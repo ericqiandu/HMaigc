@@ -349,8 +349,8 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
         >
             <button
                 type="button"
-                className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium transition hover:brightness-110"
-                style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}
+                className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                style={{ background: theme.toolbar.itemHover, color: theme.node.muted, outlineColor: theme.accent.primary }}
                 aria-label={`打开${label}选择`}
             >
                 {icon}

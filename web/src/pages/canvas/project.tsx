@@ -1470,7 +1470,7 @@ function InfiniteCanvasPage() {
                     />
                 ) : null}
 
-                {dialogNode && dialogNode.type !== CanvasNodeType.Script && dialogNode.type !== CanvasNodeType.Drawing && !selectionBox ? (
+                {dialogNode && dialogNode.type !== CanvasNodeType.Script && dialogNode.type !== CanvasNodeType.Drawing && !selectionBox && !isNodeDragging ? (
                     <CanvasNodePanelOverlay node={dialogNode} viewport={viewport} containerRef={containerRef}>
                         {renderCanvasNodePanel(dialogNode)}
                     </CanvasNodePanelOverlay>
