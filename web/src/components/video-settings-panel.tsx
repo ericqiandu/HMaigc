@@ -5,6 +5,7 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { normalizeVideoDuration, normalizeVideoResolution, VIDEO_DURATION_OPTIONS, VIDEO_RESOLUTION_OPTIONS } from "@/lib/video-generation-options";
+import { supportsVideoSuperResolution, videoSuperResolutionTargets, VIDEO_SUPER_RESOLUTION_SCENES, VIDEO_SUPER_RESOLUTION_VERSIONS } from "@/lib/video-super-resolution";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = VIDEO_RESOLUTION_OPTIONS.map((value) => ({ value: String(value), label: `${value}P` }));
@@ -22,7 +23,7 @@ const secondOptions = VIDEO_DURATION_OPTIONS;
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onConfigChange: (key: keyof AiConfig, value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -66,6 +67,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             <button
                                 key={item.value}
                                 type="button"
+                                data-selected={size === item.value}
                                 className="flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-1 text-[11px] font-medium transition hover:opacity-80"
                                 style={{ background: size === item.value ? theme.accent.primarySoft : "transparent", borderColor: size === item.value ? theme.accent.primary : theme.node.stroke, color: size === item.value ? theme.accent.primary : theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
@@ -98,6 +100,15 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
+    const supportsSuperResolution = supportsVideoSuperResolution(config);
+    const superResolutionEnabled = config.videoSuperResolutionEnabled === "true";
+    const superResolutionTargets = videoSuperResolutionTargets(resolution);
+    const enableSuperResolution = (checked: boolean) => {
+        if (checked && !superResolutionTargets.includes(config.videoSuperResolutionResolution)) {
+            onConfigChange("videoSuperResolutionResolution", superResolutionTargets[0] || "");
+        }
+        onConfigChange("videoSuperResolutionEnabled", String(checked));
+    };
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -122,6 +133,7 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                             <button
                                 key={item.value}
                                 type="button"
+                                data-selected={ratio === item.value}
                                 className="flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md border px-1 text-[10px] font-medium leading-none transition hover:opacity-80"
                                 style={{ background: ratio === item.value ? theme.accent.primarySoft : "transparent", borderColor: ratio === item.value ? theme.accent.primary : theme.node.stroke, color: ratio === item.value ? theme.accent.primary : theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
@@ -150,6 +162,38 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                         <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />
                     </div>
                 </SettingGroup>
+                {supportsSuperResolution ? (
+                    <SettingGroup title="超分增强" color={theme.node.muted}>
+                        <div className="space-y-2">
+                            <SwitchRow label="启用专有超分模型" checked={superResolutionEnabled} disabled={superResolutionTargets.length === 0} theme={theme} onChange={enableSuperResolution} />
+                            {superResolutionTargets.length === 0 ? <div className="text-[10px] opacity-55">当前基础分辨率已无可用的更高超分目标</div> : null}
+                            {superResolutionEnabled && superResolutionTargets.length > 0 ? (
+                                <div className="space-y-2">
+                                    <div className="grid grid-cols-4 gap-1.5">
+                                        {superResolutionTargets.map((value) => (
+                                            <OptionPill key={value} selected={config.videoSuperResolutionResolution === value} theme={theme} onClick={() => onConfigChange("videoSuperResolutionResolution", value)}>
+                                                {value.toUpperCase()}
+                                            </OptionPill>
+                                        ))}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                        <select className="h-8 rounded-md border bg-transparent px-2 text-[11px] outline-none" style={{ borderColor: theme.node.stroke }} value={config.videoSuperResolutionScene} onChange={(event) => onConfigChange("videoSuperResolutionScene", event.target.value)}>
+                                            {VIDEO_SUPER_RESOLUTION_SCENES.map((item) => <option className="video-super-resolution-scene-option" key={item.value} value={item.value}>{item.label}</option>)}
+                                        </select>
+                                        <select className="h-8 rounded-md border bg-transparent px-2 text-[11px] outline-none" style={{ borderColor: theme.node.stroke }} value={config.videoSuperResolutionVersion} onChange={(event) => onConfigChange("videoSuperResolutionVersion", event.target.value)}>
+                                            {VIDEO_SUPER_RESOLUTION_VERSIONS.map((item) => <option className="video-super-resolution-version-option" key={item.value} value={item.value}>{item.label}</option>)}
+                                        </select>
+                                    </div>
+                                    <label className="flex h-8 items-center gap-2 text-[11px]">
+                                        <span className="opacity-60">输出帧率</span>
+                                        <input className="min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1 outline-none" style={{ borderColor: theme.node.stroke }} type="number" min={1} max={120} placeholder="可选，1–120" value={config.videoSuperResolutionFps} onChange={(event) => onConfigChange("videoSuperResolutionFps", event.target.value)} />
+                                    </label>
+                                    {config.videoSuperResolutionVersion === "professional" ? <div className="text-[10px] opacity-55">专业版成本约为标准版的 10 倍，请确认套餐计费配置。</div> : null}
+                                </div>
+                            ) : null}
+                        </div>
+                    </SettingGroup>
+                ) : null}
             </div>
         </ImageSettingsTheme>
     );
@@ -183,7 +227,7 @@ export function normalizeVideoResolutionValue(value: string) {
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button type="button" disabled={disabled} className="h-8 cursor-pointer whitespace-nowrap rounded-md border px-1 text-[11px] font-medium leading-none transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: selected ? theme.accent.primarySoft : "transparent", borderColor: selected ? theme.accent.primary : theme.node.stroke, color: selected ? theme.accent.primary : theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button type="button" data-selected={selected} disabled={disabled} className="h-8 cursor-pointer whitespace-nowrap rounded-md border px-1 text-[11px] font-medium leading-none transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: selected ? theme.accent.primarySoft : "transparent", borderColor: selected ? theme.accent.primary : theme.node.stroke, color: selected ? theme.accent.primary : theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
             {children}
         </button>
     );
@@ -191,8 +235,8 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
 
 function SettingGroup({ title, color, children }: { title: string; color: string; children: ReactNode }) {
     return (
-        <div className="space-y-1.5">
-            <div className="text-[10px] font-semibold" style={{ color }}>
+        <div className="canvas-video-setting-group space-y-1.5">
+            <div className="canvas-video-setting-label text-[10px] font-semibold" style={{ color }}>
                 {title}
             </div>
             {children}
@@ -229,14 +273,14 @@ function ratioPreview(ratio: string) {
     return { width: 16, height: 9 };
 }
 
-function SwitchRow({ label, checked, theme, onChange }: { label: string; checked: boolean; theme: CanvasTheme; onChange: (checked: boolean) => void }) {
+function SwitchRow({ label, checked, disabled = false, theme, onChange }: { label: string; checked: boolean; disabled?: boolean; theme: CanvasTheme; onChange: (checked: boolean) => void }) {
     return (
         <div className="flex h-8 items-center justify-between gap-2">
             <span className="min-w-0 whitespace-nowrap text-[11px]" style={{ color: theme.node.text }}>
                 {label}
             </span>
             <span className="shrink-0" onMouseDown={(event) => event.stopPropagation()}>
-                <Switch size="small" checked={checked} onChange={onChange} />
+                <Switch className="video-settings-switch" size="small" checked={checked} disabled={disabled} onChange={onChange} />
             </span>
         </div>
     );

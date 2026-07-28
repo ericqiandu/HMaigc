@@ -66,12 +66,29 @@ export type ChannelModel = {
     displayName: string;
     capability: "text" | "image" | "video" | "audio";
     billingMode: "fixed_request" | "per_second";
+    priceStrategy: "flat" | "image_resolution" | "video_resolution";
     unitPriceMicrocredits: number;
+    priceTiers: Array<{
+        id: string;
+        resolution: string;
+        unitPriceMicrocredits: number;
+        priceVersion: number;
+    }>;
     priceConfigured: boolean;
     enabled: boolean;
     priceVersion: number;
     createdAt: string;
     updatedAt: string;
+};
+
+export type ChannelModelInput = Omit<
+    ChannelModel,
+    "id" | "channelId" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"
+> & {
+    priceTiers: Array<{
+        resolution: string;
+        unitPriceMicrocredits: number;
+    }>;
 };
 
 export type LinuxDOSetting = {
@@ -227,11 +244,11 @@ export function fetchAdminChannelModels(channelId: string) {
     return request<{ models: string[]; added: number }>(api.post(`/admin/channels/${encodeURIComponent(channelId)}/models/fetch`));
 }
 
-export function createAdminChannelModel(channelId: string, input: Omit<ChannelModel, "id" | "channelId" | "priceVersion" | "createdAt" | "updatedAt">) {
+export function createAdminChannelModel(channelId: string, input: ChannelModelInput) {
     return request<{ model: ChannelModel }>(api.post(`/admin/channels/${encodeURIComponent(channelId)}/models`, input));
 }
 
-export function updateAdminChannelModel(channelId: string, id: string, input: Omit<ChannelModel, "id" | "channelId" | "priceVersion" | "createdAt" | "updatedAt">) {
+export function updateAdminChannelModel(channelId: string, id: string, input: ChannelModelInput) {
     return request<{ model: ChannelModel }>(api.patch(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}`, input));
 }
 

@@ -38,6 +38,7 @@ var publicCanvasMetadataKeys = map[string]bool{
 	"content": true, "composerContent": true, "prompt": true, "status": true, "fontSize": true,
 	"generationMode": true, "generationType": true, "model": true, "size": true, "quality": true, "transparentBackground": true,
 	"count": true, "seconds": true, "vquality": true, "generateAudio": true, "watermark": true,
+	"superResolutionEnabled": true, "superResolutionResolution": true, "superResolutionScene": true, "superResolutionVersion": true, "superResolutionFps": true,
 	"audioVoice": true, "audioFormat": true, "audioSpeed": true, "audioInstructions": true,
 	"naturalWidth": true, "naturalHeight": true, "freeResize": true, "isBatchRoot": true,
 	"batchRootId": true, "batchChildIds": true, "batchUsesReferenceImages": true, "primaryImageId": true,

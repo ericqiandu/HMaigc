@@ -16,8 +16,10 @@ func Models() []any {
 		&model.EmailVerificationCode{},
 		&model.ModelChannel{},
 		&model.ChannelModel{},
+		&model.ChannelModelPriceTier{},
 		&model.ApiCallLog{},
 		&model.ModelPricing{},
+		&model.ModelPricingTier{},
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
 		&model.BillingOrder{},
@@ -77,6 +79,12 @@ func MigrateSchema(db *gorm.DB) error {
 		return err
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS idx_users_email").Error; err != nil {
+		return err
+	}
+	// 价格策略字段为显式必填；将迁移前遗留的 NULL、空串和纯空格统一单价记录一次性标记为 flat。
+	if err := db.Model(&model.ChannelModel{}).
+		Where("price_strategy IS NULL OR TRIM(price_strategy) = ''").
+		Update("price_strategy", "flat").Error; err != nil {
 		return err
 	}
 	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nonempty ON users(lower(email)) WHERE email <> ''").Error

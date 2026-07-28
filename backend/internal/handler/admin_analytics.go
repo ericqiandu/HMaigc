@@ -95,6 +95,37 @@ func RegisterAdminAnalyticsRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"ok": true})
 	})
+	r.GET("/admin/model-pricing-settings", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		setting, err := svc.AdminModelPricingOperationsSetting(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"setting": setting})
+	})
+	r.PATCH("/admin/model-pricing-settings", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request service.ModelPricingOperationsSetting
+		if err := c.ShouldBindJSON(&request); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		setting, err := svc.UpdateModelPricingOperationsSetting(user, request)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"setting": setting})
+	})
 }
 
 func saveModelPricing(c *gin.Context, svc *service.Service, id string) {

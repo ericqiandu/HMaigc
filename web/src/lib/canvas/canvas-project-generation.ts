@@ -46,7 +46,11 @@ export async function runBackendCanvasGenerationTask({
     const task = await createGenerationTask({
         projectId,
         type: `canvas_${mode}`,
-        operation: mode === "video" ? String(metadata?.videoEditOperation || "image_to_video") : mode,
+        operation: resolveGenerationTaskOperation(mode, metadata?.videoEditOperation, {
+            referenceImageCount: referenceImages.length,
+            referenceVideoCount: referenceVideos.length,
+            referenceAudioCount: referenceAudios.length,
+        }),
         prompt,
         model: config.model,
         input: {
@@ -63,6 +67,24 @@ export async function runBackendCanvasGenerationTask({
     onTaskCreated?.(task);
     const completed = await waitForGenerationTask(task.id, { signal, initialTask: task, onTaskUpdate: onTaskCreated });
     return parseBackendGenerationResult(completed);
+}
+
+function resolveGenerationTaskOperation(
+    mode: CanvasNodeGenerationMode,
+    requestedOperation: unknown,
+    references: {
+        referenceImageCount: number;
+        referenceVideoCount: number;
+        referenceAudioCount: number;
+    },
+): string {
+    if (mode !== "video") return mode;
+    if (requestedOperation === "image_to_video" && references.referenceImageCount === 0) return "text_to_video";
+    if (typeof requestedOperation === "string" && requestedOperation.trim()) return requestedOperation;
+    if (references.referenceVideoCount > 0) return "extend";
+    if (references.referenceImageCount > 0) return "image_to_video";
+    if (references.referenceAudioCount > 0) return "audio_to_video";
+    return "text_to_video";
 }
 
 async function mediaToBackendReference(media: ReferenceVideo | ReferenceAudio) {
@@ -114,6 +136,11 @@ export function backendProviderConfig(config: AiConfig) {
         vquality: config.vquality,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
+        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled,
+        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
+        videoSuperResolutionScene: config.videoSuperResolutionScene,
+        videoSuperResolutionVersion: config.videoSuperResolutionVersion,
+        videoSuperResolutionFps: config.videoSuperResolutionFps,
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
@@ -258,11 +285,12 @@ function resolveVideoEditOperation(
     const storedOperation = node?.metadata?.videoEditOperation;
     // 连接关系是生成时的真实输入，不能让分镜节点残留的文生视频模式丢弃后来连接的参考图。
     if (storedOperation === "text_to_video" && context?.referenceImages.length) return "image_to_video";
+    if (storedOperation === "image_to_video" && context && context.referenceImages.length === 0) return "text_to_video";
     if (storedOperation) return storedOperation;
     if (context?.referenceAudios.length && !context.referenceImages.length && !context.referenceVideos.length) return "audio_to_video";
     if (context?.referenceVideos.length) return "extend";
     if (context?.referenceImages.length) return "image_to_video";
-    return "image_to_video";
+    return "text_to_video";
 }
 
 export function buildVideoGenerationMetadata(
@@ -346,6 +374,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         vquality: normalizeVideoResolution(node?.metadata?.vquality || config.vquality || defaultConfig.vquality),
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
+        videoSuperResolutionEnabled: node?.metadata?.superResolutionEnabled || config.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
+        videoSuperResolutionResolution: node?.metadata?.superResolutionResolution || config.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
+        videoSuperResolutionScene: node?.metadata?.superResolutionScene || config.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,
+        videoSuperResolutionVersion: node?.metadata?.superResolutionVersion || config.videoSuperResolutionVersion || defaultConfig.videoSuperResolutionVersion,
+        videoSuperResolutionFps: node?.metadata?.superResolutionFps || config.videoSuperResolutionFps || defaultConfig.videoSuperResolutionFps,
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
@@ -357,7 +390,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 export function supportsVideoReferenceAudio(config: AiConfig) {
     const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
     if (interfaceType === "newapi-channel-2") return false;
-    return interfaceType === "newapi-channel-1" || isSeedanceVideoConfig(config);
+    return interfaceType === "newapi-channel-1" || interfaceType === "ai-open-platform-video" || isSeedanceVideoConfig(config);
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

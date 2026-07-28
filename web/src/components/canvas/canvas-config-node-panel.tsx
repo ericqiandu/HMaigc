@@ -46,7 +46,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const operationOptions = node.metadata?.videoEditOperation === "concat" ? [...videoOperationOptions, { label: "合并成片", value: "concat" as const }] : videoOperationOptions;
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
-    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" ? count : 1, seconds: mode === "video" ? config.videoSeconds : 1 });
+    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" ? count : 1, seconds: mode === "video" ? config.videoSeconds : 1, quality: config.quality, resolution: mode === "video" ? config.vquality : config.size, videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true", videoSuperResolutionResolution: config.videoSuperResolutionResolution });
     const hasPrice = credits !== null;
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
@@ -56,7 +56,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="shrink-0 text-sm font-semibold">{simpleMode ? "快速生成" : "生成配置"}</div>
+                <div className="canvas-node-title shrink-0">{simpleMode ? "快速生成" : "生成配置"}</div>
                 {simpleMode ? <span className="rounded-md px-2 py-1 text-[10px]" style={{ background: theme.node.fill, color: theme.node.muted }}>自动配置</span> : <div className="cursor-default" onMouseDown={(event) => event.stopPropagation()}>
                     <Segmented
                         size="small"
@@ -219,6 +219,11 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         vquality: normalizeVideoResolution(node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality),
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
+        videoSuperResolutionEnabled: node.metadata?.superResolutionEnabled || globalConfig.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
+        videoSuperResolutionResolution: node.metadata?.superResolutionResolution || globalConfig.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
+        videoSuperResolutionScene: node.metadata?.superResolutionScene || globalConfig.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,
+        videoSuperResolutionVersion: node.metadata?.superResolutionVersion || globalConfig.videoSuperResolutionVersion || defaultConfig.videoSuperResolutionVersion,
+        videoSuperResolutionFps: node.metadata?.superResolutionFps || globalConfig.videoSuperResolutionFps || defaultConfig.videoSuperResolutionFps,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
@@ -231,6 +236,11 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
+    if (key === "videoSuperResolutionEnabled") return { superResolutionEnabled: value };
+    if (key === "videoSuperResolutionResolution") return { superResolutionResolution: value };
+    if (key === "videoSuperResolutionScene") return { superResolutionScene: value };
+    if (key === "videoSuperResolutionVersion") return { superResolutionVersion: value };
+    if (key === "videoSuperResolutionFps") return { superResolutionFps: value };
     return { [key]: value };
 }
 

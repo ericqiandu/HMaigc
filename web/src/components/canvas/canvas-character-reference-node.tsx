@@ -12,7 +12,7 @@ export function CanvasCharacterReferenceNodeContent({ node }: { node: CanvasNode
             <span className="absolute left-3 top-3 rounded bg-black/60 px-2 py-1 text-[10px] font-medium text-white">角色引用</span>
         </div>
         <div className="shrink-0 border-t border-border/70 px-3 py-2.5">
-            <div className="truncate text-sm font-semibold">{node.metadata?.characterName || node.title}</div>
+            <div className="canvas-node-title truncate">{node.metadata?.characterName || node.title}</div>
             <div className="mt-2 flex min-w-0 gap-1.5">
                 <State icon={<ImageIcon className="size-3" />} ready={visualReady} label={visualReady ? "形象就绪" : "形象待完善"} />
                 <State icon={<Volume2 className="size-3" />} ready={voiceReady} label={voiceReady ? node.metadata?.characterVoiceName || "声音已绑定" : "声音未绑定"} />

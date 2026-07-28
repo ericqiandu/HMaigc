@@ -36,26 +36,26 @@ type AnalyticsOverview struct {
 }
 
 type AnalyticsKPI struct {
-	ActiveUsers                    int     `json:"activeUsers"`
-	DAU                            int     `json:"dau"`
-	WAU                            int     `json:"wau"`
-	MAU                            int     `json:"mau"`
-	GenerationTasks                int     `json:"generationTasks"`
-	UpstreamRequests               int     `json:"upstreamRequests"`
-	SuccessRate                    float64 `json:"successRate"`
-	P95DurationMs                  int64   `json:"p95DurationMs"`
-	CurrentQueuedTasks             int64   `json:"currentQueuedTasks"`
-	EstimatedCostMicros            int64   `json:"estimatedCostMicros"`
-	CostAvailable                  bool    `json:"costAvailable"`
-	Currency                       string  `json:"currency"`
-	SettledRevenueMicrocredits     int64   `json:"settledRevenueMicrocredits"`
-	SettledBaseCostMicrocredits    int64   `json:"settledBaseCostMicrocredits"`
-	GrossProfitMicrocredits        int64   `json:"grossProfitMicrocredits"`
-	SettledBillingOrders           int     `json:"settledBillingOrders"`
-	PendingAmountMicrocredits      int64   `json:"pendingAmountMicrocredits"`
-	PendingBillingOrders           int     `json:"pendingBillingOrders"`
-	ReviewAmountMicrocredits       int64   `json:"reviewAmountMicrocredits"`
-	ReviewBillingOrders            int     `json:"reviewBillingOrders"`
+	ActiveUsers                 int     `json:"activeUsers"`
+	DAU                         int     `json:"dau"`
+	WAU                         int     `json:"wau"`
+	MAU                         int     `json:"mau"`
+	GenerationTasks             int     `json:"generationTasks"`
+	UpstreamRequests            int     `json:"upstreamRequests"`
+	SuccessRate                 float64 `json:"successRate"`
+	P95DurationMs               int64   `json:"p95DurationMs"`
+	CurrentQueuedTasks          int64   `json:"currentQueuedTasks"`
+	EstimatedCostMicros         int64   `json:"estimatedCostMicros"`
+	CostAvailable               bool    `json:"costAvailable"`
+	Currency                    string  `json:"currency"`
+	SettledRevenueMicrocredits  int64   `json:"settledRevenueMicrocredits"`
+	SettledBaseCostMicrocredits int64   `json:"settledBaseCostMicrocredits"`
+	GrossProfitMicrocredits     int64   `json:"grossProfitMicrocredits"`
+	SettledBillingOrders        int     `json:"settledBillingOrders"`
+	PendingAmountMicrocredits   int64   `json:"pendingAmountMicrocredits"`
+	PendingBillingOrders        int     `json:"pendingBillingOrders"`
+	ReviewAmountMicrocredits    int64   `json:"reviewAmountMicrocredits"`
+	ReviewBillingOrders         int     `json:"reviewBillingOrders"`
 }
 
 type AnalyticsTrendPoint struct {
@@ -124,16 +124,25 @@ type APICallLogPage struct {
 }
 
 type ModelPricingRequest struct {
-	ChannelID              string `json:"channelId"`
-	Model                  string `json:"model"`
-	Capability             string `json:"capability"`
-	Currency               string `json:"currency"`
-	InputPerMillionMicros  int64  `json:"inputPerMillionMicros"`
-	OutputPerMillionMicros int64  `json:"outputPerMillionMicros"`
-	CachedPerMillionMicros int64  `json:"cachedPerMillionMicros"`
-	PerRequestMicros       int64  `json:"perRequestMicros"`
-	PerMediaMicros         int64  `json:"perMediaMicros"`
-	PerVideoSecondMicros   int64  `json:"perVideoSecondMicros"`
+	ChannelID              string                    `json:"channelId"`
+	Model                  string                    `json:"model"`
+	Capability             string                    `json:"capability"`
+	Currency               string                    `json:"currency"`
+	InputPerMillionMicros  int64                     `json:"inputPerMillionMicros"`
+	OutputPerMillionMicros int64                     `json:"outputPerMillionMicros"`
+	CachedPerMillionMicros int64                     `json:"cachedPerMillionMicros"`
+	ExpectedInputTokens    int64                     `json:"expectedInputTokens"`
+	ExpectedOutputTokens   int64                     `json:"expectedOutputTokens"`
+	ExpectedCachedTokens   int64                     `json:"expectedCachedTokens"`
+	PerRequestMicros       int64                     `json:"perRequestMicros"`
+	PerMediaMicros         int64                     `json:"perMediaMicros"`
+	PerVideoSecondMicros   int64                     `json:"perVideoSecondMicros"`
+	Tiers                  []ModelPricingTierRequest `json:"tiers"`
+}
+
+type ModelPricingTierRequest struct {
+	Specification      string `json:"specification"`
+	SupplierCostMicros int64  `json:"supplierCostMicros"`
 }
 
 func (s *Service) AdminAnalytics(actor *model.User, query AnalyticsQuery) (*AnalyticsOverview, error) {
@@ -391,17 +400,19 @@ func (s *Service) SaveModelPricing(actor *model.User, id string, req ModelPricin
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
+	req.ChannelID = strings.TrimSpace(req.ChannelID)
 	req.Model = strings.TrimSpace(req.Model)
 	req.Capability = normalizeCapability(req.Capability)
 	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
 	if req.Model == "" || req.Capability == "" {
 		return nil, BadAuthRequest("请填写模型并选择能力类型")
 	}
-	if req.Currency == "" {
-		req.Currency = "USD"
-	}
-	if len(req.Currency) > 12 || hasNegativePricing(req) {
+	if req.Currency == "" || len(req.Currency) > 12 || hasNegativePricing(req) {
 		return nil, BadAuthRequest("价格配置格式无效")
+	}
+	tiers, err := normalizeModelPricingTiers(req.Tiers)
+	if err != nil {
+		return nil, err
 	}
 	pricing := &model.ModelPricing{ID: newID(), CreatedAt: time.Now()}
 	if id != "" {
@@ -410,19 +421,38 @@ func (s *Service) SaveModelPricing(actor *model.User, id string, req ModelPricin
 			return nil, err
 		}
 		pricing = current
+	} else {
+		current, err := s.repo.ModelPricingByScope(req.ChannelID, req.Model, req.Capability)
+		switch {
+		case err == nil:
+			pricing = current
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return nil, err
+		}
 	}
-	pricing.ChannelID = strings.TrimSpace(req.ChannelID)
+	pricing.ChannelID = req.ChannelID
 	pricing.Model = req.Model
 	pricing.Capability = req.Capability
 	pricing.Currency = req.Currency
 	pricing.InputPerMillionMicros = req.InputPerMillionMicros
 	pricing.OutputPerMillionMicros = req.OutputPerMillionMicros
 	pricing.CachedPerMillionMicros = req.CachedPerMillionMicros
+	pricing.ExpectedInputTokens = req.ExpectedInputTokens
+	pricing.ExpectedOutputTokens = req.ExpectedOutputTokens
+	pricing.ExpectedCachedTokens = req.ExpectedCachedTokens
 	pricing.PerRequestMicros = req.PerRequestMicros
 	pricing.PerMediaMicros = req.PerMediaMicros
 	pricing.PerVideoSecondMicros = req.PerVideoSecondMicros
 	pricing.UpdatedAt = time.Now()
-	if err := s.repo.Save(pricing); err != nil {
+	tierModels := make([]model.ModelPricingTier, 0, len(tiers))
+	now := time.Now()
+	for _, tier := range tiers {
+		tierModels = append(tierModels, model.ModelPricingTier{
+			ID: newID(), ModelPricingID: pricing.ID, Specification: tier.Specification,
+			SupplierCostMicros: tier.SupplierCostMicros, CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	if err := s.repo.SaveModelPricing(pricing, tierModels); err != nil {
 		return nil, err
 	}
 	return pricing, nil
@@ -436,7 +466,27 @@ func (s *Service) DeleteModelPricing(actor *model.User, id string) error {
 }
 
 func hasNegativePricing(req ModelPricingRequest) bool {
-	return req.InputPerMillionMicros < 0 || req.OutputPerMillionMicros < 0 || req.CachedPerMillionMicros < 0 || req.PerRequestMicros < 0 || req.PerMediaMicros < 0 || req.PerVideoSecondMicros < 0
+	return req.InputPerMillionMicros < 0 || req.OutputPerMillionMicros < 0 || req.CachedPerMillionMicros < 0 ||
+		req.ExpectedInputTokens < 0 || req.ExpectedOutputTokens < 0 || req.ExpectedCachedTokens < 0 ||
+		req.PerRequestMicros < 0 || req.PerMediaMicros < 0 || req.PerVideoSecondMicros < 0
+}
+
+func normalizeModelPricingTiers(requests []ModelPricingTierRequest) ([]ModelPricingTierRequest, error) {
+	tiers := make([]ModelPricingTierRequest, 0, len(requests))
+	seen := make(map[string]struct{}, len(requests))
+	for _, request := range requests {
+		request.Specification = strings.TrimSpace(request.Specification)
+		key := strings.ToLower(request.Specification)
+		if request.Specification == "" || len(request.Specification) > 64 || request.SupplierCostMicros < 0 {
+			return nil, BadAuthRequest("规格成本配置格式无效")
+		}
+		if _, exists := seen[key]; exists {
+			return nil, BadAuthRequest("同一成本规格不能重复")
+		}
+		seen[key] = struct{}{}
+		tiers = append(tiers, request)
+	}
+	return tiers, nil
 }
 
 func normalizeAnalyticsFilter(query AnalyticsQuery) repository.AnalyticsFilter {
@@ -908,6 +958,15 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 		for key, value := range data {
 			if _, exists := payload[key]; !exists {
 				payload[key] = value
+			}
+		}
+	}
+	if data, ok := payload["data"].([]any); ok && len(data) > 0 {
+		if first, ok := data[0].(map[string]any); ok {
+			for key, value := range first {
+				if _, exists := payload[key]; !exists {
+					payload[key] = value
+				}
 			}
 		}
 	}

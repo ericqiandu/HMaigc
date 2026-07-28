@@ -523,8 +523,8 @@ function DrawingContent({ node, theme, drawingProjectId }: NodeContentRendererPr
             )}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 px-4 pb-3 pt-12" style={{ background: `linear-gradient(to top, ${theme.node.fill}, ${theme.node.fill}e6 55%, transparent)` }}>
                 <div className="min-w-0">
-                    <div className="truncate text-xs font-semibold">{node.title || "绘图"}</div>
-                    <div className="mt-0.5 text-[10px]" style={{ color: theme.node.muted }}>{shapeCount} 个图形 · {pageCount} 个页面</div>
+                    <div className="canvas-node-title truncate">{node.title || "绘图"}</div>
+                    <div className="canvas-node-meta mt-0.5" style={{ color: theme.node.muted }}>{shapeCount} 个图形 · {pageCount} 个页面</div>
                 </div>
                 <Pencil className="size-3.5 shrink-0" style={{ color: theme.accent.primary }} />
             </div>
@@ -834,10 +834,10 @@ function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchExpanded
             </div>
             {isCharacterReference ? (
                 <div className="max-w-[80%] text-center">
-                    <div className="truncate text-xs font-medium" style={{ color: theme.node.muted }}>{node.metadata?.characterName || node.title}</div>
-                    <div className="mt-1 text-[10px] tracking-[0.12em] opacity-50">多视角参考 · 待生成</div>
+                    <div className="canvas-node-body truncate" style={{ color: theme.node.muted }}>{node.metadata?.characterName || node.title}</div>
+                    <div className="canvas-node-meta mt-1 opacity-50">多视角参考 · 待生成</div>
                 </div>
-            ) : <span className="text-[10px] tracking-[0.18em] opacity-50">空图片节点</span>}
+            ) : <span className="canvas-node-empty-label opacity-50">空图片节点</span>}
         </div>
     );
     if (isBatchRoot)
@@ -862,7 +862,7 @@ function VideoNodeContent({ node, theme, reduceMediaEffects }: NodeContentRender
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
                 <Video className="size-7 opacity-35" />
-                <span className="text-sm">空视频节点</span>
+                <span className="canvas-node-empty-label">空视频节点</span>
             </div>
         );
     if (!url) {
@@ -884,7 +884,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
                 <Music2 className="size-7 opacity-35" />
-                <span className="text-sm">空音频节点</span>
+                <span className="canvas-node-empty-label">空音频节点</span>
             </div>
         );
     if (!url) {

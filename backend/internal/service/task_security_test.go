@@ -18,6 +18,7 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	}
 	if err := db.AutoMigrate(
 		&model.ChannelModel{},
+		&model.ChannelModelPriceTier{},
 		&model.SystemSetting{},
 		&model.MembershipPlan{},
 		&model.MembershipSubscription{},
@@ -27,7 +28,7 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	}
 	channelModel := model.ChannelModel{
 		ID: "model-1", ChannelID: "channel-1", ModelKey: "text-model", Capability: "text",
-		BillingMode: "fixed_request", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
 	}
 	if err := db.Create(&channelModel).Error; err != nil {
 		t.Fatal(err)
@@ -62,17 +63,17 @@ func TestTaskBillingOrderRejectsCapabilityMismatchAndZeroPrice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.ChannelModel{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
+	if err := db.AutoMigrate(&model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
 		t.Fatal(err)
 	}
 	items := []model.ChannelModel{
 		{
 			ID: "text-model", ChannelID: "channel-1", ModelKey: "text-model", Capability: "text",
-			BillingMode: "fixed_request", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+			BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
 		},
 		{
 			ID: "free-image-model", ChannelID: "channel-1", ModelKey: "free-image-model", Capability: "image",
-			BillingMode: "fixed_request", UnitPriceMicrocredits: 0, PriceConfigured: true, Enabled: true,
+			BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 0, PriceConfigured: true, Enabled: true,
 		},
 	}
 	if err := db.Create(&items).Error; err != nil {
@@ -105,6 +106,7 @@ func TestReserveProxyBillingDeductsCreditsAndRejectsInsufficientBalance(t *testi
 	}
 	if err := db.AutoMigrate(
 		&model.ChannelModel{},
+		&model.ChannelModelPriceTier{},
 		&model.SystemSetting{},
 		&model.MembershipPlan{},
 		&model.MembershipSubscription{},
@@ -117,7 +119,7 @@ func TestReserveProxyBillingDeductsCreditsAndRejectsInsufficientBalance(t *testi
 	}
 	if err := db.Create(&model.ChannelModel{
 		ID: "image-model", ChannelID: "channel-1", ModelKey: "image-model", Capability: "image",
-		BillingMode: "fixed_request", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +127,7 @@ func TestReserveProxyBillingDeductsCreditsAndRejectsInsufficientBalance(t *testi
 		t.Fatal(err)
 	}
 	svc := &Service{repo: repository.New(db)}
-	order, err := svc.ReserveProxyBilling("user-1", "channel-1", "image-model", "image", "canvas_image", "request-1", 1)
+	order, err := svc.ReserveProxyBilling("user-1", "channel-1", "image-model", "image", "canvas_image", "request-1", BillingUsage{Quantity: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,7 @@ func TestReserveProxyBillingDeductsCreditsAndRejectsInsufficientBalance(t *testi
 	if ledgerCount != 1 {
 		t.Fatalf("reserve ledger count = %d", ledgerCount)
 	}
-	if _, err := svc.ReserveProxyBilling("user-1", "channel-1", "image-model", "image", "canvas_image", "request-2", 1); err == nil || !strings.Contains(err.Error(), "积分不足") {
+	if _, err := svc.ReserveProxyBilling("user-1", "channel-1", "image-model", "image", "canvas_image", "request-2", BillingUsage{Quantity: 1}); err == nil || !strings.Contains(err.Error(), "积分不足") {
 		t.Fatalf("insufficient balance error = %v", err)
 	}
 }

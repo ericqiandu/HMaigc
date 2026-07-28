@@ -18,8 +18,8 @@ type ChannelFormValues = { name: string; baseUrl: string; apiKey?: string; inter
 
 const interfaceTypeOptions = [
     { label: "文本", options: [{ label: "Chat Completions", value: "chat-completion" }, { label: "OpenAI Responses", value: "openai-response" }] },
-    { label: "图片", options: [{ label: "OpenAI Images", value: "openai-image" }] },
-    { label: "视频", options: [{ label: "NewAPI 视频", value: "newapi" }, { label: "NewAPI 渠道 1", value: "newapi-channel-1" }, { label: "NewAPI 渠道 2", value: "newapi-channel-2" }, { label: "xAI / Sub2API 视频", value: "xai-video" }] },
+    { label: "图片", options: [{ label: "OpenAI Images", value: "openai-image" }, { label: "APIMart 异步图片", value: "apimart-image" }] },
+    { label: "视频", options: [{ label: "NewAPI 视频", value: "newapi" }, { label: "NewAPI 渠道 1", value: "newapi-channel-1" }, { label: "NewAPI 渠道 2", value: "newapi-channel-2" }, { label: "xAI / Sub2API 视频", value: "xai-video" }, { label: "AI 开放平台视频（原生）", value: "ai-open-platform-video" }] },
 ];
 
 export default function ChannelsPage() {
@@ -158,7 +158,7 @@ export default function ChannelsPage() {
     }
 
     return (
-        <AdminPageFrame title="AI 模型配置" description="统一管理系统渠道、可用模型、成本与用户售价" actions={<Button type="primary" icon={<Plus className="size-4" />} onClick={() => openDrawer()}>新增系统渠道</Button>}>
+        <AdminPageFrame title="AI 模型配置" description="统一管理系统渠道、模型目录与连接状态" actions={<Button type="primary" icon={<Plus className="size-4" />} onClick={() => openDrawer()}>新增系统渠道</Button>}>
             <ListToolbar active={hasFilters} onReset={() => updateUrl({ filter: "", interfaceType: "all", status: "all", page: 1 })}>
                 <Input id="admin-channel-search" aria-label="搜索系统渠道" autoComplete="off" allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索渠道名称或地址" onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)} />
                 <Select className="w-40" value={interfaceType} onChange={(value) => updateUrl({ interfaceType: value, page: 1 })} options={[{ label: "全部接口", value: "all" }, ...interfaceTypeOptions.flatMap((group) => group.options)]} />
@@ -170,7 +170,7 @@ export default function ChannelsPage() {
             <Drawer title={editingChannel ? "编辑系统渠道" : "新增系统渠道"} open={drawerOpen} size="min(560px, 100vw)" onClose={closeDrawer} maskClosable={!saving} destroyOnHidden extra={<Button type="primary" loading={saving} onClick={() => void save()}>保存</Button>}>
                 <Form form={form} layout="vertical" requiredMark={false}>
                     <Form.Item name="name" label="渠道名称" rules={[{ required: true, message: "请填写渠道名称" }]}><Input placeholder="例如：OpenAI 官方渠道" /></Form.Item>
-                    <Form.Item name="interfaceType" label="接口类型" rules={[{ required: true, message: "请选择接口类型" }]} extra="按生成能力选择实际上游协议；系统渠道统一使用 Bearer 鉴权。"><Select options={interfaceTypeOptions} onChange={(value: ChannelInterfaceType) => { const current = String(form.getFieldValue("baseUrl") || "").trim(); if (!current || current === defaultBaseUrlForChannelInterface()) form.setFieldValue("baseUrl", defaultBaseUrlForChannelInterface(value)); }} /></Form.Item>
+                    <Form.Item name="interfaceType" label="接口类型" rules={[{ required: true, message: "请选择接口类型" }]} extra="按生成能力选择实际上游协议；系统会按所选接口使用对应鉴权方式。"><Select options={interfaceTypeOptions} onChange={(value: ChannelInterfaceType) => { const current = String(form.getFieldValue("baseUrl") || "").trim(); if (!current || current === defaultBaseUrlForChannelInterface()) form.setFieldValue("baseUrl", defaultBaseUrlForChannelInterface(value)); }} /></Form.Item>
                     <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: "请填写 Base URL" }]}><Input placeholder="填写渠道 Base URL" /></Form.Item>
                     <Form.Item name="apiKey" label={editingChannel ? `API Key（${configuredSecretText}）` : "API Key"} rules={editingChannel ? [] : [{ required: true, message: "请填写 API Key" }]}><Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原密钥" : "系统渠道密钥"} /></Form.Item>
                     <Form.Item name="useGlobalConcurrency" label="跟随系统并发配置" valuePropName="checked"><Switch /></Form.Item>
@@ -185,5 +185,5 @@ export default function ChannelsPage() {
 function positiveInt(value: string | null, fallback: number) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback; }
 function normalizePageSize(value: string | null) { const parsed = positiveInt(value, 20); return [20, 50, 100].includes(parsed) ? parsed : 20; }
 function normalizeStatus(value: string | null): "all" | "enabled" | "disabled" { return value === "enabled" || value === "disabled" ? value : "all"; }
-function normalizeInterface(value: string | null): "all" | ChannelInterfaceType { return ["chat-completion", "openai-response", "openai-image", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video"].includes(value || "") ? value as ChannelInterfaceType : "all"; }
-function interfaceTypeLabel(value?: ChannelInterfaceType) { return ({ "chat-completion": "Chat Completions", "openai-response": "OpenAI Responses", "openai-image": "OpenAI Images", newapi: "NewAPI 视频", "newapi-channel-1": "NewAPI 渠道 1", "newapi-channel-2": "NewAPI 渠道 2", "xai-video": "xAI / Sub2API 视频" } as Record<string, string>)[value || ""] || "未设置"; }
+function normalizeInterface(value: string | null): "all" | ChannelInterfaceType { return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video", "ai-open-platform-video"].includes(value || "") ? value as ChannelInterfaceType : "all"; }
+function interfaceTypeLabel(value?: ChannelInterfaceType) { return ({ "chat-completion": "Chat Completions", "openai-response": "OpenAI Responses", "openai-image": "OpenAI Images", "apimart-image": "APIMart 异步图片", newapi: "NewAPI 视频", "newapi-channel-1": "NewAPI 渠道 1", "newapi-channel-2": "NewAPI 渠道 2", "xai-video": "xAI / Sub2API 视频", "ai-open-platform-video": "AI 开放平台视频（原生）" } as Record<string, string>)[value || ""] || "未设置"; }

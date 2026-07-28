@@ -104,10 +104,17 @@ type PublicModelChannel struct {
 }
 
 type PublicChannelModelPrice struct {
-	Model                 string `json:"model"`
-	DisplayName           string `json:"displayName"`
-	Capability            string `json:"capability"`
-	BillingMode           string `json:"billingMode"`
+	Model                 string                        `json:"model"`
+	DisplayName           string                        `json:"displayName"`
+	Capability            string                        `json:"capability"`
+	BillingMode           string                        `json:"billingMode"`
+	PriceStrategy         string                        `json:"priceStrategy"`
+	UnitPriceMicrocredits int64                         `json:"unitPriceMicrocredits"`
+	PriceTiers            []PublicChannelModelPriceTier `json:"priceTiers"`
+}
+
+type PublicChannelModelPriceTier struct {
+	Resolution            string `json:"resolution"`
 	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
 }
 
@@ -581,7 +588,7 @@ func mergeChannelRequest(req ChannelRequest, channel model.ModelChannel) Channel
 
 func validChannelInterfaceType(value model.ChannelInterfaceType) bool {
 	switch value {
-	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
+	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
 		return true
 	default:
 		return false
@@ -613,7 +620,15 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		}
 		models = append(models, item.ModelKey)
 		if item.Enabled && item.PriceConfigured {
-			modelCosts = append(modelCosts, PublicChannelModelPrice{Model: item.ModelKey, DisplayName: item.DisplayName, Capability: item.Capability, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits})
+			tiers := make([]PublicChannelModelPriceTier, 0, len(item.PriceTiers))
+			for _, tier := range item.PriceTiers {
+				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
+			}
+			modelCosts = append(modelCosts, PublicChannelModelPrice{
+				Model: item.ModelKey, DisplayName: item.DisplayName, Capability: item.Capability,
+				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
+				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
+			})
 		}
 	}
 	if len(models) == 0 {

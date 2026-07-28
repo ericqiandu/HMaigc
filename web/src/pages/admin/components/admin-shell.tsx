@@ -1,6 +1,7 @@
 import { Tooltip } from "antd";
 import {
     BarChart3,
+    BadgeDollarSign,
     BellRing,
     ChevronRight,
     Coins,
@@ -45,13 +46,14 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
         items: [
             { path: "/admin/membership", label: "会员商业化", description: "套餐、权益与会员订单", icon: <Crown className="size-4" /> },
             { path: "/admin/users", label: "用户管理", description: "账号、角色与状态", icon: <UsersRound className="size-4" /> },
-            { path: "/admin/models", label: "AI 模型配置", description: "渠道、模型、成本与售价", icon: <RadioTower className="size-4" /> },
+            { path: "/admin/models", label: "AI 模型配置", description: "渠道接入、模型目录与启停", icon: <RadioTower className="size-4" /> },
             { path: "/admin/storyboard-prompts", label: "分镜提示词", description: "Agent 提示词版本", icon: <MessageSquareText className="size-4" /> },
         ],
     },
     {
         label: "运营",
         items: [
+            { path: "/admin/model-pricing", label: "模型商业定价", description: "成本、积分售价与利润率", icon: <BadgeDollarSign className="size-4" /> },
             { path: "/admin/announcements", label: "系统公告", description: "发布、关闭与历史公告", icon: <BellRing className="size-4" /> },
             { path: "/admin/credit-operations", label: "积分运营", description: "人工调账与异常计费", icon: <Coins className="size-4" /> },
             { path: "/admin/redemption-codes", label: "兑换码", description: "生成与查看兑换码批次", icon: <TicketCheck className="size-4" /> },

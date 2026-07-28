@@ -21,6 +21,88 @@ import (
 
 const testReferenceImageDataURL = "data:image/png;base64,aGVsbG8="
 
+func TestAIOpenPlatformVideoBodyMapsModelAndOptions(t *testing.T) {
+	body, err := aiOpenPlatformVideoBody(canvasGenerationInput{
+		Prompt: "镜头缓慢推进",
+		Config: providerConfig{
+			Model:              "doubao-seedance-2-0-260128",
+			Size:               "16:9",
+			VideoSeconds:       "8",
+			VQuality:           "4k",
+			VideoGenerateAudio: "true",
+			VideoWatermark:     "false",
+		},
+		ReferenceImages: []providerMedia{{URL: "https://example.com/first.png"}},
+		ReferenceVideos: []providerMedia{{URL: "https://example.com/reference.mp4"}},
+		ReferenceAudios: []providerMedia{{URL: "https://example.com/reference.mp3"}},
+	})
+	if err != nil {
+		t.Fatalf("aiOpenPlatformVideoBody() error = %v", err)
+	}
+	if body.Mode != "pro" || body.Resolution != "4k" || body.Ratio != "16:9" || body.Duration != 8 {
+		t.Fatalf("aiOpenPlatformVideoBody() options = %#v", body)
+	}
+	if !body.GenerateAudio || body.Watermark || !body.ReturnLastFrame {
+		t.Fatalf("aiOpenPlatformVideoBody() flags = %#v", body)
+	}
+	if len(body.Images) != 1 || body.Images[0].Role != "reference_image" ||
+		len(body.Videos) != 1 || body.Videos[0].Role != "reference_video" ||
+		len(body.Audios) != 1 || body.Audios[0].Role != "reference_audio" {
+		t.Fatalf("aiOpenPlatformVideoBody() media = %#v", body)
+	}
+}
+
+func TestAIOpenPlatformVideoRejectsUnsupportedModelAndResolution(t *testing.T) {
+	if _, err := aiOpenPlatformVideoModelMode("unknown-model"); err == nil {
+		t.Fatal("aiOpenPlatformVideoModelMode() error = nil")
+	}
+	if _, err := aiOpenPlatformVideoResolution("1080p", "fast"); err == nil {
+		t.Fatal("aiOpenPlatformVideoResolution() error = nil for fast 1080p")
+	}
+	if _, err := aiOpenPlatformVideoResolution("4k", "mini"); err == nil {
+		t.Fatal("aiOpenPlatformVideoResolution() error = nil for mini 4k")
+	}
+}
+
+func TestAIOpenPlatformVideoRequestUsesVendorPathWithoutOpenAIV1Prefix(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != aiOpenPlatformVideoCreatePath {
+			t.Errorf("request path = %q, want %q", request.URL.Path, aiOpenPlatformVideoCreatePath)
+		}
+		if request.Header.Get("ApiKey") != "test-key" {
+			t.Errorf("ApiKey header = %q", request.Header.Get("ApiKey"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":0,"message":"","data":{"task_id":"task-1"},"trace_id":"request-1"}`)
+	}))
+	defer server.Close()
+
+	var response aiOpenPlatformVideoCreated
+	err := requestAIOpenPlatformVideoJSON(
+		context.Background(),
+		providerConfig{BaseURL: server.URL + "/", APIKey: "test-key"},
+		aiOpenPlatformVideoCreatePath,
+		map[string]string{"prompt": "test"},
+		&response,
+	)
+	if err != nil {
+		t.Fatalf("requestAIOpenPlatformVideoJSON() error = %v", err)
+	}
+	if response.TaskID != "task-1" {
+		t.Fatalf("task id = %q, want task-1", response.TaskID)
+	}
+}
+
+func TestAIOpenPlatformVideoURLRejectsMissingConfiguration(t *testing.T) {
+	if _, err := aiOpenPlatformVideoURL("", aiOpenPlatformVideoCreatePath); err == nil {
+		t.Fatal("aiOpenPlatformVideoURL() error = nil for empty Base URL")
+	}
+	if _, err := aiOpenPlatformVideoURL("https://video.example.com", ""); err == nil {
+		t.Fatal("aiOpenPlatformVideoURL() error = nil for empty path")
+	}
+}
+
 func TestWriteMediaPartSanitizesFilenameAndSetsMimeType(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

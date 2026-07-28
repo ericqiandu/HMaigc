@@ -85,16 +85,16 @@ export function CanvasSelectionToolbar({ anchorRef, containerRef, count, childre
     );
 }
 
-export function CanvasNodePanelOverlay({ node, viewport, containerRef, panelWidth = 520, panelHeight = 420, children }: { node: CanvasNodeData; viewport: ViewportTransform; containerRef: RefObject<HTMLDivElement | null>; panelWidth?: number; panelHeight?: number; children: ReactNode }) {
+export function CanvasNodePanelOverlay({ node, viewport, containerRef, panelWidth = 520, panelHeight = 420, panelMargin = 12, children }: { node: CanvasNodeData; viewport: ViewportTransform; containerRef: RefObject<HTMLDivElement | null>; panelWidth?: number; panelHeight?: number; panelMargin?: number; children: ReactNode }) {
     const panelRef = useRef<HTMLDivElement>(null);
-    const initialPosition = getNodePanelPosition(node, viewport, { width: containerRef.current?.clientWidth || 0, height: containerRef.current?.clientHeight || 0 }, panelWidth, panelHeight);
+    const initialPosition = getNodePanelPosition(node, viewport, { width: containerRef.current?.clientWidth || 0, height: containerRef.current?.clientHeight || 0 }, panelWidth, panelHeight, panelMargin);
 
     useLayoutEffect(() => {
         const container = containerRef.current;
         const panel = panelRef.current;
         if (!container || !panel) return;
         const update = (nextViewport: ViewportTransform) => {
-            const position = getNodePanelPosition(node, nextViewport, { width: container.clientWidth, height: container.clientHeight }, panel.offsetWidth || panelWidth, panel.offsetHeight || panelHeight);
+            const position = getNodePanelPosition(node, nextViewport, { width: container.clientWidth, height: container.clientHeight }, panel.offsetWidth || panelWidth, panel.offsetHeight || panelHeight, panelMargin);
             panel.style.left = `${position.left}px`;
             panel.style.top = `${position.top}px`;
         };
@@ -107,14 +107,14 @@ export function CanvasNodePanelOverlay({ node, viewport, containerRef, panelWidt
             resizeObserver.disconnect();
             unsubscribeViewport();
         };
-    }, [containerRef, node.height, node.id, node.position.x, node.position.y, node.width, panelHeight, panelWidth, viewport]);
+    }, [containerRef, node.height, node.id, node.position.x, node.position.y, node.width, panelHeight, panelMargin, panelWidth, viewport]);
 
     return (
         <div
             ref={panelRef}
             data-canvas-no-zoom
-            className="thin-scrollbar absolute z-[120] max-w-[calc(100%_-_24px)] overflow-y-auto"
-            style={{ left: initialPosition.left, top: initialPosition.top, width: panelWidth, maxHeight: "calc(100% - 84px)" }}
+            className="thin-scrollbar absolute z-[120] overflow-x-hidden overflow-y-auto"
+            style={{ left: initialPosition.left, top: initialPosition.top, width: panelWidth, maxWidth: `calc(100% - ${panelMargin * 2}px)`, maxHeight: "calc(100% - 84px)" }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
         >
@@ -231,9 +231,8 @@ function getConnectionMenuPosition(position: Position, viewport: ViewportTransfo
     };
 }
 
-function getNodePanelPosition(node: CanvasNodeData, viewport: ViewportTransform, viewportSize: { width: number; height: number }, panelWidth: number, panelHeight: number) {
+function getNodePanelPosition(node: CanvasNodeData, viewport: ViewportTransform, viewportSize: { width: number; height: number }, panelWidth: number, panelHeight: number, margin: number) {
     const gap = 10;
-    const margin = 12;
     const topBoundary = 72;
     const nodeCenterX = viewport.x + (node.position.x + node.width / 2) * viewport.k;
     const nodeTop = viewport.y + node.position.y * viewport.k;

@@ -169,7 +169,7 @@ func interfaceAllowsProxyPath(interfaceType model.ChannelInterfaceType, requestP
 		return requestPath == "/responses"
 	case model.ChannelInterfaceOpenAIImage:
 		return requestPath == "/images/generations" || requestPath == "/images/edits"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
+	case model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
 		return false
 	default:
 		return true
@@ -186,7 +186,7 @@ func proxyBillingCapability(interfaceType model.ChannelInterfaceType, requestPat
 		return "audio"
 	}
 	switch interfaceType {
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
 		return "video"
 	default:
 		// Gemini 的模型能力由后台模型目录确定，不能由通用 generateContent 路径猜测。
@@ -242,34 +242,91 @@ func proxyRequestModel(contentType string, body []byte) string {
 	return strings.TrimSpace(modelName)
 }
 
-func proxyRequestVideoSeconds(contentType string, body []byte) int64 {
+func proxyBillingUsage(contentType string, body []byte, capability string) service.BillingUsage {
+	usage := service.BillingUsage{Quantity: 1}
+	if capability == "video" {
+		usage.Quantity = 0
+	}
 	mediaType, params, _ := mime.ParseMediaType(contentType)
 	if strings.HasPrefix(mediaType, "multipart/") {
 		reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
 		for {
 			part, err := reader.NextPart()
 			if err != nil {
-				return 0
+				return usage
 			}
-			if part.FormName() == "seconds" || part.FormName() == "duration" {
-				value, _ := io.ReadAll(io.LimitReader(part, 32))
-				seconds, _ := strconv.ParseInt(strings.TrimSpace(string(value)), 10, 64)
-				return seconds
+			value, _ := io.ReadAll(io.LimitReader(part, 32))
+			switch part.FormName() {
+			case "seconds", "duration":
+				if capability == "video" {
+					usage.Quantity = requestPositiveInteger(string(value))
+				}
+			case "n", "count":
+				if capability == "image" {
+					usage.Quantity = requestPositiveInteger(string(value))
+				}
+			case "resolution":
+				if capability == "image" || capability == "video" {
+					usage.Resolution = strings.TrimSpace(string(value))
+				}
+			case "super_resolution_resolution":
+				if capability == "video" {
+					usage.SuperResolutionEnabled = true
+					usage.SuperResolutionResolution = strings.TrimSpace(string(value))
+				}
+			case "quality":
+				if capability == "image" && usage.Resolution == "" {
+					usage.Resolution = strings.TrimSpace(string(value))
+				}
 			}
 			_ = part.Close()
 		}
 	}
 	var payload map[string]any
 	if json.Unmarshal(body, &payload) != nil {
+		return usage
+	}
+	if capability == "video" {
+		for _, key := range []string{"seconds", "duration"} {
+			if value, exists := payload[key]; exists {
+				usage.Quantity = requestPositiveInteger(value)
+				break
+			}
+		}
+		if value, exists := payload["resolution"]; exists {
+			usage.Resolution = strings.TrimSpace(fmt.Sprint(value))
+		}
+		if value, exists := payload["super_resolution_config"]; exists {
+			config, ok := value.(map[string]any)
+			if ok {
+				usage.SuperResolutionEnabled = true
+				usage.SuperResolutionResolution = strings.TrimSpace(fmt.Sprint(config["resolution"]))
+			}
+		}
+	}
+	if capability == "image" {
+		for _, key := range []string{"n", "count"} {
+			if value, exists := payload[key]; exists {
+				usage.Quantity = requestPositiveInteger(value)
+				break
+			}
+		}
+		if value, exists := payload["resolution"]; exists {
+			usage.Resolution = strings.TrimSpace(fmt.Sprint(value))
+		}
+		if usage.Resolution == "" {
+			if value, exists := payload["quality"]; exists {
+				usage.Resolution = strings.TrimSpace(fmt.Sprint(value))
+			}
+		}
+	}
+	return usage
+}
+
+func requestPositiveInteger(value any) int64 {
+	quantity, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(value)), 10, 64)
+	if err != nil || quantity <= 0 {
 		return 0
 	}
-	for _, key := range []string{"seconds", "duration"} {
-		value, exists := payload[key]
-		if !exists {
-			continue
-		}
-		seconds, _ := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(value)), 10, 64)
-		return seconds
-	}
-	return 0
+	return quantity
 }

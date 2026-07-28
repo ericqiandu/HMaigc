@@ -1,44 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tooltip } from "antd";
+import { App, Button, DatePicker, Select, Table, Tabs, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
 import { useSearchParams } from "react-router";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import {
-    createAdminModelPricing,
-    deleteAdminModelPricing,
     exportAdminAnalytics,
     getAdminAnalytics,
     listAdminUsers,
-    listAdminModelPricings,
-    updateAdminModelPricing,
     type AdminReferenceData,
     type AdminAnalytics,
     type AnalyticsFilters,
-    type ModelPricing,
 } from "@/services/api/auth";
 import { AdminExportButton } from "./admin-ui";
 
 type Props = {
     users: AdminReferenceData["users"];
     channels: AdminReferenceData["channels"];
-};
-
-type PricingFormValues = {
-    channelId?: string;
-    model: string;
-    capability: ModelPricing["capability"];
-    currency: string;
-    inputPerMillion?: number;
-    outputPerMillion?: number;
-    cachedPerMillion?: number;
-    perRequest?: number;
-    perMedia?: number;
-    perVideoSecond?: number;
 };
 
 const capabilityOptions = [
@@ -57,14 +39,9 @@ export default function AnalyticsPanel({ users, channels }: Props) {
     const [channelId, setChannelId] = useState(searchParams.get("channelId") || undefined);
     const [capability, setCapability] = useState(searchParams.get("capability") || undefined);
     const [data, setData] = useState<AdminAnalytics | null>(null);
-    const [pricings, setPricings] = useState<ModelPricing[]>([]);
     const [loading, setLoading] = useState(false);
-    const [pricingModalOpen, setPricingModalOpen] = useState(false);
-    const [editingPricing, setEditingPricing] = useState<ModelPricing | null>(null);
-    const [savingPricing, setSavingPricing] = useState(false);
     const [userOptions, setUserOptions] = useState(users);
     const [searchingUsers, setSearchingUsers] = useState(false);
-    const [form] = Form.useForm<PricingFormValues>();
 
     const filters = useMemo<AnalyticsFilters>(
         () => ({
@@ -81,9 +58,7 @@ export default function AnalyticsPanel({ users, channels }: Props) {
     const reload = useCallback(async () => {
         setLoading(true);
         try {
-            const [analytics, pricingData] = await Promise.all([getAdminAnalytics(filters), listAdminModelPricings()]);
-            setData(analytics);
-            setPricings(pricingData.pricings);
+            setData(await getAdminAnalytics(filters));
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取统计数据失败");
         } finally {
@@ -123,64 +98,6 @@ export default function AnalyticsPanel({ users, channels }: Props) {
         data?.models.forEach((item) => item.model !== "未识别" && names.add(item.model));
         return [...names].sort().map((name) => ({ label: name, value: name }));
     }, [channels, data?.models]);
-
-    const openPricing = (pricing?: ModelPricing) => {
-        setEditingPricing(pricing || null);
-        form.setFieldsValue(
-            pricing
-                ? {
-                      channelId: pricing.channelId || undefined,
-                      model: pricing.model,
-                      capability: pricing.capability,
-                      currency: pricing.currency,
-                      inputPerMillion: fromMicros(pricing.inputPerMillionMicros),
-                      outputPerMillion: fromMicros(pricing.outputPerMillionMicros),
-                      cachedPerMillion: fromMicros(pricing.cachedPerMillionMicros),
-                      perRequest: fromMicros(pricing.perRequestMicros),
-                      perMedia: fromMicros(pricing.perMediaMicros),
-                      perVideoSecond: fromMicros(pricing.perVideoSecondMicros),
-                  }
-                : { channelId: undefined, model: "", capability: "text", currency: "USD", inputPerMillion: 0, outputPerMillion: 0, cachedPerMillion: 0, perRequest: 0, perMedia: 0, perVideoSecond: 0 },
-        );
-        setPricingModalOpen(true);
-    };
-
-    const savePricing = async () => {
-        const values = await form.validateFields();
-        const payload = {
-            channelId: values.channelId || "",
-            model: values.model.trim(),
-            capability: values.capability,
-            currency: values.currency.trim().toUpperCase(),
-            inputPerMillionMicros: toMicros(values.inputPerMillion),
-            outputPerMillionMicros: toMicros(values.outputPerMillion),
-            cachedPerMillionMicros: toMicros(values.cachedPerMillion),
-            perRequestMicros: toMicros(values.perRequest),
-            perMediaMicros: toMicros(values.perMedia),
-            perVideoSecondMicros: toMicros(values.perVideoSecond),
-        };
-        setSavingPricing(true);
-        try {
-            const result = editingPricing ? await updateAdminModelPricing(editingPricing.id, payload) : await createAdminModelPricing(payload);
-            setPricings((items) => (editingPricing ? items.map((item) => (item.id === result.pricing.id ? result.pricing : item)) : [...items, result.pricing]));
-            setPricingModalOpen(false);
-            message.success("模型价格已保存，后续调用将按新价格记录费用快照");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存价格失败");
-        } finally {
-            setSavingPricing(false);
-        }
-    };
-
-    const removePricing = async (id: string) => {
-        try {
-            await deleteAdminModelPricing(id);
-            setPricings((items) => items.filter((item) => item.id !== id));
-            message.success("价格配置已删除");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "删除价格失败");
-        }
-    };
 
     const modelColumns: ColumnsType<AdminAnalytics["models"][number]> = [
         {
@@ -233,44 +150,6 @@ export default function AnalyticsPanel({ users, channels }: Props) {
         { title: "次数", dataIndex: "count", width: 90 },
         { title: "最近错误", dataIndex: "lastError", ellipsis: true, render: (value) => <Tooltip title={value}>{value || "--"}</Tooltip> },
         { title: "最近发生", dataIndex: "lastSeenAt", width: 170, render: (value) => dayjs(value).format("YYYY-MM-DD HH:mm") },
-    ];
-
-    const pricingColumns: ColumnsType<ModelPricing> = [
-        {
-            title: "模型",
-            dataIndex: "model",
-            width: 210,
-            render: (value, row) => (
-                <div>
-                    <div className="font-medium">{value}</div>
-                    <div className="text-xs text-foreground/45">{row.channelId ? channels.find((channel) => channel.id === row.channelId)?.name || row.channelId : "全部渠道"}</div>
-                </div>
-            ),
-        },
-        { title: "能力", dataIndex: "capability", width: 90, render: capabilityLabel },
-        {
-            title: "输入 / 输出 / 缓存（每百万 Token）",
-            width: 250,
-            render: (_, row) => `${formatMoney(fromMicros(row.inputPerMillionMicros), row.currency)} / ${formatMoney(fromMicros(row.outputPerMillionMicros), row.currency)} / ${formatMoney(fromMicros(row.cachedPerMillionMicros), row.currency)}`,
-        },
-        {
-            title: "每请求 / 每媒体 / 每视频秒",
-            width: 220,
-            render: (_, row) => `${formatMoney(fromMicros(row.perRequestMicros), row.currency)} / ${formatMoney(fromMicros(row.perMediaMicros), row.currency)} / ${formatMoney(fromMicros(row.perVideoSecondMicros), row.currency)}`,
-        },
-        {
-            title: "操作",
-            fixed: "right",
-            width: 90,
-            render: (_, row) => (
-                <Space size={4}>
-                    <Button type="text" size="small" icon={<Pencil className="size-3.5" />} onClick={() => openPricing(row)} />
-                    <Popconfirm title="删除价格配置？" okText="删除" cancelText="取消" onConfirm={() => void removePricing(row.id)}>
-                        <Button type="text" danger size="small" icon={<Trash2 className="size-3.5" />} />
-                    </Popconfirm>
-                </Space>
-            ),
-        },
     ];
 
     return (
@@ -338,48 +217,8 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                         label: `异常定位${data?.failures.length ? ` (${data.failures.reduce((sum, item) => sum + item.count, 0)})` : ""}`,
                         children: <TableSurface className="admin-analytics-table-surface mt-0"><Table className="admin-analytics-table" rowKey={(row) => `${row.type}:${row.model}`} size="small" loading={loading} columns={failureColumns} dataSource={data?.failures || []} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} /></TableSurface>,
                     },
-                    {
-                        key: "pricing",
-                        label: "模型价格",
-                        children: (
-                            <div className="admin-analytics-pricing">
-                                <div className="admin-analytics-pricing-heading mb-5 flex items-center justify-between gap-4">
-                                    <p className="admin-analytics-pricing-description text-xs leading-5 text-foreground/55">价格使用最小货币单位的百万分之一保存；修改只影响后续调用，不改写历史费用。</p>
-                                    <Button type="primary" icon={<Plus className="size-4" />} onClick={() => openPricing()}>
-                                        新增价格
-                                    </Button>
-                                </div>
-                                <TableSurface className="admin-analytics-table-surface mt-0"><Table className="admin-analytics-table" rowKey="id" size="small" columns={pricingColumns} dataSource={pricings} pagination={false} scroll={{ x: 980 }} /></TableSurface>
-                            </div>
-                        ),
-                    },
                 ]}
             />
-
-            <Modal title={editingPricing ? "编辑模型价格" : "新增模型价格"} open={pricingModalOpen} onCancel={() => setPricingModalOpen(false)} onOk={() => void savePricing()} confirmLoading={savingPricing} okText="保存" cancelText="取消" width={680}>
-                <Form form={form} layout="vertical" requiredMark={false}>
-                    <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-                        <Form.Item name="model" label="模型" rules={[{ required: true, message: "请填写模型名" }]}>
-                            <Input />
-                        </Form.Item>
-                        <Form.Item name="channelId" label="渠道范围">
-                            <Select allowClear placeholder="全部渠道" options={channels.map((channel) => ({ label: channel.name, value: channel.id }))} />
-                        </Form.Item>
-                        <Form.Item name="capability" label="能力类型" rules={[{ required: true }]}>
-                            <Select options={capabilityOptions} />
-                        </Form.Item>
-                        <Form.Item name="currency" label="币种" rules={[{ required: true }]}>
-                            <Input maxLength={12} />
-                        </Form.Item>
-                        <PriceInput name="inputPerMillion" label="每百万输入 Token" />
-                        <PriceInput name="outputPerMillion" label="每百万输出 Token" />
-                        <PriceInput name="cachedPerMillion" label="每百万缓存 Token" />
-                        <PriceInput name="perRequest" label="每次请求" />
-                        <PriceInput name="perMedia" label="每个输出媒体" />
-                        <PriceInput name="perVideoSecond" label="每视频秒" />
-                    </div>
-                </Form>
-            </Modal>
         </div>
     );
 }
@@ -400,14 +239,6 @@ function Metric({ label, value, detail }: { label: string; value: string | numbe
             <div className="admin-analytics-metric-value mt-2.5 text-2xl font-semibold tracking-[-0.02em]">{value}</div>
             {detail ? <div className="admin-analytics-metric-detail mt-1.5 text-xs leading-5 text-foreground/45">{detail}</div> : null}
         </div>
-    );
-}
-
-function PriceInput({ name, label }: { name: keyof PricingFormValues; label: string }) {
-    return (
-        <Form.Item name={name} label={`${label}（币种单位）`} rules={[{ type: "number", min: 0, message: "价格不能小于 0" }]}>
-            <InputNumber min={0} precision={6} step={0.000001} className="w-full" />
-        </Form.Item>
     );
 }
 
@@ -443,10 +274,6 @@ function formatMoney(value: number, currency = "USD") {
 
 function fromMicros(value: number) {
     return value / 1_000_000;
-}
-
-function toMicros(value?: number) {
-    return Math.round((value || 0) * 1_000_000);
 }
 
 function filterDate(value: string | null, fallback: Dayjs) {

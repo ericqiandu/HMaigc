@@ -22,7 +22,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     fromScrollTop?: number;
     toScrollTop?: number;
     active: boolean;
-    onSelect: () => void;
+    onSelect: (event: ReactMouseEvent<SVGPathElement>) => void;
     onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -38,15 +38,16 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     const gradientId = `canvas-flow-${connection.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
     return (
-        <g>
-            {emphasized ? <defs>
-                <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={startX} y1={startY} x2={endX} y2={endY}>
-                    <stop offset="0%" stopColor={theme.node.muted} stopOpacity={0.18} />
-                    <stop offset="48%" stopColor={theme.accent.primary} stopOpacity={0.58} />
-                    <stop offset="100%" stopColor={theme.accent.primary} stopOpacity={0.34} />
+        <g className="canvas-connection">
+            {emphasized ? <defs className="canvas-connection-gradient-definitions">
+                <linearGradient className="canvas-connection-gradient" id={gradientId} gradientUnits="userSpaceOnUse" x1={startX} y1={startY} x2={endX} y2={endY}>
+                    <stop className="canvas-connection-gradient-start" offset="0%" stopColor={theme.node.muted} stopOpacity={0.18} />
+                    <stop className="canvas-connection-gradient-middle" offset="48%" stopColor={theme.accent.primary} stopOpacity={0.58} />
+                    <stop className="canvas-connection-gradient-end" offset="100%" stopColor={theme.accent.primary} stopOpacity={0.34} />
                 </linearGradient>
             </defs> : null}
             <path
+                className="canvas-connection-hit-target"
                 data-connection-id={connection.id}
                 d={pathD}
                 stroke="transparent"
@@ -58,7 +59,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
                 onMouseLeave={() => setHovered(false)}
                 onClick={(event) => {
                     event.stopPropagation();
-                    onSelect();
+                    onSelect(event);
                 }}
                 onContextMenu={(event) => {
                     event.preventDefault();
@@ -67,6 +68,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
                 }}
             />
             <path
+                className="canvas-connection-visible-path"
                 d={pathD}
                 stroke={emphasized ? theme.accent.primary : theme.node.muted}
                 strokeWidth={emphasized ? 1.6 : 1}

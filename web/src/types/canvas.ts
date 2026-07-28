@@ -129,6 +129,11 @@ export type CanvasNodeMetadata = {
     vquality?: string;
     generateAudio?: string;
     watermark?: string;
+    superResolutionEnabled?: string;
+    superResolutionResolution?: string;
+    superResolutionScene?: string;
+    superResolutionVersion?: string;
+    superResolutionFps?: string;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;

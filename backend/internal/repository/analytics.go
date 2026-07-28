@@ -209,7 +209,9 @@ func (r *Repository) apiCallLogQuery(filter AnalyticsFilter) *gorm.DB {
 
 func (r *Repository) ModelPricings() ([]model.ModelPricing, error) {
 	var items []model.ModelPricing
-	return items, r.db.Order("model asc, capability asc").Find(&items).Error
+	return items, r.db.Preload("Tiers", func(db *gorm.DB) *gorm.DB {
+		return db.Order("specification asc")
+	}).Order("model asc, capability asc").Find(&items).Error
 }
 
 func (r *Repository) ModelPricing(channelID string, modelName string, capability string) (*model.ModelPricing, error) {
@@ -220,7 +222,9 @@ func (r *Repository) ModelPricing(channelID string, modelName string, capability
 	} else {
 		query = query.Where("channel_id = ?", "")
 	}
-	if err := query.First(&pricing).Error; err != nil {
+	if err := query.Preload("Tiers", func(db *gorm.DB) *gorm.DB {
+		return db.Order("specification asc")
+	}).First(&pricing).Error; err != nil {
 		return nil, err
 	}
 	return &pricing, nil
@@ -228,14 +232,49 @@ func (r *Repository) ModelPricing(channelID string, modelName string, capability
 
 func (r *Repository) ModelPricingByID(id string) (*model.ModelPricing, error) {
 	var pricing model.ModelPricing
-	if err := r.db.First(&pricing, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("Tiers", func(db *gorm.DB) *gorm.DB {
+		return db.Order("specification asc")
+	}).First(&pricing, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &pricing, nil
+}
+
+func (r *Repository) ModelPricingByScope(channelID string, modelName string, capability string) (*model.ModelPricing, error) {
+	var pricing model.ModelPricing
+	if err := r.db.Preload("Tiers", func(db *gorm.DB) *gorm.DB {
+		return db.Order("specification asc")
+	}).First(&pricing, "channel_id = ? AND model = ? AND capability = ?", channelID, modelName, capability).Error; err != nil {
 		return nil, err
 	}
 	return &pricing, nil
 }
 
 func (r *Repository) DeleteModelPricing(id string) error {
-	return r.db.Delete(&model.ModelPricing{}, "id = ?", id).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.ModelPricingTier{}, "model_pricing_id = ?", id).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.ModelPricing{}, "id = ?", id).Error
+	})
+}
+
+func (r *Repository) SaveModelPricing(pricing *model.ModelPricing, tiers []model.ModelPricingTier) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(pricing).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.ModelPricingTier{}, "model_pricing_id = ?", pricing.ID).Error; err != nil {
+			return err
+		}
+		if len(tiers) > 0 {
+			if err := tx.Create(&tiers).Error; err != nil {
+				return err
+			}
+		}
+		pricing.Tiers = tiers
+		return nil
+	})
 }
 
 func (r *Repository) CurrentQueuedTaskCount() (int64, error) {

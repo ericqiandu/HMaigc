@@ -617,7 +617,7 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	defer releaseChannel()
 	if c.Request.Method == http.MethodPost {
 		capability := proxyBillingCapability(channel.InterfaceType, path)
-		order, err := svc.ReserveProxyBilling(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyRequestVideoSeconds(c.GetHeader("Content-Type"), body))
+		order, err := svc.ReserveProxyBilling(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyBillingUsage(c.GetHeader("Content-Type"), body, capability))
 		if err != nil {
 			failService(c, err)
 			return
@@ -701,9 +701,9 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID string, method string, path string, target string, body []byte, status model.ApiCallStatus, statusCode int, duration time.Duration, errorText string, concurrencyLimit int) model.ApiCallLog {
 	capability := "text"
 	switch channel.InterfaceType {
-	case model.ChannelInterfaceOpenAIImage:
+	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage:
 		capability = "image"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
 		capability = "video"
 	}
 	requestKind := "create"

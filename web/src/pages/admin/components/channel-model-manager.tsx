@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { App, Button, Drawer, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
+import { App, Button, Drawer, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ArrowLeft, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Link } from "react-router";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
@@ -11,8 +12,6 @@ type FormValues = {
     modelKey: string;
     displayName?: string;
     capability: ChannelModel["capability"];
-    billingMode: ChannelModel["billingMode"];
-    unitPrice: number;
     enabled: boolean;
 };
 
@@ -30,8 +29,6 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
     const [form] = Form.useForm<FormValues>();
-    const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
-    const modelCapability = Form.useWatch("capability", form);
 
     const reload = async () => {
         if (!channel) return;
@@ -74,13 +71,18 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const startCreate = () => {
         setEditing(null);
-        form.setFieldsValue({ modelKey: "", displayName: "", capability: capabilityFromInterface(channel?.interfaceType), billingMode: "fixed_request", unitPrice: 0, enabled: true });
+        form.setFieldsValue({ modelKey: "", displayName: "", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
         setEditorOpen(true);
     };
 
     const startEdit = (item: ChannelModel) => {
         setEditing(item);
-        form.setFieldsValue({ modelKey: item.modelKey, displayName: item.displayName, capability: item.capability, billingMode: item.billingMode, unitPrice: item.unitPriceMicrocredits / 1_000_000, enabled: item.enabled });
+        form.setFieldsValue({
+            modelKey: item.modelKey,
+            displayName: item.displayName,
+            capability: item.capability,
+            enabled: item.enabled,
+        });
         setEditorOpen(true);
     };
 
@@ -88,17 +90,31 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         const values = await form.validateFields();
         setSaving(true);
         try {
-            const payload = {
+            const sharedPayload = {
                 modelKey: values.modelKey.trim(),
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
                 capability: values.capability,
-                billingMode: values.billingMode,
-                unitPriceMicrocredits: Math.round(values.unitPrice * 1_000_000),
-                priceConfigured: true,
                 enabled: values.enabled !== false,
             };
-            if (editing) await updateAdminChannelModel(channel.id, editing.id, payload);
-            else await createAdminChannelModel(channel.id, payload);
+            if (editing) {
+                await updateAdminChannelModel(channel.id, editing.id, {
+                    ...sharedPayload,
+                    billingMode: editing.billingMode,
+                    priceStrategy: editing.priceStrategy,
+                    unitPriceMicrocredits: editing.unitPriceMicrocredits,
+                    priceTiers: editing.priceTiers,
+                    priceConfigured: editing.priceConfigured,
+                });
+            } else {
+                await createAdminChannelModel(channel.id, {
+                    ...sharedPayload,
+                    billingMode: "fixed_request",
+                    priceStrategy: "flat",
+                    unitPriceMicrocredits: 0,
+                    priceTiers: [],
+                    priceConfigured: false,
+                });
+            }
             await reload();
             await onChanged();
             setEditorOpen(false);
@@ -133,7 +149,18 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             ),
         },
         { title: "能力", dataIndex: "capability", width: 90, render: capabilityLabel },
-        { title: "计费", width: 165, render: (_, item) => (item.priceConfigured ? `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}` : <Tag color="orange">未配置价格</Tag>) },
+        {
+            title: "计费",
+            width: 240,
+            render: (_, item) => {
+                if (!item.priceConfigured) return <Tag color="orange">未配置价格</Tag>;
+                if (item.priceStrategy !== "flat") {
+                    const unit = item.capability === "image" ? "张" : item.billingMode === "per_second" ? "秒" : "次";
+                    return <span className="text-xs text-foreground/70">{item.priceTiers.map((tier) => `${tier.resolution.replace("SR_", "超分 ")} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}</span>;
+                }
+                return `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}`;
+            },
+        },
         { title: "版本", dataIndex: "priceVersion", width: 75, render: (value) => `v${value}` },
         { title: "状态", dataIndex: "enabled", width: 85, render: (enabled) => (enabled ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
         {
@@ -166,10 +193,11 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <Button aria-label="返回 AI 模型配置" icon={<ArrowLeft className="size-4" />} onClick={onClose} />
                     <div className="min-w-0">
                         <h2 className="truncate text-lg font-semibold">{channel.name} / 模型管理</h2>
-                        <p className="mt-1 text-xs text-foreground/50">维护模型能力、计费单位、积分单价与启用状态。</p>
+                        <p className="mt-1 text-xs text-foreground/50">维护模型标识、能力与启用状态；成本和积分售价统一在商业定价中管理。</p>
                     </div>
                 </div>
                 <Space wrap>
+                    <Link className="channel-model-pricing-link" to="/admin/model-pricing"><Button>商业定价</Button></Link>
                     <Button loading={fetching} icon={<RefreshCw className="size-4" />} onClick={() => void fetchModels()}>
                         拉取模型
                     </Button>
@@ -204,13 +232,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                         <Input placeholder="不填则使用模型标识" />
                     </Form.Item>
                     <Form.Item name="capability" label="能力" rules={[{ required: true }]}>
-                        <Select onChange={(value) => { if (value !== "video") form.setFieldValue("billingMode", "fixed_request"); }} options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} />
-                    </Form.Item>
-                    <Form.Item name="billingMode" label="计费方式" rules={[{ required: true }]}>
-                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }]} />
-                    </Form.Item>
-                    <Form.Item name="unitPrice" label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"} rules={[{ required: true, message: "请输入积分价格" }]}>
-                        <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
+                        <Select options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} />
                     </Form.Item>
                     <Form.Item name="enabled" label="启用" valuePropName="checked">
                         <Switch />
@@ -223,8 +245,8 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 }
 
 function capabilityFromInterface(value?: ModelChannel["interfaceType"]): ChannelModel["capability"] {
-    if (value === "openai-image") return "image";
-    if (value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video") return "video";
+    if (value === "openai-image" || value === "apimart-image") return "image";
+    if (value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video") return "video";
     return "text";
 }
 

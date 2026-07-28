@@ -45,6 +45,11 @@ type providerConfig struct {
 	VQuality              string `json:"vquality"`
 	VideoGenerateAudio    string `json:"videoGenerateAudio"`
 	VideoWatermark        string `json:"videoWatermark"`
+	VideoSuperResolutionEnabled    string `json:"videoSuperResolutionEnabled"`
+	VideoSuperResolutionResolution string `json:"videoSuperResolutionResolution"`
+	VideoSuperResolutionScene      string `json:"videoSuperResolutionScene"`
+	VideoSuperResolutionVersion    string `json:"videoSuperResolutionVersion"`
+	VideoSuperResolutionFPS        string `json:"videoSuperResolutionFps"`
 	AudioVoice            string `json:"audioVoice"`
 	AudioFormat           string `json:"audioFormat"`
 	AudioSpeed            string `json:"audioSpeed"`
@@ -167,7 +172,8 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	if resumedProviderRequestID(ctx) == "" {
-		if err := s.hydrateGenerationMedia(userID, &input, input.Config.InterfaceType == "newapi-channel-1"); err != nil {
+		requirePublicMedia := input.Config.InterfaceType == "newapi-channel-1" || input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo)
+		if err := s.hydrateGenerationMedia(userID, &input, requirePublicMedia); err != nil {
 			return nil, err
 		}
 	}
@@ -329,6 +335,9 @@ func systemChannelIDFromBaseURL(baseURL string) string {
 }
 
 func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceAPIMartImage) {
+		return runAPIMartImageTask(ctx, input)
+	}
 	var payload imageResponse
 	if input.Mask != nil {
 		// 蒙版编辑是强校验写路径：协议能力不明确时必须失败，不能静默退化为整图重绘。
@@ -582,6 +591,9 @@ func runAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]
 }
 
 func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo) {
+		return runAIOpenPlatformVideoTask(ctx, input)
+	}
 	if input.Config.InterfaceType == "newapi-channel-2" {
 		return runNewAPIChannel2VideoTask(ctx, input)
 	}
@@ -1008,8 +1020,8 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 	}
 	allowed := map[string]map[string]bool{
 		"text":  {"chat-completion": true, "openai-response": true},
-		"image": {"openai-image": true},
-		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true},
+		"image": {"openai-image": true, "apimart-image": true},
+		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "ai-open-platform-video": true},
 	}
 	if allowed[mode] != nil && !allowed[mode][interfaceType] {
 		return fmt.Errorf("接口类型 %s 不支持%s生成", interfaceType, mode)

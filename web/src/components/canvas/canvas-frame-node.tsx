@@ -188,7 +188,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     {editing ? (
                         <input
                             autoFocus
-                            className="h-7 min-w-0 flex-1 rounded border bg-transparent px-1.5 text-sm font-semibold outline-none"
+                            className="canvas-node-title h-7 min-w-0 flex-1 rounded border bg-transparent px-1.5 outline-none"
                             style={{ borderColor: theme.frame.activeStroke, color: theme.node.text }}
                             value={title}
                             onChange={(event) => setTitle(event.target.value)}
@@ -205,7 +205,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     ) : (
                         <button
                             type="button"
-                            className="min-w-0 truncate text-left text-sm font-semibold"
+                            className="canvas-node-title min-w-0 truncate text-left"
                             title={data.title}
                             onDoubleClick={(event) => {
                                 event.stopPropagation();

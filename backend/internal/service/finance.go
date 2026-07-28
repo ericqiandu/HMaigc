@@ -376,14 +376,21 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 		return nil, BadAuthRequest("任务能力类型无效，无法计费")
 	}
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
-	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingQuantity(capability, config["videoSeconds"]))
+	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingUsage(capability, config))
 }
 
-func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, quantity int64) (*model.BillingOrder, error) {
+type BillingUsage struct {
+	Quantity                  int64
+	Resolution                string
+	SuperResolutionEnabled    bool
+	SuperResolutionResolution string
+}
+
+func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, usage BillingUsage) (*model.BillingOrder, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
 	}
-	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), quantity)
+	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), usage)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +403,7 @@ func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey 
 	return order, nil
 }
 
-func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, requestedQuantity int64) (*model.BillingOrder, error) {
+func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, usage BillingUsage) (*model.BillingOrder, error) {
 	item, err := s.repo.ChannelModelByKey(channelID, modelKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, BadAuthRequest("当前系统渠道模型未配置或已停用")
@@ -415,23 +422,74 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if requestedCapability != "" && requestedCapability != itemCapability {
 		return nil, BadAuthRequest("当前模型能力与本次生成功能不匹配")
 	}
-	if item.UnitPriceMicrocredits <= 0 {
-		return nil, BadAuthRequest("当前模型尚未配置有效的用户积分价格")
-	}
 	capability = itemCapability
-	quantity := int64(1)
 	switch item.BillingMode {
 	case "fixed_request":
 	case "per_second":
 		if item.Capability != "video" || capability != "video" {
 			return nil, BadAuthRequest("按秒计费仅适用于视频生成")
 		}
-		if requestedQuantity <= 0 {
+		if usage.Quantity <= 0 {
 			return nil, BadAuthRequest("视频生成时长无效，无法按秒计费")
 		}
-		quantity = requestedQuantity
 	default:
 		return nil, BadAuthRequest("当前模型计费方式暂不支持")
+	}
+	unitPrice := item.UnitPriceMicrocredits
+	priceTierID := ""
+	pricingResolution := ""
+	switch item.PriceStrategy {
+	case "flat":
+		if unitPrice <= 0 {
+			return nil, BadAuthRequest("当前模型尚未配置有效的用户积分价格")
+		}
+	case "image_resolution":
+		if capability != "image" || item.BillingMode != "fixed_request" {
+			return nil, BadAuthRequest("分辨率阶梯价格仅适用于按次计费的图片模型")
+		}
+		pricingResolution = normalizeImagePricingResolution(usage.Resolution)
+		if pricingResolution == "" {
+			return nil, BadAuthRequest("图片分辨率无效，无法匹配积分价格")
+		}
+		for _, tier := range item.PriceTiers {
+			if tier.Resolution == pricingResolution {
+				unitPrice = tier.UnitPriceMicrocredits
+				priceTierID = tier.ID
+				break
+			}
+		}
+		if priceTierID == "" || unitPrice <= 0 {
+			return nil, BadAuthRequest("当前模型未配置该分辨率的积分价格")
+		}
+	case "video_resolution":
+		if capability != "video" {
+			return nil, BadAuthRequest("视频分辨率价格仅适用于视频模型")
+		}
+		pricingResolution = normalizeVideoPricingResolution(usage)
+		if pricingResolution == "" {
+			return nil, BadAuthRequest("视频分辨率无效，无法匹配积分价格")
+		}
+		for _, tier := range item.PriceTiers {
+			if tier.Resolution == pricingResolution {
+				unitPrice = tier.UnitPriceMicrocredits
+				priceTierID = tier.ID
+				break
+			}
+		}
+		if priceTierID == "" || unitPrice <= 0 {
+			return nil, BadAuthRequest("当前模型未配置规格 " + pricingResolution + " 的积分价格")
+		}
+	default:
+		return nil, BadAuthRequest("当前模型尚未配置有效的价格策略")
+	}
+	quantity := int64(1)
+	if item.BillingMode == "per_second" {
+		quantity = usage.Quantity
+	} else if capability == "image" {
+		quantity = usage.Quantity
+	}
+	if quantity <= 0 {
+		return nil, BadAuthRequest("生成数量无效，无法计费")
 	}
 	policy, err := s.creditPolicy()
 	if err != nil {
@@ -441,7 +499,7 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if configured := policy.ModelMultiplierBPS[modelKey]; configured > 0 {
 		multiplierBPS = configured
 	}
-	amount, err := creditAmount(item.UnitPriceMicrocredits, quantity, multiplierBPS)
+	amount, err := creditAmount(unitPrice, quantity, multiplierBPS)
 	if err != nil {
 		return nil, err
 	}
@@ -449,20 +507,83 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		ID: newID(), UserID: userID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
-		UnitPriceMicrocredits: item.UnitPriceMicrocredits, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
+		PriceTierID: priceTierID, PricingResolution: pricingResolution,
+		UnitPriceMicrocredits: unitPrice, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
 		Status: model.BillingStatusReserved,
 	}, nil
 }
 
-func billingQuantity(capability string, value any) int64 {
-	if capability != "video" {
-		return 1
+func billingUsage(capability string, config map[string]any) BillingUsage {
+	usage := BillingUsage{Quantity: 1}
+	if capability == "image" {
+		usage.Quantity = positiveInteger(config["count"])
+		usage.Resolution = firstNonEmpty(strings.TrimSpace(fmt.Sprint(config["resolution"])), strings.TrimSpace(fmt.Sprint(config["quality"])))
+		return usage
 	}
+	if capability == "video" {
+		usage.Quantity = positiveInteger(config["videoSeconds"])
+		usage.Resolution = strings.TrimSpace(fmt.Sprint(config["vquality"]))
+		usage.SuperResolutionEnabled = strings.EqualFold(strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionEnabled"])), "true")
+		usage.SuperResolutionResolution = strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionResolution"]))
+	}
+	return usage
+}
+
+func positiveInteger(value any) int64 {
 	quantity, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(value)), 10, 64)
 	if err != nil || quantity <= 0 {
 		return 0
 	}
 	return quantity
+}
+
+func normalizeImagePricingResolution(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "1k":
+		return "1K"
+	case "medium", "2k":
+		return "2K"
+	case "high", "4k":
+		return "4K"
+	default:
+		return ""
+	}
+}
+
+func normalizeVideoPricingResolution(usage BillingUsage) string {
+	value := usage.Resolution
+	if usage.SuperResolutionEnabled {
+		value = usage.SuperResolutionResolution
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "480", "480p":
+		if usage.SuperResolutionEnabled {
+			return ""
+		}
+		return "480P"
+	case "720", "720p":
+		if usage.SuperResolutionEnabled {
+			return "SR_720P"
+		}
+		return "720P"
+	case "1080", "1080p":
+		if usage.SuperResolutionEnabled {
+			return "SR_1080P"
+		}
+		return "1080P"
+	case "2k":
+		if usage.SuperResolutionEnabled {
+			return "SR_2K"
+		}
+		return "2K"
+	case "4k":
+		if usage.SuperResolutionEnabled {
+			return "SR_4K"
+		}
+		return "4K"
+	default:
+		return ""
+	}
 }
 
 func (s *Service) MarkBillingRunning(orderID string) error {

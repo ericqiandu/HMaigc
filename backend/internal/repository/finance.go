@@ -67,7 +67,7 @@ type AdminRedeemCodeRow struct {
 
 func (r *Repository) ChannelModels(channelID string, includeDisabled bool) ([]model.ChannelModel, error) {
 	var items []model.ChannelModel
-	query := r.db.Where("channel_id = ?", channelID).Order("created_at asc")
+	query := r.db.Preload("PriceTiers", func(db *gorm.DB) *gorm.DB { return db.Order("resolution asc") }).Where("channel_id = ?", channelID).Order("created_at asc")
 	if !includeDisabled {
 		query = query.Where("enabled = ?", true)
 	}
@@ -82,7 +82,7 @@ func (r *Repository) ChannelModelsIncludingDeleted(channelID string) ([]model.Ch
 
 func (r *Repository) ChannelModelByID(channelID string, id string) (*model.ChannelModel, error) {
 	var item model.ChannelModel
-	if err := r.db.First(&item, "id = ? AND channel_id = ?", id, channelID).Error; err != nil {
+	if err := r.db.Preload("PriceTiers", func(db *gorm.DB) *gorm.DB { return db.Order("resolution asc") }).First(&item, "id = ? AND channel_id = ?", id, channelID).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil
@@ -90,7 +90,7 @@ func (r *Repository) ChannelModelByID(channelID string, id string) (*model.Chann
 
 func (r *Repository) ChannelModelByKey(channelID string, modelKey string) (*model.ChannelModel, error) {
 	var item model.ChannelModel
-	if err := r.db.First(&item, "channel_id = ? AND model_key = ? AND enabled = ?", channelID, modelKey, true).Error; err != nil {
+	if err := r.db.Preload("PriceTiers", func(db *gorm.DB) *gorm.DB { return db.Order("resolution asc") }).First(&item, "channel_id = ? AND model_key = ? AND enabled = ?", channelID, modelKey, true).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil
@@ -98,6 +98,21 @@ func (r *Repository) ChannelModelByKey(channelID string, modelKey string) (*mode
 
 func (r *Repository) SaveChannelModel(item *model.ChannelModel) error {
 	return r.db.Save(item).Error
+}
+
+func (r *Repository) SaveChannelModelPricing(item *model.ChannelModel, tiers []model.ChannelModelPriceTier) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Omit("PriceTiers").Save(item).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("channel_model_id = ?", item.ID).Delete(&model.ChannelModelPriceTier{}).Error; err != nil {
+			return err
+		}
+		if len(tiers) == 0 {
+			return nil
+		}
+		return tx.Create(&tiers).Error
+	})
 }
 
 func (r *Repository) DeleteChannelModel(channelID string, id string, modelsJSON string, now time.Time) error {

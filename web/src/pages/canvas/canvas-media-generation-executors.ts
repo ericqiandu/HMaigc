@@ -57,6 +57,11 @@ export async function executeVideoGeneration({
             vquality: generationConfig.vquality,
             generateAudio: generationConfig.videoGenerateAudio,
             watermark: generationConfig.videoWatermark,
+            superResolutionEnabled: generationConfig.videoSuperResolutionEnabled,
+            superResolutionResolution: generationConfig.videoSuperResolutionResolution,
+            superResolutionScene: generationConfig.videoSuperResolutionScene,
+            superResolutionVersion: generationConfig.videoSuperResolutionVersion,
+            superResolutionFps: generationConfig.videoSuperResolutionFps,
             references: generationReferenceUrls(generationContext),
             ...videoGenerationMetadata,
         },
@@ -86,7 +91,7 @@ export async function executeVideoGeneration({
         setNodes((current) => current.map((node) => {
             if (node.id !== videoId) return node;
             const geometry = node.metadata?.locked ? {} : { width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 } };
-            return { ...node, ...geometry, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls(generationContext), ...videoGenerationMetadata } };
+            return { ...node, ...geometry, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, superResolutionEnabled: generationConfig.videoSuperResolutionEnabled, superResolutionResolution: generationConfig.videoSuperResolutionResolution, superResolutionScene: generationConfig.videoSuperResolutionScene, superResolutionVersion: generationConfig.videoSuperResolutionVersion, superResolutionFps: generationConfig.videoSuperResolutionFps, references: generationReferenceUrls(generationContext), ...videoGenerationMetadata } };
         }));
     } finally {
         finishGenerationRequest(videoId, controller);

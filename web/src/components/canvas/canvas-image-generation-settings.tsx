@@ -33,7 +33,7 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
     };
 
     return (
-        <div className="canvas-image-generation-settings space-y-3.5">
+        <div className="canvas-image-generation-settings space-y-5">
             <SettingsSection label="画质">
                 <div className="canvas-image-quality-grid grid grid-cols-3 gap-2">
                     {qualityOptions.map((option) => (
@@ -45,7 +45,7 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
             <SettingsSection label="清晰度">
                 <div className="canvas-image-resolution-grid grid grid-cols-3 gap-2">
                     {resolutionOptions.map((option) => (
-                        <SettingsButton key={option} active={resolution === option} label={option} theme={theme} className="canvas-image-resolution-option h-8 font-semibold" onClick={() => updateDimensions(ratio, option)} />
+                        <SettingsButton key={option} active={resolution === option} label={option} theme={theme} className="canvas-image-resolution-option h-8" onClick={() => updateDimensions(ratio, option)} />
                     ))}
                 </div>
             </SettingsSection>
@@ -56,7 +56,7 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
                         <button
                             key={option}
                             type="button"
-                            className={cn("canvas-image-ratio-option flex h-[62px] flex-col items-center justify-center gap-1.5 rounded-lg text-[11px] transition-colors", ratio === option ? "font-semibold" : "opacity-60 hover:opacity-90")}
+                            className={cn("canvas-image-ratio-option flex h-[63px] flex-col items-center justify-center gap-1.5 rounded-lg transition-colors", ratio === option ? "is-active" : "opacity-60 hover:opacity-90")}
                             style={settingButtonStyle(theme, ratio === option)}
                             onClick={() => updateDimensions(option, resolution)}
                         >
@@ -83,7 +83,7 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
 function SettingsSection({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <section className="canvas-image-settings-section space-y-1.5">
-            <h4 className="canvas-image-settings-label text-[12px] font-medium opacity-55">{label}</h4>
+            <h4 className="canvas-image-settings-label opacity-55">{label}</h4>
             {children}
         </section>
     );
@@ -91,7 +91,7 @@ function SettingsSection({ label, children }: { label: string; children: React.R
 
 function SettingsButton({ active, label, theme, className, onClick }: { active: boolean; label: string; theme: CanvasTheme; className: string; onClick: () => void }) {
     return (
-        <button type="button" className={cn("canvas-image-settings-option rounded-lg text-[12px] transition-colors", active ? "font-semibold" : "opacity-60 hover:opacity-90", className)} style={settingButtonStyle(theme, active)} onClick={onClick}>
+        <button type="button" className={cn("canvas-image-settings-option rounded-lg transition-colors", active ? "is-active" : "opacity-60 hover:opacity-90", className)} style={settingButtonStyle(theme, active)} onClick={onClick}>
             <span className="canvas-image-settings-option-label">{label}</span>
         </button>
     );
@@ -113,8 +113,8 @@ function RatioIcon({ ratio, active }: { ratio: string; active: boolean }) {
 function settingButtonStyle(theme: CanvasTheme, active: boolean) {
     return {
         color: theme.node.text,
-        background: active ? theme.toolbar.activeBg : theme.toolbar.itemHover,
-        border: `1px solid ${active ? theme.node.text : theme.toolbar.border}`,
+        background: active ? "rgba(255, 255, 255, 0.1)" : "transparent",
+        border: `1px solid ${active ? "#ffffff" : "#525252"}`,
     };
 }
 

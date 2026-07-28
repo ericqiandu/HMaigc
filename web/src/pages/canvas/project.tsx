@@ -198,6 +198,7 @@ function InfiniteCanvasPage() {
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+    const [selectedConnectionAction, setSelectedConnectionAction] = useState<{ connectionId: string; position: Position } | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
@@ -612,8 +613,8 @@ function InfiniteCanvasPage() {
         closeConnectionCreateMenu,
         connectionTargetNodeId,
         connectingParams,
-        createConnectedNode,
         connectExistingNodes,
+        createConnectedNode,
         handleConnectStart,
         mouseWorld,
         pendingConnectionCreate,
@@ -753,8 +754,8 @@ function InfiniteCanvasPage() {
         batchChildCountById,
         batchMotionById,
         canvasImageNodes,
-        configInputsById,
         canvasResourceReferences,
+        configInputsById,
         connectionLayerBounds,
         contextMenuNode,
         cropNode,
@@ -1190,10 +1191,10 @@ function InfiniteCanvasPage() {
                 <CanvasNodePromptPanel
                     node={panelNode}
                     isRunning={runningNodeId === panelNode.id}
-                    mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
                     availableReferences={canvasResourceReferences}
-                    onPromptChange={handleNodePromptChange}
+                    mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
                     onReferenceConnect={connectExistingNodes}
+                    onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={handleGenerateNode}
                     onStop={confirmStopGeneration}
@@ -1405,6 +1406,7 @@ function InfiniteCanvasPage() {
                         connectionLayerBounds={connectionLayerBounds}
                         displayConnections={displayConnections}
                         selectedConnectionId={selectedConnectionId}
+                        selectedConnectionAction={selectedConnectionAction?.connectionId === selectedConnectionId ? selectedConnectionAction : null}
                         relatedConnectionIds={relatedHighlight.connectionIds}
                         scriptScrollTopById={scriptScrollTopById}
                         connectingParams={connectingParams}
@@ -1433,8 +1435,23 @@ function InfiniteCanvasPage() {
                         selectionBoundsElementRef={selectionBoundsElementRef}
                         selectionBoxElementRef={selectionBoxElementRef}
                         renderCanvasNodeContent={renderCanvasNodeContent}
-                        onConnectionSelect={(connectionId) => { setSelectedConnectionId(connectionId); setSelectedNodeIds(new Set()); setContextMenu(null); }}
-                        onConnectionContextMenu={(event, connectionId) => { setSelectedConnectionId(connectionId); setSelectedNodeIds(new Set()); closeConnectionCreateMenu(); setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId }); }}
+                        onConnectionSelect={(event, connectionId) => {
+                            setSelectedConnectionId(connectionId);
+                            setSelectedConnectionAction({ connectionId, position: screenToCanvas(event.clientX, event.clientY) });
+                            setSelectedNodeIds(new Set());
+                            setContextMenu(null);
+                        }}
+                        onConnectionCut={(connectionId) => {
+                            deleteConnection(connectionId);
+                            setSelectedConnectionAction(null);
+                        }}
+                        onConnectionContextMenu={(event, connectionId) => {
+                            setSelectedConnectionId(connectionId);
+                            setSelectedConnectionAction(null);
+                            setSelectedNodeIds(new Set());
+                            closeConnectionCreateMenu();
+                            setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId });
+                        }}
                         onNodeMouseDown={handleNodeMouseDown}
                         onNodeHoverStart={handleCanvasNodeHoverStart}
                         onNodeHoverEnd={handleCanvasNodeHoverEnd}
@@ -1475,7 +1492,13 @@ function InfiniteCanvasPage() {
                 ) : null}
 
                 {dialogNode && dialogNode.type !== CanvasNodeType.Script && dialogNode.type !== CanvasNodeType.Drawing && !selectionBox && !isNodeDragging ? (
-                    <CanvasNodePanelOverlay node={dialogNode} viewport={viewport} containerRef={containerRef}>
+                    <CanvasNodePanelOverlay
+                        node={dialogNode}
+                        viewport={viewport}
+                        containerRef={containerRef}
+                        panelWidth={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video ? 660 : 520}
+                        panelMargin={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video ? 4 : 12}
+                    >
                         {renderCanvasNodePanel(dialogNode)}
                     </CanvasNodePanelOverlay>
                 ) : null}

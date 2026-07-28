@@ -8,12 +8,14 @@ export function ChannelVideoPricing({ channel, onChange }: { channel: ModelChann
     if (!isVideoChannel(channel) || !channel.models.length) return null;
 
     const updateCost = (model: string, patch: Partial<ModelCost>) => {
-        const current = channel.modelCosts?.find((item) => item.model === model) || {
-            model,
-            capability: "video" as const,
-            billingMode: "fixed_request" as const,
-            unitPriceMicrocredits: 0,
-        };
+  const current = channel.modelCosts?.find((item) => item.model === model) || {
+    model,
+    capability: "video" as const,
+    billingMode: "fixed_request" as const,
+    priceStrategy: "flat" as const,
+    priceTiers: [],
+    unitPriceMicrocredits: 0,
+  };
         const next = [...(channel.modelCosts || []).filter((item) => item.model !== model), { ...current, ...patch, model, capability: "video" as const }];
         onChange(next.filter((item) => channel.models.includes(item.model)));
     };
@@ -60,5 +62,5 @@ export function ChannelVideoPricing({ channel, onChange }: { channel: ModelChann
 }
 
 function isVideoChannel(channel: ModelChannel) {
-    return channel.interfaceType === "newapi" || channel.interfaceType === "newapi-channel-1" || channel.interfaceType === "newapi-channel-2" || channel.interfaceType === "xai-video";
+    return channel.interfaceType === "newapi" || channel.interfaceType === "newapi-channel-1" || channel.interfaceType === "newapi-channel-2" || channel.interfaceType === "xai-video" || channel.interfaceType === "ai-open-platform-video";
 }

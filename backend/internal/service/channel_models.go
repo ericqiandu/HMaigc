@@ -13,13 +13,20 @@ import (
 )
 
 type ChannelModelRequest struct {
-	ModelKey              string `json:"modelKey"`
-	DisplayName           string `json:"displayName"`
-	Capability            string `json:"capability"`
-	BillingMode           string `json:"billingMode"`
+	ModelKey              string                         `json:"modelKey"`
+	DisplayName           string                         `json:"displayName"`
+	Capability            string                         `json:"capability"`
+	BillingMode           string                         `json:"billingMode"`
+	PriceStrategy         string                         `json:"priceStrategy"`
+	UnitPriceMicrocredits int64                          `json:"unitPriceMicrocredits"`
+	PriceTiers            []ChannelModelPriceTierRequest `json:"priceTiers"`
+	PriceConfigured       bool                           `json:"priceConfigured"`
+	Enabled               *bool                          `json:"enabled"`
+}
+
+type ChannelModelPriceTierRequest struct {
+	Resolution            string `json:"resolution"`
 	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
-	PriceConfigured       bool   `json:"priceConfigured"`
-	Enabled               *bool  `json:"enabled"`
 }
 
 // AdminChannelModelFetchResult 是管理员从上游拉目录后的汇总：models 为去重后的标识，added 为本次新建条数。
@@ -85,7 +92,7 @@ func (s *Service) FetchAdminChannelModels(ctx context.Context, actor *model.User
 			continue
 		}
 		// 自动发现不能绕过定价边界；新模型由管理员定价后再手动启用。
-		missing = append(missing, model.ChannelModel{ID: newID(), ChannelID: channelID, ModelKey: name, DisplayName: name, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", Enabled: false, PriceVersion: 1})
+		missing = append(missing, model.ChannelModel{ID: newID(), ChannelID: channelID, ModelKey: name, DisplayName: name, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: false, PriceVersion: 1})
 	}
 	added, err := s.repo.CreateMissingChannelModels(missing)
 	if err != nil {
@@ -123,10 +130,23 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if billingMode == "per_second" && capability != "video" {
 		return nil, BadAuthRequest("只有视频模型可以按秒计费")
 	}
+	priceStrategy := strings.TrimSpace(req.PriceStrategy)
+	if priceStrategy == "" {
+		return nil, BadAuthRequest("请选择模型价格策略")
+	}
+	if priceStrategy != "flat" && priceStrategy != "image_resolution" && priceStrategy != "video_resolution" {
+		return nil, BadAuthRequest("模型价格策略无效")
+	}
+	if priceStrategy == "image_resolution" && (capability != "image" || billingMode != "fixed_request") {
+		return nil, BadAuthRequest("分辨率阶梯定价仅适用于按次计费的图片模型")
+	}
+	if priceStrategy == "video_resolution" && capability != "video" {
+		return nil, BadAuthRequest("视频分辨率定价仅适用于视频模型")
+	}
 	if req.UnitPriceMicrocredits < 0 {
 		return nil, BadAuthRequest("模型积分价格不能小于 0")
 	}
-	if req.PriceConfigured && req.UnitPriceMicrocredits <= 0 {
+	if req.PriceConfigured && priceStrategy == "flat" && req.UnitPriceMicrocredits <= 0 {
 		return nil, BadAuthRequest("启用用户积分价格时，价格必须大于 0")
 	}
 	item := &model.ChannelModel{ID: newID(), ChannelID: channelID, Enabled: true, PriceVersion: 1}
@@ -144,18 +164,31 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	item.Capability = capability
 	item.BillingMode = billingMode
+	item.PriceStrategy = priceStrategy
 	item.UnitPriceMicrocredits = req.UnitPriceMicrocredits
 	item.PriceConfigured = req.PriceConfigured
 	if req.Enabled != nil {
 		item.Enabled = *req.Enabled
 	}
-	if err := s.repo.SaveChannelModel(item); err != nil {
+	tiers, err := buildChannelModelPriceTiers(item, req.PriceTiers)
+	if err != nil {
+		return nil, err
+	}
+	if priceStrategy == "image_resolution" || priceStrategy == "video_resolution" {
+		item.UnitPriceMicrocredits = 0
+	}
+	if err := s.repo.SaveChannelModelPricing(item, tiers); err != nil {
 		return nil, err
 	}
 	if err := s.syncChannelModelNames(channel); err != nil {
 		return nil, err
 	}
-	return item, nil
+	saved, err := s.repo.ChannelModelByID(channelID, item.ID)
+	if err != nil {
+		return nil, err
+	}
+	normalized := normalizeChannelModelPriceTierCollections([]model.ChannelModel{*saved})
+	return &normalized[0], nil
 }
 
 func (s *Service) DeleteAdminChannelModel(actor *model.User, channelID string, id string) error {
@@ -219,7 +252,7 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 			}
 			continue
 		}
-		item := model.ChannelModel{ID: newID(), ChannelID: channel.ID, ModelKey: name, DisplayName: name, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", Enabled: true, PriceVersion: 1}
+		item := model.ChannelModel{ID: newID(), ChannelID: channel.ID, ModelKey: name, DisplayName: name, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: true, PriceVersion: 1}
 		if err := s.repo.SaveChannelModel(&item); err != nil {
 			return err
 		}
@@ -236,10 +269,58 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 	return nil
 }
 
+func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelModelPriceTierRequest) ([]model.ChannelModelPriceTier, error) {
+	if item.PriceStrategy != "image_resolution" && item.PriceStrategy != "video_resolution" {
+		return nil, nil
+	}
+	allowed := map[string]bool{"1K": true, "2K": true, "4K": true}
+	requireAll := true
+	if item.PriceStrategy == "video_resolution" {
+		allowed = map[string]bool{
+			"480P": true, "720P": true, "1080P": true, "2K": true, "4K": true,
+			"SR_720P": true, "SR_1080P": true, "SR_2K": true, "SR_4K": true,
+		}
+		requireAll = false
+	}
+	configured := make(map[string]bool, len(allowed))
+	tiers := make([]model.ChannelModelPriceTier, 0, len(requests))
+	for _, request := range requests {
+		resolution := strings.ToUpper(strings.TrimSpace(request.Resolution))
+		if !allowed[resolution] {
+			return nil, BadAuthRequest("价格规格无效：" + resolution)
+		}
+		if configured[resolution] {
+			return nil, BadAuthRequest("价格规格不能重复")
+		}
+		if request.UnitPriceMicrocredits <= 0 {
+			return nil, BadAuthRequest(resolution + " 积分价格必须大于 0")
+		}
+		configured[resolution] = true
+		tiers = append(tiers, model.ChannelModelPriceTier{
+			ID: newID(), ChannelModelID: item.ID, Resolution: resolution,
+			UnitPriceMicrocredits: request.UnitPriceMicrocredits, PriceVersion: item.PriceVersion,
+		})
+	}
+	if item.PriceConfigured {
+		if len(tiers) == 0 {
+			return nil, BadAuthRequest("启用分辨率定价前必须至少配置一个价格规格")
+		}
+		if requireAll {
+			for resolution := range allowed {
+				if configured[resolution] {
+					continue
+				}
+				return nil, BadAuthRequest("启用分辨率定价前必须配置 " + resolution + " 价格")
+			}
+		}
+	}
+	return tiers, nil
+}
+
 func (s *Service) ensureChannelModels(channelID string, includeDisabled bool) ([]model.ChannelModel, error) {
 	items, err := s.repo.ChannelModels(channelID, includeDisabled)
 	if err != nil || len(items) > 0 {
-		return items, err
+		return normalizeChannelModelPriceTierCollections(items), err
 	}
 	channel, err := s.repo.AdminSystemChannel(channelID)
 	if err != nil {
@@ -248,7 +329,22 @@ func (s *Service) ensureChannelModels(channelID string, includeDisabled bool) ([
 	if err := s.syncInitialChannelModels(channel, channelModelNames(*channel)); err != nil {
 		return nil, err
 	}
-	return s.repo.ChannelModels(channelID, includeDisabled)
+	items, err = s.repo.ChannelModels(channelID, includeDisabled)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeChannelModelPriceTierCollections(items), nil
+}
+
+func normalizeChannelModelPriceTierCollections(items []model.ChannelModel) []model.ChannelModel {
+	normalized := make([]model.ChannelModel, len(items))
+	copy(normalized, items)
+	for index := range normalized {
+		if normalized[index].PriceTiers == nil {
+			normalized[index].PriceTiers = make([]model.ChannelModelPriceTier, 0)
+		}
+	}
+	return normalized
 }
 
 func (s *Service) syncChannelModelNames(channel *model.ModelChannel) error {
@@ -270,9 +366,9 @@ func (s *Service) syncChannelModelNames(channel *model.ModelChannel) error {
 
 func capabilityForChannel(channel model.ModelChannel) string {
 	switch channel.InterfaceType {
-	case model.ChannelInterfaceOpenAIImage:
+	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage:
 		return "image"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
 		return "video"
 	default:
 		return "text"

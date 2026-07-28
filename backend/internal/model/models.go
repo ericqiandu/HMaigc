@@ -62,10 +62,12 @@ const (
 	ChannelInterfaceChatCompletion ChannelInterfaceType = "chat-completion"
 	ChannelInterfaceOpenAIResponse ChannelInterfaceType = "openai-response"
 	ChannelInterfaceOpenAIImage    ChannelInterfaceType = "openai-image"
+	ChannelInterfaceAPIMartImage   ChannelInterfaceType = "apimart-image"
 	ChannelInterfaceNewAPIVideo    ChannelInterfaceType = "newapi"
 	ChannelInterfaceNewAPIChannel1 ChannelInterfaceType = "newapi-channel-1"
 	ChannelInterfaceNewAPIChannel2 ChannelInterfaceType = "newapi-channel-2"
 	ChannelInterfaceXAIVideo       ChannelInterfaceType = "xai-video"
+	ChannelInterfaceAIOpenVideo    ChannelInterfaceType = "ai-open-platform-video"
 
 	ApiCallStatusSucceeded ApiCallStatus = "succeeded"
 	ApiCallStatusFailed    ApiCallStatus = "failed"
@@ -211,19 +213,31 @@ type ModelChannel struct {
 }
 
 type ChannelModel struct {
-	ID                    string         `json:"id" gorm:"primaryKey;size:36"`
-	ChannelID             string         `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
-	ModelKey              string         `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
-	DisplayName           string         `json:"displayName" gorm:"size:160"`
-	Capability            string         `json:"capability" gorm:"size:32;index"`
-	BillingMode           string         `json:"billingMode" gorm:"size:32"`
-	UnitPriceMicrocredits int64          `json:"unitPriceMicrocredits"`
-	PriceConfigured       bool           `json:"priceConfigured" gorm:"index"`
-	Enabled               bool           `json:"enabled" gorm:"index"`
-	PriceVersion          int64          `json:"priceVersion"`
-	CreatedAt             time.Time      `json:"createdAt"`
-	UpdatedAt             time.Time      `json:"updatedAt"`
-	DeletedAt             gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                    string                  `json:"id" gorm:"primaryKey;size:36"`
+	ChannelID             string                  `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
+	ModelKey              string                  `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
+	DisplayName           string                  `json:"displayName" gorm:"size:160"`
+	Capability            string                  `json:"capability" gorm:"size:32;index"`
+	BillingMode           string                  `json:"billingMode" gorm:"size:32"`
+	PriceStrategy         string                  `json:"priceStrategy" gorm:"size:32"`
+	UnitPriceMicrocredits int64                   `json:"unitPriceMicrocredits"`
+	PriceConfigured       bool                    `json:"priceConfigured" gorm:"index"`
+	Enabled               bool                    `json:"enabled" gorm:"index"`
+	PriceVersion          int64                   `json:"priceVersion"`
+	CreatedAt             time.Time               `json:"createdAt"`
+	UpdatedAt             time.Time               `json:"updatedAt"`
+	DeletedAt             gorm.DeletedAt          `json:"-" gorm:"index"`
+	PriceTiers            []ChannelModelPriceTier `json:"priceTiers" gorm:"foreignKey:ChannelModelID;constraint:OnDelete:CASCADE"`
+}
+
+type ChannelModelPriceTier struct {
+	ID                    string    `json:"id" gorm:"primaryKey;size:36"`
+	ChannelModelID        string    `json:"channelModelId" gorm:"size:36;uniqueIndex:idx_channel_model_resolution,priority:1"`
+	Resolution            string    `json:"resolution" gorm:"size:16;uniqueIndex:idx_channel_model_resolution,priority:2"`
+	UnitPriceMicrocredits int64     `json:"unitPriceMicrocredits"`
+	PriceVersion          int64     `json:"priceVersion"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type ApiCallLog struct {
@@ -303,6 +317,8 @@ type BillingOrder struct {
 	Scene                 string        `json:"scene" gorm:"index;size:80"`
 	BillingMode           string        `json:"billingMode" gorm:"size:32"`
 	PriceVersion          int64         `json:"priceVersion"`
+	PriceTierID           string        `json:"priceTierId,omitempty" gorm:"index;size:36"`
+	PricingResolution     string        `json:"pricingResolution,omitempty" gorm:"size:16"`
 	UnitPriceMicrocredits int64         `json:"unitPriceMicrocredits"`
 	MultiplierBasisPoints int64         `json:"multiplierBasisPoints"`
 	Quantity              int64         `json:"quantity"`
@@ -350,19 +366,32 @@ type RedeemCode struct {
 }
 
 type ModelPricing struct {
-	ID                     string    `json:"id" gorm:"primaryKey;size:36"`
-	ChannelID              string    `json:"channelId" gorm:"size:36;uniqueIndex:idx_model_pricing_scope,priority:1"`
-	Model                  string    `json:"model" gorm:"size:120;uniqueIndex:idx_model_pricing_scope,priority:2"`
-	Capability             string    `json:"capability" gorm:"size:32;uniqueIndex:idx_model_pricing_scope,priority:3"`
-	Currency               string    `json:"currency" gorm:"size:12"`
-	InputPerMillionMicros  int64     `json:"inputPerMillionMicros"`
-	OutputPerMillionMicros int64     `json:"outputPerMillionMicros"`
-	CachedPerMillionMicros int64     `json:"cachedPerMillionMicros"`
-	PerRequestMicros       int64     `json:"perRequestMicros"`
-	PerMediaMicros         int64     `json:"perMediaMicros"`
-	PerVideoSecondMicros   int64     `json:"perVideoSecondMicros"`
-	CreatedAt              time.Time `json:"createdAt"`
-	UpdatedAt              time.Time `json:"updatedAt"`
+	ID                     string             `json:"id" gorm:"primaryKey;size:36"`
+	ChannelID              string             `json:"channelId" gorm:"size:36;uniqueIndex:idx_model_pricing_scope,priority:1"`
+	Model                  string             `json:"model" gorm:"size:120;uniqueIndex:idx_model_pricing_scope,priority:2"`
+	Capability             string             `json:"capability" gorm:"size:32;uniqueIndex:idx_model_pricing_scope,priority:3"`
+	Currency               string             `json:"currency" gorm:"size:12"`
+	InputPerMillionMicros  int64              `json:"inputPerMillionMicros"`
+	OutputPerMillionMicros int64              `json:"outputPerMillionMicros"`
+	CachedPerMillionMicros int64              `json:"cachedPerMillionMicros"`
+	ExpectedInputTokens    int64              `json:"expectedInputTokens"`
+	ExpectedOutputTokens   int64              `json:"expectedOutputTokens"`
+	ExpectedCachedTokens   int64              `json:"expectedCachedTokens"`
+	PerRequestMicros       int64              `json:"perRequestMicros"`
+	PerMediaMicros         int64              `json:"perMediaMicros"`
+	PerVideoSecondMicros   int64              `json:"perVideoSecondMicros"`
+	Tiers                  []ModelPricingTier `json:"tiers" gorm:"foreignKey:ModelPricingID"`
+	CreatedAt              time.Time          `json:"createdAt"`
+	UpdatedAt              time.Time          `json:"updatedAt"`
+}
+
+type ModelPricingTier struct {
+	ID                 string    `json:"id" gorm:"primaryKey;size:36"`
+	ModelPricingID     string    `json:"modelPricingId" gorm:"size:36;index;uniqueIndex:idx_model_pricing_tier_spec,priority:1"`
+	Specification      string    `json:"specification" gorm:"size:64;uniqueIndex:idx_model_pricing_tier_spec,priority:2"`
+	SupplierCostMicros int64     `json:"supplierCostMicros"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 type UserDailyActivity struct {
@@ -514,12 +543,12 @@ type VoiceProfile struct {
 }
 
 type CharacterVoiceBinding struct {
-	ID               string    `json:"id" gorm:"primaryKey;size:36"`
-	AssetVersionID   string    `json:"assetVersionId" gorm:"uniqueIndex;size:36"`
-	VoiceProfileID   string    `json:"voiceProfileId" gorm:"index;size:36"`
-	Instructions     string    `json:"instructions" gorm:"type:text"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID             string    `json:"id" gorm:"primaryKey;size:36"`
+	AssetVersionID string    `json:"assetVersionId" gorm:"uniqueIndex;size:36"`
+	VoiceProfileID string    `json:"voiceProfileId" gorm:"index;size:36"`
+	Instructions   string    `json:"instructions" gorm:"type:text"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // Project 是短剧领域聚合根；CanvasProject 仍代表可独立创作的画布文档。

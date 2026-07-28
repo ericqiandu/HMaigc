@@ -1,18 +1,16 @@
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 
+import { CanvasConnectionCutControl } from "@/components/canvas/canvas-connection-cut-control";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
+import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
 
-type CanvasTheme = {
-    accent: { primary: string };
-    canvas: { selectionFill: string };
-};
-
 type DisplayConnection = { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData };
+type SelectedConnectionAction = { connectionId: string; position: Position };
 type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
 type NodeBounds = { left: number; top: number; width: number; height: number; count: number } | null;
 
@@ -23,6 +21,7 @@ type CanvasProjectWorldLayersProps = {
     connectionLayerBounds: { left: number; top: number; width: number; height: number };
     displayConnections: DisplayConnection[];
     selectedConnectionId: string | null;
+    selectedConnectionAction: SelectedConnectionAction | null;
     relatedConnectionIds: Set<string>;
     scriptScrollTopById: Record<string, number>;
     connectingParams: ConnectionHandle | null;
@@ -51,7 +50,8 @@ type CanvasProjectWorldLayersProps = {
     selectionBoundsElementRef: RefObject<HTMLDivElement | null>;
     selectionBoxElementRef: RefObject<HTMLDivElement | null>;
     renderCanvasNodeContent: (node: CanvasNodeData) => ReactNode;
-    onConnectionSelect: (connectionId: string) => void;
+    onConnectionSelect: (event: ReactMouseEvent<SVGPathElement>, connectionId: string) => void;
+    onConnectionCut: (connectionId: string) => void;
     onConnectionContextMenu: (event: ReactMouseEvent<SVGPathElement>, connectionId: string) => void;
     onNodeMouseDown: (event: ReactMouseEvent, nodeId: string) => void;
     onNodeHoverStart: (nodeId: string) => void;
@@ -80,6 +80,7 @@ const EMPTY_CANVAS_NODES: CanvasNodeData[] = [];
 
 export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
     const { theme, viewportScale } = props;
+    const selectedConnectionAction = props.selectedConnectionAction;
     return (
         <>
             <svg
@@ -96,12 +97,21 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         fromScrollTop={props.scriptScrollTopById[from.id] || 0}
                         toScrollTop={props.scriptScrollTopById[to.id] || 0}
                         active={props.selectedConnectionId === connection.id || props.relatedConnectionIds.has(connection.id)}
-                        onSelect={() => props.onConnectionSelect(connection.id)}
+                        onSelect={(event) => props.onConnectionSelect(event, connection.id)}
                         onContextMenu={(event) => props.onConnectionContextMenu(event, connection.id)}
                     />
                 ))}
                 {props.connectingParams ? <ActiveConnectionPath node={props.nodeById.get(props.connectingParams.nodeId)} handle={props.connectingParams} mouseWorld={props.mouseWorld} target={props.connectionTargetNodeId ? props.nodeById.get(props.connectionTargetNodeId) : undefined} nodeScrollTop={props.scriptScrollTopById[props.connectingParams.nodeId] || 0} /> : null}
             </svg>
+
+            {selectedConnectionAction ? (
+                <CanvasConnectionCutControl
+                    position={selectedConnectionAction.position}
+                    viewportScale={viewportScale}
+                    theme={theme}
+                    onCut={() => props.onConnectionCut(selectedConnectionAction.connectionId)}
+                />
+            ) : null}
 
             {props.visibleNodes.map((node) =>
                 isFrameNode(node) ? (

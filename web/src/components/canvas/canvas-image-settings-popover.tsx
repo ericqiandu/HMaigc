@@ -98,19 +98,23 @@ function ImageSettingsPortal({
     showCount: boolean;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 }) {
-    const width = 352;
+    const width = 342;
     const gap = 8;
     const margin = 12;
+    const panelHeight = 463;
     const alignRight = placement?.endsWith("Right");
     const alignCenter = placement === "top" || placement === "bottom";
     const left = alignCenter ? buttonRect.left + buttonRect.width / 2 - width / 2 : alignRight ? buttonRect.right - width : buttonRect.left;
     const topPlacement = placement?.startsWith("top");
+    const preferredTop = topPlacement ? buttonRect.top - panelHeight - gap : buttonRect.bottom + gap;
+    const top = Math.max(margin, Math.min(window.innerHeight - panelHeight - margin, preferredTop));
     const style = {
         position: "fixed",
         zIndex: 1200,
         width,
         left: Math.max(margin, Math.min(window.innerWidth - width - margin, left)),
-        ...(topPlacement ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, buttonRect.top - margin * 2) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, window.innerHeight - buttonRect.bottom - margin * 2) }),
+        top,
+        maxHeight: `calc(100vh - ${margin * 2}px)`,
         background: theme.spatial.elevated,
         border: `1px solid ${theme.toolbar.border}`,
         borderRadius: 16,

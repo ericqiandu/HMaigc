@@ -68,6 +68,14 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 size="small"
                 open={open}
                 value={current || undefined}
+                placeholder={
+                    presentation === "canvasImage" ? (
+                        <span className="canvas-model-picker-placeholder flex min-w-0 items-center gap-1.5">
+                            <ModelIcon model="" />
+                            <span className="canvas-model-picker-placeholder-text truncate">{placeholder}</span>
+                        </span>
+                    ) : placeholder
+                }
                 options={selectOptions}
                 showSearch
                 filterOption={(input, option) =>
@@ -76,7 +84,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                         .includes(input.toLocaleLowerCase())
                 }
                 notFoundContent={<span className="canvas-model-picker-empty block px-2 py-3 text-center text-xs text-foreground/48">{emptyModelLabel(config, capability)}</span>}
-                popupMatchSelectWidth={presentation === "canvasImage" ? 356 : capability === "image" || capability === "video" ? 320 : 280}
+                popupMatchSelectWidth={presentation === "canvasImage" ? 370 : capability === "image" || capability === "video" ? 320 : 280}
                 placement={presentation === "canvasImage" ? "topLeft" : "bottomLeft"}
                 className={cn("canvas-composer-model-picker", fullWidth ? "w-full" : "min-w-36 max-w-full")}
                 classNames={{ popup: { root: cn("canvas-model-picker-popup", presentation === "canvasImage" && "canvas-image-model-picker-popup") } }}
@@ -90,7 +98,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 labelRender={() => (
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5 text-[11px]">
                         <ModelIcon model={current} />
-                        <span className="canvas-model-picker-label-text min-w-0 flex-1 truncate">{current ? modelOptionLabel(config, current) : placeholder}</span>
+                        <span className="canvas-model-picker-label-text min-w-0 flex-1 truncate">{current ? presentation === "canvasImage" ? modelDisplayName(config, current) : modelOptionLabel(config, current) : placeholder}</span>
                         {showSelectedPrice ? <ModelPrice price={currentPrice} compact /> : null}
                     </span>
                 )}

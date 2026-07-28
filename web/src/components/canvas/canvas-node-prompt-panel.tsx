@@ -13,6 +13,7 @@ import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
+import { CanvasVideoGenerationModePicker } from "./canvas-video-generation-mode-picker";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
@@ -43,17 +44,19 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const simpleMode = workspaceMode === "simple";
     const mode = defaultMode(node.type);
     const isImageMode = mode === "image";
+    const isVideoMode = mode === "video";
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     const [prompt, setPrompt] = useState(savedPrompt);
     const [presetOpen, setPresetOpen] = useState(false);
+    const [bottomPresetOpen, setBottomPresetOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
     const [promptContentHeight, setPromptContentHeight] = useState(0);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
-    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" ? generationCount : 1, seconds: mode === "video" ? config.videoSeconds : 1 });
+    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" ? generationCount : 1, seconds: mode === "video" ? config.videoSeconds : 1, quality: config.quality, resolution: mode === "video" ? config.vquality : config.size, videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true", videoSuperResolutionResolution: config.videoSuperResolutionResolution });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoImageNodeIds = useMemo(
         () => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)),
@@ -73,7 +76,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     }));
     const composerSurface = theme.spatial.dropzone;
     const referenceShelfHeight = activeReferenceCount ? 42 : 0;
-    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : 82) : (isImageMode ? 92 : 58);
+    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : 82) : (isImageMode ? 76 : 58);
     const composerHeight = Math.min(isImageMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
     const canExpandPrompt = mode === "image" || mode === "video";
@@ -145,7 +148,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     };
 
     const renderComposerHeader = (expanded: boolean) => (
-        <div className="canvas-node-composer-header flex min-w-0 items-center gap-1 px-0.5">
+        <div className={`canvas-node-composer-header flex min-w-0 items-center gap-1 px-0.5 ${isImageMode ? "canvas-node-composer-header--image" : isVideoMode ? "canvas-node-composer-header--video" : ""}`}>
             {isImageMode ? (
                 <>
                     <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
@@ -222,26 +225,47 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             </Button>
         </div>
     ) : (
-        <div className="flex min-w-0 items-center justify-between gap-0.5 px-0.5">
-            <div className={`${expanded ? "max-w-[320px]" : mode === "image" || mode === "video" ? "max-w-[240px]" : "max-w-[174px]"} min-w-[104px] flex-1`}>
-                <ModelPicker className="!h-7 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3" fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} presentation={mode === "image" ? "canvasImage" : "default"} />
+        <div className={`flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
+            <div className={`${expanded ? "max-w-[320px]" : mode === "image" ? "w-[114px] max-w-[114px] flex-none" : mode === "video" ? "w-[114px] max-w-[114px] flex-none" : "max-w-[174px]"} min-w-[88px] flex-1`}>
+                <ModelPicker className={`!h-7 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode ? "canvas-image-model-picker" : isVideoMode ? "canvas-video-model-picker" : ""}`} fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} presentation={isImageMode || isVideoMode ? "canvasImage" : "default"} />
             </div>
-            <div className="ml-auto flex min-w-0 shrink-0 items-center gap-0.5">
+            {isImageMode || isVideoMode ? <span className={isVideoMode ? "canvas-video-toolbar-divider" : "canvas-image-toolbar-divider"} aria-hidden="true" /> : null}
+            <div className={`ml-auto flex min-w-0 shrink-0 items-center gap-0.5 ${isImageMode ? "canvas-image-toolbar-actions flex-1" : ""}`}>
                 {mode === "image" ? (
                     <CanvasImageSettingsPopover
                         config={config}
                         placement={expanded ? "topRight" : "topLeft"}
-                        buttonClassName="!h-7 !w-[138px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[10px] !font-normal !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3"
+                        buttonClassName="canvas-image-settings-trigger--composer !h-7 !w-[190px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[11px] !font-semibold !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5"
                         onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                         onMissingConfig={handleMissingSystemModel}
                         onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                     />
                 ) : mode === "video" ? (
-                    <CanvasVideoSettingsPopover config={config} buttonClassName="!h-7 !w-[136px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[10px] !font-normal !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                    <>
+                        <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
+                        <span className="canvas-video-toolbar-divider" aria-hidden="true" />
+                        <CanvasVideoSettingsPopover config={config} buttonClassName="canvas-video-settings-trigger--composer !h-8 !w-[203px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !text-[12px] !font-medium !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                        <span className="canvas-video-toolbar-divider" aria-hidden="true" />
+                    </>
                 ) : mode === "audio" ? (
                     <CanvasAudioSettingsPopover config={config} buttonClassName="!h-7 !w-[138px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[10px] !font-normal !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                 ) : null}
-                <GenerationCostBadge credits={credits} theme={theme} />
+                {isImageMode ? <span className="canvas-image-toolbar-divider" aria-hidden="true" /> : null}
+                {isImageMode ? (
+                    <span className="canvas-image-bottom-preset inline-flex">
+                        <CanvasPresetPicker
+                            mode={mode}
+                            skillReferences={skillReferences}
+                            open={bottomPresetOpen}
+                            onOpenChange={setBottomPresetOpen}
+                            onSelect={applyPreset}
+                            compact
+                        />
+                    </span>
+                ) : null}
+                <span className={isImageMode ? "canvas-image-generation-cost ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost ml-auto inline-flex" : "inline-flex"}>
+                    <GenerationCostBadge credits={credits} theme={theme} />
+                </span>
                 <Button
                     type="text"
                     className={`canvas-node-submit-button !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
@@ -259,7 +283,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     return (
         <div
-            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "rounded-xl px-3 py-2.5" : "rounded-lg p-1.5"}`}
+            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "canvas-node-prompt-panel--image rounded-2xl p-2" : isVideoMode ? "canvas-node-prompt-panel--video rounded-2xl p-2" : "rounded-lg p-1.5"}`}
             style={{ background: theme.spatial.elevated, color: theme.node.text, boxShadow: `0 20px 64px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.07)` }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
@@ -268,8 +292,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             {renderComposerHeader(false)}
 
             <div
-                className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "mt-2 max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
-                style={{ height: composerHeight, background: isImageMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
+                className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "canvas-node-prompt-editor--image mt-1 max-h-[180px]" : isVideoMode ? "canvas-node-prompt-editor--video mt-1 max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
+                style={{ height: composerHeight, background: isImageMode || isVideoMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
                 <ConnectedReferenceShelf references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
                 <CanvasResourceMentionTextarea
@@ -277,7 +301,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     references={mentionReferences}
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
-                    className={`canvas-node-prompt-textarea thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35 ${isImageMode ? "px-1 py-2" : "px-2.5 py-2"}`}
+                    className={`canvas-node-prompt-textarea thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35 ${isImageMode ? "canvas-node-prompt-textarea--image px-0.5 py-1.5" : isVideoMode ? "canvas-node-prompt-textarea--video px-0.5 py-1.5" : "px-2.5 py-2"}`}
                     style={{ color: theme.node.text }}
                     placeholder={promptPlaceholder(mode, hasTextContent)}
                     onContentSizeChange={updatePromptContentHeight}
@@ -285,12 +309,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             </div>
 
             {mode === "video" && !simpleMode ? (
-                <div className="mt-1.5 rounded-md p-0.5" style={{ background: composerSurface }}>
+                <div className="canvas-video-frame-tools mt-1 rounded-md p-0.5" style={{ background: composerSurface }}>
                     <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
                 </div>
             ) : null}
 
-            <div className={`canvas-node-prompt-controls ${isImageMode ? "mt-2" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
+            <div className={`canvas-node-prompt-controls ${isImageMode ? "canvas-node-prompt-controls--image mt-1" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
 
             <Modal
                 className="canvas-prompt-editor-modal"
@@ -556,6 +580,11 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         vquality: normalizeVideoResolution(node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality),
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
+        videoSuperResolutionEnabled: node.metadata?.superResolutionEnabled || globalConfig.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
+        videoSuperResolutionResolution: node.metadata?.superResolutionResolution || globalConfig.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
+        videoSuperResolutionScene: node.metadata?.superResolutionScene || globalConfig.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,
+        videoSuperResolutionVersion: node.metadata?.superResolutionVersion || globalConfig.videoSuperResolutionVersion || defaultConfig.videoSuperResolutionVersion,
+        videoSuperResolutionFps: node.metadata?.superResolutionFps || globalConfig.videoSuperResolutionFps || defaultConfig.videoSuperResolutionFps,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
@@ -575,6 +604,11 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
+    if (key === "videoSuperResolutionEnabled") return { superResolutionEnabled: value };
+    if (key === "videoSuperResolutionResolution") return { superResolutionResolution: value };
+    if (key === "videoSuperResolutionScene") return { superResolutionScene: value };
+    if (key === "videoSuperResolutionVersion") return { superResolutionVersion: value };
+    if (key === "videoSuperResolutionFps") return { superResolutionFps: value };
     return { [key]: value };
 }
 

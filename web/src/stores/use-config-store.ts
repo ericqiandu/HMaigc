@@ -7,7 +7,7 @@ import { scopedLocalStorage } from "@/lib/user-scope";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "newapi" | "newapi-channel-1" | "newapi-channel-2" | "xai-video";
+export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "newapi-channel-1" | "newapi-channel-2" | "xai-video" | "ai-open-platform-video";
 
 export type ModelChannel = {
     id: string;
@@ -26,7 +26,12 @@ export type ModelChannel = {
         displayName?: string;
         capability: ModelCapability;
         billingMode: "fixed_request" | "per_second";
+        priceStrategy: "flat" | "image_resolution" | "video_resolution";
         unitPriceMicrocredits: number;
+        priceTiers: Array<{
+            resolution: string;
+            unitPriceMicrocredits: number;
+        }>;
     }>;
 };
 
@@ -49,6 +54,11 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    videoSuperResolutionEnabled: string;
+    videoSuperResolutionResolution: string;
+    videoSuperResolutionScene: string;
+    videoSuperResolutionVersion: string;
+    videoSuperResolutionFps: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -87,6 +97,11 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
+    videoSuperResolutionEnabled: "false",
+    videoSuperResolutionResolution: "1080p",
+    videoSuperResolutionScene: "short_series",
+    videoSuperResolutionVersion: "standard",
+    videoSuperResolutionFps: "",
     systemPrompt: "",
     models: [],
     imageModels: [],
@@ -252,6 +267,11 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot) {
             vquality: normalizeVideoResolution(config.vquality),
             videoGenerateAudio: config.videoGenerateAudio || "true",
             videoWatermark: config.videoWatermark || "false",
+            videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true" ? "true" : "false",
+            videoSuperResolutionResolution: config.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
+            videoSuperResolutionScene: config.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,
+            videoSuperResolutionVersion: config.videoSuperResolutionVersion || defaultConfig.videoSuperResolutionVersion,
+            videoSuperResolutionFps: config.videoSuperResolutionFps || "",
             transparentBackground: config.transparentBackground === "true" ? "true" : "false",
             canvasImageCount: config.canvasImageCount || defaultConfig.canvasImageCount,
             imageModels,
@@ -337,7 +357,23 @@ export function modelOptionsFromChannels(channels: ModelChannel[]) {
 
 export function hasSystemModelPrice(channel: ModelChannel, model: string) {
     if (channel.scope !== "system") return true;
-    return channel.modelCosts?.some((item) => item.model === model && Number.isFinite(item.unitPriceMicrocredits) && item.unitPriceMicrocredits >= 0) === true;
+    return channel.modelCosts?.some((item) => {
+        if (item.model !== model) return false;
+        if (item.priceStrategy === "flat") {
+            return Number.isFinite(item.unitPriceMicrocredits) && item.unitPriceMicrocredits > 0;
+        }
+        if (!Array.isArray(item.priceTiers)) return false;
+        if (item.priceStrategy === "video_resolution") {
+            return item.priceTiers.some(
+                (tier) => Number.isFinite(tier.unitPriceMicrocredits) && tier.unitPriceMicrocredits > 0,
+            );
+        }
+        const requiredResolutions = ["1K", "2K", "4K"] as const;
+        return requiredResolutions.every((resolution) => {
+            const tier = item.priceTiers.find((candidate) => candidate.resolution === resolution);
+            return tier !== undefined && Number.isFinite(tier.unitPriceMicrocredits) && tier.unitPriceMicrocredits > 0;
+        });
+    }) === true;
 }
 
 export function normalizeModelOptionValue(value: unknown, channels: ModelChannel[]) {
@@ -392,14 +428,15 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 }
 
 export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfaceType) {
-    if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video") return "";
+    if (interfaceType === "apimart-image") return "https://api.apimart.ai/v1";
+    if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video") return "";
     return OPENAI_BASE_URL;
 }
 
 function capabilityForChannelInterface(interfaceType?: ChannelInterfaceType): ModelCapability | undefined {
     if (interfaceType === "chat-completion" || interfaceType === "openai-response") return "text";
-    if (interfaceType === "openai-image") return "image";
-    if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video") return "video";
+    if (interfaceType === "openai-image" || interfaceType === "apimart-image") return "image";
+    if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video") return "video";
     return undefined;
 }
 
@@ -408,7 +445,7 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
 }
 
 function normalizeChannelInterfaceType(value: unknown): ChannelInterfaceType | undefined {
-    return value === "chat-completion" || value === "openai-response" || value === "openai-image" || value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" ? value : undefined;
+    return value === "chat-completion" || value === "openai-response" || value === "openai-image" || value === "apimart-image" || value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video" ? value : undefined;
 }
 
 function uniqueRawModels(models: string[]) {

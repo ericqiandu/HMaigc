@@ -181,11 +181,33 @@ export type ModelPricing = {
     inputPerMillionMicros: number;
     outputPerMillionMicros: number;
     cachedPerMillionMicros: number;
+    expectedInputTokens: number;
+    expectedOutputTokens: number;
+    expectedCachedTokens: number;
     perRequestMicros: number;
     perMediaMicros: number;
     perVideoSecondMicros: number;
+    tiers: Array<{
+        id: string;
+        modelPricingId: string;
+        specification: string;
+        supplierCostMicros: number;
+        createdAt: string;
+        updatedAt: string;
+    }>;
     createdAt: string;
     updatedAt: string;
+};
+
+export type ModelPricingInput = Omit<ModelPricing, "id" | "tiers" | "createdAt" | "updatedAt"> & {
+    tiers: Array<{ specification: string; supplierCostMicros: number }>;
+};
+
+export type ModelPricingOperationsSetting = {
+    configured: boolean;
+    currency: string;
+    creditRevenueMicros: number;
+    targetMarginBasisPoints: number;
 };
 
 export type StoryboardPromptTemplate = {
@@ -293,6 +315,31 @@ async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>) {
     }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseAdminReferenceData(value: unknown): AdminReferenceData {
+    if (!isRecord(value) || !Array.isArray(value.users) || !Array.isArray(value.channels)) {
+        throw new Error("后台基础数据接口返回格式错误：users 和 channels 必须为数组");
+    }
+
+    const users = value.users.map((item, index) => {
+        if (!isRecord(item) || typeof item.id !== "string" || typeof item.username !== "string" || typeof item.displayName !== "string") {
+            throw new Error(`后台基础数据接口返回格式错误：users[${index}] 字段不完整`);
+        }
+        return { id: item.id, username: item.username, displayName: item.displayName };
+    });
+    const channels = value.channels.map((item, index) => {
+        if (!isRecord(item) || typeof item.id !== "string" || typeof item.name !== "string" || !Array.isArray(item.models) || !item.models.every((model) => typeof model === "string")) {
+            throw new Error(`后台基础数据接口返回格式错误：channels[${index}] 字段不完整`);
+        }
+        return { id: item.id, name: item.name, models: item.models };
+    });
+
+    return { users, channels };
+}
+
 export function getAuthSettings() {
     return request<{ firstUser: boolean; registrationEnabled: boolean; linuxdoEnabled: boolean; emailEnabled: boolean; emailCodeRequired: boolean }>(api.get("/auth/settings"));
 }
@@ -332,8 +379,8 @@ export function listAdminUsers(params: AdminListParams = {}) {
     return request<{ users: AdminUser[]; total: number; page: number; limit: number }>(api.get("/admin/users", { params }));
 }
 
-export function getAdminReferences() {
-    return request<AdminReferenceData>(api.get("/admin/references"));
+export async function getAdminReferences() {
+    return parseAdminReferenceData(await request<unknown>(api.get("/admin/references")));
 }
 
 export function getAdminUserDetail(id: string) {
@@ -446,12 +493,20 @@ export function listAdminModelPricings() {
     return request<{ pricings: ModelPricing[] }>(api.get("/admin/model-pricings"));
 }
 
-export function createAdminModelPricing(input: Omit<ModelPricing, "id" | "createdAt" | "updatedAt">) {
+export function createAdminModelPricing(input: ModelPricingInput) {
     return request<{ pricing: ModelPricing }>(api.post("/admin/model-pricings", input));
 }
 
-export function updateAdminModelPricing(id: string, input: Omit<ModelPricing, "id" | "createdAt" | "updatedAt">) {
+export function updateAdminModelPricing(id: string, input: ModelPricingInput) {
     return request<{ pricing: ModelPricing }>(api.patch(`/admin/model-pricings/${encodeURIComponent(id)}`, input));
+}
+
+export function getAdminModelPricingOperationsSetting() {
+    return request<{ setting: ModelPricingOperationsSetting }>(api.get("/admin/model-pricing-settings"));
+}
+
+export function updateAdminModelPricingOperationsSetting(input: Omit<ModelPricingOperationsSetting, "configured">) {
+    return request<{ setting: ModelPricingOperationsSetting }>(api.patch("/admin/model-pricing-settings", input));
 }
 
 export function deleteAdminModelPricing(id: string) {
