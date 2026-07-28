@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Coins, Cpu, LockKeyhole } from "lucide-react";
+import { Coins, Cpu } from "lucide-react";
 import { Select } from "antd";
 
 import { cn } from "@/lib/utils";
@@ -101,7 +101,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 labelRender={() => (
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5 text-[11px]">
                         <ModelIcon config={config} model={current} />
-                        <span className="canvas-model-picker-label-text min-w-0 flex-1 truncate">{current ? presentation === "canvasImage" ? modelDisplayName(config, current) : modelOptionLabel(config, current) : placeholder}</span>
+                        <span className="canvas-model-picker-label-copy flex min-w-0 flex-1 items-center gap-1">
+                            <span className="canvas-model-picker-label-text min-w-0 truncate">{current ? presentation === "canvasImage" ? modelDisplayName(config, current) : modelOptionLabel(config, current) : placeholder}</span>
+                            {isMemberModel(config, current) ? <MemberDiamond /> : null}
+                        </span>
                         {showSelectedPrice ? <ModelPrice price={currentPrice} compact /> : null}
                     </span>
                 )}
@@ -127,17 +130,14 @@ function ModelLabel({ config, model, presentation }: { config: AiConfig; model: 
                 <ModelIcon config={config} model={model} />
             </span>
             <span className="canvas-model-picker-option-body min-w-0 flex-1">
-                <span className={cn("canvas-model-picker-option-title block min-w-0 truncate font-semibold", canvasImage ? "text-[14px] leading-5" : "text-[11px] leading-none")}>{modelDisplayName(config, model)}</span>
+                <span className={cn("canvas-model-picker-option-title flex min-w-0 items-center gap-1 font-semibold", canvasImage ? "text-[14px] leading-5" : "text-[11px] leading-none")}>
+                    <span className="canvas-model-picker-option-title-text truncate">{modelDisplayName(config, model)}</span>
+                    {isMemberModel(config, model) ? <MemberDiamond /> : null}
+                </span>
                 <span className={cn("canvas-model-picker-option-meta block truncate", canvasImage ? "mt-0.5 text-[11px] leading-4 text-foreground/45" : "mt-0.5 text-[10px] opacity-45")}>
                     {channel.name || "未命名渠道"} · {modelOptionName(model)}
                 </span>
             </span>
-            {modelCatalogEntry(config, model)?.accessPolicy === "member" ? (
-                <span className="canvas-model-picker-member-badge inline-flex shrink-0 items-center gap-1 rounded-full bg-foreground/[.07] px-2 py-1 text-[10px] font-medium text-foreground/65">
-                    <LockKeyhole className="canvas-model-picker-member-icon size-3" />
-                    会员
-                </span>
-            ) : null}
             <ModelPrice price={modelMenuPrice(config, model)} presentation={presentation} />
         </span>
     );
@@ -180,6 +180,18 @@ export function ModelIcon({ model, config }: { model: string; config?: AiConfig 
 function modelCatalogEntry(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
     return channel.modelCosts?.find((item) => item.model === modelOptionName(model));
+}
+
+function isMemberModel(config: AiConfig, model: string) {
+    return modelCatalogEntry(config, model)?.accessPolicy === "member";
+}
+
+function MemberDiamond() {
+    return (
+        <span className="canvas-model-picker-member-diamond inline-flex size-3.5 shrink-0 items-center justify-center" role="img" aria-label="会员专属模型" title="会员专属模型">
+            <img className="canvas-model-picker-member-diamond-image size-3 object-contain" src="/icons/member-diamond.svg" alt="" aria-hidden="true" />
+        </span>
+    );
 }
 
 function resolveModelIcon(model: string) {
