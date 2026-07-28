@@ -127,11 +127,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : (
-                <div className="canvas-node-composer-mode flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5" style={{ background: theme.toolbar.itemHover }}>
-                    <span className="canvas-node-composer-mode-icon grid size-3.5 shrink-0 place-items-center" style={{ color: theme.accent.primary }}>
+                <div
+                    className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium"
+                    style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}
+                >
+                    <span className="canvas-node-composer-mode-icon grid size-3.5 shrink-0 place-items-center">
                         <GenerationModeIcon mode={mode} />
                     </span>
-                    <span className="canvas-node-composer-mode-label truncate text-[10px] font-medium">{modeDisplayName(mode)}创作</span>
+                    <span className="canvas-node-composer-mode-label truncate">{modeDisplayName(mode)}创作</span>
                 </div>
             )}
             {!simpleMode ? (

@@ -140,7 +140,12 @@ function CompactMenuButton({
         };
     }, [open, items.length, maxMenuHeight, menuWidth]);
 
-    const buttonStyle: CSSProperties = { ...CONTROL_TEXT_STYLE, color: theme.node.text };
+    const buttonStyle: CSSProperties = {
+        ...CONTROL_TEXT_STYLE,
+        background: theme.toolbar.itemHover,
+        color: theme.node.muted,
+        outlineColor: theme.accent.primary,
+    };
     const menuStyle: CSSProperties | undefined = position
         ? {
               left: position.left,
@@ -204,7 +209,7 @@ function CompactMenuButton({
             <button
                 ref={triggerRef}
                 type="button"
-                className="inline-flex h-6 w-full min-w-0 items-center gap-1 rounded-[10px] border-0 bg-transparent px-1.5 shadow-none transition hover:opacity-80 focus-visible:outline-none focus-visible:ring-1"
+                className="inline-flex h-6 w-full min-w-0 items-center gap-1 rounded-md border-0 px-1.5 shadow-none transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
                 style={buttonStyle}
                 title={title}
                 onClick={() => setOpen((value) => !value)}
