@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,35 +24,49 @@ const (
 	siteSettingKey      = "site"
 	siteLogoMaxBytes    = 2 << 20
 	siteAgreementMaxLen = 50_000
+	siteRecordNoMaxLen  = 100
+	siteRecordURLMaxLen = 500
 )
 
 var ErrSiteLogoNotConfigured = errors.New("站点 Logo 尚未配置")
 
 type SiteSettingRequest struct {
-	SiteName        string `json:"siteName"`
-	FooterCopyright string `json:"footerCopyright"`
-	UserAgreement   string `json:"userAgreement"`
-	PrivacyPolicy   string `json:"privacyPolicy"`
+	SiteName                         string `json:"siteName"`
+	FooterCopyright                  string `json:"footerCopyright"`
+	ICPRegistrationNumber            string `json:"icpRegistrationNumber"`
+	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
+	PublicSecurityRegistrationNumber string `json:"publicSecurityRegistrationNumber"`
+	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
+	UserAgreement                    string `json:"userAgreement"`
+	PrivacyPolicy                    string `json:"privacyPolicy"`
 }
 
 type PublicSiteSetting struct {
-	SiteName        string `json:"siteName"`
-	LogoURL         string `json:"logoUrl"`
-	FooterCopyright string `json:"footerCopyright"`
-	UserAgreement   string `json:"userAgreement"`
-	PrivacyPolicy   string `json:"privacyPolicy"`
-	UpdatedBy       string `json:"updatedBy"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	SiteName                         string `json:"siteName"`
+	LogoURL                          string `json:"logoUrl"`
+	FooterCopyright                  string `json:"footerCopyright"`
+	ICPRegistrationNumber            string `json:"icpRegistrationNumber"`
+	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
+	PublicSecurityRegistrationNumber string `json:"publicSecurityRegistrationNumber"`
+	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
+	UserAgreement                    string `json:"userAgreement"`
+	PrivacyPolicy                    string `json:"privacyPolicy"`
+	UpdatedBy                        string `json:"updatedBy"`
+	CreatedAt                        string `json:"createdAt"`
+	UpdatedAt                        string `json:"updatedAt"`
 }
 
 type siteSettingValue struct {
-	SiteName        string `json:"siteName"`
-	LogoFile        string `json:"logoFile"`
-	LogoMimeType    string `json:"logoMimeType"`
-	FooterCopyright string `json:"footerCopyright"`
-	UserAgreement   string `json:"userAgreement"`
-	PrivacyPolicy   string `json:"privacyPolicy"`
+	SiteName                         string `json:"siteName"`
+	LogoFile                         string `json:"logoFile"`
+	LogoMimeType                     string `json:"logoMimeType"`
+	FooterCopyright                  string `json:"footerCopyright"`
+	ICPRegistrationNumber            string `json:"icpRegistrationNumber"`
+	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
+	PublicSecurityRegistrationNumber string `json:"publicSecurityRegistrationNumber"`
+	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
+	UserAgreement                    string `json:"userAgreement"`
+	PrivacyPolicy                    string `json:"privacyPolicy"`
 }
 
 func (s *Service) PublicSiteSetting() (*PublicSiteSetting, error) {
@@ -81,12 +96,16 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		return nil, err
 	}
 	next := siteSettingValue{
-		SiteName:        strings.TrimSpace(req.SiteName),
-		LogoFile:        current.LogoFile,
-		LogoMimeType:    current.LogoMimeType,
-		FooterCopyright: strings.TrimSpace(req.FooterCopyright),
-		UserAgreement:   strings.TrimSpace(req.UserAgreement),
-		PrivacyPolicy:   strings.TrimSpace(req.PrivacyPolicy),
+		SiteName:                         strings.TrimSpace(req.SiteName),
+		LogoFile:                         current.LogoFile,
+		LogoMimeType:                     current.LogoMimeType,
+		FooterCopyright:                  strings.TrimSpace(req.FooterCopyright),
+		ICPRegistrationNumber:            strings.TrimSpace(req.ICPRegistrationNumber),
+		ICPRegistrationURL:               strings.TrimSpace(req.ICPRegistrationURL),
+		PublicSecurityRegistrationNumber: strings.TrimSpace(req.PublicSecurityRegistrationNumber),
+		PublicSecurityRegistrationURL:    strings.TrimSpace(req.PublicSecurityRegistrationURL),
+		UserAgreement:                    strings.TrimSpace(req.UserAgreement),
+		PrivacyPolicy:                    strings.TrimSpace(req.PrivacyPolicy),
 	}
 	if err := validateSiteSetting(next); err != nil {
 		return nil, BadAuthRequest(err.Error())
@@ -96,7 +115,7 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		return nil, err
 	}
 	result := publicSiteSetting(setting, next)
-	if err := s.appendAdminAudit(actor, "site_setting.update", "system_setting", siteSettingKey, "更新站点基础信息与法律内容", result); err != nil {
+	if err := s.appendAdminAudit(actor, "site_setting.update", "system_setting", siteSettingKey, "更新站点基础信息、备案与法律内容", result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -258,6 +277,24 @@ func validateSiteSetting(value siteSettingValue) error {
 	if len([]rune(value.FooterCopyright)) > 200 {
 		return errors.New("底部版权不能超过 200 个字符")
 	}
+	if len([]rune(value.ICPRegistrationNumber)) > siteRecordNoMaxLen {
+		return fmt.Errorf("ICP备案号不能超过 %d 个字符", siteRecordNoMaxLen)
+	}
+	if value.ICPRegistrationURL != "" && value.ICPRegistrationNumber == "" {
+		return errors.New("填写ICP备案链接时必须同时填写ICP备案号")
+	}
+	if err := validateSiteRecordURL("ICP备案链接", value.ICPRegistrationURL); err != nil {
+		return err
+	}
+	if len([]rune(value.PublicSecurityRegistrationNumber)) > siteRecordNoMaxLen {
+		return fmt.Errorf("公安备案号不能超过 %d 个字符", siteRecordNoMaxLen)
+	}
+	if value.PublicSecurityRegistrationURL != "" && value.PublicSecurityRegistrationNumber == "" {
+		return errors.New("填写公安备案链接时必须同时填写公安备案号")
+	}
+	if err := validateSiteRecordURL("公安备案链接", value.PublicSecurityRegistrationURL); err != nil {
+		return err
+	}
 	if len([]rune(value.UserAgreement)) > siteAgreementMaxLen {
 		return fmt.Errorf("用户协议不能超过 %d 个字符", siteAgreementMaxLen)
 	}
@@ -273,12 +310,30 @@ func validateSiteSetting(value siteSettingValue) error {
 	return nil
 }
 
+func validateSiteRecordURL(label string, rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	if len([]rune(rawURL)) > siteRecordURLMaxLen {
+		return fmt.Errorf("%s不能超过 %d 个字符", label, siteRecordURLMaxLen)
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
+		return fmt.Errorf("%s必须是有效的 HTTP 或 HTTPS 地址", label)
+	}
+	return nil
+}
+
 func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) PublicSiteSetting {
 	result := PublicSiteSetting{
-		SiteName:        value.SiteName,
-		FooterCopyright: value.FooterCopyright,
-		UserAgreement:   value.UserAgreement,
-		PrivacyPolicy:   value.PrivacyPolicy,
+		SiteName:                         value.SiteName,
+		FooterCopyright:                  value.FooterCopyright,
+		ICPRegistrationNumber:            value.ICPRegistrationNumber,
+		ICPRegistrationURL:               value.ICPRegistrationURL,
+		PublicSecurityRegistrationNumber: value.PublicSecurityRegistrationNumber,
+		PublicSecurityRegistrationURL:    value.PublicSecurityRegistrationURL,
+		UserAgreement:                    value.UserAgreement,
+		PrivacyPolicy:                    value.PrivacyPolicy,
 	}
 	if setting != nil {
 		result.UpdatedBy = setting.UpdatedBy

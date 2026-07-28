@@ -39,15 +39,19 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 
 	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
 	updated, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{
-		SiteName:        "弘梦 AIGC",
-		FooterCopyright: "© 弘梦科技",
-		UserAgreement:   "第一条 用户权利与义务",
-		PrivacyPolicy:   "第一条 信息处理规则",
+		SiteName:                         "弘梦 AIGC",
+		FooterCopyright:                  "© 弘梦科技",
+		ICPRegistrationNumber:            "蜀ICP备2026000000号-1",
+		ICPRegistrationURL:               "https://beian.miit.gov.cn/",
+		PublicSecurityRegistrationNumber: "川公网安备51000000000000号",
+		PublicSecurityRegistrationURL:    "http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=51000000000000",
+		UserAgreement:                    "第一条 用户权利与义务",
+		PrivacyPolicy:                    "第一条 信息处理规则",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.SiteName != "弘梦 AIGC" || updated.UserAgreement == "" || updated.PrivacyPolicy == "" {
+	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" || updated.UserAgreement == "" || updated.PrivacyPolicy == "" {
 		t.Fatalf("unexpected updated setting: %#v", updated)
 	}
 	reloaded, err := svc.PublicSiteSetting()
@@ -79,6 +83,15 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 	oversizedAgreement := string(bytes.Repeat([]byte("字"), siteAgreementMaxLen+1))
 	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", UserAgreement: oversizedAgreement}); err == nil {
 		t.Fatal("oversized agreement should be rejected")
+	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "javascript:alert(1)"}); err == nil {
+		t.Fatal("unsafe registration URL should be rejected")
+	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", PublicSecurityRegistrationURL: "https://user@example.com/path"}); err == nil {
+		t.Fatal("registration URL with credentials should be rejected")
+	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "https://beian.miit.gov.cn/"}); err == nil {
+		t.Fatal("registration URL without registration number should be rejected")
 	}
 }
 

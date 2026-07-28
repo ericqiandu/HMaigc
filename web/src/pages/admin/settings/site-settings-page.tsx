@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button, Form, Input, Skeleton, Tag } from "antd";
-import { FileText, Image as ImageIcon, RefreshCw, Save, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { FileCheck2, FileText, Image as ImageIcon, RefreshCw, Save, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, type ChangeEvent } from "react";
 
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
@@ -94,7 +94,7 @@ export default function SiteSettingsPage() {
     const legalConfigured = Boolean(setting?.userAgreement.trim() && setting?.privacyPolicy.trim());
 
     return (
-        <AdminPageFrame title="站点设置" description="统一管理站点品牌、底部版权与公开法律内容">
+        <AdminPageFrame title="站点设置" description="统一管理站点品牌、底部版权、网站备案与公开法律内容">
             <div className="site-settings-page mx-auto max-w-5xl space-y-5">
                 {settingQuery.error ? (
                     <Alert
@@ -170,6 +170,35 @@ export default function SiteSettingsPage() {
                             </div>
                         </SettingsSectionCard>
 
+                        <SettingsSectionCard icon={<FileCheck2 className="site-settings-registration-icon size-4" />} title="网站备案" description="配置首页底部对外展示的 ICP 与公安备案信息，备案链接仅允许 HTTP 或 HTTPS。">
+                            <div className="site-settings-registration-fields grid gap-x-6 gap-y-4 px-6 py-6 lg:grid-cols-2">
+                                <Form.Item className="site-settings-icp-number-field mb-0" name="icpRegistrationNumber" label="ICP备案号" rules={[{ max: 100, message: "ICP备案号不能超过 100 个字符" }]}>
+                                    <Input className="site-settings-icp-number-input" maxLength={100} showCount placeholder="例如：蜀ICP备2026000000号-1" />
+                                </Form.Item>
+                                <Form.Item
+                                    className="site-settings-icp-url-field mb-0"
+                                    name="icpRegistrationUrl"
+                                    label="ICP备案链接"
+                                    dependencies={["icpRegistrationNumber"]}
+                                    rules={[{ max: 500, message: "ICP备案链接不能超过 500 个字符" }, optionalHTTPURLRule("ICP备案链接", () => form.getFieldValue("icpRegistrationNumber"))]}
+                                >
+                                    <Input className="site-settings-icp-url-input" maxLength={500} placeholder="https://beian.miit.gov.cn/" />
+                                </Form.Item>
+                                <Form.Item className="site-settings-security-number-field mb-0" name="publicSecurityRegistrationNumber" label="公安备案号" rules={[{ max: 100, message: "公安备案号不能超过 100 个字符" }]}>
+                                    <Input className="site-settings-security-number-input" maxLength={100} showCount placeholder="例如：川公网安备51000000000000号" />
+                                </Form.Item>
+                                <Form.Item
+                                    className="site-settings-security-url-field mb-0"
+                                    name="publicSecurityRegistrationUrl"
+                                    label="公安备案链接"
+                                    dependencies={["publicSecurityRegistrationNumber"]}
+                                    rules={[{ max: 500, message: "公安备案链接不能超过 500 个字符" }, optionalHTTPURLRule("公安备案链接", () => form.getFieldValue("publicSecurityRegistrationNumber"))]}
+                                >
+                                    <Input className="site-settings-security-url-input" maxLength={500} placeholder="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=..." />
+                                </Form.Item>
+                            </div>
+                        </SettingsSectionCard>
+
                         <SettingsSectionCard
                             icon={<ShieldCheck className="site-settings-legal-icon size-4" />}
                             title="法律内容"
@@ -219,7 +248,31 @@ function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
     return {
         siteName: setting.siteName,
         footerCopyright: setting.footerCopyright,
+        icpRegistrationNumber: setting.icpRegistrationNumber,
+        icpRegistrationUrl: setting.icpRegistrationUrl,
+        publicSecurityRegistrationNumber: setting.publicSecurityRegistrationNumber,
+        publicSecurityRegistrationUrl: setting.publicSecurityRegistrationUrl,
         userAgreement: setting.userAgreement,
         privacyPolicy: setting.privacyPolicy,
+    };
+}
+
+function optionalHTTPURLRule(label: string, getRegistrationNumber: () => string | undefined) {
+    return {
+        async validator(_rule: unknown, value?: string) {
+            const normalized = value?.trim();
+            if (!normalized) return;
+            if (!getRegistrationNumber()?.trim()) {
+                throw new Error(`填写${label}时必须同时填写对应备案号`);
+            }
+            try {
+                const parsed = new URL(normalized);
+                if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) {
+                    throw new Error("invalid registration URL");
+                }
+            } catch {
+                throw new Error(`${label}必须是有效的 HTTP 或 HTTPS 地址`);
+            }
+        },
     };
 }

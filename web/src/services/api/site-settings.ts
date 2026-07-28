@@ -15,6 +15,10 @@ export type SiteSettings = {
     siteName: string;
     logoUrl: string;
     footerCopyright: string;
+    icpRegistrationNumber: string;
+    icpRegistrationUrl: string;
+    publicSecurityRegistrationNumber: string;
+    publicSecurityRegistrationUrl: string;
     userAgreement: string;
     privacyPolicy: string;
     updatedBy: string;
@@ -22,7 +26,10 @@ export type SiteSettings = {
     updatedAt: string;
 };
 
-export type UpdateSiteSettingsInput = Pick<SiteSettings, "siteName" | "footerCopyright" | "userAgreement" | "privacyPolicy">;
+export type UpdateSiteSettingsInput = Pick<
+    SiteSettings,
+    "siteName" | "footerCopyright" | "icpRegistrationNumber" | "icpRegistrationUrl" | "publicSecurityRegistrationNumber" | "publicSecurityRegistrationUrl" | "userAgreement" | "privacyPolicy"
+>;
 
 export const publicSiteSettingsQueryKey = ["public-site-settings"] as const;
 export const adminSiteSettingsQueryKey = ["admin-site-settings"] as const;
