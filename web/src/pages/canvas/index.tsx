@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Input, Modal, Popover, Select } from "antd";
 import { CheckSquare2, Download, FileUp, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 
-import { PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
+import { ListToolbar, PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState } from "@/components/layout/workspace-state";
 
 import { readZip } from "@/lib/zip";
@@ -140,38 +140,44 @@ export default function CanvasPage() {
                 <PageHeader
                     title="我的画布"
                     meta={<span className="canvas-library-count text-xs tabular-nums text-foreground/38">{hydrated ? filteredProjects.length : "—"}</span>}
-                    actions={<div className="canvas-library-actions ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
-                        <Button className="canvas-library-selection-button !h-9 !rounded-full !px-4" type={selectionMode ? "primary" : "default"} icon={<CheckSquare2 className="canvas-library-selection-icon size-3.5" />} onClick={() => setSelectionMode((active) => !active)}>多选</Button>
-                        <Button className="canvas-library-import-button !h-9 !rounded-full !px-4" disabled={!hydrated} icon={<FileUp className="canvas-library-import-icon size-3.5" />} onClick={() => inputRef.current?.click()}>导入</Button>
-                        <Popover
-                            trigger="click"
-                            placement="bottomRight"
-                            content={(
-                                <div className="canvas-library-filter-panel grid w-56 gap-3">
-                                    <label className="canvas-library-filter-field grid gap-1.5 text-xs text-foreground/55">
-                                        所属项目
-                                        <Select aria-label="按所属项目筛选" className="canvas-library-project-filter w-full" value={projectFilter} onChange={(value) => { setProjectFilter(value); setPage(1); }} options={[{ label: "全部项目", value: "all" }, { label: "自由画布", value: "independent" }, ...(projectQuery.data?.projects || []).map(({ project }) => ({ label: project.name, value: project.id }))]} />
-                                    </label>
-                                    <label className="canvas-library-filter-field grid gap-1.5 text-xs text-foreground/55">
-                                        排序方式
-                                        <Select aria-label="画布排序" className="canvas-library-sort-filter w-full" value={sort} onChange={(value) => { setSort(value); setPage(1); }} options={[{ label: "最近更新", value: "updated" }, { label: "名称排序", value: "name" }, { label: "节点数量", value: "nodes" }]} />
-                                    </label>
-                                    {keyword || projectFilter !== "all" || sort !== "updated" ? <Button className="canvas-library-reset-button" size="small" onClick={() => { setKeyword(""); setProjectFilter("all"); setSort("updated"); setPage(1); }}>重置筛选</Button> : null}
-                                </div>
-                            )}
-                        >
-                            <Button className="canvas-library-filter-button !size-9 !rounded-full !p-0" aria-label="筛选与排序" title="筛选与排序" icon={<SlidersHorizontal className="canvas-library-filter-icon size-3.5" />} />
-                        </Popover>
-                        <div className="canvas-library-search min-w-[180px] flex-1 sm:w-60 sm:flex-none">
-                            <Input allowClear className="canvas-library-search-input !h-9 !rounded-full" prefix={<Search className="canvas-library-search-icon size-3.5 text-foreground/40" />} value={keyword} placeholder="搜索画布" aria-label="搜索画布" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
-                        </div>
-                        {projects.length ? (
-                            <Dropdown menu={{ items: [{ key: "delete-all", danger: true, icon: <Trash2 className="canvas-library-delete-icon size-3.5" />, label: "删除全部画布", onClick: () => setDeleteIds(projects.map((project) => project.id)) }] }} trigger={["click"]}>
-                                <Button className="canvas-library-more-button !size-9 !rounded-full !p-0" aria-label="更多画布操作" title="更多操作" icon={<MoreHorizontal className="canvas-library-more-icon size-4" />} />
-                            </Dropdown>
-                        ) : null}
-                    </div>}
                 />
+                <ListToolbar
+                    active={Boolean(keyword || projectFilter !== "all" || sort !== "updated")}
+                    onReset={() => { setKeyword(""); setProjectFilter("all"); setSort("updated"); setPage(1); }}
+                    trailing={(
+                        <>
+                            <Button className="canvas-library-selection-button !h-9 !px-3" type={selectionMode ? "primary" : "default"} icon={<CheckSquare2 className="canvas-library-selection-icon size-3.5" />} onClick={() => setSelectionMode((active) => !active)}>多选</Button>
+                            <Button className="canvas-library-import-button !h-9 !px-3" disabled={!hydrated} icon={<FileUp className="canvas-library-import-icon size-3.5" />} onClick={() => inputRef.current?.click()}>导入</Button>
+                            {projects.length ? (
+                                <Dropdown menu={{ items: [{ key: "delete-all", danger: true, icon: <Trash2 className="canvas-library-delete-icon size-3.5" />, label: "删除全部画布", onClick: () => setDeleteIds(projects.map((project) => project.id)) }] }} trigger={["click"]}>
+                                    <Button className="canvas-library-more-button !size-9 !p-0" aria-label="更多画布操作" title="更多操作" icon={<MoreHorizontal className="canvas-library-more-icon size-4" />} />
+                                </Dropdown>
+                            ) : null}
+                        </>
+                    )}
+                >
+                    <div className="canvas-library-search min-w-0 w-full sm:w-60">
+                        <Input allowClear className="canvas-library-search-input !h-9" prefix={<Search className="canvas-library-search-icon size-3.5 text-foreground/40" />} value={keyword} placeholder="搜索画布" aria-label="搜索画布" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
+                    </div>
+                    <Popover
+                        trigger="click"
+                        placement="bottomLeft"
+                        content={(
+                            <div className="canvas-library-filter-panel grid w-56 gap-3">
+                                <label className="canvas-library-filter-field grid gap-1.5 text-xs text-foreground/55">
+                                    所属项目
+                                    <Select aria-label="按所属项目筛选" className="canvas-library-project-filter w-full" value={projectFilter} onChange={(value) => { setProjectFilter(value); setPage(1); }} options={[{ label: "全部项目", value: "all" }, { label: "自由画布", value: "independent" }, ...(projectQuery.data?.projects || []).map(({ project }) => ({ label: project.name, value: project.id }))]} />
+                                </label>
+                                <label className="canvas-library-filter-field grid gap-1.5 text-xs text-foreground/55">
+                                    排序方式
+                                    <Select aria-label="画布排序" className="canvas-library-sort-filter w-full" value={sort} onChange={(value) => { setSort(value); setPage(1); }} options={[{ label: "最近更新", value: "updated" }, { label: "名称排序", value: "name" }, { label: "节点数量", value: "nodes" }]} />
+                                </label>
+                            </div>
+                        )}
+                    >
+                        <Button className="canvas-library-filter-button !size-9 !p-0" aria-label="筛选与排序" title="筛选与排序" icon={<SlidersHorizontal className="canvas-library-filter-icon size-3.5" />} />
+                    </Popover>
+                </ListToolbar>
 
                 {selectedIds.length ? (
                     <div className="app-canvas-selection-toolbar mt-3 flex min-h-10 flex-wrap items-center gap-2 rounded-lg bg-foreground/[.05] px-3 py-1.5 text-xs">

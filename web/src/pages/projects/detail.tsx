@@ -1,13 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button, Tooltip } from "antd";
-import { ArrowLeft, BookOpenText, Images, LayoutDashboard, LayoutGrid, Plus, Settings2, type LucideIcon } from "lucide-react";
+import { BookOpenText, Images, LayoutDashboard, LayoutGrid, Plus, Settings2, type LucideIcon } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 
 import { createCanvasProjectWithRemoteSync } from "@/services/user-data-sync";
 import { getProject } from "@/services/api/projects";
-import { WorkspacePage } from "@/components/layout/workspace-page";
+import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { WorkspaceSignalIcon } from "@/components/ui/aceternity/workspace-signal-icon";
 
 import ProjectAssetsView from "./detail/assets";
 import ProjectCanvasesView from "./detail/canvases";
@@ -48,36 +47,52 @@ export default function ProjectDetailPage() {
     const chapterHref = projectChapterHref(detail.data.units, projectId, chapterId);
     return (
         <WorkspacePage className="project-workbench-page !overflow-hidden" fluid>
-            <div className="flex h-full min-h-0 flex-col">
-                <header className="shrink-0 border-b border-border/65 bg-background/80 px-3 py-2 backdrop-blur-md sm:px-4 lg:px-5 lg:py-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 lg:min-h-16 lg:flex-nowrap">
-                        <div className="flex min-w-0 flex-1 items-center gap-2.5 lg:w-[250px] lg:flex-none xl:w-[290px]">
-                            <button type="button" onClick={() => navigate("/projects")} className="grid size-9 shrink-0 place-items-center rounded-full text-foreground/60 transition-colors hover:bg-foreground/[.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="返回项目" title="返回项目"><ArrowLeft className="size-4" /></button>
-                            <WorkspaceSignalIcon variant="projects" size="sm" />
-                            <div className="flex min-w-0 items-center gap-2">
-                                <h1 className="min-w-0 truncate text-[13px] font-semibold text-foreground/90">{detail.data.project.name}</h1>
-                                <span className={`size-1.5 shrink-0 rounded-full ${detail.data.project.status === "archived" ? "bg-foreground/30" : "bg-[var(--workspace-accent)]"}`} />
-                                <span className="hidden shrink-0 text-[10px] text-foreground/42 sm:inline">{detail.data.project.status === "archived" ? "已归档" : "进行中"}</span>
-                            </div>
-                        </div>
-                        <nav className="thin-scrollbar order-last mt-1 flex h-11 w-full min-w-0 items-center gap-0.5 overflow-x-auto lg:order-none lg:mt-0 lg:h-16 lg:flex-1 lg:border-l lg:border-border/55 lg:pl-3" aria-label="项目导航">
-                            {views.map((item) => { const Icon = item.icon; const active = item.key === activeView; const href = item.key === "chapters" ? chapterHref : `/projects/${projectId}/${item.key}`; return <Link key={item.key} to={href} className={`relative flex h-11 shrink-0 items-center gap-2 rounded-md px-2.5 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-3 ${active ? "bg-[var(--workspace-accent-soft)] font-medium text-foreground lg:after:absolute lg:after:inset-x-3 lg:after:bottom-0 lg:after:h-0.5 lg:after:rounded-full lg:after:bg-[var(--workspace-accent)]" : "text-foreground/52 hover:bg-foreground/[.045] hover:text-foreground"}`} aria-current={active ? "page" : undefined}><Icon className={`size-4 shrink-0 ${active ? "text-[var(--workspace-accent)]" : "text-foreground/45"}`} /><span className="sm:hidden">{item.shortLabel}</span><span className="hidden sm:inline">{item.label}</span></Link>; })}
-                        </nav>
-                        <Tooltip title="新建项目画布"><Button size="small" className="!h-9 !shrink-0 !px-2 sm:!px-3" icon={<Plus className="size-4" />} onClick={createCanvas} aria-label="新建项目画布"><span className="hidden sm:inline">新建画布</span></Button></Tooltip>
-                    </div>
-                </header>
-                {detail.data.project.status === "archived" ? <Alert type="warning" showIcon banner message="项目已归档，恢复后才能创建画布和生成任务" className="!border-x-0 !border-t-0" /> : null}
-                <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                    <div className={activeView === "chapters" ? "min-h-0 flex-1" : "thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-7"}>
-                        <div className={activeView === "overview" ? "mx-auto w-full max-w-[1200px]" : activeView === "chapters" ? "h-full w-full" : "w-full"}>
+            <div className="flex h-full min-h-0 flex-col px-4 pt-20 sm:px-6 md:px-[104px] md:pt-[90px]">
+                <PageHeader
+                    title={detail.data.project.name}
+                    backTo="/projects"
+                    backLabel="返回项目中心"
+                    meta={(
+                        <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-foreground/45">
+                            <span className={`size-1.5 rounded-full ${detail.data.project.status === "archived" ? "bg-foreground/30" : "bg-[var(--workspace-accent)]"}`} />
+                            {detail.data.project.status === "archived" ? "已归档" : "进行中"}
+                        </span>
+                    )}
+                    actions={(
+                        <Tooltip title="在当前项目中新建画布">
+                            <Button type="primary" className="!h-9 !px-3" icon={<Plus className="size-4" />} onClick={createCanvas} aria-label="新建项目画布">新建画布</Button>
+                        </Tooltip>
+                    )}
+                />
+                <nav className="thin-scrollbar mt-3 flex h-11 w-full shrink-0 items-end gap-1 overflow-x-auto border-b border-border/70" aria-label="项目导航">
+                    {views.map((item) => {
+                        const Icon = item.icon;
+                        const active = item.key === activeView;
+                        const href = item.key === "chapters" ? chapterHref : `/projects/${projectId}/${item.key}`;
+                        return (
+                            <Link
+                                key={item.key}
+                                to={href}
+                                className={`relative flex h-10 shrink-0 items-center gap-2 px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-3 ${active ? "font-semibold text-foreground after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:bg-[var(--workspace-accent)]" : "text-foreground/48 hover:bg-foreground/[.04] hover:text-foreground"}`}
+                                aria-current={active ? "page" : undefined}
+                            >
+                                <Icon className={`size-3.5 shrink-0 ${active ? "text-[var(--workspace-accent)]" : "text-foreground/38"}`} />
+                                <span className="sm:hidden">{item.shortLabel}</span>
+                                <span className="hidden sm:inline">{item.label}</span>
+                            </Link>
+                        );
+                    })}
+                </nav>
+                {detail.data.project.status === "archived" ? <Alert type="warning" showIcon banner message="项目已归档，恢复后才能创建画布和生成任务" className="!mt-3 !rounded-md !border-border/70" /> : null}
+                <div className={activeView === "chapters" ? "mt-4 min-h-0 flex-1 overflow-hidden pb-4" : "thin-scrollbar mt-5 min-h-0 flex-1 overflow-y-auto pb-8"}>
+                    <div className={activeView === "chapters" ? "h-full w-full" : "w-full"}>
                             {activeView === "overview" ? <ProjectOverviewView detail={detail.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                             {activeView === "chapters" ? <ProjectChaptersView detail={detail.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                             {activeView === "canvases" ? <ProjectCanvasesView detail={detail.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                             {activeView === "assets" ? <ProjectAssetsView detail={detail.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                             {activeView === "settings" ? <ProjectSettingsView detail={detail.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
-                        </div>
                     </div>
-                </main>
+                </div>
             </div>
         </WorkspacePage>
     );

@@ -56,9 +56,17 @@ export default function ProjectsPage() {
                 title="短剧创作"
                 description="按制作阶段查看故事项目，继续最近工作或处理未完成章节。"
                 meta={<span className="text-xs text-foreground/45">{rows.length} 个</span>}
-                actions={<><Button icon={<LayoutGrid className="size-3.5" />} onClick={() => navigate("/canvas")}>画布</Button><Button type="primary" icon={<Plus className="size-3.5" />} onClick={() => setCreateOpen(true)}>创建项目</Button></>}
             />
-            <ListToolbar active={Boolean(keyword || status !== "all" || sort !== "updated")} onReset={() => { setKeyword(""); setStatus("all"); setSort("updated"); }}>
+            <ListToolbar
+                active={Boolean(keyword || status !== "all" || sort !== "updated")}
+                onReset={() => { setKeyword(""); setStatus("all"); setSort("updated"); }}
+                trailing={(
+                    <>
+                        <Button icon={<LayoutGrid className="size-3.5" />} onClick={() => navigate("/canvas")}>画布</Button>
+                        <Button type="primary" icon={<Plus className="size-3.5" />} onClick={() => setCreateOpen(true)}>创建项目</Button>
+                    </>
+                )}
+            >
                 <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索项目、简介或画风" onChange={(event) => setKeyword(event.target.value)} />
                 <Select className="w-32" value={status} onChange={setStatus} options={[{ label: "全部状态", value: "all" }, { label: "进行中", value: "active" }, { label: "已归档", value: "archived" }]} />
                 <Select className="w-32" value={sort} onChange={setSort} options={[{ label: "最近更新", value: "updated" }, { label: "章节进度", value: "progress" }, { label: "项目名称", value: "name" }]} />

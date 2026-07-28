@@ -355,14 +355,17 @@ export default function TasksPage() {
                     title="任务中心"
                     description="先处理失败任务，再跟踪运行进度和检查生成结果。"
                     meta={<span className="text-xs text-foreground/45">{filteredTasks.length} 个任务{loading ? " · 正在同步" : ""}</span>}
-                    actions={(
+                />
+                <ListToolbar
+                    active={Boolean(keyword || projectFilter !== "all")}
+                    onReset={() => { setKeyword(""); setProjectFilter("all"); setPage(1); }}
+                    trailing={(
                         <>
                             <Button icon={<RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />} onClick={() => void loadTasks(true)}>刷新</Button>
                             <Button type="primary" icon={<Plus className="size-3.5" />} onClick={() => setCreateOpen(true)}>新建任务</Button>
                         </>
                     )}
-                />
-                <ListToolbar active={Boolean(keyword || projectFilter !== "all")} onReset={() => { setKeyword(""); setProjectFilter("all"); setPage(1); }}>
+                >
                     <Input id="task-search" name="taskSearch" allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索任务、模型、画布或项目" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
                     <Select className="w-full sm:w-48" value={projectFilter} onChange={(value) => { setProjectFilter(value); setPage(1); }} options={[{ label: "全部画布", value: "all" }, ...projectOptions]} />
                     <Segmented

@@ -259,16 +259,19 @@ export default function AssetsPage() {
                     title="素材库"
                     description="管理文本、图片、视频、音频和 3D 模型素材。"
                     meta={<span className="text-xs text-foreground/45">{filteredAssets.length} 个素材</span>}
-                    actions={(
+                />
+                <ListToolbar
+                    active={Boolean(keyword || kindFilter !== "all" || categoryFilter !== "all")}
+                    onReset={() => { setKeyword(""); setKindFilter("all"); setCategoryFilter("all"); setPage(1); }}
+                    trailing={(
                         <>
                             <Button icon={<Download className="size-4" />} onClick={() => void exportAllAssets()}>导出全部</Button>
                             <Dropdown trigger={["click"]} menu={{ items: [{ key: "package", icon: <FileUp className="size-4" />, label: "导入素材包", onClick: () => assetInputRef.current?.click() }, { key: "model", icon: <Upload className="size-4" />, label: "上传 3D 模型", onClick: () => modelInputRef.current?.click() }] }}><Button icon={<FileUp className="size-4" />}>导入</Button></Dropdown>
                             <Button type="primary" icon={<Plus className="size-4" />} onClick={openCreate}>新增素材</Button>
                         </>
                     )}
-                />
-                <ListToolbar active={Boolean(keyword || kindFilter !== "all" || categoryFilter !== "all")} onReset={() => { setKeyword(""); setKindFilter("all"); setCategoryFilter("all"); setPage(1); }}>
-                    <Input allowClear className="w-full sm:w-80" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索标题、内容、标签或来源" onChange={(event) => { setPage(1); setKeyword(event.target.value); }} />
+                >
+                    <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索标题、内容、标签或来源" onChange={(event) => { setPage(1); setKeyword(event.target.value); }} />
                 </ListToolbar>
 
                 <div className="grid min-h-0 gap-4 lg:grid-cols-[176px_minmax(0,1fr)]">
