@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Clock3, Crown, ReceiptText, Users } from "lucide-reac
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
+import { useSiteSettings } from "@/components/site/site-settings-provider";
 import {
     cancelMembershipOrder,
     createMembershipOrder,
@@ -42,6 +43,7 @@ export default function MembershipPage() {
     const [submitting, setSubmitting] = useState(false);
     const [cancellingId, setCancellingId] = useState("");
     const [loading, setLoading] = useState(true);
+    const { settings } = useSiteSettings();
 
     const load = async () => {
         setLoading(true);
@@ -110,7 +112,7 @@ export default function MembershipPage() {
         <main className="membership-page">
             <header className="membership-header">
                 <button type="button" className="membership-back" onClick={() => navigate(-1)} aria-label="返回"><ArrowLeft className="size-4" /></button>
-                <span className="membership-brand"><Crown className="size-4" />HMaigc 会员</span>
+                <span className="membership-brand"><Crown className="size-4" />{settings.siteName} 会员</span>
                 {overview ? <span className="membership-current">当前：{overview.entitlement.planName} · 图片 {overview.entitlement.imageConcurrency} / 视频 {overview.entitlement.videoConcurrency} 并发</span> : null}
             </header>
             <section className="membership-hero">

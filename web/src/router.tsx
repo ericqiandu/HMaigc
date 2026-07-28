@@ -11,6 +11,7 @@ import RedemptionCodesPage from "@/pages/admin/redemption-codes/redemption-codes
 import RuntimePolicySettingsPage from "@/pages/admin/settings/runtime-policy-settings-page";
 import StorageSettingsPage from "@/pages/admin/settings/storage-settings-page";
 import PaymentSettingsPage from "@/pages/admin/settings/payment-settings-page";
+import SiteSettingsPage from "@/pages/admin/settings/site-settings-page";
 import StoryboardPromptsPage from "@/pages/admin/storyboard-prompts/storyboard-prompts-page";
 import UsersPage from "@/pages/admin/users/users-page";
 import AssetsPage from "@/pages/assets";
@@ -21,6 +22,7 @@ import CanvasPage from "@/pages/canvas";
 import CanvasProjectPage from "@/pages/canvas/project";
 import SharedCanvasPage from "@/pages/canvas/shared";
 import HomePage from "@/pages/home";
+import { LegalDocumentPage } from "@/pages/legal/legal-document-page";
 import MembershipPage from "@/pages/membership";
 import NotFound from "@/pages/not-found";
 import RouteErrorPage from "@/pages/route-error";
@@ -50,6 +52,8 @@ export const router = createBrowserRouter([
         errorElement: <RouteErrorPage />,
         children: [
             { path: "/", element: <HomePage /> },
+            { path: "/legal/user-agreement", element: <LegalDocumentPage document="userAgreement" /> },
+            { path: "/legal/privacy-policy", element: <LegalDocumentPage document="privacyPolicy" /> },
             { path: "/membership", element: <MembershipPage /> },
             { path: "/tasks", element: <RequireAuth><TasksPage /></RequireAuth> },
             { path: "/assets", element: <RequireAuth><AssetsPage /></RequireAuth> },
@@ -82,6 +86,7 @@ export const router = createBrowserRouter([
                     { path: "settings/email", element: <EmailSettingsPage /> },
                     { path: "settings/storage", element: <StorageSettingsPage /> },
                     { path: "settings/payment", element: <PaymentSettingsPage /> },
+                    { path: "settings/site", element: <SiteSettingsPage /> },
                 ],
             },
         ],

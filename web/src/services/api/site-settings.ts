@@ -1,0 +1,63 @@
+import axios from "axios";
+
+const api = axios.create({
+    baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api",
+    withCredentials: true,
+});
+
+type BackendEnvelope<T> = {
+    code: number;
+    data: T;
+    msg: string;
+};
+
+export type SiteSettings = {
+    siteName: string;
+    logoUrl: string;
+    footerCopyright: string;
+    userAgreement: string;
+    privacyPolicy: string;
+    updatedBy: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type UpdateSiteSettingsInput = Pick<SiteSettings, "siteName" | "footerCopyright" | "userAgreement" | "privacyPolicy">;
+
+export const publicSiteSettingsQueryKey = ["public-site-settings"] as const;
+export const adminSiteSettingsQueryKey = ["admin-site-settings"] as const;
+
+async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promise<T> {
+    try {
+        const response = await promise;
+        if (response.data.code !== 0) throw new Error(response.data.msg || "请求失败");
+        return response.data.data;
+    } catch (error) {
+        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) {
+            throw new Error(error.response?.data?.msg || error.message || "请求失败");
+        }
+        throw error;
+    }
+}
+
+export function getPublicSiteSettings() {
+    return request<SiteSettings>(api.get("/public/site"));
+}
+
+export function getAdminSiteSettings() {
+    return request<SiteSettings>(api.get("/admin/settings/site"));
+}
+
+export function updateAdminSiteSettings(input: UpdateSiteSettingsInput) {
+    return request<SiteSettings>(api.put("/admin/settings/site", input));
+}
+
+export function uploadAdminSiteLogo(file: File) {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    return request<SiteSettings>(api.post("/admin/settings/site/logo", formData));
+}
+
+export function removeAdminSiteLogo() {
+    return request<SiteSettings>(api.delete("/admin/settings/site/logo"));
+}

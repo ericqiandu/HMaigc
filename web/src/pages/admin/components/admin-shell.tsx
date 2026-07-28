@@ -9,7 +9,7 @@ import {
     FileClock,
     HardDrive,
     Home,
-    Infinity as InfinityIcon,
+    Globe2,
     Mail,
     MessageSquareText,
     PanelLeftClose,
@@ -25,6 +25,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router";
 
 import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
 import { WORKSPACE_SIDEBAR_STORAGE_KEY } from "@/components/layout/workspace-sidebar-state";
+import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { cn } from "@/lib/utils";
 
 type AdminNavigationItem = {
@@ -65,12 +66,14 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
             { path: "/admin/settings/email", label: "邮件服务", description: "注册验证码 SMTP", icon: <Mail className="size-4" /> },
             { path: "/admin/settings/storage", label: "存储服务", description: "OSS 与资源存储", icon: <HardDrive className="size-4" /> },
             { path: "/admin/settings/payment", label: "支付配置", description: "收银台与商户参数", icon: <CreditCard className="size-4" /> },
+            { path: "/admin/settings/site", label: "站点设置", description: "品牌、版权与法律内容", icon: <Globe2 className="size-4" /> },
         ],
     },
 ];
 
 export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
+    const { settings } = useSiteSettings();
     const toggleCollapsed = () => {
         setCollapsed((current) => {
             const next = !current;
@@ -84,12 +87,12 @@ export function AdminShell() {
             <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden lg:flex", collapsed ? "w-16" : "w-[236px]")}>
                 <div className={cn("admin-sidebar-brand flex h-16 shrink-0 items-center", collapsed ? "justify-center" : "gap-2.5 px-4")}>
                     {!collapsed ? (
-                        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2" title="弘梦">
-                            <span className="admin-brand-mark grid size-8 shrink-0 place-items-center rounded-md bg-foreground text-background">
-                                <InfinityIcon className="admin-brand-icon size-4" />
+                        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2" title={settings.siteName}>
+                            <span className="admin-brand-mark grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-foreground/[.06]">
+                                <img className="admin-brand-image size-5 object-contain" src={siteLogoURL(settings)} alt="" />
                             </span>
                             <span className="admin-brand-copy min-w-0">
-                                <span className="admin-brand-name block truncate text-sm font-semibold">弘梦</span>
+                                <span className="admin-brand-name block truncate text-sm font-semibold">{settings.siteName}</span>
                                 <span className="admin-brand-caption block truncate text-[9px] font-medium tracking-[0.16em] text-foreground/38">ADMIN CONSOLE</span>
                             </span>
                         </Link>

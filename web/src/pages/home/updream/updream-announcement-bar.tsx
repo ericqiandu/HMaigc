@@ -1,8 +1,11 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 
+import { useSiteSettings } from "@/components/site/site-settings-provider";
+
 export function UpdreamAnnouncementBar() {
     const [visible, setVisible] = useState(true);
+    const { settings } = useSiteSettings();
 
     if (!visible) return null;
 
@@ -14,7 +17,7 @@ export function UpdreamAnnouncementBar() {
                 </span>
                 <span className="updream-announcement-copy text-center text-[#1f2d3d]">
                     招增长伙伴：懂冷启动、内容增长或海外增长，欢迎加入{" "}
-                    <span className="updream-announcement-brand font-semibold">HMaigc</span>。
+                    <span className="updream-announcement-brand font-semibold">{settings.siteName}</span>。
                 </span>
                 <button
                     type="button"

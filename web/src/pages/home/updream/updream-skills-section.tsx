@@ -1,6 +1,7 @@
 import { BadgeCheck, ChevronRight, Zap } from "lucide-react";
 import { Link } from "react-router";
 
+import { useSiteSettings } from "@/components/site/site-settings-provider";
 import skill1 from "@/pages/home/updream/assets/skill-1.png";
 import skill2 from "@/pages/home/updream/assets/skill-2.png";
 import skill3 from "@/pages/home/updream/assets/skill-3.png";
@@ -20,7 +21,7 @@ interface Skill {
 const SKILLS: readonly Skill[] = [
     {
         title: "剧本策划助手",
-        author: "HMaigc 官方",
+        author: "官方",
         description: "对剧本、故事梗概、角色设定或原始想法做诊断、策划、结构优化、大纲扩写和正文改写。",
         uses: "3.4 k",
         thumbnail: skill1,
@@ -28,7 +29,7 @@ const SKILLS: readonly Skill[] = [
     },
     {
         title: "剧本转视频提示词",
-        author: "HMaigc 官方",
+        author: "官方",
         description: "将完整剧本的文本一键转换为严格时间码视频提示词。",
         uses: "1.3 k",
         thumbnail: skill2,
@@ -36,7 +37,7 @@ const SKILLS: readonly Skill[] = [
     },
     {
         title: "剧本直出美术资产",
-        author: "HMaigc 官方",
+        author: "官方",
         description: "将剧本、小说或故事文本拆解为资产清单、分场美术演变表（Markdown 表格）和固定美学提示词。",
         uses: "662",
         thumbnail: skill3,
@@ -44,7 +45,7 @@ const SKILLS: readonly Skill[] = [
     },
     {
         title: "分镜光影设计",
-        author: "HMaigc 官方",
+        author: "官方",
         description: "为分镜图、分镜视频、分镜脚本、剧本或故事梗概建立统一光影逻辑。",
         uses: "263",
         thumbnail: skill4,
@@ -52,7 +53,7 @@ const SKILLS: readonly Skill[] = [
     },
     {
         title: "人物多视角生成",
-        author: "HMaigc 官方",
+        author: "官方",
         description: "为人物角色规划特殊视角、环视机位、视角迁移 prompt，并在需要时生成一致性视角图。",
         uses: "2.3 k",
         thumbnail: skill5,
@@ -68,7 +69,7 @@ const SKILLS: readonly Skill[] = [
     },
 ] as const;
 
-function UpdreamSkillCard({ skill }: { skill: Skill }) {
+function UpdreamSkillCard({ skill, siteName }: { skill: Skill; siteName: string }) {
     return (
         <Link to="/skills" className="updream-skill-link block">
             <article
@@ -85,7 +86,7 @@ function UpdreamSkillCard({ skill }: { skill: Skill }) {
                         </h3>
                         <p className="updream-skill-author mt-0.5 flex items-center gap-1 text-[11px] text-white/75">
                             <BadgeCheck className="updream-skill-verified size-3" />
-                            {skill.author}
+                            {skill.author === "官方" ? `${siteName} 官方` : skill.author}
                         </p>
                     </div>
                 </div>
@@ -108,6 +109,8 @@ function UpdreamSkillCard({ skill }: { skill: Skill }) {
 }
 
 export function UpdreamSkillsSection() {
+    const { settings } = useSiteSettings();
+
     return (
         <section className="updream-skills mx-auto w-full max-w-[1408px] px-4 pb-24 sm:px-8">
             <div className="updream-skills-heading mb-5 flex items-center justify-between">
@@ -119,7 +122,7 @@ export function UpdreamSkillsSection() {
             </div>
             <div className="updream-skills-grid grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
                 {SKILLS.map((skill) => (
-                    <UpdreamSkillCard key={skill.title} skill={skill} />
+                    <UpdreamSkillCard key={skill.title} skill={skill} siteName={settings.siteName} />
                 ))}
             </div>
         </section>

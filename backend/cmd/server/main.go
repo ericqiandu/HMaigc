@@ -79,6 +79,7 @@ func main() {
 	handler.RegisterFinanceRoutes(api, svc)
 	handler.RegisterMembershipRoutes(api, svc)
 	handler.RegisterPaymentRoutes(api, svc)
+	handler.RegisterSiteSettingRoutes(api, svc)
 	// 登录态模型目录代理：避免浏览器直连各上游时分别处理 CORS。
 	handler.RegisterChannelModelRoutes(api, svc)
 	handler.RegisterSystemProxyRoutes(api, svc)

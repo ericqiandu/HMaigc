@@ -5,6 +5,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router";
 
 import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
+import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { getAntThemeConfig } from "@/lib/app-theme";
 
@@ -47,11 +48,12 @@ export function AuthScene() {
     const reducedMotion = useReducedMotion();
     const activeTab = location.pathname === "/register" ? "register" : "login";
     const copy = activeTab === "register" ? authCopy.register : authCopy.login;
+    const { settings } = useSiteSettings();
 
     return (
         <main className="h-dvh min-h-0 overflow-y-auto bg-[#08090c] text-white lg:overflow-hidden">
             <div className="grid min-h-full lg:h-full lg:grid-cols-[minmax(0,1.32fr)_minmax(520px,1fr)]">
-                <section className="relative min-h-[250px] overflow-hidden sm:min-h-[320px] lg:min-h-0" aria-label="HMaigc 品牌影片">
+                <section className="relative min-h-[250px] overflow-hidden sm:min-h-[320px] lg:min-h-0" aria-label={`${settings.siteName} 品牌影片`}>
                     <video
                         className="absolute inset-0 size-full object-cover"
                         src={AUTH_VIDEO_URL}
@@ -66,8 +68,8 @@ export function AuthScene() {
                     <div aria-hidden className="absolute inset-y-0 right-0 hidden w-[clamp(120px,14vw,240px)] bg-[linear-gradient(90deg,transparent_0%,rgba(11,12,16,.68)_58%,#0b0c10_100%)] lg:block" />
                     <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-4 p-5 sm:p-7 lg:p-9">
                         <Link to="/" className="inline-flex items-center gap-2.5 text-sm font-semibold text-white drop-shadow-sm transition-opacity hover:opacity-80">
-                            <span className="size-7 bg-current" style={{ mask: "url(/logo.svg) center / contain no-repeat", WebkitMask: "url(/logo.svg) center / contain no-repeat" }} />
-                            HMaigc
+                            <img className="auth-site-logo size-7 object-contain" src={siteLogoURL(settings)} alt="" />
+                            <span className="auth-site-name">{settings.siteName}</span>
                         </Link>
                         <span className="inline-flex items-center gap-2 rounded-full border border-white/16 bg-black/20 px-3 py-1.5 text-[11px] text-white/76 backdrop-blur-xl">
                             <Play className="size-3 fill-current" />

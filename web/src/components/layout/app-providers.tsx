@@ -6,6 +6,7 @@ import zhCN from "antd/locale/zh_CN";
 
 import { AuthSessionHydrator } from "@/components/auth/auth-session-hydrator";
 import { ClientRootInit } from "@/components/layout/client-root-init";
+import { SiteSettingsProvider } from "@/components/site/site-settings-provider";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -32,9 +33,11 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark)}>
             <App message={{ duration: 3, maxCount: 3 }} notification={{ duration: 4.5, maxCount: 3, placement: "topRight" }}>
                 <QueryClientProvider client={queryClient}>
-                    <AuthSessionHydrator>
-                        <ClientRootInit>{children}</ClientRootInit>
-                    </AuthSessionHydrator>
+                    <SiteSettingsProvider>
+                        <AuthSessionHydrator>
+                            <ClientRootInit>{children}</ClientRootInit>
+                        </AuthSessionHydrator>
+                    </SiteSettingsProvider>
                 </QueryClientProvider>
             </App>
         </ConfigProvider>

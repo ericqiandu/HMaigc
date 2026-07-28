@@ -1,5 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 
+import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +12,7 @@ type FullScreenLoaderProps = {
 
 export function FullScreenLoader({ label = "正在恢复创作空间", detail = "同步账号、模型和项目数据", className }: FullScreenLoaderProps) {
     const reducedMotion = useReducedMotion();
+    const { settings } = useSiteSettings();
 
     return (
         <motion.div
@@ -51,9 +53,10 @@ export function FullScreenLoader({ label = "正在恢复创作空间", detail = 
                         transition={{ duration: 4.1, repeat: Infinity, ease: "linear" }}
                         style={{ clipPath: "polygon(32% 0, 100% 0, 100% 100%, 98% 100%, 98% 2px, 32% 2px)" }}
                     />
-                    <motion.span
+                    <motion.img
+                        src={siteLogoURL(settings)}
+                        alt=""
                         className="size-10 bg-current"
-                        style={{ mask: "url(/logo.svg) center / contain no-repeat", WebkitMask: "url(/logo.svg) center / contain no-repeat" }}
                         animate={reducedMotion ? undefined : { opacity: [0.58, 1, 0.58], scale: [0.96, 1, 0.96] }}
                         transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
                     />
