@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowUp, AtSign, Boxes, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, Square, UserRound, Video } from "lucide-react";
+import { ArrowUp, AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, Square, UserRound, Video } from "lucide-react";
 import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -28,13 +28,15 @@ type CanvasNodePromptPanelProps = {
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
     onStop: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
+    availableReferences: CanvasResourceReference[];
+    onReferenceConnect: (sourceNodeId: string, targetNodeId: string) => boolean;
     onImageSettingsOpenChange?: (open: boolean) => void;
     workspaceMode?: CanvasWorkspaceMode;
 };
 
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], availableReferences, onReferenceConnect, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useThemeStore((state) => state.theme);
     const theme = canvasThemes[themeName];
@@ -53,9 +55,22 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const priceChannel = resolveModelChannel(config, config.model);
     const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" ? generationCount : 1, seconds: mode === "video" ? config.videoSeconds : 1 });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
-    const videoFrameOptions = mentionReferences
-        .filter((item) => item.active && item.kind === "image")
-        .map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
+    const activeVideoImageNodeIds = useMemo(
+        () => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)),
+        [mentionReferences],
+    );
+    const availableVideoImageReferences = useMemo(
+        () => availableReferences
+            .filter((item) => item.kind === "image" && item.nodeId !== node.id && Boolean(item.previewUrl))
+            .map((item) => ({ ...item, active: activeVideoImageNodeIds.has(item.nodeId) })),
+        [activeVideoImageNodeIds, availableReferences, node.id],
+    );
+    const videoFrameOptions = availableVideoImageReferences.map((item) => ({
+        nodeId: item.nodeId,
+        label: item.label,
+        title: item.title,
+        previewUrl: item.previewUrl,
+    }));
     const composerSurface = theme.spatial.dropzone;
     const referenceShelfHeight = activeReferenceCount ? 42 : 0;
     const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : 82) : (isImageMode ? 92 : 58);
@@ -105,6 +120,16 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         updatePrompt(basePrompt ? `${basePrompt} ${insertText}` : insertText);
     };
 
+    const updateVideoFrameMetadata = useCallback((patch: Partial<CanvasNodeMetadata>) => {
+        const frameNodeIds = [patch.videoStartFrameNodeId, patch.videoEndFrameNodeId]
+            .filter((value): value is string => Boolean(value));
+        const connectionsReady = frameNodeIds.every(
+            (frameNodeId) => activeVideoImageNodeIds.has(frameNodeId) || onReferenceConnect(frameNodeId, node.id),
+        );
+        if (!connectionsReady) return;
+        onConfigChange(node.id, patch);
+    }, [activeVideoImageNodeIds, node.id, onConfigChange, onReferenceConnect]);
+
     const submit = () => {
         const text = prompt.trim();
         if (!text || isRunning) return false;
@@ -126,6 +151,17 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
                     <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
+            ) : mode === "video" ? (
+                <>
+                    <ReferenceConnectPicker
+                        label="+参考"
+                        references={availableVideoImageReferences}
+                        theme={theme}
+                        targetNodeId={node.id}
+                        onConnect={onReferenceConnect}
+                    />
+                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
+                </>
             ) : (
                 <div
                     className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium"
@@ -144,7 +180,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     open={expanded ? expandedPresetOpen : presetOpen}
                     onOpenChange={expanded ? setExpandedPresetOpen : setPresetOpen}
                     onSelect={applyPreset}
-                    label={isImageMode ? "风格" : "预设"}
+                    label={mode === "video" ? "特效" : isImageMode ? "风格" : "预设"}
                     dense
                 />
             ) : null}
@@ -250,7 +286,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
             {mode === "video" && !simpleMode ? (
                 <div className="mt-1.5 rounded-md p-0.5" style={{ background: composerSurface }}>
-                    <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={(patch) => onConfigChange(node.id, patch)} />
+                    <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
                 </div>
             ) : null}
 
@@ -287,7 +323,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     </div>
                     {mode === "video" && !simpleMode ? (
                         <div className="shrink-0 rounded-md p-0.5">
-                            <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={(patch) => onConfigChange(node.id, patch)} />
+                            <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
                         </div>
                     ) : null}
                     <div className="shrink-0">{renderComposerControls(true)}</div>
@@ -358,6 +394,80 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
             >
                 {icon}
                 <span className="canvas-reference-picker-trigger-label">{label}</span>
+            </button>
+        </Popover>
+    );
+}
+
+function ReferenceConnectPicker({
+    label,
+    references,
+    theme,
+    targetNodeId,
+    onConnect,
+}: {
+    label: string;
+    references: CanvasResourceReference[];
+    theme: CanvasTheme;
+    targetNodeId: string;
+    onConnect: (sourceNodeId: string, targetNodeId: string) => boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const content = references.length ? (
+        <div className="canvas-reference-connect-menu thin-scrollbar flex max-h-64 w-64 flex-col gap-1 overflow-y-auto">
+            {references.map((reference) => (
+                <button
+                    key={reference.id}
+                    type="button"
+                    className="canvas-reference-connect-option flex min-w-0 items-center gap-2 px-2 py-1.5 text-left transition hover:brightness-110"
+                    style={{
+                        background: reference.active ? theme.accent.primarySoft : theme.toolbar.itemHover,
+                        color: reference.active ? theme.accent.primary : theme.node.text,
+                    }}
+                    onClick={() => {
+                        if (reference.active || onConnect(reference.nodeId, targetNodeId)) {
+                            setOpen(false);
+                        }
+                    }}
+                >
+                    <span className="canvas-reference-connect-thumbnail size-8 shrink-0 overflow-hidden">
+                        <ReferenceThumbnail reference={reference} />
+                    </span>
+                    <span className="canvas-reference-connect-copy min-w-0 flex-1">
+                        <span className="canvas-reference-connect-label block truncate text-[11px] font-medium">@{reference.label}</span>
+                        <span className="canvas-reference-connect-title block truncate text-[9px]" style={{ color: theme.node.muted }}>{reference.title}</span>
+                    </span>
+                    {reference.active ? (
+                        <span className="canvas-reference-connect-status inline-flex shrink-0 items-center gap-1 text-[9px]">
+                            <Check className="canvas-reference-connect-check size-3" />
+                            已连接
+                        </span>
+                    ) : null}
+                </button>
+            ))}
+        </div>
+    ) : (
+        <div className="canvas-reference-connect-empty w-52 px-2 py-1 text-[10px]" style={{ color: theme.node.muted }}>
+            画布中暂无已生成图片
+        </div>
+    );
+
+    return (
+        <Popover
+            open={open}
+            onOpenChange={setOpen}
+            trigger="click"
+            placement="topLeft"
+            content={content}
+            styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+        >
+            <button
+                type="button"
+                className="canvas-reference-connect-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                style={{ background: theme.toolbar.itemHover, color: theme.node.muted, outlineColor: theme.accent.primary }}
+                aria-label={`打开${label}选择`}
+            >
+                <span className="canvas-reference-connect-trigger-label">{label}</span>
             </button>
         </Popover>
     );

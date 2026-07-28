@@ -262,6 +262,7 @@ export function useCanvasRenderModel({
         batchChildCountById,
         batchMotionById,
         canvasImageNodes,
+        canvasResourceReferences,
         configInputsById,
         connectionLayerBounds,
         contextMenuNode,

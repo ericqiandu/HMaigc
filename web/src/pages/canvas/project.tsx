@@ -613,6 +613,7 @@ function InfiniteCanvasPage() {
         connectionTargetNodeId,
         connectingParams,
         createConnectedNode,
+        connectExistingNodes,
         handleConnectStart,
         mouseWorld,
         pendingConnectionCreate,
@@ -753,6 +754,7 @@ function InfiniteCanvasPage() {
         batchMotionById,
         canvasImageNodes,
         configInputsById,
+        canvasResourceReferences,
         connectionLayerBounds,
         contextMenuNode,
         cropNode,
@@ -1189,7 +1191,9 @@ function InfiniteCanvasPage() {
                     node={panelNode}
                     isRunning={runningNodeId === panelNode.id}
                     mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
+                    availableReferences={canvasResourceReferences}
                     onPromptChange={handleNodePromptChange}
+                    onReferenceConnect={connectExistingNodes}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={handleGenerateNode}
                     onStop={confirmStopGeneration}
@@ -1201,7 +1205,7 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [configInputsById, confirmStopGeneration, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, workspaceMode],
+        [canvasResourceReferences, configInputsById, confirmStopGeneration, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, workspaceMode],
     );
 
     const renderCanvasNodeContent = useCallback((contentNode: CanvasNodeData) => {

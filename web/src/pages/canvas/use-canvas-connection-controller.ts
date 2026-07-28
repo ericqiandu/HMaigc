@@ -85,23 +85,35 @@ export function useCanvasConnectionController({
         setConnecting(null);
     }, [closeConnectionCreateMenu, setConnecting]);
 
-    const connectNodes = useCallback((current: ConnectionHandle, targetNodeId: string, targetHandleId?: string) => {
-        if (current.nodeId === targetNodeId) return;
+    const connectNodes = useCallback((current: ConnectionHandle, targetNodeId: string, targetHandleId?: string): boolean => {
+        if (current.nodeId === targetNodeId) return false;
         const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
         if (!connection) {
             message.warning("配置节点之间不能连接");
-            return;
+            return false;
         }
         const { fromNodeId, toNodeId } = connection;
         const fromHandleId = fromNodeId === current.nodeId ? current.handleId : targetHandleId;
         const toHandleId = toNodeId === current.nodeId ? current.handleId : targetHandleId;
         const exists = connectionsRef.current.some((item) => item.fromNodeId === fromNodeId && item.toNodeId === toNodeId && item.fromHandleId === fromHandleId && item.toHandleId === toHandleId);
         if (!exists) {
-            setConnections((currentConnections) => [...currentConnections, { id: `conn-${Date.now()}`, fromNodeId, toNodeId, fromHandleId, toHandleId }]);
-            setNodes((currentNodes) => attachNodeToStoryboardRow(currentNodes, { fromNodeId, toNodeId, fromHandleId, toHandleId }));
+            const nextConnection = { id: nanoid(), fromNodeId, toNodeId, fromHandleId, toHandleId };
+            const nextConnections = [...connectionsRef.current, nextConnection];
+            const nextNodes = attachNodeToStoryboardRow(nodesRef.current, nextConnection);
+            connectionsRef.current = nextConnections;
+            nodesRef.current = nextNodes;
+            setConnections(nextConnections);
+            setNodes(nextNodes);
         }
         setContextMenu(null);
+        return true;
     }, [connectionsRef, message, nodesRef, setConnections, setContextMenu, setNodes]);
+
+    const connectExistingNodes = useCallback(
+        (sourceNodeId: string, targetNodeId: string): boolean =>
+            connectNodes({ nodeId: sourceNodeId, handleType: "source" }, targetNodeId),
+        [connectNodes],
+    );
 
     const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing, pending: PendingConnectionCreate) => {
         const storyboardRow = type === CanvasNodeType.Video ? storyboardRowFromHandle(nodesRef.current, pending.connection.nodeId, pending.connection.handleId) : undefined;
@@ -263,6 +275,7 @@ export function useCanvasConnectionController({
         closeConnectionCreateMenu,
         connectionTargetNodeId,
         connectingParams,
+        connectExistingNodes,
         createConnectedNode,
         handleConnectStart,
         mouseWorld,
