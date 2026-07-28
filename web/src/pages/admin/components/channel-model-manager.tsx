@@ -300,7 +300,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <Form.Item className="channel-model-display-name-field" name="displayName" label="显示名称">
                         <Input className="channel-model-display-name-input" placeholder="不填则使用模型标识" />
                     </Form.Item>
-                    <Form.Item className="channel-model-marketing-copy-field" name="marketingCopy" label="悬浮介绍文案" extra="用户把鼠标停在模型选项上时显示；留空则不显示悬浮说明。">
+                    <Form.Item className="channel-model-marketing-copy-field" name="marketingCopy" label="模型介绍文案" extra="显示在模型名称下方；留空时模型列表保持单行。">
                         <Input className="channel-model-marketing-copy-input" maxLength={120} showCount placeholder="例如：最强视频模型，会员专属通道，支持 15 秒音画同步" />
                     </Form.Item>
                     <Form.Item className="channel-model-promotion-badge-field" name="promotionBadge" label="促销角标" extra="仅作为运营展示，不会自动修改积分价格或活动有效期；活动结束后请及时清空。">

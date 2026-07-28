@@ -1403,27 +1403,26 @@
 
     .canvas-image-model-picker-popup {
         padding: 4px !important;
-        border: 1px solid #525252 !important;
-        border-radius: 16px !important;
-        background: rgb(68 68 68 / 95%) !important;
-        box-shadow:
-            0 1px 3px rgb(0 0 0 / 5%),
-            0 20px 25px -5px rgb(0 0 0 / 5%),
-            0 10px 10px -5px rgb(0 0 0 / 4%);
+        border: 1px solid rgba(15, 23, 42, 0.1) !important;
+        border-radius: 14px !important;
+        background: rgba(255, 255, 255, 0.98) !important;
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.14);
+    }
+
+    .dark .canvas-image-model-picker-popup {
+        border-color: rgba(255, 255, 255, 0.18) !important;
+        background: rgba(35, 35, 35, 0.98) !important;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.46);
     }
 
     .canvas-image-model-picker-popup .ant-select-item {
-        min-height: 52px;
-        padding: 8px;
-        border-radius: 12px;
+        min-height: 56px;
+        padding: 6px 8px;
+        border-radius: 10px;
     }
 
     .canvas-image-model-picker-popup .ant-select-item-group {
-        padding: 7px 8px 4px;
-        color: color-mix(in srgb, var(--foreground) 48%, transparent);
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
+        display: none;
     }
 
     .canvas-image-model-picker-popup .ant-select-item-option-grouped {
@@ -1431,7 +1430,68 @@
     }
 
     .canvas-image-model-picker-popup .rc-virtual-list-holder {
-        max-height: 400px !important;
+        max-height: 392px !important;
+        scrollbar-color: rgba(29, 29, 31, 0.28) transparent;
+        scrollbar-width: thin;
+    }
+
+    .canvas-image-model-picker-popup .canvas-model-picker-option-icon {
+        background: #f5f5f7 !important;
+    }
+
+    .canvas-image-model-picker-popup .canvas-model-picker-option-title {
+        color: #1d1d1f !important;
+    }
+
+    .canvas-image-model-picker-popup .canvas-model-picker-option-meta {
+        color: rgba(29, 29, 31, 0.64) !important;
+    }
+
+    .canvas-image-model-picker-popup .canvas-model-picker-price {
+        border: 0 !important;
+        background: #f2f2f4 !important;
+        color: rgba(29, 29, 31, 0.68) !important;
+        padding: 5px 9px !important;
+    }
+
+    .canvas-image-model-picker-popup .ant-select-item-option-disabled {
+        color: inherit !important;
+        opacity: 1;
+    }
+
+    .canvas-image-model-picker-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled),
+    .canvas-image-model-picker-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+        background: rgba(29, 29, 31, 0.07) !important;
+    }
+
+    .dark .canvas-image-model-picker-popup .rc-virtual-list-holder {
+        scrollbar-color: rgba(255, 255, 255, 0.38) transparent;
+    }
+
+    .dark .canvas-image-model-picker-popup .canvas-model-picker-option-icon {
+        background: #3a3a3c !important;
+    }
+
+    .dark .canvas-image-model-picker-popup .canvas-model-picker-option-title {
+        color: #f5f5f7 !important;
+    }
+
+    .dark .canvas-image-model-picker-popup .canvas-model-picker-option-meta {
+        color: rgba(255, 255, 255, 0.6) !important;
+    }
+
+    .dark .canvas-image-model-picker-popup .canvas-model-picker-price {
+        background: #353537 !important;
+        color: rgba(255, 255, 255, 0.62) !important;
+    }
+
+    .dark .canvas-image-model-picker-popup .canvas-model-picker-icon--configured {
+        filter: brightness(0) invert(1);
+    }
+
+    .dark .canvas-image-model-picker-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled),
+    .dark .canvas-image-model-picker-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+        background: rgba(255, 255, 255, 0.1) !important;
     }
 
     .canvas-node-prompt-panel--image {
