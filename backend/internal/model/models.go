@@ -221,6 +221,8 @@ type ChannelModel struct {
 	ChannelID             string                  `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
 	ModelKey              string                  `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
 	DisplayName           string                  `json:"displayName" gorm:"size:160"`
+	MarketingCopy         string                  `json:"marketingCopy" gorm:"size:240"`
+	PromotionBadge        string                  `json:"promotionBadge" gorm:"size:32"`
 	IconFile              string                  `json:"-" gorm:"size:160"`
 	IconMimeType          string                  `json:"-" gorm:"size:80"`
 	IconURL               string                  `json:"iconUrl" gorm:"-"`

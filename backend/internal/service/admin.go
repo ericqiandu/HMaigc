@@ -106,6 +106,8 @@ type PublicModelChannel struct {
 type PublicChannelModelPrice struct {
 	Model                 string                        `json:"model"`
 	DisplayName           string                        `json:"displayName"`
+	MarketingCopy         string                        `json:"marketingCopy"`
+	PromotionBadge        string                        `json:"promotionBadge"`
 	IconURL               string                        `json:"iconUrl"`
 	AccessPolicy          model.ModelAccessPolicy       `json:"accessPolicy"`
 	Accessible            bool                          `json:"accessible"`
@@ -635,7 +637,8 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
-				Model: item.ModelKey, DisplayName: item.DisplayName, IconURL: channelModelIconURL(item),
+				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
+				PromotionBadge: item.PromotionBadge, IconURL: channelModelIconURL(item),
 				AccessPolicy: item.AccessPolicy, Accessible: item.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
 				Capability:  item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,

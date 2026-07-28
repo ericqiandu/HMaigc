@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -15,6 +16,8 @@ import (
 type ChannelModelRequest struct {
 	ModelKey              string                         `json:"modelKey"`
 	DisplayName           string                         `json:"displayName"`
+	MarketingCopy         string                         `json:"marketingCopy"`
+	PromotionBadge        string                         `json:"promotionBadge"`
 	AccessPolicy          model.ModelAccessPolicy        `json:"accessPolicy"`
 	Capability            string                         `json:"capability"`
 	BillingMode           string                         `json:"billingMode"`
@@ -114,6 +117,20 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if modelKey == "" {
 		return nil, BadAuthRequest("请填写模型标识")
 	}
+	marketingCopy := strings.TrimSpace(req.MarketingCopy)
+	if len([]rune(marketingCopy)) > 120 {
+		return nil, BadAuthRequest("模型推广文案不能超过 120 个字符")
+	}
+	if strings.IndexFunc(marketingCopy, unicode.IsControl) >= 0 {
+		return nil, BadAuthRequest("模型推广文案不能包含换行或控制字符")
+	}
+	promotionBadge := strings.TrimSpace(req.PromotionBadge)
+	if len([]rune(promotionBadge)) > 12 {
+		return nil, BadAuthRequest("模型促销角标不能超过 12 个字符")
+	}
+	if strings.IndexFunc(promotionBadge, unicode.IsControl) >= 0 {
+		return nil, BadAuthRequest("模型促销角标不能包含换行或控制字符")
+	}
 	capability := normalizeCapability(req.Capability)
 	if capability == "" {
 		capability = capabilityForChannel(*channel)
@@ -158,18 +175,22 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 		return nil, BadAuthRequest("启用用户积分价格时，价格必须大于 0")
 	}
 	item := &model.ChannelModel{ID: newID(), ChannelID: channelID, AccessPolicy: model.ModelAccessAuthenticated, Enabled: true, PriceVersion: 1}
+	var previousPricing *channelModelPricingSnapshot
 	if id != "" {
 		item, err = s.repo.ChannelModelByID(channelID, id)
 		if err != nil {
 			return nil, err
 		}
-		item.PriceVersion++
+		snapshot := snapshotChannelModelPricing(item)
+		previousPricing = &snapshot
 	}
 	item.ModelKey = modelKey
 	item.DisplayName = strings.TrimSpace(req.DisplayName)
 	if item.DisplayName == "" {
 		item.DisplayName = modelKey
 	}
+	item.MarketingCopy = marketingCopy
+	item.PromotionBadge = promotionBadge
 	item.AccessPolicy = accessPolicy
 	item.Capability = capability
 	item.BillingMode = billingMode
@@ -179,12 +200,19 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if req.Enabled != nil {
 		item.Enabled = *req.Enabled
 	}
+	if priceStrategy == "image_resolution" || priceStrategy == "video_resolution" {
+		item.UnitPriceMicrocredits = 0
+	}
 	tiers, err := buildChannelModelPriceTiers(item, req.PriceTiers)
 	if err != nil {
 		return nil, err
 	}
-	if priceStrategy == "image_resolution" || priceStrategy == "video_resolution" {
-		item.UnitPriceMicrocredits = 0
+	pricingChanged := previousPricing != nil && previousPricing.differsFrom(item, tiers)
+	if pricingChanged {
+		item.PriceVersion++
+	}
+	for index := range tiers {
+		tiers[index].PriceVersion = item.PriceVersion
 	}
 	currentModels, err := s.repo.ChannelModels(channelID, true)
 	if err != nil {
@@ -194,10 +222,11 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if err != nil {
 		return nil, err
 	}
-	audit, err := newAdminAuditEvent(actor, "channel_model.save", "channel_model", item.ID, "保存模型目录、访问策略与计费配置", map[string]any{
+	audit, err := newAdminAuditEvent(actor, "channel_model.save", "channel_model", item.ID, "保存模型目录、展示配置、访问策略与计费配置", map[string]any{
 		"channelId": item.ChannelID, "modelKey": item.ModelKey, "displayName": item.DisplayName,
+		"marketingCopy": item.MarketingCopy, "promotionBadge": item.PromotionBadge,
 		"accessPolicy": item.AccessPolicy, "capability": item.Capability, "enabled": item.Enabled,
-		"priceConfigured": item.PriceConfigured, "priceVersion": item.PriceVersion,
+		"priceConfigured": item.PriceConfigured, "priceVersion": item.PriceVersion, "pricingChanged": pricingChanged,
 	})
 	if err != nil {
 		return nil, err
@@ -211,6 +240,44 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	normalized := normalizeChannelModelPriceTierCollections([]model.ChannelModel{*saved})
 	return &normalized[0], nil
+}
+
+type channelModelPricingSnapshot struct {
+	billingMode           string
+	priceStrategy         string
+	unitPriceMicrocredits int64
+	priceConfigured       bool
+	priceTiers            map[string]int64
+}
+
+func snapshotChannelModelPricing(item *model.ChannelModel) channelModelPricingSnapshot {
+	priceTiers := make(map[string]int64, len(item.PriceTiers))
+	for _, tier := range item.PriceTiers {
+		priceTiers[tier.Resolution] = tier.UnitPriceMicrocredits
+	}
+	return channelModelPricingSnapshot{
+		billingMode:           item.BillingMode,
+		priceStrategy:         item.PriceStrategy,
+		unitPriceMicrocredits: item.UnitPriceMicrocredits,
+		priceConfigured:       item.PriceConfigured,
+		priceTiers:            priceTiers,
+	}
+}
+
+func (snapshot channelModelPricingSnapshot) differsFrom(item *model.ChannelModel, tiers []model.ChannelModelPriceTier) bool {
+	if snapshot.billingMode != item.BillingMode ||
+		snapshot.priceStrategy != item.PriceStrategy ||
+		snapshot.unitPriceMicrocredits != item.UnitPriceMicrocredits ||
+		snapshot.priceConfigured != item.PriceConfigured ||
+		len(snapshot.priceTiers) != len(tiers) {
+		return true
+	}
+	for _, tier := range tiers {
+		if unitPrice, exists := snapshot.priceTiers[tier.Resolution]; !exists || unitPrice != tier.UnitPriceMicrocredits {
+			return true
+		}
+	}
+	return false
 }
 
 func channelModelNamesAfterSave(items []model.ChannelModel, saved *model.ChannelModel) []string {

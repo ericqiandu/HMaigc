@@ -11,6 +11,8 @@ import type { ModelChannel } from "@/stores/use-config-store";
 type FormValues = {
     modelKey: string;
     displayName?: string;
+    marketingCopy?: string;
+    promotionBadge?: string;
     accessPolicy: ChannelModel["accessPolicy"];
     capability: ChannelModel["capability"];
     enabled: boolean;
@@ -74,7 +76,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const startCreate = () => {
         setEditing(null);
-        form.setFieldsValue({ modelKey: "", displayName: "", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
+        form.setFieldsValue({ modelKey: "", displayName: "", marketingCopy: "", promotionBadge: "", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
         setEditorOpen(true);
     };
 
@@ -83,6 +85,8 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         form.setFieldsValue({
             modelKey: item.modelKey,
             displayName: item.displayName,
+            marketingCopy: item.marketingCopy,
+            promotionBadge: item.promotionBadge,
             accessPolicy: item.accessPolicy,
             capability: item.capability,
             enabled: item.enabled,
@@ -97,6 +101,8 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             const sharedPayload = {
                 modelKey: values.modelKey.trim(),
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
+                marketingCopy: values.marketingCopy?.trim() || "",
+                promotionBadge: values.promotionBadge?.trim() || "",
                 accessPolicy: values.accessPolicy,
                 capability: values.capability,
                 enabled: values.enabled !== false,
@@ -200,6 +206,16 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 </div>
             ),
         },
+        {
+            title: "运营展示",
+            width: 190,
+            render: (_, item) => (
+                <div className="channel-model-presentation min-w-0">
+                    {item.promotionBadge ? <Tag className="channel-model-promotion-tag" color="gold">{item.promotionBadge}</Tag> : null}
+                    <div className="channel-model-marketing-copy mt-1 truncate text-xs text-foreground/45" title={item.marketingCopy || undefined}>{item.marketingCopy || "未配置推广文案"}</div>
+                </div>
+            ),
+        },
         { title: "访问", dataIndex: "accessPolicy", width: 110, render: (value) => value === "member" ? <Tag className="channel-model-member-tag" icon={<LockKeyhole className="channel-model-member-tag-icon size-3" />} color="gold">会员专属</Tag> : <Tag className="channel-model-public-tag">全部用户</Tag> },
         { title: "能力", dataIndex: "capability", width: 90, render: capabilityLabel },
         {
@@ -232,7 +248,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const filteredItems = items.filter((item) => {
         const query = keyword.trim().toLowerCase();
-        if (query && !`${item.modelKey} ${item.displayName}`.toLowerCase().includes(query)) return false;
+        if (query && !`${item.modelKey} ${item.displayName} ${item.marketingCopy} ${item.promotionBadge}`.toLowerCase().includes(query)) return false;
         if (capability !== "all" && item.capability !== capability) return false;
         if (status === "enabled" && !item.enabled) return false;
         if (status === "disabled" && item.enabled) return false;
@@ -246,7 +262,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <Button aria-label="返回 AI 模型配置" icon={<ArrowLeft className="size-4" />} onClick={onClose} />
                     <div className="min-w-0">
                         <h2 className="truncate text-lg font-semibold">{channel.name} / 模型管理</h2>
-                        <p className="mt-1 text-xs text-foreground/50">维护模型标识、能力与启用状态；成本和积分售价统一在商业定价中管理。</p>
+                        <p className="mt-1 text-xs text-foreground/50">维护模型标识、用户侧展示、能力与启用状态；成本和积分售价统一在商业定价中管理。</p>
                     </div>
                 </div>
                 <Space wrap>
@@ -260,7 +276,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 </Space>
             </div>
             <ListToolbar active={Boolean(keyword || capability !== "all" || status !== "all")} onReset={() => { setKeyword(""); setCapability("all"); setStatus("all"); setPage(1); }}>
-                <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索模型标识或显示名称" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
+                <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索模型、文案或角标" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
                 <Select className="w-32" value={capability} onChange={(value) => { setCapability(value); setPage(1); }} options={[{ label: "全部能力", value: "all" }, { label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} />
                 <Select className="w-32" value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={[{ label: "全部状态", value: "all" }, { label: "已启用", value: "enabled" }, { label: "已停用", value: "disabled" }]} />
             </ListToolbar>
@@ -273,7 +289,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     columns={columns}
                     dataSource={filteredItems}
                     pagination={{ current: page, pageSize, total: filteredItems.length, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize !== pageSize ? 1 : nextPage); setPageSize(nextPageSize); } }}
-                    scroll={{ x: 760 }}
+                    scroll={{ x: 950 }}
                 />
             </TableSurface>
             <Drawer title={editing ? "编辑模型" : "新增模型"} open={editorOpen} size="min(520px, 100vw)" onClose={() => setEditorOpen(false)} styles={{ body: { paddingBottom: 88 } }} extra={editing ? <Button size="small" icon={<Plus className="size-3.5" />} onClick={startCreate}>新增</Button> : null}>
@@ -283,6 +299,12 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </Form.Item>
                     <Form.Item className="channel-model-display-name-field" name="displayName" label="显示名称">
                         <Input className="channel-model-display-name-input" placeholder="不填则使用模型标识" />
+                    </Form.Item>
+                    <Form.Item className="channel-model-marketing-copy-field" name="marketingCopy" label="悬浮介绍文案" extra="用户把鼠标停在模型选项上时显示；留空则不显示悬浮说明。">
+                        <Input className="channel-model-marketing-copy-input" maxLength={120} showCount placeholder="例如：最强视频模型，会员专属通道，支持 15 秒音画同步" />
+                    </Form.Item>
+                    <Form.Item className="channel-model-promotion-badge-field" name="promotionBadge" label="促销角标" extra="仅作为运营展示，不会自动修改积分价格或活动有效期；活动结束后请及时清空。">
+                        <Input className="channel-model-promotion-badge-input" maxLength={12} showCount placeholder="例如：限时4折" />
                     </Form.Item>
                     <Form.Item className="channel-model-access-field" name="accessPolicy" label="使用权限" extra="会员专属模型仅允许有效个人会员或有效团队席位成员调用；服务端会在实际生成前再次校验。" rules={[{ required: true, message: "请选择使用权限" }]}>
                         <Select className="channel-model-access-select" options={[{ label: "全部登录用户", value: "authenticated" }, { label: "有效会员专属", value: "member" }]} />

@@ -99,6 +99,7 @@ func TestPublicChannelMarksMemberModelAccessibility(t *testing.T) {
 	channel := model.ModelChannel{ID: "channel-1", Scope: model.ChannelScopeSystem, Enabled: true}
 	item := model.ChannelModel{
 		ID: "member-image", ChannelID: channel.ID, ModelKey: "member-image", DisplayName: "会员图片模型",
+		MarketingCopy: "高质量会员图片模型", PromotionBadge: "限时4折",
 		AccessPolicy: model.ModelAccessMember, Capability: "image", BillingMode: "fixed_request",
 		PriceStrategy: "flat", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
 	}
@@ -111,6 +112,9 @@ func TestPublicChannelMarksMemberModelAccessibility(t *testing.T) {
 	}
 	if guestCatalog.ModelCosts[0].AccessPolicy != model.ModelAccessMember || !memberCatalog.ModelCosts[0].Accessible {
 		t.Fatalf("member catalog = %#v", memberCatalog.ModelCosts)
+	}
+	if guestCatalog.ModelCosts[0].MarketingCopy != item.MarketingCopy || guestCatalog.ModelCosts[0].PromotionBadge != item.PromotionBadge {
+		t.Fatalf("model presentation = %#v", guestCatalog.ModelCosts[0])
 	}
 }
 
@@ -189,8 +193,9 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 	enabled := true
 
 	saved, err := svc.SaveAdminChannelModel(admin, channel.ID, "", ChannelModelRequest{
-		ModelKey: "member-image", DisplayName: "会员图片", AccessPolicy: model.ModelAccessMember,
-		Capability: "image", BillingMode: "fixed_request", PriceStrategy: "flat",
+		ModelKey: "member-image", DisplayName: "会员图片", MarketingCopy: "面向会员的高质量图片生成", PromotionBadge: "限时4折",
+		AccessPolicy: model.ModelAccessMember,
+		Capability:   "image", BillingMode: "fixed_request", PriceStrategy: "flat",
 		UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: &enabled,
 	})
 	if err != nil {
@@ -198,6 +203,9 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 	}
 	if saved.AccessPolicy != model.ModelAccessMember {
 		t.Fatalf("access policy = %q, want member", saved.AccessPolicy)
+	}
+	if saved.MarketingCopy != "面向会员的高质量图片生成" || saved.PromotionBadge != "限时4折" {
+		t.Fatalf("model presentation = %#v", saved)
 	}
 	var storedChannel model.ModelChannel
 	if err := db.First(&storedChannel, "id = ?", channel.ID).Error; err != nil {
@@ -212,5 +220,66 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 	}
 	if auditCount != 1 {
 		t.Fatalf("audit count = %d, want 1", auditCount)
+	}
+
+	presentationUpdated, err := svc.SaveAdminChannelModel(admin, channel.ID, saved.ID, ChannelModelRequest{
+		ModelKey: saved.ModelKey, DisplayName: saved.DisplayName,
+		MarketingCopy: "更新后的会员模型介绍", PromotionBadge: "会员专享",
+		AccessPolicy: saved.AccessPolicy, Capability: saved.Capability,
+		BillingMode: saved.BillingMode, PriceStrategy: saved.PriceStrategy,
+		UnitPriceMicrocredits: saved.UnitPriceMicrocredits, PriceConfigured: saved.PriceConfigured, Enabled: &enabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if presentationUpdated.PriceVersion != saved.PriceVersion {
+		t.Fatalf("presentation-only update price version = %d, want %d", presentationUpdated.PriceVersion, saved.PriceVersion)
+	}
+
+	priceUpdated, err := svc.SaveAdminChannelModel(admin, channel.ID, saved.ID, ChannelModelRequest{
+		ModelKey: presentationUpdated.ModelKey, DisplayName: presentationUpdated.DisplayName,
+		MarketingCopy: presentationUpdated.MarketingCopy, PromotionBadge: presentationUpdated.PromotionBadge,
+		AccessPolicy: presentationUpdated.AccessPolicy, Capability: presentationUpdated.Capability,
+		BillingMode: presentationUpdated.BillingMode, PriceStrategy: presentationUpdated.PriceStrategy,
+		UnitPriceMicrocredits: 120_000, PriceConfigured: presentationUpdated.PriceConfigured, Enabled: &enabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if priceUpdated.PriceVersion != presentationUpdated.PriceVersion+1 {
+		t.Fatalf("pricing update price version = %d, want %d", priceUpdated.PriceVersion, presentationUpdated.PriceVersion+1)
+	}
+
+	invalidPresentationCases := []struct {
+		name           string
+		marketingCopy  string
+		promotionBadge string
+		wantMessage    string
+	}{
+		{name: "marketing copy", marketingCopy: strings.Repeat("文", 121), promotionBadge: "限时4折", wantMessage: "推广文案不能超过"},
+		{name: "promotion badge", marketingCopy: "正常文案", promotionBadge: strings.Repeat("促", 13), wantMessage: "促销角标不能超过"},
+		{name: "marketing copy control character", marketingCopy: "第一行\n第二行", promotionBadge: "限时4折", wantMessage: "推广文案不能包含"},
+		{name: "promotion badge control character", marketingCopy: "正常文案", promotionBadge: "限时\n4折", wantMessage: "促销角标不能包含"},
+	}
+	for _, testCase := range invalidPresentationCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, saveErr := svc.SaveAdminChannelModel(admin, channel.ID, saved.ID, ChannelModelRequest{
+				ModelKey: priceUpdated.ModelKey, DisplayName: priceUpdated.DisplayName,
+				MarketingCopy: testCase.marketingCopy, PromotionBadge: testCase.promotionBadge,
+				AccessPolicy: priceUpdated.AccessPolicy, Capability: priceUpdated.Capability,
+				BillingMode: priceUpdated.BillingMode, PriceStrategy: priceUpdated.PriceStrategy,
+				UnitPriceMicrocredits: priceUpdated.UnitPriceMicrocredits, PriceConfigured: priceUpdated.PriceConfigured, Enabled: &enabled,
+			})
+			if saveErr == nil || !strings.Contains(saveErr.Error(), testCase.wantMessage) {
+				t.Fatalf("SaveAdminChannelModel() error = %v, want %q", saveErr, testCase.wantMessage)
+			}
+		})
+	}
+	storedModel, err := svc.repo.ChannelModelByID(channel.ID, saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedModel.MarketingCopy != priceUpdated.MarketingCopy || storedModel.PromotionBadge != priceUpdated.PromotionBadge {
+		t.Fatalf("invalid presentation request mutated model: %#v", storedModel)
 	}
 }

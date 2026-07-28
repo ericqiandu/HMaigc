@@ -24,6 +24,8 @@ export type ModelChannel = {
     modelCosts?: Array<{
         model: string;
         displayName?: string;
+        marketingCopy: string;
+        promotionBadge: string;
         iconUrl?: string;
         accessPolicy: "authenticated" | "member";
         accessible: boolean;

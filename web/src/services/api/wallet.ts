@@ -64,6 +64,8 @@ export type ChannelModel = {
     channelId: string;
     modelKey: string;
     displayName: string;
+    marketingCopy: string;
+    promotionBadge: string;
     iconUrl: string;
     accessPolicy: "authenticated" | "member";
     capability: "text" | "image" | "video" | "audio";

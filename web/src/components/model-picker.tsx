@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Coins, Cpu } from "lucide-react";
-import { Select } from "antd";
+import { Select, Tooltip } from "antd";
 
 import { cn } from "@/lib/utils";
 import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionLabel, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
@@ -122,24 +122,31 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
 }
 
 function ModelLabel({ config, model, presentation }: { config: AiConfig; model: string; presentation: ModelPickerProps["presentation"] }) {
-    const channel = resolveModelChannel(config, model);
     const canvasImage = presentation === "canvasImage";
-    return (
+    const presentationConfig = modelCatalogEntry(config, model);
+    const content = (
         <span className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasImage ? "gap-2.5" : "gap-1.5 py-0")}>
             <span className={cn("canvas-model-picker-option-icon grid shrink-0 place-items-center bg-foreground/[.07]", canvasImage ? "size-9 rounded-lg" : "size-6 rounded-md")}>
                 <ModelIcon config={config} model={model} />
             </span>
-            <span className="canvas-model-picker-option-body min-w-0 flex-1">
-                <span className={cn("canvas-model-picker-option-title flex min-w-0 items-center gap-1 font-semibold", canvasImage ? "text-[14px] leading-5" : "text-[11px] leading-none")}>
-                    <span className="canvas-model-picker-option-title-text truncate">{modelDisplayName(config, model)}</span>
-                    {isMemberModel(config, model) ? <MemberDiamond /> : null}
-                </span>
-                <span className={cn("canvas-model-picker-option-meta block truncate", canvasImage ? "mt-0.5 text-[11px] leading-4 text-foreground/45" : "mt-0.5 text-[10px] opacity-45")}>
-                    {channel.name || "未命名渠道"} · {modelOptionName(model)}
-                </span>
+            <span className={cn("canvas-model-picker-option-body canvas-model-picker-option-title flex min-w-0 flex-1 items-center gap-1.5 font-semibold", canvasImage ? "text-[14px] leading-5" : "text-[11px] leading-none")}>
+                <span className="canvas-model-picker-option-title-text truncate">{modelDisplayName(config, model)}</span>
+                {isMemberModel(config, model) ? <MemberDiamond /> : null}
+                {presentationConfig?.promotionBadge ? (
+                    <span className="canvas-model-picker-promotion-badge inline-flex h-5 max-w-20 shrink-0 items-center rounded-full bg-[#ffbf3f] px-2 text-[10px] font-semibold leading-none text-[#493000]">
+                        <span className="canvas-model-picker-promotion-badge-text truncate">{presentationConfig.promotionBadge}</span>
+                    </span>
+                ) : null}
             </span>
             <ModelPrice price={modelMenuPrice(config, model)} presentation={presentation} />
         </span>
+    );
+    const marketingCopy = presentationConfig?.marketingCopy?.trim();
+    if (!marketingCopy) return content;
+    return (
+        <Tooltip classNames={{ root: "canvas-model-picker-marketing-tooltip" }} title={<span className="canvas-model-picker-marketing-tooltip-copy">{marketingCopy}</span>} placement="right" mouseEnterDelay={0.25}>
+            <span className="canvas-model-picker-tooltip-trigger block w-full min-w-0">{content}</span>
+        </Tooltip>
     );
 }
 
@@ -188,8 +195,8 @@ function isMemberModel(config: AiConfig, model: string) {
 
 function MemberDiamond() {
     return (
-        <span className="canvas-model-picker-member-diamond inline-flex size-3.5 shrink-0 items-center justify-center" role="img" aria-label="会员专属模型" title="会员专属模型">
-            <img className="canvas-model-picker-member-diamond-image size-3 object-contain" src="/icons/member-diamond.svg" alt="" aria-hidden="true" />
+        <span className="canvas-model-picker-member-diamond inline-flex size-4 shrink-0 items-center justify-center" role="img" aria-label="会员专属模型" title="会员专属模型">
+            <img className="canvas-model-picker-member-diamond-image size-3.5 object-contain" src="/icons/member-diamond.svg" alt="" aria-hidden="true" />
         </span>
     );
 }

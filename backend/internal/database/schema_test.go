@@ -17,6 +17,12 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	if err := MigrateSchema(db); err != nil {
 		t.Fatalf("initial schema migration: %v", err)
 	}
+	if !db.Migrator().HasColumn(&model.ChannelModel{}, "marketing_copy") {
+		t.Fatal("channel_models.marketing_copy was not migrated")
+	}
+	if !db.Migrator().HasColumn(&model.ChannelModel{}, "promotion_badge") {
+		t.Fatal("channel_models.promotion_badge was not migrated")
+	}
 
 	channel := model.ModelChannel{
 		ID:            "channel-image",
