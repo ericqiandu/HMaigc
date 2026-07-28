@@ -224,7 +224,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     ) : (
         <div className="flex min-w-0 items-center justify-between gap-0.5 px-0.5">
             <div className={`${expanded ? "max-w-[320px]" : mode === "image" || mode === "video" ? "max-w-[240px]" : "max-w-[174px]"} min-w-[104px] flex-1`}>
-                <ModelPicker className="!h-7 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3" fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} />
+                <ModelPicker className="!h-7 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3" fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} presentation={mode === "image" ? "canvasImage" : "default"} />
             </div>
             <div className="ml-auto flex min-w-0 shrink-0 items-center gap-0.5">
                 {mode === "image" ? (

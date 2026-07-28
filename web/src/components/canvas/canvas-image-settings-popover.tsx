@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
-import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
+import { CanvasImageGenerationSettings, imageCanvasAspectLabel, imageCanvasQualityLabel, imageCanvasResolutionLabel } from "@/components/canvas/canvas-image-generation-settings";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -28,9 +29,9 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
     const transparentLabel = config.transparentBackground === "true" ? " · 透明" : "";
-    const summary = showCount ? `${imageQualityLabel(quality)} · ${imageSizeLabel(activeSize)} · ${count} 张${transparentLabel}` : `${imageQualityLabel(quality)} · ${imageSizeLabel(activeSize)}${transparentLabel}`;
+    const settingsSummary = `${imageCanvasAspectLabel(config.size)} · ${imageCanvasQualityLabel(quality)} · ${imageCanvasResolutionLabel(config.size)}`;
+    const summary = showCount ? `${settingsSummary} · ${count}张${transparentLabel}` : `${settingsSummary}${transparentLabel}`;
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -63,9 +64,16 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
 
     return (
         <>
-            <span ref={buttonRef} className="inline-flex min-w-0">
-                <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => updateOpen(!open)}>
-                    <span className="truncate">{summary}</span>
+            <span ref={buttonRef} className="canvas-image-settings-trigger-wrap inline-flex min-w-0">
+                <Button
+                    size="small"
+                    type="text"
+                    className={cn("canvas-image-settings-trigger", buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5")}
+                    style={{ background: theme.node.fill, color: theme.node.text }}
+                    icon={<Settings2 className="canvas-image-settings-trigger-icon size-3.5" />}
+                    onClick={() => updateOpen(!open)}
+                >
+                    <span className="canvas-image-settings-trigger-summary truncate">{summary}</span>
                 </Button>
             </span>
             {panel}
@@ -90,7 +98,7 @@ function ImageSettingsPortal({
     showCount: boolean;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 }) {
-    const width = 328;
+    const width = 352;
     const gap = 8;
     const margin = 12;
     const alignRight = placement?.endsWith("Right");
@@ -105,7 +113,7 @@ function ImageSettingsPortal({
         ...(topPlacement ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, buttonRect.top - margin * 2) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, window.innerHeight - buttonRect.bottom - margin * 2) }),
         background: theme.spatial.elevated,
         border: `1px solid ${theme.toolbar.border}`,
-        borderRadius: 10,
+        borderRadius: 16,
         boxShadow: `0 24px 72px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.08)`,
         padding: 12,
         overflowY: "auto",
@@ -121,7 +129,7 @@ function ImageSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showCount={showCount} className="space-y-3" />
+            <CanvasImageGenerationSettings config={config} onConfigChange={onConfigChange} theme={theme} showCount={showCount} />
         </div>,
         document.body,
     );
