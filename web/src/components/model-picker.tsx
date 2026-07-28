@@ -97,7 +97,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 onChange={(nextModel) => {
                     if (isModelAccessible(config, nextModel)) onChange(nextModel);
                 }}
-                optionRender={(option) => <ModelLabel config={config} model={String(option.value)} presentation={presentation} />}
+                optionRender={(option) => <ModelLabel config={config} model={String(option.value)} presentation={presentation} selected={String(option.value) === current} />}
                 labelRender={() => (
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5 text-[11px]">
                         <ModelIcon config={config} model={current} />
@@ -121,12 +121,18 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? `暂无匹配的${label}模型` : "系统暂无可用模型，请联系管理员配置";
 }
 
-function ModelLabel({ config, model, presentation }: { config: AiConfig; model: string; presentation: ModelPickerProps["presentation"] }) {
+function ModelLabel({ config, model, presentation, selected }: { config: AiConfig; model: string; presentation: ModelPickerProps["presentation"]; selected: boolean }) {
+    const [hovered, setHovered] = useState(false);
     const canvasImage = presentation === "canvasImage";
     const presentationConfig = modelCatalogEntry(config, model);
     const marketingCopy = canvasImage ? presentationConfig?.marketingCopy?.trim() : "";
+    const showMarketingCopy = Boolean(marketingCopy && (selected || hovered));
     return (
-        <span className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasImage ? "gap-2.5" : "gap-1.5 py-0")}>
+        <span
+            className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasImage ? "gap-2.5" : "gap-1.5 py-0", selected && "canvas-model-picker-option--selected")}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
             <span className={cn("canvas-model-picker-option-icon grid shrink-0 place-items-center bg-foreground/[.07]", canvasImage ? "size-9 rounded-lg" : "size-6 rounded-md")}>
                 <ModelIcon config={config} model={model} />
             </span>
@@ -140,7 +146,7 @@ function ModelLabel({ config, model, presentation }: { config: AiConfig; model: 
                         </span>
                     ) : null}
                 </span>
-                {marketingCopy ? (
+                {showMarketingCopy ? (
                     <span className="canvas-model-picker-option-meta mt-0.5 block w-full truncate text-[11px] font-normal leading-4">
                         {marketingCopy}
                     </span>
