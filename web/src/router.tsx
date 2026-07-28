@@ -29,6 +29,7 @@ import NotFound from "@/pages/not-found";
 import RouteErrorPage from "@/pages/route-error";
 import SkillsPage from "@/pages/skills";
 import TasksPage from "@/pages/tasks";
+import TeamsPage from "@/pages/teams";
 import WalletPage from "@/pages/wallet";
 import ProjectsPage from "@/pages/projects";
 import ProjectDetailPage from "@/pages/projects/detail";
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
             { path: "/legal/privacy-policy", element: <LegalDocumentPage document="privacyPolicy" /> },
             { path: "/membership", element: <MembershipPage /> },
             { path: "/tasks", element: <RequireAuth><TasksPage /></RequireAuth> },
+            { path: "/teams", element: <RequireAuth><TeamsPage /></RequireAuth> },
             { path: "/assets", element: <RequireAuth><AssetsPage /></RequireAuth> },
             { path: "/skills", element: <RequireAuth><SkillsPage /></RequireAuth> },
             { path: "/wallet", element: <RequireAuth><WalletPage /></RequireAuth> },

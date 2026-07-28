@@ -1,7 +1,7 @@
 import { Alert, Button, Empty, message, Segmented, Spin } from "antd";
 import { ArrowRight, ChevronLeft, Crown, ImageIcon, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { useSiteSettings } from "@/components/site/site-settings-provider";
 import { cancelMembershipOrder, createMembershipOrder, createTeam, getMyMembership, listMembershipPlans, type MembershipAudience, type MembershipBillingCycle, type MembershipOverview, type MembershipPlan } from "@/services/api/membership";
@@ -25,12 +25,15 @@ const paidCycleOrder: MembershipBillingCycle[] = ["year", "month"];
 
 export default function MembershipPage() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const requestedAudience = searchParams.get("audience") === "team" ? "team" : "personal";
+    const requestedTeamId = searchParams.get("teamId") || undefined;
     const user = useUserStore((state) => state.user);
     const { settings } = useSiteSettings();
     const carouselRef = useRef<HTMLDivElement>(null);
     const [plans, setPlans] = useState<MembershipPlan[]>([]);
     const [overview, setOverview] = useState<MembershipOverview | null>(null);
-    const [audience, setAudience] = useState<MembershipAudience>("personal");
+    const [audience, setAudience] = useState<MembershipAudience>(requestedAudience);
     const [cycle, setCycle] = useState<MembershipBillingCycle>("year");
     const [teamSeats, setTeamSeats] = useState<Record<string, number>>({});
     const [selection, setSelection] = useState<PurchaseSelection | null>(null);
@@ -71,6 +74,11 @@ export default function MembershipPage() {
     useEffect(() => {
         void load();
     }, [load]);
+
+    useEffect(() => {
+        if (!requestedTeamId || !overview?.teams.some((team) => team.id === requestedTeamId)) return;
+        setTeamId(requestedTeamId);
+    }, [overview, requestedTeamId]);
 
     useEffect(() => {
         const closeOnEscape = (event: KeyboardEvent) => {
@@ -136,7 +144,7 @@ export default function MembershipPage() {
         }
         const normalizedSeats = clampSeats(plan, seats);
         setSelection({ plan, seats: normalizedSeats });
-        setTeamId(overview?.teams[0]?.id);
+        setTeamId(requestedTeamId && overview?.teams.some((team) => team.id === requestedTeamId) ? requestedTeamId : overview?.teams[0]?.id);
         setTeamName("");
     };
 

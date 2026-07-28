@@ -62,43 +62,6 @@ func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, order)
 	})
-	r.POST("/teams", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.CreateTeamRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		team, err := svc.CreateTeam(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, team)
-	})
-	r.POST("/teams/:id/members", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.AddTeamMemberRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		member, err := svc.AddTeamMember(user, c.Param("id"), req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, member)
-	})
-
 	r.GET("/admin/membership/plans", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
 		if err != nil {

@@ -61,15 +61,6 @@ type CloseMembershipOrderRequest struct {
 	Note string `json:"note"`
 }
 
-type CreateTeamRequest struct {
-	Name string `json:"name"`
-}
-
-type AddTeamMemberRequest struct {
-	Email string               `json:"email"`
-	Role  model.TeamMemberRole `json:"role"`
-}
-
 func (s *Service) EnsureDefaultMembershipPlans() error {
 	benefits := func(values ...string) string {
 		payload, err := json.Marshal(values)
@@ -86,9 +77,9 @@ func (s *Service) EnsureDefaultMembershipPlans() error {
 		{ID: newID(), Code: "max-year", Name: "Max", Tier: "max", Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 310900, OriginalPriceCents: 777600, Currency: "CNY", CreditsPerPeriod: 64800 * 12 * CreditScale, ImageConcurrency: 8, VideoConcurrency: 6, TopupDiscountBasisPoints: 7500, BenefitsJSON: benefits("每年 777,600 积分", "图片并发 8 路", "视频并发 6 路", "积分充值 7.5 折"), Enabled: true, SortOrder: 31},
 		{ID: newID(), Code: "ultra-month", Name: "Ultra", Tier: "ultra", Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleMonth, PriceCents: 131400, OriginalPriceCents: 205300, Currency: "CNY", CreditsPerPeriod: 131400 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 7000, BenefitsJSON: benefits("每月 131,400 积分", "图片并发 12 路", "视频并发 8 路", "积分充值 7 折"), Enabled: true, SortOrder: 40},
 		{ID: newID(), Code: "ultra-year", Name: "Ultra", Tier: "ultra", Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 630900, OriginalPriceCents: 1576800, Currency: "CNY", CreditsPerPeriod: 131400 * 12 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 7000, BenefitsJSON: benefits("每年 1,576,800 积分", "图片并发 12 路", "视频并发 8 路", "积分充值 7 折"), Enabled: true, SortOrder: 41},
-		{ID: newID(), Code: "team-pro-year", Name: "团队 Pro", Tier: "pro", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 149900, OriginalPriceCents: 237600, Currency: "CNY", CreditsPerPeriod: 19800 * 12 * CreditScale, ImageConcurrency: 6, VideoConcurrency: 4, TopupDiscountBasisPoints: 9000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队主账户统一管理积分", "团队素材与项目权限", "成员用量统计与额度管理", "图片并发 6 路/席位", "视频并发 4 路/席位"), Enabled: true, SortOrder: 50},
-		{ID: newID(), Code: "team-max-year", Name: "团队 Max", Tier: "max", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 449900, OriginalPriceCents: 777600, Currency: "CNY", CreditsPerPeriod: 64800 * 12 * CreditScale, ImageConcurrency: 8, VideoConcurrency: 6, TopupDiscountBasisPoints: 8500, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队主账户统一管理积分", "团队素材与项目权限", "成员用量统计与额度管理", "图片并发 8 路/席位", "视频并发 6 路/席位"), Enabled: true, SortOrder: 60},
-		{ID: newID(), Code: "team-ultra-year", Name: "团队 Ultra", Tier: "ultra", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 809900, OriginalPriceCents: 1576800, Currency: "CNY", CreditsPerPeriod: 131400 * 12 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 8000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队主账户统一管理积分", "团队素材与项目权限", "成员用量统计与额度管理", "图片并发 12 路/席位", "视频并发 8 路/席位"), Enabled: true, SortOrder: 70},
+		{ID: newID(), Code: "team-pro-year", Name: "团队 Pro", Tier: "pro", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 149900, OriginalPriceCents: 237600, Currency: "CNY", CreditsPerPeriod: 19800 * 12 * CreditScale, ImageConcurrency: 6, VideoConcurrency: 4, TopupDiscountBasisPoints: 9000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队席位与角色权限", "邮箱邀请与到期释放", "成员共享套餐模型访问", "关键操作审计记录", "图片并发 6 路/席位", "视频并发 4 路/席位"), Enabled: true, SortOrder: 50},
+		{ID: newID(), Code: "team-max-year", Name: "团队 Max", Tier: "max", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 449900, OriginalPriceCents: 777600, Currency: "CNY", CreditsPerPeriod: 64800 * 12 * CreditScale, ImageConcurrency: 8, VideoConcurrency: 6, TopupDiscountBasisPoints: 8500, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队席位与角色权限", "邮箱邀请与到期释放", "成员共享套餐模型访问", "关键操作审计记录", "图片并发 8 路/席位", "视频并发 6 路/席位"), Enabled: true, SortOrder: 60},
+		{ID: newID(), Code: "team-ultra-year", Name: "团队 Ultra", Tier: "ultra", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 809900, OriginalPriceCents: 1576800, Currency: "CNY", CreditsPerPeriod: 131400 * 12 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 8000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队席位与角色权限", "邮箱邀请与到期释放", "成员共享套餐模型访问", "关键操作审计记录", "图片并发 12 路/席位", "视频并发 8 路/席位"), Enabled: true, SortOrder: 70},
 	}
 	for index := range plans {
 		if err := s.repo.CreateMembershipPlanIfMissing(&plans[index]); err != nil {
@@ -474,59 +465,6 @@ func membershipPlanFromOrderSnapshot(order *model.MembershipOrder) (*model.Membe
 		return nil, fmt.Errorf("会员订单 %s 的套餐快照权益无效", order.ID)
 	}
 	return &snapshot, nil
-}
-
-func (s *Service) CreateTeam(user *model.User, req CreateTeamRequest) (*model.Team, error) {
-	name := strings.TrimSpace(req.Name)
-	if name == "" || len([]rune(name)) > 80 {
-		return nil, BadAuthRequest("团队名称不能为空且最多 80 个字符")
-	}
-	now := time.Now()
-	team := &model.Team{ID: newID(), OwnerUserID: user.ID, Name: name, Status: model.TeamStatusActive, CreatedAt: now, UpdatedAt: now}
-	owner := &model.TeamMember{ID: newID(), TeamID: team.ID, UserID: user.ID, Role: model.TeamMemberRoleOwner, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now}
-	if err := s.repo.CreateTeam(team, owner); err != nil {
-		return nil, err
-	}
-	return team, nil
-}
-
-func (s *Service) AddTeamMember(user *model.User, teamID string, req AddTeamMemberRequest) (*model.TeamMember, error) {
-	team, err := s.repo.TeamForOwner(user.ID, teamID)
-	if err != nil {
-		return nil, BadAuthRequest("团队不存在或当前用户不是团队所有者")
-	}
-	target, err := s.repo.UserByEmail(strings.ToLower(strings.TrimSpace(req.Email)))
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, BadAuthRequest("该邮箱尚未注册，不能加入团队")
-		}
-		return nil, err
-	}
-	if req.Role != model.TeamMemberRoleAdmin && req.Role != model.TeamMemberRoleMember {
-		return nil, BadAuthRequest("成员角色无效")
-	}
-	subscriptions, err := s.repo.ActiveMembershipSubscriptions(user.ID, time.Now())
-	if err != nil {
-		return nil, err
-	}
-	seatLimit := 0
-	for _, subscription := range subscriptions {
-		if subscription.TeamID == team.ID && subscription.Seats > seatLimit {
-			seatLimit = subscription.Seats
-		}
-	}
-	if seatLimit == 0 {
-		return nil, BadAuthRequest("团队尚未开通有效团队会员")
-	}
-	now := time.Now()
-	member := &model.TeamMember{ID: newID(), TeamID: team.ID, UserID: target.ID, Role: req.Role, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now}
-	if err := s.repo.AddTeamMember(member, seatLimit); err != nil {
-		if errors.Is(err, repository.ErrTeamSeatLimitReached) {
-			return nil, BadAuthRequest("团队席位已满，请先升级席位数")
-		}
-		return nil, err
-	}
-	return member, nil
 }
 
 func normalizePage(page int, limit int) (int, int) {

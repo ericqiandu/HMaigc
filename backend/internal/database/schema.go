@@ -26,6 +26,8 @@ func Models() []any {
 		&model.MembershipPlan{},
 		&model.Team{},
 		&model.TeamMember{},
+		&model.TeamInvitation{},
+		&model.TeamAuditEvent{},
 		&model.MembershipOrder{},
 		&model.MembershipSubscription{},
 		&model.PaymentCheckoutSession{},

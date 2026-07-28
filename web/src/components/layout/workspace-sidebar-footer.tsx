@@ -1,5 +1,5 @@
 import { App, Popover, Switch } from "antd";
-import { BookOpenCheck, ChevronRight, Coins, LogIn, LogOut, Moon, Settings2, ShieldCheck, Sun, UserRound } from "lucide-react";
+import { BookOpenCheck, ChevronRight, Coins, LogIn, LogOut, Moon, Settings2, ShieldCheck, Sun, UserRound, UsersRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -76,6 +76,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
 
                             <nav className="py-2" aria-label="账号与工具">
                                 <MenuLink to="/wallet" icon={<Coins />} label="积分与账单" onNavigate={() => setMenuOpen(false)} />
+                                <MenuLink to="/teams" icon={<UsersRound />} label="团队空间" onNavigate={() => setMenuOpen(false)} />
                                 <MenuLink to="/skills" icon={<BookOpenCheck />} label="技能库" onNavigate={() => setMenuOpen(false)} />
                                 <MenuLink to="/settings" icon={<Settings2 />} label="设置" onNavigate={() => setMenuOpen(false)} />
                                 {user.role === "admin" ? <MenuLink to="/admin" icon={<ShieldCheck />} label="管理员后台" onNavigate={() => setMenuOpen(false)} /> : null}

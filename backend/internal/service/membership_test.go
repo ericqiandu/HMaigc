@@ -28,6 +28,8 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 		&model.MembershipSubscription{},
 		&model.Team{},
 		&model.TeamMember{},
+		&model.TeamInvitation{},
+		&model.TeamAuditEvent{},
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
 		&model.AdminAuditEvent{},

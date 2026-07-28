@@ -249,11 +249,6 @@ func (r *Repository) GrantMembershipSubscriptionCredits(subscription *model.Memb
 	})
 }
 
-func (r *Repository) TeamForOwner(ownerID string, teamID string) (*model.Team, error) {
-	var team model.Team
-	return &team, r.db.First(&team, "id = ? AND owner_user_id = ?", teamID, ownerID).Error
-}
-
 func (r *Repository) TeamsForUser(userID string) ([]model.Team, error) {
 	var teams []model.Team
 	err := r.db.Raw(`
@@ -265,35 +260,15 @@ func (r *Repository) TeamsForUser(userID string) ([]model.Team, error) {
 	return teams, err
 }
 
+func (r *Repository) TeamForOwner(ownerID string, teamID string) (*model.Team, error) {
+	var team model.Team
+	return &team, r.db.First(&team, "id = ? AND owner_user_id = ? AND status = ?", teamID, ownerID, model.TeamStatusActive).Error
+}
+
 func (r *Repository) TeamMembers(teamID string) ([]model.TeamMember, error) {
 	var members []model.TeamMember
 	err := r.db.Where("team_id = ? AND status = ?", teamID, model.TeamMemberStatusActive).Order("created_at asc").Find(&members).Error
 	return members, err
-}
-
-func (r *Repository) CreateTeam(team *model.Team, owner *model.TeamMember) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(team).Error; err != nil {
-			return err
-		}
-		return tx.Create(owner).Error
-	})
-}
-
-func (r *Repository) AddTeamMember(member *model.TeamMember, seatLimit int) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		var count int64
-		if err := tx.Model(&model.TeamMember{}).Where("team_id = ? AND status = ?", member.TeamID, model.TeamMemberStatusActive).Count(&count).Error; err != nil {
-			return err
-		}
-		if count >= int64(seatLimit) {
-			return ErrTeamSeatLimitReached
-		}
-		return tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "team_id"}, {Name: "user_id"}},
-			DoUpdates: clause.Assignments(map[string]interface{}{"role": member.Role, "status": member.Status, "updated_at": member.UpdatedAt}),
-		}).Create(member).Error
-	})
 }
 
 func (r *Repository) ActivateMembershipOrder(orderID string, actorID string, provider string, providerTradeNo string, note string, subscription *model.MembershipSubscription, ledger *model.CreditLedgerEntry) error {

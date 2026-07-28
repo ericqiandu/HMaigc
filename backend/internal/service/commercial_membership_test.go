@@ -285,7 +285,11 @@ func TestTeamPurchaseGrantsOwnerCreditsAndMemberEntitlement(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AddTeamMember(owner, team.ID, AddTeamMemberRequest{Email: member.Email, Role: model.TeamMemberRoleMember}); err != nil {
+	invitation, err := svc.CreateTeamInvitation(owner, team.ID, CreateTeamInvitationRequest{Email: member.Email, Role: model.TeamMemberRoleMember})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AcceptTeamInvitationByToken(member, AcceptTeamInvitationRequest{Token: invitation.AcceptToken}); err != nil {
 		t.Fatal(err)
 	}
 	var ownerAccount model.CreditAccount
