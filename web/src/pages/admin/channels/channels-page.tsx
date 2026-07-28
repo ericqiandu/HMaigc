@@ -154,11 +154,11 @@ export default function ChannelsPage() {
     ];
 
     if (managingChannel) {
-        return <AdminPageFrame title="系统渠道" description={`${managingChannel.name} · 模型与售价`}><ChannelModelManager channel={managingChannel} onClose={() => setManagingChannel(null)} onChanged={async () => { await syncChannels(); await reload(); }} /></AdminPageFrame>;
+        return <AdminPageFrame title="AI 模型配置" description={`${managingChannel.name} · 模型、成本与售价`}><ChannelModelManager channel={managingChannel} onClose={() => setManagingChannel(null)} onChanged={async () => { await syncChannels(); await reload(); }} /></AdminPageFrame>;
     }
 
     return (
-        <AdminPageFrame title="系统渠道" description="渠道、模型与售价" actions={<Button type="primary" icon={<Plus className="size-4" />} onClick={() => openDrawer()}>新增系统渠道</Button>}>
+        <AdminPageFrame title="AI 模型配置" description="统一管理系统渠道、可用模型、成本与用户售价" actions={<Button type="primary" icon={<Plus className="size-4" />} onClick={() => openDrawer()}>新增系统渠道</Button>}>
             <ListToolbar active={hasFilters} onReset={() => updateUrl({ filter: "", interfaceType: "all", status: "all", page: 1 })}>
                 <Input id="admin-channel-search" aria-label="搜索系统渠道" autoComplete="off" allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索渠道名称或地址" onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)} />
                 <Select className="w-40" value={interfaceType} onChange={(value) => updateUrl({ interfaceType: value, page: 1 })} options={[{ label: "全部接口", value: "all" }, ...interfaceTypeOptions.flatMap((group) => group.options)]} />

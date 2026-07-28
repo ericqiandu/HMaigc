@@ -29,7 +29,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             .map((channel) => ({
                 key: channel.id,
                 label: channel.name || "未命名渠道",
-                scope: channel.scope === "system" ? "系统渠道" : "自定义渠道",
+                scope: "系统渠道",
                 models: options.filter((model) => resolveModelChannel(config, model).id === channel.id),
             }))
             .filter((group) => group.models.length);
@@ -94,7 +94,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
 function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     const label = capability === "image" ? "生图" : capability === "video" ? "视频" : capability === "text" ? "文本" : capability === "audio" ? "音频" : "";
     if (capability && config.models.length) return `当前渠道没有匹配的${label}模型`;
-    return config.models.length ? `暂无匹配的${label}模型` : "请先到配置里添加渠道和模型";
+    return config.models.length ? `暂无匹配的${label}模型` : "系统暂无可用模型，请联系管理员配置";
 }
 
 function ModelLabel({ config, model, capability }: { config: AiConfig; model: string; capability?: ModelCapability }) {

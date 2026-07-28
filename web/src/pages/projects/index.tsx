@@ -53,7 +53,6 @@ export default function ProjectsPage() {
     return (
         <WorkspacePage>
             <PageHeader
-                icon="projects"
                 title="短剧创作"
                 description="按制作阶段查看故事项目，继续最近工作或处理未完成章节。"
                 meta={<span className="text-xs text-foreground/45">{rows.length} 个</span>}

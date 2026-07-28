@@ -106,3 +106,25 @@ func TestAuthorizeSystemProxyBlocksBackendOnlyVideoInterfaces(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyBillingCapabilityUsesRequestSemantics(t *testing.T) {
+	tests := []struct {
+		name          string
+		interfaceType model.ChannelInterfaceType
+		path          string
+		want          string
+	}{
+		{name: "chat", path: "/chat/completions", want: "text"},
+		{name: "image", path: "/images/edits", want: "image"},
+		{name: "audio", path: "/audio/speech", want: "audio"},
+		{name: "video backend", interfaceType: model.ChannelInterfaceNewAPIVideo, path: "/video/generations", want: "video"},
+		{name: "gemini catalog derived", path: "/models/gemini:generateContent", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := proxyBillingCapability(test.interfaceType, test.path); got != test.want {
+				t.Fatalf("proxyBillingCapability() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

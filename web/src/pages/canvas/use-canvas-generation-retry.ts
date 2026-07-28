@@ -23,7 +23,7 @@ import {
 } from "@/lib/canvas/canvas-project-generation";
 import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
 import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/generation-error";
-import { navigateToSettings } from "@/lib/settings-navigation";
+import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
 import { storeGeneratedVideo } from "@/services/api/video";
 import type { UpdreamSkill } from "@/services/api/skills";
@@ -72,7 +72,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                     ? { ...effectiveConfig, model: savedImageMetadata.model || effectiveConfig.imageModel || effectiveConfig.model, quality: savedImageMetadata.quality || effectiveConfig.quality, size: savedImageMetadata.size || effectiveConfig.size, transparentBackground: (savedImageMetadata.transparentBackground || effectiveConfig.transparentBackground) === "true" ? "true" : "false", count: "1" }
                     : { ...buildGenerationConfig(effectiveConfig, sourceNode, retryMode), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
-                navigateToSettings({ continueCreation: true });
+                handleMissingSystemModel();
                 return;
             }
 

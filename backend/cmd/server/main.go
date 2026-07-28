@@ -48,6 +48,9 @@ func main() {
 	if err := svc.EnsureDefaultStoryboardPromptTemplate(); err != nil {
 		log.Fatal(err)
 	}
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		log.Fatal(err)
+	}
 	if err := svc.EnsureBuiltinProjectWorkflowTemplate(); err != nil {
 		log.Fatal(err)
 	}
@@ -74,6 +77,8 @@ func main() {
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)
+	handler.RegisterMembershipRoutes(api, svc)
+	handler.RegisterPaymentRoutes(api, svc)
 	// 登录态模型目录代理：避免浏览器直连各上游时分别处理 CORS。
 	handler.RegisterChannelModelRoutes(api, svc)
 	handler.RegisterSystemProxyRoutes(api, svc)

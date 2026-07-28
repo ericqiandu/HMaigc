@@ -16,7 +16,13 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.ChannelModel{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.ChannelModel{},
+		&model.SystemSetting{},
+		&model.MembershipPlan{},
+		&model.MembershipSubscription{},
+		&model.TeamMember{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	channelModel := model.ChannelModel{
@@ -43,24 +49,134 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	}
 }
 
-func TestNormalizeTaskInputStillAllowsSecretProtection(t *testing.T) {
+func TestTaskBillingOrderRejectsMissingSystemModel(t *testing.T) {
+	svc := &Service{}
+	_, err := svc.taskBillingOrder("user-1", &model.Task{ID: "task-1", Type: "canvas_image"}, map[string]any{"mode": "image"})
+	if err == nil || !strings.Contains(err.Error(), "后台配置的系统模型") {
+		t.Fatalf("taskBillingOrder() error = %v", err)
+	}
+}
+
+func TestTaskBillingOrderRejectsCapabilityMismatchAndZeroPrice(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ChannelModel{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
+		t.Fatal(err)
+	}
+	items := []model.ChannelModel{
+		{
+			ID: "text-model", ChannelID: "channel-1", ModelKey: "text-model", Capability: "text",
+			BillingMode: "fixed_request", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+		},
+		{
+			ID: "free-image-model", ChannelID: "channel-1", ModelKey: "free-image-model", Capability: "image",
+			BillingMode: "fixed_request", UnitPriceMicrocredits: 0, PriceConfigured: true, Enabled: true,
+		},
+	}
+	if err := db.Create(&items).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	task := &model.Task{ID: "task-1", Type: "canvas_image"}
+
+	_, err = svc.taskBillingOrder("user-1", task, map[string]any{
+		"mode":   "image",
+		"config": map[string]any{"channelId": "channel-1", "model": "text-model"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "能力") {
+		t.Fatalf("capability mismatch error = %v", err)
+	}
+
+	_, err = svc.taskBillingOrder("user-1", task, map[string]any{
+		"mode":   "image",
+		"config": map[string]any{"channelId": "channel-1", "model": "free-image-model"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "积分价格") {
+		t.Fatalf("zero price error = %v", err)
+	}
+}
+
+func TestReserveProxyBillingDeductsCreditsAndRejectsInsufficientBalance(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&model.ChannelModel{},
+		&model.SystemSetting{},
+		&model.MembershipPlan{},
+		&model.MembershipSubscription{},
+		&model.TeamMember{},
+		&model.CreditAccount{},
+		&model.CreditLedgerEntry{},
+		&model.BillingOrder{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ChannelModel{
+		ID: "image-model", ChannelID: "channel-1", ModelKey: "image-model", Capability: "image",
+		BillingMode: "fixed_request", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: "user-1", AvailableMicrocredits: 150_000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	order, err := svc.ReserveProxyBilling("user-1", "channel-1", "image-model", "image", "canvas_image", "request-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.AmountMicrocredits != 100_000 {
+		t.Fatalf("order amount = %d", order.AmountMicrocredits)
+	}
+	var account model.CreditAccount
+	if err := db.First(&account, "user_id = ?", "user-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits != 50_000 || account.ReservedMicrocredits != 100_000 {
+		t.Fatalf("account = available:%d reserved:%d", account.AvailableMicrocredits, account.ReservedMicrocredits)
+	}
+	var ledgerCount int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("billing_order_id = ?", order.ID).Count(&ledgerCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ledgerCount != 1 {
+		t.Fatalf("reserve ledger count = %d", ledgerCount)
+	}
+	if _, err := svc.ReserveProxyBilling("user-1", "channel-1", "image-model", "image", "canvas_image", "request-2", 1); err == nil || !strings.Contains(err.Error(), "积分不足") {
+		t.Fatalf("insufficient balance error = %v", err)
+	}
+}
+
+func TestValidateSystemProviderInputRejectsCustomCredentials(t *testing.T) {
 	input, err := normalizeTaskInput(map[string]any{
 		"config": providerConfig{BaseURL: "https://example.com", APIKey: "private-key", Model: "text-model"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, ok := input["config"].(map[string]any)
-	if !ok || config["apiKey"] != "private-key" {
-		t.Fatalf("normalized config = %#v", input["config"])
+	if err := validateSystemProviderInput(input); err == nil {
+		t.Fatal("validateSystemProviderInput() error = nil")
 	}
-	svc := &Service{dataDir: t.TempDir()}
-	if err := svc.protectTaskSecrets(input); err != nil {
+}
+
+func TestValidateSystemProviderInputAcceptsSystemChannel(t *testing.T) {
+	input, err := normalizeTaskInput(map[string]any{
+		"config": providerConfig{
+			ChannelID: "channel-1",
+			BaseURL:   "/api/ai/system/channel-1",
+			APIKey:    "system",
+			Model:     "text-model",
+		},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	protected, _ := config["apiKey"].(string)
-	if protected == "private-key" || !strings.HasPrefix(protected, encryptedSettingPrefix) {
-		t.Fatalf("protected apiKey = %q", protected)
+	if err := validateSystemProviderInput(input); err != nil {
+		t.Fatalf("validateSystemProviderInput() error = %v", err)
 	}
 }
 

@@ -70,24 +70,15 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: OPENAI_BASE_URL,
+    baseUrl: "",
     apiKey: "",
     apiFormat: "openai",
-    channels: [
-        {
-            id: "default",
-            name: "默认渠道",
-            baseUrl: OPENAI_BASE_URL,
-            apiKey: "",
-            apiFormat: "openai",
-            models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
-        },
-    ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
-    textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    channels: [],
+    model: "",
+    imageModel: "",
+    videoModel: "",
+    textModel: "",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -97,11 +88,11 @@ export const defaultConfig: AiConfig = {
     videoGenerateAudio: "true",
     videoWatermark: "false",
     systemPrompt: "",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
-    imageModels: ["default::gpt-image-2"],
-    videoModels: ["default::grok-imagine-video"],
-    textModels: ["default::gpt-5.5"],
-    audioModels: ["default::gpt-4o-mini-tts"],
+    models: [],
+    imageModels: [],
+    videoModels: [],
+    textModels: [],
+    audioModels: [],
     quality: "auto",
     size: "1:1",
     transparentBackground: "false",
@@ -212,8 +203,7 @@ export const useConfigStore = create<ConfigStore>()(
                             apiKey: channel.apiKey || "system",
                         }),
                     );
-                    const userChannels = state.config.channels.filter((channel) => channel.scope !== "system");
-                    return normalizeConfigSnapshot({ config: { ...state.config, channels: [...systemChannels, ...userChannels] } });
+                    return normalizeConfigSnapshot({ config: { ...state.config, channels: systemChannels } });
                 }),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
         }),
@@ -235,9 +225,7 @@ export const useConfigStore = create<ConfigStore>()(
 export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot) {
     const persistedConfig = (snapshot.config || {}) as Partial<AiConfig>;
     const config = { ...defaultConfig, ...persistedConfig };
-    const hasPersistedChannels = Array.isArray(persistedConfig.channels);
-    if (!hasPersistedChannels) config.channels = [];
-    const channels = normalizeChannels(config, !hasPersistedChannels);
+    const channels = normalizeChannels(config);
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
@@ -253,7 +241,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot) {
             models,
             model,
             imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels),
-            videoModel: normalizeSelectedModel(config.videoModel || "grok-imagine-video", channels, videoModels),
+            videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels),
             textModel: normalizeSelectedModel(config.textModel || model, channels, textModels),
             audioModel: normalizeSelectedModel(config.audioModel || defaultConfig.audioModel, channels, audioModels),
             audioVoice: config.audioVoice || defaultConfig.audioVoice,
@@ -368,7 +356,7 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.includes(model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName) });
+    return matched || config.channels[0] || createModelChannel({ id: "system-unavailable", name: "系统渠道未配置", baseUrl: "", apiKey: "", models: [], scope: "system", enabled: false });
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -384,9 +372,10 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     };
 }
 
-function normalizeChannels(config: AiConfig, ensureDefault = true) {
+function normalizeChannels(config: AiConfig) {
     const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
-    const channels = persistedChannels
+    return persistedChannels
+        .filter((channel) => channel.scope === "system")
         .map((channel, index) =>
             createModelChannel({
                 ...channel,
@@ -395,30 +384,7 @@ function normalizeChannels(config: AiConfig, ensureDefault = true) {
                 models: uniqueRawModels(channel.models || []),
             }),
         )
-        .filter((channel) => !isEmptyDefaultChannel(channel));
-    if (!channels.length && ensureDefault && config.apiKey.trim()) {
-        channels.push(
-            createModelChannel({
-                id: "default",
-                name: "默认渠道",
-                baseUrl: config.baseUrl || defaultConfig.baseUrl,
-                apiKey: config.apiKey || "",
-                apiFormat: config.apiFormat || defaultConfig.apiFormat,
-                models: uniqueRawModels([...(config.models || []), config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel]),
-            }),
-        );
-    }
-    return channels.map((channel) => ({ ...channel, models: uniqueRawModels(channel.models) }));
-}
-
-function isEmptyDefaultChannel(channel: ModelChannel) {
-    if (channel.scope === "system") return false;
-    if (channel.id !== "default" || channel.name.trim() !== "默认渠道" || channel.apiKey.trim()) return false;
-    const baseUrl = channel.baseUrl.trim().replace(/\/+$/, "");
-    const defaultBaseUrl = defaultConfig.baseUrl.trim().replace(/\/+$/, "");
-    if (baseUrl && baseUrl !== defaultBaseUrl) return false;
-    const defaultModels = new Set((defaultConfig.channels[0]?.models || []).map(modelOptionName));
-    return !channel.models.length || channel.models.every((model) => defaultModels.has(modelOptionName(model)));
+        .map((channel) => ({ ...channel, models: uniqueRawModels(channel.models) }));
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {

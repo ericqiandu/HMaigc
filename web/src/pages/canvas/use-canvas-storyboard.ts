@@ -17,7 +17,7 @@ import {
     storyboardRowsFromTask,
 } from "@/lib/canvas/canvas-project-domain";
 import { buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
-import { navigateToSettings } from "@/lib/settings-navigation";
+import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { createGenerationTask, waitForGenerationTask } from "@/services/api/task-center";
 import { modelOptionName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import {
@@ -115,7 +115,7 @@ export function useCanvasStoryboard({
         const expandedPrompt = expandStoryboardTextMentions(prompt, buildNodeMentionReferences(scriptNode, nodesRef.current, connectionsRef.current));
         const generationConfig = buildGenerationConfig(effectiveConfig, scriptNode, "text");
         if (!isAiConfigReady(generationConfig, generationConfig.model)) {
-            navigateToSettings({ continueCreation: true });
+            handleMissingSystemModel();
             return;
         }
         setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, composerContent: prompt, status: NODE_STATUS_LOADING, taskStage: "正在创建任务", taskProgress: 0, errorDetails: undefined } } : node));
@@ -240,7 +240,7 @@ export function useCanvasStoryboard({
         if (missing.length) return message.warning(`有 ${missing.length} 个镜头缺少画面描述或图片提示词`);
         const imageModel = effectiveConfig.imageModel || effectiveConfig.model;
         if (!isAiConfigReady(effectiveConfig, imageModel)) {
-            navigateToSettings({ continueCreation: true });
+            handleMissingSystemModel();
             return;
         }
         const activeNodeIds = activeGenerationBatchNodeIds(scriptNode, "storyboard_image");
@@ -304,7 +304,7 @@ export function useCanvasStoryboard({
     const createAndGenerateScriptVideos = useCallback(async (nodeId: string) => {
         const videoModel = effectiveConfig.videoModel || effectiveConfig.model;
         if (!isAiConfigReady(effectiveConfig, videoModel)) {
-            navigateToSettings({ continueCreation: true });
+            handleMissingSystemModel();
             return;
         }
         let scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
@@ -358,7 +358,7 @@ export function useCanvasStoryboard({
         if (!scriptNode || !rows.length) return;
         const imageModel = effectiveConfig.imageModel || effectiveConfig.model;
         if (!isAiConfigReady(effectiveConfig, imageModel)) {
-            navigateToSettings({ continueCreation: true });
+            handleMissingSystemModel();
             return;
         }
         const actionBoardRows = rows.filter((row) => !nodesRef.current.some((node) => node.type === CanvasNodeType.Image && node.metadata?.workflowKind === "action_board" && node.metadata.shotIndex === row.shotNumber && Boolean(node.metadata.content)));
@@ -408,7 +408,7 @@ export function useCanvasStoryboard({
         if (readyRows.length !== rows.length) message.warning(`${rows.length - readyRows.length} 个镜头没有可用分镜图，已跳过`);
         const videoModel = effectiveConfig.videoModel || effectiveConfig.model;
         if (!isAiConfigReady(effectiveConfig, videoModel)) {
-            navigateToSettings({ continueCreation: true });
+            handleMissingSystemModel();
             return;
         }
         const activeNodeIds = activeGenerationBatchNodeIds(scriptNode, "storyboard_video");

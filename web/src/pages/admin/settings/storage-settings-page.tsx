@@ -46,9 +46,9 @@ export default function StorageSettingsPage() {
 
     return (
         <AdminPageFrame title="存储服务" description="OSS 与资源存储">
-            <div className="mx-auto max-w-5xl space-y-5">
-                <div className="rounded-lg border border-border bg-muted/25 p-4 text-foreground/75">
-                    <div className="flex items-start gap-3"><span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-muted/60"><Info className="size-4" /></span><div><div className="text-sm font-semibold text-foreground">资源存储规则</div><p className="mt-1 text-xs leading-6 text-foreground/55">启用后，新上传和生成的媒体由后端写入 OSS；未启用时写入后端数据卷。资源统一通过登录鉴权接口读取，不直接暴露 OSS 对象地址。</p></div></div>
+            <div className="admin-storage-layout mx-auto max-w-5xl space-y-8">
+                <div className="admin-storage-guidance bg-muted/25 px-5 py-4 text-foreground/75">
+                    <div className="admin-storage-guidance-content flex items-start gap-4"><span className="admin-storage-guidance-icon mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-muted/60"><Info className="size-4" /></span><div className="admin-storage-guidance-copy"><div className="admin-storage-guidance-title text-sm font-semibold text-foreground">资源存储规则</div><p className="admin-storage-guidance-description mt-1.5 text-xs leading-6 text-foreground/55">启用后，新上传和生成的媒体由后端写入 OSS；未启用时写入后端数据卷。资源统一通过登录鉴权接口读取，不直接暴露 OSS 对象地址。</p></div></div>
                 </div>
                 <SettingsSectionCard
                     icon={<Cloud className="size-4" />}
@@ -58,7 +58,7 @@ export default function StorageSettingsPage() {
                     footer={<><div className="text-xs text-foreground/45">{setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存 OSS 配置"}</div><Button type="primary" loading={saving} onClick={() => void save()}>保存 OSS 配置</Button></>}
                 >
                     <Form form={form} layout="vertical" requiredMark={false} disabled={loading}>
-                        <div className="grid grid-cols-1 gap-x-5 px-5 pt-5 md:grid-cols-2">
+                        <div className="storage-settings-fields grid grid-cols-1 gap-x-6 px-6 pt-6 md:grid-cols-2">
                             <Form.Item name="enabled" label="启用 OSS" valuePropName="checked"><Switch /></Form.Item>
                             <Form.Item name="provider" label="存储渠道" rules={[{ required: true, message: "请选择存储渠道" }]}><Select options={[{ label: "阿里云 OSS", value: "aliyun" }]} /></Form.Item>
                             <Form.Item name="region" label="Region"><Input autoComplete="off" placeholder="例如：oss-cn-hangzhou" /></Form.Item>
@@ -70,7 +70,7 @@ export default function StorageSettingsPage() {
                         </div>
                     </Form>
                 </SettingsSectionCard>
-                <div className="grid gap-3 text-xs text-foreground/55 sm:grid-cols-3"><Notice icon={<Cloud className="size-3.5" />} text="新资源优先上传 OSS" /><Notice icon={<ShieldCheck className="size-3.5" />} text="AccessKey Secret 不回显" /><Notice icon={<KeyRound className="size-3.5" />} text="异常时自动本地降级" /></div>
+                <div className="admin-storage-notices grid gap-1 text-xs text-foreground/55 sm:grid-cols-3"><Notice icon={<Cloud className="size-3.5" />} text="新资源优先上传 OSS" /><Notice icon={<ShieldCheck className="size-3.5" />} text="AccessKey Secret 不回显" /><Notice icon={<KeyRound className="size-3.5" />} text="存储异常时明确返回错误" /></div>
             </div>
         </AdminPageFrame>
     );
@@ -78,4 +78,4 @@ export default function StorageSettingsPage() {
 
 function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { enabled: setting?.enabled || false, provider: setting?.provider || "aliyun", region: setting?.region || "", endpoint: setting?.endpoint || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", pathPrefix: setting?.pathPrefix || "" }; }
 function formatTime(value?: string) { return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "--"; }
-function Notice({ icon, text }: { icon: ReactNode; text: string }) { return <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2"><span className="text-foreground/40">{icon}</span><span>{text}</span></div>; }
+function Notice({ icon, text }: { icon: ReactNode; text: string }) { return <div className="admin-storage-notice flex items-center gap-2 bg-foreground/[.025] px-3 py-2.5"><span className="admin-storage-notice-icon text-foreground/40">{icon}</span><span className="admin-storage-notice-text">{text}</span></div>; }

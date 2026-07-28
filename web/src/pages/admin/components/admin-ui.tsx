@@ -146,9 +146,9 @@ export function AdminRowActions({
     };
 
     return (
-        <div className="flex items-center justify-end gap-1.5">
+        <div className="admin-row-actions flex items-center justify-end gap-1">
             {primary ? (
-                <Button size="small" icon={primary.icon} disabled={primary.disabled} onClick={primary.onClick}>
+                <Button className="admin-row-primary-action" size="small" icon={primary.icon} disabled={primary.disabled} onClick={primary.onClick}>
                     {primary.label}
                 </Button>
             ) : null}
@@ -163,7 +163,7 @@ export function AdminRowActions({
                         },
                     }}
                 >
-                    <Button size="small" type="text" icon={<MoreHorizontal className="size-4" />} aria-label="更多操作" />
+                    <Button className="admin-row-more-action" size="small" type="text" icon={<MoreHorizontal className="size-4" />} aria-label="更多操作" />
                 </Dropdown>
             ) : null}
         </div>
@@ -188,19 +188,19 @@ export function SettingsSectionCard({
     className?: string;
 }) {
     return (
-        <section className={cn("overflow-hidden rounded-lg border border-border bg-background", className)}>
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
-                <div className="flex min-w-0 items-start gap-3">
-                    {icon ? <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/40">{icon}</span> : null}
-                    <div className="min-w-0">
-                        <h2 className="text-base font-semibold">{title}</h2>
-                        <p className="mt-1 text-xs leading-5 text-foreground/55">{description}</p>
+        <section className={cn("admin-section-card overflow-hidden rounded-[10px] border border-border/70 bg-background/75", className)}>
+            <div className="admin-section-card-header flex flex-wrap items-start justify-between gap-4 px-6 pb-5 pt-6">
+                <div className="admin-section-card-heading flex min-w-0 items-start gap-4">
+                    {icon ? <span className="admin-section-card-icon grid size-9 shrink-0 place-items-center rounded-lg bg-muted/45 text-foreground/75">{icon}</span> : null}
+                    <div className="admin-section-card-copy min-w-0">
+                        <h2 className="admin-section-card-title text-base font-semibold tracking-[-0.01em]">{title}</h2>
+                        <p className="admin-section-card-description mt-1.5 text-xs leading-5 text-foreground/55">{description}</p>
                     </div>
                 </div>
                 {isStatusConfig(status) ? <Tag variant="filled" color={status.color}>{status.label}</Tag> : status}
             </div>
-            {children}
-            {footer ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4">{footer}</div> : null}
+            <div className="admin-section-card-content bg-foreground/[.018]">{children}</div>
+            {footer ? <div className="admin-section-card-footer flex flex-wrap items-center justify-between gap-4 bg-foreground/[.018] px-6 pb-6 pt-1">{footer}</div> : null}
         </section>
     );
 }

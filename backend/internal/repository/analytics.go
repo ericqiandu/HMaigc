@@ -97,6 +97,37 @@ func (r *Repository) AnalyticsAPICallLogs(filter AnalyticsFilter) ([]model.ApiCa
 	return logs, query.Find(&logs).Error
 }
 
+func (r *Repository) AnalyticsBillingOrders(filter AnalyticsFilter) ([]model.BillingOrder, error) {
+	var orders []model.BillingOrder
+	pendingStatuses := []model.BillingStatus{
+		model.BillingStatusReserved,
+		model.BillingStatusRunning,
+		model.BillingStatusUncertain,
+	}
+	query := r.db.Where(
+		"((status = ? AND settled_at >= ? AND settled_at < ?) OR (status IN ? AND created_at >= ? AND created_at < ?))",
+		model.BillingStatusSettled,
+		filter.From,
+		filter.To,
+		pendingStatuses,
+		filter.From,
+		filter.To,
+	)
+	if filter.UserID != "" {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+	if filter.Model != "" {
+		query = query.Where("model = ?", filter.Model)
+	}
+	if filter.ChannelID != "" {
+		query = query.Where("channel_id = ?", filter.ChannelID)
+	}
+	if filter.Capability != "" {
+		query = query.Where("capability = ?", filter.Capability)
+	}
+	return orders, query.Find(&orders).Error
+}
+
 func (r *Repository) AnalyticsActivities(filter AnalyticsFilter) ([]model.UserDailyActivity, error) {
 	var activities []model.UserDailyActivity
 	query := r.db.Where("day >= ? AND day < ?", filter.From, filter.To)

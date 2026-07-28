@@ -1,9 +1,9 @@
-import { FolderKanban, Images, ListChecks, Maximize2 } from "lucide-react";
+import { FolderKanban, Images, ListChecks, Maximize2, WandSparkles } from "lucide-react";
 
 export const navigationTools = [
     {
         slug: "projects",
-        label: "短剧创作",
+        label: "创作",
         icon: FolderKanban,
     },
     {
@@ -21,6 +21,9 @@ export const navigationTools = [
         label: "素材",
         icon: Images,
     },
+    {
+        slug: "skills",
+        label: "技能",
+        icon: WandSparkles,
+    },
 ] as const;
-
-export type NavigationToolSlug = (typeof navigationTools)[number]["slug"];

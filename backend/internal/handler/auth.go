@@ -616,13 +616,7 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	defer releaseChannel()
 	if c.Request.Method == http.MethodPost {
-		capability := "text"
-		switch channel.InterfaceType {
-		case model.ChannelInterfaceOpenAIImage:
-			capability = "image"
-		case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
-			capability = "video"
-		}
+		capability := proxyBillingCapability(channel.InterfaceType, path)
 		order, err := svc.ReserveProxyBilling(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyRequestVideoSeconds(c.GetHeader("Content-Type"), body))
 		if err != nil {
 			failService(c, err)

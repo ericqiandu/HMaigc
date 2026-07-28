@@ -126,6 +126,9 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if req.UnitPriceMicrocredits < 0 {
 		return nil, BadAuthRequest("模型积分价格不能小于 0")
 	}
+	if req.PriceConfigured && req.UnitPriceMicrocredits <= 0 {
+		return nil, BadAuthRequest("启用用户积分价格时，价格必须大于 0")
+	}
 	item := &model.ChannelModel{ID: newID(), ChannelID: channelID, Enabled: true, PriceVersion: 1}
 	if id != "" {
 		item, err = s.repo.ChannelModelByID(channelID, id)

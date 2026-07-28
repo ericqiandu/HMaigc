@@ -52,7 +52,7 @@ export default function EmailSettingsPanel() {
             footer={<><span className="text-xs text-foreground/45">SMTP 密码使用服务端密钥加密，接口不回显明文。</span><Button type="primary" loading={saving} onClick={() => void save()}>保存邮件配置</Button></>}
         >
             <Form form={form} layout="vertical" requiredMark={false} disabled={loading}>
-                <div className="grid gap-x-5 px-5 pt-5 md:grid-cols-2">
+                <div className="email-settings-fields grid gap-x-6 px-6 pt-6 md:grid-cols-2">
                     <Form.Item name="enabled" label="启用注册验证邮件" valuePropName="checked" extra="公开注册开启后，普通邮箱注册必须完成验证码校验。"><Switch /></Form.Item>
                     <Form.Item name="encryption" label="连接加密" rules={[{ required: true, message: "请选择连接加密方式" }]}><Select options={[{ label: "STARTTLS（推荐，通常 587）", value: "starttls" }, { label: "TLS（通常 465）", value: "tls" }, { label: "无加密", value: "none" }]} /></Form.Item>
                     <Form.Item name="host" label="SMTP 主机"><Input placeholder="smtp.example.com" /></Form.Item>
@@ -60,7 +60,7 @@ export default function EmailSettingsPanel() {
                     <Form.Item name="username" label="SMTP 用户名"><Input autoComplete="off" placeholder="通常为完整邮箱地址" /></Form.Item>
                     <Form.Item name="password" label={setting?.hasPassword ? `SMTP 密码（${configuredSecretText}）` : "SMTP 密码"}><Input.Password autoComplete="new-password" placeholder={setting?.hasPassword ? "留空保留原密码" : "SMTP 密码或授权码"} /></Form.Item>
                     <Form.Item name="fromEmail" label="发件邮箱" rules={[{ type: "email", message: "请输入有效的发件邮箱" }]}><Input placeholder="noreply@example.com" /></Form.Item>
-                    <Form.Item name="fromName" label="发件人名称"><Input placeholder="影策" /></Form.Item>
+                    <Form.Item name="fromName" label="发件人名称"><Input placeholder="HMaigc" /></Form.Item>
                 </div>
             </Form>
         </SettingsSectionCard>

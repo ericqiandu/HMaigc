@@ -32,10 +32,6 @@ func TestStoryboardPromptsLeaveAspectRatioToVideoNode(t *testing.T) {
 	if strings.Contains(defaultStoryboardPromptTemplate(), "2.39:1") {
 		t.Fatal("default storyboard prompt still hard-codes 2.39:1")
 	}
-	plan := fallbackAgentStoryboardPlan("测试故事")
-	if strings.Contains(plan.StyleGuide+plan.Shots[0].VideoPrompt, "2.39:1") || strings.Contains(plan.StyleGuide+plan.Shots[0].VideoPrompt, "画幅") {
-		t.Fatal("fallback storyboard still mentions output aspect ratio")
-	}
 }
 
 func TestValidateStoryboardShotCount(t *testing.T) {

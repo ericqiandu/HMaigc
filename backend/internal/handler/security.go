@@ -176,6 +176,24 @@ func interfaceAllowsProxyPath(interfaceType model.ChannelInterfaceType, requestP
 	}
 }
 
+func proxyBillingCapability(interfaceType model.ChannelInterfaceType, requestPath string) string {
+	switch requestPath {
+	case "/responses", "/chat/completions":
+		return "text"
+	case "/images/generations", "/images/edits":
+		return "image"
+	case "/audio/speech":
+		return "audio"
+	}
+	switch interfaceType {
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo:
+		return "video"
+	default:
+		// Gemini 的模型能力由后台模型目录确定，不能由通用 generateContent 路径猜测。
+		return ""
+	}
+}
+
 func normalizedProxyPath(value string) (string, error) {
 	decoded, err := url.PathUnescape(value)
 	if err != nil || strings.Contains(decoded, "\\") || strings.Contains(decoded, "\x00") {

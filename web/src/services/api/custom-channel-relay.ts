@@ -1,6 +1,6 @@
-import { isSystemProxyBaseUrl, resolveBackendApiUrl, type AiConfig } from "@/stores/use-config-store";
+import { isSystemProxyBaseUrl, type AiConfig } from "@/stores/use-config-store";
 
-type RelayConfig = Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">;
+type RelayConfig = Pick<AiConfig, "baseUrl">;
 
 export type ChannelRequest = {
     url: string;
@@ -8,21 +8,11 @@ export type ChannelRequest = {
     credentials: RequestCredentials;
 };
 
-/** 自定义渠道统一经登录态后端中转，避免依赖第三方服务的浏览器 CORS。 */
+/** 所有生成请求只允许使用后台配置的系统渠道。 */
 export function channelRequest(config: RelayConfig, upstreamUrl: string, headers: HeadersInit = {}): ChannelRequest {
     const normalizedHeaders = new Headers(headers);
-    if (isSystemProxyBaseUrl(config.baseUrl)) {
-        return { url: upstreamUrl, headers: Object.fromEntries(normalizedHeaders.entries()), credentials: "include" };
+    if (!isSystemProxyBaseUrl(config.baseUrl)) {
+        throw new Error("仅支持后台配置的系统模型渠道，请联系管理员");
     }
-
-    const normalizedUpstreamUrl = new URL(upstreamUrl).toString();
-    normalizedHeaders.delete("x-goog-api-key");
-    normalizedHeaders.set("Authorization", `Bearer ${config.apiKey}`);
-    normalizedHeaders.set("X-Canvas-Upstream-URL", normalizedUpstreamUrl);
-    normalizedHeaders.set("X-Canvas-Upstream-Format", config.apiFormat === "gemini" ? "gemini" : "openai");
-    return {
-        url: resolveBackendApiUrl("/api/ai/custom"),
-        headers: Object.fromEntries(normalizedHeaders.entries()),
-        credentials: "include",
-    };
+    return { url: upstreamUrl, headers: Object.fromEntries(normalizedHeaders.entries()), credentials: "include" };
 }

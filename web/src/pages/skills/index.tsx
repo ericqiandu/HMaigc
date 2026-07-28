@@ -154,7 +154,6 @@ export default function SkillsPage() {
         <>
             <WorkspacePage grid>
                 <PageHeader
-                    icon="skills"
                     title="技能库"
                     description="浏览 Updream 技能，管理激活与收藏。"
                     meta={<span className="text-xs text-foreground/45">{displayedTotal} 个技能</span>}

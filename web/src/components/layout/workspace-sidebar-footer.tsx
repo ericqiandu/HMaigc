@@ -17,9 +17,10 @@ type WorkspaceSidebarFooterProps = {
     expandedClassName: string;
     collapsedClassName: string;
     accountClassName: string;
+    compact?: boolean;
 };
 
-export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, accountClassName }: WorkspaceSidebarFooterProps) {
+export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, accountClassName, compact = false }: WorkspaceSidebarFooterProps) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const user = useUserStore((state) => state.user);
@@ -44,15 +45,15 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
         }
     };
 
-    if (!hydrated) return <div className="h-24 animate-pulse rounded-md bg-foreground/[.035]" />;
+    if (!hydrated) return <div className={cn("animate-pulse rounded-md bg-foreground/[.035]", compact ? "h-8 w-24" : "h-24")} />;
 
     return (
-        <div>
+        <div className={cn("workspace-account-actions", compact && "flex items-center gap-1")}>
             {user ? (
                 <SystemAnnouncementCenter
                     userId={user.id}
-                    className={cn("relative mb-1 flex h-9 w-full items-center rounded-md text-xs text-foreground/55 transition-colors hover:bg-foreground/[.05] hover:text-foreground", collapsedClassName)}
-                    showLabel
+                    className={cn("relative flex h-9 items-center rounded-md text-xs text-foreground/55 transition-colors hover:bg-foreground/[.05] hover:text-foreground", compact ? "w-9 shrink-0" : "mb-1 w-full", collapsedClassName)}
+                    showLabel={!compact}
                     labelClassName={expandedClassName}
                     staticMotion
                 />
@@ -60,7 +61,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
             {user ? (
                 <Popover
                     trigger="click"
-                    placement="rightBottom"
+                    placement={compact ? "bottomRight" : "rightBottom"}
                     open={menuOpen}
                     onOpenChange={setMenuOpen}
                     content={(

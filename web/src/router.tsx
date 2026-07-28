@@ -6,9 +6,11 @@ import AdminPage from "@/pages/admin";
 import { AccessSettingsPage, AnalyticsPage, AnnouncementsPage, CreditOperationsPage, EmailSettingsPage } from "@/pages/admin/admin-route-pages";
 import ChannelsPage from "@/pages/admin/channels/channels-page";
 import LogsPage from "@/pages/admin/logs/logs-page";
+import MembershipAdminPage from "@/pages/admin/membership/membership-page";
 import RedemptionCodesPage from "@/pages/admin/redemption-codes/redemption-codes-page";
 import RuntimePolicySettingsPage from "@/pages/admin/settings/runtime-policy-settings-page";
 import StorageSettingsPage from "@/pages/admin/settings/storage-settings-page";
+import PaymentSettingsPage from "@/pages/admin/settings/payment-settings-page";
 import StoryboardPromptsPage from "@/pages/admin/storyboard-prompts/storyboard-prompts-page";
 import UsersPage from "@/pages/admin/users/users-page";
 import AssetsPage from "@/pages/assets";
@@ -19,6 +21,7 @@ import CanvasPage from "@/pages/canvas";
 import CanvasProjectPage from "@/pages/canvas/project";
 import SharedCanvasPage from "@/pages/canvas/shared";
 import HomePage from "@/pages/home";
+import MembershipPage from "@/pages/membership";
 import NotFound from "@/pages/not-found";
 import RouteErrorPage from "@/pages/route-error";
 import SkillsPage from "@/pages/skills";
@@ -47,6 +50,7 @@ export const router = createBrowserRouter([
         errorElement: <RouteErrorPage />,
         children: [
             { path: "/", element: <HomePage /> },
+            { path: "/membership", element: <MembershipPage /> },
             { path: "/tasks", element: <RequireAuth><TasksPage /></RequireAuth> },
             { path: "/assets", element: <RequireAuth><AssetsPage /></RequireAuth> },
             { path: "/skills", element: <RequireAuth><SkillsPage /></RequireAuth> },
@@ -64,18 +68,20 @@ export const router = createBrowserRouter([
                 children: [
                     { index: true, element: <AnalyticsPage /> },
                     { path: "users", element: <UsersPage /> },
-                    { path: "channels", element: <ChannelsPage /> },
+                    { path: "models", element: <ChannelsPage /> },
                     { path: "storyboard-prompts", element: <StoryboardPromptsPage /> },
                     { path: "announcements", element: <AnnouncementsPage /> },
                     { path: "credit-operations", element: <CreditOperationsPage /> },
                     { path: "redemption-codes", element: <RedemptionCodesPage /> },
                     { path: "logs", element: <LogsPage /> },
+                    { path: "membership", element: <MembershipAdminPage /> },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },
                     { path: "settings/concurrency", element: <Navigate to="/admin/settings/runtime-policy" replace /> },
                     { path: "settings/runtime-policy", element: <RuntimePolicySettingsPage /> },
                     { path: "settings/access", element: <AccessSettingsPage /> },
                     { path: "settings/email", element: <EmailSettingsPage /> },
                     { path: "settings/storage", element: <StorageSettingsPage /> },
+                    { path: "settings/payment", element: <PaymentSettingsPage /> },
                 ],
             },
         ],

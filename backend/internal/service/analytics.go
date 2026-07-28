@@ -36,18 +36,26 @@ type AnalyticsOverview struct {
 }
 
 type AnalyticsKPI struct {
-	ActiveUsers         int     `json:"activeUsers"`
-	DAU                 int     `json:"dau"`
-	WAU                 int     `json:"wau"`
-	MAU                 int     `json:"mau"`
-	GenerationTasks     int     `json:"generationTasks"`
-	UpstreamRequests    int     `json:"upstreamRequests"`
-	SuccessRate         float64 `json:"successRate"`
-	P95DurationMs       int64   `json:"p95DurationMs"`
-	CurrentQueuedTasks  int64   `json:"currentQueuedTasks"`
-	EstimatedCostMicros int64   `json:"estimatedCostMicros"`
-	CostAvailable       bool    `json:"costAvailable"`
-	Currency            string  `json:"currency"`
+	ActiveUsers                    int     `json:"activeUsers"`
+	DAU                            int     `json:"dau"`
+	WAU                            int     `json:"wau"`
+	MAU                            int     `json:"mau"`
+	GenerationTasks                int     `json:"generationTasks"`
+	UpstreamRequests               int     `json:"upstreamRequests"`
+	SuccessRate                    float64 `json:"successRate"`
+	P95DurationMs                  int64   `json:"p95DurationMs"`
+	CurrentQueuedTasks             int64   `json:"currentQueuedTasks"`
+	EstimatedCostMicros            int64   `json:"estimatedCostMicros"`
+	CostAvailable                  bool    `json:"costAvailable"`
+	Currency                       string  `json:"currency"`
+	SettledRevenueMicrocredits     int64   `json:"settledRevenueMicrocredits"`
+	SettledBaseCostMicrocredits    int64   `json:"settledBaseCostMicrocredits"`
+	GrossProfitMicrocredits        int64   `json:"grossProfitMicrocredits"`
+	SettledBillingOrders           int     `json:"settledBillingOrders"`
+	PendingAmountMicrocredits      int64   `json:"pendingAmountMicrocredits"`
+	PendingBillingOrders           int     `json:"pendingBillingOrders"`
+	ReviewAmountMicrocredits       int64   `json:"reviewAmountMicrocredits"`
+	ReviewBillingOrders            int     `json:"reviewBillingOrders"`
 }
 
 type AnalyticsTrendPoint struct {
@@ -141,6 +149,14 @@ func (s *Service) AdminAnalytics(actor *model.User, query AnalyticsQuery) (*Anal
 	if err != nil {
 		return nil, err
 	}
+	billingOrders, err := s.repo.AnalyticsBillingOrders(filter)
+	if err != nil {
+		return nil, err
+	}
+	billingSummary, err := summarizeAnalyticsBilling(billingOrders)
+	if err != nil {
+		return nil, err
+	}
 	if filter.ChannelID != "" {
 		tasks = tasksWithLoggedRequests(tasks, logs)
 	}
@@ -180,7 +196,84 @@ func (s *Service) AdminAnalytics(actor *model.User, query AnalyticsQuery) (*Anal
 	}
 	result := buildAnalyticsOverview(filter, tasks, rollingTasks, rollingLogs, logs, activities, users)
 	result.KPI.CurrentQueuedTasks = queued
+	result.KPI.SettledRevenueMicrocredits = billingSummary.settledRevenueMicrocredits
+	result.KPI.SettledBaseCostMicrocredits = billingSummary.settledBaseCostMicrocredits
+	result.KPI.GrossProfitMicrocredits = billingSummary.settledRevenueMicrocredits - billingSummary.settledBaseCostMicrocredits
+	result.KPI.SettledBillingOrders = billingSummary.settledBillingOrders
+	result.KPI.PendingAmountMicrocredits = billingSummary.pendingAmountMicrocredits
+	result.KPI.PendingBillingOrders = billingSummary.pendingBillingOrders
+	result.KPI.ReviewAmountMicrocredits = billingSummary.reviewAmountMicrocredits
+	result.KPI.ReviewBillingOrders = billingSummary.reviewBillingOrders
 	return result, nil
+}
+
+type analyticsBillingSummary struct {
+	settledRevenueMicrocredits  int64
+	settledBaseCostMicrocredits int64
+	settledBillingOrders        int
+	pendingAmountMicrocredits   int64
+	pendingBillingOrders        int
+	reviewAmountMicrocredits    int64
+	reviewBillingOrders         int
+}
+
+func summarizeAnalyticsBilling(orders []model.BillingOrder) (analyticsBillingSummary, error) {
+	var result analyticsBillingSummary
+	for _, order := range orders {
+		switch order.Status {
+		case model.BillingStatusSettled:
+			baseAmount, err := analyticsBillingBaseAmount(order)
+			if err != nil {
+				return analyticsBillingSummary{}, err
+			}
+			result.settledRevenueMicrocredits, err = addAnalyticsMicrocredits(result.settledRevenueMicrocredits, order.AmountMicrocredits, order.ID)
+			if err != nil {
+				return analyticsBillingSummary{}, err
+			}
+			result.settledBaseCostMicrocredits, err = addAnalyticsMicrocredits(result.settledBaseCostMicrocredits, baseAmount, order.ID)
+			if err != nil {
+				return analyticsBillingSummary{}, err
+			}
+			result.settledBillingOrders++
+		case model.BillingStatusReserved, model.BillingStatusRunning:
+			var err error
+			result.pendingAmountMicrocredits, err = addAnalyticsMicrocredits(result.pendingAmountMicrocredits, order.AmountMicrocredits, order.ID)
+			if err != nil {
+				return analyticsBillingSummary{}, err
+			}
+			result.pendingBillingOrders++
+		case model.BillingStatusUncertain:
+			var err error
+			result.reviewAmountMicrocredits, err = addAnalyticsMicrocredits(result.reviewAmountMicrocredits, order.AmountMicrocredits, order.ID)
+			if err != nil {
+				return analyticsBillingSummary{}, err
+			}
+			result.reviewBillingOrders++
+		}
+	}
+	return result, nil
+}
+
+func analyticsBillingBaseAmount(order model.BillingOrder) (int64, error) {
+	if order.UnitPriceMicrocredits < 0 || order.Quantity <= 0 {
+		return 0, errors.New("计费订单基础金额参数无效: " + order.ID)
+	}
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if order.UnitPriceMicrocredits > maxInt64/order.Quantity {
+		return 0, errors.New("计费订单基础金额溢出: " + order.ID)
+	}
+	return order.UnitPriceMicrocredits * order.Quantity, nil
+}
+
+func addAnalyticsMicrocredits(total int64, amount int64, orderID string) (int64, error) {
+	if amount < 0 {
+		return 0, errors.New("计费订单金额无效: " + orderID)
+	}
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if total > maxInt64-amount {
+		return 0, errors.New("计费统计金额溢出: " + orderID)
+	}
+	return total + amount, nil
 }
 
 func (s *Service) AdminAPICallLogs(actor *model.User, query APICallLogQuery) (*APICallLogPage, error) {

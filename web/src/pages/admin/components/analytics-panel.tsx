@@ -6,7 +6,8 @@ import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
 import { useSearchParams } from "react-router";
 
-import { ListToolbar } from "@/components/layout/workspace-page";
+import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
+import { formatCredits } from "@/constant/credits";
 import {
     createAdminModelPricing,
     deleteAdminModelPricing,
@@ -273,7 +274,7 @@ export default function AnalyticsPanel({ users, channels }: Props) {
     ];
 
     return (
-        <div className="space-y-5">
+        <div className="admin-analytics-layout space-y-9">
             <ListToolbar trailing={<><Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>刷新</Button><AdminExportButton exportFile={() => exportAdminAnalytics(filters)} fileName={() => `usage-${filters.from}-${filters.to}.csv`} label="导出 CSV" /></>}>
                 <div>
                     <div className="mb-1 text-xs text-foreground/55">时间范围</div>
@@ -285,21 +286,29 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                 <FilterSelect label="能力" value={capability} onChange={setCapability} options={capabilityOptions} />
             </ListToolbar>
 
-            <div className="grid overflow-hidden rounded-md border border-border sm:grid-cols-2 xl:grid-cols-6">
+            <div className="admin-analytics-metrics grid overflow-hidden rounded-[10px] border border-border/70 bg-background/75 sm:grid-cols-2 xl:grid-cols-5">
                 <Metric label="活跃用户" value={data?.kpi.activeUsers ?? "--"} detail={data ? `DAU ${data.kpi.dau} · WAU ${data.kpi.wau} · MAU ${data.kpi.mau}` : undefined} />
                 <Metric label="生成任务" value={data?.kpi.generationTasks ?? "--"} detail={data ? `上游请求 ${data.kpi.upstreamRequests}` : undefined} />
                 <Metric label="请求成功率" value={data ? percent(data.kpi.successRate) : "--"} />
                 <Metric label="P95 耗时" value={data ? formatDuration(data.kpi.p95DurationMs) : "--"} />
                 <Metric label="当前队列" value={data?.kpi.currentQueuedTasks ?? "--"} detail="排队 + 运行中" />
-                <Metric label="估算费用" value={data ? formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable) : "--"} />
+                <Metric label="上游估算成本" value={data ? formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable) : "--"} detail="供应商货币成本，不与积分混算" />
+                <Metric label="已结算积分营收" value={data ? formatCredits(data.kpi.settledRevenueMicrocredits) : "--"} detail={data ? `${data.kpi.settledBillingOrders} 笔已结算订单` : undefined} />
+                <Metric label="基础积分成本" value={data ? formatCredits(data.kpi.settledBaseCostMicrocredits) : "--"} detail="按订单计费快照统计" />
+                <Metric label="积分毛利" value={data ? formatCredits(data.kpi.grossProfitMicrocredits) : "--"} detail="积分营收 − 基础积分成本" />
+                <Metric
+                    label="冻结积分"
+                    value={data ? formatCredits(data.kpi.pendingAmountMicrocredits + data.kpi.reviewAmountMicrocredits) : "--"}
+                    detail={data ? `处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${formatCredits(data.kpi.reviewAmountMicrocredits)} / ${data.kpi.reviewBillingOrders} 笔` : undefined}
+                />
             </div>
 
-            <section className="border-y border-border py-4">
-                <div className="mb-3">
-                    <h3 className="text-sm font-medium">使用趋势</h3>
-                    <p className="text-xs text-foreground/50">生成任务与真实上游请求分开统计，成功率按上游请求计算。</p>
+            <section className="admin-analytics-trend overflow-hidden rounded-[10px] border border-border/70 bg-background/75">
+                <div className="admin-analytics-trend-heading px-6 pb-4 pt-6">
+                    <h3 className="admin-analytics-trend-title text-base font-semibold">使用趋势</h3>
+                    <p className="admin-analytics-trend-description mt-1.5 text-xs leading-5 text-foreground/50">生成任务与真实上游请求分开统计，成功率按上游请求计算。</p>
                 </div>
-                <div className="h-[300px] w-full">
+                <div className="admin-analytics-chart h-[320px] w-full bg-foreground/[.018] px-4 pb-5 pt-3">
                     <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={data?.trend || []} margin={{ top: 8, right: 12, bottom: 0, left: -16 }}>
                             <CartesianGrid stroke="currentColor" className="text-foreground/10" vertical={false} />
@@ -316,31 +325,31 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                 </div>
             </section>
 
-            <Tabs
+            <Tabs className="admin-analytics-tabs"
                 items={[
                     {
                         key: "models",
                         label: "模型分析",
-                        children: <Table rowKey={(row) => `${row.model}:${row.capability}`} size="small" loading={loading} columns={modelColumns} dataSource={data?.models || []} pagination={{ pageSize: 10 }} scroll={{ x: 1250 }} />,
+                        children: <TableSurface className="admin-analytics-table-surface mt-0"><Table className="admin-analytics-table" rowKey={(row) => `${row.model}:${row.capability}`} size="small" loading={loading} columns={modelColumns} dataSource={data?.models || []} pagination={{ pageSize: 10 }} scroll={{ x: 1250 }} /></TableSurface>,
                     },
-                    { key: "users", label: "用户活动", children: <Table rowKey="userId" size="small" loading={loading} columns={userColumns} dataSource={data?.users || []} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} /> },
+                    { key: "users", label: "用户活动", children: <TableSurface className="admin-analytics-table-surface mt-0"><Table className="admin-analytics-table" rowKey="userId" size="small" loading={loading} columns={userColumns} dataSource={data?.users || []} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} /></TableSurface> },
                     {
                         key: "failures",
                         label: `异常定位${data?.failures.length ? ` (${data.failures.reduce((sum, item) => sum + item.count, 0)})` : ""}`,
-                        children: <Table rowKey={(row) => `${row.type}:${row.model}`} size="small" loading={loading} columns={failureColumns} dataSource={data?.failures || []} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} />,
+                        children: <TableSurface className="admin-analytics-table-surface mt-0"><Table className="admin-analytics-table" rowKey={(row) => `${row.type}:${row.model}`} size="small" loading={loading} columns={failureColumns} dataSource={data?.failures || []} pagination={{ pageSize: 10 }} scroll={{ x: 900 }} /></TableSurface>,
                     },
                     {
                         key: "pricing",
                         label: "模型价格",
                         children: (
-                            <div>
-                                <div className="mb-3 flex items-center justify-between">
-                                    <p className="text-xs text-foreground/55">价格使用最小货币单位的百万分之一保存；修改只影响后续调用，不改写历史费用。</p>
+                            <div className="admin-analytics-pricing">
+                                <div className="admin-analytics-pricing-heading mb-5 flex items-center justify-between gap-4">
+                                    <p className="admin-analytics-pricing-description text-xs leading-5 text-foreground/55">价格使用最小货币单位的百万分之一保存；修改只影响后续调用，不改写历史费用。</p>
                                     <Button type="primary" icon={<Plus className="size-4" />} onClick={() => openPricing()}>
                                         新增价格
                                     </Button>
                                 </div>
-                                <Table rowKey="id" size="small" columns={pricingColumns} dataSource={pricings} pagination={false} scroll={{ x: 980 }} />
+                                <TableSurface className="admin-analytics-table-surface mt-0"><Table className="admin-analytics-table" rowKey="id" size="small" columns={pricingColumns} dataSource={pricings} pagination={false} scroll={{ x: 980 }} /></TableSurface>
                             </div>
                         ),
                     },
@@ -377,8 +386,8 @@ export default function AnalyticsPanel({ users, channels }: Props) {
 
 function FilterSelect({ label, value, onChange, options, width = 150, filterOption = true, loading, onSearch }: { label: string; value?: string; onChange: (value?: string) => void; options: Array<{ label: string; value: string }>; width?: number; filterOption?: boolean; loading?: boolean; onSearch?: (value: string) => void }) {
     return (
-        <div>
-            <div className="mb-1 text-xs text-foreground/55">{label}</div>
+        <div className="admin-analytics-filter">
+            <div className="admin-analytics-filter-label mb-1.5 text-xs text-foreground/55">{label}</div>
             <Select allowClear showSearch optionFilterProp="label" filterOption={filterOption} loading={loading} placeholder="全部" value={value} onChange={onChange} onSearch={onSearch} options={options} style={{ width }} />
         </div>
     );
@@ -386,10 +395,10 @@ function FilterSelect({ label, value, onChange, options, width = 150, filterOpti
 
 function Metric({ label, value, detail }: { label: string; value: string | number; detail?: string }) {
     return (
-        <div className="min-h-24 border-b border-r border-border p-4 last:border-r-0 xl:border-b-0">
-            <div className="text-xs text-foreground/55">{label}</div>
-            <div className="mt-2 text-2xl font-semibold tracking-normal">{value}</div>
-            {detail ? <div className="mt-1 text-xs text-foreground/45">{detail}</div> : null}
+        <div className="admin-analytics-metric min-h-28 border-b border-r border-border/55 p-5 last:border-r-0 xl:border-b-0">
+            <div className="admin-analytics-metric-label text-xs text-foreground/55">{label}</div>
+            <div className="admin-analytics-metric-value mt-2.5 text-2xl font-semibold tracking-[-0.02em]">{value}</div>
+            {detail ? <div className="admin-analytics-metric-detail mt-1.5 text-xs leading-5 text-foreground/45">{detail}</div> : null}
         </div>
     );
 }

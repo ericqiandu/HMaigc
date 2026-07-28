@@ -51,7 +51,7 @@ import { WorkspaceErrorState, WorkspaceState } from "@/components/layout/workspa
 import { canvasStylePresets } from "@/components/canvas/canvas-style-picker-modal";
 import { normalizeCharacterName } from "@/lib/canvas/canvas-character-reference";
 import { decodeNovelText, splitTextIntoChapters } from "@/lib/canvas/canvas-document";
-import { navigateToSettings } from "@/lib/settings-navigation";
+import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import {
     createProjectAssetCandidates,
     createProjectUnit,
@@ -230,7 +230,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         if (!sourceText) throw new Error("当前章节没有可分析的正文");
         const textModel = effectiveConfig.textModel || effectiveConfig.model;
         if (!isAiConfigReady(effectiveConfig, textModel)) {
-            navigateToSettings({ continueCreation: true });
+            handleMissingSystemModel();
             return null;
         }
         return {

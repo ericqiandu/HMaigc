@@ -138,6 +138,14 @@ export type AdminAnalytics = {
         estimatedCostMicros: number;
         costAvailable: boolean;
         currency?: string;
+        settledRevenueMicrocredits: number;
+        settledBaseCostMicrocredits: number;
+        grossProfitMicrocredits: number;
+        settledBillingOrders: number;
+        pendingAmountMicrocredits: number;
+        pendingBillingOrders: number;
+        reviewAmountMicrocredits: number;
+        reviewBillingOrders: number;
     };
     trend: Array<{ day: string; tasks: number; requests: number; activeUsers: number; requestSuccessRate: number }>;
     models: Array<{

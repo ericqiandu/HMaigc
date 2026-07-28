@@ -1,41 +1,68 @@
 import { Button, Pagination } from "antd";
-import { RotateCcw } from "lucide-react";
+import { ArrowLeft, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router";
 
-import { WorkspaceSignalIcon, type WorkspaceSignalIconVariant } from "@/components/ui/aceternity/workspace-signal-icon";
 import { cn } from "@/lib/utils";
 
 export function WorkspacePage({ children, className, grid = false, fluid = false }: { children: ReactNode; className?: string; grid?: boolean; fluid?: boolean }) {
     return (
         <main className={cn("app-user-content thin-scrollbar h-full overflow-y-auto text-foreground", grid && "app-workspace-grid", className)}>
-            <div className={fluid ? "h-full w-full" : "w-full px-3 py-3 sm:px-4 sm:py-4 xl:px-5"}>{children}</div>
+            <div className={fluid ? "h-full w-full" : "workspace-page-frame w-full px-4 pb-8 pt-20 sm:px-6 md:px-[104px] md:pt-[90px]"}>{children}</div>
         </main>
     );
 }
 
-export function PageHeader({ title, description, meta, actions, icon }: { title: string; description?: string; meta?: ReactNode; actions?: ReactNode; icon?: WorkspaceSignalIconVariant }) {
+type PageHeaderProps = {
+    title: string;
+    description?: string;
+    meta?: ReactNode;
+    actions?: ReactNode;
+    backTo?: string;
+    onBack?: () => void;
+    backLabel?: string;
+};
+
+export function PageHeader({ title, description, meta, actions, backTo = "/", onBack, backLabel = "返回首页" }: PageHeaderProps) {
+    const navigate = useNavigate();
+    const handleBack = () => {
+        if (onBack) {
+            onBack();
+            return;
+        }
+        navigate(backTo);
+    };
+
     return (
-        <header className="app-page-header flex min-h-14 flex-col gap-3 border-b border-border/80 pb-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-                {icon ? <WorkspaceSignalIcon variant={icon} /> : null}
-                <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
-                        <h1 className="truncate text-[22px] font-semibold leading-7">{title}</h1>
+        <header className="app-page-header flex min-h-9 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="page-header-copy flex min-w-0 items-center gap-2">
+                <button
+                    type="button"
+                    className="page-header-back grid size-9 shrink-0 place-items-center rounded-full text-foreground/60 transition-colors hover:bg-foreground/[.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={handleBack}
+                    aria-label={backLabel}
+                    title={backLabel}
+                >
+                    <ArrowLeft className="page-header-back-icon size-4" />
+                </button>
+                <div className="page-header-text min-w-0">
+                    <div className="page-header-title-row flex min-w-0 flex-wrap items-baseline gap-2">
+                        <h1 className="page-header-title truncate text-sm font-semibold leading-6 tracking-[-0.01em]">{title}</h1>
                         {meta}
                     </div>
-                    {description ? <p className="mt-1 text-xs leading-5 text-foreground/58">{description}</p> : null}
+                    {description ? <p className="page-header-description hidden">{description}</p> : null}
                 </div>
             </div>
-            {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+            {actions ? <div className="page-header-actions ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div> : null}
         </header>
     );
 }
 
 export function ListToolbar({ children, trailing, active, onReset }: { children: ReactNode; trailing?: ReactNode; active?: boolean; onReset?: () => void }) {
     return (
-        <div className="mt-3 flex min-h-12 flex-col gap-2 border-b border-border/75 pb-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">{children}</div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="workspace-list-toolbar mt-3 flex min-h-10 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="workspace-list-toolbar-fields flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
+            <div className="workspace-list-toolbar-actions flex shrink-0 flex-wrap items-center gap-2">
                 {active && onReset ? <Button type="text" icon={<RotateCcw className="size-3.5" />} onClick={onReset}>重置</Button> : null}
                 {trailing}
             </div>
@@ -44,17 +71,17 @@ export function ListToolbar({ children, trailing, active, onReset }: { children:
 }
 
 export function TableSurface({ children, className }: { children: ReactNode; className?: string }) {
-    return <div className={cn("app-table-surface mt-4 min-w-0 overflow-hidden rounded-lg border border-border bg-background", className)}>{children}</div>;
+    return <div className={cn("app-table-surface mt-4 min-w-0 overflow-hidden rounded-lg bg-foreground/[.025]", className)}>{children}</div>;
 }
 
 export function CollectionGrid({ children, className }: { children: ReactNode; className?: string }) {
-    return <div className={cn("mt-4 grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-[repeat(auto-fill,minmax(248px,1fr))]", className)}>{children}</div>;
+    return <div className={cn("workspace-collection-grid mt-5 grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-[repeat(auto-fill,minmax(248px,1fr))]", className)}>{children}</div>;
 }
 
 export function PaginationBar({ current, pageSize, total, onChange, pageSizeOptions = [20, 50, 100] }: { current: number; pageSize: number; total: number; onChange: (page: number, pageSize: number) => void; pageSizeOptions?: number[] }) {
     if (total <= pageSize && current === 1) return null;
     return (
-        <div className="app-pagination-bar sticky bottom-0 z-10 flex min-w-0 justify-end border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
+        <div className="app-pagination-bar sticky bottom-0 z-10 mt-4 flex min-w-0 justify-end bg-background/92 px-2 py-3 backdrop-blur-xl">
             <Pagination
                 current={current}
                 pageSize={pageSize}

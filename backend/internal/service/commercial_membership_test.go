@@ -1,0 +1,547 @@
+package service
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/gorm"
+)
+
+func createCommercialTestUsers(t *testing.T, db *gorm.DB) (*model.User, *model.User, *model.User) {
+	t.Helper()
+	admin := &model.User{ID: "commercial-admin", Username: "admin", Email: "admin@example.com", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	owner := &model.User{ID: "commercial-owner", Username: "owner", Email: "owner@example.com", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	other := &model.User{ID: "commercial-other", Username: "other", Email: "other@example.com", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create([]*model.User{admin, owner, other}).Error; err != nil {
+		t.Fatal(err)
+	}
+	return admin, owner, other
+}
+
+func readyWechatPaymentSetting() PaymentSettingRequest {
+	return PaymentSettingRequest{
+		CheckoutBaseURL: "https://checkout.example.com",
+		Wechat: PaymentChannelSettingRequest{
+			Enabled:            true,
+			AppID:              "wx-app-id",
+			MerchantID:         "merchant-id",
+			MerchantSerialNo:   "merchant-serial",
+			MerchantPrivateKey: "merchant-private-key",
+			PlatformPublicKey:  "platform-public-key",
+			APIv3Key:           "api-v3-key",
+			NotifyURL:          "https://api.example.com/payment/wechat/notify",
+			GatewayURL:         "https://api.mch.weixin.qq.com",
+		},
+	}
+}
+
+func checkoutToken(t *testing.T, checkoutURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(checkoutURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimPrefix(parsed.Path, "/pay/")
+	if token == "" || strings.Contains(token, "/") {
+		t.Fatalf("invalid checkout token path %q", parsed.Path)
+	}
+	return token
+}
+
+func requireAuthStatus(t *testing.T, err error, status int) {
+	t.Helper()
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != status {
+		t.Fatalf("error = %#v, want AuthError status %d", err, status)
+	}
+}
+
+func TestPendingMembershipOrderDoesNotGrantEntitlementOrCredits(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	_, owner, _ := createCommercialTestUsers(t, db)
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != model.MembershipOrderPending {
+		t.Fatalf("order status = %s, want pending", order.Status)
+	}
+	var subscriptionCount int64
+	if err := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", order.ID).Count(&subscriptionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	var ledgerCount int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ?", owner.ID).Count(&ledgerCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	var accountCount int64
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", owner.ID).Count(&accountCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subscriptionCount != 0 || ledgerCount != 0 || accountCount != 0 {
+		t.Fatalf("pending order created grants: subscriptions=%d ledger=%d accounts=%d", subscriptionCount, ledgerCount, accountCount)
+	}
+	entitlement, err := svc.MembershipEntitlement(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entitlement.Tier != "origin" {
+		t.Fatalf("pending order entitlement tier = %q, want origin", entitlement.Tier)
+	}
+}
+
+func TestMembershipOrderCanOnlyBeCancelledByItsOwner(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	_, owner, other := createCommercialTestUsers(t, db)
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CancelMembershipOrder(other, order.ID); err == nil {
+		t.Fatal("other user unexpectedly cancelled the order")
+	}
+	cancelled, err := svc.CancelMembershipOrder(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != model.MembershipOrderCancelled || cancelled.ResolutionNote != "用户主动取消订单" {
+		t.Fatalf("unexpected cancelled order: %#v", cancelled)
+	}
+}
+
+func TestStalePendingMembershipOrderIsClosedDuringLifecycleReconciliation(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	_, owner, _ := createCommercialTestUsers(t, db)
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleCreatedAt := time.Now().Add(-25 * time.Hour)
+	if err := db.Model(&model.MembershipOrder{}).Where("id = ?", order.ID).Updates(map[string]interface{}{
+		"created_at": staleCreatedAt,
+		"updated_at": staleCreatedAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MembershipEntitlement(owner); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.MembershipOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.MembershipOrderCancelled || stored.ResolutionNote != "订单超过 24 小时未支付，系统自动关闭" {
+		t.Fatalf("stale order was not reconciled: %#v", stored)
+	}
+}
+
+func TestRenewalCreditsAreGrantedWhenTheQueuedSubscriptionStarts(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	plan := membershipPlanByCode(t, db, "pro-month")
+	firstOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AdminConfirmMembershipOrder(admin, firstOrder.ID, ConfirmMembershipOrderRequest{
+		ProviderTradeNo: "renewal-first",
+		Note:            "首期到账",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AdminConfirmMembershipOrder(admin, secondOrder.ID, ConfirmMembershipOrderRequest{
+		ProviderTradeNo: "renewal-second",
+		Note:            "续费到账",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var secondSubscription model.MembershipSubscription
+	if err := db.First(&secondSubscription, "order_id = ?", secondOrder.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !secondSubscription.StartsAt.After(time.Now()) {
+		t.Fatalf("renewal starts at %s, want a future start", secondSubscription.StartsAt)
+	}
+	var ledgerCount int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ?", owner.ID).Count(&ledgerCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ledgerCount != 1 {
+		t.Fatalf("ledger count before renewal start = %d, want 1", ledgerCount)
+	}
+	now := time.Now()
+	if err := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", firstOrder.ID).Updates(map[string]interface{}{
+		"ends_at":    now.Add(-time.Minute),
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", secondOrder.ID).Updates(map[string]interface{}{
+		"starts_at":  now.Add(-time.Minute),
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MembershipEntitlement(owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ?", owner.ID).Count(&ledgerCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ledgerCount != 2 {
+		t.Fatalf("ledger count after renewal start = %d, want 2", ledgerCount)
+	}
+	var account model.CreditAccount
+	if err := db.First(&account, "user_id = ?", owner.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits != plan.CreditsPerPeriod*2 {
+		t.Fatalf("credits after renewal start = %d, want %d", account.AvailableMicrocredits, plan.CreditsPerPeriod*2)
+	}
+}
+
+func TestMembershipConfirmationRequiresAuditFieldsAndRemainsAtomic(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, request := range map[string]ConfirmMembershipOrderRequest{
+		"missing trade number": {Note: "人工核验"},
+		"missing note":         {ProviderTradeNo: "trade-001"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, confirmErr := svc.AdminConfirmMembershipOrder(admin, order.ID, request)
+			requireAuthStatus(t, confirmErr, http.StatusBadRequest)
+		})
+	}
+	var stored model.MembershipOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.MembershipOrderPending {
+		t.Fatalf("invalid confirmation changed order to %s", stored.Status)
+	}
+	var grants int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ?", owner.ID).Count(&grants).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grants != 0 {
+		t.Fatalf("invalid confirmation created %d credit grants", grants)
+	}
+}
+
+func TestTeamPurchaseGrantsOwnerCreditsAndMemberEntitlement(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, member := createCommercialTestUsers(t, db)
+	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "商业制作团队"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "team-pro-year")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID, TeamID: team.ID, Seats: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
+		ProviderTradeNo: "team-trade-001",
+		Note:            "团队套餐到账",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddTeamMember(owner, team.ID, AddTeamMemberRequest{Email: member.Email, Role: model.TeamMemberRoleMember}); err != nil {
+		t.Fatal(err)
+	}
+	var ownerAccount model.CreditAccount
+	if err := db.First(&ownerAccount, "user_id = ?", owner.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ownerAccount.AvailableMicrocredits != plan.CreditsPerPeriod*3 {
+		t.Fatalf("owner credits = %d, want %d", ownerAccount.AvailableMicrocredits, plan.CreditsPerPeriod*3)
+	}
+	var memberAccountCount int64
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", member.ID).Count(&memberAccountCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if memberAccountCount != 0 {
+		t.Fatalf("team member unexpectedly received a separate credit account")
+	}
+	entitlement, err := svc.MembershipEntitlement(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entitlement.TeamID != team.ID || entitlement.ImageConcurrency != plan.ImageConcurrency || entitlement.VideoConcurrency != plan.VideoConcurrency {
+		t.Fatalf("unexpected member entitlement: %#v", entitlement)
+	}
+}
+
+func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	_, owner, _ := createCommercialTestUsers(t, db)
+	runtimePolicy := defaultRuntimePolicy()
+	runtimePolicy.Task.ActiveTaskLimit = 2
+	imagePolicy, capability, err := svc.membershipActiveTaskPolicy(owner.ID, "canvas_image", runtimePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capability != taskCapabilityImage || imagePolicy.CapabilityLimit != 4 || imagePolicy.TotalLimit != 8 {
+		t.Fatalf("unexpected origin image policy: %#v capability=%s", imagePolicy, capability)
+	}
+	for index := 0; index < imagePolicy.CapabilityLimit; index++ {
+		task := &model.Task{
+			ID: "image-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_image",
+			Capability: taskCapabilityImage, Status: model.TaskStatusQueued,
+		}
+		if err := svc.repo.CreateTaskWithActiveLimit(task, imagePolicy); err != nil {
+			t.Fatalf("create image task %d: %v", index+1, err)
+		}
+	}
+	excess := &model.Task{ID: "image-task-excess", UserID: owner.ID, Type: "canvas_image", Capability: taskCapabilityImage, Status: model.TaskStatusQueued}
+	if err := svc.repo.CreateTaskWithActiveLimit(excess, imagePolicy); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
+		t.Fatalf("excess image task error = %v, want ErrCapabilityTaskLimit", err)
+	}
+	otherPolicy, _, err := svc.membershipActiveTaskPolicy(owner.ID, "canvas_text", runtimePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < runtimePolicy.Task.ActiveTaskLimit; index++ {
+		task := &model.Task{
+			ID: "other-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_text",
+			Capability: taskCapabilityOther, Status: model.TaskStatusRunning,
+		}
+		if err := svc.repo.CreateTaskWithActiveLimit(task, otherPolicy); err != nil {
+			t.Fatalf("create other task %d: %v", index+1, err)
+		}
+	}
+	excessOther := &model.Task{ID: "other-task-excess", UserID: owner.ID, Type: "canvas_text", Capability: taskCapabilityOther, Status: model.TaskStatusQueued}
+	if err := svc.repo.CreateTaskWithActiveLimit(excessOther, otherPolicy); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
+		t.Fatalf("excess other task error = %v, want ErrCapabilityTaskLimit", err)
+	}
+	if _, _, err := svc.membershipActiveTaskPolicy(owner.ID, "unknown-task", runtimePolicy); err == nil {
+		t.Fatal("unknown task type unexpectedly received a fallback concurrency policy")
+	}
+}
+
+func TestPaymentSecretsAreEncryptedAndBlankUpdatePreservesThem(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	admin, _, _ := createCommercialTestUsers(t, db)
+	request := readyWechatPaymentSetting()
+	public, err := svc.UpdatePaymentSetting(admin, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !public.Wechat.Ready || !public.Wechat.HasMerchantPrivateKey || !public.Wechat.HasPlatformPublicKey || !public.Wechat.HasAPIv3Key {
+		t.Fatalf("public setting does not report ready secret flags: %#v", public.Wechat)
+	}
+	var stored model.SystemSetting
+	if err := db.First(&stored, "key = ?", paymentSettingKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, plaintext := range []string{"merchant-private-key", "platform-public-key", "api-v3-key"} {
+		if strings.Contains(stored.ValueJSON, plaintext) {
+			t.Fatalf("stored payment setting leaked plaintext %q", plaintext)
+		}
+	}
+	blankSecrets := request
+	blankSecrets.Wechat.MerchantPrivateKey = ""
+	blankSecrets.Wechat.PlatformPublicKey = ""
+	blankSecrets.Wechat.APIv3Key = ""
+	blankSecrets.Wechat.AppID = "wx-app-id-updated"
+	updated, err := svc.UpdatePaymentSetting(admin, blankSecrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Wechat.AppID != "wx-app-id-updated" || !updated.Wechat.Ready {
+		t.Fatalf("blank secret update did not preserve readiness: %#v", updated.Wechat)
+	}
+}
+
+func TestPaymentCheckoutProtectsOwnershipTokenAndExpiration(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, other := createCommercialTestUsers(t, db)
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreatePaymentCheckout(other, order.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("cross-user checkout error = %v, want record not found", err)
+	}
+	before := time.Now()
+	result, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExpiresAt.Before(before.Add(14*time.Minute)) || result.ExpiresAt.After(before.Add(16*time.Minute)) {
+		t.Fatalf("checkout expiry = %s, want approximately 15 minutes", result.ExpiresAt)
+	}
+	token := checkoutToken(t, result.CheckoutURL)
+	digest := sha256.Sum256([]byte(token))
+	var session model.PaymentCheckoutSession
+	if err := db.First(&session, "order_id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if session.TokenHash != hex.EncodeToString(digest[:]) || session.TokenHash == token {
+		t.Fatalf("checkout token was not stored as its SHA-256 digest")
+	}
+	view, err := svc.PaymentCheckout(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.OrderID != order.ID || len(view.Providers) != 1 || view.Providers[0] != model.PaymentProviderWechat {
+		t.Fatalf("unexpected checkout view: %#v", view)
+	}
+	if err := db.Model(&session).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.PaymentCheckout(token)
+	requireAuthStatus(t, err, http.StatusBadRequest)
+	if err := db.First(&session, "id = ?", session.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != model.PaymentCheckoutExpired {
+		t.Fatalf("expired checkout status = %s, want expired", session.Status)
+	}
+}
+
+func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incomplete := readyWechatPaymentSetting()
+	incomplete.Wechat.APIv3Key = ""
+	if _, err := svc.UpdatePaymentSetting(admin, incomplete); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreatePaymentCheckout(owner, order.ID)
+	requireAuthStatus(t, err, http.StatusBadRequest)
+	var sessionCount int64
+	if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).Count(&sessionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 0 {
+		t.Fatalf("incomplete merchant config created %d checkout sessions", sessionCount)
+	}
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreatePaymentTransaction(checkoutToken(t, result.CheckoutURL), CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat})
+	requireAuthStatus(t, err, http.StatusBadGateway)
+	var transaction model.PaymentTransaction
+	if err := db.First(&transaction, "order_id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if transaction.Status != model.PaymentTransactionFailed || transaction.CodeURL != "" || transaction.FailureReason == "" {
+		t.Fatalf("provider connector failure was not recorded explicitly: %#v", transaction)
+	}
+}
+
+func TestPaymentGatewayRejectsNonOfficialOrInsecureEndpoints(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	admin, _, _ := createCommercialTestUsers(t, db)
+
+	for name, gatewayURL := range map[string]string{
+		"insecure scheme":      "http://api.mch.weixin.qq.com",
+		"unofficial host":      "https://payments.example.com",
+		"host suffix trap":     "https://api.mch.weixin.qq.com.attacker.example",
+		"embedded credentials": "https://merchant:secret@api.mch.weixin.qq.com",
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := readyWechatPaymentSetting()
+			request.Wechat.GatewayURL = gatewayURL
+			_, err := svc.UpdatePaymentSetting(admin, request)
+			requireAuthStatus(t, err, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestPaymentAuditEndpointsRequireAdminAndRejectUnknownFilters(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	admin, owner, _ := createCommercialTestUsers(t, db)
+
+	if _, err := svc.AdminPaymentTransactions(owner, AdminListQuery{}); err == nil {
+		t.Fatal("ordinary user unexpectedly accessed payment transactions")
+	} else {
+		requireAuthStatus(t, err, http.StatusForbidden)
+	}
+	if _, err := svc.AdminPaymentWebhookEvents(owner, AdminListQuery{}); err == nil {
+		t.Fatal("ordinary user unexpectedly accessed payment webhook events")
+	} else {
+		requireAuthStatus(t, err, http.StatusForbidden)
+	}
+
+	for name, query := range map[string]AdminListQuery{
+		"unknown provider":           {Type: "bank-transfer"},
+		"unknown transaction status": {Status: "successful"},
+	} {
+		t.Run("transactions "+name, func(t *testing.T) {
+			_, err := svc.AdminPaymentTransactions(admin, query)
+			requireAuthStatus(t, err, http.StatusBadRequest)
+		})
+	}
+	for name, query := range map[string]AdminListQuery{
+		"unknown provider":       {Type: "bank-transfer"},
+		"unknown webhook status": {Status: "ignored"},
+	} {
+		t.Run("webhooks "+name, func(t *testing.T) {
+			_, err := svc.AdminPaymentWebhookEvents(admin, query)
+			requireAuthStatus(t, err, http.StatusBadRequest)
+		})
+	}
+}

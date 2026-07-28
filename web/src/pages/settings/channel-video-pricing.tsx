@@ -21,7 +21,7 @@ export function ChannelVideoPricing({ channel, onChange }: { channel: ModelChann
     return (
         <div className="mt-3 border-t border-border/70 pt-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-                <div><div className="text-xs font-medium">视频模型价格</div><div className="mt-0.5 text-[10px] text-foreground/42">仅用于记录自定义渠道成本，不扣平台积分</div></div>
+                <div><div className="text-xs font-medium">视频模型价格</div><div className="mt-0.5 text-[10px] text-foreground/42">价格由后台系统模型配置统一提供</div></div>
                 <span className="text-[10px] text-foreground/35">{channel.models.length} 个模型</span>
             </div>
             <div className="divide-y divide-border/60 rounded-md border border-border/70">

@@ -99,7 +99,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
             if (!asset.character) throw new Error("角色版本信息不完整");
             const model = effectiveConfig.imageModel || effectiveConfig.model;
             const config = { ...effectiveConfig, model };
-            if (!isAiConfigReady(config, model)) throw new Error("请先在设置中配置可用的图片模型");
+            if (!isAiConfigReady(config, model)) throw new Error("系统暂无可用图片模型，请联系管理员完成 AI 模型配置");
             const projectStyle = canvasStylePresets.find((preset) => preset.id === detail.project.stylePresetId);
             await generateCharacterTurnaround({ projectId: detail.project.id, assetId: asset.id, versionId: asset.character.versionId, name: asset.title, definition: asset.character.definition, projectStyle, config });
             return getProjectCharacter(detail.project.id, asset.id);

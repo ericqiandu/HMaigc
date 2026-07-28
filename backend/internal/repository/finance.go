@@ -17,6 +17,7 @@ var (
 	ErrInsufficientCredits  = errors.New("insufficient credits")
 	ErrRedeemCodeInvalid    = errors.New("redeem code invalid")
 	ErrActiveTaskLimit      = errors.New("active task limit reached")
+	ErrCapabilityTaskLimit  = errors.New("capability task limit reached")
 	ErrTaskNotRetryable     = errors.New("task is not retryable")
 	ErrBillingStateConflict = errors.New("billing state conflict")
 )
@@ -186,9 +187,15 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 	return count > 0, err
 }
 
-func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {
+type ActiveTaskPolicy struct {
+	TotalLimit      int
+	Capability      string
+	CapabilityLimit int
+}
+
+func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
+		if err := enforceActiveTaskLimit(tx, task.UserID, policy); err != nil {
 			return err
 		}
 		if err := reserveBillingOrder(tx, order); err != nil {
@@ -198,19 +205,19 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 	})
 }
 
-func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, policy ActiveTaskPolicy) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
+		if err := enforceActiveTaskLimit(tx, task.UserID, policy); err != nil {
 			return err
 		}
 		return tx.Create(task).Error
 	})
 }
 
-func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *model.BillingOrder, activeTaskLimit int) (*model.Task, error) {
+func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *model.BillingOrder, policy ActiveTaskPolicy) (*model.Task, error) {
 	var task model.Task
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := enforceActiveTaskLimit(tx, userID, activeTaskLimit); err != nil {
+		if err := enforceActiveTaskLimit(tx, userID, policy); err != nil {
 			return err
 		}
 		if order != nil {
@@ -220,7 +227,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 		}
 		updates := map[string]any{
 			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "result_json": "",
-			"started_at": nil, "completed_at": nil, "updated_at": time.Now(),
+			"capability": policy.Capability, "started_at": nil, "completed_at": nil, "updated_at": time.Now(),
 		}
 		if order != nil {
 			updates["billing_order_id"] = order.ID
@@ -239,13 +246,22 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 	return &task, err
 }
 
-func enforceActiveTaskLimit(tx *gorm.DB, userID string, activeTaskLimit int) error {
+func enforceActiveTaskLimit(tx *gorm.DB, userID string, policy ActiveTaskPolicy) error {
 	var count int64
 	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {
 		return err
 	}
-	if count >= int64(activeTaskLimit) {
+	if count >= int64(policy.TotalLimit) {
 		return ErrActiveTaskLimit
+	}
+	var capabilityCount int64
+	if err := tx.Model(&model.Task{}).
+		Where("user_id = ? AND capability = ? AND status IN ?", userID, policy.Capability, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Count(&capabilityCount).Error; err != nil {
+		return err
+	}
+	if capabilityCount >= int64(policy.CapabilityLimit) {
+		return ErrCapabilityTaskLimit
 	}
 	return nil
 }

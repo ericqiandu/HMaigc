@@ -7,7 +7,7 @@ import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { createAdminRedeemBatch, disableAdminRedeemBatch, disableAdminRedeemCode, listAdminRedeemBatchCodes, listAdminRedeemBatches, type AdminRedeemCode, type RedeemBatch } from "@/services/api/wallet";
-import { AdminExportButton } from "./admin-ui";
+import { AdminExportButton, SettingsSectionCard } from "./admin-ui";
 
 type RedeemFormValues = { amount: number; count: number; note?: string; expiresAt?: string };
 
@@ -129,18 +129,13 @@ export default function RedemptionCodesPanel() {
     ];
 
     return (
-        <div className="space-y-8">
-            <section className="overflow-hidden rounded-lg border border-border bg-background">
-                <div className="flex items-start gap-3 border-b border-border px-5 py-4">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/40">
-                        <KeyRound className="size-4" />
-                    </span>
-                    <div>
-                        <h2 className="text-base font-semibold">生成兑换码批次</h2>
-                        <p className="mt-1 text-xs leading-5 text-foreground/55">兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。</p>
-                    </div>
-                </div>
-                <Form form={form} layout="vertical" requiredMark={false} className="grid gap-x-4 px-5 pt-5 md:grid-cols-12">
+        <div className="admin-redemption-layout space-y-9">
+            <SettingsSectionCard
+                icon={<KeyRound className="size-4" />}
+                title="生成兑换码批次"
+                description="兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。"
+            >
+                <Form form={form} layout="vertical" requiredMark={false} className="admin-redemption-form grid gap-x-5 px-6 pb-1 pt-5 md:grid-cols-12">
                     <Form.Item name="amount" label="每个兑换码的积分" rules={[{ required: true, message: "请填写积分面额" }]} className="md:col-span-3">
                         <InputNumber style={{ width: "100%" }} min={0.000001} precision={6} />
                     </Form.Item>
@@ -153,20 +148,20 @@ export default function RedemptionCodesPanel() {
                     <Form.Item name="note" label="批次备注" className="md:col-span-4">
                         <Input maxLength={500} placeholder="例如：7 月活动赠送" />
                     </Form.Item>
-                    <div className="flex items-center justify-between gap-4 border-t border-border py-4 md:col-span-12">
+                    <div className="admin-redemption-actions flex items-center justify-between gap-5 py-4 md:col-span-12">
                         <span className="text-xs text-foreground/45">单批最多生成 5,000 个。生成成功后会立即显示结果，请及时下载留存。</span>
                         <Button type="primary" loading={creating} icon={<TicketCheck className="size-4" />} onClick={() => void createBatch()}>
                             生成兑换码
                         </Button>
                     </div>
                 </Form>
-            </section>
+            </SettingsSectionCard>
 
-            <section>
-                <div className="mb-4 flex items-end justify-between gap-3">
-                    <div>
-                        <h2 className="text-base font-semibold">批次记录</h2>
-                        <p className="mt-1 text-xs text-foreground/55">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
+            <section className="admin-redemption-records">
+                <div className="admin-redemption-records-heading mb-5 flex items-end justify-between gap-4">
+                    <div className="admin-redemption-records-copy">
+                        <h2 className="admin-redemption-records-title text-base font-semibold">批次记录</h2>
+                        <p className="admin-redemption-records-description mt-1.5 text-xs leading-5 text-foreground/55">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
                     </div>
                     <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
                         刷新

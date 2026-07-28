@@ -154,13 +154,13 @@ export default function AdminAnnouncementsPanel() {
     ];
 
     return (
-        <>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-                <div className="flex min-w-0 items-center gap-3">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-muted/45 text-foreground"><BellRing className="size-4" /></span>
-                    <div className="min-w-0">
-                        <div className="text-sm font-medium text-foreground">共保留 {total} 条公告记录</div>
-                        <div className="mt-0.5 text-xs text-foreground/50">关闭公告会立即从用户公告中心移除</div>
+        <div className="admin-announcements-layout">
+            <div className="admin-announcements-heading mb-5 flex flex-wrap items-center justify-between gap-4">
+                <div className="admin-announcements-heading-copy flex min-w-0 items-center gap-4">
+                    <span className="admin-announcements-icon grid size-9 shrink-0 place-items-center rounded-lg bg-muted/45 text-foreground/75"><BellRing className="size-4" /></span>
+                    <div className="admin-announcements-summary min-w-0">
+                        <div className="admin-announcements-count text-sm font-medium text-foreground">共保留 {total} 条公告记录</div>
+                        <div className="admin-announcements-description mt-1 text-xs leading-5 text-foreground/50">关闭公告会立即从用户公告中心移除</div>
                     </div>
                 </div>
                 <Button type="primary" icon={<Plus className="size-4" />} onClick={openPublishModal}>发布公告</Button>
@@ -196,7 +196,7 @@ export default function AdminAnnouncementsPanel() {
                     </Form.Item>
                 </Form>
             </Modal>
-        </>
+        </div>
     );
 }
 

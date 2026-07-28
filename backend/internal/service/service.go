@@ -277,22 +277,22 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if containsInlineMediaDataURL(normalizedInput) {
 		return nil, BadAuthRequest("任务输入不能包含内嵌媒体，请先上传到资源存储")
 	}
+	if err := validateSystemProviderInput(normalizedInput); err != nil {
+		return nil, err
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
-	}
-	activeTasks, err := s.repo.ActiveTaskCountForUser(userID)
-	if err != nil {
-		return nil, err
-	}
-	if activeTasks >= int64(policy.Task.ActiveTaskLimit) {
-		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
 	}
 	taskType := req.Type
 	if taskType == "" {
 		taskType = "video_image_to_video"
 	}
-	task := model.Task{ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, taskType, policy)
+	if err != nil {
+		return nil, err
+	}
+	task := model.Task{ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Capability: capability, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
@@ -305,12 +305,15 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	inputJSON, _ := json.Marshal(normalizedInput)
 	task.InputJSON = string(inputJSON)
-	if billingOrder != nil {
-		task.BillingOrderID = billingOrder.ID
+	task.BillingOrderID = billingOrder.ID
+	task.Provider = "system"
+	task.Model = billingOrder.Model
+	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, activeTaskPolicy)
+	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
+		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
 	}
-	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy)
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
-		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
+		return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))
 	}
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
@@ -419,12 +422,20 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	task, err = s.repo.RetryTaskWithBilling(userID, task.ID, billingOrder, policy.Task.ActiveTaskLimit)
+	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, task.Type, policy)
+	if err != nil {
+		return nil, err
+	}
+	task.Capability = capability
+	task, err = s.repo.RetryTaskWithBilling(userID, task.ID, billingOrder, activeTaskPolicy)
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
 	}
+	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
+		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
+	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
-		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
+		return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))
 	}
 	if errors.Is(err, repository.ErrTaskNotRetryable) {
 		return nil, BadAuthRequest("任务已被其他请求重新入队，请勿重复重试")
@@ -912,35 +923,14 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
-	if strings.HasPrefix(task.Type, "canvas_") || canRunProviderTask(task) {
-		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.Type, task.Prompt, task.InputJSON)
-		return result, nil, err
-	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)
 	}
-	if strings.HasPrefix(task.Type, "video_") {
-		result, ops := buildVideoWorkflowResult(task)
-		return result, ops, nil
+	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
+		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.Type, task.Prompt, task.InputJSON)
+		return result, nil, err
 	}
-	result, ops := buildAgentResult(task)
-	return result, ops, nil
-}
-
-func canRunProviderTask(task model.Task) bool {
-	if !strings.HasPrefix(task.Type, "video_") || strings.TrimSpace(task.InputJSON) == "" {
-		return false
-	}
-	var input map[string]any
-	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
-		return false
-	}
-	mode, _ := input["mode"].(string)
-	config, ok := input["config"].(map[string]any)
-	if mode != "video" || !ok || strings.TrimSpace(fmt.Sprint(config["model"])) == "" {
-		return false
-	}
-	return strings.TrimSpace(fmt.Sprint(config["channelId"])) != "" || (strings.TrimSpace(fmt.Sprint(config["baseUrl"])) != "" && strings.TrimSpace(fmt.Sprint(config["apiKey"])) != "")
+	return nil, nil, fmt.Errorf("不支持的任务类型：%s", task.Type)
 }
 
 func (s *Service) processAgentStoryboardTask(ctx context.Context, task model.Task) (map[string]interface{}, []map[string]interface{}, error) {
@@ -954,22 +944,21 @@ func (s *Service) processAgentStoryboardTask(ctx context.Context, task model.Tas
 	if len(assets) == 0 {
 		assets = extractStoryboardAssets(input.CanvasSnapshot)
 	}
-	plan := fallbackAgentStoryboardPlan(task.Prompt)
-	if providerConfigReady(input.Config) {
-		config, err := s.resolveProviderConfig(input.Config)
-		if err != nil {
-			return nil, nil, err
-		}
-		result, err := runTextTask(ctx, canvasGenerationInput{Mode: "text", Prompt: s.buildAgentStoryboardPlannerPrompt(task.Prompt, input.Requirements, assets, 0, 0), Config: config})
-		if err != nil {
-			return nil, nil, err
-		}
-		text, _ := result["text"].(string)
-		nextPlan, err := parseAgentStoryboardPlan(text)
-		if err != nil {
-			return nil, nil, err
-		}
-		plan = nextPlan
+	if !providerConfigReady(input.Config) {
+		return nil, nil, errors.New("当前功能必须使用后台配置的文本模型")
+	}
+	config, err := s.resolveProviderConfig(input.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	result, err := runTextTask(ctx, canvasGenerationInput{Mode: "text", Prompt: s.buildAgentStoryboardPlannerPrompt(task.Prompt, input.Requirements, assets, 0, 0), Config: config})
+	if err != nil {
+		return nil, nil, err
+	}
+	text, _ := result["text"].(string)
+	plan, err := parseAgentStoryboardPlan(text)
+	if err != nil {
+		return nil, nil, err
 	}
 	return buildAgentStoryboardResult(task, plan, assets)
 }
@@ -1043,7 +1032,61 @@ func (s *Service) processStoryboardRowsTask(ctx context.Context, task model.Task
 }
 
 func providerConfigReady(config providerConfig) bool {
-	return strings.TrimSpace(config.Model) != "" && (strings.TrimSpace(config.ChannelID) != "" || (strings.TrimSpace(config.BaseURL) != "" && strings.TrimSpace(config.APIKey) != ""))
+	return strings.TrimSpace(config.Model) != "" && strings.TrimSpace(config.ChannelID) != ""
+}
+
+func validateSystemProviderInput(input map[string]any) error {
+	rawConfig, exists := input["config"]
+	if !exists || rawConfig == nil {
+		return nil
+	}
+	config, ok := rawConfig.(map[string]any)
+	if !ok {
+		return BadAuthRequest("任务模型配置格式无效")
+	}
+	readString := func(key string) (string, error) {
+		value, exists := config[key]
+		if !exists || value == nil {
+			return "", nil
+		}
+		text, ok := value.(string)
+		if !ok {
+			return "", BadAuthRequest("任务模型配置格式无效")
+		}
+		return strings.TrimSpace(text), nil
+	}
+	channelID, err := readString("channelId")
+	if err != nil {
+		return err
+	}
+	modelName, err := readString("model")
+	if err != nil {
+		return err
+	}
+	baseURL, err := readString("baseUrl")
+	if err != nil {
+		return err
+	}
+	apiKey, err := readString("apiKey")
+	if err != nil {
+		return err
+	}
+	if channelID == "" && modelName == "" && baseURL == "" && apiKey == "" {
+		return nil
+	}
+	if channelID == "" {
+		return BadAuthRequest("用户不能配置自定义 API，请由管理员在后台配置系统模型渠道")
+	}
+	if apiKey != "" && apiKey != "system" {
+		return BadAuthRequest("用户不能提交自定义 API 密钥，请由管理员在后台配置系统模型渠道")
+	}
+	if baseURL != "" {
+		embeddedChannelID := systemChannelIDFromBaseURL(baseURL)
+		if embeddedChannelID == "" || embeddedChannelID != channelID {
+			return BadAuthRequest("用户不能配置自定义 API 地址，请由管理员在后台配置系统模型渠道")
+		}
+	}
+	return nil
 }
 
 func parseAgentStoryboardPlan(raw string) (agentStoryboardPlan, error) {
@@ -1123,43 +1166,6 @@ func extractJSONText(raw string) (string, error) {
 		return "", errors.New("分镜模型返回的不是 JSON")
 	}
 	return trimmed[start : end+1], nil
-}
-
-func fallbackAgentStoryboardPlan(prompt string) agentStoryboardPlan {
-	title := shortTitle(prompt, 18)
-	return agentStoryboardPlan{
-		Title:      title,
-		Logline:    "围绕用户 brief 拆解的影视短片工作流。",
-		StyleGuide: "真实电影机拍摄，自然曝光，低饱和色彩，保持角色、空间、道具和镜头语言一致。",
-		Characters: []string{"主角：根据 brief 保持服装、动作动机和情绪连续。"},
-		Locations:  []string{"主场景：根据 brief 建立前景、中景、远景和可信光源。"},
-		Shots: []agentStoryboardShot{
-			{
-				Title:        "开场建立",
-				Description:  "建立故事空间、主角状态和情绪基调。",
-				VisualPrompt: "以真实电影机语言建立主要空间和角色状态，前景、中景、远景层次清晰。",
-				VideoPrompt:  "8 秒连续镜头，从故事空间中的人类尺度前景开始，摄影机缓慢前推，先展示环境细节和主角状态，中段让关键冲突迹象进入画面，结尾停在主角反应。自然曝光，真实高光滚降，空气介质和轻微胶片颗粒，避免廉价特效感、均匀平光和无尺度参照。",
-				Camera:       "中景，平视到轻微低机位，中等焦段",
-				Motion:       "缓慢前推，结尾停住",
-			},
-			{
-				Title:        "冲突推进",
-				Description:  "推进动作、关系变化和核心冲突。",
-				VisualPrompt: "主体动作、道具和环境反馈同时出现，空间调度明确。",
-				VideoPrompt:  "10 秒连续镜头，摄影机从主角侧后方跟随移动，开始画面聚焦人物动作和关键道具，中段冲突升级，环境中的灯光、尘埃、水汽或人群反应随动作发生变化，结尾用中近景压住情绪。真实电影机拍摄，受控冷暖对比，运动处保留自然模糊，避免过度锐化、过亮轮廓和塑料表面。",
-				Camera:       "中近景，侧后方跟拍，中长焦压缩空间",
-				Motion:       "跟拍加轻微抬镜",
-			},
-			{
-				Title:        "结果与钩子",
-				Description:  "交代结果并留下下一段钩子。",
-				VisualPrompt: "主角反应、环境后果和悬念信息同框。",
-				VideoPrompt:  "8 秒连续镜头，从冲突后的环境细节开始，摄影机缓慢横移揭示结果，中段主角进入画面并完成关键反应，结尾停在一个可延续的悬念物或空间方向。真实电影摄影质感，暗部保留层次，高光不过曝，低饱和色彩，避免海报式摆拍、干净空白背景和主体完整居中平铺。",
-				Camera:       "中景到近景，横移构图",
-				Motion:       "缓慢横移，结尾定格",
-			},
-		},
-	}
 }
 
 func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, assets []storyboardAsset) (map[string]interface{}, []map[string]interface{}, error) {
@@ -1504,64 +1510,6 @@ func (s *Service) markSessionFailed(task model.Task, message string) error {
 		return err
 	}
 	return s.repo.Create(&model.Message{ID: newID(), UserID: task.UserID, SessionID: task.SessionID, Role: "assistant", Content: defaultString(message, "会话任务失败。")})
-}
-
-func buildAgentResult(task model.Task) (map[string]any, []map[string]any) {
-	title := strings.TrimSpace(task.Prompt)
-	if len([]rune(title)) > 28 {
-		title = string([]rune(title)[:28]) + "..."
-	}
-	result := map[string]any{
-		"taskId":    task.ID,
-		"operation": task.Operation,
-		"provider":  defaultString(task.Provider, "internal-agent"),
-		"model":     defaultString(task.Model, "workflow-router"),
-		"plan": []map[string]any{
-			{"kind": "script", "title": "创意脚本", "content": task.Prompt},
-			{"kind": "scene", "title": "主场景", "content": "根据用户输入拆解为可生成的视频场景。"},
-			{"kind": "shot", "title": "镜头 1", "content": "建立画面、主体、风格和运镜。"},
-			{"kind": "final", "title": "成片", "content": "等待视频生成 Provider 回填成片结果。"},
-		},
-	}
-	ops := []map[string]any{
-		nodeOp("script-"+task.ID, "text", "剧本 · "+title, 0, 0, "script", task.Prompt),
-		nodeOp("scene-"+task.ID, "text", "场景 · 主场景", 380, 0, "scene", "主场景设定、角色关系、视觉风格。"),
-		nodeOp("shot-"+task.ID, "config", "分镜 · 镜头 1", 760, 0, "shot", task.Prompt),
-		nodeOp("final-"+task.ID, "video", "成片 · 待生成", 1140, 0, "final", ""),
-		connectOp("script-"+task.ID, "scene-"+task.ID),
-		connectOp("scene-"+task.ID, "shot-"+task.ID),
-		connectOp("shot-"+task.ID, "final-"+task.ID),
-	}
-	return result, ops
-}
-
-func buildVideoWorkflowResult(task model.Task) (map[string]any, []map[string]any) {
-	title := strings.TrimSpace(task.Prompt)
-	if len([]rune(title)) > 28 {
-		title = string([]rune(title)[:28]) + "..."
-	}
-	operation := defaultString(task.Operation, strings.TrimPrefix(task.Type, "video_"))
-	result := map[string]any{
-		"taskId":    task.ID,
-		"operation": operation,
-		"provider":  defaultString(task.Provider, "internal-agent"),
-		"model":     defaultString(task.Model, "workflow-router"),
-		"plan": []map[string]any{
-			{"kind": "reference_set", "title": "参考素材组", "content": "收集原视频、参考图、参考音频和版本样片。"},
-			{"kind": "shot", "title": "编辑镜头", "content": task.Prompt},
-			{"kind": "final", "title": "结果版本", "content": "等待 provider 生成或人工确认后回填版本结果。"},
-		},
-	}
-	ops := []map[string]any{
-		nodeOp("video-brief-"+task.ID, "text", "编辑需求 · "+title, 0, 0, "script", task.Prompt),
-		nodeOpWithMetadata("video-ref-"+task.ID, "text", "参考素材组", 380, 0, map[string]any{"workflowKind": "reference_set", "status": "idle", "content": "原片、参考图、参考音频、风格板或历史版本。", "videoEditOperation": operation}),
-		nodeOpWithMetadata("video-shot-"+task.ID, "config", "视频任务 · "+operation, 760, 0, map[string]any{"workflowKind": "shot", "status": "idle", "generationMode": "video", "prompt": task.Prompt, "composerContent": task.Prompt, "videoEditOperation": operation}),
-		nodeOpWithMetadata("video-result-"+task.ID, "video", "结果版本 · 待回填", 1140, 0, map[string]any{"workflowKind": "final", "status": "idle", "videoEditOperation": operation, "versionLabel": "v1"}),
-		connectOp("video-brief-"+task.ID, "video-ref-"+task.ID),
-		connectOp("video-ref-"+task.ID, "video-shot-"+task.ID),
-		connectOp("video-shot-"+task.ID, "video-result-"+task.ID),
-	}
-	return result, ops
 }
 
 func nodeOp(id string, nodeType string, title string, x int, y int, workflowKind string, content string) map[string]any {

@@ -10,7 +10,7 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import { resolveBackendApiUrl } from "@/stores/use-config-store";
 import { cn } from "@/lib/utils";
 
-export function CanvasProjectCard({ project, projectName, variant = "library" }: { project: CanvasProject; projectName?: string; variant?: "library" | "recent" }) {
+export function CanvasProjectCard({ project, projectName, variant = "library", selectionMode = false }: { project: CanvasProject; projectName?: string; variant?: "library" | "recent"; selectionMode?: boolean }) {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -36,7 +36,7 @@ export function CanvasProjectCard({ project, projectName, variant = "library" }:
             <div className="app-canvas-project-preview relative">
                 <button
                     type="button"
-                    className="block aspect-[16/10] w-full overflow-hidden text-left"
+                    className="block aspect-video w-full overflow-hidden text-left"
                     onClick={(event) => {
                         event.stopPropagation();
                         open();
@@ -44,11 +44,11 @@ export function CanvasProjectCard({ project, projectName, variant = "library" }:
                 >
                     <ProjectPreview project={project} />
                 </button>
-                {!compact ? <span className={`absolute left-2.5 top-2.5 grid size-6 place-items-center rounded-md border border-black/10 bg-white/90 shadow-sm backdrop-blur transition-opacity dark:border-white/10 dark:bg-stone-900/90 ${selected ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"}`} onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={(event) => toggleSelected(project.id, event.target.checked)} className="app-canvas-project-checkbox size-3.5" aria-label={`选择 ${project.title}`} /></span> : null}
+                {!compact ? <span className={`app-canvas-project-selection absolute left-2.5 top-2.5 grid size-6 place-items-center rounded-md bg-white/90 shadow-sm backdrop-blur transition-opacity dark:bg-stone-900/90 ${selected || selectionMode ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"}`} onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={(event) => toggleSelected(project.id, event.target.checked)} className="app-canvas-project-checkbox size-3.5" aria-label={`选择 ${project.title}`} /></span> : null}
                 <span className="absolute bottom-2 right-2 rounded-md border border-white/15 bg-stone-950/80 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xl">{project.nodes.length} 节点</span>
             </div>
 
-            <div className="px-1 pb-1 pt-2.5">
+            <div className="app-canvas-project-meta px-1 pb-1 pt-2.5">
                 <div className="flex items-center justify-between gap-3">
                 {editing ? (
                     <Input className="min-w-0" value={editingTitle} onClick={(event) => event.stopPropagation()} onChange={(event) => setEditingTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveTitle()} autoFocus />
@@ -61,7 +61,7 @@ export function CanvasProjectCard({ project, projectName, variant = "library" }:
                             open();
                         }}
                     >
-                            <h2 className="line-clamp-1 text-[13px] font-semibold leading-5 text-foreground">{project.title}</h2>
+                            <h2 className="app-canvas-project-title line-clamp-1 text-sm font-medium leading-5 text-foreground">{project.title}</h2>
                     </button>
                 )}
                     {editing ? (
@@ -75,7 +75,7 @@ export function CanvasProjectCard({ project, projectName, variant = "library" }:
                             menu={{
                                 onClick: ({ domEvent }) => domEvent.stopPropagation(),
                                 items: [
-                                    { key: "export", icon: <Download className="size-3.5" />, label: "导出画布", onClick: () => void exportCanvasProjects([project], project.title || "影策画布") },
+                                    { key: "export", icon: <Download className="size-3.5" />, label: "导出画布", onClick: () => void exportCanvasProjects([project], project.title || "HMaigc画布") },
                                     { key: "rename", icon: <Pencil className="size-3.5" />, label: "重命名", onClick: () => startEditing(project.id, project.title) },
                                     { type: "divider" },
                                     { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除", onClick: () => setDeleteIds([project.id]) },
@@ -86,11 +86,11 @@ export function CanvasProjectCard({ project, projectName, variant = "library" }:
                         </Dropdown>
                     )}
                 </div>
-                <div className="mt-0.5 flex min-w-0 items-center justify-between gap-2 text-[11px] leading-5 text-foreground/52">
-                    <span className="truncate">{projectName || "自由画布"}</span>
-                    <span className="shrink-0">{project.connections.length} 条连线</span>
+                <div className="app-canvas-project-details mt-0.5 flex min-w-0 items-center justify-between gap-2 text-[11px] leading-5 text-foreground/48">
+                    <span className="app-canvas-project-belonging truncate">{projectName || "自由画布"}</span>
+                    <span className="app-canvas-project-connections shrink-0">{project.connections.length} 条连线</span>
                 </div>
-                <p className="text-[10px] tabular-nums text-foreground/38">更新于 {formatProjectTime(project.updatedAt)}</p>
+                <p className="app-canvas-project-time text-[10px] tabular-nums text-foreground/35">编辑于 {formatProjectTime(project.updatedAt)}</p>
             </div>
         </article>
     );

@@ -256,7 +256,6 @@ export default function AssetsPage() {
         <>
             <WorkspacePage grid>
                 <PageHeader
-                    icon="assets"
                     title="素材库"
                     description="管理文本、图片、视频、音频和 3D 模型素材。"
                     meta={<span className="text-xs text-foreground/45">{filteredAssets.length} 个素材</span>}

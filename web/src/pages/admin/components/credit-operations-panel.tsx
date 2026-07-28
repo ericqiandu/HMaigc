@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag } from "antd";
+import { App, Button, Form, Input, InputNumber, Modal, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CircleAlert, Coins, RefreshCw, Search, Settings2, UserRoundCog } from "lucide-react";
+import { CircleAlert, Coins, RefreshCw, Save, Search, Settings2, UserRoundCog } from "lucide-react";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { AdminRowActions } from "@/pages/admin/components/admin-ui";
 import { listAdminUsers, type AdminReferenceData, type LocalUser } from "@/services/api/auth";
 import { adjustAdminUserCredits, getAdminCreditPolicy, listAdminBillingOrders, resolveAdminBillingOrder, updateAdminCreditPolicy, type BillingOrder } from "@/services/api/wallet";
 
@@ -171,144 +172,150 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
         { title: "原因", dataIndex: "error", width: 260, ellipsis: true, render: (value) => value || "费用状态不明确" },
         {
             title: "处理",
-            width: 180,
+            width: 142,
             fixed: "right",
             render: (_, order) =>
                 order.status === "settled" || order.status === "refunded" ? (
                     <span className="text-xs text-foreground/40">处理完成</span>
                 ) : (
-                    <Space size={6}>
-                        <Button
-                            size="small"
-                            onClick={() => {
+                    <AdminRowActions
+                        primary={{
+                            label: "确认扣费",
+                            onClick: () => {
                                 setResolvingOrder({ order, action: "settle" });
                                 resolutionForm.resetFields();
-                            }}
-                        >
-                            确认扣费
-                        </Button>
-                        <Button
-                            size="small"
-                            danger
-                            onClick={() => {
-                                setResolvingOrder({ order, action: "refund" });
-                                resolutionForm.resetFields();
-                            }}
-                        >
-                            退回积分
-                        </Button>
-                    </Space>
+                            },
+                        }}
+                        actions={[
+                            {
+                                key: "refund",
+                                label: "退回积分",
+                                danger: true,
+                                onClick: () => {
+                                    setResolvingOrder({ order, action: "refund" });
+                                    resolutionForm.resetFields();
+                                },
+                            },
+                        ]}
+                    />
                 ),
         },
     ];
 
     return (
-        <div className="space-y-8">
-            <section className="rounded-lg border border-border bg-background p-5">
-                <div className="flex items-start gap-3">
-                    <span className="grid size-8 place-items-center rounded-md bg-muted/40">
-                        <Settings2 className="size-4" />
-                    </span>
-                    <div>
-                        <h2 className="text-base font-semibold">积分策略</h2>
-                        <p className="mt-1 text-xs text-foreground/55">注册、签到与模型倍率统一在服务端结算。</p>
-                    </div>
-                </div>
-                <Form form={policyForm} layout="vertical" requiredMark={false} className="mt-5">
-                    <div className="grid gap-4 md:grid-cols-3">
-                        <Form.Item
-                            name="signupBonus"
-                            label="注册默认积分"
-                            rules={[
-                                { required: true, message: "请填写注册积分" },
-                                { type: "number", min: 0 },
-                            ]}
-                        >
-                            <InputNumber className="w-full" min={0} precision={6} />
-                        </Form.Item>
-                        <Form.Item
-                            name="checkinBonus"
-                            label="每日签到积分"
-                            rules={[
-                                { required: true, message: "请填写签到积分" },
-                                { type: "number", min: 0 },
-                            ]}
-                        >
-                            <InputNumber className="w-full" min={0} precision={6} />
-                        </Form.Item>
-                        <Form.Item
-                            name="defaultMultiplier"
-                            label="默认模型倍率"
-                            rules={[
-                                { required: true, message: "请填写默认倍率" },
-                                { type: "number", min: 0.0001, max: 100 },
-                            ]}
-                        >
-                            <InputNumber className="w-full" min={0.0001} max={100} precision={4} />
-                        </Form.Item>
-                    </div>
-                    <Form.Item name="modelMultipliers" label="模型独立倍率" extra="每行一项，格式为 模型名=倍率。例如 gpt-image-1=1.5">
-                        <Input.TextArea rows={4} placeholder={"gpt-image-1=1.5\nseedance-1.0-pro=2"} />
-                    </Form.Item>
-                    <Button type="primary" loading={savingPolicy} onClick={() => void savePolicy()}>
-                        保存积分策略
-                    </Button>
-                </Form>
-            </section>
-            <section className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.7fr)]">
-                <div className="border-b border-border p-5 lg:border-b-0 lg:border-r">
-                    <div className="flex items-start gap-3">
-                        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/40">
-                            <UserRoundCog className="size-4" />
+        <div className="credit-operations space-y-9">
+            <div className="credit-operations-overview grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.85fr)]">
+                <section className="credit-policy-panel overflow-hidden rounded-[10px] border border-border/70 bg-background/75">
+                    <div className="credit-panel-heading flex items-start gap-4 px-6 pb-5 pt-6">
+                        <span className="credit-panel-icon grid size-9 place-items-center rounded-md bg-muted/35">
+                            <Settings2 className="size-4" />
                         </span>
-                        <div>
-                            <h2 className="text-base font-semibold">人工调整积分</h2>
-                            <p className="mt-1 text-xs text-foreground/55">所有变更都会写入不可修改的用户积分流水。</p>
+                        <div className="credit-panel-heading-copy">
+                            <h2 className="credit-panel-title text-base font-semibold">积分策略</h2>
+                            <p className="credit-panel-description mt-1.5 text-xs leading-5 text-foreground/50">注册、签到与模型倍率统一在服务端结算。</p>
                         </div>
                     </div>
-                    <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="mt-5">
-                        <Form.Item name="userId" label="目标用户" rules={[{ required: true, message: "请选择用户" }]}>
-                            <Select showSearch filterOption={false} loading={searchingUsers} placeholder="搜索用户名或显示名称" onSearch={(value) => void searchUsers(value)} options={adjustmentUsers.map((user) => ({ label: `${user.displayName || user.username} · @${user.username}`, value: user.id }))} />
-                        </Form.Item>
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <Form.Item name="amount" label="积分变化" extra="正数增加，负数扣减。" rules={[{ required: true, message: "请填写积分变化" }]}>
-                                <InputNumber className="w-full" precision={6} prefix={<Coins className="size-3.5 text-foreground/45" />} placeholder="例如 10 或 -2" />
+                    <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form bg-foreground/[.018] px-6 pb-6 pt-5">
+                        <div className="credit-policy-fields grid gap-5 md:grid-cols-3">
+                            <Form.Item
+                                name="signupBonus"
+                                label="注册默认积分"
+                                rules={[
+                                    { required: true, message: "请填写注册积分" },
+                                    { type: "number", min: 0 },
+                                ]}
+                            >
+                                <InputNumber className="w-full" min={0} precision={6} />
                             </Form.Item>
-                            <Form.Item name="note" label="调整原因" rules={[{ required: true, message: "请填写调整原因" }]}>
-                                <Input maxLength={500} placeholder="将显示在审计流水中" />
+                            <Form.Item
+                                name="checkinBonus"
+                                label="每日签到积分"
+                                rules={[
+                                    { required: true, message: "请填写签到积分" },
+                                    { type: "number", min: 0 },
+                                ]}
+                            >
+                                <InputNumber className="w-full" min={0} precision={6} />
+                            </Form.Item>
+                            <Form.Item
+                                name="defaultMultiplier"
+                                label="默认模型倍率"
+                                rules={[
+                                    { required: true, message: "请填写默认倍率" },
+                                    { type: "number", min: 0.0001, max: 100 },
+                                ]}
+                            >
+                                <InputNumber className="w-full" min={0.0001} max={100} precision={4} />
                             </Form.Item>
                         </div>
-                        <Button type="primary" loading={adjusting} onClick={() => void adjust()}>
-                            确认调整
-                        </Button>
+                        <Form.Item name="modelMultipliers" label="模型独立倍率" extra="每行一项，格式为 模型名=倍率。例如 gpt-image-1=1.5">
+                            <Input.TextArea rows={4} placeholder={"gpt-image-1=1.5\nseedance-1.0-pro=2"} />
+                        </Form.Item>
+                        <div className="admin-form-actions credit-policy-actions flex justify-end">
+                            <Button className="admin-form-submit" type="primary" icon={<Save className="size-4" />} loading={savingPolicy} onClick={() => void savePolicy()}>
+                                保存积分策略
+                            </Button>
+                        </div>
                     </Form>
-                </div>
-                <div className="flex flex-col justify-between bg-muted/20 p-5">
-                    <div>
-                        <span className="grid size-8 place-items-center rounded-md border border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-300">
-                            <CircleAlert className="size-4" />
-                        </span>
-                        <h3 className="mt-4 text-sm font-semibold">写操作强校验</h3>
-                        <p className="mt-2 text-xs leading-6 text-foreground/60">余额不足时不允许负向调整。每次操作记录管理员、用户、金额、原因和变更后的余额。</p>
+                </section>
+                <section className="credit-adjustment-panel overflow-hidden rounded-[10px] border border-border/70 bg-background/75">
+                    <div className="credit-adjustment-content p-6">
+                        <div className="credit-panel-heading flex items-start gap-4">
+                            <span className="credit-panel-icon grid size-9 shrink-0 place-items-center rounded-md bg-muted/35">
+                                <UserRoundCog className="size-4" />
+                            </span>
+                            <div className="credit-panel-heading-copy">
+                                <h2 className="credit-panel-title text-base font-semibold">人工调整积分</h2>
+                                <p className="credit-panel-description mt-1.5 text-xs leading-5 text-foreground/50">所有变更都会写入不可修改的用户积分流水。</p>
+                            </div>
+                        </div>
+                        <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form mt-6">
+                            <Form.Item name="userId" label="目标用户" rules={[{ required: true, message: "请选择用户" }]}>
+                                <Select
+                                    showSearch
+                                    filterOption={false}
+                                    loading={searchingUsers}
+                                    placeholder="搜索用户名或显示名称"
+                                    onSearch={(value) => void searchUsers(value)}
+                                    options={adjustmentUsers.map((user) => ({ label: `${user.displayName || user.username} · @${user.username}`, value: user.id }))}
+                                />
+                            </Form.Item>
+                            <div className="credit-adjustment-fields grid gap-5 sm:grid-cols-2 xl:grid-cols-1">
+                                <Form.Item name="amount" label="积分变化" extra="正数增加，负数扣减。" rules={[{ required: true, message: "请填写积分变化" }]}>
+                                    <InputNumber className="w-full" precision={6} prefix={<Coins className="size-3.5 text-foreground/45" />} placeholder="例如 10 或 -2" />
+                                </Form.Item>
+                                <Form.Item name="note" label="调整原因" rules={[{ required: true, message: "请填写调整原因" }]}>
+                                    <Input maxLength={500} placeholder="将显示在审计流水中" />
+                                </Form.Item>
+                            </div>
+                            <div className="admin-form-actions credit-adjustment-actions flex justify-end">
+                                <Button className="admin-form-submit" type="primary" icon={<Coins className="size-4" />} loading={adjusting} onClick={() => void adjust()}>
+                                    确认调整
+                                </Button>
+                            </div>
+                        </Form>
                     </div>
-                    <div className="mt-6 border-t border-border pt-4 text-xs text-foreground/45">建议在备注中填写工单号或处理依据。</div>
-                </div>
-            </section>
+                    <div className="credit-adjustment-notice flex items-start gap-3.5 bg-amber-500/[.055] px-6 py-5">
+                        <CircleAlert className="credit-adjustment-notice-icon mt-0.5 size-4 shrink-0 text-amber-500" />
+                        <div className="credit-adjustment-notice-copy">
+                            <h3 className="credit-adjustment-notice-title text-xs font-semibold text-foreground/80">写操作强校验</h3>
+                            <p className="credit-adjustment-notice-description mt-1.5 text-[11px] leading-5 text-foreground/48">余额不足时不允许负向调整，建议在备注中填写工单号或处理依据。</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
 
-            <section>
-                <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h2 className="text-base font-semibold">计费订单</h2>
+            <section className="credit-orders-section pt-1">
+                <div className="credit-orders-heading mb-5 flex flex-wrap items-end justify-between gap-4">
+                    <div className="credit-orders-heading-copy">
+                        <div className="credit-orders-title-row flex items-center gap-2">
+                            <h2 className="credit-orders-title text-base font-semibold">计费订单</h2>
                             <Tag variant="filled" color={orderStatus === "review" && total ? "warning" : "default"}>
                                 {total} 条
                             </Tag>
                         </div>
-                        <p className="mt-1 text-xs leading-5 text-foreground/55">待核对订单可人工结算或退款，已结算与已退款历史保持只读。</p>
+                        <p className="mt-1.5 text-xs leading-5 text-foreground/55">待核对订单可人工结算或退款，已结算与已退款历史保持只读。</p>
                     </div>
-                    <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
-                        刷新
-                    </Button>
                 </div>
                 <ListToolbar
                     active={Boolean(keyword || orderStatus !== "review")}
@@ -317,6 +324,11 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                         setOrderStatus("review");
                         setPage(1);
                     }}
+                    trailing={
+                        <Button className="credit-orders-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
+                            刷新
+                        </Button>
+                    }
                 >
                     <Input
                         allowClear
@@ -372,7 +384,14 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                 </TableSurface>
             </section>
 
-            <Modal title={resolvingOrder?.action === "settle" ? "确认扣除冻结积分" : "确认退回冻结积分"} open={Boolean(resolvingOrder)} onCancel={() => setResolvingOrder(null)} onOk={() => void resolveBilling()} confirmLoading={resolving} okButtonProps={{ danger: resolvingOrder?.action === "refund" }}>
+            <Modal
+                title={resolvingOrder?.action === "settle" ? "确认扣除冻结积分" : "确认退回冻结积分"}
+                open={Boolean(resolvingOrder)}
+                onCancel={() => setResolvingOrder(null)}
+                onOk={() => void resolveBilling()}
+                confirmLoading={resolving}
+                okButtonProps={{ danger: resolvingOrder?.action === "refund" }}
+            >
                 <Form form={resolutionForm} layout="vertical" requiredMark={false}>
                     <Form.Item name="note" label="核对依据" rules={[{ required: true, message: "请填写供应商账单、任务状态或处理依据" }]}>
                         <Input.TextArea rows={4} maxLength={500} placeholder="例如：供应商后台确认该请求未产生费用" />

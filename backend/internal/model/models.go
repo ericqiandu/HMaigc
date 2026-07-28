@@ -88,6 +88,7 @@ const (
 	CreditLedgerRefund       CreditLedgerType = "refund"
 	CreditLedgerAdminAdjust  CreditLedgerType = "admin_adjustment"
 	CreditLedgerSignupBonus  CreditLedgerType = "signup_bonus"
+	CreditLedgerMembership   CreditLedgerType = "membership_grant"
 	CreditLedgerCheckinBonus CreditLedgerType = "checkin_bonus"
 
 	RedeemCodeUnused   RedeemCodeStatus = "unused"
@@ -679,11 +680,12 @@ type UserAnnouncementRead struct {
 
 type Task struct {
 	ID                string     `json:"id" gorm:"primaryKey;size:36"`
-	UserID            string     `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1"`
+	UserID            string     `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1;index:idx_tasks_user_capability_status,priority:1"`
 	SessionID         string     `json:"sessionId" gorm:"index;size:36"`
 	ProjectID         string     `json:"projectId" gorm:"index;size:80"`
 	Type              string     `json:"type" gorm:"index;size:64"`
-	Status            TaskStatus `json:"status" gorm:"index;size:24;index:idx_tasks_status_created,priority:1;index:idx_tasks_claim,priority:1"`
+	Capability        string     `json:"capability" gorm:"index;size:24;index:idx_tasks_user_capability_status,priority:2"`
+	Status            TaskStatus `json:"status" gorm:"index;size:24;index:idx_tasks_status_created,priority:1;index:idx_tasks_claim,priority:1;index:idx_tasks_user_capability_status,priority:3"`
 	Stage             string     `json:"stage" gorm:"size:80"`
 	Progress          int        `json:"progress"`
 	Prompt            string     `json:"prompt"`

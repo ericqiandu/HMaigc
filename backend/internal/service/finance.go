@@ -350,19 +350,30 @@ func (s *Service) AdminDisableRedeemCode(actor *model.User, batchID string, code
 func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[string]any) (*model.BillingOrder, error) {
 	config, _ := input["config"].(map[string]any)
 	if config == nil {
-		return nil, nil
+		return nil, BadAuthRequest("当前功能必须使用后台配置的系统模型")
 	}
 	channelID := strings.TrimSpace(fmt.Sprint(config["channelId"]))
 	if channelID == "" {
 		channelID = systemChannelIDFromBaseURL(fmt.Sprint(config["baseUrl"]))
 	}
 	if channelID == "" {
-		return nil, nil
+		return nil, BadAuthRequest("当前功能必须使用后台配置的系统模型")
 	}
 	modelKey := strings.TrimPrefix(strings.TrimSpace(fmt.Sprint(config["model"])), "models/")
-	capability := normalizeCapability(fmt.Sprint(input["mode"]))
+	if modelKey == "" {
+		return nil, BadAuthRequest("请选择后台已启用的系统模型")
+	}
+	taskCapability := capabilityFromTaskType(task.Type)
+	inputCapability := normalizeCapability(fmt.Sprint(input["mode"]))
+	if taskCapability != "" && inputCapability != "" && taskCapability != inputCapability {
+		return nil, BadAuthRequest("任务类型与模型能力不匹配")
+	}
+	capability := taskCapability
 	if capability == "" {
-		capability = capabilityFromTaskType(task.Type)
+		capability = inputCapability
+	}
+	if capability == "" {
+		return nil, BadAuthRequest("任务能力类型无效，无法计费")
 	}
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
 	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingQuantity(capability, config["videoSeconds"]))
@@ -396,6 +407,18 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if !item.PriceConfigured {
 		return nil, BadAuthRequest("当前模型尚未配置用户积分价格")
 	}
+	itemCapability := normalizeCapability(item.Capability)
+	if itemCapability == "" {
+		return nil, BadAuthRequest("当前模型尚未配置有效能力类型")
+	}
+	requestedCapability := normalizeCapability(capability)
+	if requestedCapability != "" && requestedCapability != itemCapability {
+		return nil, BadAuthRequest("当前模型能力与本次生成功能不匹配")
+	}
+	if item.UnitPriceMicrocredits <= 0 {
+		return nil, BadAuthRequest("当前模型尚未配置有效的用户积分价格")
+	}
+	capability = itemCapability
 	quantity := int64(1)
 	switch item.BillingMode {
 	case "fixed_request":

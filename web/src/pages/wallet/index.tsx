@@ -5,9 +5,8 @@ import { motion, useReducedMotion } from "motion/react";
 import { ArrowDownLeft, ArrowUpRight, CalendarCheck, Coins, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, TicketCheck } from "lucide-react";
 
 import { formatCredits } from "@/constant/credits";
-import { PaginationBar, TableSurface } from "@/components/layout/workspace-page";
+import { PageHeader, PaginationBar, TableSurface, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
-import { WorkspaceSignalIcon } from "@/components/ui/aceternity/workspace-signal-icon";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { checkinCredits, getWallet, redeemCredits, type CreditLedgerEntry, type WalletSummary } from "@/services/api/wallet";
@@ -116,27 +115,24 @@ export default function WalletPage() {
     ];
 
     return (
-        <main className="app-user-content thin-scrollbar relative h-full overflow-y-auto text-foreground">
-            <div className="relative mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-                <motion.header initial={reducedMotion ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: aceternityMotion.duration.panel, ease: aceternityMotion.easing.enter }} className="app-page-header flex flex-wrap items-start justify-between gap-4 pb-6">
-                    <div className="flex items-center gap-3">
-                        <WorkspaceSignalIcon variant="wallet" />
-                        <div>
-                            <h1 className="text-[22px] font-semibold leading-7">积分中心</h1>
-                            <p className="mt-1 text-xs leading-5 text-foreground/58">模型调用、冻结与退款都在同一条可追溯流水中。</p>
-                        </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+        <WorkspacePage className="wallet-workspace-page">
+            <div className="wallet-page-content">
+                <PageHeader
+                    title="积分中心"
+                    description="模型调用、冻结与退款都在同一条可追溯流水中。"
+                    actions={(
+                        <div className="wallet-header-actions flex flex-wrap gap-2">
                         <Button icon={<CalendarCheck className="size-4" />} type={wallet?.policy.checkedInToday ? "default" : "primary"} loading={checkingIn} disabled={wallet?.policy.checkedInToday} onClick={() => void checkin()}>
                             {wallet?.policy.checkedInToday ? "今日已签到" : `签到 +${formatCredits(wallet?.policy.checkinBonusMicrocredits || 0)}`}
                         </Button>
                         <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
                             刷新余额
                         </Button>
-                    </div>
-                </motion.header>
+                        </div>
+                    )}
+                />
 
-                <section className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
+                <section className="wallet-summary-grid mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
                     <CometCard rotateDepth={2.2} translateDepth={2} glare={!reducedMotion} className="credit-balance-card overflow-hidden rounded-lg border">
                         <div className="flex min-h-[210px] flex-col justify-between p-5 sm:p-6">
                             <div className="flex items-start justify-between gap-4">
@@ -220,7 +216,7 @@ export default function WalletPage() {
                     />
                 </section>
             </div>
-        </main>
+        </WorkspacePage>
     );
 }
 
@@ -285,6 +281,7 @@ function ledgerTypeMeta(type: CreditLedgerEntry["type"]) {
         admin_adjustment: { label: "管理员调账", tagColor: "default", icon: <SlidersHorizontal className="size-4" />, iconClass: "bg-muted text-foreground/60" },
         signup_bonus: { label: "注册奖励", tagColor: "gold", icon: <Sparkles className="size-4" />, iconClass: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
         checkin_bonus: { label: "签到奖励", tagColor: "cyan", icon: <CalendarCheck className="size-4" />, iconClass: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-300" },
+        membership: { label: "会员积分", tagColor: "purple", icon: <Sparkles className="size-4" />, iconClass: "bg-violet-500/10 text-violet-600 dark:text-violet-300" },
     } as const;
     return values[type] || { label: "其他积分变动", tagColor: "default", icon: <ArrowUpRight className="size-4" />, iconClass: "bg-muted text-foreground/60" };
 }
@@ -295,6 +292,7 @@ function ledgerTitle(entry: CreditLedgerEntry) {
     if (entry.type === "consume") return "模型调用";
     if (entry.type === "signup_bonus") return "新用户注册奖励";
     if (entry.type === "checkin_bonus") return "每日签到奖励";
+    if (entry.type === "membership") return "会员套餐积分";
     return entry.note || "积分调整";
 }
 

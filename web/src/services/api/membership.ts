@@ -1,0 +1,94 @@
+import axios from "axios";
+
+const api = axios.create({ baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api", withCredentials: true });
+
+type BackendEnvelope<T> = { code: number; data: T; msg: string };
+
+async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promise<T> {
+    try {
+        const response = await promise;
+        if (response.data.code !== 0) throw new Error(response.data.msg || "请求失败");
+        return response.data.data;
+    } catch (error) {
+        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) throw new Error(error.response?.data?.msg || error.message || "请求失败");
+        throw error;
+    }
+}
+
+export type MembershipAudience = "personal" | "team";
+export type MembershipBillingCycle = "free" | "month" | "year";
+
+export type MembershipPlan = {
+    id: string; code: string; name: string; tier: string;
+    audience: MembershipAudience; billingCycle: MembershipBillingCycle;
+    priceCents: number; originalPriceCents: number; currency: string;
+    creditsPerPeriod: number; imageConcurrency: number; videoConcurrency: number;
+    topupDiscountBasisPoints: number; minSeats: number; maxSeats: number;
+    benefitsJson: string; benefits: string[]; enabled: boolean; sortOrder: number;
+    createdAt: string; updatedAt: string;
+};
+
+export type MembershipEntitlement = {
+    planId: string; planName: string; tier: string; audience: MembershipAudience;
+    imageConcurrency: number; videoConcurrency: number; topupDiscountBasisPoints: number;
+    teamId?: string; expiresAt?: string;
+};
+
+export type MembershipOrder = {
+    id: string; orderNumber: string; userId: string; teamId?: string; planId: string;
+    seats: number; unitPriceCents: number; totalPriceCents: number; currency: string;
+    status: "pending" | "paid" | "cancelled" | "refunded";
+    planSnapshotJson: string;
+    paymentProvider: string; providerTradeNo: string; resolutionNote?: string;
+    paidAt?: string; createdAt: string; updatedAt: string;
+};
+
+export type Team = { id: string; ownerUserId: string; name: string; status: "active" | "disabled"; createdAt: string; updatedAt: string };
+
+export type MembershipOverview = { entitlement: MembershipEntitlement; orders: MembershipOrder[]; teams: Team[] };
+
+export function listMembershipPlans() {
+    return request<MembershipPlan[]>(api.get("/membership/plans"));
+}
+
+export function getMyMembership() {
+    return request<MembershipOverview>(api.get("/membership"));
+}
+
+export function createMembershipOrder(input: { planId: string; teamId?: string; seats?: number }) {
+    return request<MembershipOrder>(api.post("/membership/orders", input));
+}
+
+export function cancelMembershipOrder(id: string) {
+    return request<MembershipOrder>(api.post(`/membership/orders/${encodeURIComponent(id)}/cancel`, {}));
+}
+
+export function createTeam(name: string) {
+    return request<Team>(api.post("/teams", { name }));
+}
+
+export function listAdminMembershipPlans() {
+    return request<MembershipPlan[]>(api.get("/admin/membership/plans"));
+}
+
+export type UpdateMembershipPlanInput = {
+    name: string; priceCents: number; originalPriceCents: number; creditsPerPeriod: number;
+    imageConcurrency: number; videoConcurrency: number; topupDiscountBasisPoints: number;
+    minSeats: number; maxSeats: number; benefits: string[]; enabled: boolean; sortOrder: number;
+};
+
+export function updateAdminMembershipPlan(id: string, input: UpdateMembershipPlanInput) {
+    return request<MembershipPlan>(api.patch(`/admin/membership/plans/${encodeURIComponent(id)}`, input));
+}
+
+export function listAdminMembershipOrders(page = 1, limit = 30) {
+    return request<{ items: MembershipOrder[]; total: number; page: number; limit: number }>(api.get("/admin/membership/orders", { params: { page, limit } }));
+}
+
+export function confirmAdminMembershipOrder(id: string, input: { providerTradeNo: string; note: string }) {
+    return request<MembershipOrder>(api.post(`/admin/membership/orders/${encodeURIComponent(id)}/confirm`, input));
+}
+
+export function closeAdminMembershipOrder(id: string, input: { note: string }) {
+    return request<MembershipOrder>(api.post(`/admin/membership/orders/${encodeURIComponent(id)}/close`, input));
+}

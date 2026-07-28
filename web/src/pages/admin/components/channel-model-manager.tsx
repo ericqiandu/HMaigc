@@ -163,7 +163,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         <div>
             <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
                 <div className="flex min-w-0 items-start gap-3">
-                    <Button aria-label="返回系统渠道" icon={<ArrowLeft className="size-4" />} onClick={onClose} />
+                    <Button aria-label="返回 AI 模型配置" icon={<ArrowLeft className="size-4" />} onClick={onClose} />
                     <div className="min-w-0">
                         <h2 className="truncate text-lg font-semibold">{channel.name} / 模型管理</h2>
                         <p className="mt-1 text-xs text-foreground/50">维护模型能力、计费单位、积分单价与启用状态。</p>

@@ -198,7 +198,7 @@ export default function TasksPage() {
             if (values.operation === "agent_session") {
                 const textModel = values.model?.trim() || effectiveConfig.textModel || effectiveConfig.model;
                 if (!isAiConfigReady(effectiveConfig, textModel)) {
-                    message.error("请先在设置里配置可用的文本模型、Base URL 和 API Key");
+                    message.error("系统暂无可用文本模型，请联系管理员完成 AI 模型配置");
                     return;
                 }
                 const requestConfig = resolveModelRequestConfig(effectiveConfig, textModel);
@@ -207,7 +207,7 @@ export default function TasksPage() {
             } else {
                 const videoModel = values.model?.trim() || effectiveConfig.videoModel || effectiveConfig.model;
                 if (values.operation !== "compare_versions" && !isAiConfigReady(effectiveConfig, videoModel)) {
-                    message.error("请先在设置里配置可用的视频模型、Base URL 和 API Key");
+                    message.error("系统暂无可用视频模型，请联系管理员完成 AI 模型配置");
                     return;
                 }
                 const requestConfig = resolveModelRequestConfig(effectiveConfig, videoModel);
@@ -352,7 +352,6 @@ export default function TasksPage() {
         <>
             <WorkspacePage grid>
                 <PageHeader
-                    icon="tasks"
                     title="任务中心"
                     description="先处理失败任务，再跟踪运行进度和检查生成结果。"
                     meta={<span className="text-xs text-foreground/45">{filteredTasks.length} 个任务{loading ? " · 正在同步" : ""}</span>}

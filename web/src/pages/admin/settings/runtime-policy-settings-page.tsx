@@ -66,14 +66,9 @@ const rateFields: PolicyField[] = [
     { group: "request", name: "loginIPPerTenMinutes", label: "登录 IP", extra: "每 IP 每 10 分钟允许登录的次数。", unit: "次/10分钟", max: 999_999 },
     { group: "request", name: "loginAccountPerTenMinutes", label: "登录账号组合", extra: "同一 IP 与账号组合每 10 分钟的登录次数。", unit: "次/10分钟", max: 999_999 },
     { group: "request", name: "systemRelayPerMinute", label: "系统渠道中转", extra: "每账号每分钟使用系统渠道的请求数。", unit: "次/分钟", max: 999_999 },
-    { group: "request", name: "customRelayPerMinute", label: "自定义渠道中转", extra: "每账号每分钟使用自定义渠道的请求数。", unit: "次/分钟", max: 999_999 },
 ];
 
 const relayFields: PolicyField[] = [
-    { group: "request", name: "customRelayConcurrency", label: "自定义渠道并发", extra: "单账号同时进行的自定义渠道请求数。", unit: "个", max: 999 },
-    { group: "request", name: "customRelayRequestMB", label: "自定义渠道请求体", extra: "中转到自定义上游的请求体上限。", unit: "MB", max: 999 },
-    { group: "request", name: "customRelayResponseMB", label: "自定义渠道响应体", extra: "自定义上游 JSON 与流式响应的读取上限。", unit: "MB", max: 999 },
-    { group: "request", name: "customRelayTimeoutMinutes", label: "自定义渠道超时", extra: "自定义渠道连接与响应的最长等待时间。", unit: "分钟", max: 9_999 },
     { group: "request", name: "systemRelayRequestMB", label: "系统渠道请求体", extra: "中转到系统渠道的请求体上限。", unit: "MB", max: 999 },
     { group: "request", name: "systemRelayResponseMB", label: "系统渠道响应体", extra: "系统渠道上游响应的读取上限。", unit: "MB", max: 999 },
     { group: "request", name: "channelCircuitFailureCount", label: "熔断失败次数", extra: "一分钟内连续失败达到该值后打开熔断。", unit: "次", max: 999 },
@@ -184,7 +179,7 @@ export default function RuntimePolicySettingsPage() {
 function PolicySection({ icon, title, description, fields, status }: { icon: ReactNode; title: string; description: string; fields: PolicyField[]; status?: ReactNode }) {
     return (
         <SettingsSectionCard icon={icon} title={title} description={description} status={status}>
-            <div className="grid grid-cols-1 gap-x-5 px-5 pt-5 md:grid-cols-2 xl:grid-cols-3">
+            <div className="runtime-policy-settings-fields grid grid-cols-1 gap-x-6 px-6 pt-6 md:grid-cols-2 xl:grid-cols-3">
                 {fields.map((field) => (
                     <Form.Item key={`${field.group}.${field.name}`} name={[field.group, field.name]} label={field.label} extra={field.extra} rules={[{ required: true, message: `请填写${field.label}` }, { type: "number", min: 1, max: field.max, message: `${field.label}必须是 1-${field.max} 的整数` }]}>
                         <InputNumber className="w-full" min={1} max={field.max} precision={0} addonAfter={field.unit} />

@@ -11,6 +11,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 const testReferenceImageDataURL = "data:image/png;base64,aGVsbG8="
@@ -775,14 +781,35 @@ func TestProcessTaskValidatesInterfaceBeforeHydratingMedia(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelChannel{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := model.ModelChannel{
+		ID:            "channel-1",
+		Scope:         model.ChannelScopeSystem,
+		Enabled:       true,
+		Name:          "system channel",
+		BaseURL:       server.URL + "/v1",
+		APIKey:        "system-key",
+		APIFormat:     "openai",
+		InterfaceType: model.ChannelInterfaceChatCompletion,
+		ModelsJSON:    `["text-model"]`,
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
 	input := canvasGenerationInput{
 		Mode:            "video",
 		Prompt:          "make it move",
-		Config:          providerConfig{BaseURL: server.URL + "/v1", APIKey: "key", Model: "text-model", InterfaceType: "chat-completion"},
+		Config:          providerConfig{ChannelID: channel.ID, Model: "text-model"},
 		ReferenceImages: []providerMedia{{StorageKey: "resource:missing"}},
 	}
 	raw, _ := json.Marshal(input)
-	_, err := (&Service{}).processCanvasGenerationTask(context.Background(), "user-1", "video_generate", "", string(raw))
+	_, err = (&Service{repo: repository.New(db)}).processCanvasGenerationTask(context.Background(), "user-1", "video_generate", "", string(raw))
 	if err == nil || !strings.Contains(err.Error(), "不支持video生成") {
 		t.Fatalf("processCanvasGenerationTask() error = %v", err)
 	}
