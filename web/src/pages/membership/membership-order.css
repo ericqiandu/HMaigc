@@ -1,7 +1,7 @@
 .membership-loading,
 .membership-empty {
     display: grid;
-    min-height: 360px;
+    min-height: 570px;
     place-items: center;
 }
 
@@ -52,10 +52,10 @@
 }
 
 .membership-orders {
-    margin-top: 24px;
-    border: 1px solid var(--membership-border);
-    border-radius: 10px;
-    background: var(--membership-subtle);
+    margin-top: 12px;
+    border: 0;
+    border-radius: 0;
+    background: #101012;
 }
 
 .membership-orders-summary {
@@ -176,6 +176,26 @@
 
 .membership-orders-empty {
     margin: 28px 0;
+}
+
+.membership-order-modal {
+    --membership-border: rgb(255 255 255 / 10%);
+    --membership-muted: rgb(255 255 255 / 50%);
+}
+
+.membership-order-modal .ant-modal-content,
+.membership-order-modal .ant-modal-header {
+    background: #151517;
+    color: #f5f5f7;
+}
+
+.membership-order-modal .ant-modal-title,
+.membership-order-modal .ant-modal-close {
+    color: #f5f5f7;
+}
+
+.membership-order-modal .ant-modal-footer {
+    border-top-color: var(--membership-border);
 }
 
 .membership-order-modal-content {

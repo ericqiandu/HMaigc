@@ -1,20 +1,9 @@
 import { Button } from "antd";
-import { BadgePercent, Check, Crown, ImageIcon, Minus, Plus, Users, Video, Zap } from "lucide-react";
+import { BadgePercent, Check, ImageIcon, Minus, Plus, Video, Zap } from "lucide-react";
 
 import type { MembershipPlan } from "@/services/api/membership";
 
-import {
-    billingCycleLabel,
-    clampSeats,
-    discountLabel,
-    formatCredits,
-    formatMoney,
-    monthlyCredits,
-    monthlyPriceCents,
-    planTotalCredits,
-    planTotalPriceCents,
-    topupDiscountLabel,
-} from "./membership-formatters";
+import { clampSeats, discountLabel, formatCredits, formatMoney, monthlyCredits, monthlyPriceCents, planTotalCredits, planTotalPriceCents, topupDiscountLabel } from "./membership-formatters";
 
 type MembershipPlanCardProps = {
     className?: string;
@@ -26,15 +15,7 @@ type MembershipPlanCardProps = {
     seats: number;
 };
 
-export function MembershipPlanCard({
-    className = "",
-    currentPlanId,
-    featured,
-    onPurchase,
-    onSeatsChange,
-    plan,
-    seats,
-}: MembershipPlanCardProps) {
+export function MembershipPlanCard({ className = "", currentPlanId, featured, onPurchase, onSeatsChange, plan, seats }: MembershipPlanCardProps) {
     const teamPlan = plan.audience === "team";
     const normalizedSeats = clampSeats(plan, seats);
     const current = currentPlanId === plan.id;
@@ -44,17 +25,14 @@ export function MembershipPlanCard({
     const paidPlan = plan.billingCycle !== "free";
 
     return (
-        <article className={`membership-plan-card ${featured ? "is-featured" : ""} ${current ? "is-current" : ""} ${className}`}>
+        <article className={`membership-plan-card ${teamPlan ? "is-team" : ""} ${featured ? "is-featured" : ""} ${current ? "is-current" : ""} ${className}`}>
             {featured ? <span className="membership-plan-banner">热门推荐</span> : null}
             <div className="membership-plan-heading">
                 <div className="membership-plan-name-row">
-                    <span className="membership-plan-icon">
-                        {teamPlan ? <Users className="membership-plan-icon-svg" /> : <Crown className="membership-plan-icon-svg" />}
-                    </span>
                     <h2 className="membership-plan-name">{plan.name}</h2>
                     {discount ? <span className="membership-plan-discount">{discount}</span> : null}
                 </div>
-                <span className="membership-plan-cycle">{billingCycleLabel[plan.billingCycle]}</span>
+                {current ? <span className="membership-plan-current-badge">当前方案</span> : null}
             </div>
 
             <div className="membership-plan-price-block">
@@ -77,26 +55,16 @@ export function MembershipPlanCard({
                 <div className="membership-seat-control">
                     <div className="membership-seat-copy">
                         <span className="membership-seat-label">团队席位</span>
-                        <small className="membership-seat-range">{plan.minSeats}–{plan.maxSeats} 人</small>
+                        <small className="membership-seat-range">
+                            {plan.minSeats}–{plan.maxSeats} 人
+                        </small>
                     </div>
                     <div className="membership-seat-stepper">
-                        <button
-                            aria-label={`减少 ${plan.name} 席位`}
-                            className="membership-seat-button"
-                            disabled={normalizedSeats <= plan.minSeats}
-                            onClick={() => onSeatsChange(plan.id, normalizedSeats - 1)}
-                            type="button"
-                        >
+                        <button aria-label={`减少 ${plan.name} 席位`} className="membership-seat-button" disabled={normalizedSeats <= plan.minSeats} onClick={() => onSeatsChange(plan.id, normalizedSeats - 1)} type="button">
                             <Minus className="membership-seat-button-icon" />
                         </button>
                         <strong className="membership-seat-value">{normalizedSeats}</strong>
-                        <button
-                            aria-label={`增加 ${plan.name} 席位`}
-                            className="membership-seat-button"
-                            disabled={normalizedSeats >= plan.maxSeats}
-                            onClick={() => onSeatsChange(plan.id, normalizedSeats + 1)}
-                            type="button"
-                        >
+                        <button aria-label={`增加 ${plan.name} 席位`} className="membership-seat-button" disabled={normalizedSeats >= plan.maxSeats} onClick={() => onSeatsChange(plan.id, normalizedSeats + 1)} type="button">
                             <Plus className="membership-seat-button-icon" />
                         </button>
                     </div>
@@ -106,9 +74,7 @@ export function MembershipPlanCard({
             <div className="membership-plan-credit">
                 <span className="membership-plan-credit-label">{teamPlan ? "团队周期总积分" : "周期积分"}</span>
                 <strong className="membership-plan-credit-value">{formatCredits(teamPlan ? totalCredits : plan.creditsPerPeriod)}</strong>
-                {plan.billingCycle === "year" ? (
-                    <small className="membership-plan-credit-monthly">月均 {formatCredits(monthlyCredits(plan) * (teamPlan ? normalizedSeats : 1))} 积分</small>
-                ) : null}
+                {plan.billingCycle === "year" ? <small className="membership-plan-credit-monthly">月均 {formatCredits(monthlyCredits(plan) * (teamPlan ? normalizedSeats : 1))} 积分</small> : null}
             </div>
 
             <div className="membership-plan-core-benefits">
@@ -129,12 +95,7 @@ export function MembershipPlanCard({
                 </span>
             </div>
 
-            <Button
-                className="membership-plan-action"
-                disabled={!paidPlan}
-                onClick={() => onPurchase(plan, normalizedSeats)}
-                type={featured ? "primary" : "default"}
-            >
+            <Button className="membership-plan-action" disabled={!paidPlan} onClick={() => onPurchase(plan, normalizedSeats)} type={featured ? "primary" : "default"}>
                 {!paidPlan ? "基础方案" : current ? "续费当前方案" : teamPlan ? "开通团队会员" : "立即开通"}
             </Button>
 

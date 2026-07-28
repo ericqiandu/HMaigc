@@ -1,7 +1,6 @@
 @media (max-width: 1180px) {
-    .membership-plan-carousel,
-    .membership-plan-carousel.is-team {
-        grid-auto-columns: minmax(280px, calc((100% - 24px) / 3));
+    .membership-plan-carousel {
+        grid-auto-columns: 310px;
     }
 
     .membership-overview-metric {
@@ -11,14 +10,25 @@
 }
 
 @media (max-width: 900px) {
-    .membership-page {
-        padding-right: 20px;
-        padding-left: 20px;
+    .membership-window {
+        inset: 6px;
     }
 
-    .membership-plan-carousel,
-    .membership-plan-carousel.is-team {
-        grid-auto-columns: minmax(280px, calc((100% - 12px) / 2));
+    .membership-plans-section {
+        padding-right: 46px;
+        padding-left: 46px;
+    }
+
+    .membership-carousel-button-left {
+        left: 8px;
+    }
+
+    .membership-carousel-button-right {
+        right: 8px;
+    }
+
+    .membership-account-panel {
+        width: calc(100% - 92px);
     }
 
     .membership-overview {
@@ -54,23 +64,86 @@
 }
 
 @media (max-width: 640px) {
-    .membership-page {
-        padding-right: 16px;
-        padding-bottom: 36px;
-        padding-left: 16px;
+    .membership-window {
+        inset: 0;
+        border-radius: 0;
     }
 
-    .membership-current {
-        display: none;
+    .membership-window-header {
+        height: 72px;
     }
 
-    .membership-hero {
-        margin-top: 18px;
-        margin-bottom: 24px;
+    .membership-window-close {
+        top: 12px;
+        right: 8px;
     }
 
     .membership-audience-tabs {
-        margin-bottom: 16px;
+        gap: 34px;
+        padding-right: 36px;
+        padding-left: 36px;
+    }
+
+    .membership-audience-tab {
+        min-width: 82px;
+        font-size: 16px;
+    }
+
+    .membership-hero {
+        min-height: 104px;
+        padding: 20px 44px 16px;
+    }
+
+    .membership-cycle-switch.ant-segmented {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .membership-cycle-switch .ant-segmented-item {
+        min-width: 0;
+    }
+
+    .membership-plans-section {
+        padding-right: 44px;
+        padding-bottom: 28px;
+        padding-left: 44px;
+    }
+
+    .membership-plan-carousel {
+        grid-auto-columns: minmax(278px, calc(100vw - 96px));
+    }
+
+    .membership-plan-card {
+        min-height: 740px;
+        padding-right: 20px;
+        padding-left: 20px;
+    }
+
+    .membership-plan-name {
+        font-size: 20px;
+    }
+
+    .membership-plan-price {
+        font-size: 38px;
+    }
+
+    .membership-carousel-button {
+        top: 274px;
+        width: 34px;
+        height: 34px;
+    }
+
+    .membership-carousel-button-left {
+        left: 5px;
+    }
+
+    .membership-carousel-button-right {
+        right: 5px;
+    }
+
+    .membership-account-panel {
+        width: calc(100% - 32px);
+        margin-bottom: 24px;
     }
 
     .membership-overview-metrics {
@@ -80,28 +153,6 @@
 
     .membership-overview-metric:nth-child(3)::before {
         display: none;
-    }
-
-    .membership-plan-carousel,
-    .membership-plan-carousel.is-team {
-        grid-auto-columns: minmax(278px, 88vw);
-    }
-
-    .membership-plan-card {
-        min-height: 560px;
-    }
-
-    .membership-team-capabilities {
-        grid-template-columns: 1fr;
-    }
-
-    .membership-team-capability + .membership-team-capability::before {
-        top: 0;
-        right: 20px;
-        bottom: auto;
-        left: 20px;
-        width: auto;
-        height: 1px;
     }
 
     .membership-orders-summary {
@@ -134,10 +185,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .membership-plan-card,
     .membership-audience-tab,
     .membership-audience-tab::after,
-    .membership-back,
+    .membership-window-close,
     .membership-carousel-button,
     .membership-seat-button,
     .membership-orders-chevron {
