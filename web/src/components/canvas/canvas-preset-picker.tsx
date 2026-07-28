@@ -67,7 +67,7 @@ const BUILTIN_PRESETS: CanvasPromptPreset[] = [
     },
 ];
 
-export function CanvasPresetPicker({ mode, skillReferences = [], open, onOpenChange, onSelect, compact = false, dense = false }: { mode: CanvasGenerationMode; skillReferences?: CanvasResourceReference[]; open?: boolean; onOpenChange?: (open: boolean) => void; onSelect: (preset: CanvasPromptPreset) => void; compact?: boolean; dense?: boolean }) {
+export function CanvasPresetPicker({ mode, skillReferences = [], open, onOpenChange, onSelect, compact = false, dense = false, label = "预设" }: { mode: CanvasGenerationMode; skillReferences?: CanvasResourceReference[]; open?: boolean; onOpenChange?: (open: boolean) => void; onSelect: (preset: CanvasPromptPreset) => void; compact?: boolean; dense?: boolean; label?: string }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [internalOpen, setInternalOpen] = useState(false);
     const [query, setQuery] = useState("");
@@ -118,7 +118,7 @@ export function CanvasPresetPicker({ mode, skillReferences = [], open, onOpenCha
         <Popover open={actualOpen} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 8, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
             <button type="button" className={`inline-flex shrink-0 items-center justify-center gap-1 rounded-md transition hover:brightness-110 ${compact ? "size-6" : dense ? "h-6 px-1.5" : "h-7 px-2"}`} style={{ background: theme.toolbar.itemHover, color: theme.node.muted }} title="预设（输入 / 也可打开）" aria-label="打开预设">
                 <WandSparkles className={dense ? "size-3" : "size-3.5"} />
-                {compact ? null : <span className="text-[10px] font-medium">预设</span>}
+                {compact ? null : <span className="canvas-preset-picker-label text-[10px] font-medium">{label}</span>}
             </button>
         </Popover>
     );

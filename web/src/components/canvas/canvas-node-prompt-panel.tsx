@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Boxes, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, Square, UserRound, Video } from "lucide-react";
-import { Button, Modal, Tooltip } from "antd";
+import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -40,9 +40,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const theme = canvasThemes[themeName];
     const simpleMode = workspaceMode === "simple";
     const mode = defaultMode(node.type);
+    const isImageMode = mode === "image";
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
-    const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     const [prompt, setPrompt] = useState(savedPrompt);
     const [presetOpen, setPresetOpen] = useState(false);
@@ -58,8 +58,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         .map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
     const composerSurface = theme.spatial.dropzone;
     const referenceShelfHeight = activeReferenceCount ? 42 : 0;
-    const composerMinHeight = activeReferenceCount ? 82 : 58;
-    const composerHeight = Math.min(144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
+    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : 82) : (isImageMode ? 92 : 58);
+    const composerHeight = Math.min(isImageMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
     const canExpandPrompt = mode === "image" || mode === "video";
     const updatePromptContentHeight = useCallback((height: number) => {
@@ -120,13 +120,20 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     };
 
     const renderComposerHeader = (expanded: boolean) => (
-        <div className="flex min-w-0 items-center gap-1 px-0.5">
-            <div className="flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5" style={{ background: theme.toolbar.itemHover }}>
-                <span className="grid size-3.5 shrink-0 place-items-center" style={{ color: theme.accent.primary }}>
-                    <GenerationModeIcon mode={mode} />
-                </span>
-                <span className="truncate text-[10px] font-medium">{modeDisplayName(mode)}创作</span>
-            </div>
+        <div className="canvas-node-composer-header flex min-w-0 items-center gap-1 px-0.5">
+            {isImageMode ? (
+                <>
+                    <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
+                </>
+            ) : (
+                <div className="canvas-node-composer-mode flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5" style={{ background: theme.toolbar.itemHover }}>
+                    <span className="canvas-node-composer-mode-icon grid size-3.5 shrink-0 place-items-center" style={{ color: theme.accent.primary }}>
+                        <GenerationModeIcon mode={mode} />
+                    </span>
+                    <span className="canvas-node-composer-mode-label truncate text-[10px] font-medium">{modeDisplayName(mode)}创作</span>
+                </div>
+            )}
             {!simpleMode ? (
                 <CanvasPresetPicker
                     mode={mode}
@@ -134,11 +141,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     open={expanded ? expandedPresetOpen : presetOpen}
                     onOpenChange={expanded ? setExpandedPresetOpen : setPresetOpen}
                     onSelect={applyPreset}
+                    label={isImageMode ? "风格" : "预设"}
                     dense
                 />
             ) : null}
-            <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
-                {activeReferenceCount ? <ComposerPill theme={theme} icon={<Boxes className="size-2.5" />} label={`已连接 ${activeReferenceCount} 个`} active /> : null}
+            <div className="canvas-node-composer-header-actions ml-auto flex shrink-0 items-center justify-end gap-1">
+                {!isImageMode && activeReferenceCount ? <ComposerPill theme={theme} icon={<Boxes className="size-2.5" />} label={`已连接 ${activeReferenceCount} 个`} active /> : null}
                 {!expanded && canExpandPrompt ? (
                     <Tooltip title="放大编辑">
                         <button
@@ -197,7 +205,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 <GenerationCostBadge credits={credits} theme={theme} />
                 <Button
                     type="text"
-                    className="!inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !rounded-md !border-0 !p-0 !shadow-none"
+                    className={`canvas-node-submit-button !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
                     danger={isRunning}
                     disabled={isSubmitDisabled}
                     style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.accent.primary, borderColor: "transparent", color: isSubmitDisabled ? theme.node.faint : "#ffffff" }}
@@ -212,7 +220,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     return (
         <div
-            className="aceternity-floating-panel overflow-hidden rounded-lg p-1.5 backdrop-blur-2xl"
+            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "rounded-xl px-3 py-2.5" : "rounded-lg p-1.5"}`}
             style={{ background: theme.spatial.elevated, color: theme.node.text, boxShadow: `0 20px 64px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.07)` }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
@@ -221,8 +229,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             {renderComposerHeader(false)}
 
             <div
-                className="relative mt-1.5 flex max-h-36 flex-col overflow-hidden rounded-lg transition-[height,outline-color] duration-150 focus-within:outline focus-within:outline-1 motion-reduce:transition-none"
-                style={{ height: composerHeight, background: composerSurface, outlineColor: theme.accent.primary }}
+                className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "mt-2 max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
+                style={{ height: composerHeight, background: isImageMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
                 <ConnectedReferenceShelf references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
                 <CanvasResourceMentionTextarea
@@ -230,9 +238,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     references={mentionReferences}
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
-                    className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2.5 py-2 text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35"
+                    className={`canvas-node-prompt-textarea thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35 ${isImageMode ? "px-1 py-2" : "px-2.5 py-2"}`}
                     style={{ color: theme.node.text }}
-                    placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
+                    placeholder={promptPlaceholder(mode, hasTextContent)}
                     onContentSizeChange={updatePromptContentHeight}
                 />
             </div>
@@ -243,7 +251,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 </div>
             ) : null}
 
-            <div className="mt-1.5">{renderComposerControls(false)}</div>
+            <div className={`canvas-node-prompt-controls ${isImageMode ? "mt-2" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
 
             <Modal
                 className="canvas-prompt-editor-modal"
@@ -270,7 +278,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             containerClassName="min-h-0 flex-1"
                             className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-current placeholder:opacity-35"
                             style={{ color: theme.node.text }}
-                            placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
+                            placeholder={promptPlaceholder(mode, hasTextContent)}
                             aria-label={`${modeDisplayName(mode)}提示词`}
                         />
                     </div>
@@ -295,6 +303,60 @@ function ComposerPill({ theme, icon, label, active = false }: { theme: CanvasThe
             {icon}
             {label}
         </span>
+    );
+}
+
+function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { label: string; references: CanvasResourceReference[]; theme: CanvasTheme; onInsert: (reference: CanvasResourceReference) => void; icon?: ReactNode }) {
+    const [open, setOpen] = useState(false);
+    const activeReferences = references.filter((item) => item.active && item.kind !== "skill");
+    const content = activeReferences.length ? (
+        <div className="canvas-reference-picker-menu thin-scrollbar flex max-h-64 w-64 flex-col gap-1 overflow-y-auto">
+            {activeReferences.map((reference) => (
+                <button
+                    key={reference.id}
+                    type="button"
+                    className="canvas-reference-picker-option flex min-w-0 items-center gap-2 px-2 py-1.5 text-left transition hover:brightness-110"
+                    style={{ background: theme.toolbar.itemHover, color: theme.node.text }}
+                    onClick={() => {
+                        onInsert(reference);
+                        setOpen(false);
+                    }}
+                >
+                    <span className="canvas-reference-picker-thumbnail size-8 shrink-0 overflow-hidden">
+                        <ReferenceThumbnail reference={reference} />
+                    </span>
+                    <span className="canvas-reference-picker-copy min-w-0 flex-1">
+                        <span className="canvas-reference-picker-label block truncate text-[11px] font-medium">@{reference.label}</span>
+                        <span className="canvas-reference-picker-title block truncate text-[9px]" style={{ color: theme.node.muted }}>{reference.title}</span>
+                    </span>
+                </button>
+            ))}
+        </div>
+    ) : (
+        <div className="canvas-reference-picker-empty w-52 px-2 py-1 text-[10px]" style={{ color: theme.node.muted }}>
+            请先连接图片或素材节点
+        </div>
+    );
+
+    return (
+        <Popover
+            open={open}
+            onOpenChange={setOpen}
+            trigger="click"
+            placement="topLeft"
+            content={content}
+            styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+        >
+            <button
+                type="button"
+                className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium transition hover:brightness-110"
+                style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}
+                aria-label={`打开${label}选择`}
+            >
+                {icon}
+                <span className="canvas-reference-picker-trigger-label">{label}</span>
+            </button>
+        </Popover>
     );
 }
 
@@ -389,10 +451,10 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     };
 }
 
-function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: boolean, hasTextContent: boolean) {
+function promptPlaceholder(mode: CanvasNodeGenerationMode, hasTextContent: boolean) {
     if (mode === "video") return "描述要生成的视频内容";
     if (mode === "audio") return "描述要生成的音频内容";
-    if (mode === "image") return hasImageContent ? "输入新提示词，重新生成当前图片" : "描述要生成的图片内容";
+    if (mode === "image") return "可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
 }
 
