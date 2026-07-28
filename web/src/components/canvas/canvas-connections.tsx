@@ -25,7 +25,8 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     onSelect: (event: ReactMouseEvent<SVGPathElement>) => void;
     onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
 }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const themeName = useThemeStore((state) => state.theme);
+    const theme = canvasThemes[themeName];
     const [hovered, setHovered] = useState(false);
     const startX = from.position.x + from.width;
     const startY = connectionHandleY(from, connection.fromHandleId, fromScrollTop);
@@ -71,9 +72,9 @@ export const ConnectionPath = React.memo(function ConnectionPath({
                 className="canvas-connection-visible-path"
                 d={pathD}
                 stroke={emphasized ? theme.accent.primary : theme.node.muted}
-                strokeWidth={emphasized ? 1.6 : 1}
+                strokeWidth={emphasized ? 1.6 : themeName === "light" ? 1.15 : 1}
                 vectorEffect="non-scaling-stroke"
-                strokeOpacity={emphasized ? 0.52 : 0.24}
+                strokeOpacity={emphasized ? 0.52 : themeName === "light" ? 0.42 : 0.24}
                 fill="none"
                 strokeLinecap="round"
                 style={{ pointerEvents: "none" }}

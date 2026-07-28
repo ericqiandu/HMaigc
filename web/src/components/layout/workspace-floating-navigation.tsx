@@ -3,8 +3,14 @@ import { NavLink } from "react-router";
 
 import { navigationTools } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
+import { useUserStore } from "@/stores/use-user-store";
 
 export function WorkspaceFloatingNavigation() {
+    const hydrated = useUserStore((state) => state.hydrated);
+    const user = useUserStore((state) => state.user);
+
+    if (!hydrated || !user) return null;
+
     return (
         <nav className="workspace-floating-navigation" aria-label="工作台导航">
             <NavLink

@@ -14,6 +14,7 @@ import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasVideoGenerationModePicker } from "./canvas-video-generation-mode-picker";
+import { CanvasVideoSuperResolutionPopover } from "./canvas-video-super-resolution-popover";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
@@ -56,7 +57,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [promptContentHeight, setPromptContentHeight] = useState(0);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
-    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" ? generationCount : 1, seconds: mode === "video" ? config.videoSeconds : 1, quality: config.quality, resolution: mode === "video" ? config.vquality : config.size, videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true", videoSuperResolutionResolution: config.videoSuperResolutionResolution });
+    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" || mode === "video" ? generationCount : 1, seconds: mode === "video" ? config.videoSeconds : 1, quality: config.quality, resolution: mode === "video" ? config.vquality : config.size, videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true", videoSuperResolutionResolution: config.videoSuperResolutionResolution });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoImageNodeIds = useMemo(
         () => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)),
@@ -244,7 +245,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <>
                         <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
                         <span className="canvas-video-toolbar-divider" aria-hidden="true" />
-                        <CanvasVideoSettingsPopover config={config} buttonClassName="canvas-video-settings-trigger--composer !h-8 !w-[203px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !text-[12px] !font-medium !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                        <CanvasVideoSettingsPopover config={config} buttonClassName="canvas-video-settings-trigger--composer !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !text-[12px] !font-medium !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                        <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         <span className="canvas-video-toolbar-divider" aria-hidden="true" />
                     </>
                 ) : mode === "audio" ? (
@@ -601,6 +603,7 @@ function promptPlaceholder(mode: CanvasNodeGenerationMode, hasTextContent: boole
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {
+    if (key === "count") return { count: Math.max(1, Math.floor(Math.abs(Number(value)) || 1)) };
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };

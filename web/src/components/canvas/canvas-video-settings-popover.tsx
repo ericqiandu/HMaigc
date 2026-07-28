@@ -5,7 +5,6 @@ import { Button } from "antd";
 
 import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { supportsVideoSuperResolution } from "@/lib/video-super-resolution";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -18,9 +17,6 @@ type CanvasVideoSettingsPopoverProps = {
 
 export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const superResolutionSummary = supportsVideoSuperResolution(config) && config.videoSuperResolutionEnabled === "true"
-        ? ` · 超分${config.videoSuperResolutionResolution.toUpperCase()}`
-        : "";
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
@@ -54,7 +50,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
                     <span className="inline-flex min-w-0 items-center gap-1 truncate">
-                        <span className="truncate">{videoSizeLabel(config.size)} · {videoResolutionLabel(config.vquality)} · {videoSecondsLabel(config.videoSeconds)} · 1个{superResolutionSummary}</span>
+                        <span className="truncate">{videoSizeLabel(config.size)} · {videoResolutionLabel(config.vquality)} · {videoSecondsLabel(config.videoSeconds)} · {Math.max(1, Math.floor(Math.abs(Number(config.count)) || 1))}个</span>
                         {config.videoGenerateAudio !== "false" ? <Volume2 className="size-3.5 shrink-0" /> : null}
                     </span>
                 </Button>
@@ -86,7 +82,7 @@ function VideoSettingsPortal({
     const alignCenter = placement === "top" || placement === "bottom";
     const left = alignCenter ? buttonRect.left + buttonRect.width / 2 - width / 2 : alignRight ? buttonRect.right - width : buttonRect.left;
     const topPlacement = placement?.startsWith("top");
-    const estimatedHeight = 450;
+    const estimatedHeight = 460;
     const topSpace = buttonRect.top - gap - margin;
     const bottomSpace = window.innerHeight - buttonRect.bottom - gap - margin;
     const placeAbove = topPlacement ? topSpace >= estimatedHeight || topSpace >= bottomSpace : bottomSpace < estimatedHeight && topSpace > bottomSpace;
@@ -114,7 +110,7 @@ function VideoSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="canvas-video-generation-settings space-y-3" />
+            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="canvas-video-generation-settings space-y-3.5" />
         </div>,
         document.body,
     );
