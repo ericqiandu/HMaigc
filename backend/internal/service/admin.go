@@ -106,6 +106,9 @@ type PublicModelChannel struct {
 type PublicChannelModelPrice struct {
 	Model                 string                        `json:"model"`
 	DisplayName           string                        `json:"displayName"`
+	IconURL               string                        `json:"iconUrl"`
+	AccessPolicy          model.ModelAccessPolicy       `json:"accessPolicy"`
+	Accessible            bool                          `json:"accessible"`
 	Capability            string                        `json:"capability"`
 	BillingMode           string                        `json:"billingMode"`
 	PriceStrategy         string                        `json:"priceStrategy"`
@@ -347,7 +350,14 @@ func (s *Service) BulkDisableUsers(actor *model.User, req BulkDisableUsersReques
 	return &BulkDisableUsersResult{Users: users, DisabledCount: len(users)}, nil
 }
 
-func (s *Service) PublicSystemChannels() ([]PublicModelChannel, error) {
+func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	hasMembership, err := s.HasActiveMembership(user.ID)
+	if err != nil {
+		return nil, err
+	}
 	channels, err := s.repo.SystemChannels(false)
 	if err != nil {
 		return nil, err
@@ -358,7 +368,7 @@ func (s *Service) PublicSystemChannels() ([]PublicModelChannel, error) {
 		if itemErr != nil {
 			return nil, itemErr
 		}
-		result = append(result, publicChannel(channel, false, items))
+		result = append(result, publicChannel(channel, false, items, hasMembership))
 	}
 	return result, nil
 }
@@ -382,7 +392,7 @@ func (s *Service) AdminSystemChannelPage(actor *model.User, query AdminListQuery
 		if itemErr != nil {
 			return nil, itemErr
 		}
-		result = append(result, publicChannel(channel, true, items))
+		result = append(result, publicChannel(channel, true, items, true))
 	}
 	return &AdminChannelPage{Channels: result, Total: total, Page: page, Limit: limit}, nil
 }
@@ -415,7 +425,7 @@ func (s *Service) CreateSystemChannel(actor *model.User, req ChannelRequest) (*P
 	if err != nil {
 		return nil, err
 	}
-	public := publicChannel(channel, true, items)
+	public := publicChannel(channel, true, items, true)
 	return &public, nil
 }
 
@@ -449,7 +459,7 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 	if err != nil {
 		return nil, err
 	}
-	public := publicChannel(next, true, items)
+	public := publicChannel(next, true, items, true)
 	return &public, nil
 }
 
@@ -611,7 +621,7 @@ func inferChannelInterfaceType(models []string) model.ChannelInterfaceType {
 	return model.ChannelInterfaceChatCompletion
 }
 
-func publicChannel(channel model.ModelChannel, admin bool, channelModels []model.ChannelModel) PublicModelChannel {
+func publicChannel(channel model.ModelChannel, admin bool, channelModels []model.ChannelModel, hasMembership bool) PublicModelChannel {
 	models := make([]string, 0, len(channelModels))
 	modelCosts := make([]PublicChannelModelPrice, 0, len(channelModels))
 	for _, item := range channelModels {
@@ -625,7 +635,9 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
-				Model: item.ModelKey, DisplayName: item.DisplayName, Capability: item.Capability,
+				Model: item.ModelKey, DisplayName: item.DisplayName, IconURL: channelModelIconURL(item),
+				AccessPolicy: item.AccessPolicy, Accessible: item.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
+				Capability:  item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
 			})

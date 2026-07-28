@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -115,7 +116,11 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		channels, _ := svc.PublicSystemChannels()
+		channels, err := svc.PublicSystemChannels(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
 		limits, err := svc.PublicRuntimeLimits()
 		if err != nil {
 			failService(c, err)
@@ -124,16 +129,38 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, gin.H{"user": publicUser, "systemChannels": channels, "runtimeLimits": limits})
 	})
 	r.GET("/channels/system", func(c *gin.Context) {
-		if _, err := currentUser(c, svc); err != nil {
+		user, err := currentUser(c, svc)
+		if err != nil {
 			failService(c, err)
 			return
 		}
-		channels, err := svc.PublicSystemChannels()
+		channels, err := svc.PublicSystemChannels(user)
 		if err != nil {
 			failService(c, err)
 			return
 		}
 		ok(c, gin.H{"channels": channels})
+	})
+	r.GET("/model-icons/:modelId", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		filePath, mimeType, modifiedAt, err := svc.ChannelModelIconFile(user, c.Param("modelId"))
+		if err != nil {
+			if errors.Is(err, service.ErrChannelModelIconNotConfigured) || errors.Is(err, os.ErrNotExist) {
+				fail(c, http.StatusNotFound, service.ErrChannelModelIconNotConfigured)
+				return
+			}
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "private, max-age=86400, immutable")
+		c.Header("Content-Type", mimeType)
+		c.Header("Last-Modified", modifiedAt.UTC().Format(http.TimeFormat))
+		c.Header("X-Content-Type-Options", "nosniff")
+		http.ServeFile(c.Writer, c.Request, filePath)
 	})
 }
 

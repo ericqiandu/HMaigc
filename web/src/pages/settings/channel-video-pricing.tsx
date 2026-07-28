@@ -10,6 +10,8 @@ export function ChannelVideoPricing({ channel, onChange }: { channel: ModelChann
     const updateCost = (model: string, patch: Partial<ModelCost>) => {
   const current = channel.modelCosts?.find((item) => item.model === model) || {
     model,
+    accessPolicy: "authenticated" as const,
+    accessible: true,
     capability: "video" as const,
     billingMode: "fixed_request" as const,
     priceStrategy: "flat" as const,

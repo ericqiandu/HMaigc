@@ -196,6 +196,7 @@ export default function ModelPricingPage() {
         const modelInput = {
             modelKey: editing.modelKey,
             displayName: editing.displayName,
+            accessPolicy: editing.accessPolicy,
             capability: editing.capability,
             billingMode: values.billingMode,
             priceStrategy: values.priceStrategy,

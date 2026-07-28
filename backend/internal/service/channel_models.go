@@ -15,6 +15,7 @@ import (
 type ChannelModelRequest struct {
 	ModelKey              string                         `json:"modelKey"`
 	DisplayName           string                         `json:"displayName"`
+	AccessPolicy          model.ModelAccessPolicy        `json:"accessPolicy"`
 	Capability            string                         `json:"capability"`
 	BillingMode           string                         `json:"billingMode"`
 	PriceStrategy         string                         `json:"priceStrategy"`
@@ -92,7 +93,7 @@ func (s *Service) FetchAdminChannelModels(ctx context.Context, actor *model.User
 			continue
 		}
 		// 自动发现不能绕过定价边界；新模型由管理员定价后再手动启用。
-		missing = append(missing, model.ChannelModel{ID: newID(), ChannelID: channelID, ModelKey: name, DisplayName: name, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: false, PriceVersion: 1})
+		missing = append(missing, model.ChannelModel{ID: newID(), ChannelID: channelID, ModelKey: name, DisplayName: name, AccessPolicy: model.ModelAccessAuthenticated, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: false, PriceVersion: 1})
 	}
 	added, err := s.repo.CreateMissingChannelModels(missing)
 	if err != nil {
@@ -119,6 +120,13 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	if capability == "" {
 		return nil, BadAuthRequest("请选择模型能力")
+	}
+	accessPolicy := req.AccessPolicy
+	if accessPolicy == "" {
+		return nil, BadAuthRequest("请选择模型使用权限")
+	}
+	if accessPolicy != model.ModelAccessAuthenticated && accessPolicy != model.ModelAccessMember {
+		return nil, BadAuthRequest("模型访问策略无效")
 	}
 	billingMode := strings.TrimSpace(req.BillingMode)
 	if billingMode == "" {
@@ -149,7 +157,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if req.PriceConfigured && priceStrategy == "flat" && req.UnitPriceMicrocredits <= 0 {
 		return nil, BadAuthRequest("启用用户积分价格时，价格必须大于 0")
 	}
-	item := &model.ChannelModel{ID: newID(), ChannelID: channelID, Enabled: true, PriceVersion: 1}
+	item := &model.ChannelModel{ID: newID(), ChannelID: channelID, AccessPolicy: model.ModelAccessAuthenticated, Enabled: true, PriceVersion: 1}
 	if id != "" {
 		item, err = s.repo.ChannelModelByID(channelID, id)
 		if err != nil {
@@ -162,6 +170,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if item.DisplayName == "" {
 		item.DisplayName = modelKey
 	}
+	item.AccessPolicy = accessPolicy
 	item.Capability = capability
 	item.BillingMode = billingMode
 	item.PriceStrategy = priceStrategy
@@ -177,10 +186,23 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if priceStrategy == "image_resolution" || priceStrategy == "video_resolution" {
 		item.UnitPriceMicrocredits = 0
 	}
-	if err := s.repo.SaveChannelModelPricing(item, tiers); err != nil {
+	currentModels, err := s.repo.ChannelModels(channelID, true)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.syncChannelModelNames(channel); err != nil {
+	modelsJSON, err := json.Marshal(channelModelNamesAfterSave(currentModels, item))
+	if err != nil {
+		return nil, err
+	}
+	audit, err := newAdminAuditEvent(actor, "channel_model.save", "channel_model", item.ID, "保存模型目录、访问策略与计费配置", map[string]any{
+		"channelId": item.ChannelID, "modelKey": item.ModelKey, "displayName": item.DisplayName,
+		"accessPolicy": item.AccessPolicy, "capability": item.Capability, "enabled": item.Enabled,
+		"priceConfigured": item.PriceConfigured, "priceVersion": item.PriceVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.SaveChannelModelPricing(item, tiers, string(modelsJSON), audit); err != nil {
 		return nil, err
 	}
 	saved, err := s.repo.ChannelModelByID(channelID, item.ID)
@@ -189,6 +211,20 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	normalized := normalizeChannelModelPriceTierCollections([]model.ChannelModel{*saved})
 	return &normalized[0], nil
+}
+
+func channelModelNamesAfterSave(items []model.ChannelModel, saved *model.ChannelModel) []string {
+	names := make([]string, 0, len(items)+1)
+	for _, item := range items {
+		if item.ID == saved.ID || !item.Enabled {
+			continue
+		}
+		names = append(names, item.ModelKey)
+	}
+	if saved.Enabled {
+		names = append(names, saved.ModelKey)
+	}
+	return uniqueNonEmpty(names)
 }
 
 func (s *Service) DeleteAdminChannelModel(actor *model.User, channelID string, id string) error {
@@ -252,7 +288,7 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 			}
 			continue
 		}
-		item := model.ChannelModel{ID: newID(), ChannelID: channel.ID, ModelKey: name, DisplayName: name, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: true, PriceVersion: 1}
+		item := model.ChannelModel{ID: newID(), ChannelID: channel.ID, ModelKey: name, DisplayName: name, AccessPolicy: model.ModelAccessAuthenticated, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: true, PriceVersion: 1}
 		if err := s.repo.SaveChannelModel(&item); err != nil {
 			return err
 		}
@@ -343,25 +379,9 @@ func normalizeChannelModelPriceTierCollections(items []model.ChannelModel) []mod
 		if normalized[index].PriceTiers == nil {
 			normalized[index].PriceTiers = make([]model.ChannelModelPriceTier, 0)
 		}
+		normalized[index].IconURL = channelModelIconURL(normalized[index])
 	}
 	return normalized
-}
-
-func (s *Service) syncChannelModelNames(channel *model.ModelChannel) error {
-	items, err := s.repo.ChannelModels(channel.ID, false)
-	if err != nil {
-		return err
-	}
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		names = append(names, item.ModelKey)
-	}
-	encoded, err := json.Marshal(names)
-	if err != nil {
-		return err
-	}
-	channel.ModelsJSON = string(encoded)
-	return s.repo.Save(channel)
 }
 
 func capabilityForChannel(channel model.ModelChannel) string {

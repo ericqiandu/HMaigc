@@ -1,14 +1,10 @@
 package service
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime/multipart"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -133,7 +129,7 @@ func (s *Service) UpdateSiteLogo(actor *model.User, header *multipart.FileHeader
 	if header.Size <= 0 || header.Size > siteLogoMaxBytes {
 		return nil, BadAuthRequest("Logo 文件大小必须在 2MB 以内")
 	}
-	content, mimeType, extension, err := readSiteLogo(header)
+	content, mimeType, extension, err := readManagedImage(header, siteLogoMaxBytes, "Logo")
 	if err != nil {
 		return nil, err
 	}
@@ -145,11 +141,10 @@ func (s *Service) UpdateSiteLogo(actor *model.User, header *multipart.FileHeader
 	if err := os.MkdirAll(logoDir, 0o750); err != nil {
 		return nil, fmt.Errorf("创建站点 Logo 目录失败: %w", err)
 	}
-	digest := sha256.Sum256(content)
-	fileName := hex.EncodeToString(digest[:]) + extension
+	fileName := managedImageFileName(content, extension)
 	finalPath := filepath.Join(logoDir, fileName)
 	if _, err := os.Stat(finalPath); errors.Is(err, os.ErrNotExist) {
-		if err := writeSiteLogoAtomically(logoDir, finalPath, content); err != nil {
+		if err := writeFileAtomically(logoDir, ".site-logo-*", finalPath, content); err != nil {
 			return nil, err
 		}
 	} else if err != nil {
@@ -348,66 +343,6 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 		result.LogoURL = "/api/public/site/logo?v=" + version
 	}
 	return result
-}
-
-func readSiteLogo(header *multipart.FileHeader) ([]byte, string, string, error) {
-	file, err := header.Open()
-	if err != nil {
-		return nil, "", "", err
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, siteLogoMaxBytes+1))
-	if err != nil {
-		return nil, "", "", fmt.Errorf("读取 Logo 文件失败: %w", err)
-	}
-	if len(content) == 0 || len(content) > siteLogoMaxBytes {
-		return nil, "", "", BadAuthRequest("Logo 文件大小必须在 2MB 以内")
-	}
-	mimeType := strings.TrimSpace(strings.Split(http.DetectContentType(content), ";")[0])
-	switch mimeType {
-	case "image/png":
-		return content, mimeType, ".png", nil
-	case "image/jpeg":
-		return content, mimeType, ".jpg", nil
-	case "image/webp":
-		return content, mimeType, ".webp", nil
-	default:
-		return nil, "", "", BadAuthRequest("Logo 仅支持 PNG、JPG 或 WebP 格式")
-	}
-}
-
-func writeSiteLogoAtomically(directory string, finalPath string, content []byte) error {
-	tempFile, err := os.CreateTemp(directory, ".site-logo-*")
-	if err != nil {
-		return fmt.Errorf("创建 Logo 临时文件失败: %w", err)
-	}
-	tempPath := tempFile.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tempPath)
-		}
-	}()
-	if err := tempFile.Chmod(0o640); err != nil {
-		_ = tempFile.Close()
-		return fmt.Errorf("设置 Logo 文件权限失败: %w", err)
-	}
-	if _, err := tempFile.Write(content); err != nil {
-		_ = tempFile.Close()
-		return fmt.Errorf("写入 Logo 文件失败: %w", err)
-	}
-	if err := tempFile.Sync(); err != nil {
-		_ = tempFile.Close()
-		return fmt.Errorf("同步 Logo 文件失败: %w", err)
-	}
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("关闭 Logo 文件失败: %w", err)
-	}
-	if err := os.Rename(tempPath, finalPath); err != nil {
-		return fmt.Errorf("保存 Logo 文件失败: %w", err)
-	}
-	cleanup = false
-	return nil
 }
 
 func (s *Service) siteLogoDir() string {

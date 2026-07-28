@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Coins, Cpu } from "lucide-react";
+import { Coins, Cpu, LockKeyhole } from "lucide-react";
 import { Select } from "antd";
 
 import { cn } from "@/lib/utils";
-import { modelDisplayName, modelOptionLabel, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionLabel, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -22,7 +22,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const options = useMemo(
-        () => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))),
+        () => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...catalogModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))),
         [capability, config, value],
     );
     const optionGroups = useMemo(() => {
@@ -41,17 +41,18 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const current = value || "";
     const currentPrice = modelMenuPrice(config, current);
     const selectOptions = useMemo(
-        () =>
-            optionGroups.map((group) => ({
+        () => presentation === "canvasImage"
+            ? options.map((model) => ({ value: model, label: modelOptionLabel(config, model), disabled: !isModelAccessible(config, model) }))
+            : optionGroups.map((group) => ({
                 label: (
                     <span className="canvas-model-picker-group flex min-w-0 items-center gap-1.5">
                         <span className="canvas-model-picker-group-name truncate">{group.label}</span>
                         <span className="canvas-model-picker-group-scope shrink-0 text-[10px] font-normal text-foreground/38">{group.scope}</span>
                     </span>
                 ),
-                options: group.models.map((model) => ({ value: model, label: modelOptionLabel(config, model) })),
+                options: group.models.map((model) => ({ value: model, label: modelOptionLabel(config, model), disabled: !isModelAccessible(config, model) })),
             })),
-        [config, optionGroups],
+        [config, optionGroups, options, presentation],
     );
 
     useEffect(() => {
@@ -71,7 +72,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 placeholder={
                     presentation === "canvasImage" ? (
                         <span className="canvas-model-picker-placeholder flex min-w-0 items-center gap-1.5">
-                            <ModelIcon model="" />
+                            <ModelIcon config={config} model="" />
                             <span className="canvas-model-picker-placeholder-text truncate">{placeholder}</span>
                         </span>
                     ) : placeholder
@@ -93,11 +94,13 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                     if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
                     setOpen(nextOpen);
                 }}
-                onChange={onChange}
+                onChange={(nextModel) => {
+                    if (isModelAccessible(config, nextModel)) onChange(nextModel);
+                }}
                 optionRender={(option) => <ModelLabel config={config} model={String(option.value)} presentation={presentation} />}
                 labelRender={() => (
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5 text-[11px]">
-                        <ModelIcon model={current} />
+                        <ModelIcon config={config} model={current} />
                         <span className="canvas-model-picker-label-text min-w-0 flex-1 truncate">{current ? presentation === "canvasImage" ? modelDisplayName(config, current) : modelOptionLabel(config, current) : placeholder}</span>
                         {showSelectedPrice ? <ModelPrice price={currentPrice} compact /> : null}
                     </span>
@@ -119,16 +122,22 @@ function ModelLabel({ config, model, presentation }: { config: AiConfig; model: 
     const channel = resolveModelChannel(config, model);
     const canvasImage = presentation === "canvasImage";
     return (
-        <span className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasImage ? "gap-2.5 py-0.5" : "gap-1.5 py-0")}>
-            <span className={cn("canvas-model-picker-option-icon grid shrink-0 place-items-center bg-black/5 dark:bg-white/10", canvasImage ? "size-9 rounded-lg" : "size-6 rounded-md")}>
-                <ModelIcon model={model} />
+        <span className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasImage ? "gap-2.5" : "gap-1.5 py-0")}>
+            <span className={cn("canvas-model-picker-option-icon grid shrink-0 place-items-center bg-foreground/[.07]", canvasImage ? "size-9 rounded-lg" : "size-6 rounded-md")}>
+                <ModelIcon config={config} model={model} />
             </span>
             <span className="canvas-model-picker-option-body min-w-0 flex-1">
-                <span className={cn("canvas-model-picker-option-title block min-w-0 truncate font-medium", canvasImage ? "text-[13px] leading-5" : "text-[11px] leading-none")}>{modelDisplayName(config, model)}</span>
-                <span className={cn("canvas-model-picker-option-meta block truncate opacity-45", canvasImage ? "mt-0.5 text-[11px] leading-4" : "mt-0.5 text-[10px]")}>
+                <span className={cn("canvas-model-picker-option-title block min-w-0 truncate font-semibold", canvasImage ? "text-[14px] leading-5" : "text-[11px] leading-none")}>{modelDisplayName(config, model)}</span>
+                <span className={cn("canvas-model-picker-option-meta block truncate", canvasImage ? "mt-0.5 text-[11px] leading-4 text-foreground/45" : "mt-0.5 text-[10px] opacity-45")}>
                     {channel.name || "未命名渠道"} · {modelOptionName(model)}
                 </span>
             </span>
+            {modelCatalogEntry(config, model)?.accessPolicy === "member" ? (
+                <span className="canvas-model-picker-member-badge inline-flex shrink-0 items-center gap-1 rounded-full bg-foreground/[.07] px-2 py-1 text-[10px] font-medium text-foreground/65">
+                    <LockKeyhole className="canvas-model-picker-member-icon size-3" />
+                    会员
+                </span>
+            ) : null}
             <ModelPrice price={modelMenuPrice(config, model)} presentation={presentation} />
         </span>
     );
@@ -159,9 +168,18 @@ function ModelPrice({ price, compact = false, presentation = "default" }: { pric
     );
 }
 
-export function ModelIcon({ model }: { model: string }) {
+export function ModelIcon({ model, config }: { model: string; config?: AiConfig }) {
+    const configuredIcon = config ? modelCatalogEntry(config, model)?.iconUrl?.trim() : "";
+    if (configuredIcon) {
+        return <img src={configuredIcon} alt="" className="canvas-model-picker-icon size-3.5 shrink-0 object-contain" />;
+    }
     const icon = resolveModelIcon(modelOptionName(model));
     return icon ? <img src={icon} alt="" className="canvas-model-picker-icon size-3.5 shrink-0 dark:invert" /> : <Cpu className="canvas-model-picker-icon size-3.5 shrink-0 opacity-70" />;
+}
+
+function modelCatalogEntry(config: AiConfig, model: string) {
+    const channel = resolveModelChannel(config, model);
+    return channel.modelCosts?.find((item) => item.model === modelOptionName(model));
 }
 
 function resolveModelIcon(model: string) {

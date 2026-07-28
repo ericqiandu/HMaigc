@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Drawer, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ArrowLeft, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Image as ImageIcon, LockKeyhole, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import { Link } from "react-router";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
-import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
+import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, removeAdminChannelModelIcon, updateAdminChannelModel, uploadAdminChannelModelIcon, type ChannelModel } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
 
 type FormValues = {
     modelKey: string;
     displayName?: string;
+    accessPolicy: ChannelModel["accessPolicy"];
     capability: ChannelModel["capability"];
     enabled: boolean;
 };
@@ -22,6 +23,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [loading, setLoading] = useState(false);
     const [fetching, setFetching] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [iconSaving, setIconSaving] = useState(false);
     const [editorOpen, setEditorOpen] = useState(false);
     const [keyword, setKeyword] = useState("");
     const [capability, setCapability] = useState<ChannelModel["capability"] | "all">("all");
@@ -29,6 +31,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
     const [form] = Form.useForm<FormValues>();
+    const iconInputRef = useRef<HTMLInputElement>(null);
 
     const reload = async () => {
         if (!channel) return;
@@ -71,7 +74,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const startCreate = () => {
         setEditing(null);
-        form.setFieldsValue({ modelKey: "", displayName: "", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
+        form.setFieldsValue({ modelKey: "", displayName: "", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
         setEditorOpen(true);
     };
 
@@ -80,6 +83,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         form.setFieldsValue({
             modelKey: item.modelKey,
             displayName: item.displayName,
+            accessPolicy: item.accessPolicy,
             capability: item.capability,
             enabled: item.enabled,
         });
@@ -93,6 +97,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             const sharedPayload = {
                 modelKey: values.modelKey.trim(),
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
+                accessPolicy: values.accessPolicy,
                 capability: values.capability,
                 enabled: values.enabled !== false,
             };
@@ -127,6 +132,48 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         }
     };
 
+    const selectIcon = async (event: ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file || !editing) return;
+        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+            message.error("模型图标仅支持 PNG、JPG 或 WebP 格式");
+            return;
+        }
+        if (file.size > 1024 * 1024) {
+            message.error("模型图标文件大小不能超过 1MB");
+            return;
+        }
+        setIconSaving(true);
+        try {
+            const result = await uploadAdminChannelModelIcon(channel.id, editing.id, file);
+            setEditing(result.model);
+            await reload();
+            await onChanged();
+            message.success("模型图标已更新");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "上传模型图标失败");
+        } finally {
+            setIconSaving(false);
+        }
+    };
+
+    const removeIcon = async () => {
+        if (!editing) return;
+        setIconSaving(true);
+        try {
+            const result = await removeAdminChannelModelIcon(channel.id, editing.id);
+            setEditing(result.model);
+            await reload();
+            await onChanged();
+            message.success("已移除模型自定义图标");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "移除模型图标失败");
+        } finally {
+            setIconSaving(false);
+        }
+    };
+
     const remove = async (item: ChannelModel) => {
         try {
             await deleteAdminChannelModel(channel.id, item.id);
@@ -142,12 +189,18 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         {
             title: "模型",
             render: (_, item) => (
-                <div>
-                    <div className="font-medium">{item.displayName || item.modelKey}</div>
-                    <div className="text-xs text-foreground/45">{item.modelKey}</div>
+                <div className="channel-model-identity flex min-w-0 items-center gap-2.5">
+                    <span className="channel-model-icon-preview grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-foreground/[.06]">
+                        {item.iconUrl ? <img className="channel-model-icon-image size-5 object-contain" src={item.iconUrl} alt="" /> : <ImageIcon className="channel-model-icon-fallback size-4 text-foreground/40" />}
+                    </span>
+                    <div className="channel-model-copy min-w-0">
+                        <div className="channel-model-name truncate font-medium">{item.displayName || item.modelKey}</div>
+                        <div className="channel-model-key truncate text-xs text-foreground/45">{item.modelKey}</div>
+                    </div>
                 </div>
             ),
         },
+        { title: "访问", dataIndex: "accessPolicy", width: 110, render: (value) => value === "member" ? <Tag className="channel-model-member-tag" icon={<LockKeyhole className="channel-model-member-tag-icon size-3" />} color="gold">会员专属</Tag> : <Tag className="channel-model-public-tag">全部用户</Tag> },
         { title: "能力", dataIndex: "capability", width: 90, render: capabilityLabel },
         {
             title: "计费",
@@ -187,7 +240,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     });
 
     return (
-        <div>
+        <div className="channel-model-manager">
             <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
                 <div className="flex min-w-0 items-start gap-3">
                     <Button aria-label="返回 AI 模型配置" icon={<ArrowLeft className="size-4" />} onClick={onClose} />
@@ -228,9 +281,28 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <Form.Item name="modelKey" label="模型标识" rules={[{ required: true, message: "请输入模型标识" }]}>
                         <Input placeholder="gpt-image-2" />
                     </Form.Item>
-                    <Form.Item name="displayName" label="显示名称">
-                        <Input placeholder="不填则使用模型标识" />
+                    <Form.Item className="channel-model-display-name-field" name="displayName" label="显示名称">
+                        <Input className="channel-model-display-name-input" placeholder="不填则使用模型标识" />
                     </Form.Item>
+                    <Form.Item className="channel-model-access-field" name="accessPolicy" label="使用权限" extra="会员专属模型仅允许有效个人会员或有效团队席位成员调用；服务端会在实际生成前再次校验。" rules={[{ required: true, message: "请选择使用权限" }]}>
+                        <Select className="channel-model-access-select" options={[{ label: "全部登录用户", value: "authenticated" }, { label: "有效会员专属", value: "member" }]} />
+                    </Form.Item>
+                    <div className="channel-model-icon-editor mb-6 bg-foreground/[.035] px-4 py-4">
+                        <span className="channel-model-icon-editor-label mb-3 block text-sm font-medium text-foreground/85">模型图标</span>
+                        <div className="channel-model-icon-editor-row flex items-center gap-3">
+                            <span className="channel-model-icon-editor-preview grid size-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-background">
+                                {editing?.iconUrl ? <img className="channel-model-icon-editor-image size-8 object-contain" src={editing.iconUrl} alt="" /> : <ImageIcon className="channel-model-icon-editor-fallback size-5 text-foreground/35" />}
+                            </span>
+                            <div className="channel-model-icon-editor-actions min-w-0">
+                                <input ref={iconInputRef} className="channel-model-icon-file-input !hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void selectIcon(event)} />
+                                <Space className="channel-model-icon-buttons" wrap>
+                                    <Button className="channel-model-icon-upload-button" disabled={!editing} loading={iconSaving} icon={<Upload className="channel-model-icon-upload-icon size-4" />} onClick={() => iconInputRef.current?.click()}>{editing?.iconUrl ? "替换" : "上传"}</Button>
+                                    {editing?.iconUrl ? <Popconfirm title="移除模型图标" description="移除后前端会按模型名称显示内置图标或通用图标。" okText="移除" cancelText="取消" onConfirm={() => void removeIcon()}><Button className="channel-model-icon-remove-button" type="text" danger loading={iconSaving}>移除</Button></Popconfirm> : null}
+                                </Space>
+                                <span className="channel-model-icon-help mt-2 block text-[11px] leading-4 text-foreground/45">{editing ? "PNG、JPG 或 WebP，最大 1MB，建议使用透明底方形图标。" : "请先添加模型，再上传图标。"}</span>
+                            </div>
+                        </div>
+                    </div>
                     <Form.Item name="capability" label="能力" rules={[{ required: true }]}>
                         <Select options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} />
                     </Form.Item>

@@ -411,6 +411,19 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if err != nil {
 		return nil, err
 	}
+	switch item.AccessPolicy {
+	case model.ModelAccessAuthenticated:
+	case model.ModelAccessMember:
+		hasMembership, membershipErr := s.HasActiveMembership(userID)
+		if membershipErr != nil {
+			return nil, membershipErr
+		}
+		if !hasMembership {
+			return nil, Forbidden("当前模型仅限有效会员使用，请先升级会员")
+		}
+	default:
+		return nil, errors.New("当前模型访问策略配置无效")
+	}
 	if !item.PriceConfigured {
 		return nil, BadAuthRequest("当前模型尚未配置用户积分价格")
 	}

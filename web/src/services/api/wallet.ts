@@ -64,6 +64,8 @@ export type ChannelModel = {
     channelId: string;
     modelKey: string;
     displayName: string;
+    iconUrl: string;
+    accessPolicy: "authenticated" | "member";
     capability: "text" | "image" | "video" | "audio";
     billingMode: "fixed_request" | "per_second";
     priceStrategy: "flat" | "image_resolution" | "video_resolution";
@@ -83,7 +85,7 @@ export type ChannelModel = {
 
 export type ChannelModelInput = Omit<
     ChannelModel,
-    "id" | "channelId" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"
+    "id" | "channelId" | "iconUrl" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"
 > & {
     priceTiers: Array<{
         resolution: string;
@@ -250,6 +252,16 @@ export function createAdminChannelModel(channelId: string, input: ChannelModelIn
 
 export function updateAdminChannelModel(channelId: string, id: string, input: ChannelModelInput) {
     return request<{ model: ChannelModel }>(api.patch(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}`, input));
+}
+
+export function uploadAdminChannelModelIcon(channelId: string, id: string, file: File) {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    return request<{ model: ChannelModel }>(api.post(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}/icon`, formData));
+}
+
+export function removeAdminChannelModelIcon(channelId: string, id: string) {
+    return request<{ model: ChannelModel }>(api.delete(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}/icon`));
 }
 
 export function deleteAdminChannelModel(channelId: string, id: string) {

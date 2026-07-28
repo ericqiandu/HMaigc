@@ -100,7 +100,7 @@ func (r *Repository) SaveChannelModel(item *model.ChannelModel) error {
 	return r.db.Save(item).Error
 }
 
-func (r *Repository) SaveChannelModelPricing(item *model.ChannelModel, tiers []model.ChannelModelPriceTier) error {
+func (r *Repository) SaveChannelModelPricing(item *model.ChannelModel, tiers []model.ChannelModelPriceTier, modelsJSON string, audit *model.AdminAuditEvent) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Omit("PriceTiers").Save(item).Error; err != nil {
 			return err
@@ -108,11 +108,46 @@ func (r *Repository) SaveChannelModelPricing(item *model.ChannelModel, tiers []m
 		if err := tx.Where("channel_model_id = ?", item.ID).Delete(&model.ChannelModelPriceTier{}).Error; err != nil {
 			return err
 		}
-		if len(tiers) == 0 {
-			return nil
+		if len(tiers) > 0 {
+			if err := tx.Create(&tiers).Error; err != nil {
+				return err
+			}
 		}
-		return tx.Create(&tiers).Error
+		result := tx.Model(&model.ModelChannel{}).
+			Where("id = ? AND scope = ?", item.ChannelID, model.ChannelScopeSystem).
+			Update("models_json", modelsJSON)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
 	})
+}
+
+// SaveChannelModelPresentation 把展示配置与审计事实放在同一事务，避免后台显示保存失败但配置已生效。
+func (r *Repository) SaveChannelModelPresentation(item *model.ChannelModel, audit *model.AdminAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Omit("PriceTiers").Save(item).Error; err != nil {
+			return err
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
+	})
+}
+
+func (r *Repository) ChannelModelByPublicID(id string) (*model.ChannelModel, error) {
+	var item model.ChannelModel
+	if err := r.db.First(&item, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
 }
 
 func (r *Repository) DeleteChannelModel(channelID string, id string, modelsJSON string, now time.Time) error {

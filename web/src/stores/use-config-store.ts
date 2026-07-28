@@ -24,6 +24,9 @@ export type ModelChannel = {
     modelCosts?: Array<{
         model: string;
         displayName?: string;
+        iconUrl?: string;
+        accessPolicy: "authenticated" | "member";
+        accessible: boolean;
         capability: ModelCapability;
         billingMode: "fixed_request" | "per_second";
         priceStrategy: "flat" | "image_resolution" | "video_resolution";
@@ -180,8 +183,21 @@ export function filterModelsByCapability(models: string[], capability?: ModelCap
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
-    if (!capability) return config.models;
-    return filterModelsByCapability(config.models, capability, config.channels);
+    const accessibleModels = config.models.filter((model) => isModelAccessible(config, model));
+    if (!capability) return accessibleModels;
+    return filterModelsByCapability(accessibleModels, capability, config.channels);
+}
+
+export function catalogModelsByCapability(config: AiConfig, capability?: ModelCapability) {
+    const models = modelOptionsFromChannels(config.channels);
+    return capability ? filterModelsByCapability(models, capability, config.channels) : models;
+}
+
+export function isModelAccessible(config: AiConfig, value: string) {
+    const channel = resolveModelChannel(config, value);
+    if (channel.scope !== "system") return true;
+    const entry = channel.modelCosts?.find((item) => item.model === modelOptionName(value));
+    return entry?.accessible === true;
 }
 
 export function configuredModelMatchesCapability(config: AiConfig, model: string, capability?: ModelCapability) {
@@ -241,7 +257,9 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot) {
     const persistedConfig = (snapshot.config || {}) as Partial<AiConfig>;
     const config = { ...defaultConfig, ...persistedConfig };
     const channels = normalizeChannels(config);
-    const models = modelOptionsFromChannels(channels);
+    const catalogModels = modelOptionsFromChannels(channels);
+    const modelConfig = { ...config, channels, models: catalogModels };
+    const models = catalogModels.filter((model) => isModelAccessible(modelConfig, model));
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
     const textModels = filterModelsByCapability(models, "text", channels);

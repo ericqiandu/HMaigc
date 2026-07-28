@@ -12,6 +12,7 @@ type UserRole string
 type UserStatus string
 type ChannelScope string
 type ChannelInterfaceType string
+type ModelAccessPolicy string
 type ApiCallStatus string
 type ResourceStatus string
 type BillingStatus string
@@ -68,6 +69,9 @@ const (
 	ChannelInterfaceNewAPIChannel2 ChannelInterfaceType = "newapi-channel-2"
 	ChannelInterfaceXAIVideo       ChannelInterfaceType = "xai-video"
 	ChannelInterfaceAIOpenVideo    ChannelInterfaceType = "ai-open-platform-video"
+
+	ModelAccessAuthenticated ModelAccessPolicy = "authenticated"
+	ModelAccessMember        ModelAccessPolicy = "member"
 
 	ApiCallStatusSucceeded ApiCallStatus = "succeeded"
 	ApiCallStatusFailed    ApiCallStatus = "failed"
@@ -217,6 +221,10 @@ type ChannelModel struct {
 	ChannelID             string                  `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
 	ModelKey              string                  `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
 	DisplayName           string                  `json:"displayName" gorm:"size:160"`
+	IconFile              string                  `json:"-" gorm:"size:160"`
+	IconMimeType          string                  `json:"-" gorm:"size:80"`
+	IconURL               string                  `json:"iconUrl" gorm:"-"`
+	AccessPolicy          ModelAccessPolicy       `json:"accessPolicy" gorm:"size:24;index;not null;default:authenticated"`
 	Capability            string                  `json:"capability" gorm:"size:32;index"`
 	BillingMode           string                  `json:"billingMode" gorm:"size:32"`
 	PriceStrategy         string                  `json:"priceStrategy" gorm:"size:32"`

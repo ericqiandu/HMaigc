@@ -157,6 +157,20 @@ func (s *Service) MembershipEntitlement(user *model.User) (*MembershipEntitlemen
 	return nil, errors.New("缺少启用的 Origin 基础套餐，无法确定并发权益")
 }
 
+// HasActiveMembership 只认数据库中的有效个人订阅或有效团队席位；Origin 基础权益不属于付费会员。
+func (s *Service) HasActiveMembership(userID string) (bool, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false, Unauthorized("请先登录")
+	}
+	now := time.Now()
+	subscriptions, err := s.repo.ActiveMembershipSubscriptions(userID, now)
+	if err != nil {
+		return false, err
+	}
+	return len(subscriptions) > 0, nil
+}
+
 func membershipEntitlementFromSubscription(subscription model.MembershipSubscription) (*MembershipEntitlement, error) {
 	if strings.TrimSpace(subscription.PlanSnapshotJSON) == "" {
 		return nil, fmt.Errorf("有效订阅 %s 缺少套餐快照，无法确定已购权益", subscription.ID)
