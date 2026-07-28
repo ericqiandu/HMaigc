@@ -355,14 +355,6 @@ export function modelDisplayName(config: AiConfig, value: string) {
     return channel.modelCosts?.find((item) => item.model === model)?.displayName?.trim() || model;
 }
 
-export function modelOptionLabel(config: AiConfig, value: string) {
-    const decoded = decodeChannelModel(value);
-    if (!decoded) return modelDisplayName(config, value);
-    const channel = config.channels.find((item) => item.id === decoded.channelId);
-    const displayName = modelDisplayName(config, value);
-    return channel ? `${displayName}（${channel.name}）` : displayName;
-}
-
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
     return uniqueModelOptions(
         channels.flatMap((channel) =>

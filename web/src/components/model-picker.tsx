@@ -3,7 +3,7 @@ import { Coins, Cpu } from "lucide-react";
 import { Select } from "antd";
 
 import { cn } from "@/lib/utils";
-import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionLabel, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -42,7 +42,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const currentPrice = modelMenuPrice(config, current);
     const selectOptions = useMemo(
         () => presentation === "canvasImage"
-            ? options.map((model) => ({ value: model, label: modelOptionLabel(config, model), disabled: !isModelAccessible(config, model) }))
+            ? options.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) }))
             : optionGroups.map((group) => ({
                 label: (
                     <span className="canvas-model-picker-group flex min-w-0 items-center gap-1.5">
@@ -50,7 +50,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                         <span className="canvas-model-picker-group-scope shrink-0 text-[10px] font-normal text-foreground/38">{group.scope}</span>
                     </span>
                 ),
-                options: group.models.map((model) => ({ value: model, label: modelOptionLabel(config, model), disabled: !isModelAccessible(config, model) })),
+                options: group.models.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) })),
             })),
         [config, optionGroups, options, presentation],
     );
@@ -102,14 +102,14 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5 text-[11px]">
                         <ModelIcon config={config} model={current} />
                         <span className="canvas-model-picker-label-copy flex min-w-0 flex-1 items-center gap-1">
-                            <span className="canvas-model-picker-label-text min-w-0 truncate">{current ? presentation === "canvasImage" ? modelDisplayName(config, current) : modelOptionLabel(config, current) : placeholder}</span>
+                            <span className="canvas-model-picker-label-text min-w-0 truncate">{current ? modelDisplayName(config, current) : placeholder}</span>
                             {isMemberModel(config, current) ? <MemberDiamond /> : null}
                         </span>
                         {showSelectedPrice ? <ModelPrice price={currentPrice} compact /> : null}
                     </span>
                 )}
                 aria-label={placeholder}
-                title={current ? modelOptionLabel(config, current) : placeholder}
+                title={current ? modelDisplayName(config, current) : placeholder}
             />
         </div>
     );
