@@ -1,0 +1,265 @@
+.membership-loading,
+.membership-empty {
+    display: grid;
+    min-height: 360px;
+    place-items: center;
+}
+
+.membership-load-error {
+    margin-bottom: 16px;
+}
+
+.membership-team-capabilities {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin-top: 12px;
+    border-top: 1px solid var(--membership-border);
+    border-bottom: 1px solid var(--membership-border);
+}
+
+.membership-team-capability {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 2px 10px;
+    min-height: 72px;
+    padding: 12px 20px;
+}
+
+.membership-team-capability + .membership-team-capability::before {
+    position: absolute;
+    top: 16px;
+    bottom: 16px;
+    left: 0;
+    width: 1px;
+    background: var(--membership-border);
+    content: "";
+}
+
+.membership-team-capability-icon {
+    grid-row: 1 / 3;
+    color: var(--membership-muted);
+}
+
+.membership-team-capability-title {
+    font-size: 12px;
+}
+
+.membership-team-capability-copy {
+    color: var(--membership-muted);
+    font-size: 10px;
+}
+
+.membership-orders {
+    margin-top: 24px;
+    border: 1px solid var(--membership-border);
+    border-radius: 10px;
+    background: var(--membership-subtle);
+}
+
+.membership-orders-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 64px;
+    padding: 12px 16px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.membership-orders-summary::-webkit-details-marker {
+    display: none;
+}
+
+.membership-orders-summary-main,
+.membership-orders-summary-side {
+    gap: 10px;
+}
+
+.membership-orders-summary-icon {
+    color: var(--membership-muted);
+}
+
+.membership-orders-summary-copy {
+    display: grid;
+    gap: 2px;
+}
+
+.membership-orders-title {
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.membership-orders-description,
+.membership-orders-count {
+    color: var(--membership-muted);
+    font-size: 11px;
+}
+
+.membership-orders-chevron {
+    transition: transform 160ms ease;
+}
+
+.membership-orders[open] .membership-orders-chevron {
+    transform: rotate(180deg);
+}
+
+.membership-orders-content {
+    padding: 0 16px 12px;
+    border-top: 1px solid var(--membership-border);
+}
+
+.membership-order-list {
+    display: grid;
+}
+
+.membership-order-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(260px, 2fr) 90px 72px 72px;
+    align-items: center;
+    gap: 16px;
+    min-height: 62px;
+    border-bottom: 1px solid var(--membership-border);
+}
+
+.membership-order-row:last-child {
+    border-bottom: 0;
+}
+
+.membership-order-primary {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.membership-order-plan {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.membership-order-number,
+.membership-order-meta,
+.membership-order-resolved {
+    color: var(--membership-muted);
+    font-size: 11px;
+}
+
+.membership-order-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.membership-order-amount {
+    text-align: right;
+    font-size: 13px;
+}
+
+.membership-order-status {
+    margin: 0;
+    text-align: center;
+}
+
+.membership-order-action {
+    text-align: right;
+}
+
+.membership-order-resolved {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.membership-orders-empty {
+    margin: 28px 0;
+}
+
+.membership-order-modal-content {
+    display: grid;
+    gap: 20px;
+}
+
+.membership-order-summary {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    border-top: 1px solid var(--membership-border);
+    border-bottom: 1px solid var(--membership-border);
+}
+
+.membership-order-summary-item {
+    position: relative;
+    display: grid;
+    gap: 4px;
+    padding: 16px 4px;
+}
+
+.membership-order-summary-item + .membership-order-summary-item {
+    padding-left: 20px;
+}
+
+.membership-order-summary-item + .membership-order-summary-item::before {
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 0;
+    width: 1px;
+    background: var(--membership-border);
+    content: "";
+}
+
+.membership-order-summary-label,
+.membership-team-field-label {
+    color: var(--membership-muted);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.membership-order-summary-value {
+    font-size: 20px;
+}
+
+.membership-team-fields {
+    display: grid;
+    gap: 16px;
+}
+
+.membership-team-field {
+    display: grid;
+    gap: 6px;
+}
+
+.membership-team-select,
+.membership-team-name-input {
+    width: 100%;
+}
+
+.membership-team-seat-input {
+    width: 140px;
+}
+
+.membership-order-notices {
+    display: grid;
+    gap: 8px;
+    padding-top: 4px;
+}
+
+.membership-order-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    color: var(--membership-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.membership-order-note-icon {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+}

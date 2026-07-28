@@ -1,0 +1,150 @@
+@media (max-width: 1180px) {
+    .membership-plan-carousel,
+    .membership-plan-carousel.is-team {
+        grid-auto-columns: minmax(280px, calc((100% - 24px) / 3));
+    }
+
+    .membership-overview-metric {
+        min-width: 100px;
+        padding: 0 14px;
+    }
+}
+
+@media (max-width: 900px) {
+    .membership-page {
+        padding-right: 20px;
+        padding-left: 20px;
+    }
+
+    .membership-plan-carousel,
+    .membership-plan-carousel.is-team {
+        grid-auto-columns: minmax(280px, calc((100% - 12px) / 2));
+    }
+
+    .membership-overview {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .membership-overview-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        width: 100%;
+    }
+
+    .membership-overview-metric {
+        min-width: 0;
+    }
+
+    .membership-order-row {
+        grid-template-columns: 1fr auto auto;
+        gap: 8px 12px;
+        padding: 12px 0;
+    }
+
+    .membership-order-meta {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        flex-wrap: wrap;
+    }
+
+    .membership-order-action {
+        width: auto;
+    }
+}
+
+@media (max-width: 640px) {
+    .membership-page {
+        padding-right: 16px;
+        padding-bottom: 36px;
+        padding-left: 16px;
+    }
+
+    .membership-current {
+        display: none;
+    }
+
+    .membership-hero {
+        margin-top: 18px;
+        margin-bottom: 24px;
+    }
+
+    .membership-audience-tabs {
+        margin-bottom: 16px;
+    }
+
+    .membership-overview-metrics {
+        grid-template-columns: repeat(2, 1fr);
+        row-gap: 16px;
+    }
+
+    .membership-overview-metric:nth-child(3)::before {
+        display: none;
+    }
+
+    .membership-plan-carousel,
+    .membership-plan-carousel.is-team {
+        grid-auto-columns: minmax(278px, 88vw);
+    }
+
+    .membership-plan-card {
+        min-height: 560px;
+    }
+
+    .membership-team-capabilities {
+        grid-template-columns: 1fr;
+    }
+
+    .membership-team-capability + .membership-team-capability::before {
+        top: 0;
+        right: 20px;
+        bottom: auto;
+        left: 20px;
+        width: auto;
+        height: 1px;
+    }
+
+    .membership-orders-summary {
+        align-items: flex-start;
+    }
+
+    .membership-orders-description {
+        max-width: 220px;
+    }
+
+    .membership-order-row {
+        grid-template-columns: 1fr auto;
+    }
+
+    .membership-order-amount {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .membership-order-status {
+        grid-column: 1;
+        grid-row: 3;
+        justify-self: start;
+    }
+
+    .membership-order-action {
+        grid-column: 2;
+        grid-row: 3;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .membership-plan-card,
+    .membership-audience-tab,
+    .membership-audience-tab::after,
+    .membership-back,
+    .membership-carousel-button,
+    .membership-seat-button,
+    .membership-orders-chevron {
+        transition: none;
+    }
+
+    .membership-plan-carousel {
+        scroll-behavior: auto;
+    }
+}

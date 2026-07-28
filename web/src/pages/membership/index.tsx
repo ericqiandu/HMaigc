@@ -1,6 +1,6 @@
-import { Button, Empty, Input, InputNumber, message, Modal, Popconfirm, Segmented, Select, Spin, Tag } from "antd";
-import { ArrowLeft, Check, Clock3, Crown, ReceiptText, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Alert, Button, Empty, message, Segmented, Spin } from "antd";
+import { ArrowLeft, ArrowRight, ChevronLeft, Crown, ImageIcon, Users, Video } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { useSiteSettings } from "@/components/site/site-settings-provider";
@@ -17,76 +17,147 @@ import {
 } from "@/services/api/membership";
 import { useUserStore } from "@/stores/use-user-store";
 
+import { billingCycleShortLabel, clampSeats, topupDiscountLabel } from "./membership-formatters";
+import { MembershipOrderHistory } from "./membership-order-history";
+import { MembershipPlanCard } from "./membership-plan-card";
+import { MembershipPurchaseModal } from "./membership-purchase-modal";
 import "./membership.css";
+import "./membership-plan-card.css";
+import "./membership-order.css";
+import "./membership-responsive.css";
 
-const money = (value: number) => (value / 100).toLocaleString("zh-CN");
-const creditAmount = (value: number) => (value / 1_000_000).toLocaleString("zh-CN");
-const orderStatus = {
-    pending: { label: "待支付", color: "gold" },
-    paid: { label: "已支付", color: "green" },
-    cancelled: { label: "已关闭", color: "default" },
-    refunded: { label: "已退款", color: "blue" },
-} as const;
-const billingCycleLabel = { free: "永久免费", month: "月付", year: "年付" } as const;
+type PurchaseSelection = {
+    plan: MembershipPlan;
+    seats: number;
+};
+
+const paidCycleOrder: MembershipBillingCycle[] = ["year", "month"];
 
 export default function MembershipPage() {
     const navigate = useNavigate();
     const user = useUserStore((state) => state.user);
+    const { settings } = useSiteSettings();
+    const carouselRef = useRef<HTMLDivElement>(null);
     const [plans, setPlans] = useState<MembershipPlan[]>([]);
     const [overview, setOverview] = useState<MembershipOverview | null>(null);
     const [audience, setAudience] = useState<MembershipAudience>("personal");
     const [cycle, setCycle] = useState<MembershipBillingCycle>("year");
-    const [selected, setSelected] = useState<MembershipPlan | null>(null);
+    const [teamSeats, setTeamSeats] = useState<Record<string, number>>({});
+    const [selection, setSelection] = useState<PurchaseSelection | null>(null);
     const [teamId, setTeamId] = useState<string>();
     const [teamName, setTeamName] = useState("");
-    const [seats, setSeats] = useState(2);
     const [submitting, setSubmitting] = useState(false);
     const [cancellingId, setCancellingId] = useState("");
     const [loading, setLoading] = useState(true);
-    const { settings } = useSiteSettings();
+    const [loadError, setLoadError] = useState("");
+    const [canScrollLeft, setCanScrollLeft] = useState(false);
+    const [canScrollRight, setCanScrollRight] = useState(false);
 
-    const load = async () => {
+    const load = useCallback(async () => {
         setLoading(true);
+        setLoadError("");
         try {
-            const nextPlans = await listMembershipPlans();
+            const [nextPlans, nextOverview] = await Promise.all([
+                listMembershipPlans(),
+                user ? getMyMembership() : Promise.resolve(null),
+            ]);
             setPlans(nextPlans);
-            if (user) setOverview(await getMyMembership());
+            setOverview(nextOverview);
+            setTeamSeats((current) => {
+                const next = { ...current };
+                nextPlans.filter((plan) => plan.audience === "team").forEach((plan) => {
+                    next[plan.id] = clampSeats(plan, current[plan.id] ?? plan.minSeats);
+                });
+                return next;
+            });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "会员数据加载失败");
+            const reason = error instanceof Error ? error.message : "会员数据加载失败";
+            setLoadError(reason);
+            message.error(reason);
         } finally {
             setLoading(false);
         }
+    }, [user]);
+
+    useEffect(() => {
+        void load();
+    }, [load]);
+
+    const availableCycles = useMemo(() => paidCycleOrder.filter((candidate) => plans.some(
+        (plan) => plan.audience === audience && plan.billingCycle === candidate,
+    )), [audience, plans]);
+
+    useEffect(() => {
+        if (availableCycles.length > 0 && !availableCycles.includes(cycle)) {
+            setCycle(availableCycles[0]);
+        }
+    }, [availableCycles, cycle]);
+
+    const visiblePlans = useMemo(() => plans
+        .filter((plan) => {
+            if (plan.audience !== audience) return false;
+            if (audience === "personal" && plan.billingCycle === "free") return true;
+            return plan.billingCycle === cycle;
+        })
+        .sort((left, right) => left.sortOrder - right.sortOrder), [audience, cycle, plans]);
+
+    const plansById = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
+
+    const updateCarouselState = useCallback(() => {
+        const carousel = carouselRef.current;
+        if (!carousel) return;
+        setCanScrollLeft(carousel.scrollLeft > 4);
+        setCanScrollRight(carousel.scrollLeft + carousel.clientWidth < carousel.scrollWidth - 4);
+    }, []);
+
+    useEffect(() => {
+        const carousel = carouselRef.current;
+        if (!carousel) return;
+        updateCarouselState();
+        const observer = new ResizeObserver(updateCarouselState);
+        observer.observe(carousel);
+        return () => observer.disconnect();
+    }, [updateCarouselState, visiblePlans.length]);
+
+    const scrollPlans = (direction: -1 | 1) => {
+        const carousel = carouselRef.current;
+        if (!carousel) return;
+        carousel.scrollBy({ behavior: "smooth", left: direction * Math.max(280, carousel.clientWidth * 0.78) });
     };
-    useEffect(() => { void load(); }, [user?.id]);
 
-    const visiblePlans = useMemo(() => plans.filter((plan) => {
-        if (plan.audience !== audience) return false;
-        if (audience === "team") return plan.billingCycle === cycle;
-        return plan.billingCycle === "free" || plan.billingCycle === cycle;
-    }), [audience, cycle, plans]);
+    const selectAudience = (nextAudience: MembershipAudience) => {
+        setAudience(nextAudience);
+        carouselRef.current?.scrollTo({ left: 0 });
+    };
 
-    const beginPurchase = (plan: MembershipPlan) => {
+    const beginPurchase = (plan: MembershipPlan, seats: number) => {
         if (!user) {
-            navigate("/login");
+            navigate("/login?next=%2Fmembership");
             return;
         }
-        setSelected(plan);
-        setSeats(Math.max(plan.minSeats, 2));
+        const normalizedSeats = clampSeats(plan, seats);
+        setSelection({ plan, seats: normalizedSeats });
         setTeamId(overview?.teams[0]?.id);
+        setTeamName("");
     };
+
     const submitOrder = async () => {
-        if (!selected) return;
+        if (!selection) return;
         setSubmitting(true);
         try {
             let resolvedTeamId = teamId;
-            if (selected.audience === "team" && !resolvedTeamId) {
+            if (selection.plan.audience === "team" && !resolvedTeamId) {
                 if (!teamName.trim()) throw new Error("请输入团队名称");
                 const team = await createTeam(teamName.trim());
                 resolvedTeamId = team.id;
             }
-            const order = await createMembershipOrder({ planId: selected.id, teamId: resolvedTeamId, seats: selected.audience === "team" ? seats : 1 });
+            const order = await createMembershipOrder({
+                planId: selection.plan.id,
+                seats: selection.plan.audience === "team" ? selection.seats : 1,
+                teamId: resolvedTeamId,
+            });
             message.success(`订单 ${order.orderNumber} 已创建`);
-            setSelected(null);
+            setSelection(null);
             await load();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "创建订单失败");
@@ -94,6 +165,7 @@ export default function MembershipPage() {
             setSubmitting(false);
         }
     };
+
     const cancelOrder = async (orderId: string) => {
         setCancellingId(orderId);
         try {
@@ -106,112 +178,187 @@ export default function MembershipPage() {
             setCancellingId("");
         }
     };
-    const plansById = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
 
     return (
         <main className="membership-page">
             <header className="membership-header">
-                <button type="button" className="membership-back" onClick={() => navigate(-1)} aria-label="返回"><ArrowLeft className="size-4" /></button>
-                <span className="membership-brand"><Crown className="size-4" />{settings.siteName} 会员</span>
-                {overview ? <span className="membership-current">当前：{overview.entitlement.planName} · 图片 {overview.entitlement.imageConcurrency} / 视频 {overview.entitlement.videoConcurrency} 并发</span> : null}
+                <button aria-label="返回" className="membership-back" onClick={() => navigate(-1)} type="button">
+                    <ArrowLeft className="membership-back-icon" />
+                </button>
+                <span className="membership-brand">
+                    <Crown className="membership-brand-icon" />
+                    {settings.siteName} 会员
+                </span>
+                {overview ? (
+                    <span className="membership-current">
+                        当前方案：<strong className="membership-current-plan">{overview.entitlement.planName}</strong>
+                    </span>
+                ) : null}
             </header>
+
             <section className="membership-hero">
-                <span className="membership-eyebrow">MEMBERSHIP</span>
-                <h1>选择适合你的创作规模</h1>
-                <p>套餐权益、积分与并发均由后台统一配置，个人与团队订阅分别管理。</p>
-                <div className="membership-switches">
-                    <Segmented value={audience} onChange={(value) => setAudience(value as MembershipAudience)} options={[{ label: "个人会员", value: "personal" }, { label: "团队会员", value: "team" }]} />
-                    <Segmented value={cycle} onChange={(value) => setCycle(value as MembershipBillingCycle)} options={[{ label: "月付", value: "month" }, { label: "年付 · 更优惠", value: "year" }]} />
+                <div className="membership-audience-tabs" role="tablist" aria-label="会员类型">
+                    <button
+                        aria-selected={audience === "personal"}
+                        className={`membership-audience-tab ${audience === "personal" ? "is-active" : ""}`}
+                        onClick={() => selectAudience("personal")}
+                        role="tab"
+                        type="button"
+                    >
+                        创作会员
+                    </button>
+                    <button
+                        aria-selected={audience === "team"}
+                        className={`membership-audience-tab ${audience === "team" ? "is-active" : ""}`}
+                        onClick={() => selectAudience("team")}
+                        role="tab"
+                        type="button"
+                    >
+                        团队版会员
+                    </button>
                 </div>
+                <h1 className="membership-page-title sr-only">{audience === "team" ? "团队版会员方案" : "创作会员方案"}</h1>
+                {availableCycles.length > 0 ? (
+                    <Segmented
+                        className="membership-cycle-switch"
+                        onChange={(value) => setCycle(value as MembershipBillingCycle)}
+                        options={availableCycles.map((availableCycle) => ({
+                            label: availableCycle === "year" ? "按年购买 · 更优惠" : billingCycleShortLabel[availableCycle],
+                            value: availableCycle,
+                        }))}
+                        value={cycle}
+                    />
+                ) : null}
             </section>
+
+            <section className="membership-plans-section">
+                <div className="membership-plans-toolbar">
+                    <div className="membership-plans-title-wrap">
+                        <h2 className="membership-plans-title">{audience === "team" ? "团队套餐" : "创作套餐"}</h2>
+                        <span className="membership-plans-count">{visiblePlans.length} 个可用方案</span>
+                    </div>
+                    <div className="membership-carousel-actions">
+                        <button
+                            aria-label="查看上一组套餐"
+                            className="membership-carousel-button"
+                            disabled={!canScrollLeft}
+                            onClick={() => scrollPlans(-1)}
+                            type="button"
+                        >
+                            <ChevronLeft className="membership-carousel-icon" />
+                        </button>
+                        <button
+                            aria-label="查看下一组套餐"
+                            className="membership-carousel-button"
+                            disabled={!canScrollRight}
+                            onClick={() => scrollPlans(1)}
+                            type="button"
+                        >
+                            <ArrowRight className="membership-carousel-icon" />
+                        </button>
+                    </div>
+                </div>
+
+                {loadError ? (
+                    <Alert
+                        action={<Button className="membership-retry-button" onClick={() => void load()} size="small">重新加载</Button>}
+                        className="membership-load-error"
+                        description={loadError}
+                        message="会员套餐加载失败"
+                        showIcon
+                        type="error"
+                    />
+                ) : loading ? (
+                    <div className="membership-loading">
+                        <Spin className="membership-loading-spinner" />
+                    </div>
+                ) : visiblePlans.length === 0 ? (
+                    <Empty className="membership-empty" description="后台暂无当前类型与周期的上架套餐" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                    <div className={`membership-plan-carousel ${audience === "team" ? "is-team" : ""}`} onScroll={updateCarouselState} ref={carouselRef}>
+                        {visiblePlans.map((plan) => (
+                            <MembershipPlanCard
+                                className="membership-plan-carousel-item"
+                                currentPlanId={overview?.entitlement.planId}
+                                featured={plan.tier === "max"}
+                                key={plan.id}
+                                onPurchase={beginPurchase}
+                                onSeatsChange={(planId, seats) => setTeamSeats((current) => ({ ...current, [planId]: clampSeats(plan, seats) }))}
+                                plan={plan}
+                                seats={teamSeats[plan.id] ?? plan.minSeats}
+                            />
+                        ))}
+                    </div>
+                )}
+            </section>
+
+            {audience === "team" ? (
+                <section className="membership-team-capabilities">
+                    <span className="membership-team-capability"><Users className="membership-team-capability-icon" /><strong className="membership-team-capability-title">按席位计价</strong><small className="membership-team-capability-copy">费用与积分均按所选席位核算</small></span>
+                    <span className="membership-team-capability"><Crown className="membership-team-capability-icon" /><strong className="membership-team-capability-title">统一权益</strong><small className="membership-team-capability-copy">团队成员继承有效订阅权益</small></span>
+                    <span className="membership-team-capability"><ImageIcon className="membership-team-capability-icon" /><strong className="membership-team-capability-title">可审计订单</strong><small className="membership-team-capability-copy">价格与权益快照随订单保存</small></span>
+                </section>
+            ) : null}
+
             {overview ? (
-                <section className="membership-overview" aria-label="当前会员权益">
+                <section aria-label="当前会员权益" className="membership-overview">
                     <div className="membership-overview-heading">
-                        <span className="membership-overview-icon"><Crown className="size-4" /></span>
+                        <span className="membership-overview-icon">
+                            <Crown className="membership-overview-icon-svg" />
+                        </span>
                         <div className="membership-overview-title">
-                            <span>当前方案</span>
-                            <strong>{overview.entitlement.planName}</strong>
+                            <span className="membership-overview-label">当前方案</span>
+                            <strong className="membership-overview-plan">{overview.entitlement.planName}</strong>
                         </div>
                     </div>
                     <div className="membership-overview-metrics">
-                        <span className="membership-overview-metric"><small className="membership-overview-label">有效期</small><strong className="membership-overview-value">{overview.entitlement.expiresAt ? new Date(overview.entitlement.expiresAt).toLocaleDateString("zh-CN") : "长期有效"}</strong></span>
-                        <span className="membership-overview-metric"><small className="membership-overview-label">图片并发</small><strong className="membership-overview-value">{overview.entitlement.imageConcurrency}</strong></span>
-                        <span className="membership-overview-metric"><small className="membership-overview-label">视频并发</small><strong className="membership-overview-value">{overview.entitlement.videoConcurrency}</strong></span>
-                        <span className="membership-overview-metric"><small className="membership-overview-label">积分充值折扣</small><strong className="membership-overview-value">{overview.entitlement.topupDiscountBasisPoints < 10000 ? `${overview.entitlement.topupDiscountBasisPoints / 1000} 折` : "无折扣"}</strong></span>
+                        <span className="membership-overview-metric">
+                            <small className="membership-overview-metric-label">有效期</small>
+                            <strong className="membership-overview-metric-value">{overview.entitlement.expiresAt ? new Date(overview.entitlement.expiresAt).toLocaleDateString("zh-CN") : "长期有效"}</strong>
+                        </span>
+                        <span className="membership-overview-metric">
+                            <ImageIcon className="membership-overview-metric-icon" />
+                            <small className="membership-overview-metric-label">图片并发</small>
+                            <strong className="membership-overview-metric-value">{overview.entitlement.imageConcurrency}</strong>
+                        </span>
+                        <span className="membership-overview-metric">
+                            <Video className="membership-overview-metric-icon" />
+                            <small className="membership-overview-metric-label">视频并发</small>
+                            <strong className="membership-overview-metric-value">{overview.entitlement.videoConcurrency}</strong>
+                        </span>
+                        <span className="membership-overview-metric">
+                            <small className="membership-overview-metric-label">积分充值</small>
+                            <strong className="membership-overview-metric-value">{topupDiscountLabel(overview.entitlement.topupDiscountBasisPoints)}</strong>
+                        </span>
                     </div>
                 </section>
             ) : null}
-            {loading ? <div className="membership-loading"><Spin /></div> : (
-                <section className="membership-grid">
-                    {visiblePlans.map((plan) => (
-                        <article className={`membership-card membership-card-${plan.tier}`} key={plan.id}>
-                            <div className="membership-card-heading"><div><span>{plan.audience === "team" ? <Users className="size-4" /> : <Crown className="size-4" />}</span><h2>{plan.name}</h2></div><small>{plan.billingCycle === "free" ? "永久免费" : plan.billingCycle === "year" ? "按年订阅" : "按月订阅"}</small></div>
-                            <div className="membership-price"><span>¥</span><strong>{money(plan.priceCents)}</strong><small>{plan.audience === "team" ? "/席位" : ""}</small></div>
-                            {plan.originalPriceCents > plan.priceCents ? <div className="membership-original">原价 ¥{money(plan.originalPriceCents)}</div> : null}
-                            <div className="membership-metrics">
-                                <span><strong>{creditAmount(plan.creditsPerPeriod)}</strong> 周期积分</span>
-                                <span><strong>{plan.imageConcurrency}</strong> 图片并发</span>
-                                <span><strong>{plan.videoConcurrency}</strong> 视频并发</span>
-                            </div>
-                            <ul>{plan.benefits.map((benefit) => <li key={benefit}><Check className="size-4" /><span>{benefit}</span></li>)}</ul>
-                            <Button type={plan.tier === "max" ? "primary" : "default"} disabled={plan.billingCycle === "free"} onClick={() => beginPurchase(plan)}>{plan.billingCycle === "free" ? "当前基础方案" : "创建购买订单"}</Button>
-                        </article>
-                    ))}
-                </section>
-            )}
+
             {overview ? (
-                <section className="membership-orders" aria-labelledby="membership-orders-title">
-                    <div className="membership-orders-heading">
-                        <div className="membership-orders-title-wrap">
-                            <ReceiptText className="size-4" />
-                            <div className="membership-orders-title">
-                                <h2 id="membership-orders-title">订单中心</h2>
-                                <span>待支付订单超过 24 小时将自动关闭</span>
-                            </div>
-                        </div>
-                        <span className="membership-orders-count">{overview.orders.length} 笔</span>
-                    </div>
-                    {overview.orders.length === 0 ? (
-                        <Empty className="membership-orders-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会员订单" />
-                    ) : (
-                        <div className="membership-order-list">
-                            {overview.orders.map((order) => {
-                                const plan = plansById.get(order.planId);
-                                const status = orderStatus[order.status];
-                                return (
-                                    <article className="membership-order-row" key={order.id}>
-                                        <div className="membership-order-primary">
-                                            <strong>{plan?.name ?? "套餐记录不可用"}</strong>
-                                            <span>{order.orderNumber}</span>
-                                        </div>
-                                        <div className="membership-order-meta">
-                                            <span>{plan ? billingCycleLabel[plan.billingCycle] : "未知周期"}</span>
-                                            <span>{order.seats} 席位</span>
-                                            <span>{new Date(order.createdAt).toLocaleString("zh-CN")}</span>
-                                        </div>
-                                        <strong className="membership-order-amount">{money(order.totalPriceCents)}</strong>
-                                        <Tag className="membership-order-status" color={status.color}>{status.label}</Tag>
-                                        <div className="membership-order-action">
-                                            {order.status === "pending" ? (
-                                                <Popconfirm title="关闭这笔待支付订单？" description="关闭后不能继续支付，需要重新创建订单。" okText="确认关闭" cancelText="保留订单" onConfirm={() => void cancelOrder(order.id)}>
-                                                    <Button className="membership-cancel-order" type="text" danger loading={cancellingId === order.id}>关闭</Button>
-                                                </Popconfirm>
-                                            ) : <span className="membership-order-resolved">{order.resolutionNote || "—"}</span>}
-                                        </div>
-                                    </article>
-                                );
-                            })}
-                        </div>
-                    )}
-                </section>
+                <MembershipOrderHistory
+                    cancellingId={cancellingId}
+                    className="membership-orders-section"
+                    onCancel={(orderId) => void cancelOrder(orderId)}
+                    orders={overview.orders}
+                    plansById={plansById}
+                />
             ) : null}
-            <Modal className="membership-order-modal" title={`购买 ${selected?.name ?? ""}`} open={Boolean(selected)} confirmLoading={submitting} onCancel={() => setSelected(null)} onOk={() => void submitOrder()} okText="创建待付款订单">
-                {selected?.audience === "team" ? <div className="membership-team-fields">
-                    {overview?.teams.length ? <Select className="membership-team-select" value={teamId} onChange={setTeamId} options={overview.teams.map((team) => ({ label: team.name, value: team.id }))} /> : <Input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="新团队名称" />}
-                    <label>席位数量<InputNumber min={selected.minSeats} max={selected.maxSeats} value={seats} onChange={(value) => setSeats(value ?? selected.minSeats)} /></label>
-                </div> : null}
-                <p className="membership-order-note"><Clock3 className="size-4" />订单创建后不会立即开通；支付回调或管理员核验成功后，订阅、并发与积分才会生效。</p>
-            </Modal>
+
+            <MembershipPurchaseModal
+                className="membership-purchase-dialog"
+                onCancel={() => setSelection(null)}
+                onSeatsChange={(seats) => setSelection((current) => current ? { ...current, seats: clampSeats(current.plan, seats) } : null)}
+                onSubmit={() => void submitOrder()}
+                onTeamIdChange={setTeamId}
+                onTeamNameChange={setTeamName}
+                open={Boolean(selection)}
+                plan={selection?.plan ?? null}
+                seats={selection?.seats ?? 1}
+                submitting={submitting}
+                teamId={teamId}
+                teamName={teamName}
+                teams={overview?.teams ?? []}
+            />
         </main>
     );
 }
