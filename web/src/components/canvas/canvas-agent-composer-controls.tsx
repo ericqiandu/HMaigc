@@ -105,16 +105,16 @@ function ComposerPopover({
     onOpenChange: (open: boolean) => void;
 }) {
     return (
-        <Popover
-            arrow={false}
-            trigger="click"
-            placement={placement}
-            open={open}
-            onOpenChange={onOpenChange}
-            content={content}
-            overlayClassName="canvas-agent-composer-popover"
-        >
-            <CanvasAgentTooltip title={label}>
+        <CanvasAgentTooltip title={label}>
+            <Popover
+                arrow={false}
+                trigger="click"
+                placement={placement}
+                open={open}
+                onOpenChange={onOpenChange}
+                content={content}
+                overlayClassName="canvas-agent-composer-popover"
+            >
                 <Button
                     type="text"
                     className={`canvas-agent-composer-tool canvas-agent-composer-picker-trigger ${open ? "canvas-agent-composer-picker-trigger--active" : ""}`}
@@ -130,7 +130,7 @@ function ComposerPopover({
                     aria-label={label}
                     aria-expanded={open}
                 />
-            </CanvasAgentTooltip>
-        </Popover>
+            </Popover>
+        </CanvasAgentTooltip>
     );
 }
