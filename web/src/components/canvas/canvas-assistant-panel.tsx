@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import copyToClipboard from "copy-to-clipboard";
-import { Bot, BookOpenText, Copy, Cpu, Focus, History, PanelRightClose, Plus, RotateCcw, Settings2, Trash2, X } from "lucide-react";
-import { Button, Modal, Segmented, Select, Switch, Tooltip } from "antd";
+import { Bot, BookOpenText, Cpu, Focus, History, PanelRightClose, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Button, Modal, Select, Switch, Tooltip } from "antd";
 import { motion } from "motion/react";
 
 import { modelDisplayName, modelOptionName, normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -13,7 +12,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { handleMissingSystemModel, navigateToSettings } from "@/lib/settings-navigation";
+import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { cinematicAgentSessionOpsJson, createCinematicAgentSession, isAgentSessionPollingAbort, resumeCinematicAgentSession } from "@/lib/canvas/canvas-agent-session";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
@@ -113,9 +112,7 @@ const ONLINE_AGENT_TOOLS: ResponseFunctionTool[] = [
     toolDefinition("canvas_set_viewport", "调整画布视口。", { viewport: VIEWPORT_SCHEMA }, ["viewport"]),
     toolDefinition("canvas_run_generation", "触发指定节点生成，通常用于配置节点或文本/图片/视频/音频节点。", { nodeId: { type: "string" }, mode: GENERATION_MODE_SCHEMA, prompt: { type: "string" } }, ["nodeId"]),
 ];
-type OnlineAgentTab = "setup" | "chat" | "history" | "log";
-type OnlineAgentLog = { id: string; time: string; title: string; data?: unknown };
-type OnlineAgentLogContext = { model: string; running: boolean; confirmTools: boolean; messages: number; nodes: number; connections: number };
+type OnlineAgentTab = "chat" | "history";
 type OnlineLoopContext = { step: number };
 type OnlineToolResult = { ok: true; message: string; data?: unknown } | { ok: false; message: string };
 type OnlineExecutedToolCall = { toolCallId: string; name: string; result: OnlineToolResult };
@@ -155,7 +152,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const [cinematicEntryActive, setCinematicEntryActive] = useState(cinematicEntry);
     const [isRunning, setIsRunning] = useState(false);
     const [deleteChatIds, setDeleteChatIds] = useState<string[]>([]);
-    const [onlineLogs, setOnlineLogs] = useState<OnlineAgentLog[]>([]);
     const [resizing, setResizing] = useState(false);
     const [removedReferenceIds, setRemovedReferenceIds] = useState<Set<string>>(new Set());
     const [localSessions, setLocalSessions] = useState<CanvasAssistantSession[]>(() => (sessions.length ? sessions : [createSession()]));
@@ -228,8 +224,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
             updatedAt: new Date().toISOString(),
         }));
     };
-    const addOnlineLog = (title: string, data?: unknown) => setOnlineLogs((prev) => [{ id: nanoid(), time: new Date().toLocaleTimeString(), title, data }, ...prev].slice(0, 80));
-
     const upsertMessage = (sessionId: string, message: CanvasAssistantMessage) => {
         updateSession(sessionId, (session) => {
             const exists = session.messages.some((item) => item.id === message.id);
@@ -328,7 +322,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         cinematicSessionControllersRef.current.delete(requestKey);
                         cinematicSessionControllersRef.current.set(backendSessionId, controller);
                         setPendingCinematicSession(sessionId, backendSessionId);
-                        addOnlineLog("后端影视 Agent 会话已创建", { backendSessionId });
                         onCreated?.(backendSessionId);
                     },
                 },
@@ -390,7 +383,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         const userMessage: CanvasAssistantMessage = { id: nanoid(), role: "user", text, references: refs };
         const assistantId = nanoid();
         appendMessage(session.id, userMessage);
-        addOnlineLog("发送请求", { text, selectedNodeIds: snapshotRef.current.selectedNodeIds, nodeCount: snapshotRef.current.nodes.length, connectionCount: snapshotRef.current.connections.length });
         setPrompt("");
         setIsRunning(true);
         void runOnlineAgentStep(session.id, assistantId, history, userMessage, { step: 1 });
@@ -401,13 +393,11 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         try {
             setIsRunning(true);
             const messages = await buildToolAgentMessages(snapshotRef.current, history, userMessage);
-            addOnlineLog(`Agent Tool Loop ${loop.step} 开始`, { toolChoice: "auto" });
             let streamed = "";
             const result = await requestToolResponse({ ...requestConfig, systemPrompt: "" }, messages, ONLINE_AGENT_TOOLS, "auto", (text) => {
                 streamed = text;
                 if (text.trim()) upsertMessage(sessionId, { id: assistantId, role: "assistant", text });
             });
-            addOnlineLog("模型工具回复", result);
             if (result.toolCalls.length) {
                 const writableCalls = result.toolCalls.filter(isWritableToolCall);
                 if (confirmTools && writableCalls.length) {
@@ -416,17 +406,14 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     pendingToolContextRef.current.set(toolMessageId, { messages, toolCalls: result.toolCalls, assistantId, step: loop.step });
                     const toolMessage: CanvasAssistantMessage = { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(result.toolCalls), detail: { status: "pending", step: loop.step, toolCalls: result.toolCalls, impact: previewOnlineToolCalls(result.toolCalls, snapshotRef.current, effectiveConfig) } };
                     appendMessage(sessionId, toolMessage);
-                    addOnlineLog("等待用户确认", result.toolCalls);
                     return;
                 }
                 await continueOnlineToolLoop(sessionId, assistantId, messages, result, loop.step);
             } else {
                 if (!result.content.trim()) throw new Error("模型没有返回工具调用，画布操作未执行。");
                 upsertMessage(sessionId, { id: assistantId, role: "assistant", text: result.content || streamed || "没有返回内容。" });
-                addOnlineLog(`Agent Tool Loop ${loop.step} 结束`, { reply: result.content });
             }
         } catch (error) {
-            addOnlineLog("请求失败", error instanceof Error ? error.message : error);
             appendMessage(sessionId, { id: nanoid(), role: "error", title: "操作失败", text: error instanceof Error ? error.message : "操作失败" });
         } finally {
             setIsRunning(false);
@@ -435,7 +422,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
 
     const continueOnlineToolLoop = async (sessionId: string, assistantId: string, messages: ResponseInputMessage[], result: { content: string; toolCalls: ResponseToolCall[] }, step: number) => {
         const toolResults = await executeOnlineToolCalls(sessionId, result.toolCalls);
-        addOnlineLog("工具执行结果", toolResults);
         appendMessage(sessionId, {
             id: nanoid(),
             role: "tool",
@@ -454,7 +440,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         ];
         if (step >= ONLINE_AGENT_MAX_STEPS) {
             upsertMessage(sessionId, { id: assistantId, role: "assistant", text: toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。" });
-            addOnlineLog("Agent Tool Loop 达到步数上限", { maxSteps: ONLINE_AGENT_MAX_STEPS });
             return;
         }
         const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
@@ -463,7 +448,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
             streamed = text;
             if (text.trim()) upsertMessage(sessionId, { id: assistantId, role: "assistant", text });
         });
-        addOnlineLog(`Agent Tool Loop ${step + 1} 回复`, next);
         if (next.toolCalls.length) {
             const writableCalls = next.toolCalls.filter(isWritableToolCall);
             if (confirmTools && writableCalls.length) {
@@ -471,7 +455,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 const toolMessageId = nanoid();
                 pendingToolContextRef.current.set(toolMessageId, { messages: nextMessages, toolCalls: next.toolCalls, assistantId, step: step + 1 });
                 appendMessage(sessionId, { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(next.toolCalls), detail: { status: "pending", step: step + 1, toolCalls: next.toolCalls, impact: previewOnlineToolCalls(next.toolCalls, snapshotRef.current, effectiveConfig) } });
-                addOnlineLog("等待用户确认", next.toolCalls);
                 return;
             }
             await continueOnlineToolLoop(sessionId, assistantId, nextMessages, next, step + 1);
@@ -552,7 +535,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         const toolCalls = pendingContext?.toolCalls || toolCallsFromDetail(detail);
         const previousMessages = pendingContext?.messages || [];
         const session = safeSessions.find((session) => session.messages.some((item) => item.id === messageId));
-        addOnlineLog("批准工具", { messageId, toolCalls });
         const assistantId = pendingContext?.assistantId || "";
         if (!session) return;
         if (!toolCalls.length || !previousMessages.length || !assistantId) {
@@ -562,12 +544,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         try {
             setIsRunning(true);
             const results = await executeOnlineToolCalls(session.id, toolCalls);
-            addOnlineLog("工具执行结果", results);
             upsertMessage(session.id, { id: messageId, role: "tool", title: "工具执行完成", text: results.map((item) => toolResultText(item.result)).join("\n"), detail: { ...detail, results, status: "completed" } });
             pendingToolContextRef.current.delete(messageId);
             await continueOnlineToolLoopAfterResults(session.id, assistantId, previousMessages, toolCalls, results, pendingContext?.step || Number(detail.step) || 1);
         } catch (error) {
-            addOnlineLog("工具续跑失败", error instanceof Error ? error.message : error);
             appendMessage(session.id, { id: nanoid(), role: "error", title: "操作失败", text: error instanceof Error ? error.message : "操作失败" });
         } finally {
             setIsRunning(false);
@@ -576,7 +556,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
 
     const rejectOnlineTool = (messageId: string) => {
         const session = safeSessions.find((session) => session.messages.some((item) => item.id === messageId));
-        addOnlineLog("拒绝工具", { messageId });
         pendingToolContextRef.current.delete(messageId);
         if (session) upsertMessage(session.id, { id: messageId, role: "tool", title: "已拒绝执行", text: "工具调用已取消", detail: { ...objectDetail(session.messages.find((item) => item.id === messageId)?.detail), status: "rejected" } });
     };
@@ -641,17 +620,14 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         const controller = new AbortController();
         cinematicSessionControllersRef.current.set(pending.id, controller);
         setIsRunning(true);
-        addOnlineLog("恢复后端影视 Agent 会话", { backendSessionId: pending.id });
         try {
             const detail = await resumeCinematicAgentSession(pending.id, { signal: controller.signal });
             const ops = requireOps(JSON.parse(cinematicAgentSessionOpsJson(detail)));
             executeOps(ops);
             completeCinematicSession(sessionId, pending.id, ops, true);
-            addOnlineLog("后端影视 Agent 会话恢复完成", { backendSessionId: pending.id });
         } catch (error) {
             if (!isAgentSessionPollingAbort(error)) {
                 failCinematicSession(sessionId, pending.id, error);
-                addOnlineLog("后端影视 Agent 会话恢复失败", error instanceof Error ? error.message : error);
             }
         } finally {
             if (cinematicSessionControllersRef.current.get(pending.id) === controller) cinematicSessionControllersRef.current.delete(pending.id);
@@ -697,10 +673,8 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 value={view}
                 theme={theme}
                 items={[
-                    { value: "setup", label: "模型配置", icon: <Settings2 className="size-3.5" /> },
                     { value: "chat", label: "对话" },
                     { value: "history", label: "历史", icon: <History className="size-3.5" />, count: historySessions.length },
-                    { value: "log", label: "日志", count: onlineLogs.length },
                 ]}
                 onChange={setView}
                 right={
@@ -724,52 +698,43 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                                 }}
                             />
                         </Tooltip>
-                        <Tooltip title="配置">
-                            <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<Settings2 className="size-4" />} onClick={() => navigateToSettings()} />
-                        </Tooltip>
                     </>
                 }
             />
 
-            {view === "setup" ? (
-                <OnlineAgentSetupView theme={theme} activeModel={activeModel} onOpenConfig={handleMissingSystemModel} />
-            ) : (
-                <div ref={chatListRef} className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-                    {view === "history" ? (
-                        <AssistantHistory
-                            sessions={historySessions}
-                            activeSession={activeSession}
-                            onOpen={(id) => {
-                                setLocalActiveSessionId(id);
-                                setView("chat");
-                            }}
-                            onDelete={(id) => setDeleteChatIds([id])}
-                        />
-                    ) : view === "log" ? (
-                        <OnlineAgentLogView logs={onlineLogs} theme={theme} context={{ model: activeModel, running: agentBusy, confirmTools, messages: messages.length, nodes: snapshot.nodes.length, connections: snapshot.connections.length }} onClear={() => setOnlineLogs([])} />
-                    ) : messages.length ? (
-                        <>
-                            {messages.map((message) => (
-                                <div key={message.id} className="space-y-2">
-                                    <AgentChatMessage item={assistantMessageToChatMessage(message)} theme={theme} user={user} onRejectTool={rejectOnlineTool} onApproveTool={approveOnlineTool} />
-                                    {message.references?.length ? <MessageReferences message={message} /> : null}
-                                </div>
-                            ))}
-                            {agentBusy ? <AgentWorkingMessage theme={theme} /> : null}
-                        </>
-                    ) : (
-                        <div className="flex h-full flex-col items-center justify-center px-3 text-center">
-                            <span className="grid size-11 place-items-center rounded-lg border" style={{ background: theme.accent.primarySoft, borderColor: theme.spatial.glowStrong, color: theme.accent.primary }}><Bot className="size-5" /></span>
-                            <div className="mt-3 text-sm font-semibold" style={{ color: theme.node.text }}>Agent</div>
-                            <div className="mt-5 grid w-full max-w-[360px] grid-cols-2 gap-2">
-                                {["搭建短剧工作流", "整理当前画布", "生成镜头分镜", "检查节点连线"].map((suggestion) => (
-                                    <button key={suggestion} type="button" className="h-9 rounded-md border px-2 text-xs font-medium transition hover:-translate-y-0.5" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={() => setPrompt(suggestion)}>{suggestion}</button>
-                                ))}
+            <div ref={chatListRef} className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+                {view === "history" ? (
+                    <AssistantHistory
+                        sessions={historySessions}
+                        activeSession={activeSession}
+                        onOpen={(id) => {
+                            setLocalActiveSessionId(id);
+                            setView("chat");
+                        }}
+                        onDelete={(id) => setDeleteChatIds([id])}
+                    />
+                ) : messages.length ? (
+                    <>
+                        {messages.map((message) => (
+                            <div key={message.id} className="space-y-2">
+                                <AgentChatMessage item={assistantMessageToChatMessage(message)} theme={theme} user={user} onRejectTool={rejectOnlineTool} onApproveTool={approveOnlineTool} />
+                                {message.references?.length ? <MessageReferences message={message} /> : null}
                             </div>
+                        ))}
+                        {agentBusy ? <AgentWorkingMessage theme={theme} /> : null}
+                    </>
+                ) : (
+                    <div className="flex h-full flex-col items-center justify-center px-3 text-center">
+                        <span className="grid size-11 place-items-center rounded-lg border" style={{ background: theme.accent.primarySoft, borderColor: theme.spatial.glowStrong, color: theme.accent.primary }}><Bot className="size-5" /></span>
+                        <div className="mt-3 text-sm font-semibold" style={{ color: theme.node.text }}>Agent</div>
+                        <div className="mt-5 grid w-full max-w-[360px] grid-cols-2 gap-2">
+                            {["搭建短剧工作流", "整理当前画布", "生成镜头分镜", "检查节点连线"].map((suggestion) => (
+                                <button key={suggestion} type="button" className="h-9 rounded-md border px-2 text-xs font-medium transition hover:-translate-y-0.5" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={() => setPrompt(suggestion)}>{suggestion}</button>
+                            ))}
                         </div>
-                    )}
-                </div>
-            )}
+                    </div>
+                )}
+            </div>
 
             {view === "chat" ? (
                 <>
@@ -976,73 +941,6 @@ function AssistantHistory({
     );
 }
 
-function OnlineAgentSetupView({ theme, activeModel, onOpenConfig }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; activeModel: string; onOpenConfig: () => void }) {
-    const canManageSystemModels = useUserStore((state) => state.user?.role === "admin");
-
-    return (
-        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="space-y-4">
-                <div>
-                    <div className="text-base font-semibold leading-6">系统模型</div>
-                    <div className="mt-1 text-xs leading-5" style={{ color: theme.node.muted }}>
-                        网站 Agent 使用管理员在后台统一启用的文本模型，普通用户无需配置 API。
-                    </div>
-                </div>
-                <div className="rounded-lg border p-3" style={{ borderColor: theme.node.stroke }}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium leading-5">文本模型</div>
-                            <div className="mt-1 truncate text-xs leading-5" style={{ color: theme.node.muted }}>
-                                {activeModel || "未配置模型"}
-                            </div>
-                        </div>
-                        {canManageSystemModels ? (
-                            <Button className="!h-8 !px-3" type="primary" icon={<Settings2 className="size-4" />} onClick={onOpenConfig}>
-                                后台配置
-                            </Button>
-                        ) : (
-                            <span className="text-xs leading-5" style={{ color: theme.node.muted }}>请联系管理员</span>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-function OnlineAgentLogView({ logs, theme, context, onClear }: { logs: OnlineAgentLog[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; context: OnlineAgentLogContext; onClear: () => void }) {
-    const [mode, setMode] = useState<"text" | "json">("text");
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const content = mode === "text" ? formatOnlineLogText(logs, context) : formatOnlineLogJson(logs, context);
-    const lastError = [...logs].reverse().find((item) => /错误|失败|error/i.test(`${item.title}\n${stringifyLog(item.data)}`));
-    const copy = async (value = content) => {
-        if (await copyToClipboard(value)) return;
-        textareaRef.current?.focus();
-        textareaRef.current?.select();
-    };
-    return (
-        <div className="flex min-h-full flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <Segmented size="small" value={mode} onChange={(value) => setMode(value as "text" | "json")} options={[{ label: "排查日志", value: "text" }, { label: "原始 JSON", value: "json" }]} />
-                <div className="flex items-center gap-2">
-                    <span className="text-xs" style={{ color: theme.node.muted }}>{logs.length} 条</span>
-                    <Button size="small" icon={<Copy className="size-3.5" />} disabled={!logs.length} onClick={() => void copy()}>复制</Button>
-                    <Button size="small" disabled={!lastError} onClick={() => lastError && void copy(formatOnlineLogText([lastError], context))}>最近错误</Button>
-                    <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} disabled={!logs.length} onClick={onClear}>清空</Button>
-                </div>
-            </div>
-            <textarea
-                ref={textareaRef}
-                readOnly
-                value={content}
-                className="thin-scrollbar min-h-[360px] flex-1 resize-none rounded-lg border bg-transparent p-3 font-mono text-xs leading-5 outline-none"
-                style={{ borderColor: theme.node.stroke, color: theme.node.text }}
-                onFocus={(event) => event.currentTarget.select()}
-            />
-        </div>
-    );
-}
-
 function MessageReferences({ message }: { message: CanvasAssistantMessage }) {
     return (
         <div className={`flex max-w-[88%] flex-wrap gap-2 ${message.role === "user" ? "ml-auto justify-end" : "ml-11 justify-start"}`}>
@@ -1103,29 +1001,6 @@ function sessionPreview(session: CanvasAssistantSession) {
 
 function objectDetail(value: unknown) {
     return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-function stringifyLog(value: unknown) {
-    return typeof value === "string" ? value : JSON.stringify(value, null, 2);
-}
-
-function formatOnlineLogText(logs: OnlineAgentLog[], context: OnlineAgentLogContext) {
-    const head = [
-        "HMaigc 网站 Agent 诊断日志",
-        `model: ${context.model || "none"}`,
-        `running: ${context.running}`,
-        `confirmTools: ${context.confirmTools}`,
-        `messages: ${context.messages}`,
-        `nodes: ${context.nodes}`,
-        `connections: ${context.connections}`,
-        `logs: ${logs.length}`,
-    ].join("\n");
-    const body = logs.map((log, index) => [`#${index + 1} ${log.time} ${log.title}`, log.data === undefined ? "" : stringifyLog(log.data)].filter(Boolean).join("\n")).join("\n\n---\n\n");
-    return [head, body || "暂无事件日志"].join("\n\n");
-}
-
-function formatOnlineLogJson(logs: OnlineAgentLog[], context: OnlineAgentLogContext) {
-    return JSON.stringify({ context, logs: logs.map(({ time, title, data }) => ({ time, title, data })) }, null, 2);
 }
 
 function describeCanvasSnapshot(snapshot: CanvasAgentSnapshot) {
@@ -1474,7 +1349,7 @@ function explainNoop(ops: CanvasAgentOp[], snapshot: CanvasAgentSnapshot) {
     if (generationOps.length && generationOps.every((op) => !nodeIds.has(op.nodeId))) return "没有找到要触发生成的节点。";
     if (ops.every((op) => op.type === "set_viewport")) return "视图已经是目标状态。";
     if (selectOps.length && selectOps.every((op) => JSON.stringify(op.ids || []) === JSON.stringify(snapshot.selectedNodeIds))) return "选区已经是目标状态。";
-    return "工具已执行，但画布状态没有变化；请在日志 tab 查看工具参数和执行前后状态。";
+    return "工具已执行，但画布状态没有变化。请重试；若问题持续，请联系管理员排查后台审计记录。";
 }
 
 function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
