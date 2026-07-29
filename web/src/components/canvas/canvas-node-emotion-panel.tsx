@@ -210,7 +210,7 @@ function EmotionHeadPreview({ preset }: { preset: CanvasEmotionPreset }) {
 
 function EmotionFaceModel({ preset }: { preset: CanvasEmotionPreset }) {
     const renderer = useThree((state) => state.gl);
-    const gltf = useLoader(GLTFLoader, "/canvas/models/facecap.glb", (loader) => {
+    const gltf = useLoader(GLTFLoader, "/runtime-assets/canvas-models/facecap.glb", (loader) => {
         loader.setKTX2Loader(new KTX2Loader().setTranscoderPath("/three/basis/").detectSupport(renderer));
         loader.setMeshoptDecoder(MeshoptDecoder);
     });

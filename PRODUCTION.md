@@ -8,6 +8,7 @@
 docker compose --env-file .env -f docker-compose.production.yml config -q
 cd backend && go test ./...
 cd ../web && bun install --frozen-lockfile && bun test && bun run build
+cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ```
 
 必须确认：
@@ -25,9 +26,10 @@ cd ../web && bun install --frozen-lockfile && bun test && bun run build
 docker compose --env-file .env -f docker-compose.production.yml up -d --build --wait
 docker compose --env-file .env -f docker-compose.production.yml ps
 curl --fail http://127.0.0.1:3000/api/health
+curl --fail http://127.0.0.1:3000/canvas/ | grep -q '<div id="root"></div>'
 ```
 
-`/api/health` 会实时检查 PostgreSQL 与 Redis。返回非 200 时禁止继续发布流量。
+`/api/health` 会实时检查 PostgreSQL 与 Redis；`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录。任一检查失败时禁止继续发布流量。
 
 ## 3. 同一恢复点备份
 

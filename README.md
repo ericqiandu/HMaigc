@@ -74,6 +74,7 @@ docker compose --env-file .env -f docker-compose.production.yml ps
 - 配置站点名称、Logo、版权、用户协议、隐私政策及备案信息。
 - 对 PostgreSQL、后端资源卷和 `.settings-key` 建立加密备份与恢复演练。
 - 完成前端构建、Go 全量测试、生产镜像构建和关键业务回归。
+- 运行 `bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000`，确认首页、画布、项目和管理后台深链接都由当前 SPA 入口提供。
 - GitHub Actions 质量门禁通过后才允许发布生产镜像。
 
 ## 数据与升级
@@ -82,6 +83,7 @@ docker compose --env-file .env -f docker-compose.production.yml ps
 - `backend-data` 保存上传文件及服务端密钥材料；数据库备份不能替代文件备份。
 - 升级前同时备份 PostgreSQL 与 `backend-data`，再构建新镜像并执行回归。
 - 禁止把 `.env`、数据库、日志、备份、上传文件或真实密钥提交到仓库。
+- 页面路由名称不得复用于 `web/public` 静态目录；画布人脸模型统一位于 `/runtime-assets/canvas-models/`，避免静态目录抢占 `/canvas` 页面路由。
 
 ## 许可证与上游
 

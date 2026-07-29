@@ -46,7 +46,7 @@ function getDetector() {
                 wasmBinaryPath: "/mediapipe/wasm/vision_wasm_module_internal.wasm",
             },
             {
-                baseOptions: { modelAssetPath: "/canvas/models/blaze-face-full-range-sparse.tflite" },
+                baseOptions: { modelAssetPath: "/runtime-assets/canvas-models/blaze-face-full-range-sparse.tflite" },
                 runningMode: "IMAGE",
                 minDetectionConfidence: 0.25,
                 minSuppressionThreshold: 0.3,
