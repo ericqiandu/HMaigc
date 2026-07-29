@@ -369,7 +369,7 @@ export default function TasksPage() {
 
     return (
         <>
-            <WorkspacePage grid>
+            <WorkspacePage grid layout="data" className="tasks-workspace-page">
                 <PageHeader
                     title="任务中心"
                     description="先处理失败任务，再跟踪运行进度和检查生成结果。"

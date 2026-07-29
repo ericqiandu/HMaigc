@@ -254,7 +254,7 @@ export default function AssetsPage() {
 
     return (
         <>
-            <WorkspacePage grid>
+            <WorkspacePage grid layout="collection" className="assets-workspace-page">
                 <PageHeader
                     title="素材库"
                     description="管理文本、图片、视频、音频和 3D 模型素材。"
@@ -288,7 +288,7 @@ export default function AssetsPage() {
                                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => setBatchDeleteOpen(true)}>删除</Button>
                             </div>
                         ) : null}
-                        <CollectionGrid className="sm:grid-cols-[repeat(auto-fill,minmax(250px,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(270px,1fr))]">
+                        <CollectionGrid className="assets-collection-grid sm:grid-cols-[repeat(auto-fill,minmax(250px,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(270px,1fr))]">
                             {visibleAssets.map((asset) => (
                                 <AssetCard key={asset.id} asset={asset} selected={selectedIds.includes(asset.id)} onSelect={(selected) => setSelectedIds((current) => selected ? [...new Set([...current, asset.id])] : current.filter((id) => id !== asset.id))} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                             ))}

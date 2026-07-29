@@ -152,7 +152,7 @@ export default function SkillsPage() {
 
     return (
         <>
-            <WorkspacePage grid>
+            <WorkspacePage grid layout="collection" className="skills-workspace-page">
                 <PageHeader
                     title="技能库"
                     description="浏览 Updream 技能，管理激活与收藏。"
@@ -221,7 +221,7 @@ export default function SkillsPage() {
                 {loading ? (
                     <SkillSkeleton />
                 ) : displayedSkills.length ? (
-                    <CollectionGrid className="sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
+                    <CollectionGrid className="skills-collection-grid sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
                         {displayedSkills.map((skill) => (
                             <SkillCard key={skill.dir} skill={skill} loading={mutatingDir === skill.dir} onOpen={() => openSkill(skill)} onActivate={() => toggleActivation(skill)} onFavorite={() => toggleFavorite(skill)} />
                         ))}

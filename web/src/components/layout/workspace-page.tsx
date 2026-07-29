@@ -7,9 +7,23 @@ import { cn } from "@/lib/utils";
 import "@/styles/workspace-ui.css";
 import "@/styles/workspace-shell.css";
 
-export function WorkspacePage({ children, className, grid = false, fluid = false }: { children: ReactNode; className?: string; grid?: boolean; fluid?: boolean }) {
+type WorkspacePageLayout = "standard" | "collection" | "data";
+
+export function WorkspacePage({
+    children,
+    className,
+    grid = false,
+    fluid = false,
+    layout = "standard",
+}: {
+    children: ReactNode;
+    className?: string;
+    grid?: boolean;
+    fluid?: boolean;
+    layout?: WorkspacePageLayout;
+}) {
     return (
-        <main className={cn("app-user-content workspace-ui-scope thin-scrollbar h-full overflow-y-auto text-foreground", grid && "app-workspace-grid", className)}>
+        <main className={cn("app-user-content workspace-ui-scope thin-scrollbar h-full overflow-y-auto text-foreground", `workspace-page--${layout}`, grid && "app-workspace-grid", className)}>
             <div className={fluid ? "h-full w-full" : "workspace-page-frame w-full px-4 pb-8 pt-20 sm:px-6 md:px-[104px] md:pt-[90px]"}>{children}</div>
         </main>
     );

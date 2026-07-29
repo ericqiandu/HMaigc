@@ -115,7 +115,7 @@ export default function CanvasPage() {
     };
 
     return (
-        <WorkspacePage grid fluid className="canvas-library-page">
+        <WorkspacePage grid fluid layout="collection" className="canvas-library-page">
             <section className="canvas-library-content min-h-full px-4 pb-8 pt-20 sm:px-6 md:pl-[104px] md:pr-[104px] md:pt-[90px]">
                 <PageHeader
                     title="我的画布"

@@ -9,6 +9,11 @@
     margin-inline: auto;
 }
 
+.workspace-ui-scope.workspace-page--collection .workspace-collection-grid {
+    align-items: start;
+    justify-content: start;
+}
+
 .workspace-ui-scope.canvas-library-page .canvas-library-content {
     width: 100%;
     max-width: var(--workspace-ui-frame-max);
@@ -136,6 +141,10 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
     font-size: 14px;
 }
 
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar .app-list-search {
+    width: min(320px, 100%);
+}
+
 :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-reset.ant-btn {
     min-height: var(--workspace-ui-control-height);
     border-radius: var(--workspace-ui-radius-control);
@@ -181,6 +190,31 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 
 .workspace-ui-scope .app-collection-card .ant-btn-sm {
     min-height: 32px;
+}
+
+@media (min-width: 1280px) {
+    .workspace-ui-scope.skills-workspace-page .skills-collection-grid {
+        grid-template-columns: repeat(auto-fill, minmax(272px, 292px));
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-collection-grid {
+        grid-template-columns: repeat(auto-fill, minmax(240px, 260px));
+    }
+}
+
+@media (min-width: 1600px) {
+    .workspace-ui-scope.workspace-page--collection .workspace-page-frame,
+    .workspace-ui-scope.workspace-page--data .workspace-page-frame {
+        max-width: none;
+        margin-inline: 0;
+        padding-inline: 104px;
+    }
+
+    .workspace-ui-scope.workspace-page--collection.canvas-library-page .canvas-library-content {
+        max-width: none;
+        margin-inline: 0;
+        padding-inline: 104px;
+    }
 }
 
 @media (min-width: 640px) and (max-width: 1279px) {
@@ -284,6 +318,11 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 
     :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-fields > :where(.app-list-search, .canvas-library-search) {
         width: 100% !important;
+    }
+
+    .workspace-ui-scope.skills-workspace-page .skills-collection-grid,
+    .workspace-ui-scope.assets-workspace-page .assets-collection-grid {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .workspace-ui-scope .workspace-list-toolbar :where(.ant-input-affix-wrapper, .ant-select-single .ant-select-selector),

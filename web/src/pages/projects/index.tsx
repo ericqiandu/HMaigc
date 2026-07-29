@@ -117,7 +117,7 @@ export default function ProjectsPage() {
     );
 
     return (
-        <WorkspacePage className="projects-workspace">
+        <WorkspacePage className="projects-workspace" layout="collection">
             <PageHeader
                 title="我的项目"
                 description="继续最近的短剧项目，或创建新的制作空间。"
