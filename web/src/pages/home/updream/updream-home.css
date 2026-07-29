@@ -418,13 +418,13 @@
     }
 
     .updream-home-page .workspace-floating-navigation {
-        top: calc(50% + 48px);
+        top: calc(50% + 60px);
         left: 48px;
         gap: 4px;
     }
 
     .updream-home-page .workspace-floating-navigation-link {
-        height: 60px;
+        height: 64px;
         gap: 4px;
         padding: 8px 4px;
         border-radius: 12px;
@@ -432,13 +432,15 @@
 
     .updream-home-page .workspace-floating-navigation-icon-frame,
     .updream-home-page .workspace-floating-navigation-icon {
-        width: 18px;
-        height: 18px;
+        width: 20px;
+        height: 20px;
     }
 
     .updream-home-page .workspace-floating-navigation-label {
-        font-size: 12px;
-        line-height: 18px;
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 20px;
+        letter-spacing: -0.12px;
     }
 }
 
