@@ -418,6 +418,8 @@
     }
 
     .updream-home-page .workspace-floating-navigation {
+        top: calc(50% + 48px);
+        left: 48px;
         gap: 4px;
     }
 
