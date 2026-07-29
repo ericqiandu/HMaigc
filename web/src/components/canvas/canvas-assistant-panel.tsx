@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, BookOpenText, Cpu, Focus, History, PanelRightClose, Plus, RotateCcw, Trash2, X } from "lucide-react";
-import { Button, Modal, Select, Switch, Tooltip } from "antd";
+import { Bot, BookOpenText, Focus, History, PanelRightClose, Plus, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
+import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
-import { modelDisplayName, modelOptionName, normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
@@ -16,11 +16,12 @@ import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { cinematicAgentSessionOpsJson, createCinematicAgentSession, isAgentSessionPollingAbort, resumeCinematicAgentSession } from "@/lib/canvas/canvas-agent-session";
 import { cinematicAgentProgress, hasCanvasAgentLaunchRecord } from "@/lib/canvas/canvas-agent-launch";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
-import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
+import { AgentChatComposer, AgentChatMessage, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { CanvasNodeType, type CanvasAgentExecutionMode, type CanvasAgentLaunchRequest, type CanvasAssistantMessage, type CanvasAssistantPendingBackendSession, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "@/types/canvas";
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
+import "./canvas-agent-panel.css";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
@@ -148,9 +149,8 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const effectiveConfig = useEffectiveConfig();
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
-    const updateConfig = useConfigStore((state) => state.updateConfig);
     const [confirmTools, setConfirmTools] = useState(true);
-    const [width, setWidth] = useState(520);
+    const [width, setWidth] = useState(() => Math.min(420, Math.max(320, window.innerWidth)));
     const [view, setView] = useState<OnlineAgentTab>("chat");
     const [prompt, setPrompt] = useState("");
     const [cinematicEntryActive, setCinematicEntryActive] = useState(cinematicEntry);
@@ -200,7 +200,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const messages = activeSession?.messages || [];
     const hasMessages = messages.length > 0;
     const agentBusy = isRunning || safeSessions.some((session) => session.pendingBackendSession?.status === "pending");
-    const activeModel = effectiveConfig.textModel || effectiveConfig.model;
     const selectedNodeKey = useMemo(() => Array.from(selectedNodeIds).sort().join(","), [selectedNodeIds]);
     const allSelectedReferences = useMemo(() => buildAssistantReferences(nodes, selectedNodeIds), [nodes, selectedNodeIds]);
     const selectedReferences = useMemo(() => allSelectedReferences.filter((item) => !removedReferenceIds.has(item.id)), [allSelectedReferences, removedReferenceIds]);
@@ -810,7 +809,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     };
 
     const startResize = () => {
-        const move = (event: MouseEvent) => setWidth(Math.min(760, Math.max(320, window.innerWidth - event.clientX)));
+        const move = (event: MouseEvent) => setWidth(Math.min(680, Math.max(320, window.innerWidth - event.clientX)));
         const stop = () => {
             setResizing(false);
             document.body.style.cursor = "";
@@ -831,40 +830,24 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
 
     const onlineContent = (
         <>
-            <AgentPanelTabs
-                value={view}
-                theme={theme}
-                items={[
-                    { value: "chat", label: "对话" },
-                    { value: "history", label: "历史", icon: <History className="size-3.5" />, count: historySessions.length },
-                ]}
-                onChange={setView}
-                right={
-                    <>
-                        {view === "history" ? (
-                            <Tooltip title="删除全部">
-                                <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<X className="size-4" />} disabled={!historySessions.length} onClick={() => setDeleteChatIds(historySessions.map((session) => session.id))} />
-                            </Tooltip>
-                        ) : null}
-                        <Tooltip title="新对话">
-                            <Button
-                                type="text"
-                                shape="circle"
-                                className="!h-8 !w-8 !min-w-8"
-                                style={iconButtonStyle}
-                                icon={<Plus className="size-4" />}
-                                disabled={!hasMessages}
-                                onClick={() => {
-                                    startChatSession();
-                                    setView("chat");
-                                }}
-                            />
-                        </Tooltip>
-                    </>
-                }
-            />
+            {view === "history" ? (
+                <div className="canvas-agent-history-toolbar">
+                    <span className="canvas-agent-history-title">历史对话</span>
+                    <Tooltip title="删除全部">
+                        <Button
+                            type="text"
+                            className="canvas-agent-icon-button"
+                            style={iconButtonStyle}
+                            icon={<Trash2 className="size-3.5" />}
+                            disabled={!historySessions.length}
+                            onClick={() => setDeleteChatIds(historySessions.map((session) => session.id))}
+                            aria-label="删除全部历史对话"
+                        />
+                    </Tooltip>
+                </div>
+            ) : null}
 
-            <div ref={chatListRef} className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            <div ref={chatListRef} className="canvas-agent-chat-list thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto">
                 {view === "history" ? (
                     <AssistantHistory
                         sessions={historySessions}
@@ -924,10 +907,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         onSubmit={cinematicEntryActive ? () => submitCinematicProject(prompt) : submit}
                         onAddFiles={addImagesToCanvas}
                         left={
-                            <>
-                                <AgentTextModelPicker config={effectiveConfig} value={effectiveConfig.textModel} onChange={(model) => updateConfig("textModel", model)} />
-                                {cinematicEntryActive ? <span className="ml-2 inline-flex h-6 items-center rounded-md border px-2 text-[10px] font-medium" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>影视项目</span> : null}
-                            </>
+                            cinematicEntryActive
+                                ? <span className="canvas-agent-status-badge" style={{ color: theme.node.muted, background: theme.spatial.surface }}>影视项目</span>
+                                : null
                         }
                     />
                 </>
@@ -963,42 +945,68 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         <motion.div
             className="flex shrink-0"
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: closing ? 0 : width + 9, opacity: closing ? 0 : 1 }}
+            animate={{ width: closing ? 0 : width + 1, opacity: closing ? 0 : 1 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
             style={{ overflow: "clip", pointerEvents: closing ? "none" : undefined }}
         >
             <motion.aside
-                className="relative my-2 mr-2 flex shrink-0 flex-col overflow-hidden rounded-lg border"
+                className="canvas-agent-shell relative flex shrink-0 flex-col overflow-hidden border"
                 initial={{ x: 48 }}
                 animate={{ x: closing ? 28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
-                style={{ width, background: theme.spatial.elevated, borderColor: theme.node.stroke, color: theme.node.text, boxShadow: `0 24px 72px ${theme.spatial.shadow}` }}
+                style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text, boxShadow: `0 24px 72px ${theme.spatial.shadow}` }}
             >
                 <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onMouseDown={startResize} aria-label="调整右侧面板宽度" />
-                <header className="flex h-14 items-center justify-between border-b px-4" style={{ borderColor: theme.node.stroke }}>
-                    <div className="flex min-w-0 items-center gap-2">
-                        <span className="grid size-8 place-items-center rounded-md" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
-                            <Bot className="size-4" />
-                        </span>
-                        <div className="min-w-0">
-                            <div className="text-base font-semibold leading-5">Agent</div>
-                            <div className="truncate text-xs" style={{ color: theme.node.muted }}>
-                                画布助手
-                            </div>
-                        </div>
+                <header className="canvas-agent-header flex items-center justify-between border-b" style={{ borderColor: theme.node.stroke }}>
+                    <div className="canvas-agent-header-title" title={activeSession?.title || "Agent 画布助手"}>
+                        {activeSession?.title && activeSession.title !== "新对话" ? activeSession.title : "Agent 画布助手"}
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                        <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" disabled={!canUndoOps} icon={<RotateCcw className="size-3.5" />} onClick={undoLastOnlineBatch} aria-label="撤销最近一批 Agent 写回" title={undoOpsCount ? `可撤销最近 ${undoOpsCount} 批` : "没有可撤销的 Agent 写回"} />
-                        <label className="flex items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
-                            <Switch size="small" checked={confirmTools} onChange={setConfirmTools} />
-                            执行前确认
-                        </label>
+                    <div className="canvas-agent-header-actions">
+                        <Tooltip title="新建对话">
+                            <Button
+                                type="text"
+                                className="canvas-agent-icon-button"
+                                style={iconButtonStyle}
+                                icon={<Plus className="size-3.5" />}
+                                disabled={!hasMessages}
+                                onClick={() => {
+                                    startChatSession();
+                                    setView("chat");
+                                }}
+                                aria-label="新建对话"
+                            />
+                        </Tooltip>
+                        <Tooltip title={view === "history" ? "返回对话" : `历史对话 ${historySessions.length}`}>
+                            <Button
+                                type="text"
+                                className={`canvas-agent-icon-button ${view === "history" ? "canvas-agent-icon-button--active" : ""}`}
+                                style={iconButtonStyle}
+                                icon={<History className="size-3.5" />}
+                                onClick={() => setView((current) => current === "history" ? "chat" : "history")}
+                                aria-label={view === "history" ? "返回对话" : "打开历史对话"}
+                                aria-pressed={view === "history"}
+                            />
+                        </Tooltip>
+                        <Tooltip title={undoOpsCount ? `撤销最近一批写回，可撤销 ${undoOpsCount} 批` : "没有可撤销的 Agent 写回"}>
+                            <Button type="text" className="canvas-agent-icon-button" style={iconButtonStyle} disabled={!canUndoOps} icon={<RotateCcw className="size-3.5" />} onClick={undoLastOnlineBatch} aria-label="撤销最近一批 Agent 写回" />
+                        </Tooltip>
+                        <Tooltip title={confirmTools ? "执行前确认已开启" : "执行前确认已关闭"}>
+                            <Button
+                                type="text"
+                                className={`canvas-agent-icon-button ${confirmTools ? "canvas-agent-icon-button--active" : ""}`}
+                                style={iconButtonStyle}
+                                icon={<ShieldCheck className="size-3.5" />}
+                                onClick={() => setConfirmTools((current) => !current)}
+                                aria-label="切换执行前确认"
+                                aria-pressed={confirmTools}
+                            />
+                        </Tooltip>
                         <Tooltip title="收起对话">
-                            <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<PanelRightClose className="size-4" />} onClick={collapse} />
+                            <Button type="text" className="canvas-agent-icon-button" style={iconButtonStyle} icon={<PanelRightClose className="size-3.5" />} onClick={collapse} aria-label="收起对话" />
                         </Tooltip>
                     </div>
                 </header>
-                <div className="mx-3 mt-2 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-2.5 py-1.5 text-[10px]" style={{ borderColor: theme.node.stroke, background: theme.spatial.surface, color: theme.node.muted }}>
+                <div className="canvas-agent-context flex flex-wrap items-center gap-x-2 gap-y-1" style={{ color: theme.node.muted }}>
                     <span className="font-semibold" style={{ color: theme.node.text }}>将读取</span>
                     <span>当前画布 {contextSummary.nodeCount} 个节点</span>
                     {contextSummary.selectedCount ? <span className="inline-flex items-center gap-1"><Focus className="size-3" />选区 {contextSummary.selectedCount} 个</span> : null}
@@ -1010,48 +1018,6 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
             </motion.aside>
         </motion.div>
     );
-}
-
-function AgentTextModelPicker({ config, value, onChange }: { config: AiConfig; value: string; onChange: (model: string) => void }) {
-    const options = useMemo(() => Array.from(new Set([value, ...selectableModelsByCapability(config, "text")].filter(Boolean))), [config, value]);
-    const current = value || "";
-    return (
-        <div className="min-w-0 max-w-[240px]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-            <Select<string>
-                size="small"
-                variant="borderless"
-                value={current || undefined}
-                className="agent-text-model-select w-full"
-                popupMatchSelectWidth={288}
-                options={options.map((model) => ({ value: model, label: modelDisplayName(config, model) }))}
-                notFoundContent={<span className="block py-2 text-center text-xs text-foreground/48">暂无文本模型</span>}
-                optionRender={(option) => {
-                    const model = String(option.value);
-                    return <span className="flex min-w-0 items-center gap-2"><AgentModelIcon model={model} /><span className="min-w-0 flex-1"><span className="block truncate">{modelDisplayName(config, model)}</span><span className="block truncate text-[10px] opacity-45">{modelOptionName(model)}</span></span></span>;
-                }}
-                labelRender={() => <span className="flex min-w-0 items-center gap-1.5"><AgentModelIcon model={current} /><span className="min-w-0 truncate">{current ? modelDisplayName(config, current) : "选择文本模型"}</span></span>}
-                onChange={onChange}
-                aria-label="选择 Agent 文本模型"
-                title={current ? modelDisplayName(config, current) : "选择文本模型"}
-            />
-        </div>
-    );
-}
-
-function AgentModelIcon({ model }: { model: string }) {
-    const icon = resolveModelIcon(modelOptionName(model));
-    return icon ? <img src={icon} alt="" className="size-4 shrink-0 dark:invert" /> : <Cpu className="size-4 shrink-0 opacity-70" />;
-}
-
-function resolveModelIcon(model: string) {
-    const name = model.toLowerCase();
-    if (name.includes("claude") || name.includes("anthropic")) return "/icons/claude.svg";
-    if (name.includes("gemini") || name.includes("google")) return "/icons/gemini.svg";
-    if (name.includes("gpt") || name.includes("openai")) return "/icons/openai.svg";
-    if (name.includes("grok")) return "/icons/grok.svg";
-    if (name.includes("deepseek")) return "/icons/deepseek.svg";
-    if (name.includes("glm")) return "/icons/glm.svg";
-    return "";
 }
 
 function AssistantHistory({

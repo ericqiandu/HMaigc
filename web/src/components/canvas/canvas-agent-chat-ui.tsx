@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Tooltip } from "antd";
-import { ArrowUp, CheckCircle2, CircleAlert, ImagePlus, LoaderCircle, UserRound, Wrench, X, XCircle } from "lucide-react";
+import { ArrowUp, CheckCircle2, CircleAlert, LoaderCircle, Plus, UserRound, Wrench, X, XCircle } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasAgentOperationImpact } from "@/lib/canvas/canvas-agent-ops";
@@ -25,10 +27,10 @@ export function AgentChatMessage({ item, theme, user, onRejectTool, onApproveToo
     const color = item.role === "error" ? "#dc2626" : item.role === "tool" ? "#2563eb" : theme.node.text;
     if (isSystem) {
         return (
-            <div className="flex justify-center text-xs">
-                <div className="max-w-[88%] px-3 py-1.5 text-center" style={{ color: theme.node.muted }}>
+            <div className="canvas-agent-system-message flex justify-center text-xs">
+                <div className="canvas-agent-system-message-content max-w-[88%] px-3 py-1.5 text-center" style={{ color: theme.node.muted }}>
                     {item.text}
-                    {item.meta ? <span className="ml-2 opacity-60">{item.meta}</span> : null}
+                    {item.meta ? <span className="canvas-agent-system-message-meta ml-2 opacity-60">{item.meta}</span> : null}
                 </div>
             </div>
         );
@@ -36,19 +38,21 @@ export function AgentChatMessage({ item, theme, user, onRejectTool, onApproveToo
     if (item.role === "tool") {
         if (objectField(item.detail, "status") === "pending") return <AgentPendingToolCard summary={item.text} detail={item.detail} theme={theme} onReject={() => onRejectTool?.(item.id)} onApprove={() => onApproveTool?.(item.id)} />;
         return (
-            <div className="flex items-start gap-3">
+            <div className="canvas-agent-message-row flex items-start">
                 <AgentAvatar theme={theme} />
                 <AgentToolCard title={item.title || "工具调用"} text={item.text} detail={item.detail} theme={theme} />
             </div>
         );
     }
     return (
-        <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+        <div className={`canvas-agent-message-row flex items-start ${isUser ? "justify-end" : "justify-start"}`}>
             {!isUser ? <AgentAvatar theme={theme} /> : null}
-            <div className={`min-w-0 max-w-[82%] text-sm leading-6 ${isUser ? "rounded-lg border px-3 py-2.5 text-right" : "text-left"}`} style={{ color, ...(isUser ? { background: theme.accent.primarySoft, borderColor: theme.spatial.glowStrong } : {}) }}>
-                <div className="whitespace-pre-wrap break-words text-left">{item.text}</div>
+            <div className={`min-w-0 ${isUser ? "canvas-agent-user-message text-right" : "canvas-agent-assistant-message text-left"}`} style={{ color }}>
+                {isUser
+                    ? <div className="canvas-agent-message-text whitespace-pre-wrap break-words text-left">{item.text}</div>
+                    : <AgentMarkdownContent text={item.text} />}
                 {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} /> : null}
-                {item.meta ? <div className="mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
+                {item.meta ? <div className="canvas-agent-message-meta mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
             </div>
             {isUser ? <AgentUserAvatar user={user} theme={theme} /> : null}
         </div>
@@ -59,40 +63,40 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
     const impact = agentImpactFromDetail(detail);
     const cinematicProposal = objectField(detail, "kind") === "cinematic-proposal";
     return (
-        <div className="flex items-start gap-3">
+        <div className="canvas-agent-message-row flex items-start">
             <AgentAvatar theme={theme} />
-            <div className="aceternity-floating-panel min-w-0 flex-1 rounded-lg border p-4" style={{ borderColor: "rgba(217,119,6,.24)", background: theme.spatial.surface, color: theme.node.text }}>
-                <div className="flex items-start gap-3">
-                    <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border" style={{ borderColor: "rgba(217,119,6,.24)", color: "#d97706", background: "rgba(217,119,6,.04)" }}>
+            <div className="canvas-agent-proposal-card min-w-0 flex-1" style={{ color: theme.node.text }}>
+                <div className="canvas-agent-proposal-heading flex items-start gap-3">
+                    <span className="canvas-agent-tool-icon mt-0.5 grid shrink-0 place-items-center" style={{ color: "#d97706", background: "rgba(217,119,6,.08)" }}>
                         <CircleAlert className="size-4" />
                     </span>
-                    <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold leading-5">
+                    <div className="canvas-agent-proposal-copy min-w-0 flex-1">
+                        <div className="canvas-agent-proposal-title-row flex flex-wrap items-center gap-2 text-sm font-semibold leading-5">
                             <span className="agent-pending-tool-card-title">{cinematicProposal ? "确认影视方案写回" : "确认工具调用"}</span>
-                            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium" style={{ borderColor: "rgba(217,119,6,.22)", color: "#d97706", background: "rgba(217,119,6,.04)" }}>等待确认</span>
+                            <span className="canvas-agent-status-badge" style={{ color: "#d97706", background: "rgba(217,119,6,.08)" }}>等待确认</span>
                         </div>
-                        <div className="mt-2 text-sm leading-6" style={{ color: theme.node.text }}>{summary}</div>
+                        <div className="canvas-agent-proposal-summary mt-2 text-sm leading-6" style={{ color: theme.node.text }}>{summary}</div>
                     </div>
                 </div>
                 {impact?.operationCount ? (
-                    <div className="mt-3 border-t pt-3" style={{ borderColor: theme.node.stroke }}>
-                        <div className="grid grid-cols-2 gap-2">
+                    <div className="canvas-agent-proposal-impact mt-3 border-t pt-3" style={{ borderColor: theme.node.stroke }}>
+                        <div className="canvas-agent-impact-grid">
                             <ImpactMetric label="操作" value={impact.operationCount} theme={theme} />
                             <ImpactMetric label="涉及节点" value={impact.affectedNodeCount} theme={theme} />
                             <ImpactMetric label="删除" value={impact.destructiveCount} attention={impact.destructiveCount > 0} theme={theme} />
                             <ImpactMetric label="生成" value={impact.generationCount} attention={impact.generationCount > 0} theme={theme} />
                         </div>
-                        {impact.items.length ? <div className="mt-3 space-y-1.5">{impact.items.map((item, index) => <div key={`${item}-${index}`} className="flex gap-2 text-xs leading-5" style={{ color: theme.node.muted }}><span className="mt-2 size-1 shrink-0 rounded-full bg-current" /><span>{item}</span></div>)}</div> : null}
-                        {impact.warning ? <div className="mt-3 border-l-2 border-amber-500/70 bg-amber-500/[.05] px-2.5 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">{impact.warning}</div> : null}
+                        {impact.items.length ? <div className="canvas-agent-impact-items mt-3 space-y-1.5">{impact.items.map((item, index) => <div key={`${item}-${index}`} className="canvas-agent-impact-item flex gap-2 text-xs leading-5" style={{ color: theme.node.muted }}><span className="canvas-agent-impact-bullet mt-2 size-1 shrink-0 rounded-full bg-current" /><span className="canvas-agent-impact-copy">{item}</span></div>)}</div> : null}
+                        {impact.warning ? <div className="canvas-agent-impact-warning mt-3 border-l-2 border-amber-500/70 bg-amber-500/[.05] px-2.5 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">{impact.warning}</div> : null}
                     </div>
                 ) : null}
-                {detail ? <details className="mt-3 border-t pt-2" style={{ borderColor: theme.node.stroke }}><summary className="cursor-pointer text-xs" style={{ color: theme.node.muted }}>技术详情</summary><AgentDetailBlock detail={detail} theme={theme} /></details> : null}
+                {detail ? <details className="canvas-agent-proposal-detail mt-3 border-t pt-2" style={{ borderColor: theme.node.stroke }}><summary className="canvas-agent-proposal-detail-summary cursor-pointer text-xs" style={{ color: theme.node.muted }}>技术详情</summary><AgentDetailBlock detail={detail} theme={theme} /></details> : null}
                 {onReject || onApprove ? (
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                        <Button danger className="!h-9" icon={<XCircle className="size-4" />} onClick={() => onReject?.()}>
+                    <div className="canvas-agent-proposal-actions">
+                        <Button className="canvas-agent-proposal-secondary" icon={<XCircle className="size-3.5" />} onClick={() => onReject?.()}>
                             {cinematicProposal ? "暂不写入" : "拒绝执行"}
                         </Button>
-                        <Button className="!h-9" icon={<CheckCircle2 className="size-4" />} style={{ borderColor: "rgba(22,163,74,.42)", color: "#16a34a", background: "transparent" }} onClick={() => onApprove?.()}>
+                        <Button type="primary" className="canvas-agent-proposal-primary" icon={<CheckCircle2 className="size-3.5" />} onClick={() => onApprove?.()}>
                             {cinematicProposal ? "确认写入并执行" : "批准执行"}
                         </Button>
                     </div>
@@ -103,7 +107,7 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
 }
 
 function ImpactMetric({ label, value, attention = false, theme }: { label: string; value: number; attention?: boolean; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
-    return <div className="rounded-md border px-2 py-1.5" style={{ borderColor: attention ? "rgba(217,119,6,.24)" : theme.node.stroke, background: attention ? "rgba(217,119,6,.04)" : theme.spatial.elevated }}><div className="text-[10px]" style={{ color: theme.node.muted }}>{label}</div><div className="mt-0.5 text-sm font-semibold tabular-nums" style={{ color: attention ? "#d97706" : theme.node.text }}>{value}</div></div>;
+    return <div className="canvas-agent-impact-metric"><div className="canvas-agent-impact-label text-[10px]" style={{ color: theme.node.muted }}>{label}</div><div className="canvas-agent-impact-value mt-0.5 text-sm font-semibold tabular-nums" style={{ color: attention ? "#d97706" : theme.node.text }}>{value}</div></div>;
 }
 
 function agentImpactFromDetail(detail: unknown) {
@@ -123,21 +127,21 @@ function agentImpactFromDetail(detail: unknown) {
 export function AgentToolCard({ title, text, detail, theme }: { title: string; text: string; detail?: unknown; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const state = toolCardState(title, text, detail);
     return (
-        <details className="min-w-0 flex-1 rounded-lg border px-4 py-3.5 text-left backdrop-blur-xl" style={{ borderColor: state.softBorder, background: theme.spatial.surface, color: theme.node.text, boxShadow: `0 14px 34px ${theme.spatial.shadow}` }}>
-            <summary className="cursor-pointer list-none">
-                <div className="flex items-start gap-3">
-                    <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border" style={{ borderColor: state.softBorder, color: state.color, background: state.softBg }}>
+        <details className="canvas-agent-tool-card min-w-0 flex-1 text-left" style={{ color: theme.node.text }}>
+            <summary className="canvas-agent-tool-summary cursor-pointer list-none">
+                <div className="canvas-agent-tool-heading flex items-start gap-3">
+                    <span className="canvas-agent-tool-icon mt-0.5 grid shrink-0 place-items-center" style={{ color: state.color, background: state.softBg }}>
                         {state.icon}
                     </span>
-                    <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold leading-5">
-                            <span className="min-w-0 truncate">{title}</span>
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium" style={{ borderColor: state.softBorder, color: state.color, background: state.softBg }}>
+                    <div className="canvas-agent-tool-copy min-w-0 flex-1">
+                        <div className="canvas-agent-tool-title-row flex flex-wrap items-center gap-2 text-sm font-semibold leading-5">
+                            <span className="canvas-agent-tool-title min-w-0 truncate">{title}</span>
+                            <span className="canvas-agent-status-badge" style={{ color: state.color, background: state.softBg }}>
                                 {state.label}
                             </span>
-                            {detail ? <span className="ml-auto text-xs font-normal" style={{ color: theme.node.muted }}>详情</span> : null}
+                            {detail ? <span className="canvas-agent-tool-detail-label ml-auto text-xs font-normal" style={{ color: theme.node.muted }}>详情</span> : null}
                         </div>
-                        <div className="mt-2 text-sm leading-6" style={{ color: state.isError ? state.color : theme.node.muted }}>
+                        <div className="canvas-agent-tool-text mt-2 text-sm leading-6" style={{ color: state.isError ? state.color : theme.node.muted }}>
                             {text}
                         </div>
                     </div>
@@ -155,11 +159,11 @@ export function AgentWorkingMessage({ theme }: { theme: (typeof canvasThemes)[ke
         return () => window.clearInterval(timer);
     }, [setLength]);
     return (
-        <div className="flex items-start gap-2.5">
+        <div className="canvas-agent-working-message flex items-start gap-2.5">
             <AgentAvatar theme={theme} />
-            <div className="min-w-0 max-w-[82%]">
-                <div className="font-mono text-sm" style={{ color: theme.node.muted }} aria-label={WORKING_TEXT}>
-                    <span className="inline-block w-[96px]">{WORKING_TEXT.slice(0, Math.min(length, WORKING_TEXT.length))}</span>
+            <div className="canvas-agent-working-copy min-w-0 max-w-[82%]">
+                <div className="canvas-agent-working-text font-mono text-sm" style={{ color: theme.node.muted }} aria-label={WORKING_TEXT}>
+                    <span className="canvas-agent-working-text-inner inline-block w-[96px]">{WORKING_TEXT.slice(0, Math.min(length, WORKING_TEXT.length))}</span>
                 </div>
             </div>
         </div>
@@ -194,15 +198,15 @@ export function AgentChatComposer({
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canSubmit = !disabled && !sending && Boolean(prompt.trim() || attachments.length);
     return (
-        <div className="px-2 pb-2 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
-            <div className="aceternity-floating-panel rounded-lg border px-3 pb-2.5 pt-3" style={{ background: theme.spatial.elevated, borderColor: theme.node.stroke }}>
+        <div className="canvas-agent-composer-wrap" onWheelCapture={(event) => event.stopPropagation()}>
+            <div className="canvas-agent-composer border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
                 {attachments.length ? (
-                    <div className="thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
+                    <div className="canvas-agent-composer-attachments thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
                         {attachments.map((item) => (
-                            <div key={item.id} className="group relative size-14 shrink-0 overflow-hidden rounded-lg border" style={{ borderColor: theme.node.stroke }} title={item.name}>
-                                <img src={item.url} alt={item.name} className="size-full object-cover" />
+                            <div key={item.id} className="canvas-agent-composer-attachment group relative size-14 shrink-0 overflow-hidden rounded-md" title={item.name}>
+                                <img src={item.url} alt={item.name} className="canvas-agent-composer-attachment-image size-full object-cover" />
                                 {onRemoveAttachment ? (
-                                    <button type="button" className="absolute right-1 top-1 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => onRemoveAttachment(item.id)} aria-label="移除图片">
+                                    <button type="button" className="canvas-agent-composer-attachment-remove absolute right-1 top-1 grid size-5 place-items-center rounded-md opacity-0 transition group-hover:opacity-100" style={{ background: theme.toolbar.panel, color: theme.node.text }} onClick={() => onRemoveAttachment(item.id)} aria-label="移除图片">
                                         <X className="size-3" />
                                     </button>
                                 ) : null}
@@ -225,53 +229,67 @@ export function AgentChatComposer({
                         event.preventDefault();
                         void onSubmit();
                     }}
-                    className="thin-scrollbar max-h-32 min-h-[72px] w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:opacity-45"
+                    className="canvas-agent-composer-textarea thin-scrollbar w-full resize-none border-0 bg-transparent outline-none placeholder:opacity-45"
                     style={{ color: theme.node.text }}
                     placeholder={placeholder}
                 />
-                <div className="mt-2 flex items-center justify-between gap-2 border-t pt-2" style={{ borderColor: theme.toolbar.border }}>
-                    <div className="flex min-w-0 items-center gap-1">
+                <div className="canvas-agent-composer-footer">
+                    <div className="canvas-agent-composer-left flex min-w-0 items-center gap-1">
                         {onAddFiles ? (
                             <>
                                 <input ref={fileInputRef} hidden type="file" accept="image/*" multiple onChange={(event) => {
                                     void onAddFiles(event.target.files);
                                     event.target.value = "";
                                 }} />
-                                <Tooltip title="上传图片">
-                                    <Button type="text" shape="circle" className="!h-9 !w-9 !min-w-9" disabled={sending} style={{ color: theme.node.muted }} icon={<ImagePlus className="size-4" />} onClick={() => fileInputRef.current?.click()} />
+                                <Tooltip title="添加图片">
+                                    <Button type="text" className="canvas-agent-composer-tool" disabled={sending} style={{ color: theme.node.muted }} icon={<Plus className="size-4" />} onClick={() => fileInputRef.current?.click()} aria-label="添加图片" />
                                 </Tooltip>
                             </>
                         ) : null}
                         {left}
                     </div>
-                    <Button type="primary" className="!h-9 !w-9 !min-w-9 !rounded-lg !p-0" disabled={!canSubmit} icon={sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} onClick={() => void onSubmit()} aria-label="发送" />
+                    <Button type="primary" className="canvas-agent-composer-submit" disabled={!canSubmit} icon={sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} onClick={() => void onSubmit()} aria-label="发送" />
                 </div>
             </div>
         </div>
     );
 }
 
-export function AgentPanelTabs<T extends string>({ value, items, theme, right, onChange }: { value: T; items: { value: T; label: string; icon?: ReactNode; count?: number }[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; right?: ReactNode; onChange: (value: T) => void }) {
+function AgentMarkdownContent({ text }: { text: string }) {
     return (
-        <div className="border-b px-3" style={{ borderColor: theme.node.stroke }}>
-            <div className="flex min-h-11 items-center justify-between gap-3">
-                <nav className="thin-scrollbar flex min-w-0 flex-1 items-center gap-3 overflow-x-auto text-sm" role="tablist" aria-label="Agent 面板">
-                    {items.map((item) => (
-                        <button key={item.value} type="button" role="tab" aria-selected={value === item.value} className={`inline-flex h-11 shrink-0 items-center gap-1.5 border-b-2 px-0.5 transition ${value === item.value ? "font-medium" : "font-normal"}`} style={{ borderColor: value === item.value ? theme.node.text : "transparent", color: value === item.value ? theme.node.text : theme.node.muted }} onClick={() => onChange(item.value)}>
-                            {item.icon}
-                            {item.label}{item.count ? ` ${item.count}` : ""}
-                        </button>
-                    ))}
-                </nav>
-                {right ? <div className="flex shrink-0 items-center gap-2">{right}</div> : null}
-            </div>
+        <div className="canvas-agent-markdown">
+            <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                    a: ({ href, children }) => <a className="canvas-agent-markdown-link" href={href} target="_blank" rel="noreferrer">{children}</a>,
+                    blockquote: ({ children }) => <blockquote className="canvas-agent-markdown-quote">{children}</blockquote>,
+                    code: ({ children, className }) => <code className={`canvas-agent-markdown-code ${className || ""}`}>{children}</code>,
+                    h1: ({ children }) => <h1 className="canvas-agent-markdown-heading">{children}</h1>,
+                    h2: ({ children }) => <h2 className="canvas-agent-markdown-heading">{children}</h2>,
+                    h3: ({ children }) => <h3 className="canvas-agent-markdown-heading">{children}</h3>,
+                    li: ({ children }) => <li className="canvas-agent-markdown-list-item">{children}</li>,
+                    ol: ({ children }) => <ol className="canvas-agent-markdown-list canvas-agent-markdown-list--ordered">{children}</ol>,
+                    p: ({ children }) => <p className="canvas-agent-markdown-paragraph">{children}</p>,
+                    pre: ({ children }) => <pre className="canvas-agent-markdown-pre">{children}</pre>,
+                    strong: ({ children }) => <strong className="canvas-agent-markdown-strong">{children}</strong>,
+                    table: ({ children }) => <div className="canvas-agent-markdown-table-wrap"><table className="canvas-agent-markdown-table">{children}</table></div>,
+                    tbody: ({ children }) => <tbody className="canvas-agent-markdown-table-body">{children}</tbody>,
+                    td: ({ children }) => <td className="canvas-agent-markdown-table-cell">{children}</td>,
+                    th: ({ children }) => <th className="canvas-agent-markdown-table-head">{children}</th>,
+                    thead: ({ children }) => <thead className="canvas-agent-markdown-table-header">{children}</thead>,
+                    tr: ({ children }) => <tr className="canvas-agent-markdown-table-row">{children}</tr>,
+                    ul: ({ children }) => <ul className="canvas-agent-markdown-list">{children}</ul>,
+                }}
+            >
+                {text}
+            </ReactMarkdown>
         </div>
     );
 }
 
 function AgentDetailBlock({ detail, theme }: { detail: unknown; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
-        <pre className="thin-scrollbar mt-3 max-h-64 overflow-auto rounded-lg border p-3 text-[11px] leading-4" style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel, color: theme.node.muted }}>
+        <pre className="canvas-agent-detail thin-scrollbar" style={{ color: theme.node.muted }}>
             {JSON.stringify(detail, null, 2)}
         </pre>
     );
@@ -279,8 +297,8 @@ function AgentDetailBlock({ detail, theme }: { detail: unknown; theme: (typeof c
 
 function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
-        <span className="grid size-8 shrink-0 place-items-center" role="img" aria-label="OpenAI">
-            <span className="size-5 opacity-80" style={{ background: theme.node.text, WebkitMask: "url(/icons/openai.svg) center / contain no-repeat", mask: "url(/icons/openai.svg) center / contain no-repeat" }} />
+        <span className="canvas-agent-avatar grid shrink-0 place-items-center" role="img" aria-label="OpenAI">
+            <span className="canvas-agent-avatar-mark size-5 opacity-80" style={{ background: theme.node.text, WebkitMask: "url(/icons/openai.svg) center / contain no-repeat", mask: "url(/icons/openai.svg) center / contain no-repeat" }} />
         </span>
     );
 }
@@ -288,17 +306,17 @@ function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canv
 function AgentUserAvatar({ user, theme }: { user: LocalUser | null; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const avatarUrl = user?.avatarUrl?.trim();
     return (
-        <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-full" style={{ color: theme.node.text }}>
-            {avatarUrl ? <img src={avatarUrl} alt="" className="size-full object-cover" referrerPolicy="no-referrer" /> : <UserRound className="size-4" />}
+        <span className="canvas-agent-avatar grid shrink-0 place-items-center overflow-hidden rounded-full" style={{ color: theme.node.text }}>
+            {avatarUrl ? <img src={avatarUrl} alt="" className="canvas-agent-user-avatar-image size-full object-cover" referrerPolicy="no-referrer" /> : <UserRound className="size-4" />}
         </span>
     );
 }
 
 function AgentMessageAttachments({ attachments }: { attachments: CanvasAgentChatAttachment[] }) {
     return (
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
+        <div className="canvas-agent-message-attachments mt-2 grid grid-cols-3 gap-1.5">
             {attachments.map((item) => (
-                <img key={item.id} src={item.url} alt={item.name} className="aspect-square w-full rounded-lg object-cover" />
+                <img key={item.id} src={item.url} alt={item.name} className="canvas-agent-message-attachment aspect-square w-full rounded-md object-cover" />
             ))}
         </div>
     );
