@@ -111,7 +111,7 @@ func (s *Service) ProjectWorkflows(projectID string) ([]ProjectWorkflowDetail, e
 }
 
 func (s *Service) CreateUnitWorkflow(userID string, projectID string, unitID string) (ProjectWorkflowDetail, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return ProjectWorkflowDetail{}, err
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
@@ -121,7 +121,7 @@ func (s *Service) CreateUnitWorkflow(userID string, projectID string, unitID str
 }
 
 func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID string, req UpdateWorkflowStepRequest) (model.WorkflowStepInstance, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.WorkflowStepInstance{}, err
 	}
 	step, err := s.repo.WorkflowStepForProject(projectID, stepID)
@@ -180,7 +180,7 @@ func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID str
 }
 
 func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID string, req RegisterTaskOutputRequest) (model.WorkflowStepInstance, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.WorkflowStepInstance{}, err
 	}
 	task, err := s.repo.TaskForUser(userID, strings.TrimSpace(req.TaskID))
@@ -312,7 +312,7 @@ func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	}
 	projectID := strings.TrimSpace(input.DomainProjectID)
 	if projectID == "" {
-		if _, projectErr := s.repo.ProjectForUser(task.UserID, task.ProjectID); projectErr == nil {
+		if _, projectErr := s.repo.ProjectEditableForUser(task.UserID, task.ProjectID, time.Now()); projectErr == nil {
 			projectID = task.ProjectID
 		}
 	}

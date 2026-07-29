@@ -110,6 +110,54 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"id": c.Param("id")})
 	})
+	r.PUT("/projects/:id/team", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req service.AssignProjectTeamRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		project, err := svc.AssignProjectTeam(user, c.Param("id"), req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"project": project})
+	})
+	r.GET("/projects/:id/permissions", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		overview, err := svc.ProjectAccessOverview(user, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, overview)
+	})
+	r.PUT("/projects/:id/permissions/:userId", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req service.UpdateProjectCollaboratorRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := svc.UpdateProjectCollaborator(user, c.Param("id"), c.Param("userId"), req); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"updated": true})
+	})
 	r.POST("/projects/:id/units", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

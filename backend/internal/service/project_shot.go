@@ -40,7 +40,7 @@ type CreateAssetCandidatesRequest struct {
 }
 
 func (s *Service) CreateProjectShot(userID string, projectID string, req CreateProjectShotRequest) (model.Shot, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.Shot{}, err
 	}
 	unitID := strings.TrimSpace(req.UnitID)
@@ -89,7 +89,7 @@ func (s *Service) CreateProjectShot(userID string, projectID string, req CreateP
 }
 
 func (s *Service) ReplaceProjectUnitShots(userID string, projectID string, unitID string, req ReplaceProjectUnitShotsRequest) ([]model.Shot, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return nil, err
 	}
 	unitID = strings.TrimSpace(unitID)
@@ -126,7 +126,7 @@ func validShotStatus(status string) bool {
 }
 
 func (s *Service) LinkShotAsset(userID string, projectID string, shotID string, req LinkShotAssetRequest) (model.ShotAssetReference, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.ShotAssetReference{}, err
 	}
 	if _, err := s.repo.ShotForProject(projectID, shotID); err != nil {
@@ -151,7 +151,7 @@ func (s *Service) LinkShotAsset(userID string, projectID string, shotID string, 
 }
 
 func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, req CreateAssetCandidatesRequest) ([]model.ProjectAssetCandidate, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return nil, err
 	}
 	if len(req.Candidates) == 0 || len(req.Candidates) > 100 {

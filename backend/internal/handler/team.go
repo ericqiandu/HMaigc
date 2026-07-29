@@ -1,7 +1,11 @@
 package handler
 
 import (
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/service"
 
@@ -172,5 +176,90 @@ func RegisterTeamRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, gin.H{"left": true})
+	})
+	r.GET("/teams/:id/resources", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+		resources, err := svc.TeamResources(user.ID, c.Param("id"), limit)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"resources": resources})
+	})
+	r.POST("/teams/:id/resources", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "team-resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, (policy.Resource.ResourceUploadMB<<20)+(1<<20))
+		file, err := c.FormFile("file")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		width, _ := strconv.Atoi(c.PostForm("width"))
+		height, _ := strconv.Atoi(c.PostForm("height"))
+		durationMs, _ := strconv.ParseInt(c.PostForm("durationMs"), 10, 64)
+		resource, err := svc.UploadTeamResource(user.ID, c.Param("id"), file, c.PostForm("kind"), width, height, durationMs)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"resource": resource})
+	})
+	r.GET("/teams/:id/resources/:resourceId/file", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		resource, err := svc.TeamResource(user.ID, c.Param("id"), c.Param("resourceId"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		etag := resourceResponseETag(resource)
+		c.Header("Cache-Control", "private, no-cache")
+		c.Header("ETag", etag)
+		c.Header("Accept-Ranges", "bytes")
+		c.Header("X-Content-Type-Options", "nosniff")
+		if ifNoneMatch(c.GetHeader("If-None-Match"), etag) {
+			c.Status(http.StatusNotModified)
+			return
+		}
+		rangeHeader := c.GetHeader("Range")
+		if ifRange := strings.TrimSpace(c.GetHeader("If-Range")); ifRange != "" && ifRange != etag {
+			rangeHeader = ""
+		}
+		stream, err := svc.OpenTeamResourceRange(user.ID, c.Param("id"), resource.ID, rangeHeader)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		defer stream.Body.Close()
+		if resource.MimeType == "" {
+			resource.MimeType = "application/octet-stream"
+		}
+		if resource.Provider == "local" {
+			if seeker, ok := stream.Body.(io.ReadSeeker); ok {
+				c.Header("Content-Type", resource.MimeType)
+				http.ServeContent(c.Writer, c.Request, resource.ID, resource.UpdatedAt, seeker)
+				return
+			}
+		}
+		if stream.ContentRange != "" {
+			c.Header("Content-Range", stream.ContentRange)
+		}
+		c.DataFromReader(stream.StatusCode, stream.ContentLength, resource.MimeType, stream.Body, nil)
 	})
 }

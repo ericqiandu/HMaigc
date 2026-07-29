@@ -20,15 +20,21 @@ type MembershipPlanView struct {
 }
 
 type MembershipEntitlement struct {
-	PlanID             string                   `json:"planId"`
-	PlanName           string                   `json:"planName"`
-	Tier               string                   `json:"tier"`
-	Audience           model.MembershipAudience `json:"audience"`
-	ImageConcurrency   int                      `json:"imageConcurrency"`
-	VideoConcurrency   int                      `json:"videoConcurrency"`
-	TopupDiscountBasis int                      `json:"topupDiscountBasisPoints"`
-	TeamID             string                   `json:"teamId,omitempty"`
-	ExpiresAt          *time.Time               `json:"expiresAt,omitempty"`
+	PlanID                    string                   `json:"planId"`
+	PlanName                  string                   `json:"planName"`
+	Tier                      string                   `json:"tier"`
+	Audience                  model.MembershipAudience `json:"audience"`
+	ImageConcurrency          int                      `json:"imageConcurrency"`
+	VideoConcurrency          int                      `json:"videoConcurrency"`
+	UnlimitedTaskQueue        bool                     `json:"unlimitedTaskQueue"`
+	TeamStorageBytes          int64                    `json:"teamStorageBytes"`
+	SharedAssetsEnabled       bool                     `json:"sharedAssetsEnabled"`
+	ProjectPermissionsEnabled bool                     `json:"projectPermissionsEnabled"`
+	InvoicingEnabled          bool                     `json:"invoicingEnabled"`
+	CommercialUseEnabled      bool                     `json:"commercialUseEnabled"`
+	TopupDiscountBasis        int                      `json:"topupDiscountBasisPoints"`
+	TeamID                    string                   `json:"teamId,omitempty"`
+	ExpiresAt                 *time.Time               `json:"expiresAt,omitempty"`
 }
 
 type CreateMembershipOrderRequest struct {
@@ -38,18 +44,24 @@ type CreateMembershipOrderRequest struct {
 }
 
 type UpdateMembershipPlanRequest struct {
-	Name                     string   `json:"name"`
-	PriceCents               int64    `json:"priceCents"`
-	OriginalPriceCents       int64    `json:"originalPriceCents"`
-	CreditsPerPeriod         int64    `json:"creditsPerPeriod"`
-	ImageConcurrency         int      `json:"imageConcurrency"`
-	VideoConcurrency         int      `json:"videoConcurrency"`
-	TopupDiscountBasisPoints int      `json:"topupDiscountBasisPoints"`
-	MinSeats                 int      `json:"minSeats"`
-	MaxSeats                 int      `json:"maxSeats"`
-	Benefits                 []string `json:"benefits"`
-	Enabled                  bool     `json:"enabled"`
-	SortOrder                int      `json:"sortOrder"`
+	Name                      string   `json:"name"`
+	PriceCents                int64    `json:"priceCents"`
+	OriginalPriceCents        int64    `json:"originalPriceCents"`
+	CreditsPerPeriod          int64    `json:"creditsPerPeriod"`
+	ImageConcurrency          int      `json:"imageConcurrency"`
+	VideoConcurrency          int      `json:"videoConcurrency"`
+	UnlimitedTaskQueue        bool     `json:"unlimitedTaskQueue"`
+	TeamStorageBytes          int64    `json:"teamStorageBytes"`
+	SharedAssetsEnabled       bool     `json:"sharedAssetsEnabled"`
+	ProjectPermissionsEnabled bool     `json:"projectPermissionsEnabled"`
+	InvoicingEnabled          bool     `json:"invoicingEnabled"`
+	CommercialUseEnabled      bool     `json:"commercialUseEnabled"`
+	TopupDiscountBasisPoints  int      `json:"topupDiscountBasisPoints"`
+	MinSeats                  int      `json:"minSeats"`
+	MaxSeats                  int      `json:"maxSeats"`
+	Benefits                  []string `json:"benefits"`
+	Enabled                   bool     `json:"enabled"`
+	SortOrder                 int      `json:"sortOrder"`
 }
 
 type ConfirmMembershipOrderRequest struct {
@@ -62,6 +74,7 @@ type CloseMembershipOrderRequest struct {
 }
 
 func (s *Service) EnsureDefaultMembershipPlans() error {
+	const teamStorage130TB int64 = 130 * (1 << 40)
 	benefits := func(values ...string) string {
 		payload, err := json.Marshal(values)
 		if err != nil {
@@ -77,9 +90,9 @@ func (s *Service) EnsureDefaultMembershipPlans() error {
 		{ID: newID(), Code: "max-year", Name: "Max", Tier: "max", Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 310900, OriginalPriceCents: 777600, Currency: "CNY", CreditsPerPeriod: 64800 * 12 * CreditScale, ImageConcurrency: 8, VideoConcurrency: 6, TopupDiscountBasisPoints: 7500, BenefitsJSON: benefits("每年 777,600 积分", "图片并发 8 路", "视频并发 6 路", "积分充值 7.5 折"), Enabled: true, SortOrder: 31},
 		{ID: newID(), Code: "ultra-month", Name: "Ultra", Tier: "ultra", Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleMonth, PriceCents: 131400, OriginalPriceCents: 205300, Currency: "CNY", CreditsPerPeriod: 131400 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 7000, BenefitsJSON: benefits("每月 131,400 积分", "图片并发 12 路", "视频并发 8 路", "积分充值 7 折"), Enabled: true, SortOrder: 40},
 		{ID: newID(), Code: "ultra-year", Name: "Ultra", Tier: "ultra", Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 630900, OriginalPriceCents: 1576800, Currency: "CNY", CreditsPerPeriod: 131400 * 12 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 7000, BenefitsJSON: benefits("每年 1,576,800 积分", "图片并发 12 路", "视频并发 8 路", "积分充值 7 折"), Enabled: true, SortOrder: 41},
-		{ID: newID(), Code: "team-pro-year", Name: "团队 Pro", Tier: "pro", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 149900, OriginalPriceCents: 237600, Currency: "CNY", CreditsPerPeriod: 19800 * 12 * CreditScale, ImageConcurrency: 6, VideoConcurrency: 4, TopupDiscountBasisPoints: 9000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队席位与角色权限", "邮箱邀请与到期释放", "成员共享套餐模型访问", "关键操作审计记录", "图片并发 6 路/席位", "视频并发 4 路/席位"), Enabled: true, SortOrder: 50},
-		{ID: newID(), Code: "team-max-year", Name: "团队 Max", Tier: "max", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 449900, OriginalPriceCents: 777600, Currency: "CNY", CreditsPerPeriod: 64800 * 12 * CreditScale, ImageConcurrency: 8, VideoConcurrency: 6, TopupDiscountBasisPoints: 8500, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队席位与角色权限", "邮箱邀请与到期释放", "成员共享套餐模型访问", "关键操作审计记录", "图片并发 8 路/席位", "视频并发 6 路/席位"), Enabled: true, SortOrder: 60},
-		{ID: newID(), Code: "team-ultra-year", Name: "团队 Ultra", Tier: "ultra", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 809900, OriginalPriceCents: 1576800, Currency: "CNY", CreditsPerPeriod: 131400 * 12 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, TopupDiscountBasisPoints: 8000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("团队席位与角色权限", "邮箱邀请与到期释放", "成员共享套餐模型访问", "关键操作审计记录", "图片并发 12 路/席位", "视频并发 8 路/席位"), Enabled: true, SortOrder: 70},
+		{ID: newID(), Code: "team-pro-year", Name: "团队 Pro", Tier: "pro", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 149900, OriginalPriceCents: 237600, Currency: "CNY", CreditsPerPeriod: 19800 * 12 * CreditScale, ImageConcurrency: 6, VideoConcurrency: 4, UnlimitedTaskQueue: true, TeamStorageBytes: teamStorage130TB, SharedAssetsEnabled: true, ProjectPermissionsEnabled: true, InvoicingEnabled: true, CommercialUseEnabled: true, TopupDiscountBasisPoints: 9000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("多人画布协作", "团队共享资产库", "团队任务不限排队（执行并发受模型渠道限制）", "团队席位管理", "积分用量管控", "项目权限管理", "发票申请与交付", "团队资产隔离", "云端存储空间 130 TB", "商业使用授权"), Enabled: true, SortOrder: 50},
+		{ID: newID(), Code: "team-max-year", Name: "团队 Max", Tier: "max", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 449900, OriginalPriceCents: 777600, Currency: "CNY", CreditsPerPeriod: 64800 * 12 * CreditScale, ImageConcurrency: 8, VideoConcurrency: 6, UnlimitedTaskQueue: true, TeamStorageBytes: teamStorage130TB, SharedAssetsEnabled: true, ProjectPermissionsEnabled: true, InvoicingEnabled: true, CommercialUseEnabled: true, TopupDiscountBasisPoints: 8500, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("多人画布协作", "团队共享资产库", "团队任务不限排队（执行并发受模型渠道限制）", "团队席位管理", "积分用量管控", "项目权限管理", "发票申请与交付", "团队资产隔离", "云端存储空间 130 TB", "商业使用授权"), Enabled: true, SortOrder: 60},
+		{ID: newID(), Code: "team-ultra-year", Name: "团队 Ultra", Tier: "ultra", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear, PriceCents: 809900, OriginalPriceCents: 1576800, Currency: "CNY", CreditsPerPeriod: 131400 * 12 * CreditScale, ImageConcurrency: 12, VideoConcurrency: 8, UnlimitedTaskQueue: true, TeamStorageBytes: teamStorage130TB, SharedAssetsEnabled: true, ProjectPermissionsEnabled: true, InvoicingEnabled: true, CommercialUseEnabled: true, TopupDiscountBasisPoints: 8000, MinSeats: 2, MaxSeats: 200, BenefitsJSON: benefits("多人画布协作", "团队共享资产库", "团队任务不限排队（执行并发受模型渠道限制）", "团队席位管理", "积分用量管控", "项目权限管理", "发票申请与交付", "团队资产隔离", "云端存储空间 130 TB", "商业使用授权"), Enabled: true, SortOrder: 70},
 	}
 	for index := range plans {
 		if err := s.repo.CreateMembershipPlanIfMissing(&plans[index]); err != nil {
@@ -105,13 +118,55 @@ func (s *Service) MembershipPlans(admin *model.User) ([]MembershipPlanView, erro
 func membershipPlanViews(plans []model.MembershipPlan) ([]MembershipPlanView, error) {
 	views := make([]MembershipPlanView, 0, len(plans))
 	for _, plan := range plans {
-		var benefits []string
-		if err := json.Unmarshal([]byte(plan.BenefitsJSON), &benefits); err != nil {
-			return nil, fmt.Errorf("套餐 %s 的权益配置损坏: %w", plan.Code, err)
+		benefits, err := membershipPlanBenefits(plan)
+		if err != nil {
+			return nil, err
 		}
 		views = append(views, MembershipPlanView{MembershipPlan: plan, Benefits: benefits})
 	}
 	return views, nil
+}
+
+// membershipPlanBenefits keeps operational team entitlements as the public source of truth.
+// Personal plans still use editable marketing copy because they have no team capability switches.
+func membershipPlanBenefits(plan model.MembershipPlan) ([]string, error) {
+	if plan.Audience != model.MembershipAudienceTeam {
+		var benefits []string
+		if err := json.Unmarshal([]byte(plan.BenefitsJSON), &benefits); err != nil {
+			return nil, fmt.Errorf("套餐 %s 的权益配置损坏: %w", plan.Code, err)
+		}
+		return benefits, nil
+	}
+	benefits := []string{"多人画布协作"}
+	if plan.SharedAssetsEnabled {
+		benefits = append(benefits, "团队共享资产库")
+	}
+	if plan.UnlimitedTaskQueue {
+		benefits = append(benefits, "团队任务不限排队（执行并发受模型渠道限制）")
+	}
+	benefits = append(benefits, "团队席位管理", "积分用量管控")
+	if plan.ProjectPermissionsEnabled {
+		benefits = append(benefits, "项目权限管理")
+	}
+	if plan.InvoicingEnabled {
+		benefits = append(benefits, "发票申请与交付")
+	}
+	benefits = append(benefits, "团队资产隔离")
+	if plan.TeamStorageBytes > 0 {
+		benefits = append(benefits, "云端存储空间 "+formatTeamStorage(plan.TeamStorageBytes))
+	}
+	if plan.CommercialUseEnabled {
+		benefits = append(benefits, "商业使用授权")
+	}
+	return benefits, nil
+}
+
+func formatTeamStorage(bytes int64) string {
+	const tebibyte int64 = 1 << 40
+	if bytes%tebibyte == 0 {
+		return fmt.Sprintf("%d TB", bytes/tebibyte)
+	}
+	return fmt.Sprintf("%.1f TB", float64(bytes)/float64(tebibyte))
 }
 
 func (s *Service) MembershipEntitlement(user *model.User) (*MembershipEntitlement, error) {
@@ -142,7 +197,7 @@ func (s *Service) MembershipEntitlement(user *model.User) (*MembershipEntitlemen
 	}
 	for _, plan := range plans {
 		if plan.Code == "origin-free" {
-			return &MembershipEntitlement{PlanID: plan.ID, PlanName: plan.Name, Tier: plan.Tier, Audience: plan.Audience, ImageConcurrency: plan.ImageConcurrency, VideoConcurrency: plan.VideoConcurrency, TopupDiscountBasis: plan.TopupDiscountBasisPoints}, nil
+			return entitlementFromPlan(plan, "", nil), nil
 		}
 	}
 	return nil, errors.New("缺少启用的 Origin 基础套餐，无法确定并发权益")
@@ -185,17 +240,39 @@ func membershipEntitlementFromSubscription(subscription model.MembershipSubscrip
 	if snapshot.TopupDiscountBasisPoints < 0 || snapshot.TopupDiscountBasisPoints > 10000 {
 		return nil, fmt.Errorf("有效订阅 %s 的套餐快照充值折扣无效", subscription.ID)
 	}
+	return entitlementFromPlan(snapshot, subscription.TeamID, subscription.EndsAt), nil
+}
+
+func (s *Service) billingTeamID(userID string, now time.Time) (string, error) {
+	subscriptions, err := s.repo.ActiveMembershipSubscriptions(userID, now)
+	if err != nil {
+		return "", err
+	}
+	var selected *MembershipEntitlement
+	for _, subscription := range subscriptions {
+		candidate, parseErr := membershipEntitlementFromSubscription(subscription)
+		if parseErr != nil {
+			return "", parseErr
+		}
+		if selected == nil || candidate.ImageConcurrency+candidate.VideoConcurrency > selected.ImageConcurrency+selected.VideoConcurrency {
+			selected = candidate
+		}
+	}
+	if selected == nil {
+		return "", nil
+	}
+	return selected.TeamID, nil
+}
+
+func entitlementFromPlan(plan model.MembershipPlan, teamID string, expiresAt *time.Time) *MembershipEntitlement {
 	return &MembershipEntitlement{
-		PlanID:             snapshot.ID,
-		PlanName:           snapshot.Name,
-		Tier:               snapshot.Tier,
-		Audience:           snapshot.Audience,
-		ImageConcurrency:   snapshot.ImageConcurrency,
-		VideoConcurrency:   snapshot.VideoConcurrency,
-		TopupDiscountBasis: snapshot.TopupDiscountBasisPoints,
-		TeamID:             subscription.TeamID,
-		ExpiresAt:          subscription.EndsAt,
-	}, nil
+		PlanID: plan.ID, PlanName: plan.Name, Tier: plan.Tier, Audience: plan.Audience,
+		ImageConcurrency: plan.ImageConcurrency, VideoConcurrency: plan.VideoConcurrency,
+		UnlimitedTaskQueue: plan.UnlimitedTaskQueue, TeamStorageBytes: plan.TeamStorageBytes,
+		SharedAssetsEnabled: plan.SharedAssetsEnabled, ProjectPermissionsEnabled: plan.ProjectPermissionsEnabled,
+		InvoicingEnabled: plan.InvoicingEnabled, CommercialUseEnabled: plan.CommercialUseEnabled,
+		TopupDiscountBasis: plan.TopupDiscountBasisPoints, TeamID: teamID, ExpiresAt: expiresAt,
+	}
 }
 
 func (s *Service) CreateMembershipOrder(user *model.User, req CreateMembershipOrderRequest) (*model.MembershipOrder, error) {
@@ -272,18 +349,32 @@ func (s *Service) AdminUpdateMembershipPlan(actor *model.User, id string, req Up
 	if plan.Audience == model.MembershipAudienceTeam && (req.MinSeats < 2 || req.MaxSeats < req.MinSeats) {
 		return nil, BadAuthRequest("团队套餐席位范围无效")
 	}
+	if req.OriginalPriceCents < 0 || req.TeamStorageBytes < 0 {
+		return nil, BadAuthRequest("套餐原价或团队存储额度无效")
+	}
+	if plan.Audience == model.MembershipAudienceTeam {
+		if req.SharedAssetsEnabled && req.TeamStorageBytes <= 0 {
+			return nil, BadAuthRequest("启用团队共享资产库时必须配置有效存储额度")
+		}
+	} else if req.UnlimitedTaskQueue || req.TeamStorageBytes != 0 || req.SharedAssetsEnabled || req.ProjectPermissionsEnabled || req.InvoicingEnabled || req.CommercialUseEnabled {
+		return nil, BadAuthRequest("个人套餐不能配置团队商业权益")
+	}
 	benefits, err := json.Marshal(req.Benefits)
 	if err != nil {
 		return nil, err
 	}
 	plan.Name, plan.PriceCents, plan.OriginalPriceCents = strings.TrimSpace(req.Name), req.PriceCents, req.OriginalPriceCents
 	plan.CreditsPerPeriod, plan.ImageConcurrency, plan.VideoConcurrency = req.CreditsPerPeriod, req.ImageConcurrency, req.VideoConcurrency
+	plan.UnlimitedTaskQueue, plan.TeamStorageBytes = req.UnlimitedTaskQueue, req.TeamStorageBytes
+	plan.SharedAssetsEnabled, plan.ProjectPermissionsEnabled = req.SharedAssetsEnabled, req.ProjectPermissionsEnabled
+	plan.InvoicingEnabled, plan.CommercialUseEnabled = req.InvoicingEnabled, req.CommercialUseEnabled
 	plan.TopupDiscountBasisPoints, plan.MinSeats, plan.MaxSeats = req.TopupDiscountBasisPoints, req.MinSeats, req.MaxSeats
 	plan.BenefitsJSON, plan.Enabled, plan.SortOrder = string(benefits), req.Enabled, req.SortOrder
-	if err := s.repo.SaveMembershipPlan(plan); err != nil {
+	audit, err := newAdminAuditEvent(actor, "membership_plan.update", "membership_plan", plan.ID, "更新会员套餐", req)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.appendAdminAudit(actor, "membership_plan.update", "membership_plan", plan.ID, "更新会员套餐", req); err != nil {
+	if err := s.repo.SaveMembershipPlan(plan, audit); err != nil {
 		return nil, err
 	}
 	return plan, nil

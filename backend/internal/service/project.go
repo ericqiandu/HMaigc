@@ -191,7 +191,7 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 }
 
 func (s *Service) UpdateProject(userID string, id string, req UpdateProjectRequest) (model.Project, error) {
-	project, err := s.repo.ProjectForUser(userID, id)
+	project, err := s.repo.ProjectEditableForUser(userID, id, time.Now())
 	if err != nil {
 		return model.Project{}, err
 	}
@@ -228,14 +228,15 @@ func (s *Service) UpdateProject(userID string, id string, req UpdateProjectReque
 }
 
 func (s *Service) DeleteProject(userID string, id string) error {
-	if _, err := s.repo.ProjectForUser(userID, id); err != nil {
+	project, err := s.repo.ProjectManageableForUser(userID, id, time.Now())
+	if err != nil {
 		return err
 	}
-	return s.repo.DeleteProject(userID, id)
+	return s.repo.DeleteProject(project.UserID, id)
 }
 
 func (s *Service) CreateProjectUnit(userID string, projectID string, req CreateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := newProjectUnit(projectID, req, req.Position)
@@ -263,7 +264,7 @@ func (s *Service) GetProjectUnit(userID string, projectID string, unitID string)
 }
 
 func (s *Service) ImportProjectUnits(userID string, projectID string, req ImportProjectUnitsRequest) ([]model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return nil, err
 	}
 	if len(req.Units) == 0 || len(req.Units) > 2500 {
@@ -288,7 +289,7 @@ func (s *Service) ImportProjectUnits(userID string, projectID string, req Import
 }
 
 func (s *Service) ReorderProjectUnits(userID string, projectID string, req ReorderProjectUnitsRequest) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return err
 	}
 	units, err := s.repo.ProjectUnits(projectID)
@@ -319,7 +320,7 @@ func (s *Service) ReorderProjectUnits(userID string, projectID string, req Reord
 }
 
 func (s *Service) DeleteProjectUnit(userID string, projectID string, unitID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return err
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
@@ -349,7 +350,7 @@ func newProjectUnit(projectID string, req CreateProjectUnitRequest, position int
 }
 
 func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID string, req UpdateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := s.repo.ProjectUnit(projectID, unitID)
@@ -377,7 +378,7 @@ func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID stri
 }
 
 func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvasUnitRequest) (model.CanvasUnitLink, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.CanvasUnitLink{}, err
 	}
 	canvasID := strings.TrimSpace(req.CanvasID)
@@ -410,7 +411,7 @@ func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvas
 }
 
 func (s *Service) UnlinkCanvasUnit(userID string, projectID string, canvasID string, unitID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return err
 	}
 	canvas, err := s.repo.CanvasProjectForUser(userID, strings.TrimSpace(canvasID))
@@ -427,7 +428,7 @@ func (s *Service) UnlinkCanvasUnit(userID string, projectID string, canvasID str
 }
 
 func (s *Service) UnlinkCanvasProject(userID string, projectID string, canvasID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return err
 	}
 	canvas, err := s.repo.CanvasProjectForUser(userID, strings.TrimSpace(canvasID))
@@ -489,7 +490,7 @@ func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID strin
 		if canvas.ProjectID == "" {
 			return nil
 		}
-		project, projectErr := s.repo.ProjectForUser(canvas.UserID, canvas.ProjectID)
+		project, projectErr := s.repo.ProjectEditableForUser(userID, canvas.ProjectID, time.Now())
 		if projectErr != nil {
 			return projectErr
 		}
@@ -500,7 +501,7 @@ func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID strin
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	project, err := s.repo.ProjectForUser(userID, id)
+	project, err := s.repo.ProjectEditableForUser(userID, id, time.Now())
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil

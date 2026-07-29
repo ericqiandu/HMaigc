@@ -646,6 +646,14 @@ func (r *Repository) ResourceForUser(userID string, id string) (*model.Resource,
 	return &resource, nil
 }
 
+func (r *Repository) ResourceForTeam(teamID string, id string) (*model.Resource, error) {
+	var resource model.Resource
+	if err := r.db.First(&resource, "id = ? AND team_id = ? AND status <> ?", id, teamID, model.ResourceStatusDeleted).Error; err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
 func (r *Repository) Resource(id string) (*model.Resource, error) {
 	var resource model.Resource
 	if err := r.db.First(&resource, "id = ?", id).Error; err != nil {
@@ -660,6 +668,16 @@ func (r *Repository) Resources(userID string, limit int) ([]model.Resource, erro
 		limit = 200
 	}
 	err := r.db.Order("created_at desc").Limit(limit).Find(&resources, "user_id = ?", userID).Error
+	return resources, err
+}
+
+func (r *Repository) TeamResources(teamID string, limit int) ([]model.Resource, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	var resources []model.Resource
+	err := r.db.Where("team_id = ? AND status <> ?", teamID, model.ResourceStatusDeleted).
+		Order("created_at desc").Limit(limit).Find(&resources).Error
 	return resources, err
 }
 
@@ -756,17 +774,11 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 }
 
 func (r *Repository) Projects(userID string) ([]model.Project, error) {
-	var projects []model.Project
-	err := r.db.Where("user_id = ?", userID).Order("updated_at desc").Find(&projects).Error
-	return projects, err
+	return r.AccessibleProjects(userID)
 }
 
 func (r *Repository) ProjectForUser(userID string, id string) (*model.Project, error) {
-	var project model.Project
-	if err := r.db.First(&project, "id = ? AND user_id = ?", id, userID).Error; err != nil {
-		return nil, err
-	}
-	return &project, nil
+	return r.ProjectReadableForUser(userID, id)
 }
 
 func (r *Repository) CreateProject(project *model.Project) error {
@@ -814,6 +826,9 @@ func (r *Repository) DeleteProject(userID string, id string) error {
 			return err
 		}
 		if err := tx.Where("project_id = ?", id).Delete(&model.ProjectUnit{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", id).Delete(&model.ProjectCollaborator{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&model.Project{}, "id = ? AND user_id = ?", id, userID).Error

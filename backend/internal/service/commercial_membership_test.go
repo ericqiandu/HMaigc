@@ -264,7 +264,7 @@ func TestMembershipConfirmationRequiresAuditFieldsAndRemainsAtomic(t *testing.T)
 	}
 }
 
-func TestTeamPurchaseGrantsOwnerCreditsAndMemberEntitlement(t *testing.T) {
+func TestTeamPurchaseGrantsTeamCreditsAndMemberEntitlement(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
@@ -292,12 +292,19 @@ func TestTeamPurchaseGrantsOwnerCreditsAndMemberEntitlement(t *testing.T) {
 	if _, err := svc.AcceptTeamInvitationByToken(member, AcceptTeamInvitationRequest{Token: invitation.AcceptToken}); err != nil {
 		t.Fatal(err)
 	}
-	var ownerAccount model.CreditAccount
-	if err := db.First(&ownerAccount, "user_id = ?", owner.ID).Error; err != nil {
+	var teamAccount model.TeamCreditAccount
+	if err := db.First(&teamAccount, "team_id = ?", team.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ownerAccount.AvailableMicrocredits != plan.CreditsPerPeriod*3 {
-		t.Fatalf("owner credits = %d, want %d", ownerAccount.AvailableMicrocredits, plan.CreditsPerPeriod*3)
+	if teamAccount.AvailableMicrocredits != plan.CreditsPerPeriod*3 {
+		t.Fatalf("team credits = %d, want %d", teamAccount.AvailableMicrocredits, plan.CreditsPerPeriod*3)
+	}
+	var ownerAccountCount int64
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", owner.ID).Count(&ownerAccountCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ownerAccountCount != 0 {
+		t.Fatalf("team purchase unexpectedly credited the owner's personal account")
 	}
 	var memberAccountCount int64
 	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", member.ID).Count(&memberAccountCount).Error; err != nil {

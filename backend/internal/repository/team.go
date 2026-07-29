@@ -21,8 +21,9 @@ var (
 
 type TeamMemberRecord struct {
 	model.TeamMember
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
+	Username                string `json:"username"`
+	DisplayName             string `json:"displayName"`
+	MonthlyUsedMicrocredits int64  `json:"monthlyUsedMicrocredits"`
 }
 
 type TeamAuditRecord struct {
@@ -47,11 +48,14 @@ type TeamSummaryRecord struct {
 	CurrentRole            model.TeamMemberRole `json:"currentRole"`
 	SeatUsed               int                  `json:"seatUsed"`
 	InvitationSeatReserved int                  `json:"invitationSeatReserved"`
+	SubscriptionID         string               `json:"subscriptionId"`
 	PlanID                 string               `json:"planId"`
-	PlanName               string               `json:"planName"`
-	PlanTier               string               `json:"planTier"`
+	PlanSnapshotJSON       string               `json:"planSnapshotJson"`
 	SeatLimit              int                  `json:"seatLimit"`
 	SubscriptionEndsAt     *time.Time           `json:"subscriptionEndsAt"`
+	AvailableMicrocredits  int64                `json:"availableMicrocredits"`
+	ReservedMicrocredits   int64                `json:"reservedMicrocredits"`
+	StorageUsedBytes       int64                `json:"storageUsedBytes"`
 }
 
 func (r *Repository) TeamSummaryRecordsForUser(userID string, now time.Time) ([]TeamSummaryRecord, error) {
@@ -64,11 +68,14 @@ func (r *Repository) TeamSummaryRecordsForUser(userID string, now time.Time) ([]
 		       (SELECT COUNT(*) FROM team_invitations pending_invitations
 		         WHERE pending_invitations.team_id = teams.id
 		           AND pending_invitations.status = ? AND pending_invitations.expires_at > ?) AS invitation_seat_reserved,
+		       COALESCE(active_subscription.id, '') AS subscription_id,
 		       COALESCE(active_subscription.plan_id, '') AS plan_id,
-		       COALESCE(plans.name, '') AS plan_name,
-		       COALESCE(plans.tier, '') AS plan_tier,
+		       COALESCE(active_subscription.plan_snapshot_json, '') AS plan_snapshot_json,
 		       COALESCE(active_subscription.seats, 0) AS seat_limit,
-		       active_subscription.ends_at AS subscription_ends_at
+		       active_subscription.ends_at AS subscription_ends_at,
+		       COALESCE((SELECT credits.available_microcredits FROM team_credit_accounts credits WHERE credits.team_id = teams.id), 0) AS available_microcredits,
+		       COALESCE((SELECT credits.reserved_microcredits FROM team_credit_accounts credits WHERE credits.team_id = teams.id), 0) AS reserved_microcredits,
+		       COALESCE((SELECT SUM(resources.size) FROM resources WHERE resources.team_id = teams.id AND resources.status = ?), 0) AS storage_used_bytes
 		FROM teams
 		JOIN team_members actor_membership
 		  ON actor_membership.team_id = teams.id
@@ -85,13 +92,13 @@ func (r *Repository) TeamSummaryRecordsForUser(userID string, now time.Time) ([]
 			ORDER BY candidate.seats DESC, candidate.created_at DESC
 			LIMIT 1
 		  )
-		LEFT JOIN membership_plans plans ON plans.id = active_subscription.plan_id
 		WHERE teams.status = ?
 		ORDER BY teams.created_at DESC
 	`,
 		model.TeamMemberStatusActive,
 		model.TeamInvitationStatusPending,
 		now,
+		model.ResourceStatusReady,
 		userID,
 		model.TeamMemberStatusActive,
 		model.MembershipSubscriptionActive,
@@ -128,16 +135,44 @@ func (r *Repository) TeamMemberByID(teamID string, memberID string) (*model.Team
 
 func (r *Repository) TeamMemberRecords(teamID string) ([]TeamMemberRecord, error) {
 	var records []TeamMemberRecord
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	monthEnd := monthStart.AddDate(0, 1, 0)
 	err := r.db.Raw(`
-		SELECT members.*, users.username, users.display_name
+		SELECT members.*, users.username, users.display_name,
+		       COALESCE((SELECT SUM(orders.amount_microcredits)
+		         FROM billing_orders orders
+		        WHERE orders.team_id = members.team_id
+		          AND orders.user_id = members.user_id
+		          AND orders.created_at >= ? AND orders.created_at < ?
+		          AND orders.status IN ('reserved', 'running', 'settled', 'uncertain')), 0) AS monthly_used_microcredits
 		FROM team_members members
 		JOIN users ON users.id = members.user_id
 		WHERE members.team_id = ? AND members.status = ?
 		ORDER BY
 			CASE members.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
 			members.created_at ASC
-	`, teamID, model.TeamMemberStatusActive).Scan(&records).Error
+	`, monthStart, monthEnd, teamID, model.TeamMemberStatusActive).Scan(&records).Error
 	return records, err
+}
+
+func (r *Repository) TeamCreditAccount(teamID string) (*model.TeamCreditAccount, error) {
+	account := model.TeamCreditAccount{TeamID: teamID}
+	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.First(&account, "team_id = ?", teamID).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
+func (r *Repository) TeamStoredResourceBytes(teamID string) (int64, error) {
+	var bytes int64
+	err := r.db.Model(&model.Resource{}).
+		Where("team_id = ? AND status = ?", teamID, model.ResourceStatusReady).
+		Select("COALESCE(SUM(size), 0)").Scan(&bytes).Error
+	return bytes, err
 }
 
 func (r *Repository) ActiveTeamSubscription(teamID string, now time.Time) (*model.MembershipSubscription, error) {
@@ -219,6 +254,21 @@ func (r *Repository) RenameTeam(teamID string, name string, audit *model.TeamAud
 		result := tx.Model(&model.Team{}).
 			Where("id = ? AND status = ?", teamID, model.TeamStatusActive).
 			Updates(map[string]interface{}{"name": name, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(audit).Error
+	})
+}
+
+func (r *Repository) UpdateTeamMemberPolicy(teamID string, memberID string, role model.TeamMemberRole, monthlyLimit int64, audit *model.TeamAuditEvent, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.TeamMember{}).
+			Where("id = ? AND team_id = ? AND status = ? AND role <> ?", memberID, teamID, model.TeamMemberStatusActive, model.TeamMemberRoleOwner).
+			Updates(map[string]interface{}{"role": role, "monthly_credit_limit_microcredits": monthlyLimit, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}

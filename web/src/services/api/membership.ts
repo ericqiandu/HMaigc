@@ -19,28 +19,71 @@ export type MembershipAudience = "personal" | "team";
 export type MembershipBillingCycle = "free" | "month" | "year";
 
 export type MembershipPlan = {
-    id: string; code: string; name: string; tier: string;
-    audience: MembershipAudience; billingCycle: MembershipBillingCycle;
-    priceCents: number; originalPriceCents: number; currency: string;
-    creditsPerPeriod: number; imageConcurrency: number; videoConcurrency: number;
-    topupDiscountBasisPoints: number; minSeats: number; maxSeats: number;
-    benefitsJson: string; benefits: string[]; enabled: boolean; sortOrder: number;
-    createdAt: string; updatedAt: string;
+    id: string;
+    code: string;
+    name: string;
+    tier: string;
+    audience: MembershipAudience;
+    billingCycle: MembershipBillingCycle;
+    priceCents: number;
+    originalPriceCents: number;
+    currency: string;
+    creditsPerPeriod: number;
+    imageConcurrency: number;
+    videoConcurrency: number;
+    unlimitedTaskQueue: boolean;
+    teamStorageBytes: number;
+    sharedAssetsEnabled: boolean;
+    projectPermissionsEnabled: boolean;
+    invoicingEnabled: boolean;
+    commercialUseEnabled: boolean;
+    topupDiscountBasisPoints: number;
+    minSeats: number;
+    maxSeats: number;
+    benefitsJson: string;
+    benefits: string[];
+    enabled: boolean;
+    sortOrder: number;
+    createdAt: string;
+    updatedAt: string;
 };
 
 export type MembershipEntitlement = {
-    planId: string; planName: string; tier: string; audience: MembershipAudience;
-    imageConcurrency: number; videoConcurrency: number; topupDiscountBasisPoints: number;
-    teamId?: string; expiresAt?: string;
+    planId: string;
+    planName: string;
+    tier: string;
+    audience: MembershipAudience;
+    imageConcurrency: number;
+    videoConcurrency: number;
+    topupDiscountBasisPoints: number;
+    unlimitedTaskQueue: boolean;
+    teamStorageBytes: number;
+    sharedAssetsEnabled: boolean;
+    projectPermissionsEnabled: boolean;
+    invoicingEnabled: boolean;
+    commercialUseEnabled: boolean;
+    teamId?: string;
+    expiresAt?: string;
 };
 
 export type MembershipOrder = {
-    id: string; orderNumber: string; userId: string; teamId?: string; planId: string;
-    seats: number; unitPriceCents: number; totalPriceCents: number; currency: string;
+    id: string;
+    orderNumber: string;
+    userId: string;
+    teamId?: string;
+    planId: string;
+    seats: number;
+    unitPriceCents: number;
+    totalPriceCents: number;
+    currency: string;
     status: "pending" | "paid" | "cancelled" | "refunded";
     planSnapshotJson: string;
-    paymentProvider: string; providerTradeNo: string; resolutionNote?: string;
-    paidAt?: string; createdAt: string; updatedAt: string;
+    paymentProvider: string;
+    providerTradeNo: string;
+    resolutionNote?: string;
+    paidAt?: string;
+    createdAt: string;
+    updatedAt: string;
 };
 
 export type Team = { id: string; ownerUserId: string; name: string; status: "active" | "disabled"; createdAt: string; updatedAt: string };
@@ -72,9 +115,45 @@ export function listAdminMembershipPlans() {
 }
 
 export type UpdateMembershipPlanInput = {
-    name: string; priceCents: number; originalPriceCents: number; creditsPerPeriod: number;
-    imageConcurrency: number; videoConcurrency: number; topupDiscountBasisPoints: number;
-    minSeats: number; maxSeats: number; benefits: string[]; enabled: boolean; sortOrder: number;
+    name: string;
+    priceCents: number;
+    originalPriceCents: number;
+    creditsPerPeriod: number;
+    imageConcurrency: number;
+    videoConcurrency: number;
+    topupDiscountBasisPoints: number;
+    unlimitedTaskQueue: boolean;
+    teamStorageBytes: number;
+    sharedAssetsEnabled: boolean;
+    projectPermissionsEnabled: boolean;
+    invoicingEnabled: boolean;
+    commercialUseEnabled: boolean;
+    minSeats: number;
+    maxSeats: number;
+    benefits: string[];
+    enabled: boolean;
+    sortOrder: number;
+};
+
+export type InvoiceRequestStatus = "pending" | "issued" | "rejected";
+
+export type InvoiceRequest = {
+    id: string;
+    userId: string;
+    teamId?: string;
+    membershipOrderId: string;
+    title: string;
+    taxNumber?: string;
+    email: string;
+    amountCents: number;
+    status: InvoiceRequestStatus;
+    invoiceNumber?: string;
+    invoiceUrl?: string;
+    resolutionNote?: string;
+    resolvedBy?: string;
+    resolvedAt?: string;
+    createdAt: string;
+    updatedAt: string;
 };
 
 export function updateAdminMembershipPlan(id: string, input: UpdateMembershipPlanInput) {
@@ -91,4 +170,28 @@ export function confirmAdminMembershipOrder(id: string, input: { providerTradeNo
 
 export function closeAdminMembershipOrder(id: string, input: { note: string }) {
     return request<MembershipOrder>(api.post(`/admin/membership/orders/${encodeURIComponent(id)}/close`, input));
+}
+
+export function listMyInvoiceRequests() {
+    return request<{ items: InvoiceRequest[] }>(api.get("/membership/invoices"));
+}
+
+export function createInvoiceRequest(input: { membershipOrderId: string; title: string; taxNumber?: string; email: string }) {
+    return request<InvoiceRequest>(api.post("/membership/invoices", input));
+}
+
+export function listAdminInvoiceRequests(status?: InvoiceRequestStatus, page = 1, limit = 30) {
+    return request<{ items: InvoiceRequest[]; total: number; page: number; limit: number }>(api.get("/admin/membership/invoices", { params: { status, page, limit } }));
+}
+
+export function resolveAdminInvoiceRequest(
+    id: string,
+    input: {
+        status: Exclude<InvoiceRequestStatus, "pending">;
+        invoiceNumber?: string;
+        invoiceUrl?: string;
+        note: string;
+    },
+) {
+    return request<{ resolved: boolean }>(api.post(`/admin/membership/invoices/${encodeURIComponent(id)}/resolve`, input));
 }

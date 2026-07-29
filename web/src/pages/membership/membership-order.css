@@ -147,6 +147,111 @@
     font-size: 11px;
 }
 
+.membership-invoices {
+    border-top: 1px solid var(--membership-border);
+}
+
+.membership-invoices-summary {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    list-style: none;
+    padding: 18px 0;
+}
+
+.membership-invoices-summary::-webkit-details-marker {
+    display: none;
+}
+
+.membership-invoices-summary-main,
+.membership-invoices-summary-side,
+.membership-invoices-toolbar,
+.membership-invoice-row {
+    align-items: center;
+    display: flex;
+}
+
+.membership-invoices-summary-main {
+    gap: 10px;
+}
+
+.membership-invoices-summary-icon,
+.membership-invoices-chevron {
+    height: 16px;
+    width: 16px;
+}
+
+.membership-invoices-summary-copy,
+.membership-invoice-primary {
+    display: grid;
+    gap: 3px;
+}
+
+.membership-invoices-title {
+    font-size: 13px;
+}
+
+.membership-invoices-description,
+.membership-invoices-count,
+.membership-invoices-toolbar-note,
+.membership-invoice-meta,
+.membership-invoice-note {
+    color: var(--membership-muted);
+    font-size: 11px;
+}
+
+.membership-invoices-summary-side {
+    gap: 8px;
+}
+
+.membership-invoices[open] .membership-invoices-chevron {
+    transform: rotate(180deg);
+}
+
+.membership-invoices-content {
+    padding-bottom: 18px;
+}
+
+.membership-invoices-toolbar {
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.membership-invoice-list {
+    background: var(--membership-subtle);
+}
+
+.membership-invoice-row {
+    gap: 12px;
+    min-height: 58px;
+    padding: 10px 12px;
+}
+
+.membership-invoice-row + .membership-invoice-row {
+    border-top: 1px solid var(--membership-border);
+}
+
+.membership-invoice-primary {
+    min-width: 0;
+    flex: 1;
+}
+
+.membership-invoice-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.membership-invoice-download {
+    color: var(--membership-accent);
+    font-size: 12px;
+}
+
+.membership-invoices-empty {
+    margin: 18px 0;
+}
+
 .membership-order-meta {
     display: flex;
     align-items: center;

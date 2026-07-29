@@ -21,20 +21,21 @@ import (
 )
 
 type Service struct {
-	repo            *repository.Repository
-	dataDir         string
-	cancelMu        sync.Mutex
-	registrationMu  sync.Mutex
-	emailCodeMu     sync.Mutex
-	redeemBatchMu   sync.Mutex
-	storageMu       sync.Mutex
-	characterTaskMu sync.Mutex
-	siteSettingMu   sync.Mutex
-	activeCancels   map[string]context.CancelFunc
-	pendingStorage  map[string]int64
-	coordinator     *runtimeCoordinator
-	runtimeErr      error
-	workerID        string
+	repo               *repository.Repository
+	dataDir            string
+	cancelMu           sync.Mutex
+	registrationMu     sync.Mutex
+	emailCodeMu        sync.Mutex
+	redeemBatchMu      sync.Mutex
+	storageMu          sync.Mutex
+	characterTaskMu    sync.Mutex
+	siteSettingMu      sync.Mutex
+	activeCancels      map[string]context.CancelFunc
+	pendingStorage     map[string]int64
+	pendingTeamStorage map[string]int64
+	coordinator        *runtimeCoordinator
+	runtimeErr         error
+	workerID           string
 }
 
 const taskWorkerConcurrency = 3
@@ -317,7 +318,10 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))
 	}
 	if errors.Is(err, repository.ErrInsufficientCredits) {
-		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
+		return nil, BadAuthRequest(creditInsufficientMessage(billingOrder.TeamID))
+	}
+	if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
+		return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
 	}
 	if err != nil {
 		return nil, err
@@ -430,7 +434,10 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	task.Capability = capability
 	task, err = s.repo.RetryTaskWithBilling(userID, task.ID, billingOrder, activeTaskPolicy)
 	if errors.Is(err, repository.ErrInsufficientCredits) {
-		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
+		return nil, BadAuthRequest(creditInsufficientMessage(billingOrder.TeamID))
+	}
+	if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
+		return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
 	}
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
@@ -453,6 +460,13 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	}
 	_ = s.log(userID, task.ID, "info", "任务已重新入队", "")
 	return taskForOutput(*task), nil
+}
+
+func creditInsufficientMessage(teamID string) string {
+	if teamID != "" {
+		return "团队积分余额不足，请联系团队所有者续费或充值"
+	}
+	return "积分不足，请先使用兑换码充值"
 }
 
 func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {

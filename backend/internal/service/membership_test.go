@@ -38,8 +38,16 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 		&model.Resource{},
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
+		&model.TeamCreditAccount{},
+		&model.TeamCreditLedgerEntry{},
+		&model.BillingOrder{},
+		&model.InvoiceRequest{},
+		&model.Project{},
+		&model.ProjectCollaborator{},
 		&model.AdminAuditEvent{},
 		&model.SystemSetting{},
+		&model.UserOSSSetting{},
+		&model.UserDailyUploadUsage{},
 		&model.PaymentCheckoutSession{},
 		&model.PaymentTransaction{},
 		&model.PaymentWebhookEvent{},
@@ -394,5 +402,40 @@ func TestTeamMembershipRequiresOwnedTeamAndValidSeatRange(t *testing.T) {
 	}
 	if order.TeamID != team.ID || order.Seats != 3 || order.TotalPriceCents != plan.PriceCents*3 {
 		t.Fatalf("unexpected team order: %#v", order)
+	}
+}
+
+func TestMembershipPlanViewsDerivesTeamCommercialBenefitsFromStructuredEntitlements(t *testing.T) {
+	plans := []model.MembershipPlan{{
+		ID:                        "team-plan-structured",
+		Code:                      "team-structured",
+		Audience:                  model.MembershipAudienceTeam,
+		BenefitsJSON:              `["旧的非结构化宣传文案"]`,
+		UnlimitedTaskQueue:        true,
+		TeamStorageBytes:          130 * (1 << 40),
+		SharedAssetsEnabled:       true,
+		ProjectPermissionsEnabled: true,
+		InvoicingEnabled:          true,
+		CommercialUseEnabled:      true,
+	}}
+	views, err := membershipPlanViews(plans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(views[0].Benefits, "|")
+	want := strings.Join([]string{
+		"多人画布协作",
+		"团队共享资产库",
+		"团队任务不限排队（执行并发受模型渠道限制）",
+		"团队席位管理",
+		"积分用量管控",
+		"项目权限管理",
+		"发票申请与交付",
+		"团队资产隔离",
+		"云端存储空间 130 TB",
+		"商业使用授权",
+	}, "|")
+	if got != want {
+		t.Fatalf("team benefits = %q, want %q", got, want)
 	}
 }

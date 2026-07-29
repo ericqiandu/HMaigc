@@ -193,6 +193,10 @@ func (s *Service) OpenResourceRange(userID string, id string, rangeHeader string
 }
 
 func (s *Service) storeResource(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
+	return s.storeScopedResource(userID, "", kind, fileName, mimeType, size, width, height, durationMs, body)
+}
+
+func (s *Service) storeScopedResource(userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
 	now := time.Now()
 	kind = normalizeResourceKind(kind, mimeType)
 	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting(userID)
@@ -200,11 +204,15 @@ func (s *Service) storeResource(userID string, kind string, fileName string, mim
 		return nil, err
 	}
 	provider := "local"
-	objectKey := localObjectKey(userID, kind, fileName, now)
-	resource := model.Resource{ID: newID(), UserID: userID, Kind: kind, Status: model.ResourceStatusPending, Provider: provider, ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, CreatedAt: now, UpdatedAt: now}
+	scopeKey := userID
+	if teamID != "" {
+		scopeKey = "team-" + teamID
+	}
+	objectKey := localObjectKey(scopeKey, kind, fileName, now)
+	resource := model.Resource{ID: newID(), UserID: userID, TeamID: teamID, Kind: kind, Status: model.ResourceStatusPending, Provider: provider, ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, CreatedAt: now, UpdatedAt: now}
 	if useOSS {
 		provider = setting.Provider
-		objectKey = ossObjectKey(setting, userID, kind, fileName, now)
+		objectKey = ossObjectKey(setting, scopeKey, kind, fileName, now)
 		resource.Provider = provider
 		resource.Endpoint = setting.Endpoint
 		resource.Bucket = setting.Bucket

@@ -42,15 +42,22 @@ type AcceptTeamInvitationRequest struct {
 }
 
 type UpdateTeamMemberRequest struct {
-	Role model.TeamMemberRole `json:"role"`
+	Role                           model.TeamMemberRole `json:"role"`
+	MonthlyCreditLimitMicrocredits *int64               `json:"monthlyCreditLimitMicrocredits"`
 }
 
 type TeamSubscriptionView struct {
-	PlanID    string     `json:"planId"`
-	PlanName  string     `json:"planName"`
-	PlanTier  string     `json:"planTier"`
-	SeatLimit int        `json:"seatLimit"`
-	EndsAt    *time.Time `json:"endsAt,omitempty"`
+	PlanID                    string     `json:"planId"`
+	PlanName                  string     `json:"planName"`
+	PlanTier                  string     `json:"planTier"`
+	SeatLimit                 int        `json:"seatLimit"`
+	EndsAt                    *time.Time `json:"endsAt,omitempty"`
+	UnlimitedTaskQueue        bool       `json:"unlimitedTaskQueue"`
+	TeamStorageBytes          int64      `json:"teamStorageBytes"`
+	SharedAssetsEnabled       bool       `json:"sharedAssetsEnabled"`
+	ProjectPermissionsEnabled bool       `json:"projectPermissionsEnabled"`
+	InvoicingEnabled          bool       `json:"invoicingEnabled"`
+	CommercialUseEnabled      bool       `json:"commercialUseEnabled"`
 }
 
 type TeamSummary struct {
@@ -59,6 +66,9 @@ type TeamSummary struct {
 	SeatUsed               int                   `json:"seatUsed"`
 	InvitationSeatReserved int                   `json:"invitationSeatReserved"`
 	Subscription           *TeamSubscriptionView `json:"subscription,omitempty"`
+	AvailableMicrocredits  int64                 `json:"availableMicrocredits"`
+	ReservedMicrocredits   int64                 `json:"reservedMicrocredits"`
+	StorageUsedBytes       int64                 `json:"storageUsedBytes"`
 }
 
 type TeamDetail struct {
@@ -118,11 +128,24 @@ func (s *Service) TeamWorkspace(user *model.User) (*TeamWorkspace, error) {
 			CurrentRole:            record.CurrentRole,
 			SeatUsed:               record.SeatUsed,
 			InvitationSeatReserved: record.InvitationSeatReserved,
+			AvailableMicrocredits:  record.AvailableMicrocredits,
+			ReservedMicrocredits:   record.ReservedMicrocredits,
+			StorageUsedBytes:       record.StorageUsedBytes,
 		}
-		if record.PlanID != "" {
+		if record.SubscriptionID != "" {
+			entitlement, entitlementErr := membershipEntitlementFromSubscription(model.MembershipSubscription{
+				ID: record.SubscriptionID, TeamID: record.ID, PlanID: record.PlanID,
+				Seats: record.SeatLimit, PlanSnapshotJSON: record.PlanSnapshotJSON, EndsAt: record.SubscriptionEndsAt,
+			})
+			if entitlementErr != nil {
+				return nil, entitlementErr
+			}
 			summary.Subscription = &TeamSubscriptionView{
-				PlanID: record.PlanID, PlanName: record.PlanName, PlanTier: record.PlanTier,
+				PlanID: entitlement.PlanID, PlanName: entitlement.PlanName, PlanTier: entitlement.Tier,
 				SeatLimit: record.SeatLimit, EndsAt: record.SubscriptionEndsAt,
+				UnlimitedTaskQueue: entitlement.UnlimitedTaskQueue, TeamStorageBytes: entitlement.TeamStorageBytes,
+				SharedAssetsEnabled: entitlement.SharedAssetsEnabled, ProjectPermissionsEnabled: entitlement.ProjectPermissionsEnabled,
+				InvoicingEnabled: entitlement.InvoicingEnabled, CommercialUseEnabled: entitlement.CommercialUseEnabled,
 			}
 		}
 		summaries = append(summaries, summary)
@@ -315,6 +338,13 @@ func (s *Service) UpdateTeamMember(user *model.User, teamID string, memberID str
 	if req.Role != model.TeamMemberRoleAdmin && req.Role != model.TeamMemberRoleMember {
 		return BadAuthRequest("成员角色无效")
 	}
+	monthlyLimit := int64(0)
+	if req.MonthlyCreditLimitMicrocredits != nil {
+		monthlyLimit = *req.MonthlyCreditLimitMicrocredits
+		if monthlyLimit < 0 {
+			return BadAuthRequest("成员月度积分额度不能为负数")
+		}
+	}
 	target, err := s.repo.TeamMemberByID(team.ID, memberID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &AuthError{Status: http.StatusNotFound, Message: "团队成员不存在"}
@@ -325,19 +355,24 @@ func (s *Service) UpdateTeamMember(user *model.User, teamID string, memberID str
 	if target.Role == model.TeamMemberRoleOwner {
 		return Forbidden("团队所有者角色不可修改")
 	}
-	if target.Role == req.Role {
-		return BadAuthRequest("成员已经是该角色")
+	if req.MonthlyCreditLimitMicrocredits == nil {
+		monthlyLimit = target.MonthlyCreditLimitMicrocredits
+	}
+	if target.Role == req.Role && target.MonthlyCreditLimitMicrocredits == monthlyLimit {
+		return BadAuthRequest("成员角色和月度积分额度均未变化")
 	}
 	now := time.Now()
 	metadata, err := json.Marshal(struct {
-		PreviousRole model.TeamMemberRole `json:"previousRole"`
-		Role         model.TeamMemberRole `json:"role"`
-	}{PreviousRole: target.Role, Role: req.Role})
+		PreviousRole                           model.TeamMemberRole `json:"previousRole"`
+		Role                                   model.TeamMemberRole `json:"role"`
+		PreviousMonthlyCreditLimitMicrocredits int64                `json:"previousMonthlyCreditLimitMicrocredits"`
+		MonthlyCreditLimitMicrocredits         int64                `json:"monthlyCreditLimitMicrocredits"`
+	}{PreviousRole: target.Role, Role: req.Role, PreviousMonthlyCreditLimitMicrocredits: target.MonthlyCreditLimitMicrocredits, MonthlyCreditLimitMicrocredits: monthlyLimit})
 	if err != nil {
 		return err
 	}
-	audit := newTeamAuditEvent(team.ID, user.ID, "member.role_updated", string(metadata), now)
-	return s.repo.UpdateTeamMemberRole(team.ID, memberID, req.Role, audit, now)
+	audit := newTeamAuditEvent(team.ID, user.ID, "member.policy_updated", string(metadata), now)
+	return s.repo.UpdateTeamMemberPolicy(team.ID, memberID, req.Role, monthlyLimit, audit, now)
 }
 
 func (s *Service) RemoveTeamMember(user *model.User, teamID string, memberID string) error {
@@ -437,13 +472,26 @@ func (s *Service) teamSummary(team model.Team, role model.TeamMemberRole, now ti
 	if err != nil {
 		return nil, err
 	}
-	plan, err := s.repo.MembershipPlan(subscription.PlanID)
+	entitlement, err := membershipEntitlementFromSubscription(*subscription)
 	if err != nil {
 		return nil, err
 	}
 	summary.Subscription = &TeamSubscriptionView{
-		PlanID: plan.ID, PlanName: plan.Name, PlanTier: plan.Tier,
+		PlanID: entitlement.PlanID, PlanName: entitlement.PlanName, PlanTier: entitlement.Tier,
 		SeatLimit: subscription.Seats, EndsAt: subscription.EndsAt,
+		UnlimitedTaskQueue: entitlement.UnlimitedTaskQueue, TeamStorageBytes: entitlement.TeamStorageBytes,
+		SharedAssetsEnabled: entitlement.SharedAssetsEnabled, ProjectPermissionsEnabled: entitlement.ProjectPermissionsEnabled,
+		InvoicingEnabled: entitlement.InvoicingEnabled, CommercialUseEnabled: entitlement.CommercialUseEnabled,
+	}
+	account, err := s.repo.TeamCreditAccount(team.ID)
+	if err != nil {
+		return nil, err
+	}
+	summary.AvailableMicrocredits = account.AvailableMicrocredits
+	summary.ReservedMicrocredits = account.ReservedMicrocredits
+	summary.StorageUsedBytes, err = s.repo.TeamStoredResourceBytes(team.ID)
+	if err != nil {
+		return nil, err
 	}
 	return summary, nil
 }

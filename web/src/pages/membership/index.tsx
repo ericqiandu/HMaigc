@@ -9,6 +9,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 import { billingCycleShortLabel, clampSeats, topupDiscountLabel } from "./membership-formatters";
 import { MembershipOrderHistory } from "./membership-order-history";
+import { MembershipInvoiceCenter } from "./membership-invoice-center";
 import { MembershipPlanCard } from "./membership-plan-card";
 import { MembershipPurchaseModal } from "./membership-purchase-modal";
 import "./membership.css";
@@ -302,6 +303,7 @@ export default function MembershipPage() {
                                 </div>
                             </div>
                             <MembershipOrderHistory cancellingId={cancellingId} className="membership-orders-section" onCancel={(orderId) => void cancelOrder(orderId)} orders={overview.orders} plansById={plansById} />
+                            <MembershipInvoiceCenter email={user?.email || ""} orders={overview.orders} plansById={plansById} />
                         </section>
                     ) : null}
                 </div>

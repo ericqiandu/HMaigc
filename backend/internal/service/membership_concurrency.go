@@ -55,6 +55,7 @@ func (s *Service) membershipActiveTaskPolicy(userID string, taskType string, run
 		TotalLimit:      totalLimit,
 		Capability:      capability,
 		CapabilityLimit: capabilityLimit,
+		Unlimited:       entitlement.UnlimitedTaskQueue,
 	}, capability, nil
 }
 

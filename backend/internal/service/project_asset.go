@@ -88,7 +88,7 @@ func (s *Service) ProjectAssets(userID string, projectID string) ([]ProjectAsset
 }
 
 func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProjectAssetRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	assetID := strings.TrimSpace(req.AssetID)
@@ -159,7 +159,7 @@ func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProj
 }
 
 func (s *Service) UnlinkProjectAsset(userID string, projectID string, assetID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return err
 	}
 	asset, err := s.repo.AssetForUser(userID, assetID)
@@ -215,7 +215,7 @@ func canvasReferencesCharacterAsset(payloadJSON string, assetID string) (bool, e
 }
 
 func (s *Service) UpdateProjectAssetCategory(userID string, projectID string, assetID string, req UpdateProjectAssetCategoryRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	asset, err := s.repo.AssetForUser(userID, strings.TrimSpace(assetID))
@@ -253,7 +253,7 @@ func (s *Service) UpdateProjectAssetCategory(userID string, projectID string, as
 }
 
 func (s *Service) CreateProjectAssetVersion(userID string, projectID string, assetID string, req CreateAssetVersionRequest) (model.AssetVersion, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.AssetVersion{}, err
 	}
 	asset, err := s.repo.AssetForUser(userID, assetID)
@@ -300,7 +300,7 @@ func (s *Service) CreateProjectAssetVersion(userID string, projectID string, ass
 }
 
 func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, candidateID string, req ConfirmProjectAssetCandidateRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	candidate, err := s.repo.ProjectAssetCandidate(projectID, candidateID)
@@ -349,7 +349,7 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		if candidate.Category == model.AssetCategoryCharacter {
 			kind = "entity"
 			var characterPayload string
-				characterPayload, marshalErr = characterAssetPayload(assetID, versionID, candidate.Name, json.RawMessage(candidate.DetailsJSON), now, now)
+			characterPayload, marshalErr = characterAssetPayload(assetID, versionID, candidate.Name, json.RawMessage(candidate.DetailsJSON), now, now)
 			payload = []byte(characterPayload)
 		} else {
 			payload, marshalErr = json.Marshal(map[string]any{

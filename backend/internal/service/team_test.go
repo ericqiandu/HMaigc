@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -30,16 +31,22 @@ func activateTeamTestSubscription(t *testing.T, db *gorm.DB, team *model.Team, o
 		ID: newID(), Code: "team-plan-" + team.ID, Name: "团队测试套餐",
 		Tier: "pro", Audience: model.MembershipAudienceTeam, BillingCycle: model.MembershipBillingCycleYear,
 		Currency: "CNY", ImageConcurrency: 6, VideoConcurrency: 4, MinSeats: 2, MaxSeats: 200, Enabled: true,
+		UnlimitedTaskQueue: true, TeamStorageBytes: 130 * (1 << 40), SharedAssetsEnabled: true,
+		ProjectPermissionsEnabled: true, InvoicingEnabled: true, CommercialUseEnabled: true,
 	}
 	if err := db.Create(plan).Error; err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	end := now.AddDate(1, 0, 0)
+	snapshot, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 	subscription := &model.MembershipSubscription{
 		ID: newID(), UserID: owner.ID, TeamID: team.ID, PlanID: plan.ID,
 		Status: model.MembershipSubscriptionActive, Seats: seats, StartsAt: now.Add(-time.Minute),
-		EndsAt: &end, CreatedAt: now, UpdatedAt: now,
+		EndsAt: &end, PlanSnapshotJSON: string(snapshot), CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(subscription).Error; err != nil {
 		t.Fatal(err)

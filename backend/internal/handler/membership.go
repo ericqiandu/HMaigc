@@ -62,6 +62,37 @@ func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, order)
 	})
+	r.GET("/membership/invoices", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		requests, err := svc.MyInvoiceRequests(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"items": requests})
+	})
+	r.POST("/membership/invoices", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req service.CreateInvoiceRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		request, err := svc.CreateInvoiceRequest(user, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, request)
+	})
 	r.GET("/admin/membership/plans", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
 		if err != nil {
@@ -143,5 +174,37 @@ func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, order)
+	})
+	r.GET("/admin/membership/invoices", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
+		items, total, err := svc.AdminInvoiceRequests(actor, c.Query("status"), page, limit)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"items": items, "total": total, "page": page, "limit": limit})
+	})
+	r.POST("/admin/membership/invoices/:id/resolve", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req service.ResolveInvoiceRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := svc.AdminResolveInvoiceRequest(actor, c.Param("id"), req); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"resolved": true})
 	})
 }

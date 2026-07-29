@@ -396,7 +396,10 @@ func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey 
 	}
 	if err := s.repo.ReserveBillingOrder(order); err != nil {
 		if errors.Is(err, repository.ErrInsufficientCredits) {
-			return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
+			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
+		}
+		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
+			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
 		}
 		return nil, err
 	}
@@ -404,6 +407,10 @@ func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey 
 }
 
 func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, usage BillingUsage) (*model.BillingOrder, error) {
+	teamID, err := s.billingTeamID(userID, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	item, err := s.repo.ChannelModelByKey(channelID, modelKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, BadAuthRequest("当前系统渠道模型未配置或已停用")
@@ -517,7 +524,7 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		return nil, err
 	}
 	return &model.BillingOrder{
-		ID: newID(), UserID: userID, IdempotencyKey: idempotencyKey, TaskID: taskID,
+		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
 		PriceTierID: priceTierID, PricingResolution: pricingResolution,

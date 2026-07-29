@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -56,9 +57,13 @@ func TestMemberModelAllowsActivePersonalSubscription(t *testing.T) {
 	svc, db := newModelAccessTestService(t)
 	now := time.Now()
 	endsAt := now.Add(24 * time.Hour)
+	snapshot, err := json.Marshal(model.MembershipPlan{ID: "pro", Name: "Pro", Tier: "pro", Audience: model.MembershipAudiencePersonal, ImageConcurrency: 6, VideoConcurrency: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
 	subscription := model.MembershipSubscription{
 		ID: "subscription-1", UserID: "user-1", PlanID: "pro", OrderID: "order-1",
-		Status: model.MembershipSubscriptionActive, StartsAt: now.Add(-time.Hour), EndsAt: &endsAt,
+		Status: model.MembershipSubscriptionActive, StartsAt: now.Add(-time.Hour), EndsAt: &endsAt, PlanSnapshotJSON: string(snapshot),
 	}
 	if err := db.Create(&subscription).Error; err != nil {
 		t.Fatal(err)
@@ -78,9 +83,13 @@ func TestMemberModelAllowsActiveTeamSeat(t *testing.T) {
 	svc, db := newModelAccessTestService(t)
 	now := time.Now()
 	endsAt := now.Add(24 * time.Hour)
+	snapshot, err := json.Marshal(model.MembershipPlan{ID: "team-pro", Name: "团队 Pro", Tier: "pro", Audience: model.MembershipAudienceTeam, ImageConcurrency: 6, VideoConcurrency: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
 	subscription := model.MembershipSubscription{
 		ID: "subscription-team", TeamID: "team-1", PlanID: "team-pro", OrderID: "order-team",
-		Status: model.MembershipSubscriptionActive, StartsAt: now.Add(-time.Hour), EndsAt: &endsAt,
+		Status: model.MembershipSubscriptionActive, StartsAt: now.Add(-time.Hour), EndsAt: &endsAt, PlanSnapshotJSON: string(snapshot),
 	}
 	member := model.TeamMember{ID: "member-1", TeamID: "team-1", UserID: "user-1", Role: model.TeamMemberRoleMember, Status: model.TeamMemberStatusActive}
 	if err := db.Create(&subscription).Error; err != nil {

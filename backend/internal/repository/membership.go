@@ -39,8 +39,16 @@ func (r *Repository) MembershipPlan(id string) (*model.MembershipPlan, error) {
 	return &plan, r.db.First(&plan, "id = ?", id).Error
 }
 
-func (r *Repository) SaveMembershipPlan(plan *model.MembershipPlan) error {
-	return r.db.Save(plan).Error
+func (r *Repository) SaveMembershipPlan(plan *model.MembershipPlan, audit *model.AdminAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(plan).Error; err != nil {
+			return err
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
+	})
 }
 
 func (r *Repository) MembershipOrders(userID string, limit int, offset int) ([]model.MembershipOrder, int64, error) {
@@ -194,15 +202,19 @@ func (r *Repository) MembershipSubscriptionsAwaitingCreditGrant(now time.Time) (
 	err := r.db.Raw(`
 		SELECT subscriptions.*
 		FROM membership_subscriptions subscriptions
-		LEFT JOIN credit_ledger_entries ledger
-		  ON ledger.reference_key = ('membership-order:' || subscriptions.order_id)
-		 AND ledger.type = ?
+		LEFT JOIN credit_ledger_entries user_ledger
+		  ON user_ledger.reference_key = ('membership-order:' || subscriptions.order_id)
+		 AND user_ledger.type = ?
+		LEFT JOIN team_credit_ledger_entries team_ledger
+		  ON team_ledger.reference_key = ('membership-order:' || subscriptions.order_id)
+		 AND team_ledger.type = ?
 		WHERE subscriptions.status = ?
 		  AND subscriptions.order_id <> ''
 		  AND subscriptions.starts_at <= ?
-		  AND ledger.id IS NULL
+		  AND ((subscriptions.team_id = '' AND user_ledger.id IS NULL)
+		    OR (subscriptions.team_id <> '' AND team_ledger.id IS NULL))
 		ORDER BY subscriptions.starts_at ASC
-	`, model.CreditLedgerMembership, model.MembershipSubscriptionActive, now).Scan(&subscriptions).Error
+	`, model.CreditLedgerMembership, model.CreditLedgerMembership, model.MembershipSubscriptionActive, now).Scan(&subscriptions).Error
 	return subscriptions, err
 }
 
@@ -220,6 +232,34 @@ func (r *Repository) GrantMembershipSubscriptionCredits(subscription *model.Memb
 		}
 		if current.Status != model.MembershipSubscriptionActive || current.StartsAt.After(now) {
 			return errors.New("订阅尚未到积分发放时间")
+		}
+		if current.TeamID != "" {
+			var existing int64
+			if err := tx.Model(&model.TeamCreditLedgerEntry{}).Where("reference_key = ? AND type = ?", *ledger.ReferenceKey, model.CreditLedgerMembership).Count(&existing).Error; err != nil {
+				return err
+			}
+			if existing > 0 {
+				return nil
+			}
+			account := model.TeamCreditAccount{TeamID: current.TeamID}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.TeamCreditAccount{}).Where("team_id = ?", current.TeamID).Updates(map[string]interface{}{
+				"available_microcredits": gorm.Expr("available_microcredits + ?", ledger.AmountMicrocredits),
+				"version":                gorm.Expr("version + 1"), "updated_at": now,
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.First(&account, "team_id = ?", current.TeamID).Error; err != nil {
+				return err
+			}
+			return tx.Create(&model.TeamCreditLedgerEntry{
+				ID: ledger.ID, TeamID: current.TeamID, ActorUserID: ledger.ActorUserID, Type: ledger.Type,
+				AmountMicrocredits: ledger.AmountMicrocredits, AvailableDeltaMicrocredits: ledger.AvailableDeltaMicrocredits,
+				AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
+				Scene: ledger.Scene, Note: ledger.Note, ReferenceKey: ledger.ReferenceKey, CreatedAt: ledger.CreatedAt,
+			}).Error
 		}
 		var existing int64
 		if err := tx.Model(&model.CreditLedgerEntry{}).Where("reference_key = ? AND type = ?", *ledger.ReferenceKey, model.CreditLedgerMembership).Count(&existing).Error; err != nil {
@@ -300,6 +340,27 @@ func activateMembershipOrderTx(tx *gorm.DB, orderID string, actorID string, prov
 	}
 	if ledger == nil || ledger.AmountMicrocredits <= 0 {
 		return nil
+	}
+	if order.TeamID != "" {
+		account := model.TeamCreditAccount{TeamID: order.TeamID}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.TeamCreditAccount{}).Where("team_id = ?", order.TeamID).Updates(map[string]interface{}{
+			"available_microcredits": gorm.Expr("available_microcredits + ?", ledger.AmountMicrocredits),
+			"version":                gorm.Expr("version + 1"), "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.TeamCreditLedgerEntry{
+			ID: ledger.ID, TeamID: order.TeamID, ActorUserID: ledger.ActorUserID, Type: ledger.Type,
+			AmountMicrocredits: ledger.AmountMicrocredits, AvailableDeltaMicrocredits: ledger.AvailableDeltaMicrocredits,
+			AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
+			Scene: ledger.Scene, Note: ledger.Note, ReferenceKey: ledger.ReferenceKey, CreatedAt: ledger.CreatedAt,
+		}).Error
 	}
 	account := model.CreditAccount{UserID: order.UserID}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {

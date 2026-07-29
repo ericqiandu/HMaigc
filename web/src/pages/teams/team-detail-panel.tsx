@@ -1,7 +1,8 @@
 import { Button, Select, Tag, Tooltip } from "antd";
-import { Crown, DoorOpen, MailPlus, Pencil, ShieldCheck, Trash2, UserRound, UsersRound } from "lucide-react";
+import { Coins, Crown, DoorOpen, MailPlus, Pencil, ShieldCheck, Trash2, UserRound, UsersRound } from "lucide-react";
 
 import type { TeamDetail, TeamMember, TeamRole } from "@/services/api/teams";
+import { TeamCommercialPanel } from "./team-commercial-panel";
 
 type TeamDetailPanelProps = {
     detail: TeamDetail;
@@ -11,8 +12,10 @@ type TeamDetailPanelProps = {
     onPurchase: () => void;
     onLeave: () => void;
     onRoleChange: (member: TeamMember, role: Exclude<TeamRole, "owner">) => void;
+    onCreditLimitChange: (member: TeamMember) => void;
     onRemove: (member: TeamMember) => void;
     onRevokeInvitation: (invitationId: string) => void;
+    onTeamChanged: () => Promise<void>;
 };
 
 const roleLabels: Record<TeamRole, string> = {
@@ -28,21 +31,12 @@ const auditLabels: Record<string, string> = {
     "invitation.accepted": "接受邀请并加入团队",
     "invitation.revoked": "撤销了成员邀请",
     "member.role_updated": "调整了成员角色",
+    "member.policy_updated": "调整了成员权限与积分额度",
     "member.removed": "移除了团队成员",
     "member.left": "退出了团队",
 };
 
-export function TeamDetailPanel({
-    detail,
-    busyKey,
-    onInvite,
-    onRename,
-    onPurchase,
-    onLeave,
-    onRoleChange,
-    onRemove,
-    onRevokeInvitation,
-}: TeamDetailPanelProps) {
+export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchase, onLeave, onRoleChange, onCreditLimitChange, onRemove, onRevokeInvitation, onTeamChanged }: TeamDetailPanelProps) {
     const { summary } = detail;
     const canManage = summary.currentRole === "owner" || summary.currentRole === "admin";
     const occupiedSeats = summary.seatUsed + summary.invitationSeatReserved;
@@ -63,9 +57,21 @@ export function TeamDetailPanel({
                     <p className="team-detail-description mt-1 text-xs leading-5 text-foreground/48">成员、邀请和权限变更均保留审计记录。</p>
                 </div>
                 <div className="team-detail-actions flex shrink-0 flex-wrap gap-2">
-                    {canManage ? <Button className="team-invite-button" type="primary" icon={<MailPlus className="team-invite-icon size-4" />} disabled={!summary.subscription} onClick={onInvite}>邀请成员</Button> : null}
-                    {summary.currentRole === "owner" ? <Button className="team-plan-button" onClick={onPurchase}>{summary.subscription ? "管理套餐" : "开通团队会员"}</Button> : null}
-                    {summary.currentRole !== "owner" ? <Button className="team-leave-button" danger icon={<DoorOpen className="team-leave-icon size-4" />} onClick={onLeave}>退出团队</Button> : null}
+                    {canManage ? (
+                        <Button className="team-invite-button" type="primary" icon={<MailPlus className="team-invite-icon size-4" />} disabled={!summary.subscription} onClick={onInvite}>
+                            邀请成员
+                        </Button>
+                    ) : null}
+                    {summary.currentRole === "owner" ? (
+                        <Button className="team-plan-button" onClick={onPurchase}>
+                            {summary.subscription ? "管理套餐" : "开通团队会员"}
+                        </Button>
+                    ) : null}
+                    {summary.currentRole !== "owner" ? (
+                        <Button className="team-leave-button" danger icon={<DoorOpen className="team-leave-icon size-4" />} onClick={onLeave}>
+                            退出团队
+                        </Button>
+                    ) : null}
                 </div>
             </header>
 
@@ -82,7 +88,11 @@ export function TeamDetailPanel({
                         <div className="team-subscription-notice-title text-sm font-medium">团队尚未开通有效套餐</div>
                         <div className="team-subscription-notice-description mt-1 text-xs text-foreground/48">开通后才能邀请成员；邀请会立即预留一个席位。</div>
                     </div>
-                    {summary.currentRole === "owner" ? <Button className="team-subscription-notice-button" type="primary" onClick={onPurchase}>选择团队套餐</Button> : null}
+                    {summary.currentRole === "owner" ? (
+                        <Button className="team-subscription-notice-button" type="primary" onClick={onPurchase}>
+                            选择团队套餐
+                        </Button>
+                    ) : null}
                 </div>
             ) : null}
 
@@ -107,7 +117,10 @@ export function TeamDetailPanel({
                                         <span className="team-member-name truncate text-sm font-medium">{member.displayName || member.username}</span>
                                         {isOwner ? <Crown className="team-member-owner-icon size-3.5 shrink-0 text-amber-500" /> : null}
                                     </div>
-                                    <div className="team-member-meta mt-0.5 text-[11px] text-foreground/42">@{member.username} · 加入于 {formatDate(member.createdAt)}</div>
+                                    <div className="team-member-meta mt-0.5 text-[11px] text-foreground/42">
+                                        @{member.username} · 本月已用 {formatCredits(member.monthlyUsedMicrocredits)}
+                                        {member.monthlyCreditLimitMicrocredits > 0 ? ` / ${formatCredits(member.monthlyCreditLimitMicrocredits)}` : " / 不限额"}
+                                    </div>
                                 </div>
                                 <div className="team-member-actions flex shrink-0 items-center gap-1.5">
                                     {summary.currentRole === "owner" && !isOwner ? (
@@ -127,6 +140,19 @@ export function TeamDetailPanel({
                                     ) : (
                                         <span className="team-member-role-label text-xs text-foreground/48">{roleLabels[member.role]}</span>
                                     )}
+                                    {summary.currentRole === "owner" && !isOwner ? (
+                                        <Tooltip className="team-member-credit-tooltip" title="设置成员月度积分额度">
+                                            <Button
+                                                className="team-member-credit-button"
+                                                type="text"
+                                                size="small"
+                                                icon={<Coins className="team-member-credit-icon size-3.5" />}
+                                                disabled={busyKey !== ""}
+                                                onClick={() => onCreditLimitChange(member)}
+                                                aria-label={`设置 ${member.displayName || member.username} 的月度积分额度`}
+                                            />
+                                        </Tooltip>
+                                    ) : null}
                                     {canRemove ? (
                                         <Tooltip className="team-member-remove-tooltip" title="移出团队">
                                             <Button
@@ -156,29 +182,37 @@ export function TeamDetailPanel({
                         <p className="team-section-description mt-1 text-xs text-foreground/45">邀请在 7 天后失效，并在有效期内占用席位。</p>
                     </div>
                     <div className="team-invitation-list mt-3 divide-y divide-border/55 bg-foreground/[.02]">
-                        {detail.invitations.length ? detail.invitations.map((invitation) => (
-                            <article className="team-invitation-row flex min-h-14 items-center gap-3 px-3 py-2.5 sm:px-4" key={invitation.id}>
-                                <MailPlus className="team-invitation-icon size-4 shrink-0 text-foreground/35" />
-                                <div className="team-invitation-copy min-w-0 flex-1">
-                                    <div className="team-invitation-email truncate text-sm font-medium">{invitation.email}</div>
-                                    <div className="team-invitation-meta mt-0.5 text-[11px] text-foreground/42">{roleLabels[invitation.role]} · {formatDateTime(invitation.expiresAt)} 失效</div>
-                                </div>
-                                <Button
-                                    className="team-invitation-revoke-button"
-                                    type="text"
-                                    danger
-                                    size="small"
-                                    loading={busyKey === `revoke:${invitation.id}`}
-                                    disabled={busyKey !== "" && busyKey !== `revoke:${invitation.id}`}
-                                    onClick={() => onRevokeInvitation(invitation.id)}
-                                >
-                                    撤销
-                                </Button>
-                            </article>
-                        )) : <div className="team-invitation-empty px-4 py-6 text-center text-xs text-foreground/38">暂无待接受邀请</div>}
+                        {detail.invitations.length ? (
+                            detail.invitations.map((invitation) => (
+                                <article className="team-invitation-row flex min-h-14 items-center gap-3 px-3 py-2.5 sm:px-4" key={invitation.id}>
+                                    <MailPlus className="team-invitation-icon size-4 shrink-0 text-foreground/35" />
+                                    <div className="team-invitation-copy min-w-0 flex-1">
+                                        <div className="team-invitation-email truncate text-sm font-medium">{invitation.email}</div>
+                                        <div className="team-invitation-meta mt-0.5 text-[11px] text-foreground/42">
+                                            {roleLabels[invitation.role]} · {formatDateTime(invitation.expiresAt)} 失效
+                                        </div>
+                                    </div>
+                                    <Button
+                                        className="team-invitation-revoke-button"
+                                        type="text"
+                                        danger
+                                        size="small"
+                                        loading={busyKey === `revoke:${invitation.id}`}
+                                        disabled={busyKey !== "" && busyKey !== `revoke:${invitation.id}`}
+                                        onClick={() => onRevokeInvitation(invitation.id)}
+                                    >
+                                        撤销
+                                    </Button>
+                                </article>
+                            ))
+                        ) : (
+                            <div className="team-invitation-empty px-4 py-6 text-center text-xs text-foreground/38">暂无待接受邀请</div>
+                        )}
                     </div>
                 </section>
             ) : null}
+
+            <TeamCommercialPanel detail={detail} canManage={canManage} onTeamChanged={onTeamChanged} />
 
             <section className="team-audit-section mt-7 pb-8">
                 <div className="team-section-heading">
@@ -186,31 +220,42 @@ export function TeamDetailPanel({
                     <p className="team-section-description mt-1 text-xs text-foreground/45">团队关键写操作的事实记录。</p>
                 </div>
                 <div className="team-audit-list mt-3 divide-y divide-border/55">
-                    {detail.auditEvents.length ? detail.auditEvents.map((event) => (
-                        <div className="team-audit-row flex items-start gap-3 py-3" key={event.id}>
-                            <span className="team-audit-icon grid size-7 shrink-0 place-items-center rounded-full bg-foreground/[.05]">
-                                <ShieldCheck className="team-audit-shield size-3.5 text-foreground/45" />
-                            </span>
-                            <div className="team-audit-copy min-w-0 flex-1">
-                                <div className="team-audit-message text-xs text-foreground/72">
-                                    <span className="team-audit-actor font-medium text-foreground">{event.actorName}</span>
-                                    <span className="team-audit-action ml-1">{auditLabels[event.action] || event.action}</span>
-                                    {event.targetName ? <span className="team-audit-target"> · {event.targetName}</span> : null}
+                    {detail.auditEvents.length ? (
+                        detail.auditEvents.map((event) => (
+                            <div className="team-audit-row flex items-start gap-3 py-3" key={event.id}>
+                                <span className="team-audit-icon grid size-7 shrink-0 place-items-center rounded-full bg-foreground/[.05]">
+                                    <ShieldCheck className="team-audit-shield size-3.5 text-foreground/45" />
+                                </span>
+                                <div className="team-audit-copy min-w-0 flex-1">
+                                    <div className="team-audit-message text-xs text-foreground/72">
+                                        <span className="team-audit-actor font-medium text-foreground">{event.actorName}</span>
+                                        <span className="team-audit-action ml-1">{auditLabels[event.action] || event.action}</span>
+                                        {event.targetName ? <span className="team-audit-target"> · {event.targetName}</span> : null}
+                                    </div>
+                                    <div className="team-audit-time mt-1 text-[10px] text-foreground/36">{formatDateTime(event.createdAt)}</div>
                                 </div>
-                                <div className="team-audit-time mt-1 text-[10px] text-foreground/36">{formatDateTime(event.createdAt)}</div>
                             </div>
-                        </div>
-                    )) : <div className="team-audit-empty py-6 text-center text-xs text-foreground/38">暂无团队动态</div>}
+                        ))
+                    ) : (
+                        <div className="team-audit-empty py-6 text-center text-xs text-foreground/38">暂无团队动态</div>
+                    )}
                 </div>
             </section>
         </section>
     );
 }
 
+function formatCredits(value: number) {
+    return `${(value / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 积分`;
+}
+
 function TeamMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
     return (
         <div className="team-metric min-w-0">
-            <div className="team-metric-label flex items-center gap-1.5 text-[11px] text-foreground/42"><UsersRound className="team-metric-icon size-3.5" />{label}</div>
+            <div className="team-metric-label flex items-center gap-1.5 text-[11px] text-foreground/42">
+                <UsersRound className="team-metric-icon size-3.5" />
+                {label}
+            </div>
             <div className="team-metric-value mt-2 truncate text-lg font-semibold tabular-nums">{value}</div>
             <div className="team-metric-detail mt-0.5 truncate text-[10px] text-foreground/36">{detail}</div>
         </div>

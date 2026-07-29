@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	ErrInsufficientCredits  = errors.New("insufficient credits")
-	ErrRedeemCodeInvalid    = errors.New("redeem code invalid")
-	ErrActiveTaskLimit      = errors.New("active task limit reached")
-	ErrCapabilityTaskLimit  = errors.New("capability task limit reached")
-	ErrTaskNotRetryable     = errors.New("task is not retryable")
-	ErrBillingStateConflict = errors.New("billing state conflict")
+	ErrInsufficientCredits   = errors.New("insufficient credits")
+	ErrRedeemCodeInvalid     = errors.New("redeem code invalid")
+	ErrActiveTaskLimit       = errors.New("active task limit reached")
+	ErrCapabilityTaskLimit   = errors.New("capability task limit reached")
+	ErrTaskNotRetryable      = errors.New("task is not retryable")
+	ErrBillingStateConflict  = errors.New("billing state conflict")
+	ErrTeamMemberCreditLimit = errors.New("team member monthly credit limit reached")
 )
 
 // 先抢占唯一业务键再更新账户，确保注册和签到奖励在多实例并发下只入账一次。
@@ -241,6 +242,7 @@ type ActiveTaskPolicy struct {
 	TotalLimit      int
 	Capability      string
 	CapabilityLimit int
+	Unlimited       bool
 }
 
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy) error {
@@ -297,6 +299,9 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 }
 
 func enforceActiveTaskLimit(tx *gorm.DB, userID string, policy ActiveTaskPolicy) error {
+	if policy.Unlimited {
+		return nil
+	}
 	var count int64
 	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {
 		return err
@@ -323,6 +328,58 @@ func (r *Repository) ReserveBillingOrder(order *model.BillingOrder) error {
 }
 
 func reserveBillingOrder(tx *gorm.DB, order *model.BillingOrder) error {
+	if order.TeamID != "" {
+		var member model.TeamMember
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&member, "team_id = ? AND user_id = ? AND status = ?", order.TeamID, order.UserID, model.TeamMemberStatusActive).Error; err != nil {
+			return err
+		}
+		if member.MonthlyCreditLimitMicrocredits > 0 {
+			now := time.Now()
+			monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+			monthEnd := monthStart.AddDate(0, 1, 0)
+			var used int64
+			if err := tx.Model(&model.BillingOrder{}).
+				Where("team_id = ? AND user_id = ? AND created_at >= ? AND created_at < ? AND status IN ?",
+					order.TeamID, order.UserID, monthStart, monthEnd,
+					[]model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusSettled, model.BillingStatusUncertain}).
+				Select("COALESCE(SUM(amount_microcredits), 0)").Scan(&used).Error; err != nil {
+				return err
+			}
+			if used+order.AmountMicrocredits > member.MonthlyCreditLimitMicrocredits {
+				return ErrTeamMemberCreditLimit
+			}
+		}
+		account := model.TeamCreditAccount{TeamID: order.TeamID}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+			return err
+		}
+		updated := tx.Model(&model.TeamCreditAccount{}).
+			Where("team_id = ? AND available_microcredits >= ?", order.TeamID, order.AmountMicrocredits).
+			Updates(map[string]any{
+				"available_microcredits": gorm.Expr("available_microcredits - ?", order.AmountMicrocredits),
+				"reserved_microcredits":  gorm.Expr("reserved_microcredits + ?", order.AmountMicrocredits),
+				"version":                gorm.Expr("version + 1"), "updated_at": time.Now(),
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrInsufficientCredits
+		}
+		if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(order).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.TeamCreditLedgerEntry{
+			ID: newRepositoryID(), TeamID: order.TeamID, ActorUserID: order.UserID, Type: model.CreditLedgerReserve,
+			AvailableDeltaMicrocredits: -order.AmountMicrocredits, ReservedDeltaMicrocredits: order.AmountMicrocredits,
+			AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
+			BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, CreatedAt: time.Now(),
+		}).Error
+	}
 	account := model.CreditAccount{UserID: order.UserID}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
 		return err
@@ -481,6 +538,35 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 		if order.Status == model.BillingStatusRefunded {
 			return errors.New("billing order already refunded")
 		}
+		if order.TeamID != "" {
+			updated := tx.Model(&model.TeamCreditAccount{}).
+				Where("team_id = ? AND reserved_microcredits >= ?", order.TeamID, order.AmountMicrocredits).
+				Updates(map[string]any{"reserved_microcredits": gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits), "version": gorm.Expr("version + 1"), "updated_at": time.Now()})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return errors.New("team reserved credit balance is inconsistent")
+			}
+			var account model.TeamCreditAccount
+			if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
+				return err
+			}
+			now := time.Now()
+			orderUpdates := map[string]any{"status": model.BillingStatusSettled, "settled_at": &now, "updated_at": now}
+			if providerRequestID != "" {
+				orderUpdates["provider_request_id"] = providerRequestID
+			}
+			if err := tx.Model(&order).Updates(orderUpdates).Error; err != nil {
+				return err
+			}
+			return tx.Create(&model.TeamCreditLedgerEntry{
+				ID: newRepositoryID(), TeamID: order.TeamID, ActorUserID: order.UserID, Type: model.CreditLedgerConsume,
+				AmountMicrocredits: -order.AmountMicrocredits, ReservedDeltaMicrocredits: -order.AmountMicrocredits,
+				AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
+				BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, CreatedAt: now,
+			}).Error
+		}
 		updated := tx.Model(&model.CreditAccount{}).
 			Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).
 			Updates(map[string]any{
@@ -533,6 +619,36 @@ func (r *Repository) RefundBillingOrder(id string, errorText string) error {
 		}
 		if order.Status == model.BillingStatusSettled {
 			return errors.New("settled billing order requires a manual refund")
+		}
+		if order.TeamID != "" {
+			updated := tx.Model(&model.TeamCreditAccount{}).
+				Where("team_id = ? AND reserved_microcredits >= ?", order.TeamID, order.AmountMicrocredits).
+				Updates(map[string]any{
+					"available_microcredits": gorm.Expr("available_microcredits + ?", order.AmountMicrocredits),
+					"reserved_microcredits":  gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits),
+					"version":                gorm.Expr("version + 1"), "updated_at": time.Now(),
+				})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return errors.New("team reserved credit balance is inconsistent")
+			}
+			var account model.TeamCreditAccount
+			if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
+				return err
+			}
+			now := time.Now()
+			if err := tx.Model(&order).Updates(map[string]any{"status": model.BillingStatusRefunded, "error": errorText, "refunded_at": &now, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			return tx.Create(&model.TeamCreditLedgerEntry{
+				ID: newRepositoryID(), TeamID: order.TeamID, ActorUserID: order.UserID, Type: model.CreditLedgerRefund,
+				AmountMicrocredits: order.AmountMicrocredits, AvailableDeltaMicrocredits: order.AmountMicrocredits,
+				ReservedDeltaMicrocredits: -order.AmountMicrocredits, AvailableAfterMicrocredits: account.AvailableMicrocredits,
+				ReservedAfterMicrocredits: account.ReservedMicrocredits, BillingOrderID: order.ID,
+				Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, Note: errorText, CreatedAt: now,
+			}).Error
 		}
 		updated := tx.Model(&model.CreditAccount{}).
 			Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).

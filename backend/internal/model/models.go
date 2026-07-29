@@ -27,6 +27,7 @@ type AssetCategory string
 type AssetVersionStatus string
 type WorkflowStatus string
 type WorkflowStepStatus string
+type ProjectAccessRole string
 
 // AdminAuditEvent 只允许追加，用于还原管理员写操作，禁止作为可编辑业务状态使用。
 type AdminAuditEvent struct {
@@ -143,6 +144,10 @@ const (
 	WorkflowStepStatusCompleted WorkflowStepStatus = "completed"
 	WorkflowStepStatusFailed    WorkflowStepStatus = "failed"
 	WorkflowStepStatusSkipped   WorkflowStepStatus = "skipped"
+
+	ProjectAccessViewer  ProjectAccessRole = "viewer"
+	ProjectAccessEditor  ProjectAccessRole = "editor"
+	ProjectAccessManager ProjectAccessRole = "manager"
 )
 
 type User struct {
@@ -318,6 +323,7 @@ type CreditLedgerEntry struct {
 type BillingOrder struct {
 	ID                    string        `json:"id" gorm:"primaryKey;size:36"`
 	UserID                string        `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`
+	TeamID                string        `json:"teamId,omitempty" gorm:"index;size:36"`
 	IdempotencyKey        string        `json:"idempotencyKey" gorm:"size:160;uniqueIndex:idx_billing_user_idempotency,priority:2"`
 	TaskID                string        `json:"taskId,omitempty" gorm:"index;size:36"`
 	ChannelID             string        `json:"channelId" gorm:"index;size:36"`
@@ -459,6 +465,7 @@ type UserSkillState struct {
 type Resource struct {
 	ID       string         `json:"id" gorm:"primaryKey;size:36"`
 	UserID   string         `json:"userId" gorm:"index;size:36;index:idx_resources_user_created,priority:1"`
+	TeamID   string         `json:"teamId,omitempty" gorm:"index;size:36;index:idx_resources_team_created,priority:1"`
 	Kind     string         `json:"kind" gorm:"index;size:24"`
 	Status   ResourceStatus `json:"status" gorm:"index;size:24"`
 	Provider string         `json:"provider" gorm:"size:24"`
@@ -475,7 +482,7 @@ type Resource struct {
 	DurationMs       int64     `json:"durationMs"`
 	ETag             string    `json:"etag" gorm:"size:160"`
 	Error            string    `json:"error"`
-	CreatedAt        time.Time `json:"createdAt" gorm:"index:idx_resources_user_created,priority:2"`
+	CreatedAt        time.Time `json:"createdAt" gorm:"index:idx_resources_user_created,priority:2;index:idx_resources_team_created,priority:2"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
@@ -565,6 +572,7 @@ type CharacterVoiceBinding struct {
 type Project struct {
 	ID            string        `json:"id" gorm:"primaryKey;size:36"`
 	UserID        string        `json:"userId" gorm:"index;size:36;uniqueIndex:idx_projects_user_name,priority:1"`
+	TeamID        string        `json:"teamId,omitempty" gorm:"index;size:36"`
 	Name          string        `json:"name" gorm:"size:240;uniqueIndex:idx_projects_user_name,priority:2"`
 	Type          string        `json:"type" gorm:"size:32;index"`
 	AspectRatio   string        `json:"aspectRatio" gorm:"size:16"`
@@ -575,6 +583,16 @@ type Project struct {
 	Revision      int64         `json:"revision"`
 	CreatedAt     time.Time     `json:"createdAt"`
 	UpdatedAt     time.Time     `json:"updatedAt" gorm:"index"`
+}
+
+// ProjectCollaborator 是团队项目的显式成员覆盖；未配置时使用团队角色映射。
+type ProjectCollaborator struct {
+	ID        string            `json:"id" gorm:"primaryKey;size:36"`
+	ProjectID string            `json:"projectId" gorm:"uniqueIndex:idx_project_collaborator,priority:1;index;size:36"`
+	UserID    string            `json:"userId" gorm:"uniqueIndex:idx_project_collaborator,priority:2;index;size:36"`
+	Role      ProjectAccessRole `json:"role" gorm:"size:24"`
+	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt time.Time         `json:"updatedAt"`
 }
 
 type ProjectUnit struct {

@@ -7,6 +7,7 @@ const api = axios.create({ baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "
 export type Project = {
     id: string;
     userId: string;
+    teamId?: string;
     name: string;
     type: string;
     aspectRatio: string;
@@ -167,6 +168,23 @@ export type ProjectDetail = {
     assetCandidates: ProjectAssetCandidate[];
 };
 
+export type ProjectAccessRole = "viewer" | "editor" | "manager";
+
+export type ProjectAccessMember = {
+    userId: string;
+    username: string;
+    displayName: string;
+    teamRole: "owner" | "admin" | "member";
+    role: ProjectAccessRole;
+    explicit: boolean;
+};
+
+export type ProjectAccessOverview = {
+    projectId: string;
+    teamId: string;
+    members: ProjectAccessMember[];
+};
+
 async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>) {
     try {
         const response = await promise;
@@ -196,6 +214,18 @@ export function updateProject(projectId: string, input: Partial<Pick<Project, "n
 
 export function deleteProject(projectId: string) {
     return request<{ id: string }>(api.delete(`/projects/${encodeURIComponent(projectId)}`));
+}
+
+export function assignProjectTeam(projectId: string, teamId: string) {
+    return request<{ project: Project }>(api.put(`/projects/${encodeURIComponent(projectId)}/team`, { teamId }));
+}
+
+export function getProjectPermissions(projectId: string) {
+    return request<ProjectAccessOverview>(api.get(`/projects/${encodeURIComponent(projectId)}/permissions`));
+}
+
+export function updateProjectPermission(projectId: string, userId: string, role: ProjectAccessRole) {
+    return request<{ updated: boolean }>(api.put(`/projects/${encodeURIComponent(projectId)}/permissions/${encodeURIComponent(userId)}`, { role }));
 }
 
 export function createProjectUnit(projectId: string, input: { kind: string; title: string; sourceText?: string; position?: number }) {

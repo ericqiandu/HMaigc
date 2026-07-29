@@ -46,15 +46,15 @@ type CharacterRepresentationSummary struct {
 }
 
 type VoiceProfileSummary struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	Provider             string   `json:"provider"`
-	VoiceKey             string   `json:"voiceKey"`
-	Language             string   `json:"language"`
-	Timbre               string   `json:"timbre"`
-	SampleResourceID     string   `json:"sampleResourceId,omitempty"`
-	CompatibleModels     []string `json:"compatibleModels"`
-	Status               string   `json:"status"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Provider         string   `json:"provider"`
+	VoiceKey         string   `json:"voiceKey"`
+	Language         string   `json:"language"`
+	Timbre           string   `json:"timbre"`
+	SampleResourceID string   `json:"sampleResourceId,omitempty"`
+	CompatibleModels []string `json:"compatibleModels"`
+	Status           string   `json:"status"`
 }
 
 type CharacterVoiceSummary struct {
@@ -116,7 +116,7 @@ func (s *Service) ListVoiceProfiles(userID string) ([]VoiceProfileSummary, error
 }
 
 func (s *Service) CreateProjectCharacter(userID string, projectID string, req CreateProjectCharacterRequest) (ProjectCharacterDetail, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return ProjectCharacterDetail{}, err
 	}
 	name := strings.TrimSpace(req.Name)

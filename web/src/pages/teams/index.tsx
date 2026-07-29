@@ -1,4 +1,4 @@
-import { App, Button, Input, Modal, Select, Skeleton } from "antd";
+import { App, Button, Input, InputNumber, Modal, Select, Skeleton } from "antd";
 import { Check, ChevronRight, Copy, Mail, Plus, RefreshCw, UsersRound } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -15,7 +15,7 @@ import {
     removeTeamMember,
     renameTeam,
     revokeTeamInvitation,
-    updateTeamMemberRole,
+    updateTeamMemberPolicy,
     type TeamDetail,
     type TeamMember,
     type TeamRole,
@@ -42,48 +42,56 @@ export default function TeamsPage() {
     const [inviteRole, setInviteRole] = useState<Exclude<TeamRole, "owner">>("member");
     const [inviteLink, setInviteLink] = useState("");
     const [copied, setCopied] = useState(false);
+    const [creditLimitMember, setCreditLimitMember] = useState<TeamMember | null>(null);
+    const [creditLimit, setCreditLimit] = useState<number>(0);
     const workspaceRequest = useRef(0);
     const detailRequest = useRef(0);
     const inviteTokenHandled = useRef(false);
 
-    const loadWorkspace = useCallback(async (preferredTeamId?: string) => {
-        const sequence = ++workspaceRequest.current;
-        setLoading(true);
-        try {
-            const next = await getTeamWorkspace();
-            if (sequence !== workspaceRequest.current) return;
-            setWorkspace(next);
-            setActiveTeamId((current) => {
-                const candidate = preferredTeamId || current;
-                if (candidate && next.teams.some((item) => item.team.id === candidate)) return candidate;
-                return next.teams[0]?.team.id || "";
-            });
-        } catch (error) {
-            if (sequence === workspaceRequest.current) message.error(error instanceof Error ? error.message : "读取团队空间失败");
-        } finally {
-            if (sequence === workspaceRequest.current) setLoading(false);
-        }
-    }, [message]);
-
-    const loadDetail = useCallback(async (teamId: string) => {
-        if (!teamId) {
-            setDetail(null);
-            return;
-        }
-        const sequence = ++detailRequest.current;
-        setDetailLoading(true);
-        try {
-            const next = await getTeamDetail(teamId);
-            if (sequence === detailRequest.current) setDetail(next);
-        } catch (error) {
-            if (sequence === detailRequest.current) {
-                setDetail(null);
-                message.error(error instanceof Error ? error.message : "读取团队详情失败");
+    const loadWorkspace = useCallback(
+        async (preferredTeamId?: string) => {
+            const sequence = ++workspaceRequest.current;
+            setLoading(true);
+            try {
+                const next = await getTeamWorkspace();
+                if (sequence !== workspaceRequest.current) return;
+                setWorkspace(next);
+                setActiveTeamId((current) => {
+                    const candidate = preferredTeamId || current;
+                    if (candidate && next.teams.some((item) => item.team.id === candidate)) return candidate;
+                    return next.teams[0]?.team.id || "";
+                });
+            } catch (error) {
+                if (sequence === workspaceRequest.current) message.error(error instanceof Error ? error.message : "读取团队空间失败");
+            } finally {
+                if (sequence === workspaceRequest.current) setLoading(false);
             }
-        } finally {
-            if (sequence === detailRequest.current) setDetailLoading(false);
-        }
-    }, [message]);
+        },
+        [message],
+    );
+
+    const loadDetail = useCallback(
+        async (teamId: string) => {
+            if (!teamId) {
+                setDetail(null);
+                return;
+            }
+            const sequence = ++detailRequest.current;
+            setDetailLoading(true);
+            try {
+                const next = await getTeamDetail(teamId);
+                if (sequence === detailRequest.current) setDetail(next);
+            } catch (error) {
+                if (sequence === detailRequest.current) {
+                    setDetail(null);
+                    message.error(error instanceof Error ? error.message : "读取团队详情失败");
+                }
+            } finally {
+                if (sequence === detailRequest.current) setDetailLoading(false);
+            }
+        },
+        [message],
+    );
 
     const reloadActiveTeam = useCallback(async () => {
         await Promise.all([loadWorkspace(activeTeamId), loadDetail(activeTeamId)]);
@@ -207,11 +215,33 @@ export default function TeamsPage() {
         if (!activeTeamId) return;
         setBusyKey(`role:${member.id}`);
         try {
-            await updateTeamMemberRole(activeTeamId, member.id, role);
+            await updateTeamMemberPolicy(activeTeamId, member.id, { role });
             await reloadActiveTeam();
             message.success("成员角色已更新");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "更新成员角色失败");
+        } finally {
+            setBusyKey("");
+        }
+    };
+
+    const saveCreditLimit = async () => {
+        if (!activeTeamId || !creditLimitMember) return;
+        if (!Number.isFinite(creditLimit) || creditLimit < 0) {
+            message.error("成员月度积分额度不能小于 0");
+            return;
+        }
+        setBusyKey(`credit-limit:${creditLimitMember.id}`);
+        try {
+            await updateTeamMemberPolicy(activeTeamId, creditLimitMember.id, {
+                role: creditLimitMember.role === "admin" ? "admin" : "member",
+                monthlyCreditLimitMicrocredits: Math.round(creditLimit * 1_000_000),
+            });
+            setCreditLimitMember(null);
+            await reloadActiveTeam();
+            message.success("成员月度积分额度已更新");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "更新成员积分额度失败");
         } finally {
             setBusyKey("");
         }
@@ -294,12 +324,16 @@ export default function TeamsPage() {
             <PageHeader
                 title="团队空间"
                 description="管理团队成员、邀请和角色权限"
-                actions={(
+                actions={
                     <div className="teams-header-actions flex items-center gap-2">
-                        <Button className="teams-refresh-button" icon={<RefreshCw className="teams-refresh-icon size-4" />} loading={loading} onClick={() => void reloadActiveTeam()}>刷新</Button>
-                        <Button className="teams-create-button" type="primary" icon={<Plus className="teams-create-icon size-4" />} onClick={() => setCreateOpen(true)}>新建团队</Button>
+                        <Button className="teams-refresh-button" icon={<RefreshCw className="teams-refresh-icon size-4" />} loading={loading} onClick={() => void reloadActiveTeam()}>
+                            刷新
+                        </Button>
+                        <Button className="teams-create-button" type="primary" icon={<Plus className="teams-create-icon size-4" />} onClick={() => setCreateOpen(true)}>
+                            新建团队
+                        </Button>
                     </div>
-                )}
+                }
             />
 
             {workspace?.incomingInvitations.length ? (
@@ -313,9 +347,20 @@ export default function TeamsPage() {
                             <article className="incoming-team-invitation-row flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center" key={invitation.id}>
                                 <div className="incoming-team-invitation-copy min-w-0 flex-1">
                                     <div className="incoming-team-invitation-name truncate text-sm font-medium">{invitation.teamName}</div>
-                                    <div className="incoming-team-invitation-meta mt-0.5 text-[11px] text-foreground/48">{invitation.inviterName} 邀请你成为{invitation.role === "admin" ? "管理员" : "成员"} · {formatDateTime(invitation.expiresAt)} 失效</div>
+                                    <div className="incoming-team-invitation-meta mt-0.5 text-[11px] text-foreground/48">
+                                        {invitation.inviterName} 邀请你成为{invitation.role === "admin" ? "管理员" : "成员"} · {formatDateTime(invitation.expiresAt)} 失效
+                                    </div>
                                 </div>
-                                <Button className="incoming-team-invitation-accept" type="primary" size="small" loading={busyKey === `accept:${invitation.id}`} disabled={busyKey !== "" && busyKey !== `accept:${invitation.id}`} onClick={() => void acceptInvitation(invitation.id)}>接受邀请</Button>
+                                <Button
+                                    className="incoming-team-invitation-accept"
+                                    type="primary"
+                                    size="small"
+                                    loading={busyKey === `accept:${invitation.id}`}
+                                    disabled={busyKey !== "" && busyKey !== `accept:${invitation.id}`}
+                                    onClick={() => void acceptInvitation(invitation.id)}
+                                >
+                                    接受邀请
+                                </Button>
                             </article>
                         ))}
                     </div>
@@ -344,7 +389,9 @@ export default function TeamsPage() {
                                     </span>
                                     <span className="team-navigation-copy min-w-0 flex-1">
                                         <span className="team-navigation-name block truncate text-xs font-medium">{item.team.name}</span>
-                                        <span className={`team-navigation-meta mt-0.5 block truncate text-[10px] ${selected ? "text-background/58" : "text-foreground/38"}`}>{item.seatUsed} 位成员 · {roleLabel(item.currentRole)}</span>
+                                        <span className={`team-navigation-meta mt-0.5 block truncate text-[10px] ${selected ? "text-background/58" : "text-foreground/38"}`}>
+                                            {item.seatUsed} 位成员 · {roleLabel(item.currentRole)}
+                                        </span>
                                     </span>
                                     <ChevronRight className={`team-navigation-chevron size-3.5 shrink-0 ${selected ? "text-background/45" : "text-foreground/24"}`} />
                                 </button>
@@ -355,13 +402,17 @@ export default function TeamsPage() {
                         <div className="teams-navigation-empty px-2 py-8 text-center">
                             <UsersRound className="teams-navigation-empty-icon mx-auto size-7 text-foreground/20" />
                             <div className="teams-navigation-empty-title mt-2 text-xs font-medium">还没有团队</div>
-                            <button className="teams-navigation-empty-action mt-2 text-xs text-[var(--workspace-accent)]" type="button" onClick={() => setCreateOpen(true)}>创建第一个团队</button>
+                            <button className="teams-navigation-empty-action mt-2 text-xs text-[var(--workspace-accent)]" type="button" onClick={() => setCreateOpen(true)}>
+                                创建第一个团队
+                            </button>
                         </div>
                     ) : null}
                 </aside>
 
                 <main className="teams-detail-content min-w-0 flex-1 px-4 py-5 sm:px-6">
-                    {detailLoading && !detail ? <Skeleton className="teams-detail-skeleton" active paragraph={{ rows: 8 }} /> : detail ? (
+                    {detailLoading && !detail ? (
+                        <Skeleton className="teams-detail-skeleton" active paragraph={{ rows: 8 }} />
+                    ) : detail ? (
                         <TeamDetailPanel
                             detail={detail}
                             busyKey={busyKey}
@@ -379,10 +430,17 @@ export default function TeamsPage() {
                             onPurchase={() => navigate(`/membership?audience=team&teamId=${encodeURIComponent(activeTeamId)}`)}
                             onLeave={confirmLeave}
                             onRoleChange={(member, role) => void changeRole(member, role)}
+                            onCreditLimitChange={(member) => {
+                                setCreditLimitMember(member);
+                                setCreditLimit(member.monthlyCreditLimitMicrocredits / 1_000_000);
+                            }}
                             onRemove={confirmRemove}
                             onRevokeInvitation={confirmRevoke}
+                            onTeamChanged={reloadActiveTeam}
                         />
-                    ) : <TeamPlaceholder />}
+                    ) : (
+                        <TeamPlaceholder />
+                    )}
                 </main>
             </div>
 
@@ -401,23 +459,48 @@ export default function TeamsPage() {
             </Modal>
 
             <Modal
+                className="team-credit-limit-modal"
+                title={`设置 ${creditLimitMember?.displayName || creditLimitMember?.username || "成员"} 的月度积分额度`}
+                open={Boolean(creditLimitMember)}
+                okText="保存额度"
+                cancelText="取消"
+                confirmLoading={busyKey === `credit-limit:${creditLimitMember?.id || ""}`}
+                onOk={() => void saveCreditLimit()}
+                onCancel={() => setCreditLimitMember(null)}
+                destroyOnHidden
+            >
+                <div className="team-credit-limit-content pt-2">
+                    <label className="team-credit-limit-field block">
+                        <span className="team-credit-limit-label text-xs font-medium text-foreground/68">每自然月最多可消耗积分</span>
+                        <InputNumber className="team-credit-limit-input mt-2 w-full" min={0} precision={2} value={creditLimit} addonAfter="积分" onChange={(value) => setCreditLimit(value ?? 0)} />
+                    </label>
+                    <p className="team-credit-limit-help mt-2 text-xs leading-5 text-foreground/42">填写 0 表示不设置成员级上限；实际调用仍受团队积分余额与渠道安全并发限制。</p>
+                </div>
+            </Modal>
+
+            <Modal
                 className="team-invite-modal"
                 title="邀请团队成员"
                 open={inviteOpen}
                 okText={inviteLink ? "完成" : "创建邀请"}
                 cancelText="取消"
                 confirmLoading={busyKey === "invite"}
-                onOk={() => inviteLink ? setInviteOpen(false) : void submitInvitation()}
+                onOk={() => (inviteLink ? setInviteOpen(false) : void submitInvitation())}
                 onCancel={() => setInviteOpen(false)}
                 destroyOnHidden
             >
                 {inviteLink ? (
                     <div className="team-invite-result pt-2">
-                        <div className="team-invite-result-heading flex items-center gap-2 text-sm font-medium"><Check className="team-invite-result-icon size-4 text-emerald-500" />邀请已创建</div>
+                        <div className="team-invite-result-heading flex items-center gap-2 text-sm font-medium">
+                            <Check className="team-invite-result-icon size-4 text-emerald-500" />
+                            邀请已创建
+                        </div>
                         <p className="team-invite-result-description mt-2 text-xs leading-5 text-foreground/48">邀请链接只在这里展示一次。对方需要使用受邀邮箱登录，并在 7 天内接受。</p>
                         <div className="team-invite-link-row mt-4 flex items-center gap-2">
                             <Input className="team-invite-link-input min-w-0 flex-1" value={inviteLink} readOnly />
-                            <Button className="team-invite-copy-button shrink-0" icon={copied ? <Check className="team-invite-copy-icon size-4" /> : <Copy className="team-invite-copy-icon size-4" />} onClick={() => void copyInviteLink()}>{copied ? "已复制" : "复制"}</Button>
+                            <Button className="team-invite-copy-button shrink-0" icon={copied ? <Check className="team-invite-copy-icon size-4" /> : <Copy className="team-invite-copy-icon size-4" />} onClick={() => void copyInviteLink()}>
+                                {copied ? "已复制" : "复制"}
+                            </Button>
                         </div>
                     </div>
                 ) : (
@@ -431,10 +514,7 @@ export default function TeamsPage() {
                             <Select
                                 className="team-invite-role-select mt-2 w-full"
                                 value={inviteRole}
-                                options={[
-                                    { label: "成员 · 使用团队会员权益", value: "member" },
-                                    ...(activeSummary?.currentRole === "owner" ? [{ label: "管理员 · 可邀请和移除普通成员", value: "admin" as const }] : []),
-                                ]}
+                                options={[{ label: "成员 · 使用团队会员权益", value: "member" }, ...(activeSummary?.currentRole === "owner" ? [{ label: "管理员 · 可邀请和移除普通成员", value: "admin" as const }] : [])]}
                                 onChange={(role: Exclude<TeamRole, "owner">) => setInviteRole(role)}
                             />
                         </label>
