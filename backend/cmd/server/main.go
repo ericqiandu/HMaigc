@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"infinite-canvas/backend/internal/database"
@@ -33,6 +38,15 @@ func main() {
 	if err := database.ConfigurePool(db); err != nil {
 		log.Fatal(err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("close database: %v", err)
+		}
+	}()
 	if err := database.MigrateSchema(db); err != nil {
 		log.Fatal(err)
 	}
@@ -68,9 +82,7 @@ func main() {
 	r.Use(cors())
 	handler.ConfigureRuntime(svc)
 	api := r.Group("/api")
-	api.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"code": 0, "data": gin.H{"status": "ok"}, "msg": "ok"})
-	})
+	api.GET("/health", healthHandler(sqlDB, svc))
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterAuthRoutes(api, svc)
 	handler.RegisterAdminRoutes(api, svc)
@@ -98,8 +110,67 @@ func main() {
 
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
 	log.Printf("HMaigc backend listening on %s", addr)
-	if err := r.Run(addr); err != nil {
+	if err := runHTTPServer(newHTTPServer(addr, r)); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Minute,
+		WriteTimeout:      65 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
+}
+
+func runHTTPServer(server *http.Server) error {
+	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	listenResult := make(chan error, 1)
+	go func() {
+		listenResult <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-listenResult:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-signalContext.Done():
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownContext); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		err := <-listenResult
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+func healthHandler(db *sql.DB, svc *service.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			log.Printf("health dependency=database status=unavailable error=%v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "database unavailable"})
+			return
+		}
+		if err := svc.CheckRuntime(ctx); err != nil {
+			log.Printf("health dependency=runtime status=unavailable error=%v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "runtime coordinator unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"status": "ok"}, "msg": "ok"})
 	}
 }
 

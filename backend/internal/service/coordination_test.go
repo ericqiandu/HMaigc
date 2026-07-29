@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -50,5 +51,27 @@ func TestRuntimeCoordinatorStopsWaitingWhenContextIsCancelled(t *testing.T) {
 	cancel()
 	if _, err := coordinator.acquireWithWait(ctx, "channel:one", 1, time.Minute); err == nil {
 		t.Fatal("acquireWithWait() error = nil after cancellation")
+	}
+}
+
+func TestCheckRuntimeAllowsLocalCoordinatorWithoutRedis(t *testing.T) {
+	svc := &Service{coordinator: &runtimeCoordinator{}}
+	if err := svc.CheckRuntime(context.Background()); err != nil {
+		t.Fatalf("CheckRuntime() error = %v", err)
+	}
+}
+
+func TestCheckRuntimeRejectsMissingCoordinator(t *testing.T) {
+	svc := &Service{}
+	if err := svc.CheckRuntime(context.Background()); err == nil {
+		t.Fatal("CheckRuntime() error = nil")
+	}
+}
+
+func TestCheckRuntimePreservesInitializationFailure(t *testing.T) {
+	expected := errors.New("coordinator initialization failed")
+	svc := &Service{runtimeErr: expected}
+	if err := svc.CheckRuntime(context.Background()); !errors.Is(err, expected) {
+		t.Fatalf("CheckRuntime() error = %v", err)
 	}
 }

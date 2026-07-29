@@ -58,6 +58,8 @@ docker compose --env-file .env -f docker-compose.production.yml ps
 
 生产环境应由 Caddy、Nginx 或云负载均衡器提供 HTTPS。不要直接把后端、PostgreSQL 或 Redis 暴露到公网。
 
+备份、恢复演练、升级与回滚必须遵循 [生产运行手册](PRODUCTION.md)。
+
 ## 上线门禁
 
 - 在受控网络注册首个管理员后，保持公开注册关闭。
@@ -66,6 +68,7 @@ docker compose --env-file .env -f docker-compose.production.yml ps
 - 配置站点名称、Logo、版权、用户协议、隐私政策及备案信息。
 - 对 PostgreSQL、后端资源卷和 `.settings-key` 建立加密备份与恢复演练。
 - 完成前端构建、Go 全量测试、生产镜像构建和关键业务回归。
+- GitHub Actions 质量门禁通过后才允许发布生产镜像。
 
 ## 数据与升级
 

@@ -267,6 +267,22 @@ func (s *Service) ValidateRuntime() error {
 	return s.runtimeErr
 }
 
+func (s *Service) CheckRuntime(ctx context.Context) error {
+	if s.runtimeErr != nil {
+		return s.runtimeErr
+	}
+	if s.coordinator == nil {
+		return errors.New("运行时协调器未初始化")
+	}
+	if s.coordinator.redis == nil {
+		return nil
+	}
+	if err := s.coordinator.redis.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("Redis 不可用：%w", err)
+	}
+	return nil
+}
+
 func (s *Service) AllowRequest(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
 	if s.coordinator == nil {
 		return false, errors.New("运行时协调器未初始化")

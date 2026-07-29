@@ -1,8 +1,10 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,5 +38,28 @@ func TestRedactCanvasSharePath(t *testing.T) {
 	}
 	if got := redactCanvasSharePath("/api/tasks"); got != "/api/tasks" {
 		t.Fatalf("unrelated path changed: %s", got)
+	}
+}
+
+func TestNewHTTPServerUsesProductionLimits(t *testing.T) {
+	handler := http.NewServeMux()
+	server := newHTTPServer(":9000", handler)
+	if server.Addr != ":9000" || server.Handler != handler {
+		t.Fatal("server address or handler was not preserved")
+	}
+	if server.ReadHeaderTimeout != 10*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %s", server.ReadHeaderTimeout)
+	}
+	if server.ReadTimeout != 15*time.Minute {
+		t.Fatalf("ReadTimeout = %s", server.ReadTimeout)
+	}
+	if server.WriteTimeout != 65*time.Minute {
+		t.Fatalf("WriteTimeout = %s", server.WriteTimeout)
+	}
+	if server.IdleTimeout != 2*time.Minute {
+		t.Fatalf("IdleTimeout = %s", server.IdleTimeout)
+	}
+	if server.MaxHeaderBytes != 64<<10 {
+		t.Fatalf("MaxHeaderBytes = %d", server.MaxHeaderBytes)
 	}
 }

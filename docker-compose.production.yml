@@ -51,6 +51,12 @@ services:
       GIN_MODE: release
     volumes:
       - backend-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,6 +73,13 @@ services:
         VITE_TLDRAW_LICENSE_KEY: ${VITE_TLDRAW_LICENSE_KEY:-}
     ports:
       - "${CANVAS_HTTP_HOST:-127.0.0.1}:${CANVAS_HTTP_PORT:-3000}:3000"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy
