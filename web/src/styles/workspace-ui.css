@@ -1,0 +1,78 @@
+.workspace-ui-scope {
+    --workspace-ui-font-display: "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --workspace-ui-font-text: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --workspace-ui-page: #f5f5f7;
+    --workspace-ui-surface: #ffffff;
+    --workspace-ui-surface-subtle: #eeeeef;
+    --workspace-ui-surface-hover: #e8e8eb;
+    --workspace-ui-text: #1d1d1f;
+    --workspace-ui-text-secondary: rgb(29 29 31 / 62%);
+    --workspace-ui-text-tertiary: rgb(29 29 31 / 42%);
+    --workspace-ui-divider: rgb(29 29 31 / 10%);
+    --workspace-ui-control: rgb(29 29 31 / 6%);
+    --workspace-ui-control-hover: rgb(29 29 31 / 10%);
+    --workspace-ui-accent: #0071e3;
+    --workspace-ui-focus: rgb(0 113 227 / 32%);
+    --workspace-ui-radius-control: 8px;
+    --workspace-ui-radius-surface: 12px;
+    --workspace-ui-space-1: 4px;
+    --workspace-ui-space-2: 8px;
+    --workspace-ui-space-3: 12px;
+    --workspace-ui-space-4: 16px;
+    --workspace-ui-space-5: 20px;
+    --workspace-ui-space-6: 24px;
+    min-width: 0;
+    background: var(--workspace-ui-page);
+    color: var(--workspace-ui-text);
+    font-family: var(--workspace-ui-font-text);
+    font-size: 14px;
+    line-height: 1.43;
+    letter-spacing: -0.014em;
+}
+
+.dark .workspace-ui-scope {
+    --workspace-ui-page: #000000;
+    --workspace-ui-surface: #171717;
+    --workspace-ui-surface-subtle: #232323;
+    --workspace-ui-surface-hover: #292929;
+    --workspace-ui-text: #fafafa;
+    --workspace-ui-text-secondary: rgb(250 250 250 / 62%);
+    --workspace-ui-text-tertiary: rgb(250 250 250 / 42%);
+    --workspace-ui-divider: rgb(250 250 250 / 10%);
+    --workspace-ui-control: rgb(250 250 250 / 8%);
+    --workspace-ui-control-hover: rgb(250 250 250 / 12%);
+    --workspace-ui-accent: #2997ff;
+    --workspace-ui-focus: rgb(41 151 255 / 34%);
+}
+
+.workspace-ui-scope :where(button, input, textarea, select) {
+    font-family: var(--workspace-ui-font-text);
+    letter-spacing: inherit;
+}
+
+.workspace-ui-scope :where(h1, h2, h3) {
+    margin: 0;
+    color: var(--workspace-ui-text);
+    font-family: var(--workspace-ui-font-display);
+    letter-spacing: -0.02em;
+}
+
+.workspace-ui-scope :where(p) {
+    margin: 0;
+}
+
+.workspace-ui-scope :where(a, button, input, textarea, select):focus-visible {
+    outline: 2px solid var(--workspace-ui-focus);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .workspace-ui-scope *,
+    .workspace-ui-scope *::before,
+    .workspace-ui-scope *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}

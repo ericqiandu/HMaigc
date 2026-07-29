@@ -1,17 +1,25 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Form, Input, Modal, Select } from "antd";
-import { ArrowRight, BookOpenText, FolderKanban, Images, LayoutGrid, Plus, Search } from "lucide-react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { App, Button, Form, Input, Modal, Popover, Select } from "antd";
+import { LayoutGrid, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
 
-import { ListToolbar, PageHeader, TableSurface, WorkspacePage } from "@/components/layout/workspace-page";
+import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
-import { projectSummaryCompletion, projectSummaryStage } from "@/lib/project-workbench";
-import { createProject, listProjects, type ProjectSummary } from "@/services/api/projects";
+import { createProject, listProjects } from "@/services/api/projects";
+import "@/styles/workspace-ui.css";
 
-import { sourceTypeLabel } from "./detail/shared";
+import { ProjectGallery } from "./project-gallery";
+import "./projects-workspace.css";
 
-type ProjectForm = { name: string; aspectRatio: string; sourceType: string };
+type ProjectForm = {
+    name: string;
+    aspectRatio: string;
+    sourceType: string;
+};
+
+type ProjectStatusFilter = "all" | "active" | "archived";
+type ProjectSort = "updated" | "progress" | "name";
 
 export default function ProjectsPage() {
     const navigate = useNavigate();
@@ -19,16 +27,22 @@ export default function ProjectsPage() {
     const { message } = App.useApp();
     const [searchParams, setSearchParams] = useSearchParams();
     const [keyword, setKeyword] = useState("");
-    const [status, setStatus] = useState<"all" | "active" | "archived">("all");
-    const [sort, setSort] = useState<"updated" | "progress" | "name">("updated");
+    const [status, setStatus] = useState<ProjectStatusFilter>("all");
+    const [sort, setSort] = useState<ProjectSort>("updated");
     const createOpen = searchParams.get("create") === "1";
+
     const setCreateOpen = (open: boolean) => {
         const next = new URLSearchParams(searchParams);
         if (open) next.set("create", "1");
         else next.delete("create");
         setSearchParams(next, { replace: true });
     };
-    const query = useQuery({ queryKey: ["projects"], queryFn: listProjects });
+
+    const query = useQuery({
+        queryKey: ["projects"],
+        queryFn: listProjects,
+    });
+
     const mutation = useMutation({
         mutationFn: createProject,
         onSuccess: ({ project }) => {
@@ -36,113 +50,181 @@ export default function ProjectsPage() {
             void queryClient.invalidateQueries({ queryKey: ["projects"] });
             navigate(`/projects/${project.id}/overview`);
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "项目创建失败"),
+        onError: (error) => {
+            message.error(error instanceof Error ? error.message : "项目创建失败");
+        },
     });
+
     const rows = useMemo(() => {
         const normalizedKeyword = keyword.trim().toLowerCase();
         return [...(query.data?.projects || [])]
             .filter(({ project }) => status === "all" || project.status === status)
             .filter(({ project }) => !normalizedKeyword || `${project.name} ${project.description} ${project.stylePresetId}`.toLowerCase().includes(normalizedKeyword))
             .sort((left, right) => {
-                if (sort === "name") return left.project.name.localeCompare(right.project.name, "zh-CN");
-                if (sort === "progress") return projectSummaryCompletion(right) - projectSummaryCompletion(left);
+                if (sort === "name") {
+                    return left.project.name.localeCompare(right.project.name, "zh-CN");
+                }
+                if (sort === "progress") {
+                    const leftProgress = left.unitCount ? left.completedUnitCount / left.unitCount : 0;
+                    const rightProgress = right.unitCount ? right.completedUnitCount / right.unitCount : 0;
+                    return rightProgress - leftProgress;
+                }
                 return right.project.updatedAt.localeCompare(left.project.updatedAt);
             });
     }, [keyword, query.data, sort, status]);
 
-    return (
-        <WorkspacePage>
-            <PageHeader
-                title="短剧创作"
-                description="按制作阶段查看故事项目，继续最近工作或处理未完成章节。"
-                meta={<span className="text-xs text-foreground/45">{rows.length} 个</span>}
-            />
-            <ListToolbar
-                active={Boolean(keyword || status !== "all" || sort !== "updated")}
-                onReset={() => { setKeyword(""); setStatus("all"); setSort("updated"); }}
-                trailing={(
-                    <>
-                        <Button icon={<LayoutGrid className="size-3.5" />} onClick={() => navigate("/canvas")}>画布</Button>
-                        <Button type="primary" icon={<Plus className="size-3.5" />} onClick={() => setCreateOpen(true)}>创建项目</Button>
-                    </>
-                )}
-            >
-                <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索项目、简介或画风" onChange={(event) => setKeyword(event.target.value)} />
-                <Select className="w-32" value={status} onChange={setStatus} options={[{ label: "全部状态", value: "all" }, { label: "进行中", value: "active" }, { label: "已归档", value: "archived" }]} />
-                <Select className="w-32" value={sort} onChange={setSort} options={[{ label: "最近更新", value: "updated" }, { label: "章节进度", value: "progress" }, { label: "项目名称", value: "name" }]} />
-            </ListToolbar>
+    const filtersActive = status !== "all" || sort !== "updated";
+    const showGallery = !query.isLoading && !query.isError && (rows.length > 0 || (!keyword && status === "all"));
 
-            {query.isError ? <WorkspaceErrorState description={query.error instanceof Error ? query.error.message : "项目列表加载失败"} onRetry={() => void query.refetch()} /> : null}
-            {query.isLoading ? <WorkspaceLoadingState label="正在整理项目" detail="读取章节、画布与资产进度" /> : null}
-            {!query.isLoading && rows.length ? (
-                <TableSurface>
-                    <div className="hidden h-10 grid-cols-[minmax(240px,1.2fr)_minmax(150px,.75fr)_minmax(150px,.7fr)_minmax(180px,.8fr)_120px_28px] items-center gap-4 border-b border-border/70 bg-foreground/[.025] px-4 text-[11px] font-medium text-foreground/42 lg:grid">
-                        <span>项目</span><span>当前阶段</span><span>章节进度</span><span>内容</span><span>最近更新</span><span />
-                    </div>
-                    <div className="divide-y divide-border/65">
-                        {rows.map((row) => <ProjectRow key={row.project.id} row={row} />)}
-                    </div>
-                </TableSurface>
-            ) : null}
-            {!query.isLoading && !rows.length && !query.isError ? (
-                <WorkspaceState
-                    icon="projects"
-                    title={keyword || status !== "all" ? "没有匹配的项目" : "创建第一个故事项目"}
-                    description={keyword || status !== "all" ? "调整搜索词或状态筛选后再试。" : "项目会集中保存章节、项目画布、角色场景和制作进度。自由试图可从画布开始。"}
-                    action={!keyword && status === "all" ? <Button type="primary" icon={<Plus className="size-3.5" />} onClick={() => setCreateOpen(true)}>创建项目</Button> : undefined}
+    const resetFilters = () => {
+        setStatus("all");
+        setSort("updated");
+    };
+
+    const filterContent = (
+        <div className="projects-workspace-filter-content">
+            <label className="projects-workspace-filter-field">
+                <span className="projects-workspace-filter-label">项目状态</span>
+                <Select<ProjectStatusFilter>
+                    className="projects-workspace-filter-select"
+                    value={status}
+                    onChange={setStatus}
+                    options={[
+                        { label: "全部状态", value: "all" },
+                        { label: "进行中", value: "active" },
+                        { label: "已归档", value: "archived" },
+                    ]}
                 />
+            </label>
+            <label className="projects-workspace-filter-field">
+                <span className="projects-workspace-filter-label">排序方式</span>
+                <Select<ProjectSort>
+                    className="projects-workspace-filter-select"
+                    value={sort}
+                    onChange={setSort}
+                    options={[
+                        { label: "最近更新", value: "updated" },
+                        { label: "章节进度", value: "progress" },
+                        { label: "项目名称", value: "name" },
+                    ]}
+                />
+            </label>
+            {filtersActive ? (
+                <Button type="text" size="small" className="projects-workspace-filter-reset" onClick={resetFilters}>
+                    恢复默认
+                </Button>
+            ) : null}
+        </div>
+    );
+
+    return (
+        <WorkspacePage className="workspace-ui-scope projects-workspace">
+            <PageHeader
+                title="我的项目"
+                description="继续最近的短剧项目，或创建新的制作空间。"
+                meta={<span className="projects-page-count">{rows.length}</span>}
+                actions={
+                    <>
+                        <Popover content={filterContent} placement="bottomRight" trigger="click">
+                            <Button
+                                className={`projects-workspace-header-button projects-workspace-filter-button ${filtersActive ? "projects-workspace-filter-button--active" : ""}`}
+                                icon={<SlidersHorizontal className="projects-workspace-header-icon size-3.5" />}
+                            >
+                                筛选
+                            </Button>
+                        </Popover>
+                        <Button className="projects-workspace-header-button projects-page-canvas-button" icon={<LayoutGrid className="projects-workspace-header-icon size-3.5" />} onClick={() => navigate("/canvas")}>
+                            画布
+                        </Button>
+                        <Button className="projects-workspace-header-button projects-workspace-create-button projects-page-create-button" icon={<Plus className="projects-workspace-header-icon size-3.5" />} onClick={() => setCreateOpen(true)}>
+                            新建项目
+                        </Button>
+                        <Input
+                            allowClear
+                            className="projects-workspace-search"
+                            prefix={<Search className="projects-workspace-search-icon size-4" />}
+                            value={keyword}
+                            placeholder="搜索"
+                            aria-label="搜索项目"
+                            onChange={(event) => setKeyword(event.target.value)}
+                        />
+                    </>
+                }
+            />
+
+            {query.isError ? (
+                <div className="projects-workspace-state">
+                    <WorkspaceErrorState description={query.error instanceof Error ? query.error.message : "项目列表加载失败"} onRetry={() => void query.refetch()} />
+                </div>
             ) : null}
 
-            <Modal title="创建短剧项目" open={createOpen} footer={null} destroyOnHidden onCancel={() => setCreateOpen(false)} width={500} styles={{ body: { paddingTop: 12 } }}>
-                <Form<ProjectForm> layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank" }} onFinish={(values) => mutation.mutate({ ...values, type: "short-drama" })}>
-                    <Form.Item name="name" label="项目名称" rules={[{ required: true, whitespace: true, message: "请输入项目名称" }]}><Input autoFocus placeholder="例如：长安夜行" /></Form.Item>
-                    <div className="grid grid-cols-2 gap-3">
-                        <Form.Item name="aspectRatio" label="默认画幅"><Select options={[{ label: "9:16 竖屏", value: "9:16" }, { label: "16:9 横屏", value: "16:9" }, { label: "1:1 方形", value: "1:1" }]} /></Form.Item>
-                        <Form.Item name="sourceType" label="内容来源"><Select options={[{ label: "空白开始", value: "blank" }, { label: "导入小说", value: "novel" }, { label: "粘贴文本", value: "text" }]} /></Form.Item>
+            {query.isLoading ? (
+                <div className="projects-workspace-state">
+                    <WorkspaceLoadingState label="正在整理项目" detail="读取章节、画布与素材进度" />
+                </div>
+            ) : null}
+
+            {showGallery ? <ProjectGallery rows={rows} onCreate={() => setCreateOpen(true)} /> : null}
+
+            {!query.isLoading && !query.isError && !rows.length && (Boolean(keyword) || status !== "all") ? (
+                <div className="projects-workspace-state">
+                    <WorkspaceState
+                        icon="projects"
+                        title="没有匹配的项目"
+                        description="调整搜索词或筛选条件后再试。"
+                        action={
+                            <Button
+                                className="projects-workspace-reset-search"
+                                onClick={() => {
+                                    setKeyword("");
+                                    resetFilters();
+                                }}
+                            >
+                                清除筛选
+                            </Button>
+                        }
+                    />
+                </div>
+            ) : null}
+
+            <Modal title="创建短剧项目" open={createOpen} footer={null} destroyOnHidden onCancel={() => setCreateOpen(false)} width={500} className="projects-workspace-create-modal" styles={{ body: { paddingTop: 12 } }}>
+                <Form<ProjectForm> className="projects-workspace-create-form" layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank" }} onFinish={(values) => mutation.mutate({ ...values, type: "short-drama" })}>
+                    <Form.Item className="projects-workspace-create-form-item" name="name" label="项目名称" rules={[{ required: true, whitespace: true, message: "请输入项目名称" }]}>
+                        <Input autoFocus className="projects-workspace-create-name" placeholder="例如：长安夜行" />
+                    </Form.Item>
+                    <div className="projects-workspace-create-form-grid">
+                        <Form.Item className="projects-workspace-create-form-item" name="aspectRatio" label="默认画幅">
+                            <Select
+                                className="projects-workspace-create-select"
+                                options={[
+                                    { label: "9:16 竖屏", value: "9:16" },
+                                    { label: "16:9 横屏", value: "16:9" },
+                                    { label: "1:1 方形", value: "1:1" },
+                                ]}
+                            />
+                        </Form.Item>
+                        <Form.Item className="projects-workspace-create-form-item" name="sourceType" label="内容来源">
+                            <Select
+                                className="projects-workspace-create-select"
+                                options={[
+                                    { label: "空白开始", value: "blank" },
+                                    { label: "导入小说", value: "novel" },
+                                    { label: "粘贴文本", value: "text" },
+                                ]}
+                            />
+                        </Form.Item>
                     </div>
-                    <p className="-mt-1 mb-5 text-xs leading-5 text-foreground/48">创建后先进入项目概览。章节、画风和参考资产可以逐步补充。</p>
-                    <div className="flex justify-end gap-2"><Button onClick={() => setCreateOpen(false)}>取消</Button><Button type="primary" htmlType="submit" loading={mutation.isPending}>创建项目</Button></div>
+                    <p className="projects-workspace-create-help">创建后先进入项目概览。章节、画风和参考素材可以逐步补充。</p>
+                    <div className="projects-workspace-create-actions">
+                        <Button className="projects-workspace-create-cancel" onClick={() => setCreateOpen(false)}>
+                            取消
+                        </Button>
+                        <Button className="projects-workspace-create-submit" type="primary" htmlType="submit" loading={mutation.isPending}>
+                            创建项目
+                        </Button>
+                    </div>
                 </Form>
             </Modal>
         </WorkspacePage>
     );
-}
-
-function ProjectRow({ row }: { row: ProjectSummary }) {
-    const completion = projectSummaryCompletion(row);
-    const stage = projectSummaryStage(row);
-    return (
-        <Link to={`/projects/${row.project.id}/overview`} className="group block min-w-0 px-3 py-3 transition-colors hover:bg-foreground/[.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-foreground/20 sm:px-4 lg:grid lg:min-h-[76px] lg:grid-cols-[minmax(240px,1.2fr)_minmax(150px,.75fr)_minmax(150px,.7fr)_minmax(180px,.8fr)_120px_28px] lg:items-center lg:gap-4 lg:py-2.5">
-            <span className="flex min-w-0 items-start gap-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-md bg-foreground/[.06] text-foreground/50"><FolderKanban className="size-4" /></span>
-                <span className="min-w-0"><span className="flex min-w-0 items-center gap-2"><strong className="truncate text-sm font-semibold">{row.project.name}</strong>{row.project.status === "archived" ? <span className="shrink-0 rounded bg-foreground/[.07] px-1.5 py-0.5 text-[10px] text-foreground/45">已归档</span> : null}</span><span className="mt-1 block truncate text-[11px] text-foreground/42">{row.project.stylePresetId || "未设置画风"} · {row.project.aspectRatio} · {sourceTypeLabel(row.project.sourceType)}</span></span>
-            </span>
-
-            <span className="mt-3 grid grid-cols-[72px_minmax(0,1fr)] items-start gap-2 lg:mt-0 lg:block">
-                <span className="text-[10px] text-foreground/38 lg:hidden">当前阶段</span>
-                <span className="min-w-0"><span className="block text-xs font-medium text-foreground/78">{stage.label}</span><span className="mt-1 line-clamp-1 block text-[10px] text-foreground/40">{stage.detail}</span></span>
-            </span>
-
-            <span className="mt-3 grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 lg:mt-0 lg:block">
-                <span className="text-[10px] text-foreground/38 lg:hidden">章节进度</span>
-                <span className="min-w-0"><span className="flex items-center justify-between text-[10px] text-foreground/48"><span>{row.completedUnitCount}/{row.unitCount} 章</span><span>{completion}%</span></span><span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-foreground/[.08]"><span className="block h-full rounded-full bg-[var(--workspace-accent)] transition-[width]" style={{ width: `${completion}%` }} /></span></span>
-            </span>
-
-            <span className="mt-3 flex items-center gap-4 text-[11px] text-foreground/50 lg:mt-0">
-                <ProjectCount icon={<BookOpenText className="size-3.5" />} label="章节" value={row.unitCount} />
-                <ProjectCount icon={<LayoutGrid className="size-3.5" />} label="画布" value={row.canvasCount} />
-                <ProjectCount icon={<Images className="size-3.5" />} label="资产" value={row.assetCount} />
-            </span>
-            <span className="mt-3 block text-[11px] tabular-nums text-foreground/42 lg:mt-0">{formatProjectTime(row.project.updatedAt)}</span>
-            <ArrowRight className="hidden size-4 text-foreground/25 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground/60 lg:block" />
-        </Link>
-    );
-}
-
-function ProjectCount({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
-    return <span className="inline-flex items-center gap-1.5" title={`${value} ${label}`}><span className="text-foreground/32">{icon}</span><strong className="font-medium tabular-nums text-foreground/65">{value}</strong><span className="hidden 2xl:inline">{label}</span></span>;
-}
-
-function formatProjectTime(value: string) {
-    return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }

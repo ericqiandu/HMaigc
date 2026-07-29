@@ -150,4 +150,27 @@ No actionable P0, P1 or P2 difference remains in the requested icon-polish scope
 
 No actionable P0, P1 or P2 difference remains in the requested tooltip-and-toolbar synchronization scope.
 
+## Projects Workbench Reference QA (2026-07-29)
+
+- Reference: `qa-artifacts/projects-workbench-v1-20260729/reference-updream.png`.
+- Implementation: `qa-artifacts/projects-workbench-v1-20260729/implementation-hmaigc.png`.
+- Viewport: 1086 × 912 CSS px.
+- State: dark project workbench with one real project; no project was created or modified during QA.
+
+### Verified scope
+
+- The `/projects` page uses a 878px centered content frame aligned at x=104, matching the measured Updream reference frame.
+- Header and search end at x=982 with no inherited floating-account padding; controls are 36px high and remain on one line at the reference viewport.
+- The project grid starts at y=148 and resolves to three `284.66px` columns with 12px gaps.
+- The new-project card is `284.66 × 227.72px`; the real project card is `284.67 × 228.13px`.
+- Page typography resolves from one scoped 14px text base with explicit 16px page title, 14px card title and 11–12px metadata tiers.
+- The create tile, project stage, completion, chapter/canvas/material counts and update time are derived from real project data; no reference-only folder or bulk-selection capability was fabricated.
+- Filter, create-project modal and no-result search state were exercised in the real browser. No create request was submitted.
+- The homepage was opened separately and contains no `.projects-workspace` scope; homepage and project-page browser consoles remained empty.
+- Production TypeScript check and Vite build pass. The existing large-chunk warning remains outside this page-specific visual change.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains in the requested first-page workbench scope.
+
 final result: passed
