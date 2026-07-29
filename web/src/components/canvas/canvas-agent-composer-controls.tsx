@@ -44,7 +44,7 @@ export function CanvasAgentComposerControls({
         <div className="canvas-agent-composer-controls">
             <ComposerPopover
                 label="选择模型"
-                icon="/icons/agent-model.svg"
+                icon="/icons/agent-model.svg?v=2"
                 iconVariant="model"
                 placement={placement}
                 open={activePopover === "models"}

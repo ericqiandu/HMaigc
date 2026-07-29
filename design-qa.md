@@ -107,4 +107,24 @@ No actionable P0, P1 or P2 difference remains in the requested composer-control 
 
 No actionable P0, P1 or P2 difference remains in the requested homepage-versus-Agent composer scope.
 
+## Agent Toolbar Icon Polish QA (2026-07-29)
+
+- Source visual truth: the user-supplied model SVG path data and the existing 20 px neighboring toolbar icons.
+- Implementation screenshot: `qa-artifacts/agent-icon-polish-20260729/home-after.png`.
+- Before/after comparison: `qa-artifacts/agent-icon-polish-20260729/toolbar-before-after.png`.
+- Viewport: 1086 × 912 CSS px.
+- State: dark homepage, empty composer, no Agent request submitted.
+
+### Verified scope
+
+- The add-image plus glyph increased from 16 × 16 to 20 × 20 CSS px while retaining its existing 32 × 32 px accessible button hit area.
+- The model selector now uses the exact two-path geometry supplied by the user, normalized to the shared muted icon color.
+- The plus and model glyphs both render at 20 × 20 CSS px and align to the same toolbar center line.
+- The model asset URL carries an explicit version marker so local and deployed clients do not continue displaying the previous cached SVG.
+- The external SVG loads successfully, tooltips and `aria-label` remain intact, and the browser console is empty.
+
+### Final result
+
+No actionable P0, P1 or P2 difference remains in the requested icon-polish scope.
+
 final result: passed

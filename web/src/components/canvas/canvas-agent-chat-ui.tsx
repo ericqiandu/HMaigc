@@ -245,7 +245,7 @@ export function AgentChatComposer({
                                     event.target.value = "";
                                 }} />
                                 <Tooltip title="添加图片">
-                                    <Button type="text" className="canvas-agent-composer-tool" disabled={sending} style={{ color: theme.node.muted }} icon={<Plus className="size-4" />} onClick={() => fileInputRef.current?.click()} aria-label="添加图片" />
+                                    <Button type="text" className="canvas-agent-composer-tool" disabled={sending} style={{ color: theme.node.muted }} icon={<Plus className="canvas-agent-composer-add-icon size-5" />} onClick={() => fileInputRef.current?.click()} aria-label="添加图片" />
                                 </Tooltip>
                             </>
                         ) : null}
