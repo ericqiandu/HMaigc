@@ -20,9 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: open-ai-canvas-web
+          - image: hmaigc-web
             dockerfile: Dockerfile
-          - image: open-ai-canvas-backend
+          - image: hmaigc-backend
             dockerfile: backend/Dockerfile
 
     steps:

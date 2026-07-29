@@ -97,7 +97,7 @@ func main() {
 	}
 
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
-	log.Printf("影策 backend listening on %s", addr)
+	log.Printf("HMaigc backend listening on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatal(err)
 	}

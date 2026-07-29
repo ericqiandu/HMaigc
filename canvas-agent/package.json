@@ -1,6 +1,7 @@
 {
-  "name": "@ddcat666/open-ai-canvas-agent",
+  "name": "hmaigc-canvas-agent",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,14 +37,11 @@
   "engines": {
     "node": ">=18"
   },
-  "author": "ddcat <ddcat666@126.com>",
+  "author": "弘梦 <1170044099@qq.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ddcat-ai/open-ai-canvas.git",
+    "url": "https://github.com/ericqiandu/HMaigc.git",
     "directory": "canvas-agent"
   },
-  "license": "AGPL-3.0",
-  "publishConfig": {
-    "access": "public"
-  }
+  "license": "AGPL-3.0"
 }

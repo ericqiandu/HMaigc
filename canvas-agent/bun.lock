@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@ddcat666/open-ai-canvas-agent",
+      "name": "hmaigc-canvas-agent",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@openai/codex": "^0.144.6",

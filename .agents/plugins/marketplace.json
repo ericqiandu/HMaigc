@@ -1,7 +1,7 @@
 {
-  "name": "infinite-canvas-local",
+  "name": "hmaigc-local",
   "interface": {
-    "displayName": "影策 Local"
+    "displayName": "HMaigc Local"
   },
   "plugins": [
     {

@@ -17,6 +17,8 @@ dist/
 *.sqlite3
 *.bak
 *.tmp
+*.exe
+/*.zip
 .settings-key
 .DS_Store
 .idea/
