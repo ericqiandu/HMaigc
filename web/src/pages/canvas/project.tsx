@@ -10,10 +10,12 @@ import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
+import { hasPendingCinematicAgentWork } from "@/lib/canvas/canvas-agent-launch";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { App } from "antd";
 import { getNodeSpec } from "@/constant/canvas";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -326,6 +328,21 @@ function InfiniteCanvasPage() {
         cleanupAssetImages,
         cleanupCanvasFiles,
     });
+    const agentLaunchRequest = currentProject?.pendingAgentLaunch;
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const hasPendingAgentWork = hasPendingCinematicAgentWork(currentProject?.chatSessions || []);
+        if (!agentLaunchRequest && !hasPendingAgentWork) return;
+        if (agentLaunchRequest) setCinematicAgentEntry(true);
+        openAgent();
+    }, [agentLaunchRequest, currentProject?.chatSessions, openAgent, projectLoaded]);
+
+    const handleAgentLaunchHandled = useCallback((launchRequestId: string) => {
+        const latest = useCanvasStore.getState().openProject(projectId)?.pendingAgentLaunch;
+        if (latest?.id !== launchRequestId) return;
+        updateProject(projectId, { pendingAgentLaunch: undefined });
+    }, [projectId, updateProject]);
     const canAccessLinkedProject = Boolean(
         currentProject?.projectId &&
         (!currentProject.teamId || (currentProject.ownerUserId && currentProject.ownerUserId === currentUserId)),
@@ -1791,6 +1808,8 @@ function InfiniteCanvasPage() {
                     onCollapse={closeAgent}
                     cinematicEntry={cinematicAgentEntry}
                     onCinematicEntryConsumed={() => setCinematicAgentEntry(false)}
+                    agentLaunchRequest={agentLaunchRequest}
+                    onAgentLaunchHandled={handleAgentLaunchHandled}
                 />
             ) : null}
         </main>

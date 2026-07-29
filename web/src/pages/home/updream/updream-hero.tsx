@@ -1,6 +1,10 @@
-import { ArrowUp, FileText, Image as ImageIcon, Music, Table } from "lucide-react";
+import { ArrowUp, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { App } from "antd";
+
+import { createAgentCanvasProjectWithRemoteSync } from "@/services/user-data-sync";
+import type { CanvasAgentExecutionMode } from "@/types/canvas";
 
 const PLACEHOLDERS = [
     '试试说"在画布上为我创建…"，生成不阻塞，随时开启下一轮对话',
@@ -8,16 +12,12 @@ const PLACEHOLDERS = [
     "进入项目后，按 @ 可引用资产库素材",
 ] as const;
 
-const INPUT_TOOLS = [
-    { label: "添加图片", Icon: ImageIcon },
-    { label: "添加文档", Icon: FileText },
-    { label: "添加音频", Icon: Music },
-    { label: "添加表格", Icon: Table },
-] as const;
-
 export function UpdreamHero() {
+    const { message } = App.useApp();
     const navigate = useNavigate();
     const [value, setValue] = useState("");
+    const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
+    const [submitting, setSubmitting] = useState(false);
     const [placeholderIndex, setPlaceholderIndex] = useState(0);
     const [placeholderVisible, setPlaceholderVisible] = useState(true);
     const transitionTimeoutRef = useRef<number | null>(null);
@@ -37,9 +37,21 @@ export function UpdreamHero() {
         };
     }, []);
 
-    const startCreating = () => {
-        if (!value.trim()) return;
-        navigate(`/canvas?prompt=${encodeURIComponent(value.trim())}`);
+    const startCreating = async () => {
+        const prompt = value.trim();
+        if (!prompt || submitting) return;
+        setSubmitting(true);
+        try {
+            const { id, syncError } = await createAgentCanvasProjectWithRemoteSync({ prompt, mode: executionMode });
+            if (syncError) {
+                const reason = syncError instanceof Error ? syncError.message : "未知错误";
+                message.warning(`项目已在本地创建，云端同步暂未完成：${reason}`);
+            }
+            navigate(`/canvas/${id}`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "项目创建失败");
+            setSubmitting(false);
+        }
     };
 
     return (
@@ -59,9 +71,10 @@ export function UpdreamHero() {
                         onKeyDown={(event) => {
                             if (event.key === "Enter" && !event.shiftKey) {
                                 event.preventDefault();
-                                startCreating();
+                                void startCreating();
                             }
                         }}
+                        disabled={submitting}
                         rows={3}
                         className="updream-composer-input w-full resize-none bg-transparent text-[14px] leading-6 text-white/90 outline-none placeholder:text-transparent"
                         aria-label="描述你想创作的内容"
@@ -77,29 +90,38 @@ export function UpdreamHero() {
                     ) : null}
                 </div>
                 <div className="updream-composer-actions mt-3 flex items-center justify-between">
-                    <div className="updream-composer-tools flex items-center gap-2.5">
-                        {INPUT_TOOLS.map(({ label, Icon }) => (
-                            <button
-                                key={label}
-                                type="button"
-                                className="updream-composer-tool flex h-8 w-8 items-center justify-center rounded-[8px] border border-white/10 bg-white/[0.04] text-white/50 transition-colors hover:bg-white/10 hover:text-white/80"
-                                aria-label={label}
-                                title={label}
-                            >
-                                <Icon className="updream-composer-tool-icon size-[15px]" />
-                            </button>
-                        ))}
+                    <div className="updream-composer-modes flex items-center gap-1 rounded-lg bg-white/[0.04] p-1" role="group" aria-label="Agent 执行模式">
+                        <button
+                            type="button"
+                            className={`updream-composer-mode flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${executionMode === "guided" ? "bg-white/12 text-white" : "text-white/45 hover:text-white/75"}`}
+                            onClick={() => setExecutionMode("guided")}
+                            aria-pressed={executionMode === "guided"}
+                            title="Agent 先完成方案推演，写入画布和触发生成前由你确认"
+                        >
+                            <ShieldCheck className="updream-composer-mode-icon size-3.5" />
+                            执行前确认
+                        </button>
+                        <button
+                            type="button"
+                            className={`updream-composer-mode flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${executionMode === "automatic" ? "bg-white/12 text-white" : "text-white/45 hover:text-white/75"}`}
+                            onClick={() => setExecutionMode("automatic")}
+                            aria-pressed={executionMode === "automatic"}
+                            title="Agent 完成推演后直接写入画布并执行生成"
+                        >
+                            <Zap className="updream-composer-mode-icon size-3.5" />
+                            自动执行
+                        </button>
                     </div>
                     <button
                         type="button"
-                        onClick={startCreating}
+                        onClick={() => void startCreating()}
                         className={`updream-composer-send flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-                            value.trim() ? "bg-white text-black hover:bg-white/85" : "bg-white/15 text-white/40"
+                            value.trim() && !submitting ? "bg-white text-black hover:bg-white/85" : "bg-white/15 text-white/40"
                         }`}
-                        aria-label="开始创作"
-                        disabled={!value.trim()}
+                        aria-label={submitting ? "正在创建项目" : "开始创作"}
+                        disabled={!value.trim() || submitting}
                     >
-                        <ArrowUp className="updream-composer-send-icon size-[17px]" />
+                        <ArrowUp className={`updream-composer-send-icon size-[17px] ${submitting ? "animate-pulse" : ""}`} />
                     </button>
                 </div>
             </div>

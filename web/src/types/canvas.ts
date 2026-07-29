@@ -306,11 +306,23 @@ export type CanvasAssistantMessage = {
     references?: CanvasAssistantReference[];
 };
 
+export type CanvasAgentExecutionMode = "guided" | "automatic";
+
+export type CanvasAgentLaunchRequest = {
+    id: string;
+    source: "home";
+    prompt: string;
+    mode: CanvasAgentExecutionMode;
+    createdAt: string;
+};
+
 export type CanvasAssistantPendingBackendSession = {
     id: string;
     kind: "cinematic";
     messageId: string;
     status: "pending";
+    executionMode: CanvasAgentExecutionMode;
+    launchRequestId?: string;
     startedAt: string;
 };
 

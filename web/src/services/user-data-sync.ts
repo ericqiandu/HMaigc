@@ -6,6 +6,9 @@ import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { nanoid } from "nanoid";
+import { canvasAgentProjectTitle, createCanvasAgentLaunchRequest } from "@/lib/canvas/canvas-agent-launch";
+import type { CanvasAgentExecutionMode } from "@/types/canvas";
 
 let activeRemoteUserId = "";
 let applyingRemoteState = false;
@@ -87,6 +90,23 @@ export function scheduleRemoteUserDataSync() {
 
 export async function createCanvasProjectWithRemoteSync(title: string, projectId?: string) {
     const id = useCanvasStore.getState().createProject(title, projectId);
+    if (!activeRemoteUserId) return { id, syncError: new Error("尚未建立云端同步会话") };
+    try {
+        await saveRemoteUserDataNow();
+        return { id };
+    } catch (syncError) {
+        scheduleRemoteUserDataSync();
+        return { id, syncError };
+    }
+}
+
+export async function createAgentCanvasProjectWithRemoteSync(input: { prompt: string; mode: CanvasAgentExecutionMode }) {
+    const now = new Date().toISOString();
+    const store = useCanvasStore.getState();
+    const id = store.createProject(canvasAgentProjectTitle(input.prompt));
+    store.updateProject(id, {
+        pendingAgentLaunch: createCanvasAgentLaunchRequest(input.prompt, input.mode, nanoid(), now),
+    });
     if (!activeRemoteUserId) return { id, syncError: new Error("尚未建立云端同步会话") };
     try {
         await saveRemoteUserDataNow();

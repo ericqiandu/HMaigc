@@ -4,7 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
+import type { CanvasAgentLaunchRequest, CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
 export type CanvasProject = {
@@ -19,6 +19,7 @@ export type CanvasProject = {
     connections: CanvasConnection[];
     chatSessions: CanvasAssistantSession[];
     activeChatId: string | null;
+    pendingAgentLaunch?: CanvasAgentLaunchRequest;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
@@ -40,7 +41,7 @@ type CanvasStore = {
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "ownerUserId" | "teamId" | "projectId" | "title" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "revision" | "defaultTeamAccess" | "accessLevel" | "canEdit" | "canManage" | "teamSubscriptionActive">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "ownerUserId" | "teamId" | "projectId" | "title" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "pendingAgentLaunch" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "revision" | "defaultTeamAccess" | "accessLevel" | "canEdit" | "canManage" | "teamSubscriptionActive">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
@@ -124,6 +125,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     connections: source.connections || [],
                     chatSessions: source.chatSessions || [],
                     activeChatId: source.activeChatId || null,
+                    pendingAgentLaunch: source.pendingAgentLaunch,
                     backgroundMode: source.backgroundMode || "lines",
                     showImageInfo: source.showImageInfo || false,
                     viewport: source.viewport || initialViewport,

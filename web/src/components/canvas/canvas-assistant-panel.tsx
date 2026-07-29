@@ -14,11 +14,13 @@ import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { cinematicAgentSessionOpsJson, createCinematicAgentSession, isAgentSessionPollingAbort, resumeCinematicAgentSession } from "@/lib/canvas/canvas-agent-session";
+import { cinematicAgentProgress, hasCanvasAgentLaunchRecord } from "@/lib/canvas/canvas-agent-launch";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { CanvasNodeType, type CanvasAssistantMessage, type CanvasAssistantPendingBackendSession, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasAgentExecutionMode, type CanvasAgentLaunchRequest, type CanvasAssistantMessage, type CanvasAssistantPendingBackendSession, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "@/types/canvas";
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
@@ -136,9 +138,11 @@ type CanvasAssistantPanelProps = {
     onCollapse: () => void;
     cinematicEntry?: boolean;
     onCinematicEntryConsumed?: () => void;
+    agentLaunchRequest?: CanvasAgentLaunchRequest;
+    onAgentLaunchHandled?: (launchRequestId: string) => void;
 };
 
-export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, projectId, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, canUndoOps, undoOpsCount, onUndoOps, onPasteImage, closing, onCollapse, cinematicEntry = false, onCinematicEntryConsumed }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, projectId, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, canUndoOps, undoOpsCount, onUndoOps, onPasteImage, closing, onCollapse, cinematicEntry = false, onCinematicEntryConsumed, agentLaunchRequest, onAgentLaunchHandled }: CanvasAssistantPanelProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
     const effectiveConfig = useEffectiveConfig();
@@ -161,6 +165,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const snapshotRef = useRef(snapshot);
     const pendingToolContextRef = useRef(new Map<string, PendingOnlineToolContext>());
     const cinematicSessionControllersRef = useRef(new Map<string, AbortController>());
+    const startedLaunchRequestIdsRef = useRef(new Set<string>());
 
     useEffect(() => {
         if (!sessions.length) return;
@@ -236,13 +241,15 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         });
     };
 
-    const setPendingCinematicSession = (sessionId: string, backendSessionId: string) => {
+    const setPendingCinematicSession = (sessionId: string, backendSessionId: string, executionMode: CanvasAgentExecutionMode, launchRequestId?: string) => {
         const startedAt = new Date().toISOString();
         const pending: CanvasAssistantPendingBackendSession = {
             id: backendSessionId,
             kind: "cinematic",
             messageId: cinematicSessionMessageId(backendSessionId),
             status: "pending",
+            executionMode,
+            launchRequestId,
             startedAt,
         };
         updateSession(sessionId, (session) => ({
@@ -253,10 +260,37 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 role: "assistant",
                 title: "影视项目生成中",
                 text: "后端影视 Agent 正在处理。即使页面刷新，也会在重新进入画布后继续等待结果。",
-                detail: { kind: "cinematic", backendSessionId, status: "pending", startedAt },
+                detail: { kind: "cinematic", backendSessionId, launchRequestId, executionMode, status: "pending", startedAt },
             }),
             updatedAt: startedAt,
         }));
+    };
+
+    const updateCinematicSessionProgress = (sessionId: string, backendSessionId: string, detail: Parameters<typeof cinematicAgentProgress>[0]) => {
+        const progress = cinematicAgentProgress(detail);
+        updateSession(sessionId, (session) => {
+            const pending = session.pendingBackendSession;
+            if (pending?.id !== backendSessionId) return session;
+            return {
+                ...session,
+                messages: upsertAssistantMessage(session.messages, {
+                    id: pending.messageId,
+                    role: "assistant",
+                    title: "影视项目生成中",
+                    text: progress.text,
+                    detail: {
+                        kind: "cinematic",
+                        backendSessionId,
+                        launchRequestId: pending.launchRequestId,
+                        executionMode: pending.executionMode,
+                        status: "pending",
+                        startedAt: pending.startedAt,
+                        progress,
+                    },
+                }),
+                updatedAt: new Date().toISOString(),
+            };
+        });
     };
 
     const completeCinematicSession = (sessionId: string, backendSessionId: string, ops: CanvasAgentOp[], recovered = false) => {
@@ -273,7 +307,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     role: "assistant",
                     title: recovered ? "影视项目已恢复并写回" : "影视项目已写回",
                     text: recovered ? `页面重新连接后已恢复后台结果：${summary}` : summary,
-                    detail: { kind: "cinematic", backendSessionId, status: "completed", recovered, completedAt },
+                    detail: { kind: "cinematic", backendSessionId, launchRequestId: pending.launchRequestId, executionMode: pending.executionMode, status: "completed", recovered, completedAt },
                 }),
                 updatedAt: completedAt,
             };
@@ -294,14 +328,45 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     role: "error",
                     title: "影视项目生成失败",
                     text,
-                    detail: { kind: "cinematic", backendSessionId, status: "failed", failedAt },
+                    detail: { kind: "cinematic", backendSessionId, launchRequestId: pending.launchRequestId, executionMode: pending.executionMode, status: "failed", failedAt },
                 }),
                 updatedAt: failedAt,
             };
         });
     };
 
-    const runCinematicSession = async (sessionId: string, text: string, current: CanvasAgentSnapshot, config: AiConfig, onCreated?: (backendSessionId: string) => void) => {
+    const queueCinematicProposal = (sessionId: string, backendSessionId: string, ops: CanvasAgentOp[], recovered = false) => {
+        updateSession(sessionId, (session) => {
+            const pending = session.pendingBackendSession;
+            if (pending?.id !== backendSessionId) return session;
+            const proposedAt = new Date().toISOString();
+            const summary = summarizeCanvasAgentOps(ops) || "影视方案已完成，等待写回当前画布。";
+            return {
+                ...session,
+                pendingBackendSession: undefined,
+                messages: upsertAssistantMessage(session.messages, {
+                    id: pending.messageId,
+                    role: "tool",
+                    title: "确认影视方案写回",
+                    text: recovered ? `页面重新连接后已取回影视方案：${summary}` : summary,
+                    detail: {
+                        kind: "cinematic-proposal",
+                        backendSessionId,
+                        launchRequestId: pending.launchRequestId,
+                        executionMode: pending.executionMode,
+                        status: "pending",
+                        recovered,
+                        proposedAt,
+                        ops,
+                        impact: previewCanvasAgentOps(ops, snapshotRef.current),
+                    },
+                }),
+                updatedAt: proposedAt,
+            };
+        });
+    };
+
+    const runCinematicSession = async (sessionId: string, text: string, current: CanvasAgentSnapshot, config: AiConfig, executionMode: CanvasAgentExecutionMode, launchRequestId?: string, onCreated?: (backendSessionId: string) => void) => {
         const requestConfig = resolveModelRequestConfig(config, config.textModel || config.model);
         const controller = new AbortController();
         const requestKey = `creating:${nanoid()}`;
@@ -310,10 +375,11 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         try {
             const detail = await createCinematicAgentSession(
                 {
+                    clientRequestId: launchRequestId,
                     projectId,
                     prompt: text,
                     canvasSnapshot: compactSnapshot(current) as unknown as Record<string, unknown>,
-                    config: backendAgentProviderConfig(requestConfig),
+                    config: systemProviderTaskConfig(requestConfig),
                 },
                 {
                     signal: controller.signal,
@@ -321,8 +387,11 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         backendSessionId = created.session.id;
                         cinematicSessionControllersRef.current.delete(requestKey);
                         cinematicSessionControllersRef.current.set(backendSessionId, controller);
-                        setPendingCinematicSession(sessionId, backendSessionId);
+                        setPendingCinematicSession(sessionId, backendSessionId, executionMode, launchRequestId);
                         onCreated?.(backendSessionId);
+                    },
+                    onUpdate: (detail) => {
+                        if (backendSessionId) updateCinematicSessionProgress(sessionId, backendSessionId, detail);
                     },
                 },
             );
@@ -484,7 +553,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 return { ok: true, message: `当前选中 ${ids.size} 个节点。`, data: { nodes: compactSnapshot({ ...current, nodes: current.nodes.filter((node) => ids.has(node.id)) }).nodes } };
             }
             if (name === "canvas_create_cinematic_session") {
-                const cinematic = await runCinematicSession(sessionId, requireString(args.prompt, "prompt"), current, effectiveConfig);
+                const cinematic = await runCinematicSession(sessionId, requireString(args.prompt, "prompt"), current, effectiveConfig, "automatic");
                 try {
                     const result = executeOps(cinematic.ops);
                     completeCinematicSession(sessionId, cinematic.backendSessionId, cinematic.ops);
@@ -531,10 +600,37 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const approveOnlineTool = async (messageId: string) => {
         const message = safeSessions.flatMap((session) => session.messages).find((item) => item.id === messageId);
         const detail = objectDetail(message?.detail);
+        const session = safeSessions.find((session) => session.messages.some((item) => item.id === messageId));
+        if (detail.kind === "cinematic-proposal") {
+            if (!session) return;
+            try {
+                setIsRunning(true);
+                const ops = requireOps(detail.ops);
+                const result = executeOps(ops);
+                upsertMessage(session.id, {
+                    id: messageId,
+                    role: "tool",
+                    title: "影视方案已写回",
+                    text: result.changed ? summarizeCanvasAgentOps(ops) || "影视方案已写回当前画布。" : result.noopReason,
+                    detail: { ...detail, status: result.changed ? "completed" : "failed", completedAt: new Date().toISOString(), result },
+                });
+                setCinematicEntryActive(false);
+            } catch (error) {
+                upsertMessage(session.id, {
+                    id: messageId,
+                    role: "tool",
+                    title: "影视方案写回失败",
+                    text: error instanceof Error ? error.message : "影视方案写回失败",
+                    detail: { ...detail, status: "failed", failedAt: new Date().toISOString() },
+                });
+            } finally {
+                setIsRunning(false);
+            }
+            return;
+        }
         const pendingContext = pendingToolContextRef.current.get(messageId);
         const toolCalls = pendingContext?.toolCalls || toolCallsFromDetail(detail);
         const previousMessages = pendingContext?.messages || [];
-        const session = safeSessions.find((session) => session.messages.some((item) => item.id === messageId));
         const assistantId = pendingContext?.assistantId || "";
         if (!session) return;
         if (!toolCalls.length || !previousMessages.length || !assistantId) {
@@ -557,7 +653,17 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const rejectOnlineTool = (messageId: string) => {
         const session = safeSessions.find((session) => session.messages.some((item) => item.id === messageId));
         pendingToolContextRef.current.delete(messageId);
-        if (session) upsertMessage(session.id, { id: messageId, role: "tool", title: "已拒绝执行", text: "工具调用已取消", detail: { ...objectDetail(session.messages.find((item) => item.id === messageId)?.detail), status: "rejected" } });
+        if (!session) return;
+        const detail = objectDetail(session.messages.find((item) => item.id === messageId)?.detail);
+        const cinematicProposal = detail.kind === "cinematic-proposal";
+        upsertMessage(session.id, {
+            id: messageId,
+            role: "tool",
+            title: cinematicProposal ? "已拒绝影视方案" : "已拒绝执行",
+            text: cinematicProposal ? "方案未写入画布，也没有触发媒体生成。" : "工具调用已取消",
+            detail: { ...detail, status: "rejected", rejectedAt: new Date().toISOString() },
+        });
+        if (cinematicProposal) setCinematicEntryActive(false);
     };
 
     const undoLastOnlineBatch = () => {
@@ -581,12 +687,28 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         onCinematicEntryConsumed?.();
     }, [cinematicEntry, onCinematicEntryConsumed]);
 
-    const submitCinematicProject = async (text: string) => {
+    const submitCinematicProject = async (text: string, options?: { executionMode?: CanvasAgentExecutionMode; launchRequestId?: string }) => {
         const value = text.trim();
         if (!value || agentBusy) return;
+        const executionMode = options?.executionMode || (confirmTools ? "guided" : "automatic");
         const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
         if (!isAiConfigReady(requestConfig, requestConfig.model)) {
             handleMissingSystemModel();
+            if (options?.launchRequestId) {
+                const session = activeSession || createSession();
+                if (!activeSession) {
+                    setLocalSessions([session]);
+                    setLocalActiveSessionId(session.id);
+                }
+                appendMessage(session.id, { id: nanoid(), role: "user", text: value });
+                appendMessage(session.id, {
+                    id: nanoid(),
+                    role: "error",
+                    title: "系统模型未就绪",
+                    text: "管理员尚未完成系统文本模型配置，本次任务没有提交，也没有产生积分消耗。",
+                    detail: { kind: "cinematic-launch", launchRequestId: options.launchRequestId, executionMode, status: "failed" },
+                });
+            }
             return;
         }
         const session = activeSession || createSession();
@@ -599,17 +721,29 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         setIsRunning(true);
         let backendSessionId = "";
         try {
-            const cinematic = await runCinematicSession(session.id, value, snapshotRef.current, effectiveConfig, (createdId) => {
+            const cinematic = await runCinematicSession(session.id, value, snapshotRef.current, effectiveConfig, executionMode, options?.launchRequestId, (createdId) => {
                 backendSessionId = createdId;
             });
-            const next = onApplyOps(cinematic.ops);
-            snapshotRef.current = next;
-            completeCinematicSession(session.id, cinematic.backendSessionId, cinematic.ops);
+            if (executionMode === "guided") {
+                queueCinematicProposal(session.id, cinematic.backendSessionId, cinematic.ops);
+            } else {
+                const next = onApplyOps(cinematic.ops);
+                snapshotRef.current = next;
+                completeCinematicSession(session.id, cinematic.backendSessionId, cinematic.ops);
+            }
             setCinematicEntryActive(false);
         } catch (error) {
             if (isAgentSessionPollingAbort(error)) return;
             if (backendSessionId) failCinematicSession(session.id, backendSessionId, error);
-            else appendMessage(session.id, { id: nanoid(), role: "error", title: "影视项目生成失败", text: error instanceof Error ? error.message : "影视项目生成失败" });
+            else {
+                appendMessage(session.id, {
+                    id: nanoid(),
+                    role: "error",
+                    title: "影视项目生成失败",
+                    text: error instanceof Error ? error.message : "影视项目生成失败",
+                    detail: { kind: "cinematic-launch", launchRequestId: options?.launchRequestId, executionMode, status: "failed" },
+                });
+            }
         } finally {
             setIsRunning(false);
         }
@@ -621,10 +755,19 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         cinematicSessionControllersRef.current.set(pending.id, controller);
         setIsRunning(true);
         try {
-            const detail = await resumeCinematicAgentSession(pending.id, { signal: controller.signal });
+            const detail = await resumeCinematicAgentSession(pending.id, {
+                signal: controller.signal,
+                onUpdate: (update) => updateCinematicSessionProgress(sessionId, pending.id, update),
+            });
             const ops = requireOps(JSON.parse(cinematicAgentSessionOpsJson(detail)));
-            executeOps(ops);
-            completeCinematicSession(sessionId, pending.id, ops, true);
+            if (pending.executionMode === "guided") {
+                queueCinematicProposal(sessionId, pending.id, ops, true);
+            } else if (pending.executionMode === "automatic") {
+                executeOps(ops);
+                completeCinematicSession(sessionId, pending.id, ops, true);
+            } else {
+                throw new Error("影视 Agent 会话缺少明确的执行模式，已停止写回画布");
+            }
         } catch (error) {
             if (!isAgentSessionPollingAbort(error)) {
                 failCinematicSession(sessionId, pending.id, error);
@@ -641,6 +784,25 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
             if (pending?.kind === "cinematic" && pending.status === "pending") void resumePendingCinematicSession(session.id, pending);
         });
     }, [localSessions]);
+
+    useEffect(() => {
+        if (!agentLaunchRequest) return;
+        if (hasCanvasAgentLaunchRecord(sessions, agentLaunchRequest.id)) {
+            onAgentLaunchHandled?.(agentLaunchRequest.id);
+            return;
+        }
+        if (hasCanvasAgentLaunchRecord(localSessions, agentLaunchRequest.id) || agentBusy) return;
+        if (startedLaunchRequestIdsRef.current.has(agentLaunchRequest.id)) return;
+        startedLaunchRequestIdsRef.current.add(agentLaunchRequest.id);
+        setCinematicEntryActive(true);
+        setConfirmTools(agentLaunchRequest.mode === "guided");
+        setView("chat");
+        setPrompt(agentLaunchRequest.prompt);
+        void submitCinematicProject(agentLaunchRequest.prompt, {
+            executionMode: agentLaunchRequest.mode,
+            launchRequestId: agentLaunchRequest.id,
+        });
+    }, [agentBusy, agentLaunchRequest?.id, localSessions, sessions]);
 
     const addImagesToCanvas = (files: FileList | File[] | null) => {
         const file = Array.from(files || []).find((item) => item.type.startsWith("image/"));
@@ -829,7 +991,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" disabled={!canUndoOps} icon={<RotateCcw className="size-3.5" />} onClick={undoLastOnlineBatch} aria-label="撤销最近一批 Agent 写回" title={undoOpsCount ? `可撤销最近 ${undoOpsCount} 批` : "没有可撤销的 Agent 写回"} />
                         <label className="flex items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
                             <Switch size="small" checked={confirmTools} onChange={setConfirmTools} />
-                            工具确认
+                            执行前确认
                         </label>
                         <Tooltip title="收起对话">
                             <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={iconButtonStyle} icon={<PanelRightClose className="size-4" />} onClick={collapse} />
@@ -1428,34 +1590,6 @@ function compactMetadata(metadata: CanvasNodeData["metadata"]) {
         chapterId: metadata?.chapterId,
         chapterTitle: metadata?.chapterTitle,
         shotIndex: metadata?.shotIndex,
-    };
-}
-
-function backendAgentProviderConfig(config: ReturnType<typeof resolveModelRequestConfig>) {
-    return {
-        apiFormat: config.apiFormat,
-        interfaceType: config.interfaceType,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-        size: config.size,
-        quality: config.quality,
-        transparentBackground: config.transparentBackground,
-        count: config.count,
-        videoSeconds: config.videoSeconds,
-        vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled,
-        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
-        videoSuperResolutionScene: config.videoSuperResolutionScene,
-        videoSuperResolutionVersion: config.videoSuperResolutionVersion,
-        videoSuperResolutionFps: config.videoSuperResolutionFps,
-        audioVoice: config.audioVoice,
-        audioFormat: config.audioFormat,
-        audioSpeed: config.audioSpeed,
-        audioInstructions: config.audioInstructions,
-        systemPrompt: config.systemPrompt,
     };
 }
 

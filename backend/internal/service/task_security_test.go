@@ -223,3 +223,84 @@ func TestCreateSessionRemovesDraftWhenTaskCreationFails(t *testing.T) {
 		t.Fatalf("draft counts = sessions:%d messages:%d", sessionCount, messageCount)
 	}
 }
+
+func TestCreateSessionReturnsExistingSessionForSameClientRequestID(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Session{}, &model.Message{}, &model.Task{}, &model.Result{}); err != nil {
+		t.Fatal(err)
+	}
+	existing := model.Session{
+		ID:        "launch_request_123",
+		UserID:    "user-1",
+		ProjectID: "project-1",
+		Status:    model.SessionStatusActive,
+		Prompt:    "创建三镜头分镜",
+	}
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+
+	detail, err := svc.CreateSession("user-1", CreateSessionRequest{
+		ClientRequestID: existing.ID,
+		ProjectID:       existing.ProjectID,
+		Prompt:          existing.Prompt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Session.ID != existing.ID {
+		t.Fatalf("session id = %q, want %q", detail.Session.ID, existing.ID)
+	}
+	var sessionCount int64
+	if err := db.Model(&model.Session{}).Count(&sessionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("session count = %d, want 1", sessionCount)
+	}
+}
+
+func TestCreateSessionRejectsReusedClientRequestIDWithDifferentPayload(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Session{}); err != nil {
+		t.Fatal(err)
+	}
+	existing := model.Session{
+		ID:        "launch_request_456",
+		UserID:    "user-1",
+		ProjectID: "project-1",
+		Status:    model.SessionStatusActive,
+		Prompt:    "原始请求",
+	}
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+
+	_, err = svc.CreateSession("user-1", CreateSessionRequest{
+		ClientRequestID: existing.ID,
+		ProjectID:       existing.ProjectID,
+		Prompt:          "不同请求",
+	})
+	if err == nil || !strings.Contains(err.Error(), "已用于其他 Agent 请求") {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+}
+
+func TestValidClientRequestID(t *testing.T) {
+	if !validClientRequestID("launch_Request-123") {
+		t.Fatal("validClientRequestID() rejected a valid request id")
+	}
+	for _, value := range []string{"short", "contains space", "含中文", strings.Repeat("a", 37)} {
+		if validClientRequestID(value) {
+			t.Fatalf("validClientRequestID(%q) = true", value)
+		}
+	}
+}

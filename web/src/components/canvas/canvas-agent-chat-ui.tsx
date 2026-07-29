@@ -57,6 +57,7 @@ export function AgentChatMessage({ item, theme, user, onRejectTool, onApproveToo
 
 export function AgentPendingToolCard({ summary, detail, theme, onReject, onApprove }: { summary: string; detail?: unknown; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onReject?: () => void; onApprove?: () => void }) {
     const impact = agentImpactFromDetail(detail);
+    const cinematicProposal = objectField(detail, "kind") === "cinematic-proposal";
     return (
         <div className="flex items-start gap-3">
             <AgentAvatar theme={theme} />
@@ -67,7 +68,7 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
                     </span>
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2 text-sm font-semibold leading-5">
-                            <span>确认工具调用</span>
+                            <span className="agent-pending-tool-card-title">{cinematicProposal ? "确认影视方案写回" : "确认工具调用"}</span>
                             <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium" style={{ borderColor: "rgba(217,119,6,.22)", color: "#d97706", background: "rgba(217,119,6,.04)" }}>等待确认</span>
                         </div>
                         <div className="mt-2 text-sm leading-6" style={{ color: theme.node.text }}>{summary}</div>
@@ -89,10 +90,10 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
                 {onReject || onApprove ? (
                     <div className="mt-4 grid grid-cols-2 gap-2">
                         <Button danger className="!h-9" icon={<XCircle className="size-4" />} onClick={() => onReject?.()}>
-                            拒绝执行
+                            {cinematicProposal ? "暂不写入" : "拒绝执行"}
                         </Button>
                         <Button className="!h-9" icon={<CheckCircle2 className="size-4" />} style={{ borderColor: "rgba(22,163,74,.42)", color: "#16a34a", background: "transparent" }} onClick={() => onApprove?.()}>
-                            批准执行
+                            {cinematicProposal ? "确认写入并执行" : "批准执行"}
                         </Button>
                     </div>
                 ) : null}

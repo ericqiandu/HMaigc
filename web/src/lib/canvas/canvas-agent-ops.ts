@@ -46,6 +46,10 @@ export function summarizeCanvasAgentOps(ops?: CanvasAgentOp[]) {
 export function previewCanvasAgentOps(ops?: CanvasAgentOp[], snapshot?: CanvasAgentSnapshot): CanvasAgentOperationImpact {
     const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
     const nodeById = new Map((snapshot?.nodes || []).map((node) => [node.id, node]));
+    const nodeLabelById = new Map((snapshot?.nodes || []).map((node) => [node.id, node.title]));
+    safeOps.forEach((op) => {
+        if (op.type === "add_node" && op.id) nodeLabelById.set(op.id, op.title || canvasNodeTypeLabel(op.nodeType));
+    });
     const affectedNodeIds = new Set<string>();
     let addedNodeCount = 0;
     let destructiveCount = 0;
@@ -60,7 +64,7 @@ export function previewCanvasAgentOps(ops?: CanvasAgentOp[], snapshot?: CanvasAg
         }
         if (op.type === "update_node") {
             affectedNodeIds.add(op.id);
-            items.push(`修改「${nodeById.get(op.id)?.title || op.id}」`);
+            items.push(`修改「${nodeLabelById.get(op.id) || op.id}」`);
             return;
         }
         if (op.type === "delete_node") {
@@ -74,7 +78,7 @@ export function previewCanvasAgentOps(ops?: CanvasAgentOp[], snapshot?: CanvasAg
         if (op.type === "connect_nodes") {
             affectedNodeIds.add(op.fromNodeId);
             affectedNodeIds.add(op.toNodeId);
-            items.push(`连接「${nodeById.get(op.fromNodeId)?.title || op.fromNodeId}」到「${nodeById.get(op.toNodeId)?.title || op.toNodeId}」`);
+            items.push(`连接「${nodeLabelById.get(op.fromNodeId) || op.fromNodeId}」到「${nodeLabelById.get(op.toNodeId) || op.toNodeId}」`);
             return;
         }
         if (op.type === "delete_connections") {
@@ -86,7 +90,7 @@ export function previewCanvasAgentOps(ops?: CanvasAgentOp[], snapshot?: CanvasAg
         if (op.type === "run_generation") {
             affectedNodeIds.add(op.nodeId);
             generationCount += 1;
-            items.push(`为「${nodeById.get(op.nodeId)?.title || op.nodeId}」触发${generationModeLabel(op.mode)}生成`);
+            items.push(`为「${nodeLabelById.get(op.nodeId) || op.nodeId}」触发${generationModeLabel(op.mode)}生成`);
             return;
         }
         if (op.type === "select_nodes") {

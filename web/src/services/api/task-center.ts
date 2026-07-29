@@ -99,6 +99,7 @@ export type AgentSessionDetail = {
 };
 
 export type CreateSessionInput = {
+    clientRequestId?: string;
     projectId?: string;
     prompt: string;
     canvasSnapshot?: Record<string, unknown>;

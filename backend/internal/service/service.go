@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -28,6 +29,7 @@ type Service struct {
 	emailCodeMu        sync.Mutex
 	redeemBatchMu      sync.Mutex
 	storageMu          sync.Mutex
+	sessionCreateMu    sync.Mutex
 	characterTaskMu    sync.Mutex
 	siteSettingMu      sync.Mutex
 	activeCancels      map[string]context.CancelFunc
@@ -42,13 +44,14 @@ const taskWorkerConcurrency = 3
 const taskLogPayloadLimit = 4000
 
 type CreateSessionRequest struct {
-	ProjectID      string            `json:"projectId"`
-	Prompt         string            `json:"prompt"`
-	CanvasSnapshot map[string]any    `json:"canvasSnapshot"`
-	References     []string          `json:"references"`
-	Requirements   string            `json:"requirements"`
-	CanvasAssets   []storyboardAsset `json:"canvasAssets"`
-	Config         providerConfig    `json:"config"`
+	ClientRequestID string            `json:"clientRequestId"`
+	ProjectID       string            `json:"projectId"`
+	Prompt          string            `json:"prompt"`
+	CanvasSnapshot  map[string]any    `json:"canvasSnapshot"`
+	References      []string          `json:"references"`
+	Requirements    string            `json:"requirements"`
+	CanvasAssets    []storyboardAsset `json:"canvasAssets"`
+	Config          providerConfig    `json:"config"`
 }
 
 type CreateTaskRequest struct {
@@ -195,9 +198,31 @@ func (s *Service) CreateSession(userID string, req CreateSessionRequest) (*Sessi
 	if prompt == "" {
 		return nil, errors.New("prompt is required")
 	}
+	clientRequestID := strings.TrimSpace(req.ClientRequestID)
+	if clientRequestID != "" {
+		if !validClientRequestID(clientRequestID) {
+			return nil, BadAuthRequest("clientRequestId 格式无效")
+		}
+		s.sessionCreateMu.Lock()
+		defer s.sessionCreateMu.Unlock()
+		existing, existingErr := s.repo.SessionForUser(userID, clientRequestID)
+		if existingErr == nil {
+			if existing.ProjectID != req.ProjectID || existing.Prompt != prompt {
+				return nil, BadAuthRequest("clientRequestId 已用于其他 Agent 请求")
+			}
+			return s.SessionDetail(userID, existing.ID)
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return nil, existingErr
+		}
+	}
 	compactedSnapshot := compactPersistedValue(req.CanvasSnapshot)
 	snapshotJSON, _ := json.Marshal(compactedSnapshot)
-	session := model.Session{ID: newID(), UserID: userID, ProjectID: req.ProjectID, Status: model.SessionStatusActive, Prompt: prompt, CanvasSnapshotJSON: string(snapshotJSON)}
+	sessionID := clientRequestID
+	if sessionID == "" {
+		sessionID = newID()
+	}
+	session := model.Session{ID: sessionID, UserID: userID, ProjectID: req.ProjectID, Status: model.SessionStatusActive, Prompt: prompt, CanvasSnapshotJSON: string(snapshotJSON)}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
@@ -238,6 +263,19 @@ func (s *Service) CreateSession(userID string, req CreateSessionRequest) (*Sessi
 	}
 	s.recordActivity(userID, "agent_message", 1)
 	return s.SessionDetail(userID, session.ID)
+}
+
+func validClientRequestID(value string) bool {
+	if len(value) < 8 || len(value) > 36 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func channelModelNames(channel model.ModelChannel) []string {

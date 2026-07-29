@@ -11,6 +11,7 @@ const CINEMATIC_SESSION_MAX_POLLS = 120;
 
 type CinematicSessionWaitOptions = {
     signal?: AbortSignal;
+    onUpdate?: (detail: AgentSessionDetail) => void;
 };
 
 type CreateCinematicSessionOptions = CinematicSessionWaitOptions & {
@@ -44,6 +45,7 @@ async function waitForCinematicAgentSession(initialDetail: AgentSessionDetail, o
     let detail = initialDetail;
     for (let attempt = 0; attempt < CINEMATIC_SESSION_MAX_POLLS; attempt += 1) {
         throwIfAborted(options.signal);
+        options.onUpdate?.(detail);
         if (detail.session.status === "completed") return detail;
         if (detail.session.status === "failed") throw new Error(agentSessionFailureMessage(detail));
         await abortableDelay(CINEMATIC_SESSION_POLL_INTERVAL_MS, options.signal);
