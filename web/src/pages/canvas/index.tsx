@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Input, Modal, Popover, Select } from "antd";
 import { CheckSquare2, Download, FileUp, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
@@ -22,9 +22,7 @@ import { listProjects } from "@/services/api/projects";
 export default function CanvasPage() {
     const { message } = App.useApp();
     const navigate = useNavigate();
-    const [searchParams] = useSearchParams();
     const inputRef = useRef<HTMLInputElement>(null);
-    const autoOpenRef = useRef(false);
     const [keyword, setKeyword] = useState("");
     const [sort, setSort] = useState<"updated" | "name" | "nodes">("updated");
     const [projectFilter, setProjectFilter] = useState("all");
@@ -41,11 +39,8 @@ export default function CanvasPage() {
     const [associationProjectId, setAssociationProjectId] = useState("");
     const projectQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
 
-    const mode = searchParams.get("mode");
-    const agentMode = mode === "new" || mode === "recent" || mode === "choose";
-    const agentQuery = agentMode ? `?${searchParams.toString()}` : "";
     const enterProject = (id: string) => {
-        navigate(`/canvas/${id}${agentQuery}`);
+        navigate(`/canvas/${id}`);
     };
     const createAndEnter = () => {
         void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
@@ -118,21 +113,6 @@ export default function CanvasPage() {
             if (inputRef.current) inputRef.current.value = "";
         }
     };
-
-    useEffect(() => {
-        if (!hydrated || autoOpenRef.current || (mode !== "new" && mode !== "recent")) return;
-        autoOpenRef.current = true;
-        if (mode === "recent" && projects[0]?.id) {
-            enterProject(projects[0].id);
-            return;
-        }
-        void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
-            if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
-            enterProject(id);
-        });
-    }, [hydrated, message, mode, projects]);
-
-    if (hydrated && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
     return (
         <WorkspacePage grid fluid className="canvas-library-page">

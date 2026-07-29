@@ -6,12 +6,11 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 
 - `web/`：Vite、React、TypeScript 前端。
 - `backend/`：Go、Gin、GORM 后端。
-- `canvas-agent/`：连接本地 Codex 与网页画布的 Agent。
-- `plugins/infinite-canvas/`：Canvas Agent 的 Codex 插件。
 - `docker-compose.yml`：使用 SQLite 的本地一体化环境。
 - `docker-compose.production.yml`：使用 PostgreSQL 和 Redis 的生产环境。
 
 仓库只保留上述两条运行路径，不再维护旧镜像部署、重复 Compose 或上游一键安装脚本。
+画布助手统一使用 Web 内置网站 Agent，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent 或 Codex 插件连接路径。
 
 ## 本地开发
 

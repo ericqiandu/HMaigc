@@ -16,18 +16,16 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { handleMissingSystemModel, navigateToSettings } from "@/lib/settings-navigation";
 import { cinematicAgentSessionOpsJson, createCinematicAgentSession, isAgentSessionPollingAbort, resumeCinematicAgentSession } from "@/lib/canvas/canvas-agent-session";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
-import { AgentChatComposer, AgentChatMessage, AgentModeSwitch, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage, type CanvasAgentMode } from "./canvas-agent-chat-ui";
-import { CanvasLocalAgentPanel } from "./canvas-local-agent-panel";
+import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { CanvasNodeType, type CanvasAssistantMessage, type CanvasAssistantPendingBackendSession, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "@/types/canvas";
-import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 const ONLINE_AGENT_MAX_STEPS = 4;
 const ONLINE_AGENT_PROMPT =
-    "你是 HMaigc 网页内置在线画布助手。当前画布 JSON 会随用户消息提供。由你根据用户意图自主决定是否调用工具：普通问答可直接回答；需要读取画布事实时调用 canvas_get_state；需要改动画布时调用和本地 Agent 一致的 infinite-canvas 工具。需要生成内容时直接调用 canvas_generate_text、canvas_generate_image、canvas_generate_video、canvas_generate_audio 或 canvas_create_generation_flow；需要精确批量操作时调用 canvas_apply_ops。不要输出 JSON ops，不要编造执行结果。工具参数涉及已有节点时必须使用当前画布 JSON 中真实存在的 id；缺少必要 id 或用户意图不明确时直接说明需要用户明确选择或说明，不要猜测。调用工具后必须根据真实结果回答用户。";
+    "你是 HMaigc 网页内置在线画布助手。当前画布 JSON 会随用户消息提供。由你根据用户意图自主决定是否调用工具：普通问答可直接回答；需要读取画布事实时调用 canvas_get_state；需要改动画布时调用受支持的画布工具。需要生成内容时直接调用 canvas_generate_text、canvas_generate_image、canvas_generate_video、canvas_generate_audio 或 canvas_create_generation_flow；需要精确批量操作时调用 canvas_apply_ops。不要输出 JSON ops，不要编造执行结果。工具参数涉及已有节点时必须使用当前画布 JSON 中真实存在的 id；缺少必要 id 或用户意图不明确时直接说明需要用户明确选择或说明，不要猜测。调用工具后必须根据真实结果回答用户。";
 const JSON_RECORD_SCHEMA = { type: "object", additionalProperties: true };
 const POSITION_SCHEMA = { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"], additionalProperties: false };
 const VIEWPORT_SCHEMA = { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, k: { type: "number" } }, required: ["x", "y", "k"], additionalProperties: false };
@@ -137,24 +135,20 @@ type CanvasAssistantPanelProps = {
     undoOpsCount: number;
     onUndoOps: () => CanvasAgentSnapshot | null;
     onPasteImage: (file: File) => void;
-    agentMode: CanvasAgentMode;
-    onAgentModeChange: (mode: CanvasAgentMode) => void;
-    autoConnectLocal?: boolean;
     closing: boolean;
     onCollapse: () => void;
     cinematicEntry?: boolean;
     onCinematicEntryConsumed?: () => void;
 };
 
-export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, projectId, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, canUndoOps, undoOpsCount, onUndoOps, onPasteImage, agentMode, onAgentModeChange, autoConnectLocal, closing, onCollapse, cinematicEntry = false, onCinematicEntryConsumed }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, projectId, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, canUndoOps, undoOpsCount, onUndoOps, onPasteImage, closing, onCollapse, cinematicEntry = false, onCinematicEntryConsumed }: CanvasAssistantPanelProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
     const effectiveConfig = useEffectiveConfig();
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const confirmTools = useCanvasAgentStore((state) => state.confirmTools);
-    const setAgentState = useCanvasAgentStore((state) => state.setAgentState);
+    const [confirmTools, setConfirmTools] = useState(true);
     const [width, setWidth] = useState(520);
     const [view, setView] = useState<OnlineAgentTab>("chat");
     const [prompt, setPrompt] = useState("");
@@ -213,10 +207,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const iconButtonStyle = { color: theme.node.muted };
 
     useEffect(() => {
-        if (agentMode !== "online" || view !== "chat") return;
+        if (view !== "chat") return;
         const frame = requestAnimationFrame(() => chatListRef.current?.scrollTo({ top: chatListRef.current.scrollHeight }));
         return () => cancelAnimationFrame(frame);
-    }, [agentBusy, agentMode, localActiveSessionId, messages, view]);
+    }, [agentBusy, localActiveSessionId, messages, view]);
 
     useEffect(() => {
         setRemovedReferenceIds(new Set());
@@ -703,7 +697,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 value={view}
                 theme={theme}
                 items={[
-                    { value: "setup", label: "连接配置", icon: <Settings2 className="size-3.5" /> },
+                    { value: "setup", label: "模型配置", icon: <Settings2 className="size-3.5" /> },
                     { value: "chat", label: "对话" },
                     { value: "history", label: "历史", icon: <History className="size-3.5" />, count: historySessions.length },
                     { value: "log", label: "日志", count: onlineLogs.length },
@@ -867,10 +861,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                        {agentMode === "online" ? <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" disabled={!canUndoOps} icon={<RotateCcw className="size-3.5" />} onClick={undoLastOnlineBatch} aria-label="撤销最近一批 Agent 写回" title={undoOpsCount ? `可撤销最近 ${undoOpsCount} 批` : "没有可撤销的 Agent 写回"} /> : null}
-                        <AgentModeSwitch value={agentMode} theme={theme} onChange={onAgentModeChange} />
+                        <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" disabled={!canUndoOps} icon={<RotateCcw className="size-3.5" />} onClick={undoLastOnlineBatch} aria-label="撤销最近一批 Agent 写回" title={undoOpsCount ? `可撤销最近 ${undoOpsCount} 批` : "没有可撤销的 Agent 写回"} />
                         <label className="flex items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
-                            <Switch size="small" checked={confirmTools} onChange={(confirmTools) => setAgentState({ confirmTools })} />
+                            <Switch size="small" checked={confirmTools} onChange={setConfirmTools} />
                             工具确认
                         </label>
                         <Tooltip title="收起对话">
@@ -886,19 +879,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     {selectedReferences.length ? <span>{selectedReferences.length} 个参考节点</span> : null}
                     {undoOpsCount ? <span className="ml-auto tabular-nums">可撤销 {undoOpsCount} 批</span> : null}
                 </div>
-                {agentMode === "local" ? (
-                    <CanvasLocalAgentPanel
-                        embedded
-                        snapshot={snapshot}
-                        canUndoOps={canUndoOps}
-                        undoOpsCount={undoOpsCount}
-                        onApplyOps={onApplyOps}
-                        onUndoOps={onUndoOps}
-                        autoConnect={autoConnectLocal}
-                    />
-                ) : (
-                    onlineContent
-                )}
+                {onlineContent}
             </motion.aside>
         </motion.div>
     );

@@ -33,7 +33,6 @@ type CanvasTopBarProps = {
     onRedo: () => void;
     onShare: () => void;
     agentOpen: boolean;
-    compactAgentStatus?: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
     shortcutRequestNonce: number;
     mediaPerformanceMode: CanvasMediaPerformanceMode;
@@ -64,7 +63,6 @@ export function CanvasTopBar({
     onRedo,
     onShare,
     agentOpen,
-    compactAgentStatus,
     onToggleAgent,
     shortcutRequestNonce,
     mediaPerformanceMode,
@@ -193,7 +191,6 @@ export function CanvasTopBar({
                     >
                         <Button type="text" className="!hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="媒体性能模式" title="媒体性能模式" />
                     </Dropdown>
-                    {compactAgentStatus && canEdit ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
                     {collaborationControl}
                     {user ? (
                         <Link
@@ -358,18 +355,6 @@ function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
 function canvasTitleInputSize(value: string) {
     const visualLength = Array.from(value || "画布名称").reduce((length, character) => length + (character.codePointAt(0)! > 0xff ? 2 : 1), 0);
     return Math.min(30, Math.max(5, visualLength));
-}
-
-function CompactAgentStatus({ status, onClick }: { status: { connected: boolean; enabled: boolean; activity: string }; onClick: () => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const label = status.connected ? "已连接到本地 Codex" : status.enabled ? status.activity || "连接中" : "正在连接本地 Codex";
-    const dotColor = status.connected ? "#22c55e" : status.enabled ? "#f59e0b" : theme.node.muted;
-    return (
-        <button type="button" className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium transition hover:opacity-85" style={{ background: theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }} onClick={onClick} title="打开本地 Codex 面板">
-            <span className="size-2 rounded-full" style={{ background: dotColor }} />
-            <span className="max-w-[180px] truncate">{label}</span>
-        </button>
-    );
 }
 
 function Shortcut({ keys, value }: { keys: string[]; value: string }) {

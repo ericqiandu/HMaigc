@@ -7,7 +7,6 @@ import type { CanvasAgentOperationImpact } from "@/lib/canvas/canvas-agent-ops";
 import type { LocalUser } from "@/stores/use-user-store";
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
-export type CanvasAgentMode = "online" | "local";
 export type CanvasAgentChatMessage = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
@@ -247,18 +246,6 @@ export function AgentChatComposer({
                     <Button type="primary" className="!h-9 !w-9 !min-w-9 !rounded-lg !p-0" disabled={!canSubmit} icon={sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} onClick={() => void onSubmit()} aria-label="发送" />
                 </div>
             </div>
-        </div>
-    );
-}
-
-export function AgentModeSwitch({ value, theme, onChange }: { value: CanvasAgentMode; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (value: CanvasAgentMode) => void }) {
-    return (
-        <div className="inline-flex shrink-0 rounded-md border p-0.5 text-xs" style={{ borderColor: theme.node.stroke, background: theme.spatial.surface }}>
-            {(["online", "local"] as const).map((item) => (
-                <button key={item} type="button" className="rounded-md px-2 py-1 transition" style={{ background: value === item ? theme.node.fill : "transparent", color: value === item ? theme.node.text : theme.node.muted }} onClick={() => onChange(item)}>
-                    {item === "online" ? "网站" : "本机"}
-                </button>
-            ))}
         </div>
     );
 }

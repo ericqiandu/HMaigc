@@ -8,10 +8,8 @@
 .vscode
 .local
 assets
-canvas-agent
 docs
 docs2
-plugins
 scripts
 data
 backend/data

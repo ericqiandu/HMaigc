@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams, useSearchParams } from "react-router";
+import { useParams } from "react-router";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadMediaFile } from "@/services/file-storage";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
@@ -46,8 +46,6 @@ import { CanvasCollaborationPresenceButton, CanvasRemotePresenceLayer } from "@/
 import { CanvasScriptEditor, CanvasScriptNodeContent, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
 import { CanvasDirectorNodePanel } from "@/components/canvas/director/canvas-director-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
-import { CanvasLocalAgentPanel } from "@/components/canvas/canvas-local-agent-panel";
-import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasAlignmentGuides, CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
@@ -179,11 +177,7 @@ function CanvasRefreshShell() {
 function InfiniteCanvasPage() {
     const { message } = App.useApp();
     const params = useParams<{ id: string }>();
-    const [searchParams] = useSearchParams();
     const projectId = params.id || "";
-    const localAgentConnected = useCanvasAgentStore((state) => state.connected);
-    const localAgentActivity = useCanvasAgentStore((state) => state.activity);
-    const localAgentEnabled = useCanvasAgentStore((state) => state.enabled);
     const containerRef = useRef<HTMLDivElement>(null);
     const didInitialCenterRef = useRef(false);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -234,13 +228,11 @@ function InfiniteCanvasPage() {
     const [scriptScrollTopById, setScriptScrollTopById] = useState<Record<string, number>>({});
     const [directorNodeId, setDirectorNodeId] = useState<string | null>(null);
     const [versionCompareRootId, setVersionCompareRootId] = useState<string | null>(null);
-    const codexAutoConnect = ["new", "recent", "choose"].includes(searchParams.get("mode") || "");
-    const codexCompactAgent = codexAutoConnect && searchParams.has("agentUrl");
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [cinematicAgentEntry, setCinematicAgentEntry] = useState(false);
-    const { agentMode, assistantClosing, assistantMounted, assistantOpen, closeAgent, openAgent, setAgentMode } = useCanvasAssistantVisibility();
+    const { assistantClosing, assistantMounted, assistantOpen, closeAgent, openAgent } = useCanvasAssistantVisibility();
     const { tasks: activeTasks } = useCanvasActiveTasks(projectId, projectLoaded);
 
     useEffect(() => {
@@ -363,16 +355,6 @@ function InfiniteCanvasPage() {
         taskDetailLoading,
         taskDetailLogs,
     } = useCanvasGeneration({ projectId, domainProjectId: linkedProjectId, projectLoaded, nodes, nodesRef, setNodes });
-
-    useEffect(() => {
-        if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
-        if (searchParams.has("agentUrl")) {
-            setAgentMode("local");
-            return;
-        }
-        openAgent("local");
-    }, [openAgent, projectLoaded, searchParams, setAgentMode]);
-
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
@@ -1383,7 +1365,6 @@ function InfiniteCanvasPage() {
                     onRedo={redoCanvas}
                     onShare={() => setShareModalOpen(true)}
                     agentOpen={assistantOpen}
-                    compactAgentStatus={codexCompactAgent ? { connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity } : undefined}
                     onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
                     shortcutRequestNonce={shortcutRequestNonce}
                     mediaPerformanceMode={mediaPerformanceMode}
@@ -1573,7 +1554,7 @@ function InfiniteCanvasPage() {
 
                 <CanvasFileDropOverlay active={fileDropActive} theme={theme} />
 
-                {!nodes.length && canEditCanvas ? linkedProjectId ? <CanvasLinkedProjectEmptyState projectName={linkedProjectQuery.data?.project.name || currentProject?.title || "项目画布"} hasChapter={Boolean(linkedProjectQuery.data?.units.length)} onAddFirstChapter={() => { const first = linkedProjectQuery.data?.units.slice().sort((left, right) => left.position - right.position)[0]; if (first) void handleProjectChapterInsert({ id: first.id, projectId: linkedProjectId, title: first.title, position: first.position }); }} onOpenAssets={() => openProjectAssets()} onAddText={() => createNode(CanvasNodeType.Text)} /> : <CanvasShortDramaEmptyState onCreatePipeline={createShortDramaPipeline} onOpenAgent={() => { setCinematicAgentEntry(true); setAgentMode("online"); openAgent("online"); }} onUpload={() => handleUploadRequest()} onAddText={() => createNode(CanvasNodeType.Text)} onAddScript={() => createNode(CanvasNodeType.Script)} /> : null}
+                {!nodes.length && canEditCanvas ? linkedProjectId ? <CanvasLinkedProjectEmptyState projectName={linkedProjectQuery.data?.project.name || currentProject?.title || "项目画布"} hasChapter={Boolean(linkedProjectQuery.data?.units.length)} onAddFirstChapter={() => { const first = linkedProjectQuery.data?.units.slice().sort((left, right) => left.position - right.position)[0]; if (first) void handleProjectChapterInsert({ id: first.id, projectId: linkedProjectId, title: first.title, position: first.position }); }} onOpenAssets={() => openProjectAssets()} onAddText={() => createNode(CanvasNodeType.Text)} /> : <CanvasShortDramaEmptyState onCreatePipeline={createShortDramaPipeline} onOpenAgent={() => { setCinematicAgentEntry(true); openAgent(); }} onUpload={() => handleUploadRequest()} onAddText={() => createNode(CanvasNodeType.Text)} onAddScript={() => createNode(CanvasNodeType.Script)} /> : null}
 
                 {canEditCanvas && pendingConnectionCreate ? <CanvasConnectionCreateMenu pending={pendingConnectionCreate} viewport={viewport} viewportSize={size} containerRef={containerRef} canCreateDrawing={canCreateDrawingFromConnection} onCreate={(type) => void createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
 
@@ -1790,7 +1771,6 @@ function InfiniteCanvasPage() {
                     onClose={closeAssetPicker}
                 />
                 <CanvasProjectAssetModal open={projectAssetOpen} detail={linkedProjectQuery.data} initialCategory={projectAssetInitialCategory} onClose={closeProjectAssets} onInsert={(payloads) => handleProjectAssetsInsert(payloads, projectAssetInsertPosition)} />
-                {codexCompactAgent && !assistantMounted ? <CanvasLocalAgentPanel headless snapshot={agentSnapshot} canUndoOps={canUndoAgentOps} undoOpsCount={agentUndoCount} onApplyOps={applyAgentOps} onUndoOps={undoAgentOps} autoConnect={codexAutoConnect} /> : null}
             </section>
             {assistantMounted && canEditCanvas ? (
                 <CanvasAssistantPanel
@@ -1807,9 +1787,6 @@ function InfiniteCanvasPage() {
                     undoOpsCount={agentUndoCount}
                     onUndoOps={undoAgentOps}
                     onPasteImage={pasteAssistantImage}
-                    agentMode={agentMode}
-                    onAgentModeChange={setAgentMode}
-                    autoConnectLocal={codexAutoConnect}
                     closing={assistantClosing}
                     onCollapse={closeAgent}
                     cinematicEntry={cinematicAgentEntry}
