@@ -3,7 +3,7 @@ import { Bot, BookOpenText, Focus, History, PanelRightClose, Plus, RotateCcw, Sh
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
-import { normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
@@ -13,6 +13,8 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
+import { renderSkillPrompt } from "@/lib/canvas/canvas-skill-mentions";
+import type { UpdreamSkill } from "@/services/api/skills";
 import { cinematicAgentSessionOpsJson, createCinematicAgentSession, isAgentSessionPollingAbort, resumeCinematicAgentSession } from "@/lib/canvas/canvas-agent-session";
 import { cinematicAgentProgress, hasCanvasAgentLaunchRecord } from "@/lib/canvas/canvas-agent-launch";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
@@ -21,7 +23,10 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { CanvasNodeType, type CanvasAgentExecutionMode, type CanvasAgentLaunchRequest, type CanvasAssistantMessage, type CanvasAssistantPendingBackendSession, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "@/types/canvas";
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
+import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
+import type { CanvasAgentGenerationModels } from "./canvas-agent-model-menu";
 import "./canvas-agent-panel.css";
+import "./canvas-agent-composer-controls.css";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
@@ -149,7 +154,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const effectiveConfig = useEffectiveConfig();
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
-    const [confirmTools, setConfirmTools] = useState(true);
+    const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
+    const [agentModels, setAgentModels] = useState<CanvasAgentGenerationModels>({ image: "", video: "" });
+    const [selectedSkills, setSelectedSkills] = useState<UpdreamSkill[]>([]);
     const [width, setWidth] = useState(() => Math.min(420, Math.max(320, window.innerWidth)));
     const [view, setView] = useState<OnlineAgentTab>("chat");
     const [prompt, setPrompt] = useState("");
@@ -205,6 +212,15 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const selectedReferences = useMemo(() => allSelectedReferences.filter((item) => !removedReferenceIds.has(item.id)), [allSelectedReferences, removedReferenceIds]);
     const contextSummary = useMemo(() => summarizeCanvasContext(nodes, selectedNodeIds), [nodes, selectedNodeIds]);
     const iconButtonStyle = { color: theme.node.muted };
+    const confirmTools = executionMode === "guided";
+    const agentConfig = useMemo(
+        () => ({
+            ...effectiveConfig,
+            imageModel: agentModels.image || effectiveConfig.imageModel,
+            videoModel: agentModels.video || effectiveConfig.videoModel,
+        }),
+        [agentModels.image, agentModels.video, effectiveConfig],
+    );
 
     useEffect(() => {
         if (view !== "chat") return;
@@ -460,7 +476,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
         try {
             setIsRunning(true);
-            const messages = await buildToolAgentMessages(snapshotRef.current, history, userMessage);
+            const messages = await buildToolAgentMessages(snapshotRef.current, history, userMessage, agentModels, selectedSkills);
             let streamed = "";
             const result = await requestToolResponse({ ...requestConfig, systemPrompt: "" }, messages, ONLINE_AGENT_TOOLS, "auto", (text) => {
                 streamed = text;
@@ -472,7 +488,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     upsertMessage(sessionId, { id: assistantId, role: "assistant", text: result.content || streamed || "准备执行工具，等待确认。" });
                     const toolMessageId = nanoid();
                     pendingToolContextRef.current.set(toolMessageId, { messages, toolCalls: result.toolCalls, assistantId, step: loop.step });
-                    const toolMessage: CanvasAssistantMessage = { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(result.toolCalls), detail: { status: "pending", step: loop.step, toolCalls: result.toolCalls, impact: previewOnlineToolCalls(result.toolCalls, snapshotRef.current, effectiveConfig) } };
+                    const toolMessage: CanvasAssistantMessage = { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(result.toolCalls), detail: { status: "pending", step: loop.step, toolCalls: result.toolCalls, impact: previewOnlineToolCalls(result.toolCalls, snapshotRef.current, agentConfig) } };
                     appendMessage(sessionId, toolMessage);
                     return;
                 }
@@ -522,7 +538,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 upsertMessage(sessionId, { id: assistantId, role: "assistant", text: next.content || streamed || "准备执行工具，等待确认。" });
                 const toolMessageId = nanoid();
                 pendingToolContextRef.current.set(toolMessageId, { messages: nextMessages, toolCalls: next.toolCalls, assistantId, step: step + 1 });
-                appendMessage(sessionId, { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(next.toolCalls), detail: { status: "pending", step: step + 1, toolCalls: next.toolCalls, impact: previewOnlineToolCalls(next.toolCalls, snapshotRef.current, effectiveConfig) } });
+                appendMessage(sessionId, { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(next.toolCalls), detail: { status: "pending", step: step + 1, toolCalls: next.toolCalls, impact: previewOnlineToolCalls(next.toolCalls, snapshotRef.current, agentConfig) } });
                 return;
             }
             await continueOnlineToolLoop(sessionId, assistantId, nextMessages, next, step + 1);
@@ -552,7 +568,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 return { ok: true, message: `当前选中 ${ids.size} 个节点。`, data: { nodes: compactSnapshot({ ...current, nodes: current.nodes.filter((node) => ids.has(node.id)) }).nodes } };
             }
             if (name === "canvas_create_cinematic_session") {
-                const cinematic = await runCinematicSession(sessionId, requireString(args.prompt, "prompt"), current, effectiveConfig, "automatic");
+                const cinematic = await runCinematicSession(sessionId, requireString(args.prompt, "prompt"), current, agentConfig, "automatic");
                 try {
                     const result = executeOps(cinematic.ops);
                     completeCinematicSession(sessionId, cinematic.backendSessionId, cinematic.ops);
@@ -562,7 +578,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     throw error;
                 }
             }
-            const ops = onlineToolToOps(name, args, current, effectiveConfig);
+            const ops = onlineToolToOps(name, args, current, agentConfig);
             const result = executeOps(ops);
             return { ok: result.changed, message: result.changed ? summarizeCanvasAgentOps(ops) || "画布操作已执行。" : result.noopReason, data: result };
         } catch (error) {
@@ -689,7 +705,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const submitCinematicProject = async (text: string, options?: { executionMode?: CanvasAgentExecutionMode; launchRequestId?: string }) => {
         const value = text.trim();
         if (!value || agentBusy) return;
-        const executionMode = options?.executionMode || (confirmTools ? "guided" : "automatic");
+        const requestedExecutionMode = options?.executionMode || executionMode;
         const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
         if (!isAiConfigReady(requestConfig, requestConfig.model)) {
             handleMissingSystemModel();
@@ -705,7 +721,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     role: "error",
                     title: "系统模型未就绪",
                     text: "管理员尚未完成系统文本模型配置，本次任务没有提交，也没有产生积分消耗。",
-                    detail: { kind: "cinematic-launch", launchRequestId: options.launchRequestId, executionMode, status: "failed" },
+                    detail: { kind: "cinematic-launch", launchRequestId: options.launchRequestId, executionMode: requestedExecutionMode, status: "failed" },
                 });
             }
             return;
@@ -720,10 +736,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         setIsRunning(true);
         let backendSessionId = "";
         try {
-            const cinematic = await runCinematicSession(session.id, value, snapshotRef.current, effectiveConfig, executionMode, options?.launchRequestId, (createdId) => {
+            const cinematic = await runCinematicSession(session.id, buildAgentRequestText(value, agentModels, selectedSkills), snapshotRef.current, agentConfig, requestedExecutionMode, options?.launchRequestId, (createdId) => {
                 backendSessionId = createdId;
             });
-            if (executionMode === "guided") {
+            if (requestedExecutionMode === "guided") {
                 queueCinematicProposal(session.id, cinematic.backendSessionId, cinematic.ops);
             } else {
                 const next = onApplyOps(cinematic.ops);
@@ -740,7 +756,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     role: "error",
                     title: "影视项目生成失败",
                     text: error instanceof Error ? error.message : "影视项目生成失败",
-                    detail: { kind: "cinematic-launch", launchRequestId: options?.launchRequestId, executionMode, status: "failed" },
+                    detail: { kind: "cinematic-launch", launchRequestId: options?.launchRequestId, executionMode: requestedExecutionMode, status: "failed" },
                 });
             }
         } finally {
@@ -794,7 +810,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         if (startedLaunchRequestIdsRef.current.has(agentLaunchRequest.id)) return;
         startedLaunchRequestIdsRef.current.add(agentLaunchRequest.id);
         setCinematicEntryActive(true);
-        setConfirmTools(agentLaunchRequest.mode === "guided");
+        setExecutionMode(agentLaunchRequest.mode);
         setView("chat");
         setPrompt(agentLaunchRequest.prompt);
         void submitCinematicProject(agentLaunchRequest.prompt, {
@@ -907,9 +923,19 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         onSubmit={cinematicEntryActive ? () => submitCinematicProject(prompt) : submit}
                         onAddFiles={addImagesToCanvas}
                         left={
-                            cinematicEntryActive
-                                ? <span className="canvas-agent-status-badge" style={{ color: theme.node.muted, background: theme.spatial.surface }}>影视项目</span>
-                                : null
+                            <div className="canvas-agent-composer-extra-controls">
+                                {cinematicEntryActive ? <span className="canvas-agent-status-badge" style={{ color: theme.node.muted, background: theme.spatial.surface }}>影视项目</span> : null}
+                                <CanvasAgentComposerControls
+                                    config={effectiveConfig}
+                                    disabled={agentBusy}
+                                    models={agentModels}
+                                    selectedSkills={selectedSkills}
+                                    executionMode={executionMode}
+                                    onModelsChange={setAgentModels}
+                                    onSkillsChange={setSelectedSkills}
+                                    onExecutionModeChange={setExecutionMode}
+                                />
+                            </div>
                         }
                     />
                 </>
@@ -996,7 +1022,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                                 className={`canvas-agent-icon-button ${confirmTools ? "canvas-agent-icon-button--active" : ""}`}
                                 style={iconButtonStyle}
                                 icon={<ShieldCheck className="size-3.5" />}
-                                onClick={() => setConfirmTools((current) => !current)}
+                                onClick={() => setExecutionMode((current) => current === "guided" ? "automatic" : "guided")}
                                 aria-label="切换执行前确认"
                                 aria-pressed={confirmTools}
                             />
@@ -1502,8 +1528,15 @@ function buildAssistantReferences(nodes: CanvasNodeData[], selectedNodeIds: Set<
         .filter((item): item is CanvasAssistantReference => Boolean(item));
 }
 
-async function buildToolAgentMessages(snapshot: CanvasAgentSnapshot, history: CanvasAssistantMessage[], userMessage: CanvasAssistantMessage): Promise<ResponseInputMessage[]> {
+async function buildToolAgentMessages(
+    snapshot: CanvasAgentSnapshot,
+    history: CanvasAssistantMessage[],
+    userMessage: CanvasAssistantMessage,
+    models: CanvasAgentGenerationModels,
+    skills: UpdreamSkill[],
+): Promise<ResponseInputMessage[]> {
     const refs = userMessage.references || [];
+    const requestText = buildAgentRequestText(userMessage.text, models, skills);
     return [
         { role: "system", content: ONLINE_AGENT_PROMPT },
         ...history
@@ -1514,11 +1547,24 @@ async function buildToolAgentMessages(snapshot: CanvasAgentSnapshot, history: Ca
             role: "user",
             content: [
                 ...refs.flatMap((item) => (item.text ? [{ type: "text" as const, text: `选中节点 ${item.title}：${item.text}` }] : [])),
-                { type: "text", text: `当前画布：${JSON.stringify(compactSnapshot(snapshot))}\n\n用户需求：${userMessage.text}` },
+                { type: "text", text: `当前画布：${JSON.stringify(compactSnapshot(snapshot))}\n\n${requestText}` },
                 ...(await Promise.all(refs.filter((item) => item.dataUrl).map(async (item) => ({ type: "image_url" as const, image_url: { url: await imageToDataUrl(item) } })))),
             ],
         },
     ];
+}
+
+function buildAgentRequestText(text: string, models: CanvasAgentGenerationModels, skills: UpdreamSkill[]) {
+    const explicitModels = [
+        models.image ? `图片模型：${modelOptionName(models.image)}` : "",
+        models.video ? `视频模型：${modelOptionName(models.video)}` : "",
+    ].filter(Boolean);
+    const skillInstructions = skills.map((skill) => renderSkillPrompt(skill));
+    return [
+        explicitModels.length ? `用户在输入框中显式选择的生成模型：\n${explicitModels.join("\n")}` : "",
+        skillInstructions.length ? `用户在输入框中显式选择的 Skills：\n${skillInstructions.join("\n\n")}` : "",
+        `用户需求：${text}`,
+    ].filter(Boolean).join("\n\n");
 }
 
 function compactSnapshot(snapshot: CanvasAgentSnapshot) {
