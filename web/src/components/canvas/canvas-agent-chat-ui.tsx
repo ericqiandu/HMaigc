@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { ArrowUp, CheckCircle2, CircleAlert, LoaderCircle, Plus, UserRound, Wrench, X, XCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasAgentOperationImpact } from "@/lib/canvas/canvas-agent-ops";
 import type { LocalUser } from "@/stores/use-user-store";
+import { CanvasAgentTooltip } from "./canvas-agent-tooltip";
 import "./canvas-agent-panel.css";
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
@@ -244,9 +245,9 @@ export function AgentChatComposer({
                                     void onAddFiles(event.target.files);
                                     event.target.value = "";
                                 }} />
-                                <Tooltip title="添加图片">
+                                <CanvasAgentTooltip title="添加图片">
                                     <Button type="text" className="canvas-agent-composer-tool" disabled={sending} style={{ color: theme.node.muted }} icon={<Plus className="canvas-agent-composer-add-icon size-5" />} onClick={() => fileInputRef.current?.click()} aria-label="添加图片" />
-                                </Tooltip>
+                                </CanvasAgentTooltip>
                             </>
                         ) : null}
                         {left}

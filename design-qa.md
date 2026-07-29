@@ -127,4 +127,27 @@ No actionable P0, P1 or P2 difference remains in the requested homepage-versus-A
 
 No actionable P0, P1 or P2 difference remains in the requested icon-polish scope.
 
+## Agent Toolbar Tooltip Sync QA (2026-07-29)
+
+- Source screenshot: `qa-artifacts/agent-tooltip-sync-20260729/reference.png`.
+- Homepage screenshot: `qa-artifacts/agent-tooltip-sync-20260729/home-tooltip.png`.
+- Canvas Agent screenshot: `qa-artifacts/agent-tooltip-sync-20260729/canvas-tooltip.png`.
+- Focused comparison: `qa-artifacts/agent-tooltip-sync-20260729/tooltip-comparison.png`.
+- Viewport: 1086 × 912 CSS px.
+- State: dark homepage and an opened canvas Agent panel; no Agent request was submitted.
+
+### Verified scope
+
+- Homepage and canvas Agent tooltips now use one shared `CanvasAgentTooltip` component instead of separate Ant Design defaults.
+- The visible tooltip surface measures `rgb(5, 7, 11)` with `rgb(255, 255, 255)` text, 4 px × 8 px padding, 6 px radius, 12 px type and 600 font weight.
+- Hover remains the primary pointer interaction; focus uses the same tooltip for keyboard accessibility.
+- Both composers render the same four controls in the same order: add image, model, Skills and generation mode.
+- The add-image, model and Skills glyphs are 20 × 20 CSS px; the manual-mode glyph remains optically normalized at 17 × 17 CSS px. Every control retains a 32 × 32 CSS px hit area.
+- The model, Skills and generation-mode controls use the same shared asset URLs in both surfaces, including `/icons/agent-model.svg?v=2`.
+- Homepage and canvas browser logs remained empty throughout the visual and interaction checks.
+
+### Final result
+
+No actionable P0, P1 or P2 difference remains in the requested tooltip-and-toolbar synchronization scope.
+
 final result: passed

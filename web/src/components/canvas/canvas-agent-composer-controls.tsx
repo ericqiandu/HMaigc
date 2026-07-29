@@ -1,5 +1,5 @@
 import { useState, type ComponentProps, type ReactNode } from "react";
-import { Button, Popover, Tooltip } from "antd";
+import { Button, Popover } from "antd";
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type {
@@ -10,6 +10,7 @@ import type {
 import { CanvasAgentModeMenu } from "./canvas-agent-mode-menu";
 import { CanvasAgentModelMenu } from "./canvas-agent-model-menu";
 import { CanvasAgentSkillMenu } from "./canvas-agent-skill-menu";
+import { CanvasAgentTooltip } from "./canvas-agent-tooltip";
 import "./canvas-agent-composer-controls.css";
 
 type AgentComposerPopover = "models" | "skills" | "mode";
@@ -113,7 +114,7 @@ function ComposerPopover({
             content={content}
             overlayClassName="canvas-agent-composer-popover"
         >
-            <Tooltip title={label}>
+            <CanvasAgentTooltip title={label}>
                 <Button
                     type="text"
                     className={`canvas-agent-composer-tool canvas-agent-composer-picker-trigger ${open ? "canvas-agent-composer-picker-trigger--active" : ""}`}
@@ -129,7 +130,7 @@ function ComposerPopover({
                     aria-label={label}
                     aria-expanded={open}
                 />
-            </Tooltip>
+            </CanvasAgentTooltip>
         </Popover>
     );
 }
