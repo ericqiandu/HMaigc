@@ -205,3 +205,35 @@ final result: passed
 ### Final result
 
 No actionable P0, P1 or P2 issue remains in the requested workspace-layout, typography, button-alignment or responsive scope.
+
+## Admin Workspace UI Rollout QA (2026-07-30)
+
+- Scope: shared admin shell, analytics, users, model channels, credit operations and site settings.
+- Before/after evidence: `qa-artifacts/admin-workspace-ui-20260730/`.
+- Viewports: 390 × 844, 768 × 844, 1024 × 900 and 1440 × 900 CSS px.
+- State: dark mode with the authenticated local admin account and real local data; no configuration, user or billing mutation was submitted during QA.
+
+### Resolved findings
+
+- P1: the admin shell used a separate system font, 24px page titles and a narrower 1180px frame, which visibly diverged from the workspace.
+- P1: mobile admin navigation exposed the full information architecture as a crowded horizontal strip.
+- P1: desktop and mobile controls mixed 34–38px heights, while key mobile search and action controls did not meet the shared 44px standard.
+- P2: admin-only radial backgrounds, visible card outlines and inconsistent primary-button treatment created a second visual language.
+
+### Verified standard
+
+- Admin pages resolve to the workspace `SF Pro Text` / `PingFang SC` / `Microsoft YaHei` font stack with 16px page titles and 22px title line height.
+- Desktop page actions, search and filter controls are 36px high; mobile search and primary action controls are 44px high.
+- The desktop shell keeps its 236px operational sidebar while page content uses the shared 1240px maximum width.
+- At widths below 1024px, the sidebar is replaced by a 56px mobile header and a 320px navigation drawer. Drawer navigation updates the route and closes after selection.
+- Page-header actions use the same neutral control surface as the workspace; blue remains reserved for true primary actions inside forms and transactional content.
+- Cards and table shells use one 12px surface radius without decorative outer borders or shadows.
+- `/admin`, `/admin/users`, `/admin/models`, `/admin/credit-operations` and `/admin/settings/site` produce no document-level horizontal overflow at 390, 768, 1024 or 1440px.
+- The model-channel creation drawer opens and closes normally without submitting a mutation.
+- The homepage and user workspaces remain outside the scoped admin stylesheet.
+- Browser runtime logs are empty after route, drawer and modal interaction checks.
+- TypeScript/Vite production build passes; all current frontend tests pass.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains in the requested admin-versus-workspace visual, typography, button and responsive scope.

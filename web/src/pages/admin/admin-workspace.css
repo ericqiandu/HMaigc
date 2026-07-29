@@ -1,0 +1,644 @@
+@layer utilities {
+    .admin-workspace.workspace-ui-scope,
+    .admin-mobile-navigation-drawer.workspace-ui-scope {
+        background: var(--workspace-ui-page);
+        color: var(--workspace-ui-text);
+        font-family: var(--workspace-ui-font-text);
+        font-size: 14px;
+        line-height: 1.43;
+        letter-spacing: -0.014em;
+    }
+
+    .admin-workspace {
+        background: var(--workspace-ui-page);
+    }
+
+    .admin-sidebar {
+        border-right-color: var(--workspace-ui-divider);
+        background: color-mix(in srgb, var(--workspace-ui-surface) 48%, var(--workspace-ui-page));
+    }
+
+    .admin-sidebar-brand {
+        min-height: 64px;
+    }
+
+    .admin-brand-mark,
+    .admin-mobile-brand-mark {
+        border-radius: var(--workspace-ui-radius-control);
+        background: var(--workspace-ui-control);
+    }
+
+    .admin-brand-name,
+    .admin-mobile-brand-name {
+        color: var(--workspace-ui-text);
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+        letter-spacing: -0.02em;
+    }
+
+    .admin-brand-caption,
+    .admin-mobile-page-name {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 10px;
+        font-weight: 500;
+        line-height: 14px;
+        letter-spacing: 0.04em;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation {
+        padding: 12px 10px;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group {
+        margin-bottom: 16px;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-label {
+        margin-bottom: 6px;
+        padding-inline: 10px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 16px;
+        letter-spacing: 0.04em;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-items {
+        display: grid;
+        gap: 2px;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link {
+        height: 36px;
+        border-radius: var(--workspace-ui-radius-control);
+        color: var(--workspace-ui-text-secondary);
+        font-size: 13px;
+        font-weight: 400;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link:hover {
+        background: var(--workspace-ui-control);
+        color: var(--workspace-ui-text);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link.is-active {
+        background: var(--workspace-ui-control-hover);
+        color: var(--workspace-ui-text);
+        font-weight: 500;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link.is-active::before {
+        width: 2px;
+        height: 16px;
+        background: var(--workspace-ui-accent);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-icon {
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link.is-active .admin-navigation-icon {
+        color: var(--workspace-ui-accent);
+    }
+
+    .admin-sidebar-footer {
+        display: grid;
+        gap: 2px;
+        border-top: 1px solid var(--workspace-ui-divider);
+        background: transparent;
+        padding: 10px;
+    }
+
+    .admin-sidebar-footer-action {
+        min-height: 36px;
+        border-radius: var(--workspace-ui-radius-control);
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .admin-sidebar-footer-action:hover {
+        background: var(--workspace-ui-control);
+        color: var(--workspace-ui-text);
+    }
+
+    .admin-page {
+        background: var(--workspace-ui-page);
+        color: var(--workspace-ui-text);
+    }
+
+    .admin-page-frame {
+        max-width: var(--workspace-ui-content-max);
+        padding: 32px 32px 56px;
+    }
+
+    .admin-page-header {
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .admin-page-heading {
+        flex: 1 1 420px;
+    }
+
+    .admin-page-breadcrumb {
+        gap: 6px;
+        margin-bottom: 8px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 16px;
+    }
+
+    .admin-page-breadcrumb-current {
+        color: var(--workspace-ui-text-secondary);
+    }
+
+    .admin-page-title {
+        margin: 0;
+        color: var(--workspace-ui-text);
+        font-family: var(--workspace-ui-font-display);
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 22px;
+        letter-spacing: -0.02em;
+    }
+
+    .admin-page-description {
+        margin: 4px 0 0;
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-page-actions {
+        min-height: var(--workspace-ui-control-height);
+        gap: 8px;
+    }
+
+    .admin-workspace :where(.ant-btn:not(.ant-btn-sm):not(.ant-btn-lg)) {
+        height: var(--workspace-ui-control-height);
+        padding-inline: 14px;
+        border-radius: var(--workspace-ui-radius-control);
+        box-shadow: none;
+        font-family: var(--workspace-ui-font-text);
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .admin-workspace :where(.ant-btn-sm) {
+        height: 30px;
+        padding-inline: 10px;
+        border-radius: 6px;
+        font-size: 12px;
+    }
+
+    .admin-workspace :where(.ant-btn-default:not(:disabled)),
+    .admin-workspace .admin-page-actions :where(.ant-btn-primary:not(:disabled)) {
+        border-color: var(--workspace-ui-divider) !important;
+        background: var(--workspace-ui-control) !important;
+        color: var(--workspace-ui-text) !important;
+    }
+
+    .admin-workspace :where(.ant-btn-default:not(:disabled):hover),
+    .admin-workspace .admin-page-actions :where(.ant-btn-primary:not(:disabled):hover) {
+        border-color: var(--workspace-ui-divider) !important;
+        background: var(--workspace-ui-control-hover) !important;
+        color: var(--workspace-ui-text) !important;
+    }
+
+    .admin-workspace :where(.ant-btn-primary:not(:disabled)) {
+        border-color: transparent;
+        background: var(--workspace-ui-accent);
+        color: #ffffff;
+    }
+
+    .admin-workspace :where(.ant-input:not(textarea)),
+    .admin-workspace :where(.ant-input-affix-wrapper),
+    .admin-workspace :where(.ant-input-number),
+    .admin-workspace :where(.ant-picker),
+    .admin-workspace :where(.ant-select-single .ant-select-selector) {
+        min-height: var(--workspace-ui-control-height) !important;
+        border-color: transparent;
+        border-radius: var(--workspace-ui-radius-control);
+        background: var(--workspace-ui-control);
+        box-shadow: none;
+        color: var(--workspace-ui-text);
+        font-size: 14px;
+    }
+
+    .admin-workspace :where(.ant-input-affix-wrapper:hover),
+    .admin-workspace :where(.ant-input-number:hover),
+    .admin-workspace :where(.ant-picker:hover),
+    .admin-workspace :where(.ant-select-single:hover .ant-select-selector) {
+        border-color: transparent;
+        background: var(--workspace-ui-control-hover);
+    }
+
+    .admin-workspace :where(.ant-input-affix-wrapper-focused),
+    .admin-workspace :where(.ant-input-number-focused),
+    .admin-workspace :where(.ant-picker-focused),
+    .admin-workspace :where(.ant-select-focused .ant-select-selector) {
+        border-color: var(--workspace-ui-accent);
+        background: var(--workspace-ui-control);
+        box-shadow: 0 0 0 2px var(--workspace-ui-focus);
+    }
+
+    .admin-workspace .ant-input-affix-wrapper > input.ant-input {
+        min-height: 0 !important;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    .admin-workspace .ant-form-item {
+        margin-bottom: 20px;
+    }
+
+    .admin-workspace .ant-form-item-label {
+        padding-bottom: 6px;
+    }
+
+    .admin-workspace .ant-form-item-label > label {
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        font-weight: 500;
+    }
+
+    .admin-workspace .ant-form-item-extra {
+        margin-top: 6px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+    }
+
+    .admin-workspace .workspace-list-toolbar {
+        margin-top: 0;
+        margin-bottom: 16px;
+    }
+
+    .admin-workspace .workspace-list-toolbar-actions {
+        margin-left: auto;
+        justify-content: flex-end;
+    }
+
+    .admin-workspace .app-table-surface {
+        overflow: hidden;
+        border: 0;
+        border-radius: var(--workspace-ui-radius-surface);
+        background: var(--workspace-ui-surface);
+        box-shadow: none;
+    }
+
+    .admin-workspace .app-data-table .ant-table {
+        background: transparent;
+    }
+
+    .admin-workspace .app-data-table .ant-table-thead > tr > th {
+        padding-block: 10px;
+        border-bottom-color: var(--workspace-ui-divider);
+        background: var(--workspace-ui-surface-subtle);
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .admin-workspace .app-data-table .ant-table-tbody > tr > td {
+        padding-block: 12px;
+        border-bottom-color: var(--workspace-ui-divider);
+        background: var(--workspace-ui-surface);
+        font-size: 13px;
+    }
+
+    .admin-workspace .app-data-table .ant-table-tbody > tr:hover > td {
+        background: var(--workspace-ui-control);
+    }
+
+    .admin-workspace .app-data-table .ant-table-pagination,
+    .admin-workspace .app-pagination-bar {
+        border-top-color: var(--workspace-ui-divider);
+        background: color-mix(in srgb, var(--workspace-ui-surface) 94%, transparent);
+    }
+
+    .admin-workspace .admin-section-card,
+    .admin-workspace .admin-analytics-metrics,
+    .admin-workspace .admin-analytics-trend {
+        border: 0;
+        border-radius: var(--workspace-ui-radius-surface);
+        background: var(--workspace-ui-surface);
+        box-shadow: none;
+    }
+
+    .admin-workspace .admin-section-card-header {
+        gap: 16px;
+        padding: 20px;
+    }
+
+    .admin-workspace .admin-section-card-heading {
+        gap: 12px;
+    }
+
+    .admin-workspace .admin-section-card-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: var(--workspace-ui-radius-control);
+        background: var(--workspace-ui-control);
+        color: var(--workspace-ui-text-secondary);
+    }
+
+    .admin-workspace .admin-section-card-title,
+    .admin-workspace .admin-analytics-trend-title,
+    .admin-workspace .admin-invoice-toolbar-title {
+        color: var(--workspace-ui-text);
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+        letter-spacing: -0.014em;
+    }
+
+    .admin-workspace .admin-section-card-description,
+    .admin-workspace .admin-analytics-trend-description,
+    .admin-workspace .admin-invoice-toolbar-description {
+        margin-top: 4px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-workspace .admin-section-card-content,
+    .admin-workspace .admin-section-card-footer {
+        background: var(--workspace-ui-surface-subtle);
+    }
+
+    .admin-workspace .admin-section-card-footer {
+        padding: 4px 20px 20px;
+    }
+
+    .admin-workspace .admin-analytics-layout > :not([hidden]) ~ :not([hidden]) {
+        margin-top: 20px;
+    }
+
+    .admin-workspace .admin-analytics-metric {
+        min-height: 108px;
+        border-color: var(--workspace-ui-divider);
+        padding: 20px;
+    }
+
+    .admin-workspace .admin-analytics-metric-label {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+    }
+
+    .admin-workspace .admin-analytics-metric-value {
+        margin-top: 8px;
+        color: var(--workspace-ui-text);
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 26px;
+    }
+
+    .admin-workspace .admin-analytics-metric-detail {
+        margin-top: 4px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+    }
+
+    .admin-workspace .admin-analytics-trend-heading {
+        padding: 20px 20px 16px;
+    }
+
+    .admin-workspace .admin-analytics-chart {
+        background: var(--workspace-ui-surface-subtle);
+    }
+
+    .admin-workspace .ant-tabs-nav {
+        margin-bottom: 16px;
+    }
+
+    .admin-workspace .admin-row-primary-action {
+        min-width: 72px;
+    }
+
+    .admin-workspace .admin-row-more-action {
+        width: 30px;
+        padding-inline: 0;
+    }
+
+    .admin-workspace .admin-form-actions {
+        min-height: var(--workspace-ui-control-height);
+        align-items: center;
+    }
+
+    .admin-workspace .admin-form-submit {
+        min-width: 112px;
+    }
+
+    .admin-mobile-header {
+        z-index: 30;
+        min-height: 56px;
+        border-bottom: 1px solid var(--workspace-ui-divider);
+        background: color-mix(in srgb, var(--workspace-ui-page) 88%, transparent);
+        padding-inline: 16px;
+        backdrop-filter: saturate(160%) blur(18px);
+    }
+
+    .admin-mobile-brand {
+        gap: 10px;
+    }
+
+    .admin-mobile-brand-mark {
+        width: 32px;
+        height: 32px;
+    }
+
+    .admin-mobile-brand-image {
+        width: 20px;
+        height: 20px;
+    }
+
+    .admin-mobile-menu-button {
+        width: 36px;
+        height: 36px;
+        border-radius: var(--workspace-ui-radius-control);
+    }
+
+    .admin-mobile-navigation-drawer .ant-drawer-content {
+        background: var(--workspace-ui-surface);
+    }
+
+    .admin-mobile-navigation-drawer .ant-drawer-header {
+        min-height: 64px;
+        border-bottom-color: var(--workspace-ui-divider);
+        padding: 12px 16px;
+    }
+
+    .admin-mobile-navigation-drawer .ant-drawer-title {
+        color: var(--workspace-ui-text);
+    }
+
+    .admin-mobile-navigation-drawer .ant-drawer-body {
+        padding: 0;
+    }
+
+    .admin-mobile-drawer-title {
+        display: grid;
+        gap: 1px;
+    }
+
+    .admin-mobile-drawer-title-primary {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+    }
+
+    .admin-mobile-drawer-title-secondary {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 10px;
+        font-weight: 500;
+        line-height: 14px;
+    }
+    @media (max-width: 1023px) {
+        .admin-page-frame {
+            max-width: 100%;
+            padding: 24px 24px 48px;
+        }
+
+        .admin-page-header {
+            margin-bottom: 20px;
+        }
+    }
+
+    @media (max-width: 639px) {
+        .admin-page-frame {
+            padding: 20px 16px 40px;
+        }
+
+    .admin-page-header {
+        align-items: stretch;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .admin-page-heading {
+        flex-basis: 100%;
+    }
+
+    .admin-page-actions {
+        display: flex;
+        width: 100%;
+        min-height: 44px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .admin-page-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+        width: 0;
+        min-width: 0;
+        min-height: 44px;
+        flex: 1 1 0;
+        justify-content: center;
+    }
+
+    .admin-page-actions > :only-child {
+        width: auto;
+        max-width: max-content;
+        flex: 0 0 auto;
+    }
+
+    .admin-page-actions > div {
+        display: flex;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .admin-page-actions > div > .ant-btn {
+        min-width: 0;
+        min-height: 44px;
+        flex: 1 1 0;
+        justify-content: center;
+    }
+
+    .admin-workspace :where(.ant-btn:not(.ant-btn-sm):not(.ant-btn-lg)) {
+        min-height: 44px;
+    }
+
+    .admin-workspace :where(.ant-input:not(textarea)),
+    .admin-workspace :where(.ant-input-affix-wrapper),
+    .admin-workspace :where(.ant-input-number),
+    .admin-workspace :where(.ant-picker),
+    .admin-workspace :where(.ant-select-single .ant-select-selector) {
+        min-height: 44px !important;
+    }
+
+    .admin-workspace .workspace-list-toolbar-fields {
+        width: 100%;
+    }
+
+    .admin-workspace .workspace-list-toolbar-actions {
+        display: flex;
+        width: 100%;
+        margin-left: 0;
+        gap: 8px;
+    }
+
+    .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+        min-width: 0;
+        min-height: 44px;
+        flex: 1 1 0;
+        justify-content: center;
+    }
+
+    .admin-workspace .admin-analytics-filter {
+        min-width: 0;
+        flex: 1 1 148px;
+    }
+
+    .admin-workspace .admin-analytics-filter .ant-select,
+    .admin-workspace .admin-analytics-layout .ant-picker-range {
+        width: 100% !important;
+    }
+
+    .admin-workspace .admin-section-card-header {
+        padding: 16px;
+    }
+
+    .admin-workspace .admin-section-card-heading {
+        gap: 10px;
+    }
+
+    .admin-workspace .admin-section-card-content > :where(div) {
+        padding-inline: 16px;
+    }
+
+    .admin-workspace .admin-section-card-footer {
+        padding: 4px 16px 16px;
+    }
+
+    .admin-workspace .admin-analytics-metric {
+        min-height: 100px;
+        padding: 16px;
+    }
+
+    .admin-workspace .admin-analytics-trend-heading {
+        padding: 16px 16px 12px;
+    }
+
+    .admin-workspace .admin-form-submit {
+        width: 100%;
+        min-height: 44px;
+    }
+
+        .admin-mobile-navigation-drawer .ant-drawer-content-wrapper {
+            max-width: calc(100vw - 24px);
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .admin-page-content {
+            animation: none;
+        }
+    }
+}
