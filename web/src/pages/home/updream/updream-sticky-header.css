@@ -7,9 +7,117 @@
     -webkit-backdrop-filter: saturate(115%) blur(6px);
 }
 
+.updream-header-logo-link {
+    display: inline-flex;
+    min-width: 0;
+    height: 40px;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 4px;
+    border-radius: 12px;
+    color: #172033;
+    text-decoration: none;
+    transition:
+        background-color 160ms ease,
+        color 160ms ease;
+}
+
+.updream-header-logo-link:hover {
+    background: rgb(23 32 51 / 7%);
+}
+
+.updream-header-logo-link:focus-visible {
+    outline: 2px solid #0071e3;
+    outline-offset: 2px;
+}
+
+.updream-header-logo-mark {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 9px;
+    background: rgb(23 32 51 / 8%);
+}
+
+.updream-header-logo-image {
+    display: block;
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+}
+
+.updream-header-logo-link[data-logo-source="custom"] .updream-header-logo-image {
+    width: 26px;
+    height: 26px;
+}
+
+.updream-header-logo-link .updream-header-logo {
+    overflow: hidden;
+    color: inherit;
+    filter: none;
+    font-family: "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 20px;
+    font-weight: 650;
+    line-height: 24px;
+    letter-spacing: -0.03em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dark .updream-header-logo-link {
+    color: #ffffff;
+}
+
+.dark .updream-header-logo-link:hover {
+    background: rgb(255 255 255 / 7%);
+}
+
+.dark .updream-header-logo-mark {
+    background: rgb(255 255 255 / 10%);
+}
+
+.dark .updream-header-logo-link[data-logo-source="default"] .updream-header-logo-image {
+    filter: invert(1);
+}
+
 @media (prefers-reduced-transparency: reduce) {
     .updream-header {
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .updream-header-logo-link {
+        transition: none;
+    }
+}
+
+@media (max-width: 360px) {
+    .updream-header-logo-link {
+        gap: 6px;
+        padding-right: 6px;
+    }
+
+    .updream-header-logo-mark {
+        width: 30px;
+        height: 30px;
+    }
+
+    .updream-header-logo-image {
+        width: 20px;
+        height: 20px;
+    }
+
+    .updream-header-logo-link[data-logo-source="custom"] .updream-header-logo-image {
+        width: 24px;
+        height: 24px;
+    }
+
+    .updream-header-logo-link .updream-header-logo {
+        font-size: 18px;
+        line-height: 22px;
     }
 }
