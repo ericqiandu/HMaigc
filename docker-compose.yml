@@ -20,7 +20,7 @@ services:
       CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-http://localhost:3000}
       GIN_MODE: release
     volumes:
-      - backend-data:/data
+      - ${CANVAS_DATA_PATH:-./.local/data}:/data
     restart: unless-stopped
 
   web:
@@ -34,6 +34,3 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
-
-volumes:
-  backend-data:
