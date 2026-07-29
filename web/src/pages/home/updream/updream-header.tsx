@@ -2,6 +2,7 @@ import { Link } from "react-router";
 
 import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { UpdreamAccountActions } from "@/pages/home/updream/updream-account-actions";
+import "@/pages/home/updream/updream-sticky-header.css";
 
 export function UpdreamHeader() {
     const { settings } = useSiteSettings();
