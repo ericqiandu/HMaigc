@@ -13,16 +13,42 @@ import { previewCanvasAgentOps } from "../src/lib/canvas/canvas-agent-ops";
 
 describe("canvas agent launch", () => {
     test("normalizes the prompt and creates a privacy-safe persisted launch request", () => {
-        const request = createCanvasAgentLaunchRequest("  月下少女走进发光竹林  ", "guided", "launch-1", "2026-07-29T00:00:00.000Z");
+        const request = createCanvasAgentLaunchRequest({
+            prompt: "  月下少女走进发光竹林  ",
+            mode: "guided",
+            models: { image: "channel-1::image-model", video: "" },
+            skills: [{
+                dir: "storyboard",
+                name: "分镜助手",
+                description: "将故事拆解为分镜。",
+                detailText: "输出镜头清单。",
+            }],
+            id: "launch-1",
+            createdAt: "2026-07-29T00:00:00.000Z",
+        });
 
         expect(request).toEqual({
             id: "launch-1",
             source: "home",
             prompt: "月下少女走进发光竹林",
             mode: "guided",
+            models: { image: "channel-1::image-model", video: "" },
+            skills: [{
+                dir: "storyboard",
+                name: "分镜助手",
+                description: "将故事拆解为分镜。",
+                detailText: "输出镜头清单。",
+            }],
             createdAt: "2026-07-29T00:00:00.000Z",
         });
-        expect(() => createCanvasAgentLaunchRequest("   ", "automatic", "launch-2", request.createdAt)).toThrow("创作描述不能为空");
+        expect(() => createCanvasAgentLaunchRequest({
+            prompt: "   ",
+            mode: "automatic",
+            models: { image: "", video: "" },
+            skills: [],
+            id: "launch-2",
+            createdAt: request.createdAt,
+        })).toThrow("创作描述不能为空");
     });
 
     test("derives a compact project title without putting the prompt in the URL", () => {

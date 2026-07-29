@@ -5,6 +5,21 @@
     gap: 3px;
 }
 
+.canvas-agent-composer-tool.ant-btn {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    padding: 0 !important;
+    border-radius: 8px !important;
+    color: color-mix(in srgb, var(--foreground) 62%, transparent);
+}
+
+.canvas-agent-composer-tool.ant-btn:hover,
+.canvas-agent-composer-tool.ant-btn:focus-visible {
+    background: color-mix(in srgb, var(--foreground) 7%, transparent) !important;
+    color: var(--foreground) !important;
+}
+
 .canvas-agent-composer-extra-controls {
     display: flex;
     min-width: 0;

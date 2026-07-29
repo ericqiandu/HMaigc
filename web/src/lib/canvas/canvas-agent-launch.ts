@@ -1,9 +1,23 @@
 import type { AgentSessionDetail } from "@/services/api/task-center";
-import type { CanvasAgentExecutionMode, CanvasAgentLaunchRequest, CanvasAssistantSession } from "@/types/canvas";
+import type {
+    CanvasAgentExecutionMode,
+    CanvasAgentGenerationModels,
+    CanvasAgentLaunchRequest,
+    CanvasAgentSkillSelection,
+    CanvasAssistantSession,
+} from "@/types/canvas";
 
 const PROJECT_TITLE_LIMIT = 24;
 
-export function createCanvasAgentLaunchRequest(prompt: string, mode: CanvasAgentExecutionMode, id: string, createdAt: string): CanvasAgentLaunchRequest {
+export function createCanvasAgentLaunchRequest(input: {
+    prompt: string;
+    mode: CanvasAgentExecutionMode;
+    models: CanvasAgentGenerationModels;
+    skills: CanvasAgentSkillSelection[];
+    id: string;
+    createdAt: string;
+}): CanvasAgentLaunchRequest {
+    const { prompt, mode, models, skills, id, createdAt } = input;
     const normalizedPrompt = prompt.trim();
     if (!normalizedPrompt) throw new Error("创作描述不能为空");
     return {
@@ -11,6 +25,8 @@ export function createCanvasAgentLaunchRequest(prompt: string, mode: CanvasAgent
         source: "home",
         prompt: normalizedPrompt,
         mode,
+        models: { ...models },
+        skills: skills.map((skill) => ({ ...skill })),
         createdAt,
     };
 }

@@ -1,10 +1,29 @@
-import { ArrowUp, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { App } from "antd";
+import { nanoid } from "nanoid";
 
 import { createAgentCanvasProjectWithRemoteSync } from "@/services/user-data-sync";
-import type { CanvasAgentExecutionMode } from "@/types/canvas";
+import { useEffectiveConfig } from "@/stores/use-config-store";
+import { useThemeStore } from "@/stores/use-theme-store";
+import { canvasThemes } from "@/lib/canvas-theme";
+import { uploadImage } from "@/services/image-storage";
+import type {
+    CanvasAgentExecutionMode,
+    CanvasAgentGenerationModels,
+    CanvasAgentSkillSelection,
+} from "@/types/canvas";
+import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-composer-controls";
+import {
+    AgentChatComposer,
+    type CanvasAgentChatAttachment,
+} from "@/components/canvas/canvas-agent-chat-ui";
+
+const MAX_REFERENCE_IMAGES = 4;
+
+type HomeReferenceAttachment = CanvasAgentChatAttachment & {
+    file: File;
+};
 
 const PLACEHOLDERS = [
     '试试说"在画布上为我创建…"，生成不阻塞，随时开启下一轮对话',
@@ -15,12 +34,18 @@ const PLACEHOLDERS = [
 export function UpdreamHero() {
     const { message } = App.useApp();
     const navigate = useNavigate();
+    const config = useEffectiveConfig();
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [value, setValue] = useState("");
     const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
+    const [models, setModels] = useState<CanvasAgentGenerationModels>({ image: "", video: "" });
+    const [selectedSkills, setSelectedSkills] = useState<CanvasAgentSkillSelection[]>([]);
+    const [referenceAttachments, setReferenceAttachments] = useState<HomeReferenceAttachment[]>([]);
     const [submitting, setSubmitting] = useState(false);
     const [placeholderIndex, setPlaceholderIndex] = useState(0);
     const [placeholderVisible, setPlaceholderVisible] = useState(true);
     const transitionTimeoutRef = useRef<number | null>(null);
+    const referenceAttachmentsRef = useRef<HomeReferenceAttachment[]>([]);
 
     useEffect(() => {
         const timer = window.setInterval(() => {
@@ -37,12 +62,61 @@ export function UpdreamHero() {
         };
     }, []);
 
+    useEffect(() => {
+        referenceAttachmentsRef.current = referenceAttachments;
+    }, [referenceAttachments]);
+
+    useEffect(() => () => {
+        referenceAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.url));
+    }, []);
+
+    const addReferenceImages = (files: FileList | File[] | null) => {
+        const images = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        if (!images.length) return;
+        const remaining = MAX_REFERENCE_IMAGES - referenceAttachments.length;
+        if (remaining <= 0) {
+            message.warning(`最多添加 ${MAX_REFERENCE_IMAGES} 张参考图片`);
+            return;
+        }
+        const accepted = images.slice(0, remaining);
+        if (accepted.length < images.length) message.warning(`最多添加 ${MAX_REFERENCE_IMAGES} 张参考图片`);
+        setReferenceAttachments((current) => [
+            ...current,
+            ...accepted.map((file) => ({
+                id: nanoid(),
+                name: file.name,
+                url: URL.createObjectURL(file),
+                file,
+            })),
+        ]);
+    };
+
+    const removeReferenceImage = (id: string) => {
+        setReferenceAttachments((current) => {
+            const removed = current.find((attachment) => attachment.id === id);
+            if (removed) URL.revokeObjectURL(removed.url);
+            return current.filter((attachment) => attachment.id !== id);
+        });
+    };
+
     const startCreating = async () => {
         const prompt = value.trim();
         if (!prompt || submitting) return;
         setSubmitting(true);
         try {
-            const { id, syncError } = await createAgentCanvasProjectWithRemoteSync({ prompt, mode: executionMode });
+            const referenceImages = await Promise.all(
+                referenceAttachments.map(async (attachment) => ({
+                    ...(await uploadImage(attachment.file)),
+                    name: attachment.name,
+                })),
+            );
+            const { id, syncError } = await createAgentCanvasProjectWithRemoteSync({
+                prompt,
+                mode: executionMode,
+                models,
+                skills: selectedSkills,
+                referenceImages,
+            });
             if (syncError) {
                 const reason = syncError instanceof Error ? syncError.message : "未知错误";
                 message.warning(`项目已在本地创建，云端同步暂未完成：${reason}`);
@@ -63,67 +137,33 @@ export function UpdreamHero() {
                 从一个想法开始，让 AI 和你一起完成剧本、分镜与影像创作
             </p>
 
-            <div className="updream-composer mt-9 w-full max-w-[700px] rounded-[22px] border border-white/10 bg-[#16171b] p-4 shadow-[0_8px_40px_rgba(0,0,0,0.45)]">
-                <div className="updream-composer-input-wrap relative">
-                    <textarea
-                        value={value}
-                        onChange={(event) => setValue(event.target.value)}
-                        onKeyDown={(event) => {
-                            if (event.key === "Enter" && !event.shiftKey) {
-                                event.preventDefault();
-                                void startCreating();
-                            }
-                        }}
-                        disabled={submitting}
-                        rows={3}
-                        className="updream-composer-input w-full resize-none bg-transparent text-[14px] leading-6 text-white/90 outline-none placeholder:text-transparent"
-                        aria-label="描述你想创作的内容"
-                    />
-                    {value === "" ? (
-                        <span
-                            className={`updream-composer-placeholder pointer-events-none absolute left-0 top-0 text-[14px] leading-6 text-white/35 transition-opacity duration-300 ${
-                                placeholderVisible ? "opacity-100" : "opacity-0"
-                            }`}
-                        >
-                            {PLACEHOLDERS[placeholderIndex]}
-                        </span>
-                    ) : null}
-                </div>
-                <div className="updream-composer-actions mt-3 flex items-center justify-between">
-                    <div className="updream-composer-modes flex items-center gap-1 rounded-lg bg-white/[0.04] p-1" role="group" aria-label="Agent 执行模式">
-                        <button
-                            type="button"
-                            className={`updream-composer-mode flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${executionMode === "guided" ? "bg-white/12 text-white" : "text-white/45 hover:text-white/75"}`}
-                            onClick={() => setExecutionMode("guided")}
-                            aria-pressed={executionMode === "guided"}
-                            title="Agent 先完成方案推演，写入画布和触发生成前由你确认"
-                        >
-                            <ShieldCheck className="updream-composer-mode-icon size-3.5" />
-                            执行前确认
-                        </button>
-                        <button
-                            type="button"
-                            className={`updream-composer-mode flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${executionMode === "automatic" ? "bg-white/12 text-white" : "text-white/45 hover:text-white/75"}`}
-                            onClick={() => setExecutionMode("automatic")}
-                            aria-pressed={executionMode === "automatic"}
-                            title="Agent 完成推演后直接写入画布并执行生成"
-                        >
-                            <Zap className="updream-composer-mode-icon size-3.5" />
-                            自动执行
-                        </button>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => void startCreating()}
-                        className={`updream-composer-send flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-                            value.trim() && !submitting ? "bg-white text-black hover:bg-white/85" : "bg-white/15 text-white/40"
-                        }`}
-                        aria-label={submitting ? "正在创建项目" : "开始创作"}
-                        disabled={!value.trim() || submitting}
-                    >
-                        <ArrowUp className={`updream-composer-send-icon size-[17px] ${submitting ? "animate-pulse" : ""}`} />
-                    </button>
-                </div>
+            <div className="updream-home-agent-composer mt-9 w-full max-w-[700px]">
+                <AgentChatComposer
+                    prompt={value}
+                    attachments={referenceAttachments}
+                    disabled={submitting}
+                    sending={submitting}
+                    submitReady={Boolean(value.trim())}
+                    placeholder={placeholderVisible ? PLACEHOLDERS[placeholderIndex] : ""}
+                    theme={theme}
+                    onPromptChange={setValue}
+                    onSubmit={() => void startCreating()}
+                    onAddFiles={addReferenceImages}
+                    onRemoveAttachment={removeReferenceImage}
+                    left={
+                        <CanvasAgentComposerControls
+                            config={config}
+                            disabled={submitting}
+                            models={models}
+                            selectedSkills={selectedSkills}
+                            executionMode={executionMode}
+                            placement="bottomLeft"
+                            onModelsChange={setModels}
+                            onSkillsChange={setSelectedSkills}
+                            onExecutionModeChange={setExecutionMode}
+                        />
+                    }
+                />
             </div>
         </section>
     );

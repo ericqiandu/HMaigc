@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasAgentOperationImpact } from "@/lib/canvas/canvas-agent-ops";
 import type { LocalUser } from "@/stores/use-user-store";
+import "./canvas-agent-panel.css";
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
 export type CanvasAgentChatMessage = {
@@ -182,6 +183,7 @@ export function AgentChatComposer({
     onAddFiles,
     onRemoveAttachment,
     left,
+    submitReady,
 }: {
     prompt: string;
     attachments?: CanvasAgentChatAttachment[];
@@ -194,9 +196,10 @@ export function AgentChatComposer({
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
     left?: ReactNode;
+    submitReady?: boolean;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const canSubmit = !disabled && !sending && Boolean(prompt.trim() || attachments.length);
+    const canSubmit = !disabled && !sending && (submitReady ?? Boolean(prompt.trim() || attachments.length));
     return (
         <div className="canvas-agent-composer-wrap" onWheelCapture={(event) => event.stopPropagation()}>
             <div className="canvas-agent-composer border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>

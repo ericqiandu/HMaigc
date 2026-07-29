@@ -11,10 +11,9 @@ import {
     type AiConfig,
     type ModelCapability,
 } from "@/stores/use-config-store";
+import type { CanvasAgentGenerationModels } from "@/types/canvas";
 
 type AgentGenerationCapability = Extract<ModelCapability, "image" | "video">;
-
-export type CanvasAgentGenerationModels = Record<AgentGenerationCapability, string>;
 
 export function CanvasAgentModelMenu({
     config,

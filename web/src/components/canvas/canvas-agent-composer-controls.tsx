@@ -1,12 +1,16 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { Button, Popover, Tooltip } from "antd";
 
 import type { AiConfig } from "@/stores/use-config-store";
-import type { CanvasAgentExecutionMode } from "@/types/canvas";
-import type { UpdreamSkill } from "@/services/api/skills";
+import type {
+    CanvasAgentExecutionMode,
+    CanvasAgentGenerationModels,
+    CanvasAgentSkillSelection,
+} from "@/types/canvas";
 import { CanvasAgentModeMenu } from "./canvas-agent-mode-menu";
-import { CanvasAgentModelMenu, type CanvasAgentGenerationModels } from "./canvas-agent-model-menu";
+import { CanvasAgentModelMenu } from "./canvas-agent-model-menu";
 import { CanvasAgentSkillMenu } from "./canvas-agent-skill-menu";
+import "./canvas-agent-composer-controls.css";
 
 type AgentComposerPopover = "models" | "skills" | "mode";
 type AgentComposerIconVariant = "model" | "skills" | "mode";
@@ -15,10 +19,11 @@ type CanvasAgentComposerControlsProps = {
     config: AiConfig;
     disabled?: boolean;
     models: CanvasAgentGenerationModels;
-    selectedSkills: UpdreamSkill[];
+    selectedSkills: CanvasAgentSkillSelection[];
     executionMode: CanvasAgentExecutionMode;
+    placement?: ComponentProps<typeof Popover>["placement"];
     onModelsChange: (models: CanvasAgentGenerationModels) => void;
-    onSkillsChange: (skills: UpdreamSkill[]) => void;
+    onSkillsChange: (skills: CanvasAgentSkillSelection[]) => void;
     onExecutionModeChange: (mode: CanvasAgentExecutionMode) => void;
 };
 
@@ -28,6 +33,7 @@ export function CanvasAgentComposerControls({
     models,
     selectedSkills,
     executionMode,
+    placement = "top",
     onModelsChange,
     onSkillsChange,
     onExecutionModeChange,
@@ -40,6 +46,7 @@ export function CanvasAgentComposerControls({
                 label="选择模型"
                 icon="/icons/agent-model.svg"
                 iconVariant="model"
+                placement={placement}
                 open={activePopover === "models"}
                 disabled={disabled}
                 onOpenChange={(open) => setActivePopover(open ? "models" : null)}
@@ -49,6 +56,7 @@ export function CanvasAgentComposerControls({
                 label="Skills"
                 icon="/icons/agent-skills.svg"
                 iconVariant="skills"
+                placement={placement}
                 open={activePopover === "skills"}
                 disabled={disabled}
                 onOpenChange={(open) => setActivePopover(open ? "skills" : null)}
@@ -58,6 +66,7 @@ export function CanvasAgentComposerControls({
                 label="生成模式"
                 icon={executionMode === "guided" ? "/icons/agent-mode-manual.svg" : "/icons/agent-mode-automatic.svg"}
                 iconVariant="mode"
+                placement={placement}
                 open={activePopover === "mode"}
                 disabled={disabled}
                 onOpenChange={(open) => setActivePopover(open ? "mode" : null)}
@@ -79,6 +88,7 @@ function ComposerPopover({
     label,
     icon,
     iconVariant,
+    placement,
     open,
     disabled,
     content,
@@ -87,6 +97,7 @@ function ComposerPopover({
     label: string;
     icon: string;
     iconVariant: AgentComposerIconVariant;
+    placement: ComponentProps<typeof Popover>["placement"];
     open: boolean;
     disabled?: boolean;
     content: ReactNode;
@@ -96,7 +107,7 @@ function ComposerPopover({
         <Popover
             arrow={false}
             trigger="click"
-            placement="top"
+            placement={placement}
             open={open}
             onOpenChange={onOpenChange}
             content={content}

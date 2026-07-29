@@ -3,7 +3,7 @@ import { Bot, BookOpenText, Focus, History, PanelRightClose, Plus, RotateCcw, Sh
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
-import { modelOptionName, normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
@@ -13,20 +13,27 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
-import { renderSkillPrompt } from "@/lib/canvas/canvas-skill-mentions";
-import type { UpdreamSkill } from "@/services/api/skills";
+import { buildCanvasAgentRequestText } from "@/lib/canvas/canvas-agent-composer-context";
 import { cinematicAgentSessionOpsJson, createCinematicAgentSession, isAgentSessionPollingAbort, resumeCinematicAgentSession } from "@/lib/canvas/canvas-agent-session";
 import { cinematicAgentProgress, hasCanvasAgentLaunchRecord } from "@/lib/canvas/canvas-agent-launch";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { AgentChatComposer, AgentChatMessage, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { CanvasNodeType, type CanvasAgentExecutionMode, type CanvasAgentLaunchRequest, type CanvasAssistantMessage, type CanvasAssistantPendingBackendSession, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "@/types/canvas";
+import {
+    CanvasNodeType,
+    type CanvasAgentExecutionMode,
+    type CanvasAgentGenerationModels,
+    type CanvasAgentLaunchRequest,
+    type CanvasAgentSkillSelection,
+    type CanvasAssistantMessage,
+    type CanvasAssistantPendingBackendSession,
+    type CanvasAssistantReference,
+    type CanvasAssistantSession,
+    type CanvasNodeData,
+} from "@/types/canvas";
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
-import type { CanvasAgentGenerationModels } from "./canvas-agent-model-menu";
-import "./canvas-agent-panel.css";
-import "./canvas-agent-composer-controls.css";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
@@ -156,7 +163,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
     const [agentModels, setAgentModels] = useState<CanvasAgentGenerationModels>({ image: "", video: "" });
-    const [selectedSkills, setSelectedSkills] = useState<UpdreamSkill[]>([]);
+    const [selectedSkills, setSelectedSkills] = useState<CanvasAgentSkillSelection[]>([]);
     const [width, setWidth] = useState(() => Math.min(420, Math.max(320, window.innerWidth)));
     const [view, setView] = useState<OnlineAgentTab>("chat");
     const [prompt, setPrompt] = useState("");
@@ -702,10 +709,25 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         onCinematicEntryConsumed?.();
     }, [cinematicEntry, onCinematicEntryConsumed]);
 
-    const submitCinematicProject = async (text: string, options?: { executionMode?: CanvasAgentExecutionMode; launchRequestId?: string }) => {
+    const submitCinematicProject = async (
+        text: string,
+        options?: {
+            executionMode?: CanvasAgentExecutionMode;
+            launchRequestId?: string;
+            models?: CanvasAgentGenerationModels;
+            skills?: CanvasAgentSkillSelection[];
+        },
+    ) => {
         const value = text.trim();
         if (!value || agentBusy) return;
         const requestedExecutionMode = options?.executionMode || executionMode;
+        const requestedModels = options?.models || agentModels;
+        const requestedSkills = options?.skills || selectedSkills;
+        const requestedConfig = {
+            ...effectiveConfig,
+            imageModel: requestedModels.image || effectiveConfig.imageModel,
+            videoModel: requestedModels.video || effectiveConfig.videoModel,
+        };
         const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
         if (!isAiConfigReady(requestConfig, requestConfig.model)) {
             handleMissingSystemModel();
@@ -736,7 +758,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         setIsRunning(true);
         let backendSessionId = "";
         try {
-            const cinematic = await runCinematicSession(session.id, buildAgentRequestText(value, agentModels, selectedSkills), snapshotRef.current, agentConfig, requestedExecutionMode, options?.launchRequestId, (createdId) => {
+            const cinematic = await runCinematicSession(session.id, buildCanvasAgentRequestText(value, requestedModels, requestedSkills), snapshotRef.current, requestedConfig, requestedExecutionMode, options?.launchRequestId, (createdId) => {
                 backendSessionId = createdId;
             });
             if (requestedExecutionMode === "guided") {
@@ -811,11 +833,15 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         startedLaunchRequestIdsRef.current.add(agentLaunchRequest.id);
         setCinematicEntryActive(true);
         setExecutionMode(agentLaunchRequest.mode);
+        setAgentModels(agentLaunchRequest.models);
+        setSelectedSkills(agentLaunchRequest.skills);
         setView("chat");
         setPrompt(agentLaunchRequest.prompt);
         void submitCinematicProject(agentLaunchRequest.prompt, {
             executionMode: agentLaunchRequest.mode,
             launchRequestId: agentLaunchRequest.id,
+            models: agentLaunchRequest.models,
+            skills: agentLaunchRequest.skills,
         });
     }, [agentBusy, agentLaunchRequest?.id, localSessions, sessions]);
 
@@ -1533,10 +1559,10 @@ async function buildToolAgentMessages(
     history: CanvasAssistantMessage[],
     userMessage: CanvasAssistantMessage,
     models: CanvasAgentGenerationModels,
-    skills: UpdreamSkill[],
+    skills: CanvasAgentSkillSelection[],
 ): Promise<ResponseInputMessage[]> {
     const refs = userMessage.references || [];
-    const requestText = buildAgentRequestText(userMessage.text, models, skills);
+    const requestText = buildCanvasAgentRequestText(userMessage.text, models, skills);
     return [
         { role: "system", content: ONLINE_AGENT_PROMPT },
         ...history
@@ -1552,19 +1578,6 @@ async function buildToolAgentMessages(
             ],
         },
     ];
-}
-
-function buildAgentRequestText(text: string, models: CanvasAgentGenerationModels, skills: UpdreamSkill[]) {
-    const explicitModels = [
-        models.image ? `图片模型：${modelOptionName(models.image)}` : "",
-        models.video ? `视频模型：${modelOptionName(models.video)}` : "",
-    ].filter(Boolean);
-    const skillInstructions = skills.map((skill) => renderSkillPrompt(skill));
-    return [
-        explicitModels.length ? `用户在输入框中显式选择的生成模型：\n${explicitModels.join("\n")}` : "",
-        skillInstructions.length ? `用户在输入框中显式选择的 Skills：\n${skillInstructions.join("\n\n")}` : "",
-        `用户需求：${text}`,
-    ].filter(Boolean).join("\n\n");
 }
 
 function compactSnapshot(snapshot: CanvasAgentSnapshot) {

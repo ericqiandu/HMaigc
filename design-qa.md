@@ -75,4 +75,36 @@ No actionable P0, P1 or P2 difference remains in the requested composer-control 
 
 - P3: if a future product requirement adds share or CLI actions, add them only after their real flows exist; do not add decorative buttons.
 
+## Homepage Agent Composer QA (2026-07-29)
+
+- Source visual truth: `qa-artifacts/home-agent-composer-20260729/agent-composer-full.png`.
+- Implementation screenshot: `qa-artifacts/home-agent-composer-20260729/home-composer-full-current.png`.
+- Focused comparison: `qa-artifacts/home-agent-composer-20260729/composer-comparison.png`.
+- Viewport: 1086 × 912 CSS px.
+- Device scale factor: 1.
+- State: dark homepage, empty composer, manual mode, no Agent request submitted.
+
+### Verified scope
+
+- The homepage now renders the same `AgentChatComposer` component used by the canvas Agent panel instead of maintaining a parallel visual implementation.
+- Both instances have the same 139 px component height, surface treatment, radius, typography, 32 × 32 px toolbar actions and disabled submit state.
+- Homepage width remains 680 px while the canvas drawer uses 399 px; this is an intentional container-width difference, not component drift.
+- The control order is identical: add image, generation model, Skills, generation mode and submit.
+- The image input accepts multiple `image/*` files and applies the homepage limit of four reference images.
+- Model, Skill and mode popovers open below the homepage composer without clipping. Their measured sizes are 394 × 408, 474 × 424 and 264 × 138 CSS px including Ant Design outer padding.
+- Manual and automatic mode switching updates the real mode icon and launch configuration.
+- Model and Skill choices use the same live system catalog and shared request-context builder as the canvas Agent panel.
+- Selected homepage reference images are uploaded and seeded as real canvas image nodes before the Agent launch begins.
+- Browser console remained empty throughout the interaction checks.
+
+### Comparison history
+
+- Initial homepage implementation duplicated the Agent toolbar and drifted in structure, spacing and interaction behavior.
+- The first reuse pass shared only the model, Skill and mode controls; the homepage still lacked the Agent add-image flow and used a separate composer shell.
+- The final pass removed the parallel shell and reused the complete `AgentChatComposer`, with one shared launch contract for mode, models and Skills.
+
+### Final result
+
+No actionable P0, P1 or P2 difference remains in the requested homepage-versus-Agent composer scope.
+
 final result: passed

@@ -9,6 +9,8 @@ import {
     listFavoriteSkills,
     type UpdreamSkill,
 } from "@/services/api/skills";
+import { toCanvasAgentSkillSelection } from "@/lib/canvas/canvas-agent-composer-context";
+import type { CanvasAgentSkillSelection } from "@/types/canvas";
 
 type SkillScope = "general" | "favorites" | "mine";
 
@@ -22,8 +24,8 @@ export function CanvasAgentSkillMenu({
     selectedSkills,
     onChange,
 }: {
-    selectedSkills: UpdreamSkill[];
-    onChange: (skills: UpdreamSkill[]) => void;
+    selectedSkills: CanvasAgentSkillSelection[];
+    onChange: (skills: CanvasAgentSkillSelection[]) => void;
 }) {
     const [scope, setScope] = useState<SkillScope>("general");
     const [query, setQuery] = useState("");
@@ -60,7 +62,11 @@ export function CanvasAgentSkillMenu({
     }, [query, skills]);
 
     const toggleSkill = (skill: UpdreamSkill) => {
-        onChange(selectedDirs.has(skill.dir) ? selectedSkills.filter((item) => item.dir !== skill.dir) : [...selectedSkills, skill]);
+        onChange(
+            selectedDirs.has(skill.dir)
+                ? selectedSkills.filter((item) => item.dir !== skill.dir)
+                : [...selectedSkills, toCanvasAgentSkillSelection(skill)],
+        );
     };
 
     return (

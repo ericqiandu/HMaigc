@@ -308,11 +308,25 @@ export type CanvasAssistantMessage = {
 
 export type CanvasAgentExecutionMode = "guided" | "automatic";
 
+export type CanvasAgentGenerationModels = {
+    image: string;
+    video: string;
+};
+
+export type CanvasAgentSkillSelection = {
+    dir: string;
+    name: string;
+    description: string;
+    detailText: string;
+};
+
 export type CanvasAgentLaunchRequest = {
     id: string;
     source: "home";
     prompt: string;
     mode: CanvasAgentExecutionMode;
+    models: CanvasAgentGenerationModels;
+    skills: CanvasAgentSkillSelection[];
     createdAt: string;
 };
 

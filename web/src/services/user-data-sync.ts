@@ -8,7 +8,15 @@ import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { nanoid } from "nanoid";
 import { canvasAgentProjectTitle, createCanvasAgentLaunchRequest } from "@/lib/canvas/canvas-agent-launch";
-import type { CanvasAgentExecutionMode } from "@/types/canvas";
+import { getNodeSpec } from "@/constant/canvas";
+import type { UploadedImage } from "@/services/image-storage";
+import type {
+    CanvasAgentExecutionMode,
+    CanvasAgentGenerationModels,
+    CanvasAgentSkillSelection,
+    CanvasNodeData,
+} from "@/types/canvas";
+import { CanvasNodeType } from "@/types/canvas";
 
 let activeRemoteUserId = "";
 let applyingRemoteState = false;
@@ -100,12 +108,27 @@ export async function createCanvasProjectWithRemoteSync(title: string, projectId
     }
 }
 
-export async function createAgentCanvasProjectWithRemoteSync(input: { prompt: string; mode: CanvasAgentExecutionMode }) {
+export async function createAgentCanvasProjectWithRemoteSync(input: {
+    prompt: string;
+    mode: CanvasAgentExecutionMode;
+    models: CanvasAgentGenerationModels;
+    skills: CanvasAgentSkillSelection[];
+    referenceImages: Array<UploadedImage & { name: string }>;
+}) {
     const now = new Date().toISOString();
     const store = useCanvasStore.getState();
     const id = store.createProject(canvasAgentProjectTitle(input.prompt));
+    const referenceNodes = createAgentReferenceNodes(input.referenceImages);
     store.updateProject(id, {
-        pendingAgentLaunch: createCanvasAgentLaunchRequest(input.prompt, input.mode, nanoid(), now),
+        nodes: referenceNodes,
+        pendingAgentLaunch: createCanvasAgentLaunchRequest({
+            prompt: input.prompt,
+            mode: input.mode,
+            models: input.models,
+            skills: input.skills,
+            id: nanoid(),
+            createdAt: now,
+        }),
     });
     if (!activeRemoteUserId) return { id, syncError: new Error("尚未建立云端同步会话") };
     try {
@@ -115,6 +138,29 @@ export async function createAgentCanvasProjectWithRemoteSync(input: { prompt: st
         scheduleRemoteUserDataSync();
         return { id, syncError };
     }
+}
+
+function createAgentReferenceNodes(images: Array<UploadedImage & { name: string }>): CanvasNodeData[] {
+    const spec = getNodeSpec(CanvasNodeType.Image);
+    return images.map((image, index) => ({
+        id: nanoid(),
+        type: CanvasNodeType.Image,
+        title: image.name || `参考图片 ${index + 1}`,
+        position: { x: index * (spec.width + 40), y: 0 },
+        width: spec.width,
+        height: spec.height,
+        metadata: {
+            ...spec.metadata,
+            content: image.url,
+            status: "success",
+            storageKey: image.storageKey,
+            naturalWidth: image.width,
+            naturalHeight: image.height,
+            mimeType: image.mimeType,
+            bytes: image.bytes,
+            workflowKind: "reference_set",
+        },
+    }));
 }
 
 export async function deleteAssetWithRemoteSync(id: string) {
