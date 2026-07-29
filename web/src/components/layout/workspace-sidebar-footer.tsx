@@ -1,5 +1,5 @@
 import { App, Popover, Switch } from "antd";
-import { BookOpenCheck, ChevronRight, Coins, LogIn, LogOut, Moon, Settings2, ShieldCheck, Sun, UserRound, UsersRound } from "lucide-react";
+import { BookOpenCheck, ChevronRight, Coins, Gem, LogIn, LogOut, Moon, Settings2, ShieldCheck, Sun, UserRound, UsersRound, Zap } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -59,54 +59,68 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                 />
             ) : null}
             {user ? (
-                <Popover
-                    trigger="click"
-                    placement={compact ? "bottomRight" : "rightBottom"}
-                    open={menuOpen}
-                    onOpenChange={setMenuOpen}
-                    content={(
-                        <div className="w-[232px] py-0.5">
-                            <div className="flex items-center gap-3 border-b border-border/65 px-1 pb-3">
-                                <UserAvatar user={user} className="size-8" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex min-w-0 items-center gap-1.5"><span className="truncate text-sm font-medium">{user.displayName || user.username}</span><IdentityProviderBadge user={user} /></div>
-                                    <div className="mt-0.5 truncate text-[11px] tabular-nums text-foreground/45">可用 {balance} 积分</div>
+                <div className={compact ? "workspace-top-bar-account-pill" : "workspace-sidebar-account-menu"}>
+                    {compact ? (
+                        <>
+                            <Link to="/wallet" className="workspace-top-bar-balance" title={`${balance} 积分`} aria-label={`可用积分 ${balance}`}>
+                                <Zap className="workspace-top-bar-balance-icon" aria-hidden="true" />
+                                <span className="workspace-top-bar-balance-value">{balance}</span>
+                            </Link>
+                            <Link to="/membership" className="workspace-top-bar-membership" aria-label="升级会员" title="升级会员">
+                                <Gem className="workspace-top-bar-membership-icon" aria-hidden="true" />
+                                <span className="workspace-top-bar-membership-label">升级会员</span>
+                            </Link>
+                        </>
+                    ) : null}
+                    <Popover
+                        trigger="click"
+                        placement={compact ? "bottomRight" : "rightBottom"}
+                        open={menuOpen}
+                        onOpenChange={setMenuOpen}
+                        content={(
+                            <div className="workspace-account-popover-content w-[232px] py-0.5">
+                                <div className="workspace-account-popover-summary flex items-center gap-3 border-b border-border/65 px-1 pb-3">
+                                    <UserAvatar user={user} className="size-8" />
+                                    <div className="workspace-account-popover-copy min-w-0 flex-1">
+                                        <div className="workspace-account-popover-name-row flex min-w-0 items-center gap-1.5"><span className="workspace-account-popover-name truncate text-sm font-medium">{user.displayName || user.username}</span><IdentityProviderBadge user={user} /></div>
+                                        <div className="workspace-account-popover-balance mt-0.5 truncate text-[11px] tabular-nums text-foreground/45">可用 {balance} 积分</div>
+                                    </div>
                                 </div>
-                            </div>
 
-                            <nav className="py-2" aria-label="账号与工具">
-                                <MenuLink to="/wallet" icon={<Coins />} label="积分与账单" onNavigate={() => setMenuOpen(false)} />
-                                <MenuLink to="/teams" icon={<UsersRound />} label="团队空间" onNavigate={() => setMenuOpen(false)} />
-                                <MenuLink to="/skills" icon={<BookOpenCheck />} label="技能库" onNavigate={() => setMenuOpen(false)} />
-                                <MenuLink to="/settings" icon={<Settings2 />} label="设置" onNavigate={() => setMenuOpen(false)} />
-                                {user.role === "admin" ? <MenuLink to="/admin" icon={<ShieldCheck />} label="管理员后台" onNavigate={() => setMenuOpen(false)} /> : null}
-                            </nav>
+                                <nav className="workspace-account-popover-nav py-2" aria-label="账号与工具">
+                                    <MenuLink to="/wallet" icon={<Coins />} label="积分与账单" onNavigate={() => setMenuOpen(false)} />
+                                    <MenuLink to="/teams" icon={<UsersRound />} label="团队空间" onNavigate={() => setMenuOpen(false)} />
+                                    <MenuLink to="/skills" icon={<BookOpenCheck />} label="技能库" onNavigate={() => setMenuOpen(false)} />
+                                    <MenuLink to="/settings" icon={<Settings2 />} label="设置" onNavigate={() => setMenuOpen(false)} />
+                                    {user.role === "admin" ? <MenuLink to="/admin" icon={<ShieldCheck />} label="管理员后台" onNavigate={() => setMenuOpen(false)} /> : null}
+                                </nav>
 
-                            <div className="border-y border-border/65 py-2">
-                                <AppChangelogButton className="flex h-8 w-full items-center gap-2 rounded px-2 text-[11px] text-foreground/58 hover:bg-foreground/[.055] hover:text-foreground [&_svg]:size-3.5" showLabel showVersion versionClassName="ml-auto text-[9px] tabular-nums text-foreground/32" />
-                            </div>
+                                <div className="workspace-account-popover-changelog border-y border-border/65 py-2">
+                                    <AppChangelogButton className="workspace-account-popover-changelog-button flex h-8 w-full items-center gap-2 rounded px-2 text-[11px] text-foreground/58 hover:bg-foreground/[.055] hover:text-foreground [&_svg]:size-3.5" showLabel showVersion versionClassName="workspace-account-popover-version ml-auto text-[9px] tabular-nums text-foreground/32" />
+                                </div>
 
-                            <div className="flex h-10 items-center px-2">
-                                {theme === "dark" ? <Moon className="size-3.5 text-foreground/45" /> : <Sun className="size-3.5 text-foreground/45" />}
-                                <span className="ml-2 flex-1 text-xs text-foreground/65">深色模式</span>
-                                <Switch size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
+                                <div className="workspace-account-popover-theme flex h-10 items-center px-2">
+                                    {theme === "dark" ? <Moon className="workspace-account-popover-theme-icon size-3.5 text-foreground/45" /> : <Sun className="workspace-account-popover-theme-icon size-3.5 text-foreground/45" />}
+                                    <span className="workspace-account-popover-theme-label ml-2 flex-1 text-xs text-foreground/65">深色模式</span>
+                                    <Switch className="workspace-account-popover-theme-switch" size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
+                                </div>
+                                <button type="button" className="workspace-account-popover-logout flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-red-500/[.08] hover:text-red-600" onClick={() => void handleLogout()}><LogOut className="workspace-account-popover-logout-icon size-3.5" /><span className="workspace-account-popover-logout-label">退出登录</span></button>
                             </div>
-                            <button type="button" className="flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-red-500/[.08] hover:text-red-600" onClick={() => void handleLogout()}><LogOut className="size-3.5" />退出登录</button>
-                        </div>
-                    )}
-                >
-                    <button type="button" className={cn("flex min-h-10 w-full min-w-0 items-center overflow-hidden rounded-md text-left transition-colors hover:bg-foreground/[.045]", accountClassName)} title={`${user.displayName || user.username} · ${balance} 积分`}>
-                        <UserAvatar user={user} className="size-7" />
-                        <span className={cn("min-w-0 flex-1 flex-col", expandedClassName)}>
-                            <span className="truncate text-xs font-medium">{user.displayName || user.username}</span>
-                            <span className="mt-0.5 block truncate text-[9px] tabular-nums text-foreground/42">{balance} 积分</span>
-                        </span>
-                        <ChevronRight className={cn("size-3.5 shrink-0 text-foreground/30", expandedClassName)} />
-                    </button>
-                </Popover>
+                        )}
+                    >
+                        <button type="button" className={cn("workspace-account-trigger flex min-h-10 w-full min-w-0 items-center overflow-hidden rounded-md text-left transition-colors hover:bg-foreground/[.045]", accountClassName)} title={`${user.displayName || user.username} · ${balance} 积分`}>
+                            <UserAvatar user={user} className="size-7" />
+                            <span className={cn("workspace-account-trigger-copy min-w-0 flex-1 flex-col", expandedClassName)}>
+                                <span className="workspace-account-trigger-name truncate text-xs font-medium">{user.displayName || user.username}</span>
+                                <span className="workspace-account-trigger-balance mt-0.5 block truncate text-[9px] tabular-nums text-foreground/42">{balance} 积分</span>
+                            </span>
+                            <ChevronRight className={cn("workspace-account-trigger-chevron size-3.5 shrink-0 text-foreground/30", expandedClassName)} />
+                        </button>
+                    </Popover>
+                </div>
             ) : (
-                <Link to="/login" className={cn("flex h-10 items-center rounded-md text-xs text-foreground/65 hover:bg-foreground/[.05] hover:text-foreground", collapsedClassName)} title="登录">
-                    <LogIn className="size-4 shrink-0" /><span className={expandedClassName}>登录</span>
+                <Link to="/login" className={cn("workspace-account-login flex h-10 items-center rounded-md text-xs text-foreground/65 hover:bg-foreground/[.05] hover:text-foreground", collapsedClassName)} title="登录">
+                    <LogIn className="workspace-account-login-icon size-4 shrink-0" /><span className={cn("workspace-account-login-label", expandedClassName)}>登录</span>
                 </Link>
             )}
         </div>

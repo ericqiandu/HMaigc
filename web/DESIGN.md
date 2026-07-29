@@ -5,6 +5,7 @@
 ## 当前推广方式
 
 - 新视觉标准通过 `WorkspacePage` 自动挂载 `.workspace-ui-scope`，并显式覆盖独立的 `.settings-workspace-page`。
+- 工作台统一由 `AppWorkspaceShell` 挂载 `WorkspaceTopBar`：左侧展示后台站点配置中的 Logo 与站点名称，右侧展示真实公告、积分、会员入口和账户菜单；页面不得各自复制顶栏。
 - 当前标准应用于项目、画布列表、任务、素材、技能、设置、团队、积分工作区与管理后台。
 - 管理后台保留独立的侧栏信息架构和运营密度，但必须通过 `.admin-workspace.workspace-ui-scope` 继承同一套语义颜色、字体、内容宽度、控件高度与响应式标准；后台专属映射集中维护在 `src/pages/admin/admin-workspace.css`。
 - 首页、会员购买页和画布编辑器拥有独立的信息架构，不得无选择地继承工作区布局规则。
