@@ -15,6 +15,7 @@ let syncQueued = false;
 let subscriptionsInstalled = false;
 let remoteAssetVersions = new Map<string, string>();
 let remoteProjectVersions = new Map<string, string>();
+let remoteTeamProjectIds = new Set<string>();
 
 const LOCAL_STORAGE_KEY_PATTERN = /^(image|video|audio|file|video-reference|audio-reference):/;
 
@@ -25,6 +26,7 @@ export async function syncRemoteUserData(userId?: string | null) {
     try {
         const [remoteCanvas, remoteAssets] = await Promise.all([listRemoteCanvasProjects(), listRemoteAssets()]);
         remoteProjectVersions = versionMap(remoteCanvas.projects);
+        remoteTeamProjectIds = new Set(remoteCanvas.projects.filter((project) => Boolean(project.teamId)).map((project) => project.id));
         remoteAssetVersions = versionMap(remoteAssets.assets);
         const localProjects = useCanvasStore.getState().projects;
         const localAssets = useAssetStore.getState().assets;
@@ -63,6 +65,7 @@ export function resetRemoteUserDataSync() {
     activeRemoteUserId = "";
     remoteAssetVersions.clear();
     remoteProjectVersions.clear();
+    remoteTeamProjectIds.clear();
     if (syncTimer) {
         window.clearTimeout(syncTimer);
         syncTimer = null;
@@ -127,9 +130,9 @@ async function saveRemoteUserDataBatch() {
     try {
         const currentProjects = useCanvasStore.getState().projects;
         const currentAssets = useAssetStore.getState().assets;
-        const dirtyProjects = currentProjects.filter((item) => remoteProjectVersions.get(item.id) !== item.updatedAt);
+        const dirtyProjects = currentProjects.filter((item) => !item.teamId && remoteProjectVersions.get(item.id) !== item.updatedAt);
         const dirtyAssets = currentAssets.filter((item) => remoteAssetVersions.get(item.id) !== item.updatedAt);
-        const deletedProjectIds = missingIds(remoteProjectVersions, currentProjects);
+        const deletedProjectIds = missingIds(remoteProjectVersions, currentProjects).filter((id) => !remoteTeamProjectIds.has(id));
         const deletedAssetIds = missingIds(remoteAssetVersions, currentAssets);
         if (!dirtyProjects.length && !dirtyAssets.length && !deletedProjectIds.length && !deletedAssetIds.length) return;
         const uploaded = new Map<string, string>();

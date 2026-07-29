@@ -23,6 +23,7 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 	}
 	if err := db.AutoMigrate(
 		&model.User{},
+		&model.UserIdentity{},
 		&model.MembershipPlan{},
 		&model.MembershipOrder{},
 		&model.MembershipSubscription{},
@@ -30,6 +31,11 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 		&model.TeamMember{},
 		&model.TeamInvitation{},
 		&model.TeamAuditEvent{},
+		&model.CanvasProject{},
+		&model.CanvasCollaborator{},
+		&model.CanvasChange{},
+		&model.CanvasShare{},
+		&model.Resource{},
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
 		&model.AdminAuditEvent{},

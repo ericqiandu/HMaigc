@@ -646,6 +646,14 @@ func (r *Repository) ResourceForUser(userID string, id string) (*model.Resource,
 	return &resource, nil
 }
 
+func (r *Repository) Resource(id string) (*model.Resource, error) {
+	var resource model.Resource
+	if err := r.db.First(&resource, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
 func (r *Repository) Resources(userID string, limit int) ([]model.Resource, error) {
 	var resources []model.Resource
 	if limit <= 0 || limit > 500 {

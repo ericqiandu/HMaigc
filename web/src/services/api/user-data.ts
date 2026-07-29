@@ -10,6 +10,13 @@ export type RemoteUserDataSummary = {
     id: string;
     kind?: string;
     title: string;
+    teamId?: string;
+    revision?: number;
+    defaultTeamAccess?: "viewer" | "editor";
+    accessLevel?: "viewer" | "editor" | "manager";
+    canEdit?: boolean;
+    canManage?: boolean;
+    teamSubscriptionActive?: boolean;
     createdAt: string;
     updatedAt: string;
 };

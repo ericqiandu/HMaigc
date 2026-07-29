@@ -13,6 +13,8 @@ import { useUserStore } from "@/stores/use-user-store";
 import type { CanvasMediaPerformanceMode, CanvasWorkspaceMode } from "@/types/canvas";
 
 type CanvasTopBarProps = {
+    canEdit?: boolean;
+    canManage?: boolean;
     title: string;
     workspaceMode: CanvasWorkspaceMode;
     onWorkspaceModeChange: (mode: CanvasWorkspaceMode) => void;
@@ -38,9 +40,12 @@ type CanvasTopBarProps = {
     onMediaPerformanceModeChange: (mode: CanvasMediaPerformanceMode) => void;
     onOpenSearch: () => void;
     projectContext?: CanvasContextSummary & { projectId: string; projectName: string };
+    collaborationControl?: ReactNode;
 };
 
 export function CanvasTopBar({
+    canEdit = true,
+    canManage = true,
     title,
     workspaceMode,
     onWorkspaceModeChange,
@@ -66,6 +71,7 @@ export function CanvasTopBar({
     onMediaPerformanceModeChange,
     onOpenSearch,
     projectContext,
+    collaborationControl,
 }: CanvasTopBarProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
@@ -98,9 +104,9 @@ export function CanvasTopBar({
                                 { key: "projects", icon: <LayoutGrid className="size-4" />, label: <Link to="/canvas">画布</Link> },
                                 { type: "divider" },
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
-                                { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
+                                { key: "delete", disabled: !canManage, danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                 { type: "divider" },
-                                { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
+                                { key: "import", disabled: !canEdit, icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
                                 { key: "search", icon: <Search className="size-4" />, label: <MenuLabel text="搜索节点" shortcut="⌘ K" />, onClick: onOpenSearch },
                                 {
                                     key: "performance",
@@ -113,8 +119,8 @@ export function CanvasTopBar({
                                     ],
                                 },
                                 { type: "divider" },
-                                { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
-                                { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },
+                                { key: "undo", disabled: !canEdit || !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
+                                { key: "redo", disabled: !canEdit || !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },
                             ],
                         }}
                     >
@@ -141,14 +147,14 @@ export function CanvasTopBar({
                             />
                         ) : (
                             <div className="flex min-w-0 items-center gap-0.5">
-                                <button type="button" className="max-w-[280px] truncate text-left text-base font-semibold tracking-normal transition-opacity hover:opacity-75" onClick={onStartTitleEditing} title="点击修改画布名称">
+                                <button type="button" className="max-w-[280px] truncate text-left text-base font-semibold tracking-normal transition-opacity hover:opacity-75 disabled:cursor-default disabled:hover:opacity-100" onClick={onStartTitleEditing} title={canEdit ? "点击修改画布名称" : "当前画布仅可查看"} disabled={!canEdit}>
                                     {title}
                                 </button>
-                                <Tooltip title="重命名画布">
+                                {canEdit ? <Tooltip title="重命名画布">
                                     <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md opacity-60 transition hover:bg-black/5 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 dark:hover:bg-white/10" style={{ color: theme.node.text }} onClick={onStartTitleEditing} aria-label="重命名画布">
                                         <Pencil className="size-3.5" />
                                     </button>
-                                </Tooltip>
+                                </Tooltip> : null}
                             </div>
                         )}
                         {projectContext && !isTitleEditing ? (
@@ -187,7 +193,8 @@ export function CanvasTopBar({
                     >
                         <Button type="text" className="!hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="媒体性能模式" title="媒体性能模式" />
                     </Dropdown>
-                    {compactAgentStatus ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
+                    {compactAgentStatus && canEdit ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
+                    {collaborationControl}
                     {user ? (
                         <Link
                             to="/wallet"
@@ -199,9 +206,10 @@ export function CanvasTopBar({
                             <span>{availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 })}</span>
                         </Link>
                     ) : null}
-                    <Button type="text" className="!h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title="分享画布" />
+                    <Button disabled={!canManage} type="text" className="!h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title={canManage ? "分享画布" : "只有画布管理者可以公开分享"} />
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button
+                        disabled={!canEdit}
                         type="text"
                         className="!h-10 !rounded-xl !px-3 !font-medium"
                         style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -20,13 +21,20 @@ type CanvasProjectsSyncRequest struct {
 }
 
 type UserDataSummary struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind,omitempty"`
-	Category  string    `json:"category,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID                     string                  `json:"id"`
+	Kind                   string                  `json:"kind,omitempty"`
+	Category               string                  `json:"category,omitempty"`
+	Status                 string                  `json:"status,omitempty"`
+	Title                  string                  `json:"title"`
+	TeamID                 string                  `json:"teamId,omitempty"`
+	Revision               int64                   `json:"revision,omitempty"`
+	DefaultTeamAccess      model.CanvasAccessLevel `json:"defaultTeamAccess,omitempty"`
+	AccessLevel            model.CanvasAccessLevel `json:"accessLevel,omitempty"`
+	CanEdit                bool                    `json:"canEdit,omitempty"`
+	CanManage              bool                    `json:"canManage,omitempty"`
+	TeamSubscriptionActive bool                    `json:"teamSubscriptionActive,omitempty"`
+	CreatedAt              time.Time               `json:"createdAt"`
+	UpdatedAt              time.Time               `json:"updatedAt"`
 }
 
 func (s *Service) UserAssetSummaries(userID string) ([]UserDataSummary, error) {
@@ -160,23 +168,33 @@ func (s *Service) UserCanvasProjects(userID string) ([]json.RawMessage, error) {
 }
 
 func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, error) {
-	projects, err := s.repo.CanvasProjectSummaries(userID)
+	projects, err := s.repo.CanvasProjectSummariesForActor(userID)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]UserDataSummary, 0, len(projects))
 	for _, project := range projects {
-		result = append(result, UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt})
+		access, err := canvasSummaryAccess(project)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, UserDataSummary{
+			ID: project.ID, Title: project.Title, TeamID: project.TeamID, Revision: project.Revision,
+			DefaultTeamAccess: project.DefaultTeamAccess, AccessLevel: access.Level,
+			CanEdit: access.CanEdit, CanManage: access.CanManage,
+			TeamSubscriptionActive: access.TeamSubscriptionActive,
+			CreatedAt:              project.CreatedAt, UpdatedAt: project.UpdatedAt,
+		})
 	}
 	return result, nil
 }
 
 func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
-	project, err := s.repo.CanvasProjectForUser(userID, id)
+	project, access, err := s.canvasAccess(userID, id)
 	if err != nil {
 		return nil, err
 	}
-	return json.RawMessage(project.PayloadJSON), nil
+	return canvasProjectResponse(project, access)
 }
 
 func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
@@ -190,9 +208,17 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	existing, existingErr := s.repo.CanvasProjectForUser(userID, project.ID)
+	existing, existingErr := s.repo.CanvasProject(project.ID)
 	if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 		return UserDataSummary{}, existingErr
+	}
+	if existing != nil {
+		if existing.UserID != userID {
+			return UserDataSummary{}, &AuthError{Status: 404, Message: "画布不存在"}
+		}
+		if existing.TeamID != "" {
+			return UserDataSummary{}, &AuthError{Status: 409, Message: "团队画布必须通过多人协作通道保存"}
+		}
 	}
 	existingBytes := int64(0)
 	if existing != nil {
@@ -211,14 +237,25 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	if existingErr != nil || existing.PayloadJSON != project.PayloadJSON || existing.Title != project.Title {
 		s.recordActivity(userID, "canvas", 1)
 	}
-	return UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt}, nil
+	return UserDataSummary{
+		ID: project.ID, Title: project.Title, Revision: project.Revision,
+		AccessLevel: model.CanvasAccessManager, CanEdit: true, CanManage: true,
+		TeamSubscriptionActive: true, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt,
+	}, nil
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	if err := s.repo.DeleteCanvasShare(userID, id); err != nil {
+	project, access, err := s.canvasAccess(userID, id)
+	if err != nil {
 		return err
 	}
-	return s.repo.DeleteCanvasProject(userID, id)
+	if !access.CanManage {
+		return Forbidden("当前用户不能删除该画布")
+	}
+	if err := s.repo.DeleteCanvasShare(project.UserID, id); err != nil {
+		return err
+	}
+	return s.repo.DeleteCanvasProjectWithCollaboration(id)
 }
 
 func (s *Service) ReplaceUserCanvasProjects(userID string, req CanvasProjectsSyncRequest) ([]json.RawMessage, error) {
@@ -329,6 +366,30 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		PayloadJSON: string(raw),
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
+	}, nil
+}
+
+func canvasSummaryAccess(project repository.CanvasProjectSummaryRecord) (CanvasAccessView, error) {
+	if project.TeamID == "" {
+		return CanvasAccessView{
+			Level: model.CanvasAccessManager, CanEdit: true, CanManage: true,
+			TeamSubscriptionActive: true,
+		}, nil
+	}
+	level := project.DefaultTeamAccess
+	if canManageTeam(project.CurrentTeamRole) {
+		level = model.CanvasAccessManager
+	} else if project.OverrideAccess != "" {
+		level = project.OverrideAccess
+	}
+	if level != model.CanvasAccessViewer && level != model.CanvasAccessEditor && level != model.CanvasAccessManager {
+		return CanvasAccessView{}, errors.New("团队画布权限配置无效")
+	}
+	canManage := level == model.CanvasAccessManager
+	return CanvasAccessView{
+		Level: level, TeamID: project.TeamID, TeamRole: project.CurrentTeamRole,
+		CanEdit:   project.SubscriptionActive && (level == model.CanvasAccessEditor || canManage),
+		CanManage: canManage, TeamSubscriptionActive: project.SubscriptionActive,
 	}, nil
 }
 

@@ -59,6 +59,8 @@ func Models() []any {
 		&model.WorkflowStepInstance{},
 		&model.WorkflowStepTask{},
 		&model.CanvasProject{},
+		&model.CanvasCollaborator{},
+		&model.CanvasChange{},
 		&model.CanvasShare{},
 		&model.StoryboardPromptTemplate{},
 		&model.Announcement{},

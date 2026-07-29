@@ -292,3 +292,46 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 	s.coordinator.recordChannelResult(ctx, channelID, failed, policy.Request.ChannelCircuitFailureCount, time.Duration(policy.Request.ChannelCircuitOpenSeconds)*time.Second)
 	return nil
 }
+
+func (s *Service) PublishCanvasCollaborationEvent(ctx context.Context, canvasID string, payload []byte) (bool, error) {
+	if s.coordinator == nil {
+		return false, errors.New("运行时协调器未初始化")
+	}
+	if s.coordinator.redis == nil {
+		return false, nil
+	}
+	channel := "canvas:collaboration:" + strings.TrimSpace(canvasID)
+	if channel == "canvas:collaboration:" {
+		return true, errors.New("协作画布 ID 为空")
+	}
+	return true, s.coordinator.redis.Publish(ctx, channel, payload).Err()
+}
+
+func (s *Service) SubscribeCanvasCollaborationEvents(
+	ctx context.Context,
+	consume func(canvasID string, payload []byte),
+) (func() error, bool, error) {
+	if s.coordinator == nil {
+		return nil, false, errors.New("运行时协调器未初始化")
+	}
+	if s.coordinator.redis == nil {
+		return func() error { return nil }, false, nil
+	}
+	pubsub := s.coordinator.redis.PSubscribe(ctx, "canvas:collaboration:*")
+	confirmCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err := pubsub.Receive(confirmCtx); err != nil {
+		_ = pubsub.Close()
+		return nil, true, fmt.Errorf("订阅画布协作事件失败：%w", err)
+	}
+	go func() {
+		for message := range pubsub.Channel() {
+			canvasID := strings.TrimPrefix(message.Channel, "canvas:collaboration:")
+			if canvasID == "" {
+				continue
+			}
+			consume(canvasID, []byte(message.Payload))
+		}
+	}()
+	return pubsub.Close, true, nil
+}

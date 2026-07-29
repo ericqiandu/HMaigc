@@ -15,6 +15,7 @@ type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
 type NodeBounds = { left: number; top: number; width: number; height: number; count: number } | null;
 
 type CanvasProjectWorldLayersProps = {
+    readOnly?: boolean;
     projectId: string;
     theme: CanvasTheme;
     viewportScale: number;
@@ -104,7 +105,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                 {props.connectingParams ? <ActiveConnectionPath node={props.nodeById.get(props.connectingParams.nodeId)} handle={props.connectingParams} mouseWorld={props.mouseWorld} target={props.connectionTargetNodeId ? props.nodeById.get(props.connectionTargetNodeId) : undefined} nodeScrollTop={props.scriptScrollTopById[props.connectingParams.nodeId] || 0} /> : null}
             </svg>
 
-            {selectedConnectionAction ? (
+            {selectedConnectionAction && !props.readOnly ? (
                 <CanvasConnectionCutControl
                     position={selectedConnectionAction.position}
                     viewportScale={viewportScale}
@@ -123,6 +124,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         scale={viewportScale}
                         isSelected={props.selectedNodeIds.has(node.id)}
                         isDropTarget={props.frameDropTargetId === node.id}
+                        readOnly={props.readOnly}
                         onMouseDown={props.onNodeMouseDown}
                         onResize={props.onNodeResize}
                         onToggleCollapsed={props.onToggleFrame}
@@ -148,6 +150,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         batchMotion={props.batchMotionById.get(node.id)}
                         showImageInfo={props.showImageInfo}
                         reduceMediaEffects={props.reduceMediaEffects || props.isNodeDragging || props.mediaEffectsDisabledNodeId === node.id}
+                        readOnly={props.readOnly}
                         resourceLabel={props.resourceReferenceByNodeId.get(node.id)}
                         mentionReferences={props.mentionReferencesByNodeId.get(node.id) || EMPTY_RESOURCE_REFERENCES}
                         renderNodeContent={props.renderCanvasNodeContent}

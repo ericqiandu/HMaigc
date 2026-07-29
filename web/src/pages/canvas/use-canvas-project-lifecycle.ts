@@ -6,6 +6,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { hydrateAssistantImages, hydrateCanvasImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listActivatedSkills, type UpdreamSkill } from "@/services/api/skills";
+import { deleteRemoteCanvasProject } from "@/services/api/user-data";
 import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, CanvasNodeMetadata, ViewportTransform } from "@/types/canvas";
@@ -173,15 +174,24 @@ export function useCanvasProjectLifecycle({
     }, [message, navigate]);
 
     const deleteCurrentProject = useCallback(() => {
-        const drawingIds = nodesRef.current.flatMap((node) => node.type === "drawing" && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
-        if (drawingIds.length) {
-            void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId)))
-                .catch(() => message.warning("项目已删除，但部分本地绘图缓存清理失败"));
+        const finishDelete = () => {
+            const drawingIds = nodesRef.current.flatMap((node) => node.type === "drawing" && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
+            if (drawingIds.length) {
+                void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId)))
+                    .catch(() => message.warning("项目已删除，但部分本地绘图缓存清理失败"));
+            }
+            deleteProjects([projectId]);
+            cleanupAssetImages();
+            navigate("/canvas");
+        };
+        if (currentProject?.teamId) {
+            void deleteRemoteCanvasProject(projectId)
+                .then(finishDelete)
+                .catch((error) => message.error(error instanceof Error ? `删除团队画布失败：${error.message}` : "删除团队画布失败"));
+            return;
         }
-        deleteProjects([projectId]);
-        cleanupAssetImages();
-        navigate("/canvas");
-    }, [cleanupAssetImages, deleteProjects, message, navigate, nodesRef, projectId]);
+        finishDelete();
+    }, [cleanupAssetImages, currentProject?.teamId, deleteProjects, message, navigate, nodesRef, projectId]);
 
     const renameCurrentProject = useCallback((title: string) => {
         renameProject(projectId, title);

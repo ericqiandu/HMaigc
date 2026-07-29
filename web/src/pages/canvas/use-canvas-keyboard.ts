@@ -3,6 +3,7 @@ import { useEffect, type Dispatch, type SetStateAction } from "react";
 import type { CanvasNodeData, ContextMenuState } from "@/types/canvas";
 
 type UseCanvasKeyboardOptions = {
+    readOnly?: boolean;
     nodesRef: { current: CanvasNodeData[] };
     selectedNodeIdsRef: { current: Set<string> };
     selectedConnectionId: string | null;
@@ -30,6 +31,7 @@ type UseCanvasKeyboardOptions = {
 };
 
 export function useCanvasKeyboard({
+    readOnly = false,
     nodesRef,
     selectedNodeIdsRef,
     selectedConnectionId,
@@ -64,7 +66,7 @@ export function useCanvasKeyboard({
             if (isModifierShortcut && !event.altKey && key === "s") {
                 event.preventDefault();
                 event.stopPropagation();
-                if (!event.repeat) void saveCanvasProject();
+                if (!event.repeat && !readOnly) void saveCanvasProject();
                 return;
             }
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom]")) return;
@@ -82,12 +84,14 @@ export function useCanvasKeyboard({
             }
             if (isModifierShortcut && !event.altKey && key === "z") {
                 event.preventDefault();
+                if (readOnly) return;
                 if (event.shiftKey) redoCanvas();
                 else undoCanvas();
                 return;
             }
             if (isModifierShortcut && !event.altKey && key === "y") {
                 event.preventDefault();
+                if (readOnly) return;
                 redoCanvas();
                 return;
             }
@@ -106,10 +110,12 @@ export function useCanvasKeyboard({
             }
             if (isModifierShortcut && !event.altKey && key === "v") {
                 event.preventDefault();
+                if (readOnly) return;
                 if (!pasteCopiedNodes()) void pasteSystemClipboard();
                 return;
             }
             if (event.key === "Delete" || event.key === "Backspace") {
+                if (readOnly) return;
                 if (selectedNodeIdsRef.current.size) deleteNodes(new Set(selectedNodeIdsRef.current));
                 else if (selectedConnectionId) deleteConnection(selectedConnectionId);
             }
@@ -124,5 +130,5 @@ export function useCanvasKeyboard({
 
         window.addEventListener("keydown", handleKeyDown, true);
         return () => window.removeEventListener("keydown", handleKeyDown, true);
-    }, [cancelSelectionBox, copySelectedNodes, deleteConnection, deleteNodes, deselectCanvas, fitCanvasContent, fitCanvasSelection, nodesRef, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, saveCanvasProject, selectedConnectionId, selectedNodeIdsRef, setAnnotationNodeId, setContextMenu, setCropNodeId, setInfoNodeId, setMaskEditNodeId, setSelectedConnectionId, setSelectedNodeIds, setShortcutRequestNonce, undoCanvas, zoomToActualSize]);
+    }, [cancelSelectionBox, copySelectedNodes, deleteConnection, deleteNodes, deselectCanvas, fitCanvasContent, fitCanvasSelection, nodesRef, pasteCopiedNodes, pasteSystemClipboard, readOnly, redoCanvas, saveCanvasProject, selectedConnectionId, selectedNodeIdsRef, setAnnotationNodeId, setContextMenu, setCropNodeId, setInfoNodeId, setMaskEditNodeId, setSelectedConnectionId, setSelectedNodeIds, setShortcutRequestNonce, undoCanvas, zoomToActualSize]);
 }

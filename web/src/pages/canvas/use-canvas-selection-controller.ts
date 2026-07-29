@@ -5,6 +5,7 @@ import { applyFrameDrop, findFrameDropTarget, getFrameChildIds, isFrameNode, isN
 import type { CanvasNodeData, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 
 type UseCanvasSelectionControllerOptions = {
+    readOnly?: boolean;
     nodesRef: { current: CanvasNodeData[] };
     viewportRef: { current: ViewportTransform };
     selectedNodeIdsRef: { current: Set<string> };
@@ -41,6 +42,7 @@ const EMPTY_DRAG_STATE: DragState = {
 };
 
 export function useCanvasSelectionController({
+    readOnly = false,
     nodesRef,
     viewportRef,
     selectedNodeIdsRef,
@@ -141,6 +143,10 @@ export function useCanvasSelectionController({
 
         selectedNodeIdsRef.current = nextSelected;
         setSelectedNodeIds(nextSelected);
+        if (readOnly) {
+            dragRef.current = { ...EMPTY_DRAG_STATE };
+            return;
+        }
         if (isSelectionModifier && !nextSelected.has(nodeId)) {
             dragRef.current = { ...EMPTY_DRAG_STATE, openPanelOnClick: false };
             return;
@@ -174,7 +180,7 @@ export function useCanvasSelectionController({
         setIsNodeDragging(true);
         setAlignmentGuides({});
         setDragPreview({ x: 0, y: 0, nodeIds: new Set(initialSelectedNodes.map((item) => item.id)) });
-    }, [historyPausedRef, nodesRef, onNodeClick, onNodeInteractionStart, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [historyPausedRef, nodesRef, onNodeClick, onNodeInteractionStart, readOnly, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (dragFrameRef.current) {

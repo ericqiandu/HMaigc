@@ -9,6 +9,8 @@ import type { DirectorScene } from "@/types/director";
 
 export type CanvasProject = {
     id: string;
+    ownerUserId?: string;
+    teamId?: string;
     projectId?: string;
     title: string;
     createdAt: string;
@@ -21,6 +23,12 @@ export type CanvasProject = {
     showImageInfo: boolean;
     viewport: ViewportTransform;
     directorScenes: DirectorScene[];
+    revision?: number;
+    defaultTeamAccess?: "viewer" | "editor";
+    accessLevel?: "viewer" | "editor" | "manager";
+    canEdit?: boolean;
+    canManage?: boolean;
+    teamSubscriptionActive?: boolean;
 };
 
 type CanvasStore = {
@@ -32,7 +40,7 @@ type CanvasStore = {
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "projectId" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "ownerUserId" | "teamId" | "projectId" | "title" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "revision" | "defaultTeamAccess" | "accessLevel" | "canEdit" | "canManage" | "teamSubscriptionActive">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };

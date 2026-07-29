@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -469,11 +470,26 @@ func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID strin
 	if id == "" {
 		return nil
 	}
-	if canvas, err := s.repo.CanvasProjectForUser(userID, id); err == nil {
+	if canvas, err := s.repo.CanvasProject(id); err == nil {
+		if canvas.TeamID == "" && canvas.UserID != userID {
+			return gorm.ErrRecordNotFound
+		}
+		if canvas.TeamID != "" {
+			_, access, accessErr := s.canvasAccess(userID, canvas.ID)
+			if accessErr != nil {
+				return accessErr
+			}
+			if !access.TeamSubscriptionActive {
+				return &AuthError{Status: http.StatusPaymentRequired, Message: "团队会员已失效，画布仅可查看，不能创建生成任务"}
+			}
+			if !access.CanEdit {
+				return Forbidden("当前用户只有查看权限，不能创建生成任务")
+			}
+		}
 		if canvas.ProjectID == "" {
 			return nil
 		}
-		project, projectErr := s.repo.ProjectForUser(userID, canvas.ProjectID)
+		project, projectErr := s.repo.ProjectForUser(canvas.UserID, canvas.ProjectID)
 		if projectErr != nil {
 			return projectErr
 		}

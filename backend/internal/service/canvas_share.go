@@ -61,10 +61,14 @@ var publicCanvasForbiddenKeys = map[string]bool{
 }
 
 func (s *Service) CanvasShareStatus(userID string, projectID string) (CanvasShareStatus, error) {
-	if _, err := s.repo.CanvasProjectForUser(userID, projectID); err != nil {
+	project, access, err := s.canvasAccess(userID, projectID)
+	if err != nil {
 		return CanvasShareStatus{}, err
 	}
-	share, err := s.repo.CanvasShareForProject(userID, projectID)
+	if !access.CanManage {
+		return CanvasShareStatus{}, Forbidden("当前用户不能管理公开分享")
+	}
+	share, err := s.repo.CanvasShareForProject(project.UserID, projectID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return CanvasShareStatus{Enabled: false}, nil
 	}
@@ -78,12 +82,16 @@ func (s *Service) CreateCanvasShare(userID string, projectID string, req CanvasS
 	if req.ExpiresDays < 0 || req.ExpiresDays > 365 {
 		return CanvasShareStatus{}, BadAuthRequest("分享有效期必须在 0 到 365 天之间")
 	}
-	if _, err := s.repo.CanvasProjectForUser(userID, projectID); err != nil {
+	project, access, err := s.canvasAccess(userID, projectID)
+	if err != nil {
 		return CanvasShareStatus{}, err
 	}
-	share, err := s.repo.CanvasShareForProject(userID, projectID)
+	if !access.CanManage {
+		return CanvasShareStatus{}, Forbidden("当前用户不能创建公开分享")
+	}
+	share, err := s.repo.CanvasShareForProject(project.UserID, projectID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		share = &model.CanvasShare{ID: newID(), UserID: userID, ProjectID: projectID}
+		share = &model.CanvasShare{ID: newID(), UserID: project.UserID, ProjectID: projectID}
 	} else if err != nil {
 		return CanvasShareStatus{}, err
 	}
@@ -111,10 +119,14 @@ func (s *Service) CreateCanvasShare(userID string, projectID string, req CanvasS
 }
 
 func (s *Service) DeleteCanvasShare(userID string, projectID string) error {
-	if _, err := s.repo.CanvasProjectForUser(userID, projectID); err != nil {
+	project, access, err := s.canvasAccess(userID, projectID)
+	if err != nil {
 		return err
 	}
-	return s.repo.DeleteCanvasShare(userID, projectID)
+	if !access.CanManage {
+		return Forbidden("当前用户不能撤销公开分享")
+	}
+	return s.repo.DeleteCanvasShare(project.UserID, projectID)
 }
 
 func (s *Service) PublicCanvasShare(token string) (PublicCanvasShare, error) {
@@ -138,7 +150,7 @@ func (s *Service) OpenSharedCanvasResource(token string, resourceID string) (*mo
 }
 
 func (s *Service) OpenSharedCanvasResourceRange(token string, resourceID string, rangeHeader string) (*ResourceStream, error) {
-	share, project, err := s.sharedCanvasProject(token)
+	_, project, err := s.sharedCanvasProject(token)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +161,11 @@ func (s *Service) OpenSharedCanvasResourceRange(token string, resourceID string,
 	if !allowedResources[resourceID] {
 		return nil, gorm.ErrRecordNotFound
 	}
-	return s.OpenResourceRange(share.UserID, resourceID, rangeHeader)
+	resource, err := s.repo.Resource(resourceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.OpenResourceRange(resource.UserID, resource.ID, rangeHeader)
 }
 
 func (s *Service) sharedCanvasProject(token string) (*model.CanvasShare, *model.CanvasProject, error) {
@@ -164,7 +180,10 @@ func (s *Service) sharedCanvasProject(token string) (*model.CanvasShare, *model.
 	if share.ExpiresAt != nil && !share.ExpiresAt.After(time.Now()) {
 		return nil, nil, gorm.ErrRecordNotFound
 	}
-	project, err := s.repo.CanvasProjectForUser(share.UserID, share.ProjectID)
+	project, err := s.repo.CanvasProject(share.ProjectID)
+	if err == nil && project.UserID != share.UserID {
+		return nil, nil, gorm.ErrRecordNotFound
+	}
 	return share, project, err
 }
 
@@ -257,9 +276,6 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 		publicMetadata[key] = scrubPublicCanvasValue(value)
 	}
 	if resourceID := canvasResourceID(stringValue(metadata["storageKey"])); resourceID != "" {
-		allowedResources[resourceID] = true
-		publicMetadata["content"] = sharedCanvasResourceURL(token, resourceID)
-	} else if resourceID := canvasResourceID(stringValue(metadata["content"])); resourceID != "" {
 		allowedResources[resourceID] = true
 		publicMetadata["content"] = sharedCanvasResourceURL(token, resourceID)
 	} else if nodeType := stringValue(node["type"]); nodeType == "image" || nodeType == "video" || nodeType == "audio" {

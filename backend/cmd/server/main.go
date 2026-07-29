@@ -91,6 +91,9 @@ func main() {
 	handler.RegisterUserDataRoutes(api, svc)
 	handler.RegisterProjectRoutes(api, svc)
 	handler.RegisterCanvasShareRoutes(api, svc)
+	if err := handler.RegisterCanvasCollaborationRoutes(api, svc); err != nil {
+		log.Fatal(err)
+	}
 
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
 	log.Printf("影策 backend listening on %s", addr)
