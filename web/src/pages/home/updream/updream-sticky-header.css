@@ -1,10 +1,48 @@
-.updream-header {
+.updream-home-page {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.updream-home-page::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.updream-sticky-stack {
     position: sticky;
     top: 0;
     z-index: 40;
+    width: 100%;
+    isolation: isolate;
+}
+
+.updream-sticky-stack .updream-announcement {
+    width: 100%;
+}
+
+.updream-header {
     background: transparent;
-    backdrop-filter: saturate(115%) blur(6px);
-    -webkit-backdrop-filter: saturate(115%) blur(6px);
+    border-bottom: 1px solid transparent;
+    transition:
+        background-color 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        backdrop-filter 180ms ease;
+}
+
+.updream-sticky-stack--elevated .updream-header {
+    border-bottom-color: rgb(23 32 51 / 6%);
+    background: rgb(245 247 251 / 72%);
+    box-shadow: 0 12px 32px rgb(15 23 42 / 7%);
+    backdrop-filter: saturate(145%) blur(18px);
+    -webkit-backdrop-filter: saturate(145%) blur(18px);
+}
+
+.dark .updream-sticky-stack--elevated .updream-header {
+    border-bottom-color: rgb(255 255 255 / 7%);
+    background: rgb(5 7 11 / 68%);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
 }
 
 .updream-header-logo-link {
@@ -83,15 +121,41 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
-    .updream-header {
+    .updream-sticky-stack--elevated .updream-header {
+        background: #f5f7fb;
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
+    }
+
+    .dark .updream-sticky-stack--elevated .updream-header {
+        background: #05070b;
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .updream-header,
     .updream-header-logo-link {
         transition: none;
+    }
+}
+
+@media (max-width: 640px) {
+    .updream-sticky-stack .updream-announcement {
+        min-height: 40px;
+        padding: 6px 42px 6px 12px;
+    }
+
+    .updream-announcement-content {
+        flex-wrap: nowrap;
+        gap: 6px;
+    }
+
+    .updream-announcement-copy {
+        display: none;
+    }
+
+    .updream-announcement-close {
+        right: 12px;
     }
 }
 
