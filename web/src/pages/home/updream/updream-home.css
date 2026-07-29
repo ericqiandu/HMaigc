@@ -3,6 +3,7 @@
     isolation: isolate;
     background: #f5f7fb;
     color: #172033;
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 }
 
 .dark .updream-home-page {
@@ -82,10 +83,12 @@
 }
 
 .updream-hero {
-    min-height: 589px;
+    min-height: 550px;
+    padding-top: 192px !important;
 }
 
 .updream-hero-description {
+    margin-top: 12px !important;
     color: rgba(23, 32, 51, 0.66);
     text-shadow: 0 1px 16px rgba(255, 255, 255, 0.5);
 }
@@ -163,42 +166,61 @@
 
 .updream-home-page .updream-hero-title {
     background-image: linear-gradient(95deg, #2563eb 0%, #4f46e5 46%, #0891b2 100%);
+    font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 32px !important;
+    font-weight: 400 !important;
+    line-height: 38px !important;
+    letter-spacing: -0.025em;
 }
 
-.updream-home-page .updream-composer {
-    border-color: rgba(15, 23, 42, 0.08);
-    background: rgba(255, 255, 255, 0.76);
-    box-shadow: 0 30px 90px rgba(15, 23, 42, 0.16), 0 2px 12px rgba(15, 23, 42, 0.06);
-    backdrop-filter: blur(28px) saturate(140%);
+.updream-home-agent-composer {
+    margin-top: 24px !important;
 }
 
-.updream-home-page .updream-composer-input {
-    color: rgba(15, 23, 42, 0.92);
+.updream-home-page .canvas-agent-composer-wrap {
+    padding: 0;
 }
 
-.updream-home-page .updream-composer-placeholder {
-    color: rgba(15, 23, 42, 0.38);
+.updream-home-page .canvas-agent-composer {
+    min-height: 144px;
+    padding: 18px 20px 10px;
+    border-color: rgba(15, 23, 42, 0.14) !important;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.66) !important;
+    box-shadow: none;
+    backdrop-filter: blur(20px) saturate(130%);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
 }
 
-.updream-home-page .updream-composer-tool {
-    border-color: rgba(15, 23, 42, 0.08);
-    background: rgba(15, 23, 42, 0.035);
-    color: rgba(15, 23, 42, 0.48);
+.updream-home-page .canvas-agent-composer-textarea {
+    min-height: 72px;
+    color: rgba(15, 23, 42, 0.86) !important;
 }
 
-.updream-home-page .updream-composer-tool:hover {
-    background: rgba(15, 23, 42, 0.075);
-    color: rgba(15, 23, 42, 0.8);
-}
-
-.updream-home-page .updream-composer-send {
-    background: rgba(15, 23, 42, 0.1);
+.updream-home-page .canvas-agent-composer-textarea::placeholder {
     color: rgba(15, 23, 42, 0.42);
+    opacity: 1;
 }
 
-.updream-home-page .updream-composer-send:not(:disabled) {
-    background: #172033;
-    color: #ffffff;
+.updream-home-page .canvas-agent-composer-tool.ant-btn {
+    color: rgba(15, 23, 42, 0.52) !important;
+}
+
+.updream-home-page .canvas-agent-composer-tool.ant-btn:hover,
+.updream-home-page .canvas-agent-composer-tool.ant-btn:focus-visible,
+.updream-home-page .canvas-agent-composer-picker-trigger--active.ant-btn {
+    background: rgba(15, 23, 42, 0.06) !important;
+    color: rgba(15, 23, 42, 0.9) !important;
+}
+
+.updream-home-page .canvas-agent-composer-submit.ant-btn:disabled {
+    background: rgba(15, 23, 42, 0.12) !important;
+    color: rgba(15, 23, 42, 0.42) !important;
+}
+
+.updream-home-page .canvas-agent-composer-submit.ant-btn:not(:disabled) {
+    background: #172033 !important;
+    color: #ffffff !important;
 }
 
 .updream-home-page .updream-skills-title {
@@ -223,15 +245,17 @@
 .updream-recent-project-card,
 .updream-recent-project-skeleton,
 .updream-recent-projects-error {
-    background: rgba(255, 255, 255, 0.62);
-    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
-    backdrop-filter: blur(18px) saturate(130%);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: none;
+    backdrop-filter: blur(18px) saturate(120%);
 }
 
 .updream-recent-project-create:hover,
 .updream-recent-project-card:hover {
-    background: rgba(255, 255, 255, 0.76);
-    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.1);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: none;
+    transform: none;
 }
 
 .updream-recent-project-create-surface {
@@ -278,39 +302,39 @@
     background-image: linear-gradient(95deg, #b588f5 0%, #9aa8f7 46%, #6fd5f0 100%);
 }
 
-.dark .updream-home-page .updream-composer {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(13, 16, 22, 0.7);
-    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.54);
+.dark .updream-home-page .canvas-agent-composer {
+    border-color: rgba(255, 255, 255, 0.13) !important;
+    background: rgba(24, 24, 24, 0.78) !important;
+    box-shadow: none;
 }
 
-.dark .updream-home-page .updream-composer-input {
-    color: rgba(255, 255, 255, 0.9);
+.dark .updream-home-page .canvas-agent-composer-textarea {
+    color: rgba(255, 255, 255, 0.9) !important;
 }
 
-.dark .updream-home-page .updream-composer-placeholder {
-    color: rgba(255, 255, 255, 0.35);
+.dark .updream-home-page .canvas-agent-composer-textarea::placeholder {
+    color: rgba(255, 255, 255, 0.38);
 }
 
-.dark .updream-home-page .updream-composer-tool {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.5);
+.dark .updream-home-page .canvas-agent-composer-tool.ant-btn {
+    color: rgba(255, 255, 255, 0.54) !important;
 }
 
-.dark .updream-home-page .updream-composer-tool:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.8);
+.dark .updream-home-page .canvas-agent-composer-tool.ant-btn:hover,
+.dark .updream-home-page .canvas-agent-composer-tool.ant-btn:focus-visible,
+.dark .updream-home-page .canvas-agent-composer-picker-trigger--active.ant-btn {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: rgba(255, 255, 255, 0.9) !important;
 }
 
-.dark .updream-home-page .updream-composer-send {
-    background: rgba(255, 255, 255, 0.15);
-    color: rgba(255, 255, 255, 0.4);
+.dark .updream-home-page .canvas-agent-composer-submit.ant-btn:disabled {
+    background: rgba(255, 255, 255, 0.14) !important;
+    color: rgba(255, 255, 255, 0.42) !important;
 }
 
-.dark .updream-home-page .updream-composer-send:not(:disabled) {
-    background: #ffffff;
-    color: #000000;
+.dark .updream-home-page .canvas-agent-composer-submit.ant-btn:not(:disabled) {
+    background: #ffffff !important;
+    color: #000000 !important;
 }
 
 .dark .updream-home-page .updream-skills-title {
@@ -385,6 +409,37 @@
     }
 }
 
+@media (min-width: 1025px) {
+    .updream-recent-projects-inner,
+    .updream-skills {
+        max-width: 1448px !important;
+        padding-right: 104px !important;
+        padding-left: 104px !important;
+    }
+
+    .updream-home-page .workspace-floating-navigation {
+        gap: 4px;
+    }
+
+    .updream-home-page .workspace-floating-navigation-link {
+        height: 60px;
+        gap: 4px;
+        padding: 8px 4px;
+        border-radius: 12px;
+    }
+
+    .updream-home-page .workspace-floating-navigation-icon-frame,
+    .updream-home-page .workspace-floating-navigation-icon {
+        width: 18px;
+        height: 18px;
+    }
+
+    .updream-home-page .workspace-floating-navigation-label {
+        font-size: 12px;
+        line-height: 18px;
+    }
+}
+
 @media (max-width: 640px) {
     .updream-video-background {
         height: 760px;
@@ -395,6 +450,21 @@
     }
 
     .updream-hero {
-        min-height: 590px;
+        min-height: 560px;
+        padding-top: 126px !important;
+    }
+
+    .updream-home-page .updream-hero-title {
+        font-size: 30px !important;
+        line-height: 36px !important;
+    }
+
+    .updream-home-agent-composer {
+        margin-top: 20px !important;
+    }
+
+    .updream-home-page .canvas-agent-composer {
+        min-height: 140px;
+        padding: 16px 14px 10px;
     }
 }
