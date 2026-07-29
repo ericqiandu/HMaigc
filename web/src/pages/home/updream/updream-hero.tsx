@@ -129,15 +129,15 @@ export function UpdreamHero() {
     };
 
     return (
-        <section className="updream-hero flex flex-col items-center px-4">
-            <h1 className="updream-hero-title text-center">
+        <section className="updream-hero flex flex-col items-center px-4 pt-[150px] sm:pt-[205px]">
+            <h1 className="updream-hero-title bg-gradient-to-r from-[#b588f5] via-[#9aa8f7] to-[#6fd5f0] bg-clip-text text-center text-[32px] font-medium leading-tight text-transparent sm:text-[36px]">
                 让算力更有想象力
             </h1>
-            <p className="updream-hero-description max-w-[620px] text-center">
+            <p className="updream-hero-description mt-4 max-w-[620px] text-center text-[14px] leading-6 sm:text-[15px]">
                 从一个想法开始，让 AI 和你一起完成剧本、分镜与影像创作
             </p>
 
-            <div className="updream-home-agent-composer w-full">
+            <div className="updream-home-agent-composer mt-9 w-full max-w-[700px]">
                 <AgentChatComposer
                     prompt={value}
                     attachments={referenceAttachments}
