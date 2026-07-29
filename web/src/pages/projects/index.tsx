@@ -7,7 +7,6 @@ import { useNavigate, useSearchParams } from "react-router";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 import { createProject, listProjects } from "@/services/api/projects";
-import "@/styles/workspace-ui.css";
 
 import { ProjectGallery } from "./project-gallery";
 import "./projects-workspace.css";
@@ -118,7 +117,7 @@ export default function ProjectsPage() {
     );
 
     return (
-        <WorkspacePage className="workspace-ui-scope projects-workspace">
+        <WorkspacePage className="projects-workspace">
             <PageHeader
                 title="我的项目"
                 description="继续最近的短剧项目，或创建新的制作空间。"

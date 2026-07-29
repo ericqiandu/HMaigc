@@ -1,0 +1,256 @@
+:where(.workspace-ui-scope, .settings-workspace-page) {
+    --workspace-ui-content-max: 1240px;
+    --workspace-ui-frame-max: 1448px;
+    --workspace-ui-control-height: 36px;
+}
+
+.workspace-ui-scope .workspace-page-frame {
+    max-width: var(--workspace-ui-frame-max);
+    margin-inline: auto;
+}
+
+.workspace-ui-scope.canvas-library-page .canvas-library-content {
+    width: 100%;
+    max-width: var(--workspace-ui-frame-max);
+    margin-inline: auto;
+}
+
+.settings-workspace-page {
+    width: 100%;
+    max-width: var(--workspace-ui-frame-max);
+    margin-inline: auto;
+    background: var(--workspace-ui-page);
+    color: var(--workspace-ui-text);
+    font-family: var(--workspace-ui-font-text);
+    font-size: 14px;
+    line-height: 1.43;
+    letter-spacing: -0.014em;
+}
+
+body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
+    padding-right: 0 !important;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
+    min-height: var(--workspace-ui-control-height);
+    gap: var(--workspace-ui-space-3);
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .page-header-copy {
+    gap: var(--workspace-ui-space-2);
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .page-header-back {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--workspace-ui-radius-control);
+    color: var(--workspace-ui-text-tertiary);
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .page-header-back:hover {
+    background: var(--workspace-ui-control);
+    color: var(--workspace-ui-text);
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .page-header-title {
+    color: var(--workspace-ui-text);
+    font-family: var(--workspace-ui-font-display);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 22px;
+    letter-spacing: -0.02em;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .page-header-title-row > :where(span) {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 17px;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions {
+    gap: var(--workspace-ui-space-2);
+    flex-wrap: nowrap;
+}
+
+.workspace-ui-scope .page-header-actions .ant-btn,
+.settings-workspace-page .page-header-actions .ant-btn {
+    min-height: var(--workspace-ui-control-height);
+    padding-inline: 14px;
+    border-color: var(--workspace-ui-divider) !important;
+    border-radius: var(--workspace-ui-radius-control) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--workspace-ui-text) !important;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.workspace-ui-scope .page-header-actions .ant-btn:hover,
+.settings-workspace-page .page-header-actions .ant-btn:hover {
+    border-color: var(--workspace-ui-divider) !important;
+    background: var(--workspace-ui-control-hover) !important;
+    color: var(--workspace-ui-text) !important;
+}
+
+.workspace-ui-scope .ant-btn:not(.ant-btn-sm):not(.ant-btn-lg),
+.settings-workspace-page .ant-btn:not(.ant-btn-sm):not(.ant-btn-lg) {
+    font-family: var(--workspace-ui-font-text);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar {
+    min-height: var(--workspace-ui-control-height);
+    margin-top: 14px;
+    gap: var(--workspace-ui-space-2);
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) :where(.workspace-list-toolbar-fields, .workspace-list-toolbar-actions) {
+    gap: var(--workspace-ui-space-2);
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar :where(.ant-input-affix-wrapper, .ant-select-single .ant-select-selector) {
+    min-height: var(--workspace-ui-control-height);
+    border-color: transparent !important;
+    border-radius: var(--workspace-ui-radius-control) !important;
+    background: var(--workspace-ui-control) !important;
+    box-shadow: none !important;
+    color: var(--workspace-ui-text);
+    font-size: 14px;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar :where(.ant-input-affix-wrapper:hover, .ant-select-single:hover .ant-select-selector) {
+    border-color: transparent !important;
+    background: var(--workspace-ui-control-hover) !important;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar :where(.ant-input-affix-wrapper-focused, .ant-select-focused .ant-select-selector) {
+    border-color: var(--workspace-ui-accent) !important;
+    background: var(--workspace-ui-control) !important;
+    box-shadow: 0 0 0 2px var(--workspace-ui-focus) !important;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar :where(.ant-input, .ant-select-selection-item, .ant-select-selection-placeholder) {
+    font-size: 14px;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-reset.ant-btn {
+    min-height: var(--workspace-ui-control-height);
+    border-radius: var(--workspace-ui-radius-control);
+    color: var(--workspace-ui-text-secondary);
+    font-size: 13px;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .app-table-surface,
+:where(.workspace-ui-scope, .settings-workspace-page) .app-collection-card,
+:where(.workspace-ui-scope, .settings-workspace-page) .canvas-library-new-button,
+.settings-workspace-page :where(.settings-section-nav, .settings-content-panel) {
+    border-color: transparent;
+    border-radius: var(--workspace-ui-radius-surface);
+    background: var(--workspace-ui-surface);
+    box-shadow: none;
+}
+
+:where(.workspace-ui-scope, .settings-workspace-page) .app-pagination-bar {
+    background: color-mix(in srgb, var(--workspace-ui-page) 92%, transparent);
+}
+
+@media (max-width: 1023px) {
+    :where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
+        align-items: flex-start;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions {
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 639px) {
+    .workspace-ui-scope .workspace-page-frame,
+    .workspace-ui-scope.canvas-library-page .canvas-library-content {
+        padding-top: 76px;
+        padding-inline: 16px;
+    }
+
+    .settings-workspace-page {
+        padding-top: 76px;
+        padding-inline: 16px;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
+        min-height: 0;
+        align-items: stretch;
+        gap: var(--workspace-ui-space-3);
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .page-header-copy {
+        width: 100%;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions {
+        display: flex;
+        width: 100%;
+        margin-left: 0;
+        flex-wrap: wrap;
+        gap: var(--workspace-ui-space-2);
+        overflow: visible;
+        padding-bottom: 0;
+    }
+
+    .workspace-ui-scope .page-header-actions > :where(.ant-btn, .ant-dropdown-trigger),
+    .settings-workspace-page .page-header-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+        width: 0 !important;
+        min-width: 0;
+        min-height: 44px !important;
+        padding-inline: 12px !important;
+        flex: 1 1 0 !important;
+        justify-content: center;
+    }
+
+    .workspace-ui-scope .page-header-actions > :only-child,
+    .settings-workspace-page .page-header-actions > :only-child {
+        width: auto !important;
+        max-width: max-content;
+        flex: 0 0 auto !important;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions > div {
+        display: flex;
+        width: 100%;
+        flex-wrap: nowrap;
+        gap: var(--workspace-ui-space-2);
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions > div > .ant-btn {
+        min-width: 0;
+        min-height: 44px !important;
+        flex: 1 1 0;
+        justify-content: center;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions > .ant-input-affix-wrapper {
+        min-height: 44px;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar {
+        margin-top: 14px;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-fields {
+        width: 100%;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-fields > :where(.app-list-search, .canvas-library-search) {
+        width: 100% !important;
+    }
+
+    .workspace-ui-scope .workspace-list-toolbar :where(.ant-input-affix-wrapper, .ant-select-single .ant-select-selector),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-input-affix-wrapper, .ant-select-single .ant-select-selector) {
+        min-height: 44px !important;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-actions {
+        width: 100%;
+    }
+}

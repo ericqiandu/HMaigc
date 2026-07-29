@@ -119,22 +119,22 @@ export default function CanvasPage() {
             <section className="canvas-library-content min-h-full px-4 pb-8 pt-20 sm:px-6 md:pl-[104px] md:pr-[104px] md:pt-[90px]">
                 <PageHeader
                     title="我的画布"
-                    meta={<span className="canvas-library-count text-xs tabular-nums text-foreground/38">{hydrated ? filteredProjects.length : "—"}</span>}
-                />
-                <ListToolbar
-                    active={Boolean(keyword || projectFilter !== "all" || sort !== "updated")}
-                    onReset={() => { setKeyword(""); setProjectFilter("all"); setSort("updated"); setPage(1); }}
-                    trailing={(
+                    meta={<span className="canvas-library-count text-xs tabular-nums text-foreground/38" aria-live="polite">{hydrated ? filteredProjects.length : "—"}</span>}
+                    actions={(
                         <>
                             <Button className="canvas-library-selection-button !h-9 !px-3" type={selectionMode ? "primary" : "default"} icon={<CheckSquare2 className="canvas-library-selection-icon size-3.5" />} onClick={() => setSelectionMode((active) => !active)}>多选</Button>
                             <Button className="canvas-library-import-button !h-9 !px-3" disabled={!hydrated} icon={<FileUp className="canvas-library-import-icon size-3.5" />} onClick={() => inputRef.current?.click()}>导入</Button>
                             {projects.length ? (
                                 <Dropdown menu={{ items: [{ key: "delete-all", danger: true, icon: <Trash2 className="canvas-library-delete-icon size-3.5" />, label: "删除全部画布", onClick: () => setDeleteIds(projects.map((project) => project.id)) }] }} trigger={["click"]}>
-                                    <Button className="canvas-library-more-button !size-9 !p-0" aria-label="更多画布操作" title="更多操作" icon={<MoreHorizontal className="canvas-library-more-icon size-4" />} />
+                                    <Button className="canvas-library-more-button" aria-label="更多画布操作" title="更多操作" icon={<MoreHorizontal className="canvas-library-more-icon size-4" />} />
                                 </Dropdown>
                             ) : null}
                         </>
                     )}
+                />
+                <ListToolbar
+                    active={Boolean(keyword || projectFilter !== "all" || sort !== "updated")}
+                    onReset={() => { setKeyword(""); setProjectFilter("all"); setSort("updated"); setPage(1); }}
                 >
                     <div className="canvas-library-search min-w-0 w-full sm:w-60">
                         <Input allowClear className="canvas-library-search-input !h-9" prefix={<Search className="canvas-library-search-icon size-3.5 text-foreground/40" />} value={keyword} placeholder="搜索画布" aria-label="搜索画布" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />

@@ -174,3 +174,34 @@ No actionable P0, P1 or P2 difference remains in the requested tooltip-and-toolb
 No actionable P0, P1 or P2 issue remains in the requested first-page workbench scope.
 
 final result: passed
+
+## Workspace UI Rollout QA (2026-07-30)
+
+- Scope: projects, canvas library, tasks, assets, skills, settings, teams and wallet workspaces.
+- Representative before/after evidence: `qa-artifacts/workspace-ui-rollout-20260730/`.
+- Viewports: 390 × 844, 768 × 900, 1024 × 900 and 1440 × 900 CSS px.
+- State: dark mode with real local account and workspace data; no project, task or asset was submitted during QA.
+
+### Resolved findings
+
+- P1: the floating account overlay left an inherited 118px right inset on workspace headers, so page actions did not align with the content edge.
+- P1: header actions mixed neutral and blue treatments for operations at the same hierarchy level.
+- P1: mobile action groups retained 36px desktop controls and inconsistent intrinsic widths.
+- P2: pages used different base font stacks and unconstrained wide-screen content widths.
+
+### Verified standard
+
+- All scoped pages resolve to the same `SF Pro Text` / `PingFang SC` / `Microsoft YaHei` font stack.
+- Desktop page actions, search and filter controls are 36px high; mobile controls are 44px high.
+- Two or more mobile header actions share the available width; single actions retain their content width.
+- Header action groups end at the same right edge as page content at 1024px and 1440px.
+- Workspace content is capped at 1240px inside a 1448px page frame.
+- No tested route produces document-level horizontal overflow at any of the four viewports.
+- The task-create and asset-create dialogs open from their relocated header actions and close normally.
+- The homepage contains no workspace style scope and remained outside this rollout.
+- Browser console contains no warnings or errors after the visual and interaction checks.
+- TypeScript/Vite production build passes; all 11 current frontend tests pass.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains in the requested workspace-layout, typography, button-alignment or responsive scope.

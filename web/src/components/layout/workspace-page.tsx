@@ -4,10 +4,12 @@ import type { ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 import { cn } from "@/lib/utils";
+import "@/styles/workspace-ui.css";
+import "@/styles/workspace-shell.css";
 
 export function WorkspacePage({ children, className, grid = false, fluid = false }: { children: ReactNode; className?: string; grid?: boolean; fluid?: boolean }) {
     return (
-        <main className={cn("app-user-content thin-scrollbar h-full overflow-y-auto text-foreground", grid && "app-workspace-grid", className)}>
+        <main className={cn("app-user-content workspace-ui-scope thin-scrollbar h-full overflow-y-auto text-foreground", grid && "app-workspace-grid", className)}>
             <div className={fluid ? "h-full w-full" : "workspace-page-frame w-full px-4 pb-8 pt-20 sm:px-6 md:px-[104px] md:pt-[90px]"}>{children}</div>
         </main>
     );
@@ -59,13 +61,17 @@ export function PageHeader({ title, description, meta, actions, backTo = "/", on
 }
 
 export function ListToolbar({ children, trailing, active, onReset }: { children: ReactNode; trailing?: ReactNode; active?: boolean; onReset?: () => void }) {
+    const hasActions = Boolean((active && onReset) || trailing);
+
     return (
         <div className="workspace-list-toolbar mt-3 flex min-h-10 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className="workspace-list-toolbar-fields flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
-            <div className="workspace-list-toolbar-actions flex shrink-0 flex-wrap items-center gap-2">
-                {active && onReset ? <Button type="text" icon={<RotateCcw className="size-3.5" />} onClick={onReset}>重置</Button> : null}
-                {trailing}
-            </div>
+            {hasActions ? (
+                <div className="workspace-list-toolbar-actions flex shrink-0 flex-wrap items-center gap-2">
+                    {active && onReset ? <Button className="workspace-list-toolbar-reset" type="text" icon={<RotateCcw className="workspace-list-toolbar-reset-icon size-3.5" />} onClick={onReset}>重置</Button> : null}
+                    {trailing}
+                </div>
+            ) : null}
         </div>
     );
 }

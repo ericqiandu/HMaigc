@@ -329,7 +329,7 @@ export default function TeamsPage() {
                         <Button className="teams-refresh-button" icon={<RefreshCw className="teams-refresh-icon size-4" />} loading={loading} onClick={() => void reloadActiveTeam()}>
                             刷新
                         </Button>
-                        <Button className="teams-create-button" type="primary" icon={<Plus className="teams-create-icon size-4" />} onClick={() => setCreateOpen(true)}>
+                        <Button className="teams-create-button" icon={<Plus className="teams-create-icon size-4" />} onClick={() => setCreateOpen(true)}>
                             新建团队
                         </Button>
                     </div>

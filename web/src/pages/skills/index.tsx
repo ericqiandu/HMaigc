@@ -156,7 +156,12 @@ export default function SkillsPage() {
                 <PageHeader
                     title="技能库"
                     description="浏览 Updream 技能，管理激活与收藏。"
-                    meta={<span className="text-xs text-foreground/45">{displayedTotal} 个技能</span>}
+                    meta={<span className="skills-page-count text-xs text-foreground/45">{displayedTotal} 个技能</span>}
+                    actions={(
+                        <Button className="skills-page-refresh-button" icon={<RefreshCw className="skills-page-refresh-icon size-4" />} loading={loading} onClick={refresh}>
+                            刷新
+                        </Button>
+                    )}
                 />
                 <ListToolbar
                     active={Boolean(search || category !== "all" || tab !== "featured" || sort !== "hot")}
@@ -168,11 +173,6 @@ export default function SkillsPage() {
                         setSort("hot");
                         setPage(1);
                     }}
-                    trailing={(
-                        <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={refresh}>
-                            刷新
-                        </Button>
-                    )}
                 >
                     <Input
                         allowClear

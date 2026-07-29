@@ -1,4 +1,4 @@
-.workspace-ui-scope {
+:where(.workspace-ui-scope, .settings-workspace-page) {
     --workspace-ui-font-display: "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
     --workspace-ui-font-text: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
     --workspace-ui-page: #f5f5f7;
@@ -30,7 +30,7 @@
     letter-spacing: -0.014em;
 }
 
-.dark .workspace-ui-scope {
+.dark :where(.workspace-ui-scope, .settings-workspace-page) {
     --workspace-ui-page: #000000;
     --workspace-ui-surface: #171717;
     --workspace-ui-surface-subtle: #232323;
@@ -45,31 +45,31 @@
     --workspace-ui-focus: rgb(41 151 255 / 34%);
 }
 
-.workspace-ui-scope :where(button, input, textarea, select) {
+:where(.workspace-ui-scope, .settings-workspace-page) :where(button, input, textarea, select) {
     font-family: var(--workspace-ui-font-text);
     letter-spacing: inherit;
 }
 
-.workspace-ui-scope :where(h1, h2, h3) {
+:where(.workspace-ui-scope, .settings-workspace-page) :where(h1, h2, h3) {
     margin: 0;
     color: var(--workspace-ui-text);
     font-family: var(--workspace-ui-font-display);
     letter-spacing: -0.02em;
 }
 
-.workspace-ui-scope :where(p) {
+:where(.workspace-ui-scope, .settings-workspace-page) :where(p) {
     margin: 0;
 }
 
-.workspace-ui-scope :where(a, button, input, textarea, select):focus-visible {
+:where(.workspace-ui-scope, .settings-workspace-page) :where(a, button, input, textarea, select):focus-visible {
     outline: 2px solid var(--workspace-ui-focus);
     outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .workspace-ui-scope *,
-    .workspace-ui-scope *::before,
-    .workspace-ui-scope *::after {
+    :where(.workspace-ui-scope, .settings-workspace-page) *,
+    :where(.workspace-ui-scope, .settings-workspace-page) *::before,
+    :where(.workspace-ui-scope, .settings-workspace-page) *::after {
         scroll-behavior: auto !important;
         transition-duration: 0.01ms !important;
         animation-duration: 0.01ms !important;

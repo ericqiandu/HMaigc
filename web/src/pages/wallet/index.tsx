@@ -122,7 +122,7 @@ export default function WalletPage() {
                     description="模型调用、冻结与退款都在同一条可追溯流水中。"
                     actions={(
                         <div className="wallet-header-actions flex flex-wrap gap-2">
-                        <Button icon={<CalendarCheck className="size-4" />} type={wallet?.policy.checkedInToday ? "default" : "primary"} loading={checkingIn} disabled={wallet?.policy.checkedInToday} onClick={() => void checkin()}>
+                        <Button icon={<CalendarCheck className="size-4" />} loading={checkingIn} disabled={wallet?.policy.checkedInToday} onClick={() => void checkin()}>
                             {wallet?.policy.checkedInToday ? "今日已签到" : `签到 +${formatCredits(wallet?.policy.checkinBonusMicrocredits || 0)}`}
                         </Button>
                         <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
