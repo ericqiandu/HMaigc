@@ -235,19 +235,6 @@ func (r *Repository) DeleteEmailVerificationCode(id string) error {
 	return r.db.Delete(&model.EmailVerificationCode{}, "id = ?", id).Error
 }
 
-func (r *Repository) CreateUserWithEmailVerification(user *model.User, verificationCodeID string, usedAt time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&model.EmailVerificationCode{}).Where("id = ? AND used_at IS NULL AND expires_at > ?", verificationCodeID, usedAt).Update("used_at", usedAt)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return errors.New("email verification code is no longer valid")
-		}
-		return tx.Create(user).Error
-	})
-}
-
 func (r *Repository) DeleteExpiredEmailVerificationCodes(now time.Time) error {
 	return r.db.Delete(&model.EmailVerificationCode{}, "expires_at <= ? OR used_at IS NOT NULL", now).Error
 }

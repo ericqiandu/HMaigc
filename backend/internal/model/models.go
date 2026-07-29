@@ -88,15 +88,17 @@ const (
 	BillingStatusRefunded  BillingStatus = "refunded"
 	BillingStatusUncertain BillingStatus = "uncertain"
 
-	CreditLedgerRedeem       CreditLedgerType = "redeem"
-	CreditLedgerAdminGrant   CreditLedgerType = "admin_grant"
-	CreditLedgerReserve      CreditLedgerType = "reserve"
-	CreditLedgerConsume      CreditLedgerType = "consume"
-	CreditLedgerRefund       CreditLedgerType = "refund"
-	CreditLedgerAdminAdjust  CreditLedgerType = "admin_adjustment"
-	CreditLedgerSignupBonus  CreditLedgerType = "signup_bonus"
-	CreditLedgerMembership   CreditLedgerType = "membership_grant"
-	CreditLedgerCheckinBonus CreditLedgerType = "checkin_bonus"
+	CreditLedgerRedeem          CreditLedgerType = "redeem"
+	CreditLedgerAdminGrant      CreditLedgerType = "admin_grant"
+	CreditLedgerReserve         CreditLedgerType = "reserve"
+	CreditLedgerConsume         CreditLedgerType = "consume"
+	CreditLedgerRefund          CreditLedgerType = "refund"
+	CreditLedgerAdminAdjust     CreditLedgerType = "admin_adjustment"
+	CreditLedgerSignupBonus     CreditLedgerType = "signup_bonus"
+	CreditLedgerMembership      CreditLedgerType = "membership_grant"
+	CreditLedgerCheckinBonus    CreditLedgerType = "checkin_bonus"
+	CreditLedgerReferralInviter CreditLedgerType = "referral_inviter_reward"
+	CreditLedgerReferralInvitee CreditLedgerType = "referral_invitee_reward"
 
 	RedeemCodeUnused   RedeemCodeStatus = "unused"
 	RedeemCodeRedeemed RedeemCodeStatus = "redeemed"
@@ -184,14 +186,16 @@ type UserIdentity struct {
 }
 
 type OAuthState struct {
-	ID           string     `json:"id" gorm:"primaryKey;size:36"`
-	Provider     string     `json:"provider" gorm:"index;size:32"`
-	StateHash    string     `json:"-" gorm:"uniqueIndex;size:64"`
-	CodeVerifier string     `json:"-" gorm:"size:160"`
-	NextPath     string     `json:"nextPath"`
-	ExpiresAt    time.Time  `json:"expiresAt" gorm:"index"`
-	UsedAt       *time.Time `json:"usedAt" gorm:"index"`
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID             string     `json:"id" gorm:"primaryKey;size:36"`
+	Provider       string     `json:"provider" gorm:"index;size:32"`
+	StateHash      string     `json:"-" gorm:"uniqueIndex;size:64"`
+	CodeVerifier   string     `json:"-" gorm:"size:160"`
+	NextPath       string     `json:"nextPath"`
+	ReferralCode   string     `json:"referralCode,omitempty" gorm:"size:16"`
+	RegistrationIP string     `json:"registrationIp,omitempty" gorm:"size:64"`
+	ExpiresAt      time.Time  `json:"expiresAt" gorm:"index"`
+	UsedAt         *time.Time `json:"usedAt" gorm:"index"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 type EmailVerificationCode struct {

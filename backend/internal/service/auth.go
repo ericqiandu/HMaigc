@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -32,11 +33,13 @@ func (e *AuthError) Error() string {
 }
 
 type RegisterRequest struct {
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	EmailCode   string `json:"emailCode"`
-	DisplayName string `json:"displayName"`
-	Password    string `json:"password"`
+	Username       string `json:"username"`
+	Email          string `json:"email"`
+	EmailCode      string `json:"emailCode"`
+	DisplayName    string `json:"displayName"`
+	Password       string `json:"password"`
+	InviteCode     string `json:"inviteCode"`
+	RegistrationIP string `json:"-"`
 }
 
 type LoginRequest struct {
@@ -166,11 +169,18 @@ func (s *Service) Register(req RegisterRequest) (*AuthSessionResult, error) {
 	if count == 0 {
 		user.Role = model.UserRoleAdmin
 	}
+	profile, relationship, err := s.referralRegistration(user.ID, req.InviteCode, req.RegistrationIP, now)
+	if err != nil {
+		return nil, err
+	}
+	registration := repository.UserRegistration{
+		User: &user, ReferralProfile: profile, ReferralRelationship: relationship,
+	}
 	if verifiedCode != nil {
-		if err := s.repo.CreateUserWithEmailVerification(&user, verifiedCode.ID, time.Now()); err != nil {
-			return nil, err
-		}
-	} else if err := s.repo.Create(&user); err != nil {
+		registration.VerificationCodeID = verifiedCode.ID
+		registration.VerificationCodeUsedAt = now
+	}
+	if err := s.repo.CreateUserRegistration(registration); err != nil {
 		return nil, err
 	}
 	if err := s.ensureSignupBonus(user.ID); err != nil {

@@ -1,5 +1,5 @@
 import { App, Popover, Switch } from "antd";
-import { ChevronDown, Coins, LogOut, Settings2, ShieldCheck, UserRound, Zap } from "lucide-react";
+import { ChevronDown, Coins, LogOut, Settings2, ShieldCheck, UserPlus, UserRound, Zap } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -9,6 +9,7 @@ import { applyUserSession } from "@/lib/user-session";
 import { logout } from "@/services/api/auth";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
+import { openReferralCenter, ReferralRewardCenter } from "./referral-reward-center";
 
 export function UpdreamAccountActions() {
     const { message } = App.useApp();
@@ -33,6 +34,11 @@ export function UpdreamAccountActions() {
         }
     };
 
+    const handleInvite = () => {
+        setMenuOpen(false);
+        openReferralCenter();
+    };
+
     if (!hydrated) return <div className="updream-account-loading h-10 w-[236px] animate-pulse rounded-full bg-foreground/[.06]" aria-label="正在读取账户信息" />;
 
     if (!user) {
@@ -49,6 +55,7 @@ export function UpdreamAccountActions() {
 
     return (
         <div className="updream-account-actions flex items-center gap-2">
+            <ReferralRewardCenter />
             <SystemAnnouncementCenter userId={user.id} className="updream-account-notifications grid size-10 shrink-0 place-items-center rounded-full bg-foreground/[.07] text-foreground/65 transition-colors hover:bg-foreground/[.12] hover:text-foreground" staticMotion />
             <div className="updream-account-pill flex h-10 items-center rounded-full bg-foreground/[.07] px-1.5 text-[#172033] shadow-[inset_0_0_0_1px_rgba(23,32,51,0.06)] backdrop-blur-xl dark:text-white dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">
                 <Link to="/wallet" className="updream-account-balance flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium tabular-nums transition-opacity hover:opacity-70" title={`${balance} 积分`}>
@@ -59,7 +66,7 @@ export function UpdreamAccountActions() {
                     <MembershipIcon className="updream-account-member-icon size-4" />
                     <span className="updream-account-member-label hidden sm:inline">升级会员</span>
                 </Link>
-                <Popover className="updream-account-popover" trigger="click" placement="bottomRight" open={menuOpen} onOpenChange={setMenuOpen} content={<AccountMenu user={user} balance={balance} theme={theme} setTheme={setTheme} close={() => setMenuOpen(false)} logout={() => void handleLogout()} />}>
+                <Popover className="updream-account-popover" trigger="click" placement="bottomRight" open={menuOpen} onOpenChange={setMenuOpen} content={<AccountMenu user={user} balance={balance} theme={theme} setTheme={setTheme} close={() => setMenuOpen(false)} invite={() => void handleInvite()} logout={() => void handleLogout()} />}>
                     <button type="button" className="updream-account-trigger flex h-8 items-center gap-1 pl-1 pr-1.5 text-left transition-opacity hover:opacity-75" aria-label={`打开 ${user.displayName || user.username} 的账户菜单`}>
                         <UpdreamUserAvatar user={user} className="size-7" />
                         <ChevronDown className="updream-account-chevron size-3.5 opacity-50" aria-hidden />
@@ -70,7 +77,7 @@ export function UpdreamAccountActions() {
     );
 }
 
-function AccountMenu({ user, balance, theme, setTheme, close, logout: logOut }: { user: LocalUser; balance: string; theme: "light" | "dark"; setTheme: (theme: "light" | "dark") => void; close: () => void; logout: () => void }) {
+function AccountMenu({ user, balance, theme, setTheme, close, invite, logout: logOut }: { user: LocalUser; balance: string; theme: "light" | "dark"; setTheme: (theme: "light" | "dark") => void; close: () => void; invite: () => void; logout: () => void }) {
     return (
         <div className="updream-account-menu w-[244px] py-1">
             <div className="updream-account-summary flex items-center gap-3 px-1 pb-3">
@@ -87,6 +94,7 @@ function AccountMenu({ user, balance, theme, setTheme, close, logout: logOut }: 
             <nav className="updream-account-menu-nav py-1" aria-label="账户菜单">
                 <AccountMenuLink to="/wallet" icon={<Coins className="updream-account-menu-icon size-4" />} label="积分中心" onNavigate={close} />
                 <AccountMenuLink to="/membership" icon={<MembershipIcon className="updream-account-menu-icon size-4" />} label="升级会员" onNavigate={close} />
+                <AccountMenuButton icon={<UserPlus className="updream-account-menu-icon size-4" />} label="邀请好友" onClick={invite} />
                 <AccountMenuLink to="/settings" icon={<Settings2 className="updream-account-menu-icon size-4" />} label="账户设置" onNavigate={close} />
                 {user.role === "admin" ? <AccountMenuLink to="/admin" icon={<ShieldCheck className="updream-account-menu-icon size-4" />} label="管理后台" onNavigate={close} /> : null}
             </nav>
@@ -104,6 +112,10 @@ function AccountMenu({ user, balance, theme, setTheme, close, logout: logOut }: 
 
 function AccountMenuLink({ to, icon, label, onNavigate }: { to: string; icon: ReactNode; label: string; onNavigate: () => void }) {
     return <Link to={to} onClick={onNavigate} className="updream-account-menu-link flex h-9 items-center gap-2.5 px-2 text-xs text-foreground/62 transition-colors hover:bg-foreground/[.055] hover:text-foreground">{icon}<span className="updream-account-menu-label flex-1">{label}</span></Link>;
+}
+
+function AccountMenuButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+    return <button type="button" onClick={onClick} className="updream-account-menu-link flex h-9 w-full items-center gap-2.5 px-2 text-left text-xs text-foreground/62 transition-colors hover:bg-foreground/[.055] hover:text-foreground">{icon}<span className="updream-account-menu-label flex-1">{label}</span></button>;
 }
 
 function MembershipIcon({ className }: { className: string }) {

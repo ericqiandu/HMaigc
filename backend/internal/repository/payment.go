@@ -21,8 +21,7 @@ type PaymentFulfillment struct {
 	TransactionID   string
 	ProviderTradeNo string
 	PaidAt          time.Time
-	Subscription    *model.MembershipSubscription
-	Ledger          *model.CreditLedgerEntry
+	Activation      MembershipActivation
 }
 
 type PaymentTransactionFilter struct {
@@ -130,7 +129,7 @@ func (r *Repository) FulfillPaymentTransaction(input PaymentFulfillment) (bool, 
 		if result.RowsAffected != 1 {
 			return ErrPaymentTransactionNotPayable
 		}
-		if err := activateMembershipOrderTx(tx, transaction.OrderID, "", string(transaction.Provider), input.ProviderTradeNo, "支付渠道回调自动开通", input.Subscription, input.Ledger, now); err != nil {
+		if err := activateMembershipOrderTx(tx, transaction.OrderID, "", string(transaction.Provider), input.ProviderTradeNo, "支付渠道回调自动开通", input.Activation, now); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", transaction.OrderID).Updates(map[string]interface{}{

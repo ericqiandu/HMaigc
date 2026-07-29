@@ -24,6 +24,7 @@ export default function RegisterPage() {
     const [sendingCode, setSendingCode] = useState(false);
     const [countdown, setCountdown] = useState(0);
     const next = safeNext(params.get("next"));
+    const inviteCode = normalizeInviteCode(params.get("invite"));
 
     useEffect(() => {
         let cancelled = false;
@@ -62,7 +63,7 @@ export default function RegisterPage() {
         }
         setSubmitting(true);
         try {
-            await register({ username, email, emailCode, displayName, password });
+            await register({ username, email, emailCode, displayName, password, inviteCode });
             await applyUserSession(await getAuthSession());
             if (!settings?.firstUser) window.sessionStorage.setItem("infinite-canvas:model-setup-guide", "1");
             message.success(settings?.firstUser ? "管理员账号已创建" : "注册成功");
@@ -84,6 +85,7 @@ export default function RegisterPage() {
             {settings?.firstUser ? <Notice icon={<Info className="size-3.5" />} tone="blue">首个账号自动成为管理员，邮箱验证码暂不要求。</Notice> : null}
             {registrationClosed ? <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">当前已关闭普通注册，请联系管理员创建账号。</Notice> : null}
             {mailUnavailable ? <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">管理员尚未配置注册邮件，普通邮箱注册暂不可用。</Notice> : null}
+            {inviteCode ? <Notice icon={<UserRound className="size-3.5" />} tone="blue">已通过邀请码 <strong className="font-semibold tracking-[0.08em]">{inviteCode}</strong> 进入，注册成功后邀请关系不可更换。</Notice> : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
                 <AuthField label="用户名"><Input size="large" prefix={<UserRound className="size-4 text-white/35" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="3-32 位字符" autoComplete="username" required disabled={disabled} /></AuthField>
@@ -107,7 +109,7 @@ export default function RegisterPage() {
             </div>
 
             <Button type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled} icon={<ArrowRight className="size-4" />} iconPosition="end">创建账号</Button>
-            {settings?.linuxdoEnabled ? <><Divider plain className="!border-white/10 !text-white/30">或</Divider><Button size="large" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next)}>使用 Linux.do 注册 / 登录</Button></> : null}
+            {settings?.linuxdoEnabled ? <><Divider plain className="!border-white/10 !text-white/30">或</Divider><Button size="large" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next, inviteCode)}>使用 Linux.do 注册 / 登录</Button></> : null}
         </form>
     );
 }
@@ -123,4 +125,8 @@ function Notice({ icon, tone, children }: { icon: ReactNode; tone: "blue" | "amb
 function safeNext(value: string | null) {
     if (!value || !value.startsWith("/") || value.startsWith("//")) return "/projects";
     return value;
+}
+
+function normalizeInviteCode(value: string | null) {
+    return (value || "").trim().toUpperCase().slice(0, 16);
 }

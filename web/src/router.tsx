@@ -9,6 +9,7 @@ import LogsPage from "@/pages/admin/logs/logs-page";
 import MembershipAdminPage from "@/pages/admin/membership/membership-page";
 import ModelPricingPage from "@/pages/admin/model-pricing/model-pricing-page";
 import RedemptionCodesPage from "@/pages/admin/redemption-codes/redemption-codes-page";
+import ReferralProgramPage from "@/pages/admin/referrals/referral-program-page";
 import RuntimePolicySettingsPage from "@/pages/admin/settings/runtime-policy-settings-page";
 import StorageSettingsPage from "@/pages/admin/settings/storage-settings-page";
 import PaymentSettingsPage from "@/pages/admin/settings/payment-settings-page";
@@ -81,6 +82,7 @@ export const router = createBrowserRouter([
                     { path: "announcements", element: <AnnouncementsPage /> },
                     { path: "credit-operations", element: <CreditOperationsPage /> },
                     { path: "redemption-codes", element: <RedemptionCodesPage /> },
+                    { path: "referrals", element: <ReferralProgramPage /> },
                     { path: "logs", element: <LogsPage /> },
                     { path: "membership", element: <MembershipAdminPage /> },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },

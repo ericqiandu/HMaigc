@@ -47,15 +47,3 @@ func (r *Repository) ConsumeOAuthState(provider string, stateHash string) (*mode
 	})
 	return &state, err
 }
-
-func (r *Repository) CreateOAuthUser(user *model.User, identity *model.UserIdentity) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(user).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(identity).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.CreditAccount{UserID: user.ID}).Error
-	})
-}

@@ -344,9 +344,11 @@ export function getAuthSettings() {
     return request<{ firstUser: boolean; registrationEnabled: boolean; linuxdoEnabled: boolean; emailEnabled: boolean; emailCodeRequired: boolean }>(api.get("/auth/settings"));
 }
 
-export function linuxDOLoginURL(next: string) {
+export function linuxDOLoginURL(next: string, inviteCode?: string) {
     const base = String(api.defaults.baseURL || "/api").replace(/\/$/, "");
-    return `${base}/auth/linuxdo/start?next=${encodeURIComponent(next)}`;
+    const params = new URLSearchParams({ next });
+    if (inviteCode) params.set("invite", inviteCode);
+    return `${base}/auth/linuxdo/start?${params.toString()}`;
 }
 
 export function getAuthSession() {
@@ -365,7 +367,7 @@ export function sendRegistrationEmailCode(email: string) {
     return request<{ sent: boolean }>(api.post("/auth/email-code", { email }));
 }
 
-export function register(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string }) {
+export function register(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; inviteCode?: string }) {
     return request<{ user: LocalUser }>(api.post("/auth/register", input));
 }
 

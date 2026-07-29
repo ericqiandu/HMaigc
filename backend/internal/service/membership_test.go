@@ -24,6 +24,10 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 	if err := db.AutoMigrate(
 		&model.User{},
 		&model.UserIdentity{},
+		&model.ReferralProfile{},
+		&model.ReferralRelationship{},
+		&model.ReferralRewardRule{},
+		&model.ReferralReward{},
 		&model.MembershipPlan{},
 		&model.MembershipOrder{},
 		&model.MembershipSubscription{},

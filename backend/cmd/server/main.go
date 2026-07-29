@@ -78,6 +78,7 @@ func main() {
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)
 	handler.RegisterMembershipRoutes(api, svc)
+	handler.RegisterReferralRoutes(api, svc)
 	handler.RegisterTeamRoutes(api, svc)
 	handler.RegisterPaymentRoutes(api, svc)
 	handler.RegisterSiteSettingRoutes(api, svc)

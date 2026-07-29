@@ -1,0 +1,72 @@
+.referral-reward-modal .ant-modal-content {
+    padding: 22px 24px 24px;
+    border: 0;
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--background) 96%, transparent);
+    box-shadow: 0 24px 80px rgb(0 0 0 / 22%);
+    backdrop-filter: blur(24px);
+}
+
+.referral-reward-modal .ant-modal-header {
+    margin-bottom: 20px;
+    background: transparent;
+}
+
+.referral-reward-modal .ant-modal-close {
+    top: 20px;
+    inset-inline-end: 20px;
+}
+
+.referral-reward-metric + .referral-reward-metric {
+    box-shadow: inset 1px 0 0 color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.referral-reward-copy {
+    border-radius: 7px;
+}
+
+.referral-reward-table .ant-table,
+.referral-reward-table .ant-table-container,
+.referral-reward-table .ant-table-content {
+    background: transparent;
+}
+
+.referral-reward-table .ant-table-thead > tr > th {
+    padding-block: 10px;
+    border: 0;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    color: color-mix(in srgb, currentColor 52%, transparent);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.referral-reward-table .ant-table-tbody > tr > td {
+    padding-block: 11px;
+    border-bottom-color: color-mix(in srgb, currentColor 7%, transparent);
+    font-size: 12px;
+}
+
+.referral-reward-table .ant-table-tbody > tr:last-child > td {
+    border-bottom: 0;
+}
+
+@media (max-width: 640px) {
+    .referral-reward-modal {
+        max-width: calc(100vw - 20px);
+    }
+
+    .referral-reward-modal .ant-modal-content {
+        padding-inline: 16px;
+    }
+
+    .referral-reward-code-row {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+        padding-block: 12px;
+    }
+
+    .referral-reward-copy {
+        justify-content: center;
+    }
+}

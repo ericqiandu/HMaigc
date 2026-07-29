@@ -25,6 +25,20 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	if !db.Migrator().HasColumn(&model.ChannelModel{}, "promotion_badge") {
 		t.Fatal("channel_models.promotion_badge was not migrated")
 	}
+	for _, table := range []interface{}{
+		&model.ReferralProfile{},
+		&model.ReferralRelationship{},
+		&model.ReferralRewardRule{},
+		&model.ReferralReward{},
+	} {
+		if !db.Migrator().HasTable(table) {
+			t.Fatalf("referral table for %T was not migrated", table)
+		}
+	}
+	if !db.Migrator().HasColumn(&model.OAuthState{}, "referral_code") ||
+		!db.Migrator().HasColumn(&model.OAuthState{}, "registration_ip") {
+		t.Fatal("OAuth referral context columns were not migrated")
+	}
 
 	channel := model.ModelChannel{
 		ID:            "channel-image",

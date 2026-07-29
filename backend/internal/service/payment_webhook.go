@@ -172,7 +172,7 @@ func (s *Service) fulfillVerifiedPayment(provider model.PaymentProvider, eventID
 	if err != nil {
 		return err
 	}
-	subscription, ledger, err := s.membershipFulfillmentForOrder(order, "", paidAt)
+	activation, err := s.membershipFulfillmentForOrder(order, "", paidAt)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func (s *Service) fulfillVerifiedPayment(provider model.PaymentProvider, eventID
 	}
 	_, err = s.repo.FulfillPaymentTransaction(repository.PaymentFulfillment{
 		Event: event, TransactionID: transaction.ID, ProviderTradeNo: providerTradeNo,
-		PaidAt: paidAt, Subscription: subscription, Ledger: ledger,
+		PaidAt: paidAt, Activation: activation,
 	})
 	if errors.Is(err, repository.ErrPaymentWebhookConflict) || errors.Is(err, repository.ErrPaymentTransactionNotPayable) {
 		return &AuthError{Status: http.StatusConflict, Message: err.Error()}

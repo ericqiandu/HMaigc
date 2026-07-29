@@ -35,6 +35,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
+		req.RegistrationIP = c.ClientIP()
 		policy, available := loadRuntimePolicy(c, svc)
 		if !available || !enforceRateLimit(c, "register:"+c.ClientIP(), policy.Request.RegisterPerHour, time.Hour) {
 			return
@@ -92,7 +93,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if !enforceRateLimit(c, "linuxdo-start:"+c.ClientIP(), 20, 10*time.Minute) {
 			return
 		}
-		target, err := svc.BeginLinuxDOLogin(c.Query("next"))
+		target, err := svc.BeginLinuxDOLogin(c.Query("next"), c.Query("invite"), c.ClientIP())
 		if err != nil {
 			failService(c, err)
 			return

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -138,7 +139,7 @@ func (s *Service) LinuxDOEnabled() bool {
 	return err == nil && setting.Enabled
 }
 
-func (s *Service) BeginLinuxDOLogin(nextPath string) (string, error) {
+func (s *Service) BeginLinuxDOLogin(nextPath string, inviteCode string, registrationIP string) (string, error) {
 	count, err := s.repo.UserCount()
 	if err != nil {
 		return "", err
@@ -153,13 +154,29 @@ func (s *Service) BeginLinuxDOLogin(nextPath string) (string, error) {
 	if !setting.Enabled {
 		return "", Forbidden("Linux.do 登录尚未启用")
 	}
+	normalizedInviteCode := normalizeReferralCode(inviteCode)
+	if normalizedInviteCode != "" {
+		program, programErr := s.referralProgramSetting()
+		if programErr != nil {
+			return "", programErr
+		}
+		if !program.Enabled {
+			return "", BadAuthRequest("当前邀请活动未开放")
+		}
+		if _, lookupErr := s.repo.ReferralProfileByCode(normalizedInviteCode); errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			return "", BadAuthRequest("邀请码无效")
+		} else if lookupErr != nil {
+			return "", lookupErr
+		}
+	}
 	state := randomToken()
 	verifier := randomToken()
 	challengeBytes := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeBytes[:])
 	if err := s.repo.CreateOAuthState(&model.OAuthState{
 		ID: newID(), Provider: "linuxdo", StateHash: hashToken(state), CodeVerifier: verifier,
-		NextPath: safeOAuthNext(nextPath), ExpiresAt: time.Now().Add(10 * time.Minute),
+		NextPath: safeOAuthNext(nextPath), ReferralCode: normalizedInviteCode,
+		RegistrationIP: strings.TrimSpace(registrationIP), ExpiresAt: time.Now().Add(10 * time.Minute),
 	}); err != nil {
 		return "", err
 	}
@@ -236,7 +253,14 @@ func (s *Service) CompleteLinuxDOLogin(stateValue string, code string) (*LinuxDO
 		if err != nil {
 			return nil, err
 		}
-		if err := s.repo.CreateOAuthUser(user, identity); err != nil {
+		now := time.Now()
+		profile, relationship, referralErr := s.referralRegistration(user.ID, state.ReferralCode, state.RegistrationIP, now)
+		if referralErr != nil {
+			return nil, referralErr
+		}
+		if err := s.repo.CreateUserRegistration(repository.UserRegistration{
+			User: user, Identity: identity, ReferralProfile: profile, ReferralRelationship: relationship,
+		}); err != nil {
 			return nil, err
 		}
 	} else {

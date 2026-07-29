@@ -8,6 +8,7 @@ import {
     CreditCard,
     Crown,
     FileClock,
+    Gift,
     HardDrive,
     Home,
     Globe2,
@@ -53,6 +54,7 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
     {
         label: "运营",
         items: [
+            { path: "/admin/referrals", label: "邀请有礼", description: "邀请码、首购奖励与资格", icon: <Gift className="size-4" /> },
             { path: "/admin/model-pricing", label: "模型商业定价", description: "成本、积分售价与利润率", icon: <BadgeDollarSign className="size-4" /> },
             { path: "/admin/announcements", label: "系统公告", description: "发布、关闭与历史公告", icon: <BellRing className="size-4" /> },
             { path: "/admin/credit-operations", label: "积分运营", description: "人工调账与异常计费", icon: <Coins className="size-4" /> },

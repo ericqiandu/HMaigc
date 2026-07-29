@@ -27,7 +27,7 @@ export type CreditAccount = {
 export type CreditLedgerEntry = {
     id: string;
     userId: string;
-    type: "redeem" | "admin_grant" | "consume" | "refund" | "admin_adjustment" | "signup_bonus" | "checkin_bonus" | "membership";
+    type: "redeem" | "admin_grant" | "reserve" | "consume" | "refund" | "admin_adjustment" | "signup_bonus" | "checkin_bonus" | "membership_grant" | "referral_inviter_reward" | "referral_invitee_reward";
     amountMicrocredits: number;
     availableAfterMicrocredits: number;
     reservedAfterMicrocredits: number;

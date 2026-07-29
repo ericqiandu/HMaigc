@@ -15,6 +15,18 @@ var (
 	ErrTeamSeatLimitReached      = errors.New("team seat limit reached")
 )
 
+type ReferralFulfillment struct {
+	Reward        *model.ReferralReward
+	InviterLedger *model.CreditLedgerEntry
+	InviteeLedger *model.CreditLedgerEntry
+}
+
+type MembershipActivation struct {
+	Subscription     *model.MembershipSubscription
+	MembershipLedger *model.CreditLedgerEntry
+	Referral         *ReferralFulfillment
+}
+
 const automaticMembershipOrderCloseNote = "订单超过 24 小时未支付，系统自动关闭"
 
 func (r *Repository) CreateMembershipPlanIfMissing(plan *model.MembershipPlan) error {
@@ -311,13 +323,16 @@ func (r *Repository) TeamMembers(teamID string) ([]model.TeamMember, error) {
 	return members, err
 }
 
-func (r *Repository) ActivateMembershipOrder(orderID string, actorID string, provider string, providerTradeNo string, note string, subscription *model.MembershipSubscription, ledger *model.CreditLedgerEntry) error {
+func (r *Repository) ActivateMembershipOrder(orderID string, actorID string, provider string, providerTradeNo string, note string, activation MembershipActivation) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		return activateMembershipOrderTx(tx, orderID, actorID, provider, providerTradeNo, note, subscription, ledger, time.Now())
+		return activateMembershipOrderTx(tx, orderID, actorID, provider, providerTradeNo, note, activation, time.Now())
 	})
 }
 
-func activateMembershipOrderTx(tx *gorm.DB, orderID string, actorID string, provider string, providerTradeNo string, note string, subscription *model.MembershipSubscription, ledger *model.CreditLedgerEntry, now time.Time) error {
+func activateMembershipOrderTx(tx *gorm.DB, orderID string, actorID string, provider string, providerTradeNo string, note string, activation MembershipActivation, now time.Time) error {
+	if activation.Subscription == nil {
+		return errors.New("membership activation requires subscription")
+	}
 	var order model.MembershipOrder
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", orderID).Error; err != nil {
 		return err
@@ -335,48 +350,119 @@ func activateMembershipOrderTx(tx *gorm.DB, orderID string, actorID string, prov
 	if updated.RowsAffected != 1 {
 		return ErrMembershipOrderNotPending
 	}
-	if err := tx.Create(subscription).Error; err != nil {
+	if err := tx.Create(activation.Subscription).Error; err != nil {
 		return err
 	}
-	if ledger == nil || ledger.AmountMicrocredits <= 0 {
-		return nil
+	if activation.MembershipLedger != nil && activation.MembershipLedger.AmountMicrocredits > 0 {
+		if order.TeamID != "" {
+			if err := grantTeamMembershipLedgerTx(tx, order.TeamID, activation.MembershipLedger, now); err != nil {
+				return err
+			}
+		} else if err := grantPersonalCreditLedgerTx(tx, activation.MembershipLedger, now); err != nil {
+			return err
+		}
 	}
-	if order.TeamID != "" {
-		account := model.TeamCreditAccount{TeamID: order.TeamID}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&model.TeamCreditAccount{}).Where("team_id = ?", order.TeamID).Updates(map[string]interface{}{
-			"available_microcredits": gorm.Expr("available_microcredits + ?", ledger.AmountMicrocredits),
-			"version":                gorm.Expr("version + 1"), "updated_at": now,
-		}).Error; err != nil {
-			return err
-		}
-		if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.TeamCreditLedgerEntry{
-			ID: ledger.ID, TeamID: order.TeamID, ActorUserID: ledger.ActorUserID, Type: ledger.Type,
-			AmountMicrocredits: ledger.AmountMicrocredits, AvailableDeltaMicrocredits: ledger.AvailableDeltaMicrocredits,
-			AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-			Scene: ledger.Scene, Note: ledger.Note, ReferenceKey: ledger.ReferenceKey, CreatedAt: ledger.CreatedAt,
-		}).Error
+	if activation.Referral != nil {
+		return grantReferralRewardTx(tx, &order, activation.Referral, now)
 	}
-	account := model.CreditAccount{UserID: order.UserID}
+	return nil
+}
+
+func grantTeamMembershipLedgerTx(tx *gorm.DB, teamID string, ledger *model.CreditLedgerEntry, now time.Time) error {
+	account := model.TeamCreditAccount{TeamID: teamID}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
 		return err
 	}
-	if err := tx.Model(&model.CreditAccount{}).Where("user_id = ?", order.UserID).Updates(map[string]interface{}{
+	if err := tx.Model(&model.TeamCreditAccount{}).Where("team_id = ?", teamID).Updates(map[string]interface{}{
 		"available_microcredits": gorm.Expr("available_microcredits + ?", ledger.AmountMicrocredits),
 		"version":                gorm.Expr("version + 1"), "updated_at": now,
 	}).Error; err != nil {
 		return err
 	}
-	var refreshed model.CreditAccount
-	if err := tx.First(&refreshed, "user_id = ?", order.UserID).Error; err != nil {
+	if err := tx.First(&account, "team_id = ?", teamID).Error; err != nil {
 		return err
 	}
-	ledger.AvailableAfterMicrocredits = refreshed.AvailableMicrocredits
-	ledger.ReservedAfterMicrocredits = refreshed.ReservedMicrocredits
+	return tx.Create(&model.TeamCreditLedgerEntry{
+		ID: ledger.ID, TeamID: teamID, ActorUserID: ledger.ActorUserID, Type: ledger.Type,
+		AmountMicrocredits: ledger.AmountMicrocredits, AvailableDeltaMicrocredits: ledger.AvailableDeltaMicrocredits,
+		AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
+		Scene: ledger.Scene, Note: ledger.Note, ReferenceKey: ledger.ReferenceKey, CreatedAt: ledger.CreatedAt,
+	}).Error
+}
+
+func grantPersonalCreditLedgerTx(tx *gorm.DB, ledger *model.CreditLedgerEntry, now time.Time) error {
+	if ledger == nil || ledger.UserID == "" || ledger.AmountMicrocredits <= 0 {
+		return errors.New("credit ledger grant is invalid")
+	}
+	account := model.CreditAccount{UserID: ledger.UserID}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&model.CreditAccount{}).Where("user_id = ?", ledger.UserID).Updates(map[string]interface{}{
+		"available_microcredits": gorm.Expr("available_microcredits + ?", ledger.AmountMicrocredits),
+		"version":                gorm.Expr("version + 1"), "updated_at": now,
+	}).Error; err != nil {
+		return err
+	}
+	if err := tx.First(&account, "user_id = ?", ledger.UserID).Error; err != nil {
+		return err
+	}
+	ledger.AvailableAfterMicrocredits = account.AvailableMicrocredits
+	ledger.ReservedAfterMicrocredits = account.ReservedMicrocredits
 	return tx.Create(ledger).Error
+}
+
+func grantReferralRewardTx(tx *gorm.DB, order *model.MembershipOrder, fulfillment *ReferralFulfillment, now time.Time) error {
+	if order.TeamID != "" {
+		return errors.New("team membership orders cannot grant referral rewards")
+	}
+	if fulfillment == nil || fulfillment.Reward == nil || fulfillment.InviterLedger == nil || fulfillment.InviteeLedger == nil {
+		return errors.New("referral fulfillment is incomplete")
+	}
+	reward := fulfillment.Reward
+	var relationship model.ReferralRelationship
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&relationship, "id = ?", reward.RelationshipID).Error; err != nil {
+		return err
+	}
+	if relationship.InviteeUserID != order.UserID || relationship.InviterUserID != reward.InviterUserID ||
+		reward.InviteeUserID != order.UserID || reward.MembershipOrderID != order.ID {
+		return errors.New("referral fulfillment does not match membership order")
+	}
+	if relationship.Status == model.ReferralRelationshipDisqualified || relationship.Status == model.ReferralRelationshipRewarded {
+		return nil
+	}
+	var priorPaidCount int64
+	if err := tx.Model(&model.MembershipOrder{}).
+		Where("user_id = ? AND team_id = '' AND status = ? AND id <> ?", order.UserID, model.MembershipOrderPaid, order.ID).
+		Count(&priorPaidCount).Error; err != nil {
+		return err
+	}
+	if priorPaidCount > 0 {
+		return nil
+	}
+	if fulfillment.InviterLedger.UserID != reward.InviterUserID ||
+		fulfillment.InviteeLedger.UserID != reward.InviteeUserID ||
+		fulfillment.InviterLedger.AmountMicrocredits != reward.InviterRewardMicrocredits ||
+		fulfillment.InviteeLedger.AmountMicrocredits != reward.InviteeRewardMicrocredits {
+		return errors.New("referral credit ledgers do not match reward")
+	}
+	if err := tx.Create(reward).Error; err != nil {
+		return err
+	}
+	if err := grantPersonalCreditLedgerTx(tx, fulfillment.InviterLedger, now); err != nil {
+		return err
+	}
+	if err := grantPersonalCreditLedgerTx(tx, fulfillment.InviteeLedger, now); err != nil {
+		return err
+	}
+	updated := tx.Model(&model.ReferralRelationship{}).
+		Where("id = ? AND status = ?", relationship.ID, model.ReferralRelationshipEligible).
+		Updates(map[string]interface{}{"status": model.ReferralRelationshipRewarded, "rewarded_at": now, "updated_at": now})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return errors.New("referral relationship state changed during fulfillment")
+	}
+	return nil
 }

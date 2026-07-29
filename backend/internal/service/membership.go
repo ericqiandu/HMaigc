@@ -428,11 +428,11 @@ func (s *Service) AdminConfirmMembershipOrder(actor *model.User, id string, req 
 	if err != nil {
 		return nil, err
 	}
-	subscription, ledger, err := s.membershipFulfillmentForOrder(order, actor.ID, now)
+	activation, err := s.membershipFulfillmentForOrder(order, actor.ID, now)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.ActivateMembershipOrder(order.ID, actor.ID, "manual", strings.TrimSpace(req.ProviderTradeNo), strings.TrimSpace(req.Note), subscription, ledger); err != nil {
+	if err := s.repo.ActivateMembershipOrder(order.ID, actor.ID, "manual", strings.TrimSpace(req.ProviderTradeNo), strings.TrimSpace(req.Note), activation); err != nil {
 		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
 			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能重复开通"}
 		}
@@ -444,15 +444,15 @@ func (s *Service) AdminConfirmMembershipOrder(actor *model.User, id string, req 
 	return s.repo.MembershipOrder(order.ID)
 }
 
-func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, actorID string, now time.Time) (*model.MembershipSubscription, *model.CreditLedgerEntry, error) {
+func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, actorID string, now time.Time) (repository.MembershipActivation, error) {
 	plan, err := membershipPlanFromOrderSnapshot(order)
 	if err != nil {
-		return nil, nil, err
+		return repository.MembershipActivation{}, err
 	}
 	start := now
 	latestEnd, err := s.repo.LatestMembershipSubscriptionEnd(order.UserID, order.TeamID, now)
 	if err != nil {
-		return nil, nil, err
+		return repository.MembershipActivation{}, err
 	}
 	if latestEnd != nil && latestEnd.After(start) {
 		start = *latestEnd
@@ -466,18 +466,83 @@ func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, ac
 		Status: model.MembershipSubscriptionActive, Seats: order.Seats, PlanSnapshotJSON: order.PlanSnapshotJSON,
 		StartsAt: start, EndsAt: &end, CreatedAt: now, UpdatedAt: now,
 	}
+	activation := repository.MembershipActivation{Subscription: subscription}
 	grant := plan.CreditsPerPeriod * int64(order.Seats)
-	if grant == 0 || start.After(now) {
-		return subscription, nil, nil
+	if grant > 0 && !start.After(now) {
+		reference := "membership-order:" + order.ID
+		activation.MembershipLedger = &model.CreditLedgerEntry{
+			ID: newID(), UserID: order.UserID, Type: model.CreditLedgerMembership,
+			AmountMicrocredits: grant, AvailableDeltaMicrocredits: grant, ActorUserID: actorID,
+			Scene: "membership", Note: "会员套餐积分到账", ReferenceKey: &reference,
+			CreatedAt: now,
+		}
 	}
-	reference := "membership-order:" + order.ID
-	ledger := &model.CreditLedgerEntry{
-		ID: newID(), UserID: order.UserID, Type: model.CreditLedgerMembership,
-		AmountMicrocredits: grant, AvailableDeltaMicrocredits: grant, ActorUserID: actorID,
-		Scene: "membership", Note: "会员套餐积分到账", ReferenceKey: &reference,
-		CreatedAt: now,
+	referral, err := s.referralFulfillmentForOrder(order, plan, now)
+	if err != nil {
+		return repository.MembershipActivation{}, err
 	}
-	return subscription, ledger, nil
+	activation.Referral = referral
+	return activation, nil
+}
+
+func (s *Service) referralFulfillmentForOrder(order *model.MembershipOrder, plan *model.MembershipPlan, now time.Time) (*repository.ReferralFulfillment, error) {
+	if order.TeamID != "" || plan.Audience != model.MembershipAudiencePersonal ||
+		plan.BillingCycle == model.MembershipBillingCycleFree || plan.PriceCents <= 0 {
+		return nil, nil
+	}
+	relationship, err := s.repo.ReferralRelationshipForInvitee(order.UserID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if relationship.Status == model.ReferralRelationshipDisqualified || relationship.Status == model.ReferralRelationshipRewarded {
+		return nil, nil
+	}
+	hasPriorPaidOrder, err := s.repo.HasPaidPersonalMembershipOrder(order.UserID, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	if hasPriorPaidOrder {
+		return nil, nil
+	}
+	rule, err := s.repo.ReferralRewardRuleForPlan(plan.ID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("该个人会员套餐缺少邀请奖励规则，订单暂不能履约")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !rule.Enabled || rule.InviterRewardMicrocredits <= 0 || rule.InviteeRewardMicrocredits <= 0 {
+		return nil, errors.New("该个人会员套餐的邀请奖励规则未生效，订单暂不能履约")
+	}
+	rewardID := newID()
+	inviterReference := "referral-reward:" + rewardID + ":inviter"
+	inviteeReference := "referral-reward:" + rewardID + ":invitee"
+	reward := &model.ReferralReward{
+		ID: rewardID, RelationshipID: relationship.ID, MembershipOrderID: order.ID,
+		MembershipPlanID: plan.ID, RewardRuleID: rule.ID,
+		InviterUserID: relationship.InviterUserID, InviteeUserID: order.UserID,
+		InviterRewardMicrocredits: rule.InviterRewardMicrocredits,
+		InviteeRewardMicrocredits: rule.InviteeRewardMicrocredits,
+		Status:                    model.ReferralRewardGranted, GrantedAt: now, CreatedAt: now,
+	}
+	return &repository.ReferralFulfillment{
+		Reward: reward,
+		InviterLedger: &model.CreditLedgerEntry{
+			ID: newID(), UserID: relationship.InviterUserID, Type: model.CreditLedgerReferralInviter,
+			AmountMicrocredits: rule.InviterRewardMicrocredits, AvailableDeltaMicrocredits: rule.InviterRewardMicrocredits,
+			ActorUserID: "system", Scene: "referral", Note: "邀请好友首购会员奖励",
+			ReferenceKey: &inviterReference, CreatedAt: now,
+		},
+		InviteeLedger: &model.CreditLedgerEntry{
+			ID: newID(), UserID: order.UserID, Type: model.CreditLedgerReferralInvitee,
+			AmountMicrocredits: rule.InviteeRewardMicrocredits, AvailableDeltaMicrocredits: rule.InviteeRewardMicrocredits,
+			ActorUserID: "system", Scene: "referral", Note: "受邀首购会员奖励",
+			ReferenceKey: &inviteeReference, CreatedAt: now,
+		},
+	}, nil
 }
 
 func (s *Service) reconcileMembershipLifecycle(now time.Time) error {
