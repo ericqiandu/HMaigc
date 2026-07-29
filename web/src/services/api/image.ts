@@ -242,11 +242,11 @@ function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
 }
 
-function aiHeaders(config: AiConfig, contentType?: string) {
+function aiHeaders(config: AiConfig, scene: "image" | "text", contentType?: string) {
     return {
         Authorization: `Bearer ${config.apiKey}`,
         ...(contentType ? { "Content-Type": contentType } : {}),
-        ...(isSystemProxyBaseUrl(config.baseUrl) ? { "X-Canvas-Scene": "image", "X-Idempotency-Key": crypto.randomUUID() } : {}),
+        ...(isSystemProxyBaseUrl(config.baseUrl) ? { "X-Canvas-Scene": scene, "X-Idempotency-Key": crypto.randomUUID() } : {}),
     };
 }
 
@@ -451,7 +451,7 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
 }
 
 async function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const request = channelRequest(config, aiApiUrl(config, "/responses"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
+    const request = channelRequest(config, aiApiUrl(config, "/responses"), { ...aiHeaders(config, "text", "application/json"), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
         headers: request.headers,
@@ -532,7 +532,7 @@ function consumeChatCompletionStreamText(state: ChatCompletionStreamState, text:
 }
 
 async function requestStreamingChatCompletion(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const request = channelRequest(config, aiApiUrl(config, "/chat/completions"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
+    const request = channelRequest(config, aiApiUrl(config, "/chat/completions"), { ...aiHeaders(config, "text", "application/json"), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
         headers: request.headers,
@@ -782,7 +782,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 ...(config.transparentBackground === "true" ? { background: "transparent" } : {}),
             },
             {
-                headers: aiHeaders(requestConfig, "application/json"),
+                headers: aiHeaders(requestConfig, "image", "application/json"),
                 signal: options?.signal,
             },
         );
@@ -828,7 +828,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, "image"), signal: options?.signal });
         const images = parseImagePayload(response.data);
         return images;
     } catch (error) {

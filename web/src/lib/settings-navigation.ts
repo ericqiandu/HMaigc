@@ -1,7 +1,5 @@
 import { message } from "antd";
 
-import { useUserStore } from "@/stores/use-user-store";
-
 export type SettingsSection = "preferences" | "storage";
 
 export function settingsPath(section: SettingsSection = "preferences", continueCreation = false) {
@@ -23,14 +21,7 @@ function navigateWithinWorkspace(to: string) {
     if (window.dispatchEvent(event)) window.location.assign(to);
 }
 
-/**
- * 生成流程缺少系统模型时，只有管理员可进入系统模型后台。
- * 普通用户不再被引导到个人设置，也不允许配置自定义 API。
- */
+/** 生成流程只报告当前能力缺失，不在用户操作中隐式切换到管理后台。 */
 export function handleMissingSystemModel() {
-    if (useUserStore.getState().user?.role === "admin") {
-        navigateWithinWorkspace("/admin/models");
-        return;
-    }
-    message.error("系统暂未配置可用模型，请联系管理员");
+    message.error("系统暂未配置当前功能所需的可用模型，请联系管理员完成模型、定价和权限配置");
 }

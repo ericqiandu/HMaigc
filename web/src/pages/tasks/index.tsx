@@ -8,11 +8,12 @@ import { ListToolbar, PageHeader, TableSurface, WorkspacePage } from "@/componen
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
 import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-task-display";
+import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 
 import { cancelGenerationTask, createAgentSession, createGenerationTask, listGenerationTasks, listTaskLogs, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog, type TaskStatus } from "@/services/api/task-center";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { formatCredits } from "@/constant/credits";
 import { listProjects, type ProjectSummary } from "@/services/api/projects";
 
@@ -30,6 +31,15 @@ export default function TasksPage() {
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const projects = useCanvasStore((state) => state.projects);
     const [form] = Form.useForm<CreateTaskInput & { operation: string }>();
+    const taskOperation = Form.useWatch("operation", form) || "agent_session";
+    const taskModelOptions = useMemo(() => {
+        const capability = taskOperation === "agent_session" ? "text" : taskOperation === "compare_versions" ? undefined : "video";
+        if (!capability) return [];
+        return selectableModelsByCapability(effectiveConfig, capability).map((value) => ({
+            label: modelOptionName(value),
+            value,
+        }));
+    }, [effectiveConfig, taskOperation]);
     const [tasks, setTasks] = useState<GenerationTask[]>([]);
     const [domainProjects, setDomainProjects] = useState<ProjectSummary[]>([]);
     const [loading, setLoading] = useState(false);
@@ -196,33 +206,42 @@ export default function TasksPage() {
         setCreating(true);
         try {
             if (values.operation === "agent_session") {
-                const textModel = values.model?.trim() || effectiveConfig.textModel || effectiveConfig.model;
+                const textModel = values.model?.trim() || taskModelOptions[0]?.value || "";
                 if (!isAiConfigReady(effectiveConfig, textModel)) {
                     message.error("系统暂无可用文本模型，请联系管理员完成 AI 模型配置");
                     return;
                 }
                 const requestConfig = resolveModelRequestConfig(effectiveConfig, textModel);
-                const detail = await createAgentSession({ projectId: values.projectId, prompt: values.prompt, config: backendProviderConfig(requestConfig) });
+                const detail = await createAgentSession({ projectId: values.projectId, prompt: values.prompt, config: systemProviderTaskConfig(requestConfig) });
                 setTasks((items) => [...detail.tasks, ...items]);
             } else {
-                const videoModel = values.model?.trim() || effectiveConfig.videoModel || effectiveConfig.model;
-                if (values.operation !== "compare_versions" && !isAiConfigReady(effectiveConfig, videoModel)) {
-                    message.error("系统暂无可用视频模型，请联系管理员完成 AI 模型配置");
+                const isVersionComparison = values.operation === "compare_versions";
+                const videoModel = values.model?.trim() || taskModelOptions[0]?.value || "";
+                if (!isVersionComparison && !isAiConfigReady(effectiveConfig, videoModel)) {
+                    message.error("当前账号暂无可用视频模型，请检查后台定价、模型权限或会员状态");
                     return;
                 }
-                const requestConfig = resolveModelRequestConfig(effectiveConfig, videoModel);
+                let provider = "internal-agent";
+                let model = "version-router";
+                let config: ReturnType<typeof systemProviderTaskConfig> | undefined;
+                if (!isVersionComparison) {
+                    const requestConfig = resolveModelRequestConfig(effectiveConfig, videoModel);
+                    provider = "openai-compatible";
+                    model = requestConfig.model;
+                    config = systemProviderTaskConfig(requestConfig);
+                }
                 const task = await createGenerationTask({
                     projectId: values.projectId,
                     type: `video_${values.operation}`,
                     operation: values.operation,
                     prompt: values.prompt,
-                    provider: values.operation === "compare_versions" ? "internal-agent" : "openai-compatible",
-                    model: values.operation === "compare_versions" ? "version-router" : requestConfig.model,
+                    provider,
+                    model,
                     input: {
                         source: "tasks-page",
-                        mode: values.operation === "compare_versions" ? "workflow" : "video",
+                        mode: isVersionComparison ? "workflow" : "video",
                         prompt: buildVideoOperationPrompt(values.operation, values.prompt),
-                        config: values.operation === "compare_versions" ? undefined : backendProviderConfig(requestConfig),
+                        config,
                         metadata: { videoEditOperation: values.operation },
                     },
                 });
@@ -400,7 +419,7 @@ export default function TasksPage() {
             <Modal title="新建异步生成任务" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={submitTask} confirmLoading={creating} okText="创建任务">
                 <Form form={form} layout="vertical" initialValues={{ operation: "agent_session" }}>
                     <Form.Item name="operation" label="任务类型" rules={[{ required: true, message: "请选择任务类型" }]}>
-                        <Select options={operationOptions} />
+                        <Select options={operationOptions} onChange={() => form.setFieldValue("model", undefined)} />
                     </Form.Item>
                     <Form.Item name="prompt" label="创作指令" rules={[{ required: true, message: "请输入创作指令" }]}>
                         <Input.TextArea rows={5} placeholder="描述短剧、MV、TVC 或要执行的视频编辑操作" />
@@ -409,7 +428,16 @@ export default function TasksPage() {
                         <Select allowClear showSearch optionFilterProp="label" options={projectOptions} placeholder={projectOptions.length ? "可选，选择要绑定的画布" : "暂无本地画布"} />
                     </Form.Item>
                     <Form.Item name="model" label="目标模型">
-                        <Input placeholder="可选，例如 seedance、kling、wan、nano-banana" />
+                        <Select
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            className="tasks-page-model-select"
+                            disabled={taskOperation === "compare_versions"}
+                            options={taskModelOptions}
+                            placeholder={taskOperation === "compare_versions" ? "版本对比不调用生成模型" : taskModelOptions.length ? "默认使用首个可用模型" : "当前账号暂无可用模型"}
+                            notFoundContent="当前账号暂无可用模型"
+                        />
                     </Form.Item>
                 </Form>
             </Modal>
@@ -621,34 +649,6 @@ function formatTaskJson(value?: string) {
     } catch {
         return value;
     }
-}
-
-function backendProviderConfig(config: ReturnType<typeof resolveModelRequestConfig>) {
-    return {
-        apiFormat: config.apiFormat,
-        interfaceType: config.interfaceType,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-        size: config.size,
-        quality: config.quality,
-        transparentBackground: config.transparentBackground,
-        count: config.count,
-        videoSeconds: config.videoSeconds,
-        vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled,
-        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
-        videoSuperResolutionScene: config.videoSuperResolutionScene,
-        videoSuperResolutionVersion: config.videoSuperResolutionVersion,
-        videoSuperResolutionFps: config.videoSuperResolutionFps,
-        audioVoice: config.audioVoice,
-        audioFormat: config.audioFormat,
-        audioSpeed: config.audioSpeed,
-        audioInstructions: config.audioInstructions,
-        systemPrompt: config.systemPrompt,
-    };
 }
 
 function buildVideoOperationPrompt(operation: string, prompt: string) {

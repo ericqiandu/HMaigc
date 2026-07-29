@@ -7,6 +7,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { imageMetadata, parseBackendGenerationResult } from "@/lib/canvas/canvas-generation-task-sync";
+import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
@@ -121,32 +122,7 @@ async function prepareBackendImageReference(image: ReferenceImage) {
 
 export function backendProviderConfig(config: AiConfig) {
     const requestConfig = resolveModelRequestConfig(config, config.model);
-    return {
-        channelId: requestConfig.channelId,
-        apiFormat: requestConfig.apiFormat,
-        interfaceType: requestConfig.interfaceType,
-        baseUrl: requestConfig.baseUrl,
-        apiKey: requestConfig.apiKey,
-        model: requestConfig.model,
-        size: config.size,
-        quality: config.quality,
-        transparentBackground: config.transparentBackground,
-        count: config.count,
-        videoSeconds: config.videoSeconds,
-        vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled,
-        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
-        videoSuperResolutionScene: config.videoSuperResolutionScene,
-        videoSuperResolutionVersion: config.videoSuperResolutionVersion,
-        videoSuperResolutionFps: config.videoSuperResolutionFps,
-        audioVoice: config.audioVoice,
-        audioFormat: config.audioFormat,
-        audioSpeed: config.audioSpeed,
-        audioInstructions: config.audioInstructions,
-        systemPrompt: config.systemPrompt,
-    };
+    return systemProviderTaskConfig(requestConfig);
 }
 
 export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
