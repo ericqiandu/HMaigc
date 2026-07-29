@@ -47,12 +47,12 @@
 
 .updream-video-background-scrim {
     background:
-        linear-gradient(180deg, rgba(248, 251, 255, 0.18) 0%, rgba(245, 247, 251, 0.34) 46%, #f5f7fb 94%),
-        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.08), rgba(238, 244, 252, 0.5) 72%);
+        linear-gradient(180deg, rgba(248, 251, 255, 0.12) 0%, rgba(245, 247, 251, 0.24) 46%, #f5f7fb 94%),
+        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.05), rgba(238, 244, 252, 0.34) 72%);
 }
 
 .updream-video-background-glow {
-    background: radial-gradient(circle at 50% 43%, rgba(255, 255, 255, 0.16), transparent 42%);
+    background: radial-gradient(circle at 50% 43%, rgba(255, 255, 255, 0.1), transparent 42%);
 }
 
 .dark .updream-video-background-media {
