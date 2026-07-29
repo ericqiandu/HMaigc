@@ -34,6 +34,7 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 :where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
     min-height: var(--workspace-ui-control-height);
     gap: var(--workspace-ui-space-3);
+    flex-shrink: 0;
 }
 
 :where(.workspace-ui-scope, .settings-workspace-page) .page-header-copy {
@@ -156,6 +157,44 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
     background: color-mix(in srgb, var(--workspace-ui-page) 92%, transparent);
 }
 
+.workspace-ui-scope .team-navigation-item[aria-current="page"] {
+    background: var(--workspace-ui-control-hover) !important;
+    color: var(--workspace-ui-text) !important;
+}
+
+.workspace-ui-scope .team-navigation-item[aria-current="page"] :where(.team-navigation-icon) {
+    background: var(--workspace-ui-control) !important;
+}
+
+.workspace-ui-scope .team-navigation-item[aria-current="page"] :where(.team-navigation-meta, .team-navigation-chevron) {
+    color: var(--workspace-ui-text-secondary) !important;
+}
+
+.settings-workspace-page .settings-section-button[aria-current="page"] {
+    background: var(--workspace-ui-control-hover) !important;
+    color: var(--workspace-ui-text) !important;
+}
+
+.settings-workspace-page .settings-section-button[aria-current="page"] .settings-section-description {
+    color: var(--workspace-ui-text-secondary) !important;
+}
+
+.workspace-ui-scope .app-collection-card .ant-btn-sm {
+    min-height: 32px;
+}
+
+@media (min-width: 640px) and (max-width: 1279px) {
+    .workspace-ui-scope .workspace-page-frame,
+    .workspace-ui-scope.canvas-library-page .canvas-library-content,
+    .settings-workspace-page {
+        padding-inline: clamp(24px, 4vw, 48px) !important;
+    }
+
+    .workspace-ui-scope.project-workbench-page .project-workbench-shell {
+        padding-inline: clamp(24px, 4vw, 48px) !important;
+    }
+}
+
 @media (max-width: 1023px) {
     :where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
         align-items: flex-start;
@@ -174,6 +213,8 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
     }
 
     .settings-workspace-page {
+        height: 100%;
+        overflow-y: auto;
         padding-top: 76px;
         padding-inline: 16px;
     }
@@ -252,5 +293,85 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 
     :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar-actions {
         width: 100%;
+    }
+
+    :where(.workspace-ui-scope, .settings-workspace-page) .app-pagination-bar {
+        position: static;
+        justify-content: center;
+        padding-inline: 0;
+        background: transparent;
+        backdrop-filter: none;
+    }
+
+    .settings-workspace-page .settings-page-body {
+        display: block;
+        min-height: auto;
+        flex: none;
+    }
+
+    .settings-workspace-page .settings-section-nav {
+        padding: 4px;
+    }
+
+    .settings-workspace-page .settings-section-nav > nav {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+        overflow: visible;
+    }
+
+    .settings-workspace-page .settings-section-button {
+        width: 100%;
+        min-width: 0;
+        min-height: 44px;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px;
+        text-align: center;
+    }
+
+    .settings-workspace-page .settings-section-button[aria-current="page"] {
+        background: var(--workspace-ui-control-hover) !important;
+        color: var(--workspace-ui-text) !important;
+    }
+
+    .settings-workspace-page .settings-section-copy {
+        min-width: 0;
+    }
+
+    .settings-workspace-page .settings-section-description {
+        display: none;
+    }
+
+    .settings-workspace-page .settings-content-panel {
+        min-height: auto;
+        margin-top: var(--workspace-ui-space-3);
+    }
+
+    .settings-workspace-page .settings-content-scroll {
+        height: auto;
+        overflow: visible;
+    }
+
+    .workspace-ui-scope.project-workbench-page .page-header-actions {
+        width: calc(100% - 46px);
+    }
+
+    .workspace-ui-scope .assets-filter-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--workspace-ui-space-3);
+        overflow: visible;
+    }
+
+    .workspace-ui-scope .assets-filter-options,
+    .workspace-ui-scope .skills-category-list {
+        min-width: 0;
+        padding-bottom: 4px;
+        overscroll-behavior-inline: contain;
+    }
+
+    .workspace-ui-scope :where(.asset-filter-option, .skills-category-option) {
+        min-height: 36px;
     }
 }

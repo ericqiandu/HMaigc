@@ -274,12 +274,12 @@ export default function AssetsPage() {
                     <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索标题、内容、标签或来源" onChange={(event) => { setPage(1); setKeyword(event.target.value); }} />
                 </ListToolbar>
 
-                <div className="grid min-h-0 gap-4 lg:grid-cols-[176px_minmax(0,1fr)]">
-                    <aside className="thin-scrollbar flex gap-2 overflow-x-auto border-b border-border/70 py-3 lg:sticky lg:top-0 lg:block lg:max-h-[calc(100vh-150px)] lg:overflow-y-auto lg:border-b-0 lg:border-r lg:pr-3">
+                <div className="assets-library-layout grid min-h-0 gap-4 lg:grid-cols-[176px_minmax(0,1fr)]">
+                    <aside className="assets-filter-panel thin-scrollbar grid gap-3 border-b border-border/70 py-3 lg:sticky lg:top-0 lg:block lg:max-h-[calc(100vh-150px)] lg:overflow-y-auto lg:border-b-0 lg:border-r lg:pr-3">
                         <AssetFilterGroup title="素材类型" options={kindOptions} value={kindFilter} counts={kindCounts} onChange={(value) => { setKindFilter(value as AssetKind | "all"); setPage(1); }} />
                         <AssetFilterGroup title="业务分类" options={categoryOptions} value={categoryFilter} counts={categoryCounts} onChange={(value) => { setCategoryFilter(value as AssetCategory | "all"); setPage(1); }} className="lg:mt-5" />
                     </aside>
-                    <section className="min-w-0">
+                    <section className="assets-library-results min-w-0">
                         {selectedAssets.length ? (
                             <div className="mt-3 flex min-h-10 flex-wrap items-center gap-2 border-y border-border/75 py-2 text-xs">
                                 <strong className="mr-auto font-medium">已选择 {selectedAssets.length} 个素材</strong>
@@ -485,12 +485,12 @@ function AssetCard({ asset, selected, onSelect, onOpen, onEdit, onCopy, onDownlo
 
 function AssetFilterGroup({ title, options, value, counts, onChange, className = "" }: { title: string; options: Array<{ label: string; value: string }>; value: string; counts: Map<string, number>; onChange: (value: string) => void; className?: string }) {
     return (
-        <div className={className}>
-            <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground/38">{title}</div>
-            <div className="flex gap-1 lg:block">
+        <div className={`assets-filter-group min-w-0 ${className}`}>
+            <div className="assets-filter-title mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground/38">{title}</div>
+            <div className="assets-filter-options thin-scrollbar flex gap-1 overflow-x-auto lg:block lg:overflow-visible">
                 {options.map((option) => (
-                    <button key={option.value} type="button" className={`flex h-8 shrink-0 items-center justify-between gap-3 rounded px-2 text-xs transition-colors lg:mb-0.5 lg:w-full ${value === option.value ? "bg-foreground/[.08] font-medium text-foreground" : "text-foreground/56 hover:bg-foreground/[.04] hover:text-foreground"}`} onClick={() => onChange(option.value)}>
-                        <span>{option.label}</span><span className="rounded bg-foreground/[.06] px-1.5 py-0.5 text-[10px] tabular-nums text-foreground/45">{counts.get(option.value) || 0}</span>
+                    <button key={option.value} type="button" className={`asset-filter-option flex h-8 shrink-0 items-center justify-between gap-3 rounded px-2 text-xs transition-colors lg:mb-0.5 lg:w-full ${value === option.value ? "bg-foreground/[.08] font-medium text-foreground" : "text-foreground/56 hover:bg-foreground/[.04] hover:text-foreground"}`} onClick={() => onChange(option.value)}>
+                        <span className="asset-filter-option-label">{option.label}</span><span className="asset-filter-option-count rounded bg-foreground/[.06] px-1.5 py-0.5 text-[10px] tabular-nums text-foreground/45">{counts.get(option.value) || 0}</span>
                     </button>
                 ))}
             </div>

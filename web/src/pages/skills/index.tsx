@@ -209,9 +209,9 @@ export default function SkillsPage() {
                 </ListToolbar>
 
                 {isPagedTab && categories.length ? (
-                    <div className="thin-scrollbar flex gap-1 overflow-x-auto border-b border-border/70 py-2" aria-label="技能分类">
+                    <div className="skills-category-list thin-scrollbar flex gap-1 overflow-x-auto border-b border-border/70 py-2" aria-label="技能分类">
                         {["all", ...categories].map((value) => (
-                            <button key={value} type="button" className={`h-7 shrink-0 rounded px-2.5 text-xs transition-colors ${category === value ? "bg-foreground text-background" : "text-foreground/55 hover:bg-foreground/[.05] hover:text-foreground"}`} onClick={() => { setCategory(value); setPage(1); }}>
+                            <button key={value} type="button" className={`skills-category-option h-7 shrink-0 rounded px-2.5 text-xs transition-colors ${category === value ? "bg-foreground text-background" : "text-foreground/55 hover:bg-foreground/[.05] hover:text-foreground"}`} onClick={() => { setCategory(value); setPage(1); }}>
                                 {value === "all" ? "全部分类" : value}
                             </button>
                         ))}

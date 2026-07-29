@@ -89,10 +89,12 @@ export function PaginationBar({ current, pageSize, total, onChange, pageSizeOpti
     return (
         <div className="app-pagination-bar sticky bottom-0 z-10 mt-4 flex min-w-0 justify-end bg-background/92 px-2 py-3 backdrop-blur-xl">
             <Pagination
+                className="app-pagination-control"
                 current={current}
                 pageSize={pageSize}
                 total={total}
                 showSizeChanger
+                showLessItems
                 responsive
                 pageSizeOptions={pageSizeOptions.map(String)}
                 showTotal={(value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`}
