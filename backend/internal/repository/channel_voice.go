@@ -22,7 +22,7 @@ func (r *Repository) ChannelVoices(channelID string, includeDisabled bool) ([]mo
 func (r *Repository) ChannelVoicesForUser(channelID string, userID string, includeDisabled bool) ([]model.ChannelVoice, error) {
 	var voices []model.ChannelVoice
 	query := r.db.
-		Where("channel_id = ? AND (owner_user_id = '' OR owner_user_id = ?)", channelID, userID).
+		Where("channel_id = ? AND (owner_user_id IS NULL OR owner_user_id = '' OR owner_user_id = ?)", channelID, userID).
 		Order("display_name asc, created_at asc")
 	if !includeDisabled {
 		query = query.Where("enabled = ? AND provider_status IN ?", true, []string{"active", "pending_activation"})
@@ -40,7 +40,7 @@ func (r *Repository) ChannelVoiceByID(channelID string, id string) (*model.Chann
 
 func (r *Repository) ChannelVoiceByIDForUser(channelID string, id string, userID string) (*model.ChannelVoice, error) {
 	var voice model.ChannelVoice
-	if err := r.db.First(&voice, "id = ? AND channel_id = ? AND (owner_user_id = '' OR owner_user_id = ?)", id, channelID, userID).Error; err != nil {
+	if err := r.db.First(&voice, "id = ? AND channel_id = ? AND (owner_user_id IS NULL OR owner_user_id = '' OR owner_user_id = ?)", id, channelID, userID).Error; err != nil {
 		return nil, err
 	}
 	return &voice, nil
@@ -155,7 +155,7 @@ func (r *Repository) UpsertChannelVoices(voices []model.ChannelVoice, audit *mod
 			}
 		}
 		if err := tx.Model(&model.ChannelVoice{}).
-			Where("channel_id = ? AND owner_user_id = '' AND provider_status = ? AND voice_key NOT IN ?", channelID, "active", voiceKeys).
+			Where("channel_id = ? AND (owner_user_id IS NULL OR owner_user_id = '') AND provider_status = ? AND voice_key NOT IN ?", channelID, "active", voiceKeys).
 			Updates(map[string]any{
 				"enabled": false, "provider_status": "missing", "last_error": "供应商音色目录已不再返回该音色", "updated_at": time.Now(),
 			}).Error; err != nil {

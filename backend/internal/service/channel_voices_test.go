@@ -285,6 +285,9 @@ func TestUserChannelVoicesIsolateOwnedVoicesAndPersistFavorites(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := db.Model(&model.ChannelVoice{}).Where("id = ?", "voice-global").UpdateColumn("owner_user_id", nil).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	catalog, err := svc.UserChannelVoices(user, channel.ID)
 	if err != nil {
@@ -300,6 +303,13 @@ func TestUserChannelVoicesIsolateOwnedVoicesAndPersistFavorites(t *testing.T) {
 		if voice.ID == "voice-owned" && !voice.OwnedByCurrentUser {
 			t.Fatalf("owned voice response = %#v", voice)
 		}
+	}
+	globalFavorite, err := svc.SetUserChannelVoiceFavorite(user, channel.ID, "voice-global", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !globalFavorite.Favorited || globalFavorite.OwnedByCurrentUser {
+		t.Fatalf("global favorite response = %#v", globalFavorite)
 	}
 	favorited, err := svc.SetUserChannelVoiceFavorite(user, channel.ID, "voice-owned", true)
 	if err != nil {
@@ -478,6 +488,9 @@ func TestSyncMiniMaxChannelVoicesDisablesMissingActiveVoice(t *testing.T) {
 		ProviderStatus: "active", Enabled: true,
 	}
 	if err := db.Create(&stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ChannelVoice{}).Where("id = ?", stale.ID).UpdateColumn("owner_user_id", nil).Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.SyncMiniMaxChannelVoices(context.Background(), admin, channel.ID); err != nil {

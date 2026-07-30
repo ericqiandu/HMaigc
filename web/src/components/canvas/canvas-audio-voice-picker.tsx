@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { AudioLines } from "lucide-react";
 import { Modal } from "antd";
 
+import { loadCanvasAudioVoiceCatalog } from "@/components/canvas/canvas-audio-voice-catalog-data";
 import { CanvasAudioVoiceCatalog } from "@/components/canvas/canvas-audio-voice-catalog";
 import { CanvasAudioVoiceCloneDialog } from "@/components/canvas/canvas-audio-voice-clone-dialog";
 import { useChannelVoicePreview } from "@/components/canvas/use-channel-voice-preview";
 import { normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { refreshSystemChannels } from "@/lib/user-session";
-import { setChannelVoiceFavorite } from "@/services/api/voices";
+import { listUserChannelVoices, setChannelVoiceFavorite } from "@/services/api/voices";
 import { modelOptionName, resolveModelChannel, type AiConfig, type ChannelVoice } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -27,6 +28,7 @@ export function CanvasAudioVoicePicker({ config, value, onChange, className = ""
     const [open, setOpen] = useState(false);
     const [cloneOpen, setCloneOpen] = useState(false);
     const [catalogVoices, setCatalogVoices] = useState<ChannelVoice[]>([]);
+    const [catalogLoading, setCatalogLoading] = useState(false);
     const [favoritingVoiceId, setFavoritingVoiceId] = useState("");
     const [operationError, setOperationError] = useState("");
     const selectedVoice = normalizeAudioVoiceValue(value);
@@ -41,8 +43,27 @@ export function CanvasAudioVoicePicker({ config, value, onChange, className = ""
     const cloneAvailable = channel.interfaceType === "minimax-speech" && Boolean(channel.id);
 
     useEffect(() => {
-        setCatalogVoices(configuredVoices);
-    }, [configuredVoices]);
+        if (!open) return;
+
+        const controller = new AbortController();
+        setCatalogLoading(true);
+        setCatalogVoices([]);
+        setOperationError("");
+
+        void loadCanvasAudioVoiceCatalog(channel.id, selectedModel, listUserChannelVoices, controller.signal)
+            .then((voices) => {
+                if (!controller.signal.aborted) setCatalogVoices(voices);
+            })
+            .catch((loadError: unknown) => {
+                if (controller.signal.aborted) return;
+                setOperationError(loadError instanceof Error ? `读取音色目录失败：${loadError.message}` : "读取音色目录失败");
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setCatalogLoading(false);
+            });
+
+        return () => controller.abort();
+    }, [channel.id, open, selectedModel]);
 
     const dialogStyle = {
         "--audio-voice-surface": theme.spatial.elevated,
@@ -124,6 +145,7 @@ export function CanvasAudioVoicePicker({ config, value, onChange, className = ""
                 <div className="canvas-audio-voice-dialog-theme" style={dialogStyle}>
                     <CanvasAudioVoiceCatalog
                         voices={catalogVoices}
+                        loading={catalogLoading}
                         selectedVoice={selectedVoice}
                         loadingVoiceId={preview.loadingVoiceId}
                         playingVoiceId={preview.playingVoiceId}

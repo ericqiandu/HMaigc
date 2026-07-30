@@ -85,8 +85,8 @@ export function previewChannelVoice(channelId: string, voiceId: string, model: s
     return request<{ preview: ChannelVoicePreview }>(api.post(`/channels/${encodeURIComponent(channelId)}/voices/${encodeURIComponent(voiceId)}/preview`, { model }, { signal }));
 }
 
-export function listUserChannelVoices(channelId: string) {
-    return request<{ voices: ChannelVoice[] }>(api.get(`/channels/${encodeURIComponent(channelId)}/voices`));
+export function listUserChannelVoices(channelId: string, signal?: AbortSignal) {
+    return request<{ voices: ChannelVoice[] }>(api.get(`/channels/${encodeURIComponent(channelId)}/voices`, { signal }));
 }
 
 export function setChannelVoiceFavorite(channelId: string, voiceId: string, favorite: boolean) {

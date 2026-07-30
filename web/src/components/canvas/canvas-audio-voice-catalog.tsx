@@ -9,6 +9,7 @@ type VoiceCatalogTab = "library" | "mine" | "favorites";
 
 type CanvasAudioVoiceCatalogProps = {
     voices: ChannelVoice[];
+    loading: boolean;
     selectedVoice: string;
     loadingVoiceId: string;
     playingVoiceId: string;
@@ -36,6 +37,15 @@ function paginationItems(current: number, pageCount: number): Array<number | "el
         result.push(page);
     });
     return result;
+}
+
+function emptyCatalogMessage(props: Pick<CanvasAudioVoiceCatalogProps, "error" | "loading" | "voices">, tab: VoiceCatalogTab): string {
+    if (props.loading) return "正在加载音色目录…";
+    if (props.error) return "音色目录加载失败，请根据上方错误处理后重试";
+    if (props.voices.length === 0) return "当前音频模型尚未配置可用音色，请联系管理员";
+    if (tab === "mine") return "还没有克隆音色";
+    if (tab === "favorites") return "还没有收藏音色";
+    return "当前条件下没有匹配的音色";
 }
 
 export function CanvasAudioVoiceCatalog(props: CanvasAudioVoiceCatalogProps) {
@@ -202,7 +212,7 @@ export function CanvasAudioVoiceCatalog(props: CanvasAudioVoiceCatalogProps) {
                         );
                     })
                 ) : (
-                    <div className="canvas-audio-voice-empty">{props.voices.length === 0 ? "当前音频模型尚未配置可用音色，请联系管理员" : tab === "mine" ? "还没有克隆音色" : tab === "favorites" ? "还没有收藏音色" : "当前条件下没有匹配的音色"}</div>
+                    <div className="canvas-audio-voice-empty">{emptyCatalogMessage(props, tab)}</div>
                 )}
             </div>
 
