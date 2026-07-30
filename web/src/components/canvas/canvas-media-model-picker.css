@@ -1,0 +1,15 @@
+.canvas-media-model-picker-slot {
+    width: 200px;
+    min-width: 200px;
+    max-width: 200px;
+    flex: 0 0 200px;
+}
+
+@media (max-width: 720px) {
+    .canvas-media-model-picker-slot {
+        width: 160px;
+        min-width: 160px;
+        max-width: 160px;
+        flex-basis: 160px;
+    }
+}

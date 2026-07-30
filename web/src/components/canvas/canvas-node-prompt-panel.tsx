@@ -21,6 +21,7 @@ import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-pic
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-composer.css";
+import "./canvas-media-model-picker.css";
 import "./canvas-video-composer.css";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -266,7 +267,7 @@ export function CanvasNodePromptPanel({
             </div>
         ) : (
             <div className={`flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
-                <div className={`${expanded ? "max-w-[320px]" : mode === "image" ? "w-[114px] max-w-[114px] flex-none" : mode === "video" ? "w-[114px] max-w-[114px] flex-none" : "max-w-[174px]"} min-w-[88px] flex-1`}>
+                <div className={isImageMode || isVideoMode ? "canvas-media-model-picker-slot" : `${expanded ? "max-w-[320px]" : "max-w-[174px]"} min-w-[88px] flex-1`}>
                     <ModelPicker
                         className={`!h-8 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode || isVideoMode ? "canvas-image-model-picker" : ""}`}
                         fullWidth

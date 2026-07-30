@@ -452,3 +452,35 @@ No actionable P0, P1 or P2 issue remains in the requested admin-versus-workspace
 No actionable P0, P1 or P2 difference remains for the requested asset-classification and toolbar scope.
 
 final result: passed
+
+## Canvas Media Model Width QA (2026-07-31)
+
+- Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-d8bd3579-ac08-404d-8346-ee16cc493b61.png`.
+- Audio implementation: `qa-artifacts/canvas-media-model-width-20260731/audio-model-width-after.png`.
+- Image implementation: `qa-artifacts/canvas-media-model-width-20260731/image-model-width-after.png`.
+- Video implementation: `qa-artifacts/canvas-media-model-width-20260731/video-model-width-after.png`.
+- Focused before/after comparison: `qa-artifacts/canvas-media-model-width-20260731/audio-model-width-before-after.png`.
+- Source pixels: 676 × 207.
+- Implementation viewport: 919 × 912 CSS px at device scale factor 1.
+- State: dark authenticated canvas with one selected media node and its prompt composer open.
+
+### Comparison findings and fixes
+
+- P1: audio, image and video model selectors were independently constrained to 114px, reducing the selected audio model `MinMax-speech-2.8-hd` to `MinM...`.
+- The three media composers now use one shared width contract: 200px on normal desktop layouts and 160px below the existing 720px compact breakpoint.
+- The shared `ModelPicker` remains the single rendering implementation, so icon scale, label typography, selected-state behavior, popup behavior and full-name title remain consistent across all three media types.
+
+### Verified result
+
+- Audio: 200px selector, 660px composer, `MinMax-speech-2.8-hd` renders without text overflow or truncation.
+- Image: 200px selector, 660px composer, `Gemini 3.1 Flash Image` renders without text overflow or truncation.
+- Video: 200px selector, 660px composer, `Seedance 2.0 Fast` renders without text overflow or truncation.
+- The remaining voice, generation-mode, parameter, cost and submit controls stay on one line in all three captured desktop states.
+- The production TypeScript check and Vite build pass.
+
+### Comparison history
+
+- Initial state: each media node duplicated the same 114px constraint in separate JSX/CSS branches.
+- Final state: one `canvas-media-model-picker-slot` class owns the normal and compact widths; the duplicated audio and image/video width declarations were removed.
+
+final result: passed

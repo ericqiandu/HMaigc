@@ -231,12 +231,6 @@
     gap: 4px;
 }
 
-.canvas-audio-model-picker {
-    width: 114px;
-    max-width: 114px;
-    flex: 0 0 114px;
-}
-
 .canvas-audio-control-divider {
     margin-inline: 0;
 }
@@ -559,12 +553,6 @@
 @media (max-width: 720px) {
     .canvas-audio-composer-controls {
         gap: 6px;
-    }
-
-    .canvas-audio-model-picker {
-        width: 114px;
-        max-width: 114px;
-        flex-basis: 114px;
     }
 
     .canvas-audio-character-count {

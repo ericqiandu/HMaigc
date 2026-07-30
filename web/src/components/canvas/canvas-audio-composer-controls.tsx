@@ -9,6 +9,7 @@ import type { CanvasNodeMetadata } from "@/types/canvas";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
 import "./canvas-audio-model-picker.css";
+import "./canvas-media-model-picker.css";
 
 type CanvasAudioComposerControlsProps = {
     config: AiConfig;
@@ -26,7 +27,7 @@ export function CanvasAudioComposerControls({ config, credits, promptLength, isR
         <div className="canvas-audio-composer-controls">
             <div className="canvas-audio-composer-primary-controls">
                 <ModelPicker
-                    className="canvas-image-model-picker canvas-audio-model-picker"
+                    className="canvas-image-model-picker canvas-audio-model-picker canvas-media-model-picker-slot"
                     fullWidth
                     config={config}
                     value={config.model}
