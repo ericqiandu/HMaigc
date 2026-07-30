@@ -1,6 +1,6 @@
 import { AnimatePresence, useReducedMotion } from "motion/react";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { ArrowLeft, Check, ChevronRight, Clapperboard, Clipboard, Copy, FolderOpen, FolderPlus, Image as ImageIcon, Layers3, Link2, Maximize2, Music2, PanelTop, Pencil, Plus, Redo2, Settings2, Tags, Trash2, Type, Undo2, Upload, UserRound, Video } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Clapperboard, Clipboard, Copy, FolderOpen, FolderPlus, Image as ImageIcon, Layers3, Link2, Maximize2, Music2, PanelTop, Plus, Redo2, Settings2, Tags, Trash2, Type, Undo2, Upload, UserRound, Video } from "lucide-react";
 
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
@@ -45,7 +45,6 @@ type CanvasNodeContextMenuProps = {
     onSaveAsset: () => void;
     onViewMedia: () => void;
     onEditText: () => void;
-    onOpenDrawing: () => void;
     onGenerateImage: () => void;
     onCopyContent: () => void;
     onCopyMediaUrl: () => void;
@@ -76,7 +75,6 @@ export function CanvasNodeContextMenu({
     onSaveAsset,
     onViewMedia,
     onEditText,
-    onOpenDrawing,
     onGenerateImage,
     onCopyContent,
     onCopyMediaUrl,
@@ -120,7 +118,6 @@ export function CanvasNodeContextMenu({
     const isImage = node?.type === CanvasNodeType.Image;
     const isText = node?.type === CanvasNodeType.Text;
     const isCharacterReference = Boolean(isText && node?.metadata?.workflowKind === "character" && node.metadata.characterAssetId);
-    const isDrawing = node?.type === CanvasNodeType.Drawing;
     const isVideo = node?.type === CanvasNodeType.Video;
     const isMedia = isImage || isVideo;
     const isAudio = node?.type === CanvasNodeType.Audio;
@@ -205,7 +202,6 @@ export function CanvasNodeContextMenu({
                                     <MenuSection label="节点操作" />
                                     {isFrame ? <MenuButton icon={<PanelTop />} label={node?.metadata?.frame?.collapsed ? "展开背板" : "折叠背板"} onClick={() => runAction(onToggleFrame)} /> : <MenuButton icon={<FolderPlus />} label="保存到我的素材" disabled={!canSaveAsset} onClick={() => runAction(onSaveAsset)} />}
                                     {isText ? <MenuButton icon={<Maximize2 />} label="放大编辑" onClick={() => runAction(onEditText)} /> : null}
-                                    {isDrawing ? <MenuButton icon={<Pencil />} label="打开绘图" onClick={() => runAction(onOpenDrawing)} /> : null}
                                     {isText ? <MenuButton icon={<ImageIcon />} label="用文本生图" disabled={!canGenerateFromText} onClick={() => runAction(onGenerateImage)} /> : null}
                                     <MenuDivider />
                                     <MenuSection label="副本与内容" />
@@ -251,7 +247,6 @@ function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, re
     const simpleMode = workspaceMode === "simple";
     const nodeCommands: CanvasCreateCommand[] = [
         { id: "text", label: "文本", icon: <Type />, onClick: () => onAddNode(CanvasNodeType.Text) },
-        { id: "drawing", label: "绘图", icon: <Pencil />, onClick: () => onAddNode(CanvasNodeType.Drawing) },
         { id: "script", label: "分镜脚本", icon: <Clapperboard />, badge: "核心", onClick: () => onAddNode(CanvasNodeType.Script) },
         ...(!simpleMode ? [{ id: "frame", label: "背板", icon: <PanelTop />, onClick: () => onAddNode(CanvasNodeType.Frame) }] : []),
         { id: "image", label: "图片", icon: <ImageIcon />, onClick: () => onAddNode(CanvasNodeType.Image) },
@@ -357,7 +352,6 @@ function nodeTypeLabel(node?: CanvasNodeData | null) {
     if (node.type === CanvasNodeType.Skill) return "技能节点";
     if (node.type === CanvasNodeType.Video) return "视频节点";
     if (node.type === CanvasNodeType.Audio) return "音频节点";
-    if (node.type === CanvasNodeType.Drawing) return "绘图节点";
     if (node.type === CanvasNodeType.Frame) return "背板";
     return "生成配置节点";
 }

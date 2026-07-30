@@ -73,7 +73,6 @@ type CanvasProjectWorldLayersProps = {
     onReplaceMedia: (node: CanvasNodeData) => void;
     onOpenTextEditor: (node: CanvasNodeData) => void;
     onOpenDirector: (node: CanvasNodeData) => void;
-    onOpenDrawing: (node: CanvasNodeData) => void;
 };
 
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
@@ -154,7 +153,6 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         resourceLabel={props.resourceReferenceByNodeId.get(node.id)}
                         mentionReferences={props.mentionReferencesByNodeId.get(node.id) || EMPTY_RESOURCE_REFERENCES}
                         renderNodeContent={props.renderCanvasNodeContent}
-                        drawingProjectId={props.projectId}
                         onMouseDown={props.onNodeMouseDown}
                         onHoverStart={props.onNodeHoverStart}
                         onHoverEnd={props.onNodeHoverEnd}
@@ -171,7 +169,6 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         onReplaceMedia={props.onReplaceMedia}
                         onOpenTextEditor={props.onOpenTextEditor}
                         onOpenDirector={props.onOpenDirector}
-                        onOpenDrawing={props.onOpenDrawing}
                         onContextMenu={props.onNodeContextMenu}
                     />
                 ),

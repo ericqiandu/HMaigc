@@ -19,7 +19,7 @@ cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 - `CANVAS_HTTP_HOST=127.0.0.1`，只有反向代理对公网开放。
 - PostgreSQL、Redis 和后端端口没有映射到公网。
 - 支付、模型渠道和邮件密钥只在后台或服务器环境中配置。
-- 已取得适用的 tldraw 商业许可，并完成 AGPL 与第三方模型条款审查。
+- 已完成 AGPL、第三方模型条款和生产依赖许可证审查。
 
 ## 2. 启动与健康检查
 

@@ -108,7 +108,6 @@ export function useCanvasGenerationExecutor({
             try {
                 rawGenerationContext = await hydrateNodeGenerationContext(
                     buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
-                    projectId,
                     domainProjectId,
                     mode,
                     mode === "video" && supportsVideoReferenceAudio(generationConfig),

@@ -12,7 +12,6 @@ export type ViewportTransform = {
 export enum CanvasNodeType {
     Image = "image",
     Text = "text",
-    Drawing = "drawing",
     Script = "script",
     Skill = "skill",
     Config = "config",
@@ -233,13 +232,6 @@ export type CanvasNodeMetadata = {
         expandedWidth: number;
         expandedHeight: number;
     };
-    drawingId?: string;
-    drawingRevision?: number;
-    drawingUpdatedAt?: string;
-    drawingPreviewStorageKey?: string;
-    drawingPreviewUrl?: string;
-    drawingShapeCount?: number;
-    drawingPageCount?: number;
     emotionEdit?: {
         sourceNodeId: string;
         characterName: string;

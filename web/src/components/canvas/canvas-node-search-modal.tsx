@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Input, Modal } from "antd";
-import { BookOpenText, FileText, Image, Pencil, Search, Video } from "lucide-react";
+import { BookOpenText, FileText, Image, Search, Video } from "lucide-react";
 
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -26,7 +26,7 @@ export function CanvasNodeSearchModal({ open, nodes, onClose, onFocus }: { open:
                         onClick={() => { onFocus(node.id); onClose(); }}
                     >
                         <span className="canvas-overlay-list-item-icon canvas-node-search-result-icon grid size-8 shrink-0 place-items-center">
-                            {node.type === CanvasNodeType.Image ? <Image className="size-4" /> : node.type === CanvasNodeType.Video ? <Video className="size-4" /> : node.type === CanvasNodeType.Drawing ? <Pencil className="size-4" /> : <FileText className="size-4" />}
+                            {node.type === CanvasNodeType.Image ? <Image className="size-4" /> : node.type === CanvasNodeType.Video ? <Video className="size-4" /> : <FileText className="size-4" />}
                         </span>
                         <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-medium">{node.title}</span>
@@ -51,7 +51,6 @@ function nodeTypeLabel(type: CanvasNodeType) {
     return ({
         [CanvasNodeType.Image]: "图片节点",
         [CanvasNodeType.Text]: "文本节点",
-        [CanvasNodeType.Drawing]: "绘图节点",
         [CanvasNodeType.Script]: "分镜脚本节点",
         [CanvasNodeType.Skill]: "技能节点",
         [CanvasNodeType.Config]: "生成配置节点",

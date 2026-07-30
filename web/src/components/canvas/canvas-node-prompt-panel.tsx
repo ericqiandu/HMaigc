@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowUp, AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, Square, UserRound, Video } from "lucide-react";
+import { ArrowUp, AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Square, UserRound, Video } from "lucide-react";
 import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -572,7 +572,7 @@ function ReferenceThumbnail({ reference }: { reference: CanvasResourceReference 
     if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-full bg-black object-cover" muted preload="metadata" />;
     if (reference.kind === "character" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-full bg-black/5 object-contain" />;
 
-    const Icon = reference.sourceType === CanvasNodeType.Drawing ? Pencil : reference.kind === "character" ? UserRound : reference.kind === "audio" ? Music2 : reference.kind === "video" ? Video : reference.kind === "image" ? ImageIcon : FileText;
+    const Icon = reference.kind === "character" ? UserRound : reference.kind === "audio" ? Music2 : reference.kind === "video" ? Video : reference.kind === "image" ? ImageIcon : FileText;
     return (
         <span className="grid size-full place-items-center bg-black/10 text-current dark:bg-white/10">
             <Icon className="size-3.5 opacity-75" />

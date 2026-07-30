@@ -64,7 +64,6 @@ import { CanvasProjectStatusDialogs } from "./canvas-project-status-dialogs";
 import { CanvasProjectWorldLayers } from "./canvas-project-world-layers";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
 import { CanvasEmotionWorkspace } from "@/components/canvas/canvas-emotion-workspace";
-import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { useCanvasConnectionController } from "./use-canvas-connection-controller";
 import { useCanvasCollaboration } from "./use-canvas-collaboration";
 import { useCanvasAgentOperations } from "./use-canvas-agent-operations";
@@ -106,7 +105,6 @@ import {
 import type { ReferenceImage } from "@/types/image";
 
 const CanvasDirectorWorkbench = lazy(() => import("@/components/canvas/director/canvas-director-workbench").then((module) => ({ default: module.CanvasDirectorWorkbench })));
-const CanvasDrawingEditorModal = lazy(() => import("@/components/canvas/canvas-drawing-editor-modal").then((module) => ({ default: module.CanvasDrawingEditorModal })));
 
 const NODE_STATUS_SUCCESS = "success" as const;
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
@@ -208,7 +206,6 @@ function InfiniteCanvasPage() {
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [textEditorNodeId, setTextEditorNodeId] = useState<string | null>(null);
     const [characterReferenceNodeId, setCharacterReferenceNodeId] = useState<string | null>(null);
-    const [drawingNodeId, setDrawingNodeId] = useState<string | null>(null);
     const [stylePickerOpen, setStylePickerOpen] = useState(false);
     const [projectAssetOpen, setProjectAssetOpen] = useState(false);
     const [projectAssetInitialCategory, setProjectAssetInitialCategory] = useState("all");
@@ -556,14 +553,13 @@ function InfiniteCanvasPage() {
     });
 
     const handleNodesDeleted = useCallback(
-        (removedIds: Set<string>, nextNodes: CanvasNodeData[], removedNodes: CanvasNodeData[]) => {
+        (removedIds: Set<string>, nextNodes: CanvasNodeData[]) => {
             const clearDeletedId = (current: string | null) => (current && removedIds.has(current) ? null : current);
             setHoveredNodeId(clearDeletedId);
             setToolbarNodeId(clearDeletedId);
             setDialogNodeId(clearDeletedId);
             setTextEditorNodeId(clearDeletedId);
             setCharacterReferenceNodeId(clearDeletedId);
-            setDrawingNodeId(clearDeletedId);
             setInfoNodeId(clearDeletedId);
             setCropNodeId(clearDeletedId);
             setMaskEditNodeId(clearDeletedId);
@@ -580,13 +576,9 @@ function InfiniteCanvasPage() {
             setVersionCompareRootId(clearDeletedId);
             setScriptScrollTopById((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))));
             setContextMenu((current) => (current?.type === "node" && removedIds.has(current.nodeId) ? null : current));
-            const removedDrawingIds = removedNodes.flatMap((node) => (node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []));
-            if (removedDrawingIds.length) {
-                void Promise.all(removedDrawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId))).catch(() => message.warning("绘图节点已删除，但本地绘图缓存清理失败"));
-            }
             cleanupCanvasFiles({ projectId, nodes: nextNodes, chatSessions });
         },
-        [chatSessions, cleanupCanvasFiles, message, projectId, setAngleNodeId, setAnnotationNodeId, setCropNodeId, setEmotionNodeId, setMaskEditNodeId, setSplitNodeId, setUpscaleNodeId, setRunningNodeId],
+        [chatSessions, cleanupCanvasFiles, projectId, setAngleNodeId, setAnnotationNodeId, setCropNodeId, setEmotionNodeId, setMaskEditNodeId, setSplitNodeId, setUpscaleNodeId, setRunningNodeId],
     );
 
     const {
@@ -605,7 +597,6 @@ function InfiniteCanvasPage() {
         setPrimaryVersion,
         toggleNodeLocked,
     } = useCanvasNodeOperations({
-        projectId,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,
@@ -621,7 +612,6 @@ function InfiniteCanvasPage() {
 
     const { cancelPendingConnectionCreate, closeConnectionCreateMenu, connectionTargetNodeId, connectingParams, connectExistingNodes, createConnectedNode, handleConnectStart, mouseWorld, pendingConnectionCreate, setConnecting } =
         useCanvasConnectionController({
-            projectId,
             nodesRef,
             connectionsRef,
             viewportRef,
@@ -633,7 +623,6 @@ function InfiniteCanvasPage() {
             setSelectedConnectionId,
             setContextMenu,
             setDialogNodeId,
-            setDrawingNodeId,
         });
 
     const handleCanvasSelectionStart = useCallback(() => {
@@ -649,10 +638,7 @@ function InfiniteCanvasPage() {
     }, []);
 
     const handleSelectedNodeClick = useCallback((node: CanvasNodeData) => {
-        if (node.type === CanvasNodeType.Drawing) {
-            setDialogNodeId(null);
-            setDrawingNodeId(node.id);
-        } else if (node.type === CanvasNodeType.Script) {
+        if (node.type === CanvasNodeType.Script) {
             setDialogNodeId(null);
         } else if (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Frame) {
             setDialogNodeId((current) => (current === node.id ? current : null));
@@ -802,9 +788,6 @@ function InfiniteCanvasPage() {
     const dialogNode = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const textEditorNode = textEditorNodeId ? nodeById.get(textEditorNodeId) || null : null;
     const characterReferenceNode = characterReferenceNodeId ? nodeById.get(characterReferenceNodeId) || null : null;
-    const drawingNode = drawingNodeId ? nodeById.get(drawingNodeId) || null : null;
-    const pendingConnectionSourceNode = pendingConnectionCreate?.connection.handleType === "source" ? nodeById.get(pendingConnectionCreate.connection.nodeId) : null;
-    const canCreateDrawingFromConnection = pendingConnectionSourceNode?.type === CanvasNodeType.Image && Boolean(pendingConnectionSourceNode.metadata?.content);
 
     const openTextNodeEditor = useCallback((node: CanvasNodeData) => {
         if (node.type !== CanvasNodeType.Text) return;
@@ -820,15 +803,6 @@ function InfiniteCanvasPage() {
         setTextEditorNodeId(node.id);
     }, []);
 
-    const openDrawingNode = useCallback((node: CanvasNodeData) => {
-        if (node.type !== CanvasNodeType.Drawing) return;
-        setSelectedNodeIds(new Set([node.id]));
-        setSelectedConnectionId(null);
-        setContextMenu(null);
-        setDialogNodeId(null);
-        setToolbarNodeId(null);
-        setDrawingNodeId(node.id);
-    }, []);
     const { agentSnapshot, agentUndoCount, applyAgentOps, canUndoAgentOps, dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasAgentOperations({
         projectId,
         domainProjectId: linkedProjectId,
@@ -903,14 +877,9 @@ function InfiniteCanvasPage() {
     });
 
     const clearCanvas = useCallback(() => {
-        const drawingIds = nodesRef.current.flatMap((node) => (node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []));
-        if (drawingIds.length) {
-            void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId))).catch(() => message.warning("画布已清空，但部分本地绘图缓存清理失败"));
-        }
         setNodes([]);
         setConnections([]);
         setTextEditorNodeId(null);
-        setDrawingNodeId(null);
         setInfoNodeId(null);
         setCropNodeId(null);
         setMaskEditNodeId(null);
@@ -922,7 +891,7 @@ function InfiniteCanvasPage() {
         deselectCanvas();
         setClearConfirmOpen(false);
         clearCanvasFiles();
-    }, [clearCanvasFiles, deselectCanvas, message, nodesRef, projectId, setEmotionNodeId]);
+    }, [clearCanvasFiles, deselectCanvas, setEmotionNodeId]);
 
     useCanvasKeyboard({
         readOnly: !canEditCanvas,
@@ -1151,7 +1120,7 @@ function InfiniteCanvasPage() {
 
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
-            if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
+            if (panelNode.type === CanvasNodeType.Script) return null;
             return panelNode.type === CanvasNodeType.Config ? (
                 <CanvasConfigComposer
                     value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
@@ -1521,7 +1490,6 @@ function InfiniteCanvasPage() {
                         onReplaceMedia={(node) => handleUploadRequest(node.id)}
                         onOpenTextEditor={openTextNodeEditor}
                         onOpenDirector={editCanvasDirector}
-                        onOpenDrawing={openDrawingNode}
                     />
                 </InfiniteCanvas>
 
@@ -1551,7 +1519,7 @@ function InfiniteCanvasPage() {
                     />
                 ) : null}
 
-                {canEditCanvas && dialogNode && dialogNode.type !== CanvasNodeType.Script && dialogNode.type !== CanvasNodeType.Drawing && !selectionBox && !isNodeDragging ? (
+                {canEditCanvas && dialogNode && dialogNode.type !== CanvasNodeType.Script && !selectionBox && !isNodeDragging ? (
                     <CanvasNodePanelOverlay
                         node={dialogNode}
                         viewport={viewport}
@@ -1597,7 +1565,6 @@ function InfiniteCanvasPage() {
                         viewport={viewport}
                         viewportSize={size}
                         containerRef={containerRef}
-                        canCreateDrawing={canCreateDrawingFromConnection}
                         onCreate={(type) => void createConnectedNode(type, pendingConnectionCreate)}
                         onClose={cancelPendingConnectionCreate}
                     />
@@ -1692,7 +1659,6 @@ function InfiniteCanvasPage() {
                         onChooseStyle={() => setStylePickerOpen(true)}
                         onAddScript={() => createNode(CanvasNodeType.Script)}
                         onAddFrame={() => createNode(CanvasNodeType.Frame)}
-                        onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                         onAddConfig={() => createNode(CanvasNodeType.Config)}
                         onOpenDirector={() => createDirectorShot()}
                         onUndo={undoCanvas}
@@ -1766,7 +1732,6 @@ function InfiniteCanvasPage() {
                         }}
                         onViewMedia={(node) => setPreviewNodeId(node.id)}
                         onEditText={openTextNodeEditor}
-                        onOpenDrawing={openDrawingNode}
                         onGenerateImage={generateImageFromTextNode}
                         onCopyContent={(node) => {
                             void copyNodeContentToClipboard(node);
@@ -1793,33 +1758,6 @@ function InfiniteCanvasPage() {
                         setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, title, metadata: { ...node.metadata, content, richText } } : node)));
                     }}
                 />
-
-                {drawingNode ? (
-                    <Suspense
-                        fallback={
-                            <div className="fixed inset-0 z-[500] grid place-items-center px-5" style={{ background: theme.canvas.background, color: theme.node.text }}>
-                                <WorkspaceState icon="loading" title="正在加载绘图编辑器" description="正在准备绘图画布。" />
-                            </div>
-                        }
-                    >
-                        <CanvasDrawingEditorModal
-                            node={drawingNode}
-                            projectId={projectId}
-                            open={Boolean(drawingNode)}
-                            onClose={() => setDrawingNodeId(null)}
-                            onSaved={(nodeId, summary) => {
-                                setNodes((current) =>
-                                    current.map((node) =>
-                                        node.id === nodeId
-                                            ? { ...node, metadata: { ...node.metadata, drawingRevision: summary.revision, drawingUpdatedAt: summary.updatedAt, drawingShapeCount: summary.shapeCount, drawingPageCount: summary.pageCount } }
-                                            : node,
-                                    ),
-                                );
-                                message.success("绘图已保存");
-                            }}
-                        />
-                    </Suspense>
-                ) : null}
 
                 <CanvasScriptEditor
                     node={activeScriptNode}

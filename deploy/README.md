@@ -5,7 +5,7 @@
 ## 首次准备
 
 1. 安装 Docker Engine、Docker Compose 插件、`curl`、`tar`、`sha256sum` 和 `flock`。
-2. 在 GitHub 仓库中配置 `VITE_TLDRAW_LICENSE_KEY`，推送与根目录 `VERSION` 完全一致的 `vX.Y.Z` 标签，等待镜像工作流通过。
+2. 推送与根目录 `VERSION` 完全一致的 `vX.Y.Z` 标签，等待镜像工作流通过。
 3. 私有 GHCR 包需先执行一次 `docker login ghcr.io`。
 4. 在服务器仓库根目录执行：
 

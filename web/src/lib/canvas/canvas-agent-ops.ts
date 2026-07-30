@@ -193,7 +193,6 @@ function canvasNodeTypeLabel(type?: CanvasNodeType) {
     if (type === CanvasNodeType.Config) return "生成配置";
     if (type === CanvasNodeType.Script) return "分镜脚本";
     if (type === CanvasNodeType.Frame) return "背板";
-    if (type === CanvasNodeType.Drawing) return "绘图节点";
     if (type === CanvasNodeType.Skill) return "技能节点";
     return "文本节点";
 }

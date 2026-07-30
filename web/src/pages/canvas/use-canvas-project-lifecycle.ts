@@ -3,7 +3,6 @@ import { App } from "antd";
 import { useNavigate } from "react-router";
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { hydrateAssistantImages, hydrateCanvasImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listActivatedSkills, type UpdreamSkill } from "@/services/api/skills";
 import { deleteRemoteCanvasProject } from "@/services/api/user-data";
@@ -175,11 +174,6 @@ export function useCanvasProjectLifecycle({
 
     const deleteCurrentProject = useCallback(() => {
         const finishDelete = () => {
-            const drawingIds = nodesRef.current.flatMap((node) => node.type === "drawing" && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
-            if (drawingIds.length) {
-                void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId)))
-                    .catch(() => message.warning("项目已删除，但部分本地绘图缓存清理失败"));
-            }
             deleteProjects([projectId]);
             cleanupAssetImages();
             navigate("/canvas");
@@ -191,7 +185,7 @@ export function useCanvasProjectLifecycle({
             return;
         }
         finishDelete();
-    }, [cleanupAssetImages, currentProject?.teamId, deleteProjects, message, navigate, nodesRef, projectId]);
+    }, [cleanupAssetImages, currentProject?.teamId, deleteProjects, message, navigate, projectId]);
 
     const renameCurrentProject = useCallback((title: string) => {
         renameProject(projectId, title);

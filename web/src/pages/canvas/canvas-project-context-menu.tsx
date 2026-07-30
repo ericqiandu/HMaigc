@@ -28,7 +28,6 @@ type CanvasProjectContextMenuProps = {
     onSaveAsset: (node: CanvasNodeData) => void;
     onViewMedia: (node: CanvasNodeData) => void;
     onEditText: (node: CanvasNodeData) => void;
-    onOpenDrawing: (node: CanvasNodeData) => void;
     onGenerateImage: (node: CanvasNodeData) => void;
     onCopyContent: (node: CanvasNodeData | null) => void;
     onCopyMediaUrl: (node: CanvasNodeData | null) => void;
@@ -77,9 +76,6 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             }}
             onEditText={() => {
                 if (node) props.onEditText(node);
-            }}
-            onOpenDrawing={() => {
-                if (node) props.onOpenDrawing(node);
             }}
             onGenerateImage={() => {
                 if (node) props.onGenerateImage(node);

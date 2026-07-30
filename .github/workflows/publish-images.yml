@@ -112,12 +112,6 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,prefix=sha-
 
-      - name: Require tldraw license for release web image
-        if: startsWith(github.ref, 'refs/tags/') && matrix.image == 'hmaigc-web'
-        env:
-          VITE_TLDRAW_LICENSE_KEY: ${{ secrets.VITE_TLDRAW_LICENSE_KEY }}
-        run: test -n "$VITE_TLDRAW_LICENSE_KEY"
-
       - name: Build and push backend image
         if: matrix.image == 'hmaigc-backend'
         uses: docker/build-push-action@v6
@@ -142,8 +136,6 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: |
-            VITE_TLDRAW_LICENSE_KEY=${{ secrets.VITE_TLDRAW_LICENSE_KEY }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}

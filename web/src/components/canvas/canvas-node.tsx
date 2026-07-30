@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BookOpenCheck, ChevronRight, Clock3, FileText, Image as ImageIcon, LoaderCircle, Lock, Maximize2, Music2, Pencil, Play, RefreshCw, Replace, Square, Star, Video } from "lucide-react";
+import { BookOpenCheck, ChevronRight, Clock3, FileText, Image as ImageIcon, LoaderCircle, Lock, Maximize2, Music2, Play, RefreshCw, Replace, Square, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
@@ -15,7 +15,6 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
 import "./canvas-audio-node.css";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -36,7 +35,6 @@ type CanvasNodeProps = {
     resourceLabel?: CanvasResourceReference;
     mentionReferences?: CanvasResourceReference[];
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
-    drawingProjectId?: string;
     batchCount?: number;
     batchExpanded?: boolean;
     batchClosing?: boolean;
@@ -59,7 +57,6 @@ type CanvasNodeProps = {
     onReplaceMedia?: (node: CanvasNodeData) => void;
     onOpenTextEditor?: (node: CanvasNodeData) => void;
     onOpenDirector?: (node: CanvasNodeData) => void;
-    onOpenDrawing?: (node: CanvasNodeData) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
@@ -74,14 +71,12 @@ type NodeContentRendererProps = {
     batchOpening: boolean;
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
-    drawingProjectId?: string;
     onContentChange: (nodeId: string, content: string) => void;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
     onCancelTask?: (node: CanvasNodeData) => void;
     onOpenTaskDetails?: (node: CanvasNodeData) => void;
-    onOpenDrawing?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
     reduceMediaEffects?: boolean;
 };
@@ -101,7 +96,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     resourceLabel,
     mentionReferences = [],
     renderNodeContent,
-    drawingProjectId,
     batchCount = 0,
     batchExpanded = false,
     batchClosing = false,
@@ -124,7 +118,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     onReplaceMedia,
     onOpenTextEditor,
     onOpenDirector,
-    onOpenDrawing,
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -267,7 +260,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     return (
         <div
             data-node-id={data.id}
-            className={`node-element absolute flex select-none flex-col ${dragOffset ? "cursor-grabbing" : data.type === CanvasNodeType.Drawing ? "cursor-pointer" : "cursor-default"} ${isSelected ? "z-50" : "z-10"}`}
+            className={`node-element absolute flex select-none flex-col ${dragOffset ? "cursor-grabbing" : "cursor-default"} ${isSelected ? "z-50" : "z-10"}`}
             style={{
                 transform: `translate(${data.position.x + (dragOffset?.x || 0)}px, ${data.position.y + (dragOffset?.y || 0)}px)`,
                 width: data.width,
@@ -320,11 +313,6 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onOpenDirector?.(data);
                         return;
                     }
-                    if (data.type === CanvasNodeType.Drawing) {
-                        event.stopPropagation();
-                        onOpenDrawing?.(data);
-                        return;
-                    }
                     if (!readOnly && data.type === CanvasNodeType.Text && data.metadata?.workflowKind === "character" && data.metadata.characterAssetId) {
                         event.stopPropagation();
                         onOpenTextEditor?.(data);
@@ -359,14 +347,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                         batchOpening={batchOpening}
                         batchRecovering={batchRecovering}
                         renderNodeContent={renderNodeContent}
-                        drawingProjectId={drawingProjectId}
                         mentionReferences={mentionReferences}
                         onContentChange={onContentChange}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
                         onCancelTask={onCancelTask}
                         onOpenTaskDetails={onOpenTaskDetails}
-                        onOpenDrawing={onOpenDrawing}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         reduceMediaEffects={reduceMediaEffects}
                     />
@@ -446,7 +432,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </div>
                 ) : null}
 
-                {!hasImageContent && !hasVideoContent && !hasAudioContent && data.type !== CanvasNodeType.Drawing ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
+                {!hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
                 {!readOnly && !data.metadata?.locked ? <>
                     <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
@@ -486,58 +472,8 @@ const nodeContentRenderers = {
     [CanvasNodeType.Config]: EmptyImageContent,
     [CanvasNodeType.Video]: VideoNodeContent,
     [CanvasNodeType.Audio]: AudioNodeContent,
-    [CanvasNodeType.Drawing]: DrawingContent,
     [CanvasNodeType.Frame]: UnknownNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
-
-function DrawingContent({ node, theme, drawingProjectId }: NodeContentRendererProps) {
-    const shapeCount = node.metadata?.drawingShapeCount || 0;
-    const pageCount = node.metadata?.drawingPageCount || 1;
-    const [previewUrl, setPreviewUrl] = useState(node.metadata?.drawingPreviewUrl || "");
-
-    useEffect(() => {
-        const drawingId = node.metadata?.drawingId;
-        const fallbackPreview = node.metadata?.drawingPreviewUrl || "";
-        setPreviewUrl(fallbackPreview);
-        if (!drawingProjectId || !drawingId) return;
-        let active = true;
-        let objectUrl = "";
-        void loadCanvasDrawingPreview(drawingProjectId, drawingId).then((preview) => {
-            if (!active) return;
-            if (!preview) {
-                setPreviewUrl(fallbackPreview);
-                return;
-            }
-            objectUrl = URL.createObjectURL(preview);
-            setPreviewUrl(objectUrl);
-        }).catch((error) => console.warn("读取绘图节点预览失败", error));
-        return () => {
-            active = false;
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-        };
-    }, [drawingProjectId, node.metadata?.drawingId, node.metadata?.drawingPreviewUrl, node.metadata?.drawingRevision]);
-
-    return (
-        <div className="relative h-full w-full overflow-hidden" style={{ background: theme.node.panel, color: theme.node.text }}>
-            {previewUrl ? (
-                <img src={previewUrl} alt="绘图预览" className="absolute inset-0 h-full w-full object-cover" draggable={false} />
-            ) : (
-                <div className="absolute inset-0 grid place-items-center" style={{ backgroundImage: `radial-gradient(circle, ${theme.node.stroke} 1px, transparent 1px)`, backgroundSize: "18px 18px" }}>
-                    <span className="grid size-12 place-items-center rounded-xl border" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.muted }}>
-                        <Pencil className="size-5" />
-                    </span>
-                </div>
-            )}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 px-4 pb-3 pt-12" style={{ background: `linear-gradient(to top, ${theme.node.fill}, ${theme.node.fill}e6 55%, transparent)` }}>
-                <div className="min-w-0">
-                    <div className="canvas-node-title truncate">{node.title || "绘图"}</div>
-                    <div className="canvas-node-meta mt-0.5" style={{ color: theme.node.muted }}>{shapeCount} 个图形 · {pageCount} 个页面</div>
-                </div>
-                <Pencil className="size-3.5 shrink-0" style={{ color: theme.accent.primary }} />
-            </div>
-        </div>
-    );
-}
 
 function LoadingContent({ node, theme, onCancelTask, onOpenTaskDetails }: Pick<NodeContentRendererProps, "node" | "theme" | "onCancelTask" | "onOpenTaskDetails">) {
     const taskId = node.metadata?.taskId;

@@ -167,8 +167,6 @@ function getNodePresentation(node: CanvasNodeData) {
             return { label: "视频", icon: <Video className="size-3.5" /> };
         case CanvasNodeType.Audio:
             return { label: "音频", icon: <Music2 className="size-3.5" /> };
-        case CanvasNodeType.Drawing:
-            return { label: "绘图", icon: <Pencil className="size-3.5" /> };
         case CanvasNodeType.Frame:
             return { label: "背板", icon: <Frame className="size-3.5" /> };
         case CanvasNodeType.Config:

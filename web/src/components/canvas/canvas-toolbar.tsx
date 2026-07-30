@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Segmented, Switch } from "antd";
-import { CircleDot, Clapperboard, Eraser, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Layers3, Moon, Music2, Palette, PanelTop, Pencil, Plus, Redo2, Square, Sun, Trash2, Type, Undo2, UploadCloud, UserRound, Video, WandSparkles, X } from "lucide-react";
+import { CircleDot, Clapperboard, Eraser, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Layers3, Moon, Music2, Palette, PanelTop, Plus, Redo2, Square, Sun, Trash2, Type, Undo2, UploadCloud, UserRound, Video, WandSparkles, X } from "lucide-react";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { FloatingDock, type FloatingDockEntry } from "@/components/ui/aceternity/floating-dock";
@@ -28,7 +28,6 @@ export function CanvasToolbar({
     onChooseStyle,
     onAddScript,
     onAddFrame,
-    onAddDrawing,
     onAddConfig,
     onOpenDirector,
     onUndo,
@@ -56,7 +55,6 @@ export function CanvasToolbar({
     onChooseStyle: () => void;
     onAddScript: () => void;
     onAddFrame: () => void;
-    onAddDrawing: () => void;
     onAddConfig: () => void;
     onOpenDirector: () => void;
     onUndo: () => void;
@@ -123,7 +121,6 @@ export function CanvasToolbar({
                         onChooseStyle={() => runAddAction(onChooseStyle)}
                         onAddScript={() => runAddAction(onAddScript)}
                         onAddFrame={() => runAddAction(onAddFrame)}
-                        onAddDrawing={() => runAddAction(onAddDrawing)}
                         onAddImage={() => runAddAction(onAddImage)}
                         onAddVideo={() => runAddAction(onAddVideo)}
                         onAddAudio={() => runAddAction(onAddAudio)}
@@ -171,7 +168,7 @@ export function CanvasToolbar({
     );
 }
 
-function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onChooseStyle, onAddScript, onAddFrame, onAddDrawing, onAddImage, onAddVideo, onAddAudio, onAddConfig, onOpenDirector, onUpload, onOpenAssets, onOpenProjectCharacters }: {
+function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onChooseStyle, onAddScript, onAddFrame, onAddImage, onAddVideo, onAddAudio, onAddConfig, onOpenDirector, onUpload, onOpenAssets, onOpenProjectCharacters }: {
     x: number;
     theme: CanvasTheme;
     workspaceMode: CanvasWorkspaceMode;
@@ -180,7 +177,6 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
     onChooseStyle: () => void;
     onAddScript: () => void;
     onAddFrame: () => void;
-    onAddDrawing: () => void;
     onAddImage: () => void;
     onAddVideo: () => void;
     onAddAudio: () => void;
@@ -198,7 +194,6 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
         ] : []),
         { id: "script", label: "分镜脚本", icon: <Clapperboard />, badge: "核心", onClick: onAddScript },
         ...(!simpleMode ? [{ id: "frame", label: "背板", icon: <PanelTop />, onClick: onAddFrame }] : []),
-        { id: "drawing", label: "绘图", icon: <Pencil />, onClick: onAddDrawing },
         { id: "image", label: "图片", icon: <ImageIcon />, onClick: onAddImage },
         { id: "video", label: "视频", icon: <Video />, onClick: onAddVideo },
         ...(!simpleMode ? [

@@ -65,7 +65,6 @@ openssl rand -hex 32
 - `CANVAS_CORS_ORIGINS`：实际 HTTPS 站点 Origin。
 - `CANVAS_HTTP_HOST`：有反向代理时保持 `127.0.0.1`。
 - `CANVAS_HTTP_PORT`：反向代理连接的本机端口。
-- GitHub Actions Secret `VITE_TLDRAW_LICENSE_KEY`：获得正式商业许可后配置，由 CI 注入 Web 发布镜像；服务器 `.env.production` 不保存该密钥。
 
 首次安装：
 
@@ -108,4 +107,4 @@ openssl rand -hex 32
 
 本项目基于 `ddcat-ai/open-ai-canvas` 与 `basketikun/infinite-canvas` 继续开发。上游署名和版权信息保留在 [NOTICE](NOTICE) 中。
 
-当前代码采用 [GNU Affero General Public License v3.0](LICENSE)。通过网络向用户提供修改后的程序时，需要履行 AGPL-3.0 对应的源码提供义务；正式商业上线前应由法务确认开源合规、第三方模型条款、素材版权和 tldraw 商业许可。
+当前代码采用 [GNU Affero General Public License v3.0](LICENSE)。通过网络向用户提供修改后的程序时，需要履行 AGPL-3.0 对应的源码提供义务；正式商业上线前应由法务确认开源合规、第三方模型条款和素材版权。

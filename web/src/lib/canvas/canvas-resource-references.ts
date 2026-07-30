@@ -67,12 +67,11 @@ function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[]
 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0, skill: 0, character: 0 };
-    let drawingCount = 0;
     return nodes.flatMap((node): CanvasResourceReference[] => {
         const kind = resourceKind(node);
         if (!kind) return [];
-        const index = node.type === CanvasNodeType.Drawing ? drawingCount++ : counts[kind]++;
-        const label = node.type === CanvasNodeType.Drawing ? `绘图${index + 1}` : labelForKind(kind, index);
+        const index = counts[kind]++;
+        const label = labelForKind(kind, index);
         return [
             {
                 id: node.id,
@@ -80,7 +79,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 kind,
                 label,
                 title: node.title || label,
-                previewUrl: node.metadata?.workflowKind === "character" ? node.metadata.characterCoverUrl : node.type === CanvasNodeType.Drawing ? node.metadata?.drawingPreviewUrl : node.metadata?.content,
+                previewUrl: node.metadata?.workflowKind === "character" ? node.metadata.characterCoverUrl : node.metadata?.content,
                 storageKey: node.metadata?.storageKey,
                 text: node.metadata?.workflowKind === "character" ? node.metadata.characterPrompt : node.type === CanvasNodeType.Text ? node.metadata?.content || node.metadata?.prompt : node.type === CanvasNodeType.Skill ? skillResourceText(node) : undefined,
                 active,
@@ -106,7 +105,6 @@ function isResourceNode(node: CanvasNodeData) {
 function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
     if (node.metadata?.workflowKind === "character" && node.metadata.characterAssetId) return "character";
     if (node.type === CanvasNodeType.Image && node.metadata?.content) return "image";
-    if (node.type === CanvasNodeType.Drawing && node.metadata?.drawingId) return "image";
     if (node.type === CanvasNodeType.Video && node.metadata?.content) return "video";
     if (node.type === CanvasNodeType.Audio && node.metadata?.content) return "audio";
     if (node.type === CanvasNodeType.Text && (node.metadata?.content || node.metadata?.prompt)) return "text";

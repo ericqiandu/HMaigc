@@ -4,14 +4,12 @@ import { nanoid } from "nanoid";
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
-import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
 import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 
 type UseCanvasConnectionControllerOptions = {
-    projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     connectionsRef: { current: CanvasConnection[] };
     viewportRef: { current: ViewportTransform };
@@ -23,7 +21,6 @@ type UseCanvasConnectionControllerOptions = {
     setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
     setDialogNodeId: Dispatch<SetStateAction<string | null>>;
-    setDrawingNodeId: Dispatch<SetStateAction<string | null>>;
 };
 
 type ConnectionDropTarget = {
@@ -37,7 +34,6 @@ const CONNECTION_NODE_HIT_PADDING = 32;
 const NODE_STATUS_IDLE = "idle" as const;
 
 export function useCanvasConnectionController({
-    projectId,
     nodesRef,
     connectionsRef,
     viewportRef,
@@ -49,7 +45,6 @@ export function useCanvasConnectionController({
     setSelectedConnectionId,
     setContextMenu,
     setDialogNodeId,
-    setDrawingNodeId,
 }: UseCanvasConnectionControllerOptions) {
     const { message } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
@@ -115,7 +110,7 @@ export function useCanvasConnectionController({
         [connectNodes],
     );
 
-    const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing, pending: PendingConnectionCreate) => {
+    const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio, pending: PendingConnectionCreate) => {
         const storyboardRow = type === CanvasNodeType.Video ? storyboardRowFromHandle(nodesRef.current, pending.connection.nodeId, pending.connection.handleId) : undefined;
         const videoPrompt = storyboardRow ? (storyboardRow.videoMotionPrompt || storyboardRow.plotDescription).trim() : "";
         const sourceNode = pending.connection.handleType === "source" ? nodesRef.current.find((node) => node.id === pending.connection.nodeId) : undefined;
@@ -134,35 +129,6 @@ export function useCanvasConnectionController({
             message.warning("配置节点之间不能连接");
             return;
         }
-        if (type === CanvasNodeType.Drawing) {
-            const drawingSourceNode = nodesRef.current.find((node) => node.id === pending.connection.nodeId);
-            const sourceUrl = drawingSourceNode?.type === CanvasNodeType.Image ? drawingSourceNode.metadata?.content : "";
-            if (pending.connection.handleType !== "source" || !drawingSourceNode || !sourceUrl || !newNode.metadata?.drawingId) {
-                message.error("只有已有图片内容的输出连线可以创建绘图");
-                return;
-            }
-            closeConnectionCreateMenu();
-            setConnecting(null);
-            try {
-                const saved = await createCanvasDrawingFromImage(projectId, newNode.metadata.drawingId, {
-                    url: sourceUrl,
-                    storageKey: drawingSourceNode.metadata?.storageKey,
-                    name: drawingSourceNode.title || "来源图片",
-                    mimeType: drawingSourceNode.metadata?.mimeType,
-                });
-                newNode.title = `${drawingSourceNode.title || "图片"} · 绘图`;
-                newNode.metadata = {
-                    ...newNode.metadata,
-                    drawingRevision: saved.revision,
-                    drawingUpdatedAt: saved.updatedAt,
-                    drawingShapeCount: saved.shapeCount,
-                    drawingPageCount: saved.pageCount,
-                };
-            } catch (error) {
-                message.error(error instanceof Error ? `创建绘图失败：${error.message}` : "创建绘图失败");
-                return;
-            }
-        }
         const fromHandleId = connection.fromNodeId === pending.connection.nodeId ? pending.connection.handleId : undefined;
         const toHandleId = connection.toNodeId === pending.connection.nodeId ? pending.connection.handleId : undefined;
         const connected = { ...connection, fromHandleId, toHandleId };
@@ -170,11 +136,10 @@ export function useCanvasConnectionController({
         setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
         setSelectedNodeIds(new Set([newNode.id]));
         setSelectedConnectionId(null);
-        if (type === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);
-        else if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Script && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+        if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Script && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
         closeConnectionCreateMenu();
         setConnecting(null);
-    }, [closeConnectionCreateMenu, effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, nodesRef, projectId, setConnecting, setConnections, setDialogNodeId, setDrawingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [closeConnectionCreateMenu, effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, nodesRef, setConnecting, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
 
     const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): ConnectionDropTarget => {
         const world = screenToCanvas(clientX, clientY);

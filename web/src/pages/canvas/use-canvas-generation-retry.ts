@@ -84,7 +84,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
             let rawContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null;
             try {
                 const baseContext = buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryPromptSource);
-                rawContext = hasSavedImageMetadata && !baseContext.characterReferences.length ? null : await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig));
+                rawContext = hasSavedImageMetadata && !baseContext.characterReferences.length ? null : await hydrateNodeGenerationContext(baseContext, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig));
             } catch (error) {
                 const failure = generationFailureMetadata(error, retryPromptSource);
                 message.error(failure.errorDetails);

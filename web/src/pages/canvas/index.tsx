@@ -15,7 +15,6 @@ import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
-import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { listProjects } from "@/services/api/projects";
 
@@ -86,26 +85,7 @@ export default function CanvasPage() {
                     }),
                 ),
             );
-            await Promise.all(data.projects.map(async (item) => {
-                const importedProjectId = importProject(item.project);
-                await Promise.all((item.drawingDocuments || []).map((document) => {
-                    const previewFile = document.previewPath ? zip.get(document.previewPath) : undefined;
-                    const preview = previewFile && !previewFile.type ? previewFile.slice(0, previewFile.size, "image/png") : previewFile;
-                    const renderFile = document.generationRender?.path ? zip.get(document.generationRender.path) : undefined;
-                    const renderBlob = renderFile && !renderFile.type ? renderFile.slice(0, renderFile.size, document.generationRender?.mimeType || "image/png") : renderFile;
-                    const render = renderBlob && document.generationRender
-                        ? {
-                              blob: renderBlob,
-                              pageId: document.generationRender.pageId,
-                              width: document.generationRender.width,
-                              height: document.generationRender.height,
-                              mimeType: document.generationRender.mimeType,
-                              background: document.generationRender.background,
-                          } satisfies CanvasDrawingRenderDraft
-                        : undefined;
-                    return saveCanvasDrawing(importedProjectId, document.drawingId, document.snapshot, { ...document, version: 1, revision: Math.max(0, document.revision - 1) }, preview, render);
-                }));
-            }));
+            data.projects.forEach((item) => importProject(item.project));
             message.success(`已导入 ${data.projects.length} 个画布`);
         } catch {
             message.error("导入失败，请选择有效的画布压缩包");

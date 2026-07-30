@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
-import { ChevronRight, Clapperboard, Image as ImageIcon, List, Music2, Pencil, Settings2, Video, WandSparkles, X } from "lucide-react";
+import { ChevronRight, Clapperboard, Image as ImageIcon, List, Music2, Settings2, Video, WandSparkles, X } from "lucide-react";
 
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -123,12 +123,12 @@ export function CanvasNodePanelOverlay({ node, viewport, containerRef, panelWidt
     );
 }
 
-export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, containerRef, canCreateDrawing, onCreate, onClose }: { pending: PendingConnectionCreate; viewport: ViewportTransform; viewportSize: { width: number; height: number }; containerRef: RefObject<HTMLDivElement | null>; canCreateDrawing: boolean; onCreate: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing) => void; onClose: () => void }) {
+export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, containerRef, onCreate, onClose }: { pending: PendingConnectionCreate; viewport: ViewportTransform; viewportSize: { width: number; height: number }; containerRef: RefObject<HTMLDivElement | null>; onCreate: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const reducedMotion = useReducedMotion();
     const menuRef = useRef<HTMLDivElement>(null);
     const menuWidth = 248;
-    const menuHeight = canCreateDrawing ? 420 : 376;
+    const menuHeight = 376;
     const gap = 12;
     const initialPosition = getConnectionMenuPosition(pending.position, viewport, viewportSize, menuWidth, menuHeight, gap);
 
@@ -172,7 +172,6 @@ export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, co
                 <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<List className="size-4" />} title="文本生成" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<Clapperboard className="size-4" />} title="分镜脚本" onClick={() => onCreate(CanvasNodeType.Script)} />
                 <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<ImageIcon className="size-4" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
-                {canCreateDrawing ? <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<Pencil className="size-4" />} title="绘图" onClick={() => onCreate(CanvasNodeType.Drawing)} /> : null}
                 <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<Video className="size-4" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<Music2 className="size-4" />} title="音频参考" onClick={() => onCreate(CanvasNodeType.Audio)} />
                 <ConnectionCreateOption motionEnabled={!reducedMotion} icon={<Settings2 className="size-4" />} title="配置节点" onClick={() => onCreate(CanvasNodeType.Config)} />
