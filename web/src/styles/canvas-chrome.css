@@ -1,53 +1,73 @@
 .canvas-top-bar {
-    --canvas-chrome-surface: color-mix(in srgb, var(--background) 82%, transparent);
-    --canvas-chrome-surface-hover: color-mix(in srgb, var(--foreground) 8%, var(--background));
-    --canvas-chrome-border: color-mix(in srgb, var(--foreground) 12%, transparent);
-    --canvas-chrome-shadow: 0 10px 28px color-mix(in srgb, #000000 14%, transparent);
+    --canvas-chrome-surface: color-mix(in srgb, var(--background) 90%, transparent);
+    --canvas-chrome-surface-hover: color-mix(in srgb, var(--foreground) 9%, var(--background));
+    --canvas-chrome-border: color-mix(in srgb, var(--foreground) 10%, transparent);
+    --canvas-chrome-shadow: 0 6px 18px color-mix(in srgb, #000000 12%, transparent);
     container-type: inline-size;
     container-name: canvas-chrome;
+    top: 12px !important;
+    height: 40px !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
     font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
 }
 
 .canvas-top-bar-identity,
 .canvas-top-bar-actions {
-    height: 56px;
-    min-height: 44px;
+    height: 40px;
+    min-height: 40px;
     border: 1px solid var(--canvas-chrome-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--canvas-chrome-surface);
     box-shadow: var(--canvas-chrome-shadow);
-    backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(160%) blur(16px);
+    -webkit-backdrop-filter: saturate(160%) blur(16px);
 }
 
 .canvas-top-bar-identity {
-    padding: 4px 10px 4px 4px;
+    gap: 4px !important;
+    padding: 4px 8px 4px 4px;
 }
 
 .canvas-top-bar-actions {
+    margin-left: auto;
     gap: 2px;
     padding: 4px;
 }
 
 .canvas-top-bar-menu {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
 }
 
 .canvas-top-bar-title {
+    flex-direction: row !important;
+    align-items: center !important;
     padding-right: 2px;
 }
 
+.canvas-top-bar-title > button,
+.canvas-top-bar-title > div > button:first-child,
+.canvas-top-bar-title > input {
+    font-size: 13px !important;
+    line-height: 20px !important;
+}
+
+.canvas-top-bar-context {
+    display: none !important;
+}
+
 .canvas-top-bar-title [aria-label="重命名画布"] {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
 }
 
 .canvas-top-bar-action.ant-btn {
-    width: 36px !important;
-    min-width: 36px !important;
-    height: 36px !important;
-    border-radius: 8px !important;
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    border-radius: 7px !important;
     box-shadow: none !important;
 }
 
@@ -56,9 +76,9 @@
 }
 
 .canvas-top-bar-actions .canvas-collaboration-entry {
-    width: 36px !important;
-    height: 36px !important;
-    border-radius: 8px !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 7px !important;
 }
 
 .canvas-top-bar-action.ant-btn:not(:disabled):hover,
@@ -70,19 +90,19 @@
 
 .canvas-top-bar-agent.ant-btn {
     width: auto !important;
-    min-width: 36px !important;
-    height: 36px !important;
+    min-width: 32px !important;
+    height: 32px !important;
     gap: 6px;
-    border-radius: 8px !important;
-    padding-inline: 10px !important;
+    border-radius: 7px !important;
+    padding-inline: 9px !important;
     box-shadow: none !important;
 }
 
 .canvas-top-bar-balance {
-    height: 36px;
-    min-width: 72px;
-    border-radius: 8px;
-    padding-inline: 10px;
+    height: 32px;
+    min-width: 64px;
+    border-radius: 7px;
+    padding-inline: 8px;
 }
 
 .canvas-top-bar-divider {
@@ -90,25 +110,55 @@
     margin-inline: 2px;
 }
 
-.canvas-top-bar .aceternity-mode-switch > button {
-    height: 36px;
-    min-width: 124px;
-    border-radius: 12px;
-    padding-inline: 6px;
-    box-shadow: var(--canvas-chrome-shadow) !important;
+.canvas-workspace-mode-switch {
+    position: relative !important;
+    inset: auto !important;
+    transform: none !important;
+    translate: 0 0 !important;
 }
 
-.canvas-top-bar .aceternity-mode-switch > button > span:first-child {
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
+.canvas-top-bar .canvas-workspace-mode-trigger {
+    height: 40px;
+    min-width: 104px;
+    border-radius: 10px;
+    padding-inline: 4px 8px;
+    background: var(--canvas-chrome-surface) !important;
+    border-color: var(--canvas-chrome-border) !important;
+    box-shadow: var(--canvas-chrome-shadow) !important;
+    backdrop-filter: saturate(160%) blur(16px);
+    -webkit-backdrop-filter: saturate(160%) blur(16px);
+}
+
+.canvas-top-bar .canvas-workspace-mode-icon {
+    width: 30px;
+    height: 30px;
+    border: 0 !important;
+    border-radius: 7px;
+}
+
+.canvas-workspace-mode-eyebrow {
+    display: none !important;
+}
+
+.canvas-workspace-mode-label {
+    margin-top: 0 !important;
+    font-size: 12px !important;
+    line-height: 16px !important;
+}
+
+.canvas-workspace-mode-chevron {
+    width: 18px;
+    height: 18px;
+    background: transparent !important;
 }
 
 .canvas-floating-dock {
-    min-height: 44px;
-    border-radius: 12px !important;
-    padding: 4px 6px !important;
-    box-shadow: 0 10px 28px color-mix(in srgb, #000000 16%, transparent);
+    min-height: 40px;
+    border-radius: 10px !important;
+    padding: 4px !important;
+    box-shadow: 0 6px 18px color-mix(in srgb, #000000 12%, transparent);
+    backdrop-filter: saturate(160%) blur(16px);
+    -webkit-backdrop-filter: saturate(160%) blur(16px);
 }
 
 .canvas-floating-dock > span:has(> .aceternity-dock-command) {
@@ -127,7 +177,7 @@
 }
 
 .canvas-floating-dock .aceternity-dock-command.is-active {
-    box-shadow: 0 4px 14px color-mix(in srgb, var(--dock-command-active) 20%, transparent);
+    box-shadow: none;
 }
 
 .canvas-floating-dock .aceternity-dock-tooltip {
@@ -172,10 +222,6 @@
 }
 
 @media (min-width: 640px) and (max-width: 1024px) {
-    .canvas-top-bar .aceternity-mode-switch {
-        top: 64px;
-    }
-
     .canvas-floating-dock > span:has(> button[aria-label="撤销"]),
     .canvas-floating-dock > span:has(> button[aria-label="重做"]),
     .canvas-floating-dock > span:has(> button[aria-label="清空画布"]) {
@@ -184,9 +230,14 @@
 }
 
 @media (max-width: 639px) {
+    .canvas-top-bar {
+        top: 8px !important;
+        gap: 6px !important;
+    }
+
     .canvas-top-bar-identity,
     .canvas-top-bar-actions {
-        height: 42px;
+        height: 40px;
         min-height: 40px;
         padding: 3px;
     }
@@ -198,26 +249,29 @@
     .canvas-top-bar-menu,
     .canvas-top-bar-action.ant-btn,
     .canvas-top-bar-agent.ant-btn {
-        width: 34px !important;
-        min-width: 34px !important;
-        height: 34px !important;
+        width: 32px !important;
+        min-width: 32px !important;
+        height: 32px !important;
     }
 
     .canvas-top-bar-title {
         padding-right: 0;
     }
 
-    .canvas-top-bar .aceternity-mode-switch > button {
-        height: 36px;
+    .canvas-top-bar .canvas-workspace-mode-trigger {
+        height: 40px;
+        min-width: 40px;
+        padding: 4px;
     }
 
-    .canvas-top-bar .aceternity-mode-switch {
-        top: 56px;
+    .canvas-workspace-mode-trigger > span:nth-child(2),
+    .canvas-workspace-mode-chevron {
+        display: none;
     }
 
     .canvas-floating-dock {
-        min-height: 48px;
-        padding: 4px 6px !important;
+        min-height: 44px;
+        padding: 4px !important;
     }
 }
 

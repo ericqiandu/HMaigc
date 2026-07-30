@@ -175,6 +175,44 @@ No actionable P0, P1 or P2 issue remains in the requested first-page workbench s
 
 final result: passed
 
+## LibTV-Informed Canvas Chrome QA (2026-07-30)
+
+- Reference: authenticated LibTV canvas in the in-app browser.
+- Scope: canvas header, workspace-mode switch, canvas action buttons and bottom floating controls.
+- Evidence: `qa-artifacts/canvas-libtv-alignment-20260730/`.
+- Viewports: 390 × 844, 1024 × 768 and the normal desktop viewport; Agent panel closed and open; dark and light themes.
+
+### Resolved findings
+
+- P1: the previous 56px header islands were visually heavier than the canvas content and unlike the compact reference hierarchy.
+- P1: the workspace-mode switch floated independently at the center, separating it from the canvas identity and causing avoidable crowding when the Agent panel reduced the real canvas width.
+- P1: the canvas title used a second metadata row even though the project sidebar already exposes the same context.
+- P2: bottom docks used more height, radius and shadow than the reference control language required.
+
+### Applied standard
+
+- Canvas identity, workspace mode and account actions now share a 40px control height, 10px surface radius and restrained single shadow.
+- Workspace mode sits directly beside the canvas identity, while account and collaboration actions remain right aligned.
+- Secondary project metadata is removed from the header visual layer but remains available in the project sidebar and accessible links.
+- Header icon commands use 32 × 32px targets; the Agent action retains text where space permits and an accessible name at narrow widths.
+- Bottom canvas docks use 40px surfaces, 32px commands and reduced shadows while preserving every existing action.
+- Responsive visibility follows the real canvas container width, including the narrow canvas created by an open Agent panel.
+
+### Verified result
+
+- No header or bottom-dock overlap and no document-level horizontal overflow at the tested widths.
+- Workspace-mode menu opens below its trigger and retains correct selected state.
+- Agent panel opens and closes while all header groups remain inside the available canvas width.
+- Dark and light themes retain legible surfaces, icons and focusable controls.
+- Browser runtime logs contain no warnings or errors.
+- TypeScript/Vite production build and all 11 current frontend tests pass.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains in the requested LibTV-informed canvas-header and button scope.
+
+final result: passed
+
 ## Canvas Header And Controls QA (2026-07-30)
 
 - Scope: canvas page header, workspace mode switch, primary canvas Dock and zoom/asset Docks.

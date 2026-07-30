@@ -156,7 +156,7 @@ export function CanvasTopBar({
                             </div>
                         )}
                         {projectContext && !isTitleEditing ? (
-                            <div className="mt-0.5 flex max-w-[360px] items-center gap-1.5 text-[10px]" style={{ color: theme.node.muted }}>
+                            <div className="canvas-top-bar-context mt-0.5 flex max-w-[360px] items-center gap-1.5 text-[10px]" style={{ color: theme.node.muted }}>
                                 <Link to={`/projects/${projectContext.projectId}/overview`} className="inline-flex min-w-0 items-center gap-1 hover:underline" title={`返回项目：${projectContext.projectName}`}>
                                     <FolderKanban className="size-3 shrink-0" />
                                     <span className="max-w-[120px] truncate">{projectContext.projectName}</span>
@@ -274,27 +274,27 @@ function CanvasWorkspaceModeSwitch({ mode, onChange }: { mode: CanvasWorkspaceMo
     };
 
     return (
-        <div ref={rootRef} className="aceternity-mode-switch pointer-events-auto absolute left-1/2 top-2 z-30 -translate-x-1/2">
+        <div ref={rootRef} className="canvas-workspace-mode-switch aceternity-mode-switch pointer-events-auto relative z-30">
             <motion.button
                 type="button"
                 whileHover={reducedMotion ? undefined : { y: -1, scale: 1.015 }}
                 whileTap={reducedMotion ? undefined : { scale: 0.97 }}
                 transition={aceternityMotion.spring.dock}
-                className="flex h-8 min-w-[112px] items-center gap-1.5 rounded-full border px-2 text-left outline-none backdrop-blur-2xl focus-visible:ring-2"
+                className="canvas-workspace-mode-trigger flex h-8 min-w-[112px] items-center gap-1.5 rounded-full border px-2 text-left outline-none backdrop-blur-2xl focus-visible:ring-2"
                 style={{ background: theme.spatial.elevated, borderColor: open ? theme.spatial.glowStrong : theme.toolbar.border, color: theme.node.text, boxShadow: `0 16px 44px ${theme.spatial.shadow}` }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
                 aria-label={`当前为${simple ? "简洁" : "专业"}模式，点击切换`}
                 onClick={() => setOpen((value) => !value)}
             >
-                <span className="grid size-6 shrink-0 place-items-center rounded-full border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.accent.primary }}>
+                <span className="canvas-workspace-mode-icon grid size-6 shrink-0 place-items-center rounded-full border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.accent.primary }}>
                     {simple ? <Sparkles className="size-3" /> : <Settings2 className="size-3" />}
                 </span>
                 <span className="min-w-0 flex-1">
-                    <span className="block text-[8px] leading-none" style={{ color: theme.node.muted }}>工作空间</span>
-                    <span className="mt-0.5 block text-[10px] font-semibold leading-none">{simple ? "简洁模式" : "专业模式"}</span>
+                    <span className="canvas-workspace-mode-eyebrow block text-[8px] leading-none" style={{ color: theme.node.muted }}>工作空间</span>
+                    <span className="canvas-workspace-mode-label mt-0.5 block text-[10px] font-semibold leading-none">{simple ? "简洁模式" : "专业模式"}</span>
                 </span>
-                <motion.span animate={{ rotate: open ? 180 : 0 }} transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.dock} className="grid size-5 place-items-center rounded-full" style={{ background: theme.toolbar.itemHover }}>
+                <motion.span animate={{ rotate: open ? 180 : 0 }} transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.dock} className="canvas-workspace-mode-chevron grid size-5 place-items-center rounded-full" style={{ background: theme.toolbar.itemHover }}>
                     <ChevronDown className="size-2.5" />
                 </motion.span>
             </motion.button>
