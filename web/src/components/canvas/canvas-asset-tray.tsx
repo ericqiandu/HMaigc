@@ -133,7 +133,7 @@ export function CanvasAssetTray({ assetImages, canvasImages, showLibrary = true,
                         animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
                         exit={{ opacity: 0, y: 14, scale: 0.95, rotateX: 3 }}
                         transition={aceternityMotion.spring.panel}
-                        className="aceternity-floating-panel absolute bottom-[50px] left-0 flex w-[min(88vw,312px)] origin-bottom-left flex-col overflow-hidden rounded-[18px] border p-2.5 backdrop-blur-2xl"
+                        className="canvas-overlay-panel canvas-asset-tray-panel aceternity-floating-panel absolute bottom-[50px] left-0 flex w-[min(88vw,312px)] origin-bottom-left flex-col overflow-hidden border p-2.5 backdrop-blur-2xl"
                         style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, height: safeTrayHeight, minHeight: Math.min(TRAY_MIN_HEIGHT, getMaxTrayHeight()), maxHeight: "calc(100vh - 6rem)", boxShadow: `0 32px 100px ${theme.spatial.shadow}` }}
                     >
                         <div className="absolute inset-x-10 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${theme.spatial.glowStrong}, transparent)` }} />
@@ -141,14 +141,14 @@ export function CanvasAssetTray({ assetImages, canvasImages, showLibrary = true,
                             <span className="h-1 w-12 rounded-full bg-current" />
                         </button>
 
-                        <div className="flex items-center justify-between gap-2 px-1 pb-2.5 pt-1.5">
+                        <div className="canvas-overlay-panel-heading justify-between px-1">
                             <div className="flex min-w-0 items-center gap-2">
-                                <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.accent.primary }}>
+                                <span className="canvas-overlay-panel-heading-icon" style={{ background: theme.spatial.surface, color: theme.accent.primary }}>
                                     <FolderOpen className="size-3.5" />
                                 </span>
                                 <span className="min-w-0">
-                                    <span className="block text-xs font-semibold">素材空间</span>
-                                    <span className="mt-0.5 block truncate text-[9px]" style={{ color: theme.node.muted }}>拖入画布，或定位已经使用的图片</span>
+                                    <span className="canvas-overlay-panel-title">素材空间</span>
+                                    <span className="canvas-overlay-panel-description truncate" style={{ color: theme.node.muted }}>拖入画布，或定位已经使用的图片</span>
                                 </span>
                             </div>
                             <motion.button type="button" whileHover={motionEnabled ? { rotate: -5, scale: 1.05 } : undefined} whileTap={motionEnabled ? { scale: 0.92 } : undefined} className="grid size-7 shrink-0 place-items-center rounded-full border outline-none focus-visible:ring-2" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.muted }} onClick={() => setOpen(false)} aria-label="收起素材空间">

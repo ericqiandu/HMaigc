@@ -92,10 +92,11 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="canvas-top-bar pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between px-4">
-                <div className="canvas-top-bar-identity pointer-events-auto flex min-w-0 items-center gap-3">
+            <div className="canvas-top-bar pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between gap-2 px-2 sm:px-4">
+                <div className="canvas-top-bar-identity pointer-events-auto flex min-w-0 items-center gap-1 sm:gap-3">
                     <Dropdown
                         trigger={["click"]}
+                        overlayClassName="canvas-overlay-dropdown canvas-overlay-dropdown--navigation"
                         menu={{
                             items: [
                                 { key: "home", icon: <Home className="size-4" />, label: <Link to="/">主页</Link> },
@@ -127,7 +128,7 @@ export function CanvasTopBar({
                         </button>
                     </Dropdown>
 
-                    <div ref={titleRef} className="canvas-top-bar-title flex min-w-0 flex-col items-start">
+                    <div ref={titleRef} className="canvas-top-bar-title flex min-w-0 max-w-[112px] flex-col items-start sm:max-w-none">
                         {isTitleEditing ? (
                             <input
                                 autoFocus
@@ -139,24 +140,24 @@ export function CanvasTopBar({
                                     if (event.key === "Enter") onFinishTitleEditing();
                                     if (event.key === "Escape") onCancelTitleEditing();
                                 }}
-                                className="h-8 w-auto min-w-12 max-w-[min(280px,42vw)] appearance-none border-0 bg-transparent p-0 text-left text-base font-semibold tracking-normal outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+                                className="h-8 w-auto min-w-12 max-w-[112px] appearance-none border-0 bg-transparent p-0 text-left text-sm font-semibold tracking-normal outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 sm:max-w-[min(280px,42vw)] sm:text-base"
                                 style={{ color: theme.node.text, caretColor: theme.accent.primary, border: 0, boxShadow: "none", outline: "none" }}
                                 aria-label="画布名称"
                             />
                         ) : (
                             <div className="flex min-w-0 items-center gap-0.5">
-                                <button type="button" className="max-w-[280px] truncate text-left text-base font-semibold tracking-normal transition-opacity hover:opacity-75 disabled:cursor-default disabled:hover:opacity-100" onClick={onStartTitleEditing} title={canEdit ? "点击修改画布名称" : "当前画布仅可查看"} disabled={!canEdit}>
+                                <button type="button" className="max-w-[84px] truncate text-left text-sm font-semibold tracking-normal transition-opacity hover:opacity-75 disabled:cursor-default disabled:hover:opacity-100 sm:max-w-[280px] sm:text-base" onClick={onStartTitleEditing} title={canEdit ? "点击修改画布名称" : "当前画布仅可查看"} disabled={!canEdit}>
                                     {title}
                                 </button>
                                 {canEdit ? <Tooltip title="重命名画布">
-                                    <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md opacity-60 transition hover:bg-black/5 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 dark:hover:bg-white/10" style={{ color: theme.node.text }} onClick={onStartTitleEditing} aria-label="重命名画布">
+                                    <button type="button" className="hidden size-7 shrink-0 place-items-center rounded-md opacity-60 transition hover:bg-black/5 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 dark:hover:bg-white/10 sm:grid" style={{ color: theme.node.text }} onClick={onStartTitleEditing} aria-label="重命名画布">
                                         <Pencil className="size-3.5" />
                                     </button>
                                 </Tooltip> : null}
                             </div>
                         )}
                         {projectContext && !isTitleEditing ? (
-                            <div className="canvas-top-bar-context mt-0.5 flex max-w-[360px] items-center gap-1.5 text-[10px]" style={{ color: theme.node.muted }}>
+                            <div className="canvas-top-bar-context mt-0.5 hidden max-w-[360px] items-center gap-1.5 text-[10px] sm:flex" style={{ color: theme.node.muted }}>
                                 <Link to={`/projects/${projectContext.projectId}/overview`} className="inline-flex min-w-0 items-center gap-1 hover:underline" title={`返回项目：${projectContext.projectName}`}>
                                     <FolderKanban className="size-3 shrink-0" />
                                     <span className="max-w-[120px] truncate">{projectContext.projectName}</span>
@@ -178,6 +179,7 @@ export function CanvasTopBar({
                     <Button type="text" className="canvas-top-bar-action canvas-top-bar-wide-only !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Search className="size-4" />} onClick={onOpenSearch} aria-label="搜索画布节点" title="搜索画布节点" />
                     <Dropdown
                         trigger={["click"]}
+                        overlayClassName="canvas-overlay-dropdown canvas-overlay-dropdown--performance"
                         menu={{
                             selectable: true,
                             selectedKeys: [mediaPerformanceMode],
@@ -195,7 +197,7 @@ export function CanvasTopBar({
                     {user ? (
                         <Link
                             to="/wallet"
-                            className="canvas-top-bar-balance inline-flex h-9 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-medium tabular-nums transition hover:bg-black/5 dark:hover:bg-white/10"
+                            className="canvas-top-bar-balance hidden h-9 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-medium tabular-nums transition hover:bg-black/5 dark:hover:bg-white/10 sm:inline-flex"
                             style={{ color: theme.node.text }}
                             title="查看积分明细"
                         >
@@ -204,23 +206,23 @@ export function CanvasTopBar({
                         </Link>
                     ) : null}
                     <Button disabled={!canManage} type="text" className="canvas-top-bar-action !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title={canManage ? "分享画布" : "只有画布管理者可以公开分享"} />
-                    <span className="canvas-top-bar-divider h-6 w-px" style={{ background: theme.toolbar.border }} />
+                    <span className="canvas-top-bar-divider hidden h-6 w-px sm:block" style={{ background: theme.toolbar.border }} />
                     <Button
                         disabled={!canEdit}
                         type="text"
-                        className="canvas-top-bar-agent !h-9 !rounded-lg !px-3 !font-medium"
+                        className="canvas-top-bar-agent !h-9 !w-9 !rounded-lg !px-0 !font-medium sm:!w-auto sm:!px-3"
                         style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
                         icon={<Bot className="size-4" />}
                         onClick={onToggleAgent}
                         aria-label="Agent"
                         title="打开或关闭 Agent"
                     >
-                        <span>Agent</span>
+                        <span className="hidden sm:inline">Agent</span>
                     </Button>
                 </div>
             </div>
-            <Modal title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
-                <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
+            <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--shortcuts" title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
+                <div className="canvas-overlay-body canvas-shortcuts-list space-y-1 text-sm">
                     <Shortcut keys={["空白处左键拖动", "空格 + 左键 / 中键"]} value="平移视图" />
                     <Shortcut keys={["滚轮"]} value="缩放画布" />
                     <Shortcut keys={["缩放滑杆"]} value="精确调整缩放" />
@@ -309,7 +311,7 @@ function CanvasWorkspaceModeSwitch({ mode, onChange }: { mode: CanvasWorkspaceMo
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.95 }}
                             transition={aceternityMotion.spring.panel}
-                            className="aceternity-floating-panel w-full overflow-hidden rounded-[17px] border p-1.5 backdrop-blur-2xl"
+                            className="canvas-overlay-panel canvas-workspace-mode-panel aceternity-floating-panel w-full overflow-hidden border p-1.5 backdrop-blur-2xl"
                             style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 28px 80px ${theme.spatial.shadow}` }}
                         >
                             <div className="absolute inset-x-10 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${theme.spatial.glowStrong}, transparent)` }} />
@@ -334,12 +336,13 @@ function ModeOption({ active, motionEnabled, icon, title, description, theme, on
             whileHover={motionEnabled ? { x: 3 } : undefined}
             whileTap={motionEnabled ? { scale: 0.98 } : undefined}
             transition={aceternityMotion.spring.dock}
-            className="group flex min-h-11 w-full items-center gap-2 rounded-[12px] border px-2 py-1.5 text-left outline-none focus-visible:ring-2"
+            className="canvas-overlay-option group flex min-h-11 w-full items-center gap-2 px-2 py-1.5 text-left outline-none focus-visible:ring-2"
+            data-active={active}
             style={{ background: active ? theme.accent.primarySoft : "transparent", borderColor: active ? theme.spatial.glowStrong : "transparent", color: theme.node.text }}
             onClick={onClick}
         >
-            <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border [&_svg]:size-3.5" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: active ? theme.accent.primary : theme.node.muted }}>{icon}</span>
-            <span className="min-w-0 flex-1"><span className="block text-[10px] font-semibold">{title}</span><span className="mt-0.5 block text-[8px]" style={{ color: theme.node.muted }}>{description}</span></span>
+            <span className="canvas-overlay-option-icon grid size-8 shrink-0 place-items-center [&_svg]:size-3.5" style={{ background: theme.spatial.surface, color: active ? theme.accent.primary : theme.node.muted }}>{icon}</span>
+            <span className="min-w-0 flex-1"><span className="canvas-overlay-option-title">{title}</span><span className="canvas-overlay-option-description" style={{ color: theme.node.muted }}>{description}</span></span>
             <span className="grid size-5 shrink-0 place-items-center rounded-full border transition-opacity" style={{ background: active ? theme.accent.primary : theme.spatial.surface, borderColor: active ? theme.accent.primary : theme.toolbar.border, color: active ? "white" : theme.node.muted, opacity: active ? 1 : 0.28 }}><Check className="size-3" /></span>
         </motion.button>
     );
@@ -361,7 +364,7 @@ function canvasTitleInputSize(value: string) {
 
 function Shortcut({ keys, value }: { keys: string[]; value: string }) {
     return (
-        <div className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 rounded-lg px-1 py-1.5">
+        <div className="canvas-overlay-shortcut-row grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 px-2 py-1.5">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                 {keys.map((key, index) => (
                     <span key={`${key}-${index}`} className="flex items-center gap-1.5">

@@ -18,7 +18,7 @@ export function CanvasCreateCommandGrid({ commands, variant = "node" }: { comman
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const reducedMotion = useReducedMotion();
     return (
-        <div className={cn("grid gap-1", variant === "node" ? "grid-cols-4" : "grid-cols-2")}>
+        <div className={cn("canvas-overlay-command-grid grid gap-1", variant === "node" ? "grid-cols-4" : "grid-cols-2")}>
             {commands.map((command) => (
                 <motion.button
                     key={command.id}
@@ -27,8 +27,8 @@ export function CanvasCreateCommandGrid({ commands, variant = "node" }: { comman
                     whileTap={reducedMotion ? undefined : { scale: 0.96 }}
                     transition={aceternityMotion.spring.dock}
                     className={cn(
-                        "group relative min-w-0 border border-black/10 bg-white/70 text-center outline-none transition-colors hover:border-black/20 hover:bg-black/5 focus-visible:ring-2 dark:border-white/10 dark:bg-white/[.04] dark:hover:border-white/20 dark:hover:bg-white/8",
-                        variant === "node" ? "flex h-12 flex-col items-center justify-center gap-1 rounded-[10px]" : "flex h-9 items-center justify-center gap-1.5 rounded-[9px] px-2",
+                        "canvas-overlay-command group relative min-w-0 text-center outline-none transition-colors focus-visible:ring-2",
+                        variant === "node" ? "flex h-12 flex-col items-center justify-center gap-1" : "flex h-9 items-center justify-center gap-1.5 px-2",
                     )}
                     style={{ color: theme.node.text, "--tw-ring-color": theme.node.muted } as CSSProperties}
                     title={command.label}

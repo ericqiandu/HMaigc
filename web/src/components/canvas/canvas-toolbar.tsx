@@ -99,19 +99,19 @@ export function CanvasToolbar({
 
     const items: FloatingDockEntry[] = [
         { id: selectedCount ? "tool-close-selection" : "tool-hand", label: selectedCount ? `取消选择${selectedCount > 1 ? ` ${selectedCount} 个节点` : ""}` : "移动与选择", icon: selectedCount ? <X /> : <Hand />, active: !selectedCount, onClick: () => onDeselect() },
-        { kind: "separator", id: "history-separator" },
-        { id: "tool-undo", label: "撤销", icon: <Undo2 />, disabled: !canUndo, onClick: () => onUndo() },
-        { id: "tool-redo", label: "重做", icon: <Redo2 />, disabled: !canRedo, onClick: () => onRedo() },
-        { kind: "separator", id: "create-separator" },
+        { kind: "separator", id: "history-separator", responsiveClassName: "hidden sm:block" },
+        { id: "tool-undo", label: "撤销", icon: <Undo2 />, disabled: !canUndo, onClick: () => onUndo(), responsiveClassName: "hidden sm:block" },
+        { id: "tool-redo", label: "重做", icon: <Redo2 />, disabled: !canRedo, onClick: () => onRedo(), responsiveClassName: "hidden sm:block" },
+        { kind: "separator", id: "create-separator", responsiveClassName: "hidden sm:block" },
         { id: "tool-add", label: "添加节点", icon: <Plus />, active: addOpen, onClick: (event) => { placePanel(event); setAppearanceOpen(false); setAddOpen((value) => !value); } },
         ...(!isProjectLinked ? [{ id: "tool-assets", label: "素材库", icon: <FolderOpen />, onClick: () => onOpenMyAssets() }] : []),
         { id: "tool-style", label: "画布外观", icon: <Palette />, active: appearanceOpen, onClick: (event) => { placePanel(event); setAddOpen(false); setAppearanceOpen((value) => !value); } },
         ...(selectedCount ? [{ kind: "separator" as const, id: "selection-separator" }, { id: "tool-delete", label: selectedCount > 1 ? `删除 ${selectedCount} 个节点` : "删除选中节点", icon: <Trash2 />, danger: true, onClick: () => onDelete() }] : []),
-        { id: "tool-clear", label: "清空画布", icon: <Eraser />, danger: true, onClick: () => onClear() },
+        { id: "tool-clear", label: "清空画布", icon: <Eraser />, danger: true, onClick: () => onClear(), responsiveClassName: "hidden sm:block" },
     ];
 
     return (
-        <div ref={rootRef} data-canvas-no-zoom className="pointer-events-none absolute inset-x-4 bottom-4 z-50 flex justify-center">
+        <div ref={rootRef} data-canvas-no-zoom className="pointer-events-none absolute inset-x-2 bottom-3 z-50 flex justify-center sm:inset-x-4 sm:bottom-4">
             <AnimatePresence>
                 {addOpen ? (
                     <AddNodeMenu
@@ -140,15 +140,15 @@ export function CanvasToolbar({
 
             <AnimatePresence>
                 {appearanceOpen ? (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[50px] z-30 w-[224px] -translate-x-1/2" style={{ left: panelX || "50%" }}>
-                        <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="aceternity-floating-panel overflow-hidden rounded-[17px] border p-2.5 backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: `0 24px 64px ${theme.spatial.shadow}` }} onWheel={(event) => event.stopPropagation()}>
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[116px] z-30 w-[224px] -translate-x-1/2 sm:bottom-[50px]" style={{ left: panelX || "50%" }}>
+                        <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="canvas-overlay-panel canvas-appearance-panel aceternity-floating-panel overflow-hidden border p-2.5 backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: `0 24px 64px ${theme.spatial.shadow}` }} onWheel={(event) => event.stopPropagation()}>
                             <PanelHeading icon={<Palette className="size-4" />} title="画布外观" subtitle="调整整个创作空间" theme={theme} />
-                            <div className="mt-3 text-[9px] font-semibold uppercase opacity-45">主题模式</div>
-                            <div className="mt-1 grid grid-cols-2 gap-1 rounded-[11px] border p-1" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
+                            <div className="canvas-overlay-section-label">主题模式</div>
+                            <div className="canvas-overlay-segmented grid grid-cols-2 gap-1 p-1">
                                 <CanvasThemeButton colorTheme={colorTheme} targetTheme="light" onThemeChange={setTheme}><Sun className="size-3.5" />浅色</CanvasThemeButton>
                                 <CanvasThemeButton colorTheme={colorTheme} targetTheme="dark" onThemeChange={setTheme}><Moon className="size-3.5" />深色</CanvasThemeButton>
                             </div>
-                            <div className="mt-3 text-[9px] font-semibold uppercase opacity-45">空间网格</div>
+                            <div className="canvas-overlay-section-label">空间网格</div>
                             <Segmented
                                 className="mt-1 w-full !rounded-[11px] !p-0.5 [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-h-7 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!min-h-7 [&_.ant-segmented-item-label]:!text-[10px] [&_.ant-segmented-item-label]:!leading-7"
                                 value={backgroundMode}
@@ -159,7 +159,7 @@ export function CanvasToolbar({
                                     { value: "blank", label: <span className="inline-flex items-center gap-1.5"><Square className="size-3.5" />空白</span> },
                                 ]}
                             />
-                            <div className="mt-2.5 flex items-center justify-between gap-2 rounded-[11px] border px-2.5 py-2" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
+                            <div className="canvas-overlay-setting-row mt-2 flex items-center justify-between gap-2 px-2.5 py-2">
                                 <span className="inline-flex min-w-0 items-center gap-1.5 text-[10px] font-semibold"><Info className="size-3" />图片信息</span>
                                 <Switch size="small" checked={showImageInfo} onChange={onShowImageInfoChange} />
                             </div>
@@ -213,8 +213,8 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
         ...(!isProjectLinked ? [{ id: "assets", label: "素材库", icon: <FolderOpen />, onClick: onOpenAssets }] : []),
     ];
     return (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[50px] z-40 w-[260px] max-w-[calc(100vw-24px)] -translate-x-1/2" style={{ left: x || "50%" }}>
-            <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="aceternity-floating-panel overflow-hidden rounded-[16px] border p-2 backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 24px 64px ${theme.spatial.shadow}` }} onWheel={(event) => event.stopPropagation()}>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[116px] z-40 w-[260px] max-w-[calc(100vw-24px)] -translate-x-1/2 sm:bottom-[50px]" style={{ left: x || "50%" }}>
+            <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="canvas-overlay-panel canvas-create-panel aceternity-floating-panel overflow-hidden border p-2 backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 24px 64px ${theme.spatial.shadow}` }} onWheel={(event) => event.stopPropagation()}>
                 <PanelHeading icon={<Plus className="size-4" />} title="创建内容" subtitle="选择节点类型" theme={theme} />
                 <MenuSection title="创作节点" />
                 <CanvasCreateCommandGrid commands={nodeCommands} />
@@ -227,15 +227,15 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
 
 function PanelHeading({ icon, title, subtitle, theme }: { icon: ReactNode; title: string; subtitle: string; theme: CanvasTheme }) {
     return (
-        <div className="flex items-center gap-2">
-            <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border opacity-75 [&_svg]:size-3.5" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>{icon}</span>
-            <span className="min-w-0"><span className="block text-xs font-semibold">{title}</span><span className="mt-0.5 block text-[9px]" style={{ color: theme.node.muted }}>{subtitle}</span></span>
+        <div className="canvas-overlay-panel-heading">
+            <span className="canvas-overlay-panel-heading-icon opacity-75 [&_svg]:size-3.5" style={{ background: theme.spatial.surface }}>{icon}</span>
+            <span className="min-w-0"><span className="canvas-overlay-panel-title">{title}</span><span className="canvas-overlay-panel-description" style={{ color: theme.node.muted }}>{subtitle}</span></span>
         </div>
     );
 }
 
 function MenuSection({ title }: { title: string }) {
-    return <div className="mb-1 mt-3 px-1 text-[9px] font-semibold uppercase opacity-42">{title}</div>;
+    return <div className="canvas-overlay-section-label">{title}</div>;
 }
 
 function CanvasThemeButton({ colorTheme, targetTheme, onThemeChange, children }: { colorTheme: CanvasColorTheme; targetTheme: CanvasColorTheme; onThemeChange: (theme: CanvasColorTheme) => void; children: ReactNode }) {

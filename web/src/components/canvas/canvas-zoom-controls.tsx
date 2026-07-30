@@ -94,14 +94,14 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 9, scale: 0.96 }}
                         transition={aceternityMotion.spring.panel}
-                        className="aceternity-floating-panel absolute bottom-[50px] left-0 w-[220px] overflow-hidden rounded-[17px] border p-2.5 backdrop-blur-2xl"
+                        className="canvas-overlay-panel canvas-zoom-panel aceternity-floating-panel absolute bottom-[50px] left-0 w-[220px] overflow-hidden border p-2.5 backdrop-blur-2xl"
                         style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 28px 80px ${theme.spatial.shadow}` }}
                     >
                         <div className="absolute inset-x-10 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${theme.spatial.glowStrong}, transparent)` }} />
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="canvas-overlay-panel-heading justify-between">
                             <span>
-                                <span className="block text-[10px] font-semibold">画布尺度</span>
-                                <span className="mt-0.5 block text-[9px]" style={{ color: theme.node.muted }}>精确控制视野密度</span>
+                                <span className="canvas-overlay-panel-title">画布尺度</span>
+                                <span className="canvas-overlay-panel-description" style={{ color: theme.node.muted }}>精确控制视野密度</span>
                             </span>
                             <span ref={panelLabelRef} className="rounded-full border px-2 py-0.5 text-[10px] font-semibold tabular-nums" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.accent.primary }}>
                                 {Math.round(scale * 100)}%

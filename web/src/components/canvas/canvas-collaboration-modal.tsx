@@ -151,6 +151,7 @@ export function CanvasCollaborationModal({
 
     return (
         <Modal
+            rootClassName="canvas-overlay-modal canvas-overlay-modal--collaboration"
             title={<span className="canvas-collaboration-modal-title inline-flex items-center gap-2"><UsersRound className="size-4" />多人协作</span>}
             open={open}
             onCancel={onClose}
@@ -160,7 +161,7 @@ export function CanvasCollaborationModal({
             destroyOnHidden
         >
             <Spin spinning={loading}>
-                <div className="canvas-collaboration-modal-body border-t pt-5" style={{ borderColor: theme.node.stroke }}>
+                <div className="canvas-overlay-body canvas-collaboration-modal-body">
                     {!isTeamCanvas ? (
                         <div className="canvas-collaboration-setup space-y-5">
                             <div className="canvas-collaboration-intro">
