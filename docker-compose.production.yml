@@ -1,8 +1,8 @@
-name: hmaigc
+name: ${HMAIGC_COMPOSE_PROJECT_NAME:-hmaigc}
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hmaigc}
       POSTGRES_USER: ${POSTGRES_USER:-hmaigc}
@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:7.4-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     command:
       ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
@@ -30,12 +30,8 @@ services:
     restart: unless-stopped
 
   backend:
-    image: hmaigc-backend:production
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      args:
-        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    image: ${HMAIGC_IMAGE_REGISTRY:?必须配置镜像仓库}/hmaigc-backend:${HMAIGC_VERSION:?必须配置发布版本}
+    pull_policy: missing
     environment:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
@@ -65,12 +61,8 @@ services:
     restart: unless-stopped
 
   web:
-    image: hmaigc-web:production
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VITE_TLDRAW_LICENSE_KEY: ${VITE_TLDRAW_LICENSE_KEY:-}
+    image: ${HMAIGC_IMAGE_REGISTRY:?必须配置镜像仓库}/hmaigc-web:${HMAIGC_VERSION:?必须配置发布版本}
+    pull_policy: missing
     ports:
       - "${CANVAS_HTTP_HOST:-127.0.0.1}:${CANVAS_HTTP_PORT:-3000}:3000"
     read_only: true
@@ -87,5 +79,8 @@ services:
 
 volumes:
   backend-data:
+    name: ${HMAIGC_BACKEND_DATA_VOLUME:-hmaigc-backend-data}
   postgres-data:
+    name: ${HMAIGC_POSTGRES_DATA_VOLUME:-hmaigc-postgres-data}
   redis-data:
+    name: ${HMAIGC_REDIS_DATA_VOLUME:-hmaigc-redis-data}

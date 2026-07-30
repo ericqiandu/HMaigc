@@ -53,27 +53,36 @@ MiniMax 同步语音当前支持 MP3、WAV、FLAC，语速范围为 0.5–2.0。
 生产服务器必须安装 Docker Engine 与 Docker Compose。先从私有仓库取得代码，然后创建生产配置：
 
 ```bash
-cp .env.example .env
+cp .env.production.example .env.production
+chmod 600 .env.production
 openssl rand -hex 32
 ```
 
-把生成结果写入 `.env` 的 `POSTGRES_PASSWORD`，并至少配置：
+把生成结果写入 `.env.production` 的 `POSTGRES_PASSWORD`，并至少配置：
 
+- `HMAIGC_IMAGE_REGISTRY`：例如 `ghcr.io/ericqiandu`。
+- `HMAIGC_VERSION`：与 Git 标签一致的不可变版本，例如 `v1.1.0`。
 - `CANVAS_CORS_ORIGINS`：实际 HTTPS 站点 Origin。
 - `CANVAS_HTTP_HOST`：有反向代理时保持 `127.0.0.1`。
 - `CANVAS_HTTP_PORT`：反向代理连接的本机端口。
-- `VITE_TLDRAW_LICENSE_KEY`：获得正式商业许可后填写。
+- GitHub Actions Secret `VITE_TLDRAW_LICENSE_KEY`：获得正式商业许可后配置，由 CI 注入 Web 发布镜像；服务器 `.env.production` 不保存该密钥。
 
-启动：
+首次安装：
 
 ```bash
-docker compose --env-file .env -f docker-compose.production.yml up -d --build --wait
-docker compose --env-file .env -f docker-compose.production.yml ps
+./deploy/hmaigc.sh install v1.1.0
 ```
 
 生产环境应由 Caddy、Nginx 或云负载均衡器提供 HTTPS。不要直接把后端、PostgreSQL 或 Redis 暴露到公网。
 
-备份、恢复演练、升级与回滚必须遵循 [生产运行手册](PRODUCTION.md)。
+后续升级与回滚：
+
+```bash
+./deploy/hmaigc.sh upgrade v1.1.1
+./deploy/hmaigc.sh rollback
+```
+
+完整契约见 [一键发布说明](deploy/README.md) 与 [生产运行手册](PRODUCTION.md)。
 
 ## 上线门禁
 
@@ -90,7 +99,8 @@ docker compose --env-file .env -f docker-compose.production.yml ps
 
 - PostgreSQL 是生产业务数据真源，Redis 只承担队列和实时广播。
 - `backend-data` 保存上传文件及服务端密钥材料；数据库备份不能替代文件备份。
-- 升级前同时备份 PostgreSQL 与 `backend-data`，再构建新镜像并执行回归。
+- 发布镜像由 GitHub Actions 构建并以不可变版本标签推送；生产服务器禁止现场构建或使用 `latest` 升级。
+- 升级前同时备份 PostgreSQL 与 `backend-data`，新后端完成迁移和版本验活后才允许启动 Web。
 - 禁止把 `.env`、数据库、日志、备份、上传文件或真实密钥提交到仓库。
 - 页面路由名称不得复用于 `web/public` 静态目录；画布人脸模型统一位于 `/runtime-assets/canvas-models/`，避免静态目录抢占 `/canvas` 页面路由。
 

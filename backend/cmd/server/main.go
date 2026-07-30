@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/repository"
@@ -170,7 +171,15 @@ func healthHandler(db *sql.DB, svc *service.Service) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "runtime coordinator unavailable"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"status": "ok"}, "msg": "ok"})
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"data": gin.H{
+				"status":  "ok",
+				"version": buildinfo.Version,
+				"commit":  buildinfo.Commit,
+			},
+			"msg": "ok",
+		})
 	}
 }
 

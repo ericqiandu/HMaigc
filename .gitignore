@@ -4,6 +4,8 @@ node_modules/
 docs/
 .env*
 !.env.example
+!.env.production.example
+.deploy/
 data/
 .local/
 /.local/docker-compose.postgres.yml

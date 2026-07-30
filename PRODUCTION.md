@@ -5,7 +5,7 @@
 ## 1. 上线前检查
 
 ```bash
-docker compose --env-file .env -f docker-compose.production.yml config -q
+docker compose --env-file .env.production -f docker-compose.production.yml config -q
 cd backend && go test ./...
 cd ../web && bun install --frozen-lockfile && bun test && bun run build
 cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
@@ -13,7 +13,8 @@ cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 
 必须确认：
 
-- `.env` 未被 Git 跟踪，`POSTGRES_PASSWORD` 为独立随机强密码。
+- `.env.production` 未被 Git 跟踪且权限为 `600`，`POSTGRES_PASSWORD` 为独立随机强密码。
+- `HMAIGC_VERSION` 是与根目录 `VERSION` 一致的不可变 `vX.Y.Z` 标签，禁止使用 `latest`。
 - `CANVAS_CORS_ORIGINS` 只包含实际 HTTPS 站点 Origin。
 - `CANVAS_HTTP_HOST=127.0.0.1`，只有反向代理对公网开放。
 - PostgreSQL、Redis 和后端端口没有映射到公网。
@@ -23,38 +24,21 @@ cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ## 2. 启动与健康检查
 
 ```bash
-docker compose --env-file .env -f docker-compose.production.yml up -d --build --wait
-docker compose --env-file .env -f docker-compose.production.yml ps
-curl --fail http://127.0.0.1:3000/api/health
-curl --fail http://127.0.0.1:3000/canvas/ | grep -q '<div id="root"></div>'
+./deploy/hmaigc.sh install v1.1.0
+./deploy/hmaigc.sh verify
 ```
 
-`/api/health` 会实时检查 PostgreSQL 与 Redis；`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录。任一检查失败时禁止继续发布流量。
+`/api/health` 会实时检查 PostgreSQL 与 Redis，并返回镜像编译时注入的版本和提交；部署工具必须确认实际运行版本与目标标签一致。`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录。任一检查失败时禁止继续发布流量。
 
 ## 3. 同一恢复点备份
 
-以下命令应在服务器仓库根目录执行。备份目录必须位于加密磁盘，并同步到独立存储。
+正式备份统一执行：
 
 ```bash
-stamp="$(date +%Y%m%d-%H%M%S)"
-backup_dir="$(pwd)/backups/$stamp"
-mkdir -p "$backup_dir"
-
-docker compose --env-file .env -f docker-compose.production.yml exec -T postgres \
-  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \
-  > "$backup_dir/postgres.dump"
-
-docker run --rm \
-  --mount type=volume,src=hmaigc_backend-data,dst=/source,readonly \
-  --mount type=bind,src="$backup_dir",dst=/backup \
-  alpine:3.22 \
-  tar -czf /backup/backend-data.tgz -C /source .
-
-sha256sum "$backup_dir/postgres.dump" "$backup_dir/backend-data.tgz" \
-  > "$backup_dir/SHA256SUMS"
+./deploy/hmaigc.sh backup
 ```
 
-备份成功必须同时满足：
+工具会先停止 Web 与后端写入，再生成同一恢复点。备份成功必须同时满足：
 
 - 两个归档文件均存在且非空。
 - `sha256sum -c SHA256SUMS` 通过。
@@ -64,7 +48,7 @@ sha256sum "$backup_dir/postgres.dump" "$backup_dir/backend-data.tgz" \
 
 恢复必须先在隔离项目中验证，禁止直接覆盖生产数据库。
 
-1. 复制 `.env` 为隔离配置，修改 HTTP 端口和数据库密码。
+1. 复制 `.env.production` 为隔离配置，修改 Compose 项目名、三个卷名、HTTP 端口和数据库密码。
 2. 使用独立项目名启动 PostgreSQL 与 Redis：
 
 ```bash
@@ -90,11 +74,18 @@ docker compose -p hmaigc-restore --env-file .env.restore \
 升级时：
 
 ```bash
-docker compose --env-file .env -f docker-compose.production.yml up -d --build --wait
-curl --fail http://127.0.0.1:3000/api/health
+./deploy/hmaigc.sh upgrade v1.1.1
 ```
 
-如新版本失败，停止流量，恢复上一提交构建的镜像；若数据库结构或数据已经变化，必须按同一恢复点同时恢复 PostgreSQL 与 `backend-data`。禁止只回滚代码而保留不兼容的数据状态。
+工具先拉取新镜像，再停止 Web 与后端写入并创建恢复点；只在新后端完成数据库迁移、依赖检查和版本校验后才启动 Web。任一步失败都会在 Web 重新开放前自动恢复上一版本的 PostgreSQL、`backend-data` 与镜像。
+
+人工主动回滚：
+
+```bash
+./deploy/hmaigc.sh rollback
+```
+
+回滚会覆盖升级恢复点之后产生的数据；命令执行前会先为当前版本生成安全恢复点。禁止只回滚代码而保留不兼容的数据状态。
 
 ## 6. 禁止操作
 

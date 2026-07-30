@@ -3,6 +3,8 @@
 FROM golang:1.25-alpine AS backend-build
 
 ARG GOPROXY=https://proxy.golang.org,direct
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
 ENV GOPROXY=$GOPROXY
 
 RUN apk add --no-cache build-base
@@ -11,7 +13,9 @@ WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY backend ./
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hmaigc-backend ./cmd/server \
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${APP_VERSION} -X infinite-canvas/backend/internal/buildinfo.Commit=${APP_COMMIT}" \
+        -o /out/hmaigc-backend ./cmd/server \
     && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hmaigc-migrate-sqlite-postgres ./cmd/migrate-sqlite-postgres
 
 FROM alpine:3.22
