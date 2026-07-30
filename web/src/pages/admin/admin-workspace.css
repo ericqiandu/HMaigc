@@ -47,31 +47,95 @@
     }
 
     :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation {
-        padding: 12px 10px;
+        padding: 0 10px 12px;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-search {
+        position: sticky;
+        z-index: 2;
+        top: 0;
+        padding: 10px 0 8px;
+        background: color-mix(in srgb, var(--workspace-ui-surface) 96%, transparent);
+        backdrop-filter: blur(12px);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-search-input {
+        min-height: 34px !important;
+        border: 0;
+        border-radius: var(--workspace-ui-radius-control);
+        background: var(--workspace-ui-control);
+        font-size: 12px;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-search-icon {
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-groups {
+        display: grid;
+        gap: 4px;
     }
 
     :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group {
-        margin-bottom: 16px;
+        margin: 0;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group-trigger {
+        display: flex;
+        width: 100%;
+        min-height: 30px;
+        align-items: center;
+        justify-content: space-between;
+        border-radius: 6px;
+        padding: 0 8px 0 10px;
+        color: var(--workspace-ui-text-tertiary);
+        transition: background-color 160ms ease, color 160ms ease;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group-trigger:hover {
+        background: var(--workspace-ui-control);
+        color: var(--workspace-ui-text-secondary);
     }
 
     :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-label {
-        margin-bottom: 6px;
-        padding-inline: 10px;
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 10px;
+        font-size: 11px;
         font-weight: 600;
         line-height: 16px;
-        letter-spacing: 0.04em;
+        letter-spacing: 0;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group-count {
+        min-width: 18px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group-chevron {
+        transition: transform 160ms ease;
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-group-chevron.is-expanded {
+        transform: rotate(180deg);
     }
 
     :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-items {
         display: grid;
         gap: 2px;
+        padding: 2px 0 6px;
     }
 
     :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link {
         height: 36px;
         border-radius: var(--workspace-ui-radius-control);
+        padding-inline: 10px;
         color: var(--workspace-ui-text-secondary);
         font-size: 13px;
         font-weight: 400;
@@ -100,6 +164,21 @@
 
     :where(.admin-workspace, .admin-mobile-navigation-drawer) .app-workspace-nav-link.is-active .admin-navigation-icon {
         color: var(--workspace-ui-accent);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-divider {
+        width: 28px;
+        height: 1px;
+        margin: 6px auto;
+        background: var(--workspace-ui-divider);
+    }
+
+    :where(.admin-workspace, .admin-mobile-navigation-drawer) .admin-navigation-empty {
+        padding: 24px 10px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 18px;
+        text-align: center;
     }
 
     .admin-sidebar-footer {
