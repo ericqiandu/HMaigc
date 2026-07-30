@@ -30,6 +30,10 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 		!db.Migrator().HasColumn(&model.ChannelVoice{}, "idempotency_key") {
 		t.Fatal("channel_voices commercial audit schema was not migrated")
 	}
+	if !db.Migrator().HasTable(&model.ChannelVoicePreview{}) ||
+		!db.Migrator().HasColumn(&model.ChannelVoicePreview{}, "provider_trace_id") {
+		t.Fatal("channel_voice_previews cache schema was not migrated")
+	}
 	for _, table := range []interface{}{
 		&model.ReferralProfile{},
 		&model.ReferralRelationship{},

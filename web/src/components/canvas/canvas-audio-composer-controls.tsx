@@ -20,16 +20,7 @@ type CanvasAudioComposerControlsProps = {
     onStop: () => void;
 };
 
-export function CanvasAudioComposerControls({
-    config,
-    credits,
-    promptLength,
-    isRunning,
-    submitDisabled,
-    onConfigChange,
-    onSubmit,
-    onStop,
-}: CanvasAudioComposerControlsProps) {
+export function CanvasAudioComposerControls({ config, credits, promptLength, isRunning, submitDisabled, onConfigChange, onSubmit, onStop }: CanvasAudioComposerControlsProps) {
     return (
         <div className="canvas-audio-composer-controls">
             <div className="canvas-audio-composer-primary-controls">
@@ -48,13 +39,7 @@ export function CanvasAudioComposerControls({
                 <CanvasAudioVoicePicker config={config} value={config.audioVoice} onChange={(audioVoice) => onConfigChange({ audioVoice })} />
             </div>
             <div className="canvas-audio-composer-secondary-controls">
-                <CanvasAudioSettingsPopover
-                    config={config}
-                    placement="topRight"
-                    iconOnly
-                    buttonClassName="canvas-audio-settings-trigger"
-                    onConfigChange={(key, value) => onConfigChange(audioConfigPatch(key, value))}
-                />
+                <CanvasAudioSettingsPopover config={config} placement="topRight" iconOnly buttonClassName="canvas-audio-settings-trigger" onConfigChange={(key, value) => onConfigChange(audioConfigPatch(key, value))} />
                 <span className="canvas-audio-character-count" aria-label={`已输入 ${promptLength} 个字符`}>
                     {promptLength.toLocaleString()}/50,000
                 </span>
@@ -64,14 +49,7 @@ export function CanvasAudioComposerControls({
                         {credits.toLocaleString()}
                     </span>
                 ) : null}
-                <Button
-                    type="text"
-                    className="canvas-audio-submit-button"
-                    danger={isRunning}
-                    disabled={submitDisabled}
-                    onClick={isRunning ? onStop : onSubmit}
-                    aria-label={isRunning ? "停止生成音频" : "生成音频"}
-                >
+                <Button type="text" className="canvas-audio-submit-button" danger={isRunning} disabled={submitDisabled} onClick={isRunning ? onStop : onSubmit} aria-label={isRunning ? "停止生成音频" : "生成音频"}>
                     {isRunning ? <Square className="canvas-audio-submit-icon size-3 fill-current" /> : <ArrowUp className="canvas-audio-submit-icon size-4" />}
                 </Button>
             </div>
@@ -80,7 +58,5 @@ export function CanvasAudioComposerControls({
 }
 
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string): Partial<CanvasNodeMetadata> {
-    if (key === "audioFormat") return { audioFormat: value };
-    if (key === "audioSpeed") return { audioSpeed: value };
-    return { audioInstructions: value };
+    return { [key]: value };
 }

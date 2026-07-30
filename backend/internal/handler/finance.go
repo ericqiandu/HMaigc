@@ -32,6 +32,28 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, wallet)
 	})
+	r.POST("/channels/:id/voices/:voiceId/preview", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "channel-voice-preview:"+user.ID, 20, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+		var req service.ChannelVoicePreviewRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		preview, err := svc.MiniMaxChannelVoicePreview(c.Request.Context(), user, c.Param("id"), c.Param("voiceId"), req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"preview": preview})
+	})
 	r.POST("/wallet/redeem", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

@@ -6,6 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { miniMaxVocalTags } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -40,7 +41,19 @@ type CanvasNodePromptPanelProps = {
 
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], availableReferences, onReferenceConnect, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({
+    node,
+    isRunning,
+    onPromptChange,
+    onConfigChange,
+    onGenerate,
+    onStop,
+    mentionReferences = [],
+    availableReferences,
+    onReferenceConnect,
+    onImageSettingsOpenChange,
+    workspaceMode = "professional",
+}: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useThemeStore((state) => state.theme);
     const theme = canvasThemes[themeName];
@@ -60,16 +73,21 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [promptContentHeight, setPromptContentHeight] = useState(0);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
-    const credits = requestCreditCost({ channelMode: priceChannel.scope === "system" ? "remote" : "local", modelCosts: priceChannel.modelCosts, model: modelOptionName(config.model), count: mode === "image" || mode === "video" ? generationCount : 1, seconds: mode === "video" ? config.videoSeconds : 1, quality: config.quality, resolution: mode === "video" ? config.vquality : config.size, videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true", videoSuperResolutionResolution: config.videoSuperResolutionResolution });
+    const credits = requestCreditCost({
+        channelMode: priceChannel.scope === "system" ? "remote" : "local",
+        modelCosts: priceChannel.modelCosts,
+        model: modelOptionName(config.model),
+        count: mode === "image" || mode === "video" ? generationCount : 1,
+        seconds: mode === "video" ? config.videoSeconds : 1,
+        quality: config.quality,
+        resolution: mode === "video" ? config.vquality : config.size,
+        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true",
+        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
+    });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
-    const activeVideoImageNodeIds = useMemo(
-        () => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)),
-        [mentionReferences],
-    );
+    const activeVideoImageNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)), [mentionReferences]);
     const availableVideoImageReferences = useMemo(
-        () => availableReferences
-            .filter((item) => item.kind === "image" && item.nodeId !== node.id && Boolean(item.previewUrl))
-            .map((item) => ({ ...item, active: activeVideoImageNodeIds.has(item.nodeId) })),
+        () => availableReferences.filter((item) => item.kind === "image" && item.nodeId !== node.id && Boolean(item.previewUrl)).map((item) => ({ ...item, active: activeVideoImageNodeIds.has(item.nodeId) })),
         [activeVideoImageNodeIds, availableReferences, node.id],
     );
     const videoFrameOptions = availableVideoImageReferences.map((item) => ({
@@ -82,23 +100,18 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         () => new Set([node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId].filter((value): value is string => Boolean(value))),
         [node.metadata?.videoEndFrameNodeId, node.metadata?.videoStartFrameNodeId],
     );
-    const nonFrameMentionReferences = useMemo(
-        () => mentionReferences.filter((item) => !activeVideoFrameNodeIds.has(item.nodeId)),
-        [activeVideoFrameNodeIds, mentionReferences],
-    );
+    const nonFrameMentionReferences = useMemo(() => mentionReferences.filter((item) => !activeVideoFrameNodeIds.has(item.nodeId)), [activeVideoFrameNodeIds, mentionReferences]);
     const composerSurface = theme.spatial.dropzone;
     const activeNonFrameReferenceCount = nonFrameMentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const videoFrameShelfVisible = isVideoMode && activeVideoFrameNodeIds.size > 0;
-    const referenceShelfRows = isVideoMode
-        ? Number(videoFrameShelfVisible) + Number(activeNonFrameReferenceCount > 0)
-        : Number(activeReferenceCount > 0);
+    const referenceShelfRows = isVideoMode ? Number(videoFrameShelfVisible) + Number(activeNonFrameReferenceCount > 0) : Number(activeReferenceCount > 0);
     const referenceShelfHeight = referenceShelfRows * 42;
-    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 122 : 82) : (isImageMode ? 76 : isAudioMode ? 92 : 58);
+    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 122 : 82) : isImageMode ? 76 : isAudioMode ? 92 : 58;
     const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
     const canExpandPrompt = mode === "image" || mode === "video" || mode === "audio";
     const updatePromptContentHeight = useCallback((height: number) => {
-        setPromptContentHeight((current) => Math.abs(current - height) < 1 ? current : height);
+        setPromptContentHeight((current) => (Math.abs(current - height) < 1 ? current : height));
     }, []);
 
     useEffect(() => {
@@ -142,15 +155,15 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     const appendAudioText = (fragment: string) => updatePrompt(prompt ? `${prompt}${fragment}` : fragment.trimStart());
 
-    const updateVideoFrameMetadata = useCallback((patch: Partial<CanvasNodeMetadata>) => {
-        const frameNodeIds = [patch.videoStartFrameNodeId, patch.videoEndFrameNodeId]
-            .filter((value): value is string => Boolean(value));
-        const connectionsReady = frameNodeIds.every(
-            (frameNodeId) => activeVideoImageNodeIds.has(frameNodeId) || onReferenceConnect(frameNodeId, node.id),
-        );
-        if (!connectionsReady) return;
-        onConfigChange(node.id, patch);
-    }, [activeVideoImageNodeIds, node.id, onConfigChange, onReferenceConnect]);
+    const updateVideoFrameMetadata = useCallback(
+        (patch: Partial<CanvasNodeMetadata>) => {
+            const frameNodeIds = [patch.videoStartFrameNodeId, patch.videoEndFrameNodeId].filter((value): value is string => Boolean(value));
+            const connectionsReady = frameNodeIds.every((frameNodeId) => activeVideoImageNodeIds.has(frameNodeId) || onReferenceConnect(frameNodeId, node.id));
+            if (!connectionsReady) return;
+            onConfigChange(node.id, patch);
+        },
+        [activeVideoImageNodeIds, node.id, onConfigChange, onReferenceConnect],
+    );
 
     const submit = () => {
         const text = prompt.trim();
@@ -175,22 +188,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 </>
             ) : mode === "video" ? (
                 <>
-                    <ReferenceConnectPicker
-                        label="+参考"
-                        references={availableVideoImageReferences}
-                        theme={theme}
-                        targetNodeId={node.id}
-                        onConnect={onReferenceConnect}
-                    />
+                    <ReferenceConnectPicker label="+参考" references={availableVideoImageReferences} theme={theme} targetNodeId={node.id} onConnect={onReferenceConnect} />
                     <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : isAudioMode ? (
-                <CanvasAudioTextTools onInsert={appendAudioText} />
+                <CanvasAudioTextTools model={modelOptionName(config.model)} theme={theme} onInsert={appendAudioText} />
             ) : (
-                <div
-                    className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium"
-                    style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}
-                >
+                <div className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     <span className="canvas-node-composer-mode-icon grid size-3.5 shrink-0 place-items-center">
                         <GenerationModeIcon mode={mode} />
                     </span>
@@ -227,93 +231,101 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         </div>
     );
 
-    const renderComposerControls = (expanded: boolean) => isAudioMode ? (
-        <CanvasAudioComposerControls
-            config={config}
-            credits={credits}
-            promptLength={prompt.length}
-            isRunning={isRunning}
-            submitDisabled={isSubmitDisabled}
-            onConfigChange={(patch) => onConfigChange(node.id, patch)}
-            onSubmit={() => {
-                if (expanded) submitExpandedPrompt();
-                else submit();
-            }}
-            onStop={() => onStop(node.id)}
-        />
-    ) : simpleMode ? (
-        <div className="flex min-w-0 items-center justify-between gap-2 px-0.5">
-            <span className="min-w-0 truncate px-2 text-[10px]" style={{ color: theme.node.muted }}>
-                {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
-            </span>
-            <Button
-                type="text"
-                className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-md !px-2.5 !text-[10px] !font-medium"
-                danger={isRunning}
-                disabled={isSubmitDisabled}
-                style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.node.activeStroke, color: isSubmitDisabled ? theme.node.faint : isRunning ? "#ffffff" : theme.canvas.background }}
-                onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                aria-label={isRunning ? "停止生成" : "生成"}
-            >
-                {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
-                {isRunning ? "停止" : "生成"}
-            </Button>
-        </div>
-    ) : (
-        <div className={`flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
-            <div className={`${expanded ? "max-w-[320px]" : mode === "image" ? "w-[114px] max-w-[114px] flex-none" : mode === "video" ? "w-[114px] max-w-[114px] flex-none" : "max-w-[174px]"} min-w-[88px] flex-1`}>
-                <ModelPicker className={`!h-8 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode || isVideoMode ? "canvas-image-model-picker" : ""}`} fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} presentation={isImageMode || isVideoMode ? "canvasImage" : "default"} />
-            </div>
-            {isImageMode || isVideoMode ? <span className={isVideoMode ? "canvas-video-toolbar-divider" : "canvas-image-toolbar-divider"} aria-hidden="true" /> : null}
-            <div className={`ml-auto flex min-w-0 shrink-0 items-center gap-0.5 ${isImageMode ? "canvas-image-toolbar-actions flex-1" : ""}`}>
-                {mode === "image" ? (
-                    <CanvasImageSettingsPopover
-                        config={config}
-                        placement={expanded ? "topRight" : "topLeft"}
-                        buttonClassName="canvas-image-settings-trigger--composer !h-7 !w-[190px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[11px] !font-semibold !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5"
-                        onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
-                        onMissingConfig={handleMissingSystemModel}
-                        onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
-                    />
-                ) : mode === "video" ? (
-                    <>
-                        <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
-                        <span className="canvas-video-toolbar-divider" aria-hidden="true" />
-                        <CanvasVideoSettingsPopover config={config} buttonClassName="canvas-video-settings-trigger--composer !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !text-[12px] !font-medium !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
-                        <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
-                        <span className="canvas-video-toolbar-divider" aria-hidden="true" />
-                    </>
-                ) : null}
-                {isImageMode ? <span className="canvas-image-toolbar-divider" aria-hidden="true" /> : null}
-                {isImageMode ? (
-                    <span className="canvas-image-bottom-preset inline-flex">
-                        <CanvasPresetPicker
-                            mode={mode}
-                            skillReferences={skillReferences}
-                            open={bottomPresetOpen}
-                            onOpenChange={setBottomPresetOpen}
-                            onSelect={applyPreset}
-                            compact
-                        />
-                    </span>
-                ) : null}
-                <span className={isImageMode ? "canvas-image-generation-cost ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost ml-auto inline-flex" : "inline-flex"}>
-                    <GenerationCostBadge credits={credits} theme={theme} />
+    const renderComposerControls = (expanded: boolean) =>
+        isAudioMode ? (
+            <CanvasAudioComposerControls
+                config={config}
+                credits={credits}
+                promptLength={prompt.length}
+                isRunning={isRunning}
+                submitDisabled={isSubmitDisabled}
+                onConfigChange={(patch) => onConfigChange(node.id, patch)}
+                onSubmit={() => {
+                    if (expanded) submitExpandedPrompt();
+                    else submit();
+                }}
+                onStop={() => onStop(node.id)}
+            />
+        ) : simpleMode ? (
+            <div className="flex min-w-0 items-center justify-between gap-2 px-0.5">
+                <span className="min-w-0 truncate px-2 text-[10px]" style={{ color: theme.node.muted }}>
+                    {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
                 <Button
                     type="text"
-                    className={`canvas-node-submit-button !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
+                    className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-md !px-2.5 !text-[10px] !font-medium"
                     danger={isRunning}
                     disabled={isSubmitDisabled}
-                    style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.accent.primary, borderColor: "transparent", color: isSubmitDisabled ? theme.node.faint : "#ffffff" }}
+                    style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.node.activeStroke, color: isSubmitDisabled ? theme.node.faint : isRunning ? "#ffffff" : theme.canvas.background }}
                     onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
                     aria-label={isRunning ? "停止生成" : "生成"}
                 >
                     {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
+                    {isRunning ? "停止" : "生成"}
                 </Button>
             </div>
-        </div>
-    );
+        ) : (
+            <div className={`flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
+                <div className={`${expanded ? "max-w-[320px]" : mode === "image" ? "w-[114px] max-w-[114px] flex-none" : mode === "video" ? "w-[114px] max-w-[114px] flex-none" : "max-w-[174px]"} min-w-[88px] flex-1`}>
+                    <ModelPicker
+                        className={`!h-8 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode || isVideoMode ? "canvas-image-model-picker" : ""}`}
+                        fullWidth
+                        config={config}
+                        value={config.model}
+                        onChange={(model) => onConfigChange(node.id, { model })}
+                        capability={mode}
+                        onMissingConfig={handleMissingSystemModel}
+                        showSelectedPrice={false}
+                        presentation={isImageMode || isVideoMode ? "canvasImage" : "default"}
+                    />
+                </div>
+                {isImageMode || isVideoMode ? <span className={isVideoMode ? "canvas-video-toolbar-divider" : "canvas-image-toolbar-divider"} aria-hidden="true" /> : null}
+                <div className={`ml-auto flex min-w-0 shrink-0 items-center gap-0.5 ${isImageMode ? "canvas-image-toolbar-actions flex-1" : ""}`}>
+                    {mode === "image" ? (
+                        <CanvasImageSettingsPopover
+                            config={config}
+                            placement={expanded ? "topRight" : "topLeft"}
+                            buttonClassName="canvas-image-settings-trigger--composer !h-7 !w-[190px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[11px] !font-semibold !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5"
+                            onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                            onMissingConfig={handleMissingSystemModel}
+                            onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
+                        />
+                    ) : mode === "video" ? (
+                        <>
+                            <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
+                            <span className="canvas-video-toolbar-divider" aria-hidden="true" />
+                            <CanvasVideoSettingsPopover
+                                config={config}
+                                buttonClassName="canvas-video-settings-trigger--composer !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !text-[12px] !font-medium !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5"
+                                onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                            />
+                            <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                            <span className="canvas-video-toolbar-divider" aria-hidden="true" />
+                        </>
+                    ) : null}
+                    {isImageMode ? <span className="canvas-image-toolbar-divider" aria-hidden="true" /> : null}
+                    {isImageMode ? (
+                        <span className="canvas-image-bottom-preset inline-flex">
+                            <CanvasPresetPicker mode={mode} skillReferences={skillReferences} open={bottomPresetOpen} onOpenChange={setBottomPresetOpen} onSelect={applyPreset} compact />
+                        </span>
+                    ) : null}
+                    <span className={isImageMode ? "canvas-image-generation-cost ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost ml-auto inline-flex" : "inline-flex"}>
+                        <GenerationCostBadge credits={credits} theme={theme} />
+                    </span>
+                    <Button
+                        type="text"
+                        className={`canvas-node-submit-button !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
+                        danger={isRunning}
+                        disabled={isSubmitDisabled}
+                        style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.accent.primary, borderColor: "transparent", color: isSubmitDisabled ? theme.node.faint : "#ffffff" }}
+                        onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
+                        aria-label={isRunning ? "停止生成" : "生成"}
+                    >
+                        {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
+                    </Button>
+                </div>
+            </div>
+        );
 
     return (
         <div
@@ -329,9 +341,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "canvas-node-prompt-editor--image mt-1 max-h-[180px]" : isVideoMode ? "canvas-node-prompt-editor--video mt-1 max-h-[180px]" : isAudioMode ? "canvas-node-prompt-editor--audio max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
                 style={{ height: composerHeight, background: isImageMode || isVideoMode || isAudioMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
-                {isVideoMode && !simpleMode ? (
-                    <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
-                ) : null}
+                {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
                 <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
                 <CanvasResourceMentionTextarea
                     value={prompt}
@@ -355,18 +365,16 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 centered
                 width={760}
                 destroyOnHidden
-                onCancel={() => { setExpandedPresetOpen(false); setExpandedPromptOpen(false); }}
+                onCancel={() => {
+                    setExpandedPresetOpen(false);
+                    setExpandedPromptOpen(false);
+                }}
                 styles={{ container: { display: "flex", height: "min(440px, calc(100vh - 40px))", flexDirection: "column", borderRadius: 12, padding: 0, overflow: "hidden" }, body: { minHeight: 0, flex: 1, padding: 0 } }}
             >
                 <div className="flex h-full min-h-0 flex-col gap-2.5 p-3" style={{ color: theme.node.text }}>
                     <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
-                    <div
-                        className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-lg border focus-within:outline focus-within:outline-1"
-                        style={{ borderColor: theme.toolbar.border, outlineColor: theme.accent.primary }}
-                    >
-                        {isVideoMode && !simpleMode ? (
-                            <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
-                        ) : null}
+                    <div className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-lg border focus-within:outline focus-within:outline-1" style={{ borderColor: theme.toolbar.border, outlineColor: theme.accent.primary }}>
+                        {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
                         <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
                         <CanvasResourceMentionTextarea
                             value={prompt}
@@ -388,27 +396,96 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
 function ComposerPill({ theme, icon, label, active = false }: { theme: CanvasTheme; icon: ReactNode; label: string; active?: boolean }) {
     return (
-        <span
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[9px] font-medium"
-            style={{ background: active ? theme.accent.primarySoft : theme.toolbar.itemHover, color: active ? theme.accent.primary : theme.node.muted }}
-        >
+        <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[9px] font-medium" style={{ background: active ? theme.accent.primarySoft : theme.toolbar.itemHover, color: active ? theme.accent.primary : theme.node.muted }}>
             {icon}
             {label}
         </span>
     );
 }
 
-function CanvasAudioTextTools({ onInsert }: { onInsert: (fragment: string) => void }) {
+function CanvasAudioTextTools({ model, theme, onInsert }: { model: string; theme: CanvasTheme; onInsert: (fragment: string) => void }) {
+    const [pauseOpen, setPauseOpen] = useState(false);
+    const [vocalOpen, setVocalOpen] = useState(false);
+    const supportsVocalTags = model.startsWith("speech-2.8-");
+    const pauseOptions = [
+        { value: "<#0.3#>", label: "短停顿", description: "0.3 秒" },
+        { value: "<#0.5#>", label: "自然停顿", description: "0.5 秒" },
+        { value: "<#1#>", label: "长停顿", description: "1 秒" },
+        { value: "<#2#>", label: "段落停顿", description: "2 秒" },
+    ];
+    const menuStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text };
     return (
         <div className="canvas-audio-text-tools flex min-w-0 items-center gap-1.5" role="group" aria-label="音频文本工具">
-            <button type="button" className="canvas-audio-text-tool" onClick={() => onInsert("……")} aria-label="插入停顿">
-                <span className="canvas-audio-text-tool-symbol" aria-hidden="true">&lt;#&gt;</span>
-                <span className="canvas-audio-text-tool-label">停顿</span>
-            </button>
-            <button type="button" className="canvas-audio-text-tool" onClick={() => onInsert(" 嗯，")} aria-label="插入语气词">
-                <span className="canvas-audio-text-tool-symbol" aria-hidden="true">()</span>
-                <span className="canvas-audio-text-tool-label">语气词</span>
-            </button>
+            <Popover
+                open={pauseOpen}
+                onOpenChange={setPauseOpen}
+                trigger="click"
+                placement="topLeft"
+                content={
+                    <div className="canvas-audio-text-menu grid w-56 grid-cols-2 gap-1 p-1" style={menuStyle}>
+                        {pauseOptions.map((option) => (
+                            <button
+                                key={option.value}
+                                type="button"
+                                className="canvas-audio-text-menu-option flex min-w-0 flex-col gap-0.5 rounded-md border-0 px-2 py-1.5 text-left"
+                                style={{ background: theme.toolbar.itemHover, color: theme.node.text }}
+                                onClick={() => {
+                                    onInsert(option.value);
+                                    setPauseOpen(false);
+                                }}
+                            >
+                                <span className="canvas-audio-text-menu-label text-[11px] font-medium">{option.label}</span>
+                                <span className="canvas-audio-text-menu-description text-[9px]" style={{ color: theme.node.muted }}>
+                                    {option.description}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                }
+                styles={{ content: { padding: 0, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+            >
+                <button type="button" className="canvas-audio-text-tool" aria-label="插入停顿">
+                    <span className="canvas-audio-text-tool-symbol" aria-hidden="true">
+                        &lt;#&gt;
+                    </span>
+                    <span className="canvas-audio-text-tool-label">停顿</span>
+                </button>
+            </Popover>
+            <Popover
+                open={vocalOpen}
+                onOpenChange={supportsVocalTags ? setVocalOpen : undefined}
+                trigger="click"
+                placement="topLeft"
+                content={
+                    <div className="canvas-audio-vocal-menu thin-scrollbar grid max-h-64 w-72 grid-cols-3 gap-1 overflow-y-auto p-1" style={menuStyle}>
+                        {miniMaxVocalTags.map((option) => (
+                            <button
+                                key={option.value}
+                                type="button"
+                                className="canvas-audio-vocal-option rounded-md border-0 px-2 py-1.5 text-left text-[10px]"
+                                style={{ background: theme.toolbar.itemHover, color: theme.node.text }}
+                                title={option.value}
+                                onClick={() => {
+                                    onInsert(option.value);
+                                    setVocalOpen(false);
+                                }}
+                            >
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                }
+                styles={{ content: { padding: 0, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+            >
+                <Tooltip title={supportsVocalTags ? "插入 MiniMax 语气词" : "当前模型不支持语气词标记"}>
+                    <button type="button" className="canvas-audio-text-tool" disabled={!supportsVocalTags} aria-label="插入语气词">
+                        <span className="canvas-audio-text-tool-symbol" aria-hidden="true">
+                            ()
+                        </span>
+                        <span className="canvas-audio-text-tool-label">语气词</span>
+                    </button>
+                </Tooltip>
+            </Popover>
         </div>
     );
 }
@@ -434,7 +511,9 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
                     </span>
                     <span className="canvas-reference-picker-copy min-w-0 flex-1">
                         <span className="canvas-reference-picker-label block truncate text-[11px] font-medium">@{reference.label}</span>
-                        <span className="canvas-reference-picker-title block truncate text-[9px]" style={{ color: theme.node.muted }}>{reference.title}</span>
+                        <span className="canvas-reference-picker-title block truncate text-[9px]" style={{ color: theme.node.muted }}>
+                            {reference.title}
+                        </span>
                     </span>
                 </button>
             ))}
@@ -446,14 +525,7 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
     );
 
     return (
-        <Popover
-            open={open}
-            onOpenChange={setOpen}
-            trigger="click"
-            placement="topLeft"
-            content={content}
-            styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
-        >
+        <Popover open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
             <button
                 type="button"
                 className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
@@ -503,7 +575,9 @@ function ReferenceConnectPicker({
                     </span>
                     <span className="canvas-reference-connect-copy min-w-0 flex-1">
                         <span className="canvas-reference-connect-label block truncate text-[11px] font-medium">@{reference.label}</span>
-                        <span className="canvas-reference-connect-title block truncate text-[9px]" style={{ color: theme.node.muted }}>{reference.title}</span>
+                        <span className="canvas-reference-connect-title block truncate text-[9px]" style={{ color: theme.node.muted }}>
+                            {reference.title}
+                        </span>
                     </span>
                     {reference.active ? (
                         <span className="canvas-reference-connect-status inline-flex shrink-0 items-center gap-1 text-[9px]">
@@ -521,14 +595,7 @@ function ReferenceConnectPicker({
     );
 
     return (
-        <Popover
-            open={open}
-            onOpenChange={setOpen}
-            trigger="click"
-            placement="topLeft"
-            content={content}
-            styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
-        >
+        <Popover open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
             <button
                 type="button"
                 className="canvas-reference-connect-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
@@ -575,7 +642,9 @@ function ConnectedReferenceShelf({ references, theme, onInsert }: { references: 
                         <ReferenceThumbnail reference={reference} />
                     </span>
                     <span className="absolute left-0.5 top-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-[8px] font-semibold text-white backdrop-blur-sm">{index + 1}</span>
-                    <span className="absolute bottom-0.5 right-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-white backdrop-blur-sm"><AtSign className="size-2" /></span>
+                    <span className="absolute bottom-0.5 right-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-white backdrop-blur-sm">
+                        <AtSign className="size-2" />
+                    </span>
                 </button>
             ))}
         </div>
@@ -632,6 +701,13 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
+        audioVolume: node.metadata?.audioVolume || globalConfig.audioVolume || defaultConfig.audioVolume,
+        audioPitch: node.metadata?.audioPitch || globalConfig.audioPitch || defaultConfig.audioPitch,
+        audioEmotion: node.metadata?.audioEmotion || globalConfig.audioEmotion || defaultConfig.audioEmotion,
+        audioLanguageBoost: node.metadata?.audioLanguageBoost || globalConfig.audioLanguageBoost || defaultConfig.audioLanguageBoost,
+        audioSampleRate: node.metadata?.audioSampleRate || globalConfig.audioSampleRate || defaultConfig.audioSampleRate,
+        audioBitrate: node.metadata?.audioBitrate || globalConfig.audioBitrate || defaultConfig.audioBitrate,
+        audioChannel: node.metadata?.audioChannel || globalConfig.audioChannel || defaultConfig.audioChannel,
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };

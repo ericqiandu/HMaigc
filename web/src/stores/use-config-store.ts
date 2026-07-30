@@ -70,6 +70,13 @@ export type AiConfig = {
     audioVoice: string;
     audioFormat: string;
     audioSpeed: string;
+    audioVolume: string;
+    audioPitch: string;
+    audioEmotion: string;
+    audioLanguageBoost: string;
+    audioSampleRate: string;
+    audioBitrate: string;
+    audioChannel: string;
     audioInstructions: string;
     videoSeconds: string;
     vquality: string;
@@ -113,6 +120,13 @@ export const defaultConfig: AiConfig = {
     audioVoice: "",
     audioFormat: "mp3",
     audioSpeed: "1",
+    audioVolume: "1",
+    audioPitch: "0",
+    audioEmotion: "",
+    audioLanguageBoost: "auto",
+    audioSampleRate: "32000",
+    audioBitrate: "128000",
+    audioChannel: "1",
     audioInstructions: "",
     videoSeconds: "6",
     vquality: "720",
@@ -298,6 +312,13 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot) {
             audioVoice: config.audioVoice || defaultConfig.audioVoice,
             audioFormat: config.audioFormat || defaultConfig.audioFormat,
             audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
+            audioVolume: config.audioVolume || defaultConfig.audioVolume,
+            audioPitch: config.audioPitch || defaultConfig.audioPitch,
+            audioEmotion: config.audioEmotion || defaultConfig.audioEmotion,
+            audioLanguageBoost: config.audioLanguageBoost || defaultConfig.audioLanguageBoost,
+            audioSampleRate: config.audioSampleRate || defaultConfig.audioSampleRate,
+            audioBitrate: config.audioBitrate || defaultConfig.audioBitrate,
+            audioChannel: config.audioChannel || defaultConfig.audioChannel,
             audioInstructions: config.audioInstructions || "",
             videoSeconds: normalizeVideoDuration(config.videoSeconds),
             vquality: normalizeVideoResolution(config.vquality),
@@ -386,23 +407,23 @@ export function modelOptionsFromChannels(channels: ModelChannel[]) {
 
 export function hasSystemModelPrice(channel: ModelChannel, model: string) {
     if (channel.scope !== "system") return true;
-    return channel.modelCosts?.some((item) => {
-        if (item.model !== model) return false;
-        if (item.priceStrategy === "flat") {
-            return Number.isFinite(item.unitPriceMicrocredits) && item.unitPriceMicrocredits > 0;
-        }
-        if (!Array.isArray(item.priceTiers)) return false;
-        if (item.priceStrategy === "video_resolution") {
-            return item.priceTiers.some(
-                (tier) => Number.isFinite(tier.unitPriceMicrocredits) && tier.unitPriceMicrocredits > 0,
-            );
-        }
-        const requiredResolutions = ["1K", "2K", "4K"] as const;
-        return requiredResolutions.every((resolution) => {
-            const tier = item.priceTiers.find((candidate) => candidate.resolution === resolution);
-            return tier !== undefined && Number.isFinite(tier.unitPriceMicrocredits) && tier.unitPriceMicrocredits > 0;
-        });
-    }) === true;
+    return (
+        channel.modelCosts?.some((item) => {
+            if (item.model !== model) return false;
+            if (item.priceStrategy === "flat") {
+                return Number.isFinite(item.unitPriceMicrocredits) && item.unitPriceMicrocredits > 0;
+            }
+            if (!Array.isArray(item.priceTiers)) return false;
+            if (item.priceStrategy === "video_resolution") {
+                return item.priceTiers.some((tier) => Number.isFinite(tier.unitPriceMicrocredits) && tier.unitPriceMicrocredits > 0);
+            }
+            const requiredResolutions = ["1K", "2K", "4K"] as const;
+            return requiredResolutions.every((resolution) => {
+                const tier = item.priceTiers.find((candidate) => candidate.resolution === resolution);
+                return tier !== undefined && Number.isFinite(tier.unitPriceMicrocredits) && tier.unitPriceMicrocredits > 0;
+            });
+        }) === true
+    );
 }
 
 export function normalizeModelOptionValue(value: unknown, channels: ModelChannel[]) {
@@ -476,7 +497,18 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
 }
 
 function normalizeChannelInterfaceType(value: unknown): ChannelInterfaceType | undefined {
-    return value === "chat-completion" || value === "openai-response" || value === "openai-image" || value === "apimart-image" || value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video" || value === "minimax-speech" ? value : undefined;
+    return value === "chat-completion" ||
+        value === "openai-response" ||
+        value === "openai-image" ||
+        value === "apimart-image" ||
+        value === "newapi" ||
+        value === "newapi-channel-1" ||
+        value === "newapi-channel-2" ||
+        value === "xai-video" ||
+        value === "ai-open-platform-video" ||
+        value === "minimax-speech"
+        ? value
+        : undefined;
 }
 
 function uniqueRawModels(models: string[]) {
@@ -484,7 +516,14 @@ function uniqueRawModels(models: string[]) {
 }
 
 function uniqueModelOptions(models: string[]) {
-    return Array.from(new Set((models || []).filter((model): model is string => typeof model === "string").map((model) => model.trim()).filter(Boolean)));
+    return Array.from(
+        new Set(
+            (models || [])
+                .filter((model): model is string => typeof model === "string")
+                .map((model) => model.trim())
+                .filter(Boolean),
+        ),
+    );
 }
 
 function normalizeRawModelName(value: unknown) {
@@ -504,7 +543,9 @@ export function buildApiUrl(baseUrl: string, path: string) {
 export function resolveBackendApiUrl(value: string) {
     const url = value.trim();
     if (!url.startsWith("/api/")) return url;
-    const backendBaseUrl = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").trim().replace(/\/+$/, "");
+    const backendBaseUrl = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api")
+        .trim()
+        .replace(/\/+$/, "");
     return backendBaseUrl === "/api" ? url : `${backendBaseUrl}${url.slice("/api".length)}`;
 }
 

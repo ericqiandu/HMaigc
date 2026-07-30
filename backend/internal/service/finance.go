@@ -411,25 +411,9 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if err != nil {
 		return nil, err
 	}
-	item, err := s.repo.ChannelModelByKey(channelID, modelKey)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, BadAuthRequest("当前系统渠道模型未配置或已停用")
-	}
+	item, err := s.requireAccessibleChannelModel(userID, channelID, modelKey)
 	if err != nil {
 		return nil, err
-	}
-	switch item.AccessPolicy {
-	case model.ModelAccessAuthenticated:
-	case model.ModelAccessMember:
-		hasMembership, membershipErr := s.HasActiveMembership(userID)
-		if membershipErr != nil {
-			return nil, membershipErr
-		}
-		if !hasMembership {
-			return nil, Forbidden("当前模型仅限有效会员使用，请先升级会员")
-		}
-	default:
-		return nil, errors.New("当前模型访问策略配置无效")
 	}
 	if !item.PriceConfigured {
 		return nil, BadAuthRequest("当前模型尚未配置用户积分价格")
@@ -531,6 +515,31 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		UnitPriceMicrocredits: unitPrice, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
 		Status: model.BillingStatusReserved,
 	}, nil
+}
+
+func (s *Service) requireAccessibleChannelModel(userID string, channelID string, modelKey string) (*model.ChannelModel, error) {
+	item, err := s.repo.ChannelModelByKey(channelID, modelKey)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, BadAuthRequest("当前系统渠道模型未配置或已停用")
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch item.AccessPolicy {
+	case model.ModelAccessAuthenticated:
+		return item, nil
+	case model.ModelAccessMember:
+		hasMembership, membershipErr := s.HasActiveMembership(userID)
+		if membershipErr != nil {
+			return nil, membershipErr
+		}
+		if !hasMembership {
+			return nil, Forbidden("当前模型仅限有效会员使用，请先升级会员")
+		}
+		return item, nil
+	default:
+		return nil, errors.New("当前模型访问策略配置无效")
+	}
 }
 
 func billingUsage(capability string, config map[string]any) BillingUsage {

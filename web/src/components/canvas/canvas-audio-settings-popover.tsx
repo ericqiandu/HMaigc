@@ -4,12 +4,12 @@ import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
 import { AudioSettingsPanel } from "@/components/audio-settings-panel";
-import { audioFormatLabel, audioSpeedLabel, audioVoiceLabel } from "@/lib/audio-generation";
+import { audioFormatLabel, audioSpeedLabel, audioVoiceLabel, type AudioSettingKey } from "@/lib/audio-generation";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
-export type CanvasAudioSettingKey = "audioFormat" | "audioSpeed" | "audioInstructions";
+export type CanvasAudioSettingKey = AudioSettingKey;
 
 type CanvasAudioSettingsPopoverProps = {
     config: AiConfig;
@@ -62,9 +62,11 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
                     aria-label={iconOnly ? "打开音频参数" : undefined}
                     title={iconOnly ? "音频参数" : undefined}
                 >
-                    {!iconOnly ? <span className="truncate">
-                        {audioVoiceLabel(config.audioVoice)} · {audioFormatLabel(config.audioFormat)} · {audioSpeedLabel(config.audioSpeed)}
-                    </span> : null}
+                    {!iconOnly ? (
+                        <span className="truncate">
+                            {audioVoiceLabel(config.audioVoice)} · {audioFormatLabel(config.audioFormat)} · {audioSpeedLabel(config.audioSpeed)}
+                        </span>
+                    ) : null}
                 </Button>
             </span>
             {panel}
@@ -87,7 +89,7 @@ function AudioSettingsPortal({
     config: AiConfig;
     onConfigChange: (key: CanvasAudioSettingKey, value: string) => void;
 }) {
-    const width = 356;
+    const width = Math.min(420, window.innerWidth - 24);
     const gap = 8;
     const margin = 12;
     const alignRight = placement?.endsWith("Right");

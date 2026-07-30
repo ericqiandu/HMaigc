@@ -58,6 +58,13 @@ const GENERATION_OPTION_PROPERTIES = {
     audioVoice: { type: "string" },
     audioFormat: { type: "string" },
     audioSpeed: { type: "string" },
+    audioVolume: { type: "string" },
+    audioPitch: { type: "string" },
+    audioEmotion: { type: "string" },
+    audioLanguageBoost: { type: "string" },
+    audioSampleRate: { type: "string" },
+    audioBitrate: { type: "string" },
+    audioChannel: { type: "string" },
     audioInstructions: { type: "string" },
 };
 const CANVAS_OP_SCHEMA = {
@@ -96,7 +103,16 @@ function generationToolDefinition(name: string, description: string, mode?: "tex
     return toolDefinition(
         name,
         description,
-        { prompt: { type: "string" }, title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, referenceNodeIds: { type: "array", items: { type: "string" } }, ...(mode ? {} : { mode: GENERATION_MODE_SCHEMA }), autoRun: { type: "boolean" }, ...GENERATION_OPTION_PROPERTIES },
+        {
+            prompt: { type: "string" },
+            title: { type: "string" },
+            x: { type: "number" },
+            y: { type: "number" },
+            referenceNodeIds: { type: "array", items: { type: "string" } },
+            ...(mode ? {} : { mode: GENERATION_MODE_SCHEMA }),
+            autoRun: { type: "boolean" },
+            ...GENERATION_OPTION_PROPERTIES,
+        },
         ["prompt"],
     );
 }
@@ -105,13 +121,59 @@ const ONLINE_AGENT_TOOLS: ResponseFunctionTool[] = [
     toolDefinition("canvas_get_state", "读取当前网页画布的节点、连线、选区和视口。", {}),
     toolDefinition("canvas_get_selection", "读取当前网页画布选中的节点。", {}),
     toolDefinition("canvas_export_snapshot", "导出当前画布快照，用于理解布局。", {}),
-    toolDefinition("canvas_apply_ops", "批量操作当前网页画布。ops 支持 add_node、update_node、delete_node、delete_connections、connect_nodes、set_viewport、select_nodes、run_generation。", { ops: { type: "array", items: CANVAS_OP_SCHEMA } }, ["ops"], false),
-    toolDefinition("canvas_create_node", "创建任意类型节点：text、image、config、video、audio。适合创建占位图、媒体占位、配置节点或自定义 metadata 节点。", { nodeType: NODE_TYPE_SCHEMA, title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, metadata: JSON_RECORD_SCHEMA }, ["nodeType"]),
+    toolDefinition(
+        "canvas_apply_ops",
+        "批量操作当前网页画布。ops 支持 add_node、update_node、delete_node、delete_connections、connect_nodes、set_viewport、select_nodes、run_generation。",
+        { ops: { type: "array", items: CANVAS_OP_SCHEMA } },
+        ["ops"],
+        false,
+    ),
+    toolDefinition(
+        "canvas_create_node",
+        "创建任意类型节点：text、image、config、video、audio。适合创建占位图、媒体占位、配置节点或自定义 metadata 节点。",
+        { nodeType: NODE_TYPE_SCHEMA, title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, metadata: JSON_RECORD_SCHEMA },
+        ["nodeType"],
+    ),
     toolDefinition("canvas_create_text_node", "在当前画布创建单个文本节点。", { text: { type: "string" }, x: { type: "number" }, y: { type: "number" }, title: { type: "string" }, width: { type: "number" }, height: { type: "number" } }),
-    toolDefinition("canvas_create_text_nodes", "批量创建文本节点，适合生成标题、段落、脚本、说明等内容块。", { items: { type: "array", minItems: 1, items: { type: "object", properties: { text: { type: "string" }, title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } }, required: ["text"], additionalProperties: false } }, x: { type: "number" }, y: { type: "number" }, gap: { type: "number" }, direction: { type: "string", enum: ["row", "column"] } }, ["items"]),
+    toolDefinition(
+        "canvas_create_text_nodes",
+        "批量创建文本节点，适合生成标题、段落、脚本、说明等内容块。",
+        {
+            items: {
+                type: "array",
+                minItems: 1,
+                items: {
+                    type: "object",
+                    properties: { text: { type: "string" }, title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } },
+                    required: ["text"],
+                    additionalProperties: false,
+                },
+            },
+            x: { type: "number" },
+            y: { type: "number" },
+            gap: { type: "number" },
+            direction: { type: "string", enum: ["row", "column"] },
+        },
+        ["items"],
+    ),
     toolDefinition("canvas_create_cinematic_session", "把自然语言创作指令提交给后端影视 Agent 会话，后端拆解为剧本、场景、分镜、镜头和成片节点，并返回可写回画布的操作。", { prompt: { type: "string" } }, ["prompt"]),
-    toolDefinition("canvas_create_config_node", "创建生成配置节点，可指定 text/image/video/audio 模式和生成参数，可选择立即触发生成。", { prompt: { type: "string" }, mode: GENERATION_MODE_SCHEMA, title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, autoRun: { type: "boolean" }, ...GENERATION_OPTION_PROPERTIES }),
-    toolDefinition("canvas_create_image_prompt_flow", "创建提示词文本节点和图片生成配置节点，并自动连线，可选择立即触发生图。", { prompt: { type: "string" }, x: { type: "number" }, y: { type: "number" }, autoRun: { type: "boolean" }, ...GENERATION_OPTION_PROPERTIES }, ["prompt"]),
+    toolDefinition("canvas_create_config_node", "创建生成配置节点，可指定 text/image/video/audio 模式和生成参数，可选择立即触发生成。", {
+        prompt: { type: "string" },
+        mode: GENERATION_MODE_SCHEMA,
+        title: { type: "string" },
+        x: { type: "number" },
+        y: { type: "number" },
+        width: { type: "number" },
+        height: { type: "number" },
+        autoRun: { type: "boolean" },
+        ...GENERATION_OPTION_PROPERTIES,
+    }),
+    toolDefinition(
+        "canvas_create_image_prompt_flow",
+        "创建提示词文本节点和图片生成配置节点，并自动连线，可选择立即触发生图。",
+        { prompt: { type: "string" }, x: { type: "number" }, y: { type: "number" }, autoRun: { type: "boolean" }, ...GENERATION_OPTION_PROPERTIES },
+        ["prompt"],
+    ),
     generationToolDefinition("canvas_create_generation_flow", "创建通用生成流程：提示词文本节点、生成配置节点、参考节点连线，可用于文案、生图、视频或音频。"),
     generationToolDefinition("canvas_generate_text", "创建通用文本生成流程并立即触发生成。", "text"),
     generationToolDefinition("canvas_generate_image", "创建通用图片生成流程并立即触发生成。", "image"),
@@ -119,10 +181,26 @@ const ONLINE_AGENT_TOOLS: ResponseFunctionTool[] = [
     generationToolDefinition("canvas_generate_audio", "创建通用音频生成流程并立即触发生成。", "audio"),
     toolDefinition("canvas_update_node", "更新节点基础字段或 metadata。", { id: { type: "string" }, patch: JSON_RECORD_SCHEMA, metadata: JSON_RECORD_SCHEMA }, ["id"]),
     toolDefinition("canvas_update_node_text", "更新文本节点内容和标题。", { id: { type: "string" }, text: { type: "string" }, title: { type: "string" } }, ["id", "text"]),
-    toolDefinition("canvas_move_nodes", "移动一个或多个节点，支持绝对坐标或 dx/dy 偏移。", { items: { type: "array", minItems: 1, items: { type: "object", properties: { id: { type: "string" }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number" }, dy: { type: "number" } }, required: ["id"], additionalProperties: false } } }, ["items"]),
+    toolDefinition(
+        "canvas_move_nodes",
+        "移动一个或多个节点，支持绝对坐标或 dx/dy 偏移。",
+        {
+            items: {
+                type: "array",
+                minItems: 1,
+                items: { type: "object", properties: { id: { type: "string" }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number" }, dy: { type: "number" } }, required: ["id"], additionalProperties: false },
+            },
+        },
+        ["items"],
+    ),
     toolDefinition("canvas_resize_node", "调整节点尺寸。", { id: { type: "string" }, width: { type: "number" }, height: { type: "number" }, freeResize: { type: "boolean" } }, ["id", "width", "height"]),
     toolDefinition("canvas_delete_nodes", "删除指定节点及相关连线。", { ids: { type: "array", items: { type: "string" }, minItems: 1 } }, ["ids"]),
-    toolDefinition("canvas_connect_nodes", "批量连接节点。", { connections: { type: "array", minItems: 1, items: { type: "object", properties: { fromNodeId: { type: "string" }, toNodeId: { type: "string" } }, required: ["fromNodeId", "toNodeId"], additionalProperties: false } } }, ["connections"]),
+    toolDefinition(
+        "canvas_connect_nodes",
+        "批量连接节点。",
+        { connections: { type: "array", minItems: 1, items: { type: "object", properties: { fromNodeId: { type: "string" }, toNodeId: { type: "string" } }, required: ["fromNodeId", "toNodeId"], additionalProperties: false } } },
+        ["connections"],
+    ),
     toolDefinition("canvas_select_nodes", "设置当前选中节点。", { ids: { type: "array", items: { type: "string" } } }, ["ids"]),
     toolDefinition("canvas_set_viewport", "调整画布视口。", { viewport: VIEWPORT_SCHEMA }, ["viewport"]),
     toolDefinition("canvas_run_generation", "触发指定节点生成，通常用于配置节点或文本/图片/视频/音频节点。", { nodeId: { type: "string" }, mode: GENERATION_MODE_SCHEMA, prompt: { type: "string" } }, ["nodeId"]),
@@ -155,7 +233,27 @@ type CanvasAssistantPanelProps = {
     onAgentLaunchHandled?: (launchRequestId: string) => void;
 };
 
-export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, projectId, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, canUndoOps, undoOpsCount, onUndoOps, onPasteImage, closing, onCollapse, cinematicEntry = false, onCinematicEntryConsumed, agentLaunchRequest, onAgentLaunchHandled }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({
+    nodes,
+    selectedNodeIds,
+    snapshot,
+    projectId,
+    sessions,
+    activeSessionId,
+    onSelectNodeIds,
+    onSessionsChange,
+    onApplyOps,
+    canUndoOps,
+    undoOpsCount,
+    onUndoOps,
+    onPasteImage,
+    closing,
+    onCollapse,
+    cinematicEntry = false,
+    onCinematicEntryConsumed,
+    agentLaunchRequest,
+    onAgentLaunchHandled,
+}: CanvasAssistantPanelProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
     const effectiveConfig = useEffectiveConfig();
@@ -193,11 +291,14 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
         snapshotRef.current = snapshot;
     }, [snapshot]);
 
-    useEffect(() => () => {
-        // 收起面板或刷新页面时只停止前端查询，后台任务由下次挂载根据持久化 ID 继续接管。
-        cinematicSessionControllersRef.current.forEach((controller) => controller.abort());
-        cinematicSessionControllersRef.current.clear();
-    }, []);
+    useEffect(
+        () => () => {
+            // 收起面板或刷新页面时只停止前端查询，后台任务由下次挂载根据持久化 ID 继续接管。
+            cinematicSessionControllersRef.current.forEach((controller) => controller.abort());
+            cinematicSessionControllersRef.current.clear();
+        },
+        [],
+    );
 
     useEffect(() => {
         if (applyingExternalSessionsRef.current) {
@@ -495,7 +596,13 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     upsertMessage(sessionId, { id: assistantId, role: "assistant", text: result.content || streamed || "准备执行工具，等待确认。" });
                     const toolMessageId = nanoid();
                     pendingToolContextRef.current.set(toolMessageId, { messages, toolCalls: result.toolCalls, assistantId, step: loop.step });
-                    const toolMessage: CanvasAssistantMessage = { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(result.toolCalls), detail: { status: "pending", step: loop.step, toolCalls: result.toolCalls, impact: previewOnlineToolCalls(result.toolCalls, snapshotRef.current, agentConfig) } };
+                    const toolMessage: CanvasAssistantMessage = {
+                        id: toolMessageId,
+                        role: "tool",
+                        title: "确认工具调用",
+                        text: summarizeToolCalls(result.toolCalls),
+                        detail: { status: "pending", step: loop.step, toolCalls: result.toolCalls, impact: previewOnlineToolCalls(result.toolCalls, snapshotRef.current, agentConfig) },
+                    };
                     appendMessage(sessionId, toolMessage);
                     return;
                 }
@@ -524,11 +631,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     };
 
     const continueOnlineToolLoopAfterResults = async (sessionId: string, assistantId: string, messages: ResponseInputMessage[], toolCalls: ResponseToolCall[], toolResults: OnlineExecutedToolCall[], step: number) => {
-        const nextMessages: ResponseInputMessage[] = [
-            ...messages,
-            ...toolCalls.map(toolCallToResponseInput),
-            ...toolResults.map((item) => ({ role: "tool" as const, tool_call_id: item.toolCallId, content: JSON.stringify(item.result) })),
-        ];
+        const nextMessages: ResponseInputMessage[] = [...messages, ...toolCalls.map(toolCallToResponseInput), ...toolResults.map((item) => ({ role: "tool" as const, tool_call_id: item.toolCallId, content: JSON.stringify(item.result) }))];
         if (step >= ONLINE_AGENT_MAX_STEPS) {
             upsertMessage(sessionId, { id: assistantId, role: "assistant", text: toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。" });
             return;
@@ -545,7 +648,13 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                 upsertMessage(sessionId, { id: assistantId, role: "assistant", text: next.content || streamed || "准备执行工具，等待确认。" });
                 const toolMessageId = nanoid();
                 pendingToolContextRef.current.set(toolMessageId, { messages: nextMessages, toolCalls: next.toolCalls, assistantId, step: step + 1 });
-                appendMessage(sessionId, { id: toolMessageId, role: "tool", title: "确认工具调用", text: summarizeToolCalls(next.toolCalls), detail: { status: "pending", step: step + 1, toolCalls: next.toolCalls, impact: previewOnlineToolCalls(next.toolCalls, snapshotRef.current, agentConfig) } });
+                appendMessage(sessionId, {
+                    id: toolMessageId,
+                    role: "tool",
+                    title: "确认工具调用",
+                    text: summarizeToolCalls(next.toolCalls),
+                    detail: { status: "pending", step: step + 1, toolCalls: next.toolCalls, impact: previewOnlineToolCalls(next.toolCalls, snapshotRef.current, agentConfig) },
+                });
                 return;
             }
             await continueOnlineToolLoop(sessionId, assistantId, nextMessages, next, step + 1);
@@ -912,11 +1021,23 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     </>
                 ) : (
                     <div className="flex h-full flex-col items-center justify-center px-3 text-center">
-                        <span className="grid size-11 place-items-center rounded-lg border" style={{ background: theme.accent.primarySoft, borderColor: theme.spatial.glowStrong, color: theme.accent.primary }}><Bot className="size-5" /></span>
-                        <div className="mt-3 text-sm font-semibold" style={{ color: theme.node.text }}>Agent</div>
+                        <span className="grid size-11 place-items-center rounded-lg border" style={{ background: theme.accent.primarySoft, borderColor: theme.spatial.glowStrong, color: theme.accent.primary }}>
+                            <Bot className="size-5" />
+                        </span>
+                        <div className="mt-3 text-sm font-semibold" style={{ color: theme.node.text }}>
+                            Agent
+                        </div>
                         <div className="mt-5 grid w-full max-w-[360px] grid-cols-2 gap-2">
                             {["搭建短剧工作流", "整理当前画布", "生成镜头分镜", "检查节点连线"].map((suggestion) => (
-                                <button key={suggestion} type="button" className="h-9 rounded-md border px-2 text-xs font-medium transition hover:-translate-y-0.5" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={() => setPrompt(suggestion)}>{suggestion}</button>
+                                <button
+                                    key={suggestion}
+                                    type="button"
+                                    className="h-9 rounded-md border px-2 text-xs font-medium transition hover:-translate-y-0.5"
+                                    style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.text }}
+                                    onClick={() => setPrompt(suggestion)}
+                                >
+                                    {suggestion}
+                                </button>
                             ))}
                         </div>
                     </div>
@@ -950,7 +1071,11 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                         onAddFiles={addImagesToCanvas}
                         left={
                             <div className="canvas-agent-composer-extra-controls">
-                                {cinematicEntryActive ? <span className="canvas-agent-status-badge" style={{ color: theme.node.muted, background: theme.spatial.surface }}>影视项目</span> : null}
+                                {cinematicEntryActive ? (
+                                    <span className="canvas-agent-status-badge" style={{ color: theme.node.muted, background: theme.spatial.surface }}>
+                                        影视项目
+                                    </span>
+                                ) : null}
                                 <CanvasAgentComposerControls
                                     config={effectiveConfig}
                                     disabled={agentBusy}
@@ -1034,7 +1159,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                                 className={`canvas-agent-icon-button ${view === "history" ? "canvas-agent-icon-button--active" : ""}`}
                                 style={iconButtonStyle}
                                 icon={<History className="size-3.5" />}
-                                onClick={() => setView((current) => current === "history" ? "chat" : "history")}
+                                onClick={() => setView((current) => (current === "history" ? "chat" : "history"))}
                                 aria-label={view === "history" ? "返回对话" : "打开历史对话"}
                                 aria-pressed={view === "history"}
                             />
@@ -1048,7 +1173,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                                 className={`canvas-agent-icon-button ${confirmTools ? "canvas-agent-icon-button--active" : ""}`}
                                 style={iconButtonStyle}
                                 icon={<ShieldCheck className="size-3.5" />}
-                                onClick={() => setExecutionMode((current) => current === "guided" ? "automatic" : "guided")}
+                                onClick={() => setExecutionMode((current) => (current === "guided" ? "automatic" : "guided"))}
                                 aria-label="切换执行前确认"
                                 aria-pressed={confirmTools}
                             />
@@ -1059,10 +1184,23 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
                     </div>
                 </header>
                 <div className="canvas-agent-context flex flex-wrap items-center gap-x-2 gap-y-1" style={{ color: theme.node.muted }}>
-                    <span className="font-semibold" style={{ color: theme.node.text }}>将读取</span>
+                    <span className="font-semibold" style={{ color: theme.node.text }}>
+                        将读取
+                    </span>
                     <span>当前画布 {contextSummary.nodeCount} 个节点</span>
-                    {contextSummary.selectedCount ? <span className="inline-flex items-center gap-1"><Focus className="size-3" />选区 {contextSummary.selectedCount} 个</span> : null}
-                    {contextSummary.chapterLabel ? <span className="inline-flex min-w-0 items-center gap-1"><BookOpenText className="size-3 shrink-0" /><span className="max-w-32 truncate">{contextSummary.chapterLabel}</span>{contextSummary.shotLabel ? ` · ${contextSummary.shotLabel}` : ""}</span> : null}
+                    {contextSummary.selectedCount ? (
+                        <span className="inline-flex items-center gap-1">
+                            <Focus className="size-3" />
+                            选区 {contextSummary.selectedCount} 个
+                        </span>
+                    ) : null}
+                    {contextSummary.chapterLabel ? (
+                        <span className="inline-flex min-w-0 items-center gap-1">
+                            <BookOpenText className="size-3 shrink-0" />
+                            <span className="max-w-32 truncate">{contextSummary.chapterLabel}</span>
+                            {contextSummary.shotLabel ? ` · ${contextSummary.shotLabel}` : ""}
+                        </span>
+                    ) : null}
                     {selectedReferences.length ? <span>{selectedReferences.length} 个参考节点</span> : null}
                     {undoOpsCount ? <span className="ml-auto tabular-nums">可撤销 {undoOpsCount} 批</span> : null}
                 </div>
@@ -1072,17 +1210,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, project
     );
 }
 
-function AssistantHistory({
-    sessions,
-    activeSession,
-    onOpen,
-    onDelete,
-}: {
-    sessions: CanvasAssistantSession[];
-    activeSession: CanvasAssistantSession | null;
-    onOpen: (id: string) => void;
-    onDelete: (id: string) => void;
-}) {
+function AssistantHistory({ sessions, activeSession, onOpen, onDelete }: { sessions: CanvasAssistantSession[]; activeSession: CanvasAssistantSession | null; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -1095,7 +1223,11 @@ function AssistantHistory({
                     <div className="flex items-center gap-2">
                         <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1.5">
-                                {session.id === activeSession?.id ? <span className="shrink-0 text-[10px] font-medium" style={{ color: theme.node.text }}>当前</span> : null}
+                                {session.id === activeSession?.id ? (
+                                    <span className="shrink-0 text-[10px] font-medium" style={{ color: theme.node.text }}>
+                                        当前
+                                    </span>
+                                ) : null}
                                 <div className="truncate text-sm font-medium leading-5">{session.title}</div>
                             </div>
                             <div className="truncate text-[11px] leading-4 opacity-65">{sessionPreview(session)}</div>
@@ -1217,7 +1349,13 @@ function onlineToolToOps(name: string, input: Record<string, unknown>, snapshot:
         const y = numberOr(input.y, 0);
         const gap = numberOr(input.gap, 40);
         const direction = input.direction === "row" ? "row" : "column";
-        return items.map((item, index) => textNodeOp({ ...item, text: requireString(item.text, "text") }, numberOr(item.x, direction === "row" ? x + index * (NODE_DEFAULT_SIZE[CanvasNodeType.Text].width + gap) : x), numberOr(item.y, direction === "row" ? y : y + index * (NODE_DEFAULT_SIZE[CanvasNodeType.Text].height + gap))));
+        return items.map((item, index) =>
+            textNodeOp(
+                { ...item, text: requireString(item.text, "text") },
+                numberOr(item.x, direction === "row" ? x + index * (NODE_DEFAULT_SIZE[CanvasNodeType.Text].width + gap) : x),
+                numberOr(item.y, direction === "row" ? y : y + index * (NODE_DEFAULT_SIZE[CanvasNodeType.Text].height + gap)),
+            ),
+        );
     }
     if (name === "canvas_create_image_prompt_flow") return generationFlowOps({ ...input, mode: "image" }, snapshot, config);
     if (name === "canvas_create_config_node") {
@@ -1231,7 +1369,8 @@ function onlineToolToOps(name: string, input: Record<string, unknown>, snapshot:
     if (name === "canvas_generate_video") return generationFlowOps({ ...input, mode: "video", autoRun: true }, snapshot, config);
     if (name === "canvas_generate_audio") return generationFlowOps({ ...input, mode: "audio", autoRun: true }, snapshot, config);
     if (name === "canvas_update_node") return [{ type: "update_node", id: requireString(input.id, "id"), patch: recordOptional(input.patch) as Partial<CanvasNodeData> | undefined, metadata: recordOptional(input.metadata) as CanvasNodeData["metadata"] }];
-    if (name === "canvas_update_node_text") return [{ type: "update_node", id: requireString(input.id, "id"), patch: stringOptional(input.title) ? { title: stringOptional(input.title) } : undefined, metadata: { content: requireString(input.text, "text"), status: "success" } }];
+    if (name === "canvas_update_node_text")
+        return [{ type: "update_node", id: requireString(input.id, "id"), patch: stringOptional(input.title) ? { title: stringOptional(input.title) } : undefined, metadata: { content: requireString(input.text, "text"), status: "success" } }];
     if (name === "canvas_move_nodes") {
         return requireRecordArray(input.items, "items").map((item) => {
             const id = requireString(item.id, "id");
@@ -1239,9 +1378,18 @@ function onlineToolToOps(name: string, input: Record<string, unknown>, snapshot:
             return { type: "update_node", id, patch: { position: { x: numberOr(item.x, (current?.position.x || 0) + numberOr(item.dx, 0)), y: numberOr(item.y, (current?.position.y || 0) + numberOr(item.dy, 0)) } } };
         });
     }
-    if (name === "canvas_resize_node") return [{ type: "update_node", id: requireString(input.id, "id"), patch: { width: requireNumber(input.width, "width"), height: requireNumber(input.height, "height") }, metadata: typeof input.freeResize === "boolean" ? { freeResize: input.freeResize } : undefined }];
+    if (name === "canvas_resize_node")
+        return [
+            {
+                type: "update_node",
+                id: requireString(input.id, "id"),
+                patch: { width: requireNumber(input.width, "width"), height: requireNumber(input.height, "height") },
+                metadata: typeof input.freeResize === "boolean" ? { freeResize: input.freeResize } : undefined,
+            },
+        ];
     if (name === "canvas_delete_nodes") return [{ type: "delete_node", ids: requireStringArray(input.ids, "ids") }];
-    if (name === "canvas_connect_nodes") return requireRecordArray(input.connections, "connections").map((connection) => ({ type: "connect_nodes", fromNodeId: requireString(connection.fromNodeId, "fromNodeId"), toNodeId: requireString(connection.toNodeId, "toNodeId") }));
+    if (name === "canvas_connect_nodes")
+        return requireRecordArray(input.connections, "connections").map((connection) => ({ type: "connect_nodes", fromNodeId: requireString(connection.fromNodeId, "fromNodeId"), toNodeId: requireString(connection.toNodeId, "toNodeId") }));
     if (name === "canvas_select_nodes") return [{ type: "select_nodes", ids: requireStringArray(input.ids, "ids") }];
     if (name === "canvas_set_viewport") return [{ type: "set_viewport", viewport: requireViewport(input.viewport) }];
     if (name === "canvas_run_generation") return [runGenerationOp(requireString(input.nodeId, "nodeId"), generationMode(input.mode), stringOptional(input.prompt))];
@@ -1268,7 +1416,16 @@ function generationFlowOps(input: Record<string, unknown>, snapshot: CanvasAgent
 }
 
 function textNodeOp(input: Record<string, unknown>, x: number, y: number): CanvasAgentOp {
-    return { type: "add_node", id: stringOptional(input.id), nodeType: CanvasNodeType.Text, title: stringOptional(input.title), position: { x, y }, width: numberOptional(input.width), height: numberOptional(input.height), metadata: { content: stringOptional(input.text), status: "success", fontSize: 14 } };
+    return {
+        type: "add_node",
+        id: stringOptional(input.id),
+        nodeType: CanvasNodeType.Text,
+        title: stringOptional(input.title),
+        position: { x, y },
+        width: numberOptional(input.width),
+        height: numberOptional(input.height),
+        metadata: { content: stringOptional(input.text), status: "success", fontSize: 14 },
+    };
 }
 
 function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: number, config: AiConfig): CanvasAgentOp {
@@ -1299,6 +1456,13 @@ function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: 
             audioVoice: stringOptional(input.audioVoice) || config.audioVoice,
             audioFormat: stringOptional(input.audioFormat) || config.audioFormat,
             audioSpeed: stringOptional(input.audioSpeed) || config.audioSpeed,
+            audioVolume: stringOptional(input.audioVolume) || config.audioVolume,
+            audioPitch: stringOptional(input.audioPitch) || config.audioPitch,
+            audioEmotion: stringOptional(input.audioEmotion) || config.audioEmotion,
+            audioLanguageBoost: stringOptional(input.audioLanguageBoost) || config.audioLanguageBoost,
+            audioSampleRate: stringOptional(input.audioSampleRate) || config.audioSampleRate,
+            audioBitrate: stringOptional(input.audioBitrate) || config.audioBitrate,
+            audioChannel: stringOptional(input.audioChannel) || config.audioChannel,
             audioInstructions: stringOptional(input.audioInstructions) || config.audioInstructions,
         }) as CanvasNodeData["metadata"],
     };
@@ -1554,13 +1718,7 @@ function buildAssistantReferences(nodes: CanvasNodeData[], selectedNodeIds: Set<
         .filter((item): item is CanvasAssistantReference => Boolean(item));
 }
 
-async function buildToolAgentMessages(
-    snapshot: CanvasAgentSnapshot,
-    history: CanvasAssistantMessage[],
-    userMessage: CanvasAssistantMessage,
-    models: CanvasAgentGenerationModels,
-    skills: CanvasAgentSkillSelection[],
-): Promise<ResponseInputMessage[]> {
+async function buildToolAgentMessages(snapshot: CanvasAgentSnapshot, history: CanvasAssistantMessage[], userMessage: CanvasAssistantMessage, models: CanvasAgentGenerationModels, skills: CanvasAgentSkillSelection[]): Promise<ResponseInputMessage[]> {
     const refs = userMessage.references || [];
     const requestText = buildCanvasAgentRequestText(userMessage.text, models, skills);
     return [

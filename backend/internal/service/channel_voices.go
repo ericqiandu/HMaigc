@@ -407,7 +407,7 @@ func publicChannelVoice(voice model.ChannelVoice, hasMembership bool, includeAdm
 	}
 	public := PublicChannelVoice{
 		ID: voice.ID, VoiceKey: voice.VoiceKey, DisplayName: voice.DisplayName, Description: voice.Description,
-		Language: voice.Language, Kind: voice.Kind, AccessPolicy: voice.AccessPolicy,
+		Language: miniMaxVoiceLanguage(voice.VoiceKey, voice.Language), Kind: voice.Kind, AccessPolicy: voice.AccessPolicy,
 		Accessible:       voice.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
 		CompatibleModels: compatibleModels, ProviderStatus: voice.ProviderStatus, Enabled: voice.Enabled,
 	}
@@ -465,13 +465,36 @@ func miniMaxVoicesFromResponse(channelID string, response map[string]interface{}
 			result = append(result, model.ChannelVoice{
 				ID: newID(), ChannelID: channelID, VoiceKey: voiceKey, DisplayName: displayName,
 				Description: firstNonEmptyString(description, stringField(item, "desc")),
-				Language:    firstNonEmptyString(stringField(item, "language"), stringField(item, "language_type")),
+				Language:    miniMaxVoiceLanguage(voiceKey, firstNonEmptyString(stringField(item, "language"), stringField(item, "language_type"))),
 				Kind:        group.Kind, AccessPolicy: model.ModelAccessAuthenticated, CompatibleModelsJSON: "[]",
 				ProviderStatus: "active", Enabled: true, CreatedAt: now, UpdatedAt: now,
 			})
 		}
 	}
 	return result, nil
+}
+
+func miniMaxVoiceLanguage(voiceKey string, providerLanguage string) string {
+	if value := strings.TrimSpace(providerLanguage); value != "" {
+		if _, ok := miniMaxLanguageBoosts[value]; ok && value != "auto" {
+			return value
+		}
+	}
+	normalized := strings.TrimSpace(voiceKey)
+	switch {
+	case strings.HasPrefix(normalized, "Chinese (Mandarin)_"):
+		return "Chinese"
+	case strings.HasPrefix(normalized, "Cantonese_"):
+		return "Chinese,Yue"
+	}
+	prefix, _, found := strings.Cut(normalized, "_")
+	if !found {
+		return ""
+	}
+	if _, ok := miniMaxLanguageBoosts[prefix]; ok && prefix != "auto" {
+		return prefix
+	}
+	return ""
 }
 
 func miniMaxVoiceDescription(value interface{}) (string, error) {

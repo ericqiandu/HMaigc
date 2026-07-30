@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -24,7 +25,7 @@ func newChannelVoiceTestService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&model.User{}, &model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelVoice{},
+		&model.User{}, &model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelVoice{}, &model.ChannelVoicePreview{},
 		&model.AdminAuditEvent{}, &model.MembershipSubscription{}, &model.TeamMember{},
 	); err != nil {
 		t.Fatal(err)
@@ -49,8 +50,15 @@ func TestRunMiniMaxAudioTaskMapsRequestAndDecodesHexAudio(t *testing.T) {
 			t.Errorf("request body = %#v", body)
 		}
 		voiceSetting, _ := body["voice_setting"].(map[string]interface{})
-		if voiceSetting["voice_id"] != "HMVoice001" {
+		if voiceSetting["voice_id"] != "HMVoice001" || voiceSetting["speed"] != 1.1 || voiceSetting["vol"] != 1.4 || voiceSetting["pitch"] != float64(-2) || voiceSetting["emotion"] != "calm" {
 			t.Errorf("voice_setting = %#v", voiceSetting)
+		}
+		audioSetting, _ := body["audio_setting"].(map[string]interface{})
+		if audioSetting["format"] != "mp3" || audioSetting["sample_rate"] != float64(44100) || audioSetting["bitrate"] != float64(256000) || audioSetting["channel"] != float64(2) {
+			t.Errorf("audio_setting = %#v", audioSetting)
+		}
+		if body["language_boost"] != "Chinese" {
+			t.Errorf("language_boost = %#v", body["language_boost"])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":{"audio":"494433","status":2},"trace_id":"trace-audio-1","base_resp":{"status_code":0,"status_msg":""}}`)
@@ -63,6 +71,8 @@ func TestRunMiniMaxAudioTaskMapsRequestAndDecodesHexAudio(t *testing.T) {
 			InterfaceType: string(model.ChannelInterfaceMiniMaxSpeech),
 			BaseURL:       server.URL + "/v1", APIKey: "test-key", Model: "speech-2.8-hd",
 			AudioVoice: "HMVoice001", AudioFormat: "mp3", AudioSpeed: "1.1",
+			AudioVolume: "1.4", AudioPitch: "-2", AudioEmotion: "calm",
+			AudioLanguageBoost: "Chinese", AudioSampleRate: "44100", AudioBitrate: "256000", AudioChannel: "2",
 		},
 	})
 	if err != nil {
@@ -110,11 +120,119 @@ func TestRunMiniMaxAudioTaskRejectsOutOfRangeSpeedBeforeRequest(t *testing.T) {
 			AudioVoice: "HMVoice001", AudioFormat: "mp3", AudioSpeed: "4",
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "0.5 到 2.0") {
+	if err == nil || !strings.Contains(err.Error(), "[0.5, 2]") {
 		t.Fatalf("error = %v", err)
 	}
 	if called {
 		t.Fatal("invalid speed reached MiniMax upstream")
+	}
+}
+
+func TestMiniMaxAudioSettingsRejectUnsupportedWhisperAndBitrate(t *testing.T) {
+	_, err := parseMiniMaxAudioSettings(providerConfig{
+		Model: "speech-2.8-hd", AudioFormat: "mp3", AudioEmotion: "whisper",
+	})
+	if err == nil || !strings.Contains(err.Error(), "speech-2.8") {
+		t.Fatalf("whisper error = %v", err)
+	}
+	_, err = parseMiniMaxAudioSettings(providerConfig{
+		Model: "speech-2.8-hd", AudioFormat: "mp3", AudioBitrate: "96000",
+	})
+	if err == nil || !strings.Contains(err.Error(), "比特率不支持") {
+		t.Fatalf("bitrate error = %v", err)
+	}
+}
+
+func TestMiniMaxVoiceLanguageUsesProviderValueAndExplicitPrefix(t *testing.T) {
+	tests := []struct {
+		name             string
+		voiceKey         string
+		providerLanguage string
+		want             string
+	}{
+		{name: "provider", voiceKey: "custom", providerLanguage: "Japanese", want: "Japanese"},
+		{name: "mandarin", voiceKey: "Chinese (Mandarin)_Reliable_Executive", want: "Chinese"},
+		{name: "cantonese", voiceKey: "Cantonese_Professional_Female", want: "Chinese,Yue"},
+		{name: "prefixed", voiceKey: "Korean_AirheadedGirl", want: "Korean"},
+		{name: "unknown", voiceKey: "male-qn-qingse", want: ""},
+	}
+	for _, item := range tests {
+		t.Run(item.name, func(t *testing.T) {
+			if got := miniMaxVoiceLanguage(item.voiceKey, item.providerLanguage); got != item.want {
+				t.Fatalf("miniMaxVoiceLanguage(%q, %q) = %q, want %q", item.voiceKey, item.providerLanguage, got, item.want)
+			}
+		})
+	}
+}
+
+func TestMiniMaxChannelVoicePreviewGeneratesOnceAndUsesVerifiedCache(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requestCount++
+		if request.URL.Path != "/v1/t2a_v2" {
+			t.Errorf("path = %q, want /v1/t2a_v2", request.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":{"audio":"494433","status":2},"trace_id":"trace-preview","base_resp":{"status_code":0,"status_msg":""}}`)
+	}))
+	defer server.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(database.Models()...); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(repository.New(db), t.TempDir())
+	user := model.User{ID: "preview-user", Username: "preview-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	channel := model.ModelChannel{
+		ID: "preview-channel", UserID: "admin", Scope: model.ChannelScopeSystem, Enabled: true,
+		Name: "MiniMax", BaseURL: server.URL + "/v1", APIKey: "test-key", APIFormat: "openai",
+		InterfaceType: model.ChannelInterfaceMiniMaxSpeech, ModelsJSON: `["speech-2.8-hd"]`,
+	}
+	channelModel := model.ChannelModel{
+		ID: "preview-model", ChannelID: channel.ID, ModelKey: "speech-2.8-hd", DisplayName: "MiniMax Speech",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "audio", Enabled: true,
+	}
+	voice := model.ChannelVoice{
+		ID: "preview-voice", ChannelID: channel.ID, VoiceKey: "Korean_AirheadedGirl", DisplayName: "Airheaded Girl",
+		Language: "Korean", Kind: "system", AccessPolicy: model.ModelAccessAuthenticated,
+		CompatibleModelsJSON: `["speech-2.8-hd"]`, ProviderStatus: "active", Enabled: true,
+	}
+	for _, item := range []interface{}{&user, &channel, &channelModel, &voice} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := svc.MiniMaxChannelVoicePreview(context.Background(), &user, channel.ID, voice.ID, ChannelVoicePreviewRequest{Model: channelModel.ModelKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.MiniMaxChannelVoicePreview(context.Background(), &user, channel.ID, voice.ID, ChannelVoicePreviewRequest{Model: channelModel.ModelKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("upstream request count = %d, want 1", requestCount)
+	}
+	if first.Cached || !second.Cached {
+		t.Fatalf("cache states: first=%v second=%v", first.Cached, second.Cached)
+	}
+	if first.AudioDataURL != second.AudioDataURL || !strings.HasPrefix(first.AudioDataURL, "data:audio/mpeg;base64,") {
+		t.Fatalf("preview urls: first=%q second=%q", first.AudioDataURL, second.AudioDataURL)
+	}
+	if first.SHA256 == "" || first.TraceID != "trace-preview" {
+		t.Fatalf("preview metadata = %#v", first)
+	}
+	var callLogs int64
+	if err := db.Model(&model.ApiCallLog{}).Where("source = ? AND operation = ?", "voice-preview", "voice_preview").Count(&callLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLogs != 1 {
+		t.Fatalf("voice preview audit logs = %d, want 1", callLogs)
 	}
 }
 

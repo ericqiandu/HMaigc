@@ -162,7 +162,6 @@ function normalizeTaskProgress(progress: number | undefined, status: GenerationT
     return undefined;
 }
 
-
 export function imageExtension(dataUrl: string) {
     return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
 }
@@ -205,6 +204,13 @@ export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetada
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
+        audioVolume: config.audioVolume,
+        audioPitch: config.audioPitch,
+        audioEmotion: config.audioEmotion,
+        audioLanguageBoost: config.audioLanguageBoost,
+        audioSampleRate: config.audioSampleRate,
+        audioBitrate: config.audioBitrate,
+        audioChannel: config.audioChannel,
         audioInstructions: config.audioInstructions,
     };
 }
@@ -334,7 +340,6 @@ export function getGenerationCount(count: string) {
     return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
 }
 
-
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
@@ -358,6 +363,13 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
+        audioVolume: node?.metadata?.audioVolume || config.audioVolume || defaultConfig.audioVolume,
+        audioPitch: node?.metadata?.audioPitch || config.audioPitch || defaultConfig.audioPitch,
+        audioEmotion: node?.metadata?.audioEmotion || config.audioEmotion || defaultConfig.audioEmotion,
+        audioLanguageBoost: node?.metadata?.audioLanguageBoost || config.audioLanguageBoost || defaultConfig.audioLanguageBoost,
+        audioSampleRate: node?.metadata?.audioSampleRate || config.audioSampleRate || defaultConfig.audioSampleRate,
+        audioBitrate: node?.metadata?.audioBitrate || config.audioBitrate || defaultConfig.audioBitrate,
+        audioChannel: node?.metadata?.audioChannel || config.audioChannel || defaultConfig.audioChannel,
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
@@ -373,13 +385,14 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     const configHeight = NODE_DEFAULT_SIZE[CanvasNodeType.Config].height;
     const audioSize = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
     return nodes.map((node) => {
-        const resizedNode = node.type === CanvasNodeType.Config && node.height < configHeight
-            ? { ...node, height: configHeight }
-            : node.type === CanvasNodeType.Script && node.height < NODE_DEFAULT_SIZE[CanvasNodeType.Script].height
-              ? { ...node, height: NODE_DEFAULT_SIZE[CanvasNodeType.Script].height }
-              : node.type === CanvasNodeType.Audio && (node.width < audioSize.width || node.height < audioSize.height)
-                ? { ...node, width: Math.max(node.width, audioSize.width), height: Math.max(node.height, audioSize.height) }
-                : node;
+        const resizedNode =
+            node.type === CanvasNodeType.Config && node.height < configHeight
+                ? { ...node, height: configHeight }
+                : node.type === CanvasNodeType.Script && node.height < NODE_DEFAULT_SIZE[CanvasNodeType.Script].height
+                  ? { ...node, height: NODE_DEFAULT_SIZE[CanvasNodeType.Script].height }
+                  : node.type === CanvasNodeType.Audio && (node.width < audioSize.width || node.height < audioSize.height)
+                    ? { ...node, width: Math.max(node.width, audioSize.width), height: Math.max(node.height, audioSize.height) }
+                    : node;
         return resizedNode.metadata?.status === "loading" ? { ...resizedNode, metadata: { ...resizedNode.metadata, errorDetails: "正在从任务中心恢复生成状态..." } } : resizedNode;
     });
 }

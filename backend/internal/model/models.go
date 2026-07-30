@@ -275,6 +275,22 @@ type ChannelVoice struct {
 	DeletedAt            gorm.DeletedAt    `json:"-" gorm:"index"`
 }
 
+// ChannelVoicePreview 缓存按音色与模型生成的固定试听音频。
+// 音频与目录分表存储，避免用户加载 300+ 音色时把二进制试听数据一并读入内存。
+type ChannelVoicePreview struct {
+	ID              string    `json:"id" gorm:"primaryKey;size:36"`
+	ChannelID       string    `json:"channelId" gorm:"size:36;index"`
+	ChannelVoiceID  string    `json:"channelVoiceId" gorm:"size:36;uniqueIndex:idx_channel_voice_preview,priority:1"`
+	VoiceKey        string    `json:"voiceKey" gorm:"size:256"`
+	Model           string    `json:"model" gorm:"size:120;uniqueIndex:idx_channel_voice_preview,priority:2"`
+	MimeType        string    `json:"mimeType" gorm:"size:80"`
+	Audio           []byte    `json:"-"`
+	SHA256          string    `json:"sha256" gorm:"size:64"`
+	ProviderTraceID string    `json:"providerTraceId" gorm:"size:160"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 type ChannelModelPriceTier struct {
 	ID                    string    `json:"id" gorm:"primaryKey;size:36"`
 	ChannelModelID        string    `json:"channelModelId" gorm:"size:36;uniqueIndex:idx_channel_model_resolution,priority:1"`

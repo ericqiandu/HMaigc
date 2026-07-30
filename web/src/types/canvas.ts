@@ -35,7 +35,8 @@ export type CanvasWorkflowKind = "free" | "script" | "story_input" | "character"
 export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat";
 export type CanvasSkillCategory = "writing" | "storyboard" | "image" | "video" | "utility";
 export type CanvasSkillOutputMode = "text" | "json" | "image_prompt" | "workflow";
-export type StoryboardColumn = "shotNumber" | "durationSeconds" | "plotDescription" | "dialogue" | "shotSize" | "emotion" | "lightingAndAtmosphere" | "audioEffects" | "camera" | "motion" | "timeBeats" | "imageGenerationPrompt" | "videoMotionPrompt" | "negativePrompt";
+export type StoryboardColumn =
+    "shotNumber" | "durationSeconds" | "plotDescription" | "dialogue" | "shotSize" | "emotion" | "lightingAndAtmosphere" | "audioEffects" | "camera" | "motion" | "timeBeats" | "imageGenerationPrompt" | "videoMotionPrompt" | "negativePrompt";
 
 export type StoryboardCharacterReference = {
     characterName: string;
@@ -137,6 +138,13 @@ export type CanvasNodeMetadata = {
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
+    audioVolume?: string;
+    audioPitch?: string;
+    audioEmotion?: string;
+    audioLanguageBoost?: string;
+    audioSampleRate?: string;
+    audioBitrate?: string;
+    audioChannel?: string;
     audioInstructions?: string;
     references?: string[];
     naturalWidth?: number;

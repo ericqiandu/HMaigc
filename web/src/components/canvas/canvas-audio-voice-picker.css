@@ -1,0 +1,243 @@
+.canvas-audio-voice-dialog--catalog {
+    display: flex;
+    max-height: min(720px, calc(100vh - 48px));
+    min-height: 520px;
+    flex-direction: column;
+    background: var(--audio-voice-surface);
+    color: var(--audio-voice-text);
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-dialog-header {
+    display: flex;
+    min-height: 68px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid color-mix(in srgb, var(--audio-voice-stroke) 72%, transparent);
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-dialog-title {
+    margin: 0;
+    color: var(--audio-voice-text);
+    font-size: 16px;
+    font-weight: 650;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-dialog-description {
+    margin: 3px 0 0;
+    color: var(--audio-voice-muted);
+    font-size: 12px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-dialog-close {
+    display: inline-grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: var(--audio-voice-fill);
+    color: var(--audio-voice-muted);
+    cursor: pointer;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-dialog-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px 10px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-search {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: var(--audio-voice-fill);
+    color: var(--audio-voice-muted);
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-search-input {
+    min-width: 0;
+    flex: 1;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--audio-voice-text);
+    font-size: 13px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-count {
+    flex: none;
+    color: var(--audio-voice-muted);
+    font-size: 12px;
+}
+
+.canvas-audio-voice-language-list {
+    display: flex;
+    flex: none;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 18px 12px;
+}
+
+.canvas-audio-voice-language {
+    flex: none;
+    height: 28px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--audio-voice-muted);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.canvas-audio-voice-language:hover,
+.canvas-audio-voice-language--active {
+    background: var(--audio-voice-fill);
+    color: var(--audio-voice-text);
+}
+
+.canvas-audio-voice-preview-error {
+    margin: 0 18px 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: color-mix(in srgb, #ef4444 13%, transparent);
+    color: #f87171;
+    font-size: 12px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-list {
+    display: grid;
+    min-height: 0;
+    flex: 1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 6px;
+    overflow-y: auto;
+    padding: 0 14px 14px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option {
+    display: flex;
+    min-width: 0;
+    min-height: 66px;
+    align-items: center;
+    gap: 4px;
+    border-radius: 8px;
+    background: transparent;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option:hover,
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option--selected {
+    background: var(--audio-voice-fill);
+}
+
+.canvas-audio-voice-preview-button {
+    display: inline-grid;
+    width: 38px;
+    height: 38px;
+    flex: none;
+    place-items: center;
+    margin-left: 8px;
+    border: 0;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--audio-voice-text) 8%, transparent);
+    color: var(--audio-voice-text);
+    cursor: pointer;
+}
+
+.canvas-audio-voice-preview-button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--audio-voice-text) 14%, transparent);
+}
+
+.canvas-audio-voice-preview-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.canvas-audio-voice-select-button {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    align-self: stretch;
+    padding: 8px 10px 8px 6px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.canvas-audio-voice-select-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option-copy {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option-name {
+    overflow: hidden;
+    color: var(--audio-voice-text);
+    font-size: 13px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option-meta {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--audio-voice-muted);
+    font-size: 11px;
+    line-height: 16px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option-state {
+    display: inline-grid;
+    min-width: 42px;
+    height: 28px;
+    flex: none;
+    place-items: center;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--audio-voice-text) 7%, transparent);
+    color: var(--audio-voice-muted);
+    font-size: 11px;
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-option-state--selected {
+    color: var(--audio-voice-text);
+}
+
+.canvas-audio-voice-dialog--catalog .canvas-audio-voice-empty {
+    grid-column: 1 / -1;
+    padding: 92px 16px;
+    color: var(--audio-voice-muted);
+    font-size: 13px;
+    text-align: center;
+}
+
+@media (max-width: 720px) {
+    .canvas-audio-voice-dialog--catalog {
+        min-height: min(620px, calc(100vh - 24px));
+    }
+
+    .canvas-audio-voice-dialog--catalog .canvas-audio-voice-list {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

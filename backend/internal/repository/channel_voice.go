@@ -7,6 +7,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (r *Repository) ChannelVoices(channelID string, includeDisabled bool) ([]model.ChannelVoice, error) {
@@ -42,6 +43,23 @@ func (r *Repository) ChannelVoiceByIdempotencyKey(channelID string, key string) 
 	return &voice, nil
 }
 
+func (r *Repository) ChannelVoicePreview(channelVoiceID string, modelKey string) (*model.ChannelVoicePreview, error) {
+	var preview model.ChannelVoicePreview
+	if err := r.db.First(&preview, "channel_voice_id = ? AND model = ?", channelVoiceID, modelKey).Error; err != nil {
+		return nil, err
+	}
+	return &preview, nil
+}
+
+func (r *Repository) SaveChannelVoicePreview(preview *model.ChannelVoicePreview) error {
+	return r.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "channel_voice_id"}, {Name: "model"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"channel_id", "voice_key", "mime_type", "audio", "sha256", "provider_trace_id", "updated_at",
+		}),
+	}).Create(preview).Error
+}
+
 func (r *Repository) SaveChannelVoiceWithAudit(voice *model.ChannelVoice, audit *model.AdminAuditEvent) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(voice).Error; err != nil {
@@ -72,7 +90,9 @@ func (r *Repository) UpsertChannelVoices(voices []model.ChannelVoice, audit *mod
 			switch {
 			case findErr == nil:
 				if err := tx.Model(&existing).Updates(map[string]any{
-					"kind": voice.Kind, "provider_status": voice.ProviderStatus, "last_error": "", "updated_at": voice.UpdatedAt,
+					"kind": voice.Kind, "provider_status": voice.ProviderStatus, "last_error": "",
+					"language":   gorm.Expr("CASE WHEN TRIM(COALESCE(language, '')) = '' THEN ? ELSE language END", voice.Language),
+					"updated_at": voice.UpdatedAt,
 				}).Error; err != nil {
 					return err
 				}
@@ -110,6 +130,9 @@ func (r *Repository) DeleteChannelVoice(channelID string, id string, audit *mode
 			return gorm.ErrRecordNotFound
 		}
 		if err := tx.Where("id = ? AND channel_id = ?", id, channelID).Delete(&model.ChannelVoice{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("channel_voice_id = ?", id).Delete(&model.ChannelVoicePreview{}).Error; err != nil {
 			return err
 		}
 		if audit != nil {

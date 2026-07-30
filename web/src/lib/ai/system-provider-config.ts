@@ -22,6 +22,13 @@ export type SystemProviderTaskConfig = Pick<
     | "audioVoice"
     | "audioFormat"
     | "audioSpeed"
+    | "audioVolume"
+    | "audioPitch"
+    | "audioEmotion"
+    | "audioLanguageBoost"
+    | "audioSampleRate"
+    | "audioBitrate"
+    | "audioChannel"
     | "audioInstructions"
 >;
 
@@ -33,10 +40,7 @@ export function systemProviderTaskConfig(config: ResolvedModelRequestConfig): Sy
     const channelId = config.channelId.trim();
     const model = config.model.trim();
     const channel = config.channels.find((item) => item.id === channelId);
-    const isAuthorizedSystemModel =
-        channel?.scope === "system" &&
-        channel.enabled !== false &&
-        channel.models.some((candidate) => candidate.trim() === model);
+    const isAuthorizedSystemModel = channel?.scope === "system" && channel.enabled !== false && channel.models.some((candidate) => candidate.trim() === model);
     if (!channelId || !model || !isAuthorizedSystemModel) {
         throw new Error("当前模型未绑定后台系统渠道，请联系管理员检查模型配置");
     }
@@ -59,6 +63,13 @@ export function systemProviderTaskConfig(config: ResolvedModelRequestConfig): Sy
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
+        audioVolume: config.audioVolume,
+        audioPitch: config.audioPitch,
+        audioEmotion: config.audioEmotion,
+        audioLanguageBoost: config.audioLanguageBoost,
+        audioSampleRate: config.audioSampleRate,
+        audioBitrate: config.audioBitrate,
+        audioChannel: config.audioChannel,
         audioInstructions: config.audioInstructions,
     };
 }

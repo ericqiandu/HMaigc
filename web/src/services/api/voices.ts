@@ -17,6 +17,14 @@ export type ChannelVoiceInput = {
     enabled: boolean;
 };
 
+export type ChannelVoicePreview = {
+    audioDataUrl: string;
+    mimeType: string;
+    sha256: string;
+    traceId?: string;
+    cached: boolean;
+};
+
 async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promise<T> {
     try {
         const response = await promise;
@@ -48,11 +56,14 @@ export function updateAdminChannelVoice(channelId: string, voiceId: string, inpu
     return request<{ voice: ChannelVoice }>(api.patch(`/admin/channels/${encodeURIComponent(channelId)}/voices/${encodeURIComponent(voiceId)}`, input));
 }
 
-export function cloneAdminChannelVoice(channelId: string, input: ChannelVoiceInput & {
-    file: File;
-    consentConfirmed: boolean;
-    idempotencyKey: string;
-}) {
+export function cloneAdminChannelVoice(
+    channelId: string,
+    input: ChannelVoiceInput & {
+        file: File;
+        consentConfirmed: boolean;
+        idempotencyKey: string;
+    },
+) {
     const form = new FormData();
     form.append("file", input.file);
     form.append("voiceKey", input.voiceKey);
@@ -68,4 +79,8 @@ export function cloneAdminChannelVoice(channelId: string, input: ChannelVoiceInp
 
 export function deleteAdminChannelVoice(channelId: string, voiceId: string) {
     return request<{ ok: boolean }>(api.delete(`/admin/channels/${encodeURIComponent(channelId)}/voices/${encodeURIComponent(voiceId)}`));
+}
+
+export function previewChannelVoice(channelId: string, voiceId: string, model: string, signal?: AbortSignal) {
+    return request<{ preview: ChannelVoicePreview }>(api.post(`/channels/${encodeURIComponent(channelId)}/voices/${encodeURIComponent(voiceId)}/preview`, { model }, { signal }));
 }

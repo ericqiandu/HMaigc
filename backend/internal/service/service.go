@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -32,6 +33,7 @@ type Service struct {
 	sessionCreateMu    sync.Mutex
 	characterTaskMu    sync.Mutex
 	siteSettingMu      sync.Mutex
+	voicePreviewGroup  singleflight.Group
 	activeCancels      map[string]context.CancelFunc
 	pendingStorage     map[string]int64
 	pendingTeamStorage map[string]int64

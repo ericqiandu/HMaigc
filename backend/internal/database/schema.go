@@ -24,6 +24,7 @@ func Models() []any {
 		&model.ModelChannel{},
 		&model.ChannelModel{},
 		&model.ChannelVoice{},
+		&model.ChannelVoicePreview{},
 		&model.ChannelModelPriceTier{},
 		&model.ApiCallLog{},
 		&model.ModelPricing{},
