@@ -24,7 +24,7 @@ cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ## 2. 启动与健康检查
 
 ```bash
-./deploy/hmaigc.sh install v1.1.0
+./deploy/hmaigc.sh install v1.0.10
 ./deploy/hmaigc.sh verify
 ```
 
@@ -74,7 +74,7 @@ docker compose -p hmaigc-restore --env-file .env.restore \
 升级时：
 
 ```bash
-./deploy/hmaigc.sh upgrade v1.1.1
+./deploy/hmaigc.sh upgrade v1.0.11
 ```
 
 工具先拉取新镜像，再停止 Web 与后端写入并创建恢复点；只在新后端完成数据库迁移、依赖检查和版本校验后才启动 Web。任一步失败都会在 Web 重新开放前自动恢复上一版本的 PostgreSQL、`backend-data` 与镜像。

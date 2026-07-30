@@ -61,7 +61,7 @@ openssl rand -hex 32
 把生成结果写入 `.env.production` 的 `POSTGRES_PASSWORD`，并至少配置：
 
 - `HMAIGC_IMAGE_REGISTRY`：例如 `ghcr.io/ericqiandu`。
-- `HMAIGC_VERSION`：与 Git 标签一致的不可变版本，例如 `v1.1.0`。
+- `HMAIGC_VERSION`：与 Git 标签一致的不可变版本，例如 `v1.0.10`。
 - `CANVAS_CORS_ORIGINS`：实际 HTTPS 站点 Origin。
 - `CANVAS_HTTP_HOST`：有反向代理时保持 `127.0.0.1`。
 - `CANVAS_HTTP_PORT`：反向代理连接的本机端口。
@@ -70,7 +70,7 @@ openssl rand -hex 32
 首次安装：
 
 ```bash
-./deploy/hmaigc.sh install v1.1.0
+./deploy/hmaigc.sh install v1.0.10
 ```
 
 生产环境应由 Caddy、Nginx 或云负载均衡器提供 HTTPS。不要直接把后端、PostgreSQL 或 Redis 暴露到公网。
@@ -78,7 +78,7 @@ openssl rand -hex 32
 后续升级与回滚：
 
 ```bash
-./deploy/hmaigc.sh upgrade v1.1.1
+./deploy/hmaigc.sh upgrade v1.0.11
 ./deploy/hmaigc.sh rollback
 ```
 

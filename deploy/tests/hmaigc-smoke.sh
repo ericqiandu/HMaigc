@@ -79,7 +79,7 @@ chmod +x "$TEST_ROOT/bin/flock"
 
 cat >"$TEST_ROOT/.env.production" <<EOF
 HMAIGC_IMAGE_REGISTRY=ghcr.io/example
-HMAIGC_VERSION=v1.1.0
+HMAIGC_VERSION=v1.0.10
 HMAIGC_COMPOSE_PROJECT_NAME=hmaigc-test
 HMAIGC_BACKEND_DATA_VOLUME=hmaigc-test-backend
 HMAIGC_POSTGRES_DATA_VOLUME=hmaigc-test-postgres
@@ -119,28 +119,28 @@ assert_state() {
     }
 }
 
-run_deploy install v1.1.0
-assert_state CURRENT_VERSION v1.1.0
+run_deploy install v1.0.10
+assert_state CURRENT_VERSION v1.0.10
 
-run_deploy upgrade v1.1.1
-assert_state CURRENT_VERSION v1.1.1
-assert_state PREVIOUS_VERSION v1.1.0
+run_deploy upgrade v1.0.11
+assert_state CURRENT_VERSION v1.0.11
+assert_state PREVIOUS_VERSION v1.0.10
 
 run_deploy rollback
-assert_state CURRENT_VERSION v1.1.0
-assert_state PREVIOUS_VERSION v1.1.1
+assert_state CURRENT_VERSION v1.0.10
+assert_state PREVIOUS_VERSION v1.0.11
 
-if env "${TEST_ENV[@]}" FAKE_FAIL_VERSION=v1.1.2 "$DEPLOY_COMMAND" upgrade v1.1.2; then
+if env "${TEST_ENV[@]}" FAKE_FAIL_VERSION=v1.0.12 "$DEPLOY_COMMAND" upgrade v1.0.12; then
     printf 'upgrade to intentionally broken version unexpectedly succeeded\n' >&2
     exit 1
 fi
-assert_state CURRENT_VERSION v1.1.0
+assert_state CURRENT_VERSION v1.0.10
 
-if env "${TEST_ENV[@]}" FAKE_FAIL_VERSION=v1.1.0 "$DEPLOY_COMMAND" upgrade v1.1.3; then
+if env "${TEST_ENV[@]}" FAKE_FAIL_VERSION=v1.0.10 "$DEPLOY_COMMAND" upgrade v1.0.13; then
     printf 'upgrade unexpectedly continued while current release verification failed\n' >&2
     exit 1
 fi
-assert_state CURRENT_VERSION v1.1.0
+assert_state CURRENT_VERSION v1.0.10
 
 run_deploy verify
 run_deploy status

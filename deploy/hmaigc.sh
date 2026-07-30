@@ -54,7 +54,7 @@ install_release() {
 
 upgrade_release() {
     local target="${1:-}"
-    [[ -n "$target" ]] || fail "upgrade 必须显式指定目标版本，例如 v1.1.0"
+    [[ -n "$target" ]] || fail "upgrade 必须显式指定目标版本，例如 v1.0.11"
     configure_deploy_runtime "$target"
     start_operation_log upgrade
     acquire_deploy_lock

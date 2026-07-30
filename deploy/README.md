@@ -22,10 +22,10 @@ chmod 600 .env.production
 
 ```bash
 # 首次安装
-./deploy/hmaigc.sh install v1.1.0
+./deploy/hmaigc.sh install v1.0.10
 
 # 升级：拉取镜像、停写、创建一致性备份、先验活后端、再启动 Web
-./deploy/hmaigc.sh upgrade v1.1.1
+./deploy/hmaigc.sh upgrade v1.0.11
 
 # 回滚：恢复上一版本代码、PostgreSQL 和 backend-data 同一恢复点
 ./deploy/hmaigc.sh rollback

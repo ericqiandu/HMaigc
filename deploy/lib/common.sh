@@ -51,7 +51,7 @@ resolve_from_root() {
 validate_release_version() {
     local version="$1"
     [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
-        fail "发布版本必须是不可变标签（例如 v1.1.0），禁止使用 latest 或分支名：$version"
+        fail "发布版本必须是不可变标签（例如 v1.0.10），禁止使用 latest 或分支名：$version"
 }
 
 configure_deploy_runtime() {
