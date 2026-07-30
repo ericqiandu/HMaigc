@@ -175,6 +175,46 @@ No actionable P0, P1 or P2 issue remains in the requested first-page workbench s
 
 final result: passed
 
+## Canvas Header And Controls QA (2026-07-30)
+
+- Scope: canvas page header, workspace mode switch, primary canvas Dock and zoom/asset Docks.
+- Visual evidence: `qa-artifacts/canvas-chrome-20260730/`.
+- States: dark and light canvas themes, Agent panel closed and open, project sidebar visible.
+- Viewports: 390 × 900, 768 × 900, 1024 × 900 and 1440 × 900 CSS px.
+
+### Audit findings
+
+- P0: none.
+- P1: header controls mixed 36px circular, 40px rounded-square and shadow-heavy button treatments without a shared surface.
+- P1: desktop Dock commands rendered at 29 × 29px, below the repository's 32 × 32px minimum icon-button target.
+- P1: at medium widths the zoom/asset Docks could intersect the centered creation Dock.
+- P1: when the Agent panel reduced the real canvas width, viewport-only breakpoints kept nonessential header actions visible and could crowd the title and mode switch.
+- P2: dark-theme Dock buttons used layered shadows that competed with node content.
+
+### Applied tokens and behavior
+
+- Header groups use one translucent 56px glass surface with 12px radius, one border and a restrained single shadow.
+- Header commands use 36px controls, 8px radius and consistent hover/focus behavior.
+- Canvas Docks use a 44px surface and at least 32 × 32px desktop command targets; touch layouts retain larger controls.
+- At 640–1024px the centered Dock removes duplicate history/clear commands already available from the canvas menu.
+- Header actions respond to the actual canvas container width. Search, performance and balance collapse before the remaining menu, collaboration, share and Agent controls can intersect.
+- The icon-only Agent state retains an explicit accessible name and tooltip.
+
+### Verified result
+
+- No header-group or Dock collisions at 390, 768, 1024 or 1440px.
+- No document-level horizontal overflow at any tested viewport.
+- No visible icon-only canvas control is smaller than 32 × 32px.
+- Canvas menu, workspace-mode selector, appearance panel, light/dark theme switch and Agent toggle open and close successfully.
+- Browser runtime logs contain no warnings or errors.
+- TypeScript checking and the Vite production build pass.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains in the requested canvas-header and control scope.
+
+final result: passed
+
 ## Asset Library Navigation Overlap Fix QA (2026-07-30)
 
 - User-reported source: `qa-artifacts/assets-library-overlap-fix-20260730/source-user-report-1096x909.png`.

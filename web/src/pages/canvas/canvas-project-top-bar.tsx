@@ -92,8 +92,8 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between px-4">
-                <div className="pointer-events-auto flex min-w-0 items-center gap-3">
+            <div className="canvas-top-bar pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between px-4">
+                <div className="canvas-top-bar-identity pointer-events-auto flex min-w-0 items-center gap-3">
                     <Dropdown
                         trigger={["click"]}
                         menu={{
@@ -122,12 +122,12 @@ export function CanvasTopBar({
                             ],
                         }}
                     >
-                        <button type="button" className="grid size-9 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
+                        <button type="button" className="canvas-top-bar-menu grid size-9 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
                             <Menu className="size-5" />
                         </button>
                     </Dropdown>
 
-                    <div ref={titleRef} className="flex min-w-0 flex-col items-start">
+                    <div ref={titleRef} className="canvas-top-bar-title flex min-w-0 flex-col items-start">
                         {isTitleEditing ? (
                             <input
                                 autoFocus
@@ -174,8 +174,8 @@ export function CanvasTopBar({
 
                 <CanvasWorkspaceModeSwitch mode={workspaceMode} onChange={onWorkspaceModeChange} />
 
-                <div className="pointer-events-auto flex items-center gap-1.5">
-                    <Button type="text" className="!hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Search className="size-4" />} onClick={onOpenSearch} aria-label="搜索画布节点" title="搜索画布节点" />
+                <div className="canvas-top-bar-actions pointer-events-auto flex items-center gap-1.5">
+                    <Button type="text" className="canvas-top-bar-action canvas-top-bar-wide-only !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Search className="size-4" />} onClick={onOpenSearch} aria-label="搜索画布节点" title="搜索画布节点" />
                     <Dropdown
                         trigger={["click"]}
                         menu={{
@@ -189,13 +189,13 @@ export function CanvasTopBar({
                             ],
                         }}
                     >
-                        <Button type="text" className="!hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="媒体性能模式" title="媒体性能模式" />
+                        <Button type="text" className="canvas-top-bar-action canvas-top-bar-wide-only !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="媒体性能模式" title="媒体性能模式" />
                     </Dropdown>
                     {collaborationControl}
                     {user ? (
                         <Link
                             to="/wallet"
-                            className="inline-flex h-9 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-medium tabular-nums transition hover:bg-black/5 dark:hover:bg-white/10"
+                            className="canvas-top-bar-balance inline-flex h-9 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-medium tabular-nums transition hover:bg-black/5 dark:hover:bg-white/10"
                             style={{ color: theme.node.text }}
                             title="查看积分明细"
                         >
@@ -203,17 +203,19 @@ export function CanvasTopBar({
                             <span>{availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 })}</span>
                         </Link>
                     ) : null}
-                    <Button disabled={!canManage} type="text" className="!h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title={canManage ? "分享画布" : "只有画布管理者可以公开分享"} />
-                    <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
+                    <Button disabled={!canManage} type="text" className="canvas-top-bar-action !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title={canManage ? "分享画布" : "只有画布管理者可以公开分享"} />
+                    <span className="canvas-top-bar-divider h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button
                         disabled={!canEdit}
                         type="text"
-                        className="!h-10 !rounded-xl !px-3 !font-medium"
+                        className="canvas-top-bar-agent !h-9 !rounded-lg !px-3 !font-medium"
                         style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
                         icon={<Bot className="size-4" />}
                         onClick={onToggleAgent}
+                        aria-label="Agent"
+                        title="打开或关闭 Agent"
                     >
-                        Agent
+                        <span>Agent</span>
                     </Button>
                 </div>
             </div>
