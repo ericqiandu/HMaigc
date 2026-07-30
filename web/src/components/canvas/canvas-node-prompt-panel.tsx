@@ -21,8 +21,8 @@ import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-pic
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-composer.css";
-import "./canvas-media-model-picker.css";
 import "./canvas-video-composer.css";
+import "./canvas-media-composer.css";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -181,7 +181,9 @@ export function CanvasNodePromptPanel({
     };
 
     const renderComposerHeader = (expanded: boolean) => (
-        <div className={`canvas-node-composer-header flex min-w-0 items-center gap-1 px-0.5 ${isImageMode ? "canvas-node-composer-header--image" : isVideoMode ? "canvas-node-composer-header--video" : ""}`}>
+        <div
+            className={`canvas-node-composer-header flex min-w-0 items-center gap-1 px-0.5 ${isImageMode || isVideoMode || isAudioMode ? "canvas-media-composer-header" : ""} ${isImageMode ? "canvas-node-composer-header--image" : isVideoMode ? "canvas-node-composer-header--video" : ""}`}
+        >
             {isImageMode ? (
                 <>
                     <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
@@ -266,10 +268,10 @@ export function CanvasNodePromptPanel({
                 </Button>
             </div>
         ) : (
-            <div className={`flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
+            <div className={`canvas-media-controls-row flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
                 <div className={isImageMode || isVideoMode ? "canvas-media-model-picker-slot" : `${expanded ? "max-w-[320px]" : "max-w-[174px]"} min-w-[88px] flex-1`}>
                     <ModelPicker
-                        className={`!h-8 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode || isVideoMode ? "canvas-image-model-picker" : ""}`}
+                        className={`!h-8 !w-full !min-w-0 ${isImageMode || isVideoMode ? "canvas-image-model-picker canvas-media-model-picker" : ""}`}
                         fullWidth
                         config={config}
                         value={config.model}
@@ -286,7 +288,7 @@ export function CanvasNodePromptPanel({
                         <CanvasImageSettingsPopover
                             config={config}
                             placement={expanded ? "topRight" : "topLeft"}
-                            buttonClassName="canvas-image-settings-trigger--composer !h-7 !w-[190px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[11px] !font-semibold !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5"
+                            buttonClassName="canvas-image-settings-trigger--composer canvas-media-control !h-8 !w-[190px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !shadow-none [&>span]:min-w-0"
                             onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                             onMissingConfig={handleMissingSystemModel}
                             onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
@@ -297,7 +299,7 @@ export function CanvasNodePromptPanel({
                             <span className="canvas-video-toolbar-divider" aria-hidden="true" />
                             <CanvasVideoSettingsPopover
                                 config={config}
-                                buttonClassName="canvas-video-settings-trigger--composer !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !text-[12px] !font-medium !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3.5"
+                                buttonClassName="canvas-video-settings-trigger--composer canvas-media-control !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !shadow-none [&>span]:min-w-0"
                                 onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
                             />
                             <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
@@ -310,12 +312,12 @@ export function CanvasNodePromptPanel({
                             <CanvasPresetPicker mode={mode} skillReferences={skillReferences} open={bottomPresetOpen} onOpenChange={setBottomPresetOpen} onSelect={applyPreset} compact />
                         </span>
                     ) : null}
-                    <span className={isImageMode ? "canvas-image-generation-cost ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost ml-auto inline-flex" : "inline-flex"}>
+                    <span className={isImageMode ? "canvas-image-generation-cost canvas-media-meta ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost canvas-media-meta ml-auto inline-flex" : "inline-flex"}>
                         <GenerationCostBadge credits={credits} theme={theme} />
                     </span>
                     <Button
                         type="text"
-                        className={`canvas-node-submit-button !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
+                        className={`canvas-node-submit-button canvas-media-control !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
                         danger={isRunning}
                         disabled={isSubmitDisabled}
                         style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.accent.primary, borderColor: "transparent", color: isSubmitDisabled ? theme.node.faint : "#ffffff" }}
@@ -330,7 +332,7 @@ export function CanvasNodePromptPanel({
 
     return (
         <div
-            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "canvas-node-prompt-panel--image rounded-2xl p-2" : isVideoMode ? "canvas-node-prompt-panel--video rounded-2xl p-2" : isAudioMode ? "canvas-node-prompt-panel--audio p-2.5" : "rounded-lg p-1.5"}`}
+            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "canvas-media-prompt-panel canvas-node-prompt-panel--image rounded-xl p-2" : isVideoMode ? "canvas-media-prompt-panel canvas-node-prompt-panel--video rounded-xl p-2" : isAudioMode ? "canvas-media-prompt-panel canvas-node-prompt-panel--audio rounded-xl p-2" : "rounded-lg p-1.5"}`}
             style={{ background: theme.spatial.elevated, color: theme.node.text, boxShadow: `0 20px 64px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.07)` }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}

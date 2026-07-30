@@ -484,3 +484,39 @@ final result: passed
 - Final state: one `canvas-media-model-picker-slot` class owns the normal and compact widths; the duplicated audio and image/video width declarations were removed.
 
 final result: passed
+
+## Canvas Media Composer Alignment QA (2026-07-31)
+
+- Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-51bdc88e-9df9-4b37-9173-bd16ad7021ed.png`.
+- Full implementation screenshots: `qa-artifacts/canvas-media-composer-20260731/image-node-unified.png`, `video-node-unified.png` and `audio-node-unified.png`.
+- Focused implementation screenshot: `qa-artifacts/canvas-media-composer-20260731/video-node-unified-focused.png`.
+- Same-input before/after comparison: `qa-artifacts/canvas-media-composer-20260731/video-before-after-comparison.png`.
+- Source dimensions: 661 × 205 px.
+- Primary implementation viewport: 919 × 912 CSS px at device scale factor 1; responsive checks also ran at 1024 × 768, 720 × 800 and 600 × 800 CSS px.
+- State: dark authenticated canvas with one selected image, video or audio node and its prompt composer open.
+
+### Comparison findings and fixes
+
+- P1: the selected model label occupied the top of a 32px Ant Select content box while the adjacent controls used centered flex alignment, creating a visibly raised model control.
+- P1: image, video and audio composers independently defined typography, panel geometry, row spacing, hover treatment and metadata sizing. The visible result mixed Ant's system font with Inter and SF Pro Text, plus 9px, 11px, 12px and 13px control text.
+- P2: image and video composer rules lived in the global stylesheet while audio kept a separate duplicate panel contract, making later changes likely to drift again.
+- One shared `canvas-media-composer.css` contract now owns media panel geometry, header chips, editor typography, the 32px bottom toolbar, model selector alignment, common controls, metadata, dividers and responsive model width.
+- The obsolete media-model width stylesheet and duplicated global image/video composer rules were removed rather than retained as compatibility overrides.
+
+### Verified result
+
+- Image, video and audio bottom rows all resolve to 32px height with identical vertical coordinates for model, secondary controls, metadata and submit action.
+- All three model labels resolve to `SF Pro Text` / `PingFang SC` / `Microsoft YaHei`, 12px, 600 weight and 16px line height inside a centered 32px flex row.
+- Secondary controls and metadata resolve to the same font stack, 12px, 500 weight and 16px line height.
+- Composer input text resolves to the shared font stack at 13px, 400 weight and 20px line height.
+- Image, video and audio composers use the same 660px × 192px desktop panel contract and one 12px radius.
+- At 1024px, 720px and 600px viewport widths there is no document-level horizontal overflow; the compact model slot switches to 160px at the existing breakpoint.
+- Keyboard focus remains explicit with a visible blue focus ring; hover states use the same neutral surface treatment.
+- TypeScript checking and the Vite production build pass.
+
+### Comparison history
+
+- Initial state: duplicated media composer branches with top-aligned Ant Select content and four different text scales in one toolbar.
+- Final state: one shared media composer contract with centered 32px controls, two intentional text scales and media-specific components limited to their actual behavior.
+
+final result: passed

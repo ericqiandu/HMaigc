@@ -1,0 +1,252 @@
+.canvas-media-prompt-panel {
+    display: flex;
+    width: 660px;
+    max-width: 100%;
+    min-height: 192px;
+    flex-direction: column;
+    border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--background) 94%, var(--foreground) 6%) !important;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--foreground) 12%, transparent) !important;
+    color: var(--foreground);
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 20px;
+}
+
+:root:not(.dark) .canvas-media-prompt-panel {
+    border-color: rgb(17 24 39 / 9%);
+    background: #ffffff !important;
+    box-shadow:
+        0 1px 2px rgb(15 23 42 / 5%),
+        0 10px 28px rgb(15 23 42 / 8%) !important;
+}
+
+.canvas-media-composer-header {
+    min-height: 28px;
+    gap: 4px;
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.canvas-media-composer-header > button:not([aria-label="放大编辑提示词"]),
+.canvas-media-composer-header > span > button {
+    height: 26px !important;
+    padding: 0 8px !important;
+    border-radius: 9999px !important;
+    background: color-mix(in srgb, var(--foreground) 5%, transparent) !important;
+    font-family: inherit !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    line-height: 16px !important;
+    white-space: nowrap;
+}
+
+.canvas-media-composer-header button[aria-label="放大编辑提示词"] {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--foreground) 8%, transparent) !important;
+}
+
+.canvas-media-prompt-panel .canvas-node-prompt-textarea {
+    color: color-mix(in srgb, var(--foreground) 88%, transparent);
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px !important;
+    font-weight: 400 !important;
+    line-height: 20px !important;
+    letter-spacing: 0;
+}
+
+.canvas-media-prompt-panel .canvas-node-prompt-editor {
+    min-height: 76px;
+}
+
+.canvas-media-prompt-panel .canvas-node-prompt-controls {
+    margin-top: auto !important;
+    padding-top: 4px !important;
+}
+
+.canvas-media-controls-row {
+    display: flex;
+    min-width: 0;
+    min-height: 32px;
+    align-items: center;
+    gap: 4px;
+    color: color-mix(in srgb, var(--foreground) 86%, transparent);
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+}
+
+.canvas-media-model-picker-slot {
+    display: flex;
+    width: 200px;
+    min-width: 200px;
+    max-width: 200px;
+    height: 32px;
+    flex: 0 0 200px;
+    align-items: center;
+}
+
+.canvas-media-model-picker,
+.canvas-media-model-picker .ant-select {
+    height: 32px !important;
+}
+
+.canvas-media-model-picker .canvas-composer-model-picker.ant-select {
+    align-items: center !important;
+    padding: 0 !important;
+    border-color: transparent !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.canvas-media-model-picker .canvas-composer-model-picker.ant-select .ant-select-content {
+    display: flex !important;
+    height: 32px !important;
+    align-items: center !important;
+    padding-inline: 8px !important;
+    border-color: transparent !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+}
+
+.canvas-media-model-picker .canvas-model-picker-label,
+.canvas-media-model-picker .canvas-model-picker-placeholder,
+.canvas-media-model-picker .ant-select-placeholder {
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif !important;
+    font-size: 12px !important;
+    line-height: 16px !important;
+}
+
+.canvas-media-model-picker .canvas-model-picker-label {
+    height: 32px;
+    align-items: center;
+    color: color-mix(in srgb, var(--foreground) 86%, transparent);
+    font-weight: 600 !important;
+}
+
+.canvas-media-model-picker .canvas-model-picker-placeholder,
+.canvas-media-model-picker .ant-select-placeholder {
+    color: color-mix(in srgb, var(--foreground) 58%, transparent);
+    font-weight: 500 !important;
+}
+
+.canvas-media-model-picker .canvas-model-picker-label :is(img, svg),
+.canvas-media-model-picker .canvas-model-picker-placeholder :is(img, svg) {
+    width: 14px !important;
+    height: 14px !important;
+}
+
+.canvas-media-model-picker .ant-select-suffix {
+    display: inline-flex;
+    height: 32px;
+    align-items: center;
+    color: color-mix(in srgb, var(--foreground) 42%, transparent);
+}
+
+.canvas-media-model-picker .canvas-composer-model-picker.ant-select:hover .ant-select-content,
+.canvas-media-model-picker .canvas-composer-model-picker.ant-select-focused .ant-select-content,
+.canvas-media-control:not(.canvas-node-submit-button):not(.canvas-audio-submit-button):hover {
+    background: color-mix(in srgb, var(--foreground) 6%, transparent) !important;
+}
+
+.canvas-media-model-picker .canvas-composer-model-picker.ant-select-focused,
+.canvas-media-control:focus-visible {
+    outline: 2px solid #0071e3 !important;
+    outline-offset: 1px;
+}
+
+.canvas-media-control,
+.canvas-media-control.ant-btn {
+    display: inline-flex !important;
+    height: 32px !important;
+    align-items: center !important;
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    line-height: 16px !important;
+}
+
+.canvas-media-control:not(.canvas-node-submit-button):not(.canvas-audio-submit-button),
+.canvas-media-control.ant-btn:not(.canvas-node-submit-button):not(.canvas-audio-submit-button) {
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: color-mix(in srgb, var(--foreground) 86%, transparent) !important;
+    box-shadow: none !important;
+}
+
+.canvas-media-control :is(img, svg) {
+    width: 14px !important;
+    height: 14px !important;
+}
+
+.canvas-media-meta,
+.canvas-media-meta > span {
+    display: inline-flex;
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 3px;
+    padding-inline: 4px;
+    color: color-mix(in srgb, var(--foreground) 48%, transparent);
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    line-height: 16px !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.canvas-media-controls-row :is(.canvas-image-toolbar-divider, .canvas-video-toolbar-divider, .canvas-audio-control-divider) {
+    display: block;
+    width: 1px;
+    height: 18px;
+    flex: 0 0 1px;
+    margin-inline: 2px;
+    background: color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.canvas-media-controls-row .canvas-node-submit-button,
+.canvas-media-controls-row .canvas-audio-submit-button {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+}
+
+.canvas-node-prompt-controls-row--video > div:last-child {
+    flex: 1 1 auto;
+    margin-left: 0 !important;
+}
+
+.canvas-image-toolbar-actions {
+    gap: 4px;
+}
+
+.canvas-node-prompt-panel--image .canvas-image-settings-trigger--composer.ant-btn {
+    width: 200px !important;
+}
+
+.canvas-image-bottom-preset .canvas-preset-picker-trigger {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: color-mix(in srgb, var(--foreground) 86%, transparent) !important;
+}
+
+@media (max-width: 720px) {
+    .canvas-media-model-picker-slot {
+        width: 160px;
+        min-width: 160px;
+        max-width: 160px;
+        flex-basis: 160px;
+    }
+}

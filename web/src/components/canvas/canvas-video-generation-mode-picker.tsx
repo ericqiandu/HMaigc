@@ -46,8 +46,7 @@ export function CanvasVideoGenerationModePicker({ metadata, frameOptions, onMeta
             return;
         }
         const currentEnd = metadata?.videoEndFrameNodeId;
-        const endFrame = frameOptions.find((item) => item.nodeId === currentEnd && item.nodeId !== firstFrame)?.nodeId
-            || frameOptions.find((item) => item.nodeId !== firstFrame)?.nodeId;
+        const endFrame = frameOptions.find((item) => item.nodeId === currentEnd && item.nodeId !== firstFrame)?.nodeId || frameOptions.find((item) => item.nodeId !== firstFrame)?.nodeId;
         if (!endFrame) return;
         onMetadataChange({ videoStartFrameNodeId: firstFrame, videoEndFrameNodeId: endFrame });
         setOpen(false);
@@ -88,11 +87,7 @@ export function CanvasVideoGenerationModePicker({ metadata, frameOptions, onMeta
             overlayClassName="canvas-video-mode-popover"
             styles={{ content: { padding: 0, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
         >
-            <button
-                type="button"
-                className="canvas-video-mode-trigger inline-flex h-8 shrink-0 items-center gap-1 px-2 transition-colors"
-                aria-label={`视频生成模式：${current.label}`}
-            >
+            <button type="button" className="canvas-video-mode-trigger canvas-media-control inline-flex h-8 shrink-0 items-center gap-1 px-2 transition-colors" aria-label={`视频生成模式：${current.label}`}>
                 <CurrentIcon className="size-3.5 shrink-0" />
                 <span>{current.label}</span>
                 <ChevronDown className="size-3 shrink-0 opacity-55" />
