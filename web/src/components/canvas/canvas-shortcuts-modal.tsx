@@ -90,7 +90,7 @@ export function CanvasShortcutsModal({ open, onClose }: CanvasShortcutsModalProp
             onCancel={onClose}
             footer={null}
             centered
-            width={1152}
+            width={1240}
             destroyOnHidden
             aria-labelledby="canvas-shortcuts-heading"
         >
