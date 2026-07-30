@@ -237,3 +237,35 @@ No actionable P0, P1 or P2 issue remains in the requested workspace-layout, typo
 ### Final result
 
 No actionable P0, P1 or P2 issue remains in the requested admin-versus-workspace visual, typography, button and responsive scope.
+
+## Asset Library Classification QA (2026-07-30)
+
+- Source visual truth: `qa-artifacts/assets-library-classification-20260730/reference-1840x884.png`.
+- Implementation screenshot: `qa-artifacts/assets-library-classification-20260730/implementation-1840x884.png`.
+- Same-viewport comparison: `qa-artifacts/assets-library-classification-20260730/comparison-reference-vs-implementation.png`.
+- Responsive evidence: `implementation-1440x900.png`, `implementation-1024x768.png` and `implementation-390x844.png` in the same folder.
+- State: dark asset library, empty real local asset dataset, no asset or folder data fabricated.
+
+### Comparison findings and fixes
+
+- P1: the original page split search, type filters, business categories and import actions across three unrelated regions. The redesign now follows the reference hierarchy: source tabs, a category rail, one results toolbar and a centered results state.
+- P1: a persistent card checkbox exposed batch selection without an explicit mode. Selection controls now render only after the user enters batch mode.
+- P2: the initial 1024px implementation wrapped the tag selector onto an isolated second row. The category rail now switches to a horizontal navigation at 1099px, leaving a coherent full-width toolbar.
+- P2: the reference uses source-library labels that the current backend does not support. The implementation maps the same visual pattern to real, deterministic scopes: all assets, project-linked assets and personal assets.
+
+### Verified scope
+
+- Source tabs use actual asset metadata and show live counts; switching a tab resets incompatible category, tag, pagination and selection state.
+- The category rail uses the existing character, environment, wardrobe, prop, weapon, style and other domain categories with live counts.
+- Search, type and dynamically derived tag filters operate on the selected real source/category scope.
+- Batch mode, export, asset package import, 3D model upload and create-asset controls retain their existing production behavior.
+- The create-asset modal opens successfully; source switching and batch-mode switching update the visible active state.
+- Desktop, 1024px and 390px layouts have no document-level horizontal overflow or clipped primary controls.
+- Light/dark colors are supplied entirely by the shared workspace theme tokens; no page-specific parallel palette was introduced.
+- Browser runtime logs are empty. TypeScript checking and the Vite production build pass.
+
+### Final result
+
+No actionable P0, P1 or P2 difference remains for the requested asset-classification and toolbar scope.
+
+final result: passed

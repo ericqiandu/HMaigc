@@ -1,0 +1,355 @@
+.workspace-ui-scope.assets-workspace-page .assets-scope-row {
+    margin-top: 22px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--workspace-ui-divider);
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-scope-tabs {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    gap: 3px;
+    overflow-x: auto;
+    padding: 3px;
+    border: 1px solid var(--workspace-ui-divider);
+    border-radius: 8px;
+    background: var(--workspace-ui-surface-subtle);
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-scope-tab {
+    display: inline-flex;
+    min-width: 108px;
+    height: 34px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--workspace-ui-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    transition:
+        background-color 150ms ease,
+        color 150ms ease;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-scope-tab:hover {
+    background: var(--workspace-ui-control);
+    color: var(--workspace-ui-text);
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-scope-tab[aria-current="page"] {
+    background: var(--workspace-ui-control-hover);
+    color: var(--workspace-ui-text);
+    font-weight: 600;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-scope-tab-count {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-layout {
+    display: grid;
+    min-height: 520px;
+    grid-template-columns: 208px minmax(0, 1fr);
+    gap: 32px;
+    padding-top: 20px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-panel {
+    min-width: 0;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-create {
+    display: flex;
+    width: 100%;
+    min-height: 38px;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    padding: 0 12px;
+    color: var(--workspace-ui-text);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    transition: background-color 150ms ease;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-create:hover {
+    background: var(--workspace-ui-control);
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-create-icon,
+.workspace-ui-scope.assets-workspace-page .assets-category-option-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    stroke-width: 1.75;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-navigation {
+    display: grid;
+    gap: 2px;
+    margin-top: 10px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-option {
+    display: grid;
+    width: 100%;
+    min-height: 40px;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    padding: 0 12px;
+    color: var(--workspace-ui-text-secondary);
+    font-size: 13px;
+    text-align: left;
+    transition:
+        background-color 150ms ease,
+        color 150ms ease;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-option:hover {
+    background: var(--workspace-ui-control);
+    color: var(--workspace-ui-text);
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-option[aria-current="page"] {
+    background: var(--workspace-ui-control-hover);
+    color: var(--workspace-ui-text);
+    font-weight: 600;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-category-option-count {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-results {
+    display: flex;
+    min-height: 480px;
+    flex-direction: column;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar {
+    display: flex;
+    min-height: 40px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar-filters,
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar-filters {
+    flex: 1 1 auto;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
+    flex: 0 0 auto;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-search {
+    width: min(320px, 38vw);
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-type-select {
+    width: 126px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-tag-select {
+    width: 148px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-search-icon,
+.workspace-ui-scope.assets-workspace-page .assets-library-tag-select-icon,
+.workspace-ui-scope.assets-workspace-page .assets-library-export-icon,
+.workspace-ui-scope.assets-workspace-page .assets-library-import-icon,
+.workspace-ui-scope.assets-workspace-page .assets-library-menu-icon,
+.workspace-ui-scope.assets-workspace-page .assets-selection-export-icon,
+.workspace-ui-scope.assets-workspace-page .assets-selection-delete-icon,
+.workspace-ui-scope.assets-workspace-page .assets-empty-create-icon {
+    width: 15px;
+    height: 15px;
+    stroke-width: 1.75;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-batch-button.ant-btn-primary {
+    background: var(--workspace-ui-text) !important;
+    color: var(--workspace-ui-page) !important;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-selection-toolbar {
+    display: flex;
+    min-height: 42px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding-block: 8px;
+    border-block: 1px solid var(--workspace-ui-divider);
+    font-size: 12px;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-selection-summary {
+    margin-right: auto;
+    font-weight: 600;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-collection-grid {
+    align-content: start;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-results > .workspace-state {
+    flex: 1 1 auto;
+}
+
+@media (max-width: 1199px) {
+    .workspace-ui-scope.assets-workspace-page .assets-library-layout {
+        grid-template-columns: 176px minmax(0, 1fr);
+        gap: 24px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar {
+        align-items: flex-start;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-filters {
+        flex-wrap: wrap;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-search {
+        width: min(280px, 34vw);
+    }
+}
+
+@media (max-width: 1099px) {
+    .workspace-ui-scope.assets-workspace-page .assets-library-layout {
+        display: block;
+        min-height: 0;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-panel {
+        border-bottom: 1px solid var(--workspace-ui-divider);
+        padding-bottom: 14px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-create {
+        width: max-content;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-navigation {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-option {
+        display: flex;
+        width: auto;
+        min-width: max-content;
+        flex: 0 0 auto;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-results {
+        padding-top: 16px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar {
+        flex-wrap: wrap;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
+        margin-left: auto;
+    }
+}
+
+@media (max-width: 639px) {
+    .workspace-ui-scope.assets-workspace-page .assets-scope-row {
+        margin-top: 16px;
+        padding-bottom: 12px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-scope-tabs {
+        display: flex;
+        width: 100%;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-scope-tab {
+        min-width: 94px;
+        flex: 1 0 auto;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-scope-tab-count,
+    .workspace-ui-scope.assets-workspace-page .assets-category-option-count {
+        display: none;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-layout {
+        padding-top: 14px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-create {
+        min-height: 44px;
+        padding-inline: 10px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-option {
+        min-height: 40px;
+        padding-inline: 10px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar,
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-filters,
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
+        width: 100%;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-filters,
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-search {
+        width: 100%;
+        grid-column: 1 / -1;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-type-select,
+    .workspace-ui-scope.assets-workspace-page .assets-library-tag-select {
+        width: 100%;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
+        margin-left: 0;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions > .ant-btn,
+    .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions > .ant-dropdown-trigger {
+        width: 100%;
+        min-height: 42px;
+        justify-content: center;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-library-batch-button {
+        grid-column: 1 / -1;
+    }
+}
