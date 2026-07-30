@@ -1,0 +1,286 @@
+.canvas-shortcuts-modal-root {
+    --canvas-shortcuts-accent: #2997ff;
+    --canvas-shortcuts-surface: color-mix(in srgb, var(--background) 88%, var(--foreground) 12%);
+    --canvas-shortcuts-key-surface: color-mix(in srgb, var(--foreground) 5%, transparent);
+    --canvas-shortcuts-key-border: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.canvas-shortcuts-modal-root .canvas-shortcuts-modal-shell {
+    width: min(1152px, calc(100vw - 48px)) !important;
+    max-width: calc(100vw - 48px);
+}
+
+.canvas-shortcuts-modal-root :where(.ant-modal-container, .ant-modal-content) {
+    overflow: hidden;
+    border: 1px solid var(--canvas-overlay-border);
+    border-radius: var(--canvas-overlay-radius);
+    background: var(--canvas-shortcuts-surface);
+    box-shadow: 0 24px 72px color-mix(in srgb, #000000 28%, transparent);
+}
+
+.canvas-shortcuts-modal-root .canvas-shortcuts-modal-shell .ant-modal-container {
+    padding: 0 !important;
+}
+
+.canvas-shortcuts-modal-root .ant-modal-body {
+    max-height: min(620px, calc(100dvh - 48px));
+    overflow: auto;
+    padding: 0;
+}
+
+.canvas-shortcuts-modal-root .ant-modal-close {
+    top: 12px;
+    right: 18px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    box-shadow: none;
+    color: color-mix(in srgb, var(--foreground) 72%, transparent);
+}
+
+.canvas-shortcuts-modal-root .ant-modal-close:hover {
+    background: var(--canvas-overlay-hover);
+    color: var(--foreground);
+}
+
+.canvas-shortcuts-modal-root .ant-modal-close:focus-visible {
+    outline: 2px solid var(--canvas-shortcuts-accent);
+    outline-offset: 2px;
+}
+
+.canvas-shortcuts-modal-content {
+    min-height: 424px;
+    padding: 24px 20px;
+    color: var(--foreground);
+    outline: none;
+}
+
+.canvas-shortcuts-modal-heading {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.canvas-shortcuts-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.canvas-shortcuts-section {
+    min-width: 0;
+    padding: 0 24px;
+    border-left: 1px solid var(--canvas-overlay-divider);
+}
+
+.canvas-shortcuts-section:first-child {
+    padding-left: 4px;
+    border-left: 0;
+}
+
+.canvas-shortcuts-section:last-child {
+    padding-right: 4px;
+}
+
+.canvas-shortcuts-section-title {
+    margin: 0 0 12px;
+    color: var(--canvas-shortcuts-accent);
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+    letter-spacing: -0.224px;
+}
+
+.canvas-shortcuts-section-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.canvas-shortcuts-row {
+    display: grid;
+    min-height: 40px;
+    grid-template-columns: minmax(72px, 0.8fr) minmax(108px, 1.2fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.canvas-shortcuts-row-label {
+    min-width: 0;
+    color: var(--canvas-overlay-muted);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 18px;
+    letter-spacing: -0.12px;
+}
+
+.canvas-shortcuts-row-command {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px 0;
+    color: color-mix(in srgb, var(--foreground) 86%, transparent);
+}
+
+.canvas-shortcuts-token-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.canvas-shortcuts-token-plus {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-inline: 5px;
+    color: color-mix(in srgb, var(--foreground) 38%, transparent);
+    font-size: 11px;
+    line-height: 1;
+}
+
+.canvas-shortcuts-key {
+    display: inline-flex;
+    min-width: 28px;
+    min-height: 28px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--canvas-shortcuts-key-border);
+    border-radius: 7px;
+    background: var(--canvas-shortcuts-key-surface);
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--foreground) 8%, transparent);
+    padding: 2px 7px;
+    color: inherit;
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+    letter-spacing: -0.12px;
+    white-space: nowrap;
+}
+
+.canvas-shortcuts-gesture {
+    display: inline-flex;
+    min-height: 28px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+    white-space: nowrap;
+}
+
+.canvas-shortcuts-gesture-icon {
+    width: 19px;
+    height: 19px;
+    flex: 0 0 19px;
+    color: var(--canvas-shortcuts-accent);
+    stroke-width: 1.7;
+}
+
+.canvas-shortcuts-gesture-label {
+    color: color-mix(in srgb, var(--foreground) 72%, transparent);
+}
+
+@media (max-width: 1099px) {
+    .canvas-shortcuts-modal-root .canvas-shortcuts-modal-shell {
+        width: min(720px, calc(100vw - 32px)) !important;
+        max-width: calc(100vw - 32px);
+    }
+
+    .canvas-shortcuts-modal-content {
+        padding: 20px;
+    }
+
+    .canvas-shortcuts-modal-root .ant-modal-body {
+        max-height: calc(100dvh - 48px);
+    }
+
+    .canvas-shortcuts-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .canvas-shortcuts-section {
+        padding: 4px 24px 20px;
+    }
+
+    .canvas-shortcuts-section:nth-child(odd) {
+        padding-left: 4px;
+        border-left: 0;
+    }
+
+    .canvas-shortcuts-section:nth-child(even) {
+        padding-right: 4px;
+    }
+
+    .canvas-shortcuts-section:nth-child(n + 3) {
+        border-top: 1px solid var(--canvas-overlay-divider);
+        padding-top: 20px;
+    }
+
+    .canvas-shortcuts-row {
+        min-height: 36px;
+    }
+}
+
+@media (max-width: 639px) {
+    .canvas-shortcuts-modal-root .canvas-shortcuts-modal-shell {
+        width: calc(100vw - 20px) !important;
+        max-width: calc(100vw - 20px);
+    }
+
+    .canvas-shortcuts-modal-root .ant-modal-body {
+        max-height: calc(100dvh - 60px);
+    }
+
+    .canvas-shortcuts-modal-root .ant-modal-close {
+        right: 28px;
+    }
+
+    .canvas-shortcuts-modal-content {
+        min-height: 0;
+        padding: 20px 16px;
+    }
+
+    .canvas-shortcuts-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .canvas-shortcuts-section,
+    .canvas-shortcuts-section:nth-child(odd),
+    .canvas-shortcuts-section:nth-child(even) {
+        padding: 20px 4px;
+        border-top: 1px solid var(--canvas-overlay-divider);
+        border-left: 0;
+    }
+
+    .canvas-shortcuts-section:first-child {
+        padding-top: 4px;
+        border-top: 0;
+    }
+
+    .canvas-shortcuts-section-title {
+        margin-bottom: 8px;
+    }
+
+    .canvas-shortcuts-row {
+        min-height: 44px;
+        grid-template-columns: minmax(72px, 0.65fr) minmax(170px, 1.35fr);
+        gap: 8px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .canvas-shortcuts-modal-root *,
+    .canvas-shortcuts-modal-root *::before,
+    .canvas-shortcuts-modal-root *::after {
+        scroll-behavior: auto !important;
+    }
+}

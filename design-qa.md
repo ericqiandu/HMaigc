@@ -175,6 +175,28 @@ No actionable P0, P1 or P2 issue remains in the requested first-page workbench s
 
 final result: passed
 
+## Canvas Shortcuts Modal QA (2026-07-30)
+
+- Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-97701fb5-35dd-444f-b6ba-3f334d805991.png`.
+- Desktop implementation: `qa-artifacts/canvas-shortcuts-modal-20260730/implementation-desktop-dark-1294x912-final.png`.
+- Responsive evidence: `implementation-tablet-dark-1024x768-release.png`, `implementation-mobile-dark-390x844-release.png` and `implementation-desktop-light-1294x912-release.png` in the same folder.
+- Same-density comparison: `qa-artifacts/canvas-shortcuts-modal-20260730/comparison-reference-vs-implementation.png`.
+- Full report: `qa-artifacts/canvas-shortcuts-modal-20260730/design-qa.md`.
+- Viewports: 1294 × 912, 1024 × 768 and 390 × 844 CSS px at device scale factor 1.
+- State: shortcut modal open on the real canvas; dark and light themes verified.
+
+### Verified result
+
+- The desktop modal follows the reference's four-column structure, blue category labels, compact keycaps, gesture icons, restrained dividers and single rounded surface.
+- The displayed commands are grounded in the real keyboard, selection, viewport and gesture implementations; unsupported reference-only commands were not fabricated.
+- The tablet layout becomes a 2 × 2 section grid and fits fully inside the viewport.
+- The mobile layout becomes one internally scrollable column, remains fully inside the viewport and creates no horizontal overflow.
+- Button close and Escape close work. The modal preserves keyboard focus visibility without showing an initial pointer-open focus ring.
+- Light and dark tokens both remain legible.
+- TypeScript/Vite production build and all 11 current front-end tests pass.
+
+final result: passed
+
 ## LibTV-Informed Canvas Chrome QA (2026-07-30)
 
 - Reference: authenticated LibTV canvas in the in-app browser.
