@@ -15,7 +15,7 @@ type ModelPickerProps = {
     placeholder?: string;
     onMissingConfig?: () => void;
     showSelectedPrice?: boolean;
-    presentation?: "default" | "canvasImage";
+    presentation?: "default" | "canvasImage" | "canvasAudio";
 };
 
 export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, showSelectedPrice = true, presentation = "default" }: ModelPickerProps) {
@@ -40,8 +40,9 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     }, [config, options]);
     const current = value || "";
     const currentPrice = modelMenuPrice(config, current);
+    const canvasMediaPresentation = presentation === "canvasImage" || presentation === "canvasAudio";
     const selectOptions = useMemo(
-        () => presentation === "canvasImage"
+        () => canvasMediaPresentation
             ? options.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) }))
             : optionGroups.map((group) => ({
                 label: (
@@ -52,7 +53,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 ),
                 options: group.models.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) })),
             })),
-        [config, optionGroups, options, presentation],
+        [canvasMediaPresentation, config, optionGroups, options],
     );
 
     useEffect(() => {
@@ -70,7 +71,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 open={open}
                 value={current || undefined}
                 placeholder={
-                    presentation === "canvasImage" ? (
+                    canvasMediaPresentation ? (
                         <span className="canvas-model-picker-placeholder flex min-w-0 items-center gap-1.5">
                             <ModelIcon config={config} model="" />
                             <span className="canvas-model-picker-placeholder-text truncate">{placeholder}</span>
@@ -85,10 +86,14 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                         .includes(input.toLocaleLowerCase())
                 }
                 notFoundContent={<span className="canvas-model-picker-empty block px-2 py-3 text-center text-xs text-foreground/48">{emptyModelLabel(config, capability)}</span>}
-                popupMatchSelectWidth={presentation === "canvasImage" ? 370 : capability === "image" || capability === "video" ? 320 : 280}
-                placement={presentation === "canvasImage" ? "topLeft" : "bottomLeft"}
+                popupMatchSelectWidth={presentation === "canvasImage" ? 370 : presentation === "canvasAudio" ? 360 : capability === "image" || capability === "video" ? 320 : 280}
+                placement={canvasMediaPresentation ? "topLeft" : "bottomLeft"}
                 className={cn("canvas-composer-model-picker", fullWidth ? "w-full" : "min-w-36 max-w-full")}
-                classNames={{ popup: { root: cn("canvas-model-picker-popup", presentation === "canvasImage" && "canvas-image-model-picker-popup") } }}
+                classNames={{
+                    popup: {
+                        root: cn("canvas-model-picker-popup", presentation === "canvasImage" && "canvas-image-model-picker-popup", presentation === "canvasAudio" && "canvas-audio-model-picker-popup"),
+                    },
+                }}
                 onOpenChange={(nextOpen) => {
                     if (nextOpen && !options.length && config.channelMode === "local") onMissingConfig?.();
                     if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
@@ -124,20 +129,23 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
 function ModelLabel({ config, model, presentation, selected }: { config: AiConfig; model: string; presentation: ModelPickerProps["presentation"]; selected: boolean }) {
     const [hovered, setHovered] = useState(false);
     const canvasImage = presentation === "canvasImage";
+    const canvasAudio = presentation === "canvasAudio";
+    const canvasMedia = canvasImage || canvasAudio;
     const presentationConfig = modelCatalogEntry(config, model);
-    const marketingCopy = canvasImage ? presentationConfig?.marketingCopy?.trim() : "";
-    const showMarketingCopy = Boolean(marketingCopy && (selected || hovered));
+    const marketingCopy = canvasMedia ? presentationConfig?.marketingCopy?.trim() : "";
+    const modelMeta = marketingCopy || (canvasAudio ? "未配置模型说明" : "");
+    const showMarketingCopy = Boolean(modelMeta && (canvasAudio || selected || hovered));
     return (
         <span
-            className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasImage ? "gap-2.5" : "gap-1.5 py-0", selected && "canvas-model-picker-option--selected")}
+            className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasMedia ? "gap-2.5" : "gap-1.5 py-0", selected && "canvas-model-picker-option--selected")}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
         >
-            <span className={cn("canvas-model-picker-option-icon grid shrink-0 place-items-center bg-foreground/[.07]", canvasImage ? "size-9 rounded-lg" : "size-6 rounded-md")}>
+            <span className={cn("canvas-model-picker-option-icon grid shrink-0 place-items-center bg-foreground/[.07]", canvasMedia ? "size-9 rounded-lg" : "size-6 rounded-md")}>
                 <ModelIcon config={config} model={model} />
             </span>
             <span className="canvas-model-picker-option-body flex min-w-0 flex-1 flex-col justify-center">
-                <span className={cn("canvas-model-picker-option-title flex min-w-0 items-center gap-1 font-semibold", canvasImage ? "text-[14px] leading-5" : "text-[11px] leading-none")}>
+                <span className={cn("canvas-model-picker-option-title flex min-w-0 items-center gap-1 font-semibold", canvasMedia ? "text-[14px] leading-5" : "text-[11px] leading-none")}>
                     <span className="canvas-model-picker-option-title-text truncate">{modelDisplayName(config, model)}</span>
                     {isMemberModel(config, model) ? <MemberDiamond /> : null}
                     {presentationConfig?.promotionBadge ? (
@@ -148,7 +156,7 @@ function ModelLabel({ config, model, presentation, selected }: { config: AiConfi
                 </span>
                 {showMarketingCopy ? (
                     <span className="canvas-model-picker-option-meta mt-0.5 block w-full truncate text-[11px] font-normal leading-4">
-                        {marketingCopy}
+                        {modelMeta}
                     </span>
                 ) : null}
             </span>
@@ -167,16 +175,17 @@ function modelMenuPrice(config: AiConfig, model: string): { value: number; unit:
 
 function ModelPrice({ price, compact = false, presentation = "default" }: { price: { value: number; unit: "次" | "秒" } | null | undefined; compact?: boolean; presentation?: ModelPickerProps["presentation"] }) {
     if (price === undefined) return null;
-    if (price === null) return compact ? null : <span className={cn("canvas-model-picker-price shrink-0 text-[10px] text-foreground/40", presentation === "canvasImage" && "rounded-full bg-foreground/[.06] px-2 py-1")}>未配置</span>;
+    const canvasMedia = presentation === "canvasImage" || presentation === "canvasAudio";
+    if (price === null) return compact ? null : <span className={cn("canvas-model-picker-price shrink-0 text-[10px] text-foreground/40", canvasMedia && "rounded-full bg-foreground/[.06] px-2 py-1")}>未配置</span>;
     return (
         <span
             className={cn(
                 "canvas-model-picker-price inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium tabular-nums text-foreground/55",
-                presentation === "canvasImage" ? "rounded-full bg-foreground/[.06] px-2 py-1" : "rounded border border-foreground/10 bg-foreground/[.045] px-1.5 py-0.5",
+                canvasMedia ? "rounded-full bg-foreground/[.06] px-2 py-1" : "rounded border border-foreground/10 bg-foreground/[.045] px-1.5 py-0.5",
             )}
             title={`每${price.unit}消耗 ${price.value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`}
         >
-            {presentation === "canvasImage" ? null : <Coins className="size-3" />}
+            {canvasMedia ? null : <Coins className="size-3" />}
             {price.value.toLocaleString("zh-CN", { maximumFractionDigits: compact ? 3 : 6 })}/{price.unit}
         </span>
     );

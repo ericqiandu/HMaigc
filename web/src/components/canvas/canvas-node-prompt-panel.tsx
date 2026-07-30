@@ -6,12 +6,12 @@ import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { miniMaxVocalTags } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioComposerControls } from "./canvas-audio-composer-controls";
+import { CanvasAudioTextTools } from "./canvas-audio-text-tools";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasVideoGenerationModePicker } from "./canvas-video-generation-mode-picker";
@@ -400,93 +400,6 @@ function ComposerPill({ theme, icon, label, active = false }: { theme: CanvasThe
             {icon}
             {label}
         </span>
-    );
-}
-
-function CanvasAudioTextTools({ model, theme, onInsert }: { model: string; theme: CanvasTheme; onInsert: (fragment: string) => void }) {
-    const [pauseOpen, setPauseOpen] = useState(false);
-    const [vocalOpen, setVocalOpen] = useState(false);
-    const supportsVocalTags = model.startsWith("speech-2.8-");
-    const pauseOptions = [
-        { value: "<#0.3#>", label: "短停顿", description: "0.3 秒" },
-        { value: "<#0.5#>", label: "自然停顿", description: "0.5 秒" },
-        { value: "<#1#>", label: "长停顿", description: "1 秒" },
-        { value: "<#2#>", label: "段落停顿", description: "2 秒" },
-    ];
-    const menuStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text };
-    return (
-        <div className="canvas-audio-text-tools flex min-w-0 items-center gap-1.5" role="group" aria-label="音频文本工具">
-            <Popover
-                open={pauseOpen}
-                onOpenChange={setPauseOpen}
-                trigger="click"
-                placement="topLeft"
-                content={
-                    <div className="canvas-audio-text-menu grid w-56 grid-cols-2 gap-1 p-1" style={menuStyle}>
-                        {pauseOptions.map((option) => (
-                            <button
-                                key={option.value}
-                                type="button"
-                                className="canvas-audio-text-menu-option flex min-w-0 flex-col gap-0.5 rounded-md border-0 px-2 py-1.5 text-left"
-                                style={{ background: theme.toolbar.itemHover, color: theme.node.text }}
-                                onClick={() => {
-                                    onInsert(option.value);
-                                    setPauseOpen(false);
-                                }}
-                            >
-                                <span className="canvas-audio-text-menu-label text-[11px] font-medium">{option.label}</span>
-                                <span className="canvas-audio-text-menu-description text-[9px]" style={{ color: theme.node.muted }}>
-                                    {option.description}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-                }
-                styles={{ content: { padding: 0, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
-            >
-                <button type="button" className="canvas-audio-text-tool" aria-label="插入停顿">
-                    <span className="canvas-audio-text-tool-symbol" aria-hidden="true">
-                        &lt;#&gt;
-                    </span>
-                    <span className="canvas-audio-text-tool-label">停顿</span>
-                </button>
-            </Popover>
-            <Popover
-                open={vocalOpen}
-                onOpenChange={supportsVocalTags ? setVocalOpen : undefined}
-                trigger="click"
-                placement="topLeft"
-                content={
-                    <div className="canvas-audio-vocal-menu thin-scrollbar grid max-h-64 w-72 grid-cols-3 gap-1 overflow-y-auto p-1" style={menuStyle}>
-                        {miniMaxVocalTags.map((option) => (
-                            <button
-                                key={option.value}
-                                type="button"
-                                className="canvas-audio-vocal-option rounded-md border-0 px-2 py-1.5 text-left text-[10px]"
-                                style={{ background: theme.toolbar.itemHover, color: theme.node.text }}
-                                title={option.value}
-                                onClick={() => {
-                                    onInsert(option.value);
-                                    setVocalOpen(false);
-                                }}
-                            >
-                                {option.label}
-                            </button>
-                        ))}
-                    </div>
-                }
-                styles={{ content: { padding: 0, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
-            >
-                <Tooltip title={supportsVocalTags ? "插入 MiniMax 语气词" : "当前模型不支持语气词标记"}>
-                    <button type="button" className="canvas-audio-text-tool" disabled={!supportsVocalTags} aria-label="插入语气词">
-                        <span className="canvas-audio-text-tool-symbol" aria-hidden="true">
-                            ()
-                        </span>
-                        <span className="canvas-audio-text-tool-label">语气词</span>
-                    </button>
-                </Tooltip>
-            </Popover>
-        </div>
     );
 }
 

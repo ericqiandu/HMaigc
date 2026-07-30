@@ -8,6 +8,7 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
+import "./canvas-audio-model-picker.css";
 
 type CanvasAudioComposerControlsProps = {
     config: AiConfig;
@@ -33,7 +34,7 @@ export function CanvasAudioComposerControls({ config, credits, promptLength, isR
                     capability="audio"
                     onMissingConfig={handleMissingSystemModel}
                     showSelectedPrice={false}
-                    presentation="canvasImage"
+                    presentation="canvasAudio"
                 />
                 <span className="canvas-image-toolbar-divider canvas-audio-control-divider" aria-hidden="true" />
                 <CanvasAudioVoicePicker config={config} value={config.audioVoice} onChange={(audioVoice) => onConfigChange({ audioVoice })} />
