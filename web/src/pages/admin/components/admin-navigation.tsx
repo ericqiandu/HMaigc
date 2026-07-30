@@ -1,6 +1,7 @@
 import { Input, Tooltip } from "antd";
 import {
     BadgeDollarSign,
+    AudioLines,
     BarChart3,
     BellRing,
     ChevronDown,
@@ -59,6 +60,7 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
         label: "模型与成本",
         items: [
             { path: "/admin/models", label: "AI 模型", description: "渠道接入、模型目录、图标与启停", icon: RadioTower },
+            { path: "/admin/voices", label: "音色管理", description: "系统音色、克隆音色、权限与模型兼容", icon: AudioLines },
             { path: "/admin/model-pricing", label: "商业定价", description: "供应商成本、积分售价与利润率", icon: BadgeDollarSign },
             { path: "/admin/storyboard-prompts", label: "分镜提示词", description: "Agent 分镜提示词模板与版本", icon: MessageSquareText },
             { path: "/admin/logs", label: "请求日志", description: "上游调用、耗时、状态与费用明细", icon: FileClock },

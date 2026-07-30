@@ -320,6 +320,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err := validateSystemProviderInput(normalizedInput); err != nil {
 		return nil, err
 	}
+	if err := s.validateAudioTaskInput(userID, normalizedInput); err != nil {
+		return nil, err
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
@@ -452,6 +455,9 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	}
 	var billingInput map[string]any
 	if err := json.Unmarshal([]byte(decryptedInput), &billingInput); err != nil {
+		return nil, err
+	}
+	if err := s.validateAudioTaskInput(userID, billingInput); err != nil {
 		return nil, err
 	}
 	billingOrder, err := s.taskBillingOrder(userID, task, billingInput)

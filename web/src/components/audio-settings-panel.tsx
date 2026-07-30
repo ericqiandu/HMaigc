@@ -1,44 +1,38 @@
 import { type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { audioFormatOptionsForInterface, audioSpeedLabel, audioSpeedRangeForInterface, normalizeAudioFormatValue, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import type { AiConfig } from "@/stores/use-config-store";
+import { resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 
 const speedOptions = ["0.75", "1", "1.25", "1.5"];
 
-type AudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioInstructions";
+type AudioSettingKey = "audioFormat" | "audioSpeed" | "audioInstructions";
 
 type AudioSettingsPanelProps = {
     config: AiConfig;
     onConfigChange: (key: AudioSettingKey, value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
-    includeVoice?: boolean;
     className?: string;
 };
 
-export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, includeVoice = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: AudioSettingsPanelProps) {
-    const voice = normalizeAudioVoiceValue(config.audioVoice);
+export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: AudioSettingsPanelProps) {
+    const channel = resolveModelChannel(config, config.model);
+    const interfaceType = channel.interfaceType;
+    const formatOptions = audioFormatOptionsForInterface(interfaceType);
+    const speedRange = audioSpeedRangeForInterface(interfaceType);
+    const isMiniMaxSpeech = interfaceType === "minimax-speech";
     const format = normalizeAudioFormatValue(config.audioFormat);
-    const speed = normalizeAudioSpeedValue(config.audioSpeed);
+    const speed = normalizeAudioSpeedValue(config.audioSpeed, interfaceType);
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="audio-settings-title text-lg font-semibold">音频设置</div> : null}
-                {includeVoice ? <SettingGroup title="声音" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {audioVoiceOptions.map((item) => (
-                            <OptionPill key={item.value} selected={voice === item.value} theme={theme} onClick={() => onConfigChange("audioVoice", item.value)}>
-                                {item.label}
-                            </OptionPill>
-                        ))}
-                    </div>
-                </SettingGroup> : null}
                 <SettingGroup title="格式" color={theme.node.muted}>
                     <div className="audio-settings-format-grid grid grid-cols-3 gap-2.5">
-                        {audioFormatOptions.map((item) => (
+                        {formatOptions.map((item) => (
                             <OptionPill key={item.value} selected={format === item.value} theme={theme} onClick={() => onConfigChange("audioFormat", item.value)}>
                                 {item.label}
                             </OptionPill>
@@ -55,18 +49,23 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </div>
                     <input
                         type="number"
-                        min={0.25}
-                        max={4}
+                        min={speedRange.min}
+                        max={speedRange.max}
                         step={0.05}
                         className="audio-settings-speed-input h-9 w-full rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
                         value={config.audioSpeed || "1"}
                         onChange={(event) => onConfigChange("audioSpeed", event.target.value)}
-                        onBlur={(event) => onConfigChange("audioSpeed", normalizeAudioSpeedValue(event.target.value))}
+                        onBlur={(event) => onConfigChange("audioSpeed", normalizeAudioSpeedValue(event.target.value, interfaceType))}
                         onMouseDown={(event) => event.stopPropagation()}
                     />
                 </SettingGroup>
                 <SettingGroup title="声音指令" color={theme.node.muted}>
+                    {isMiniMaxSpeech ? (
+                        <p className="audio-settings-instructions-notice text-xs leading-5" style={{ color: theme.node.muted }}>
+                            MiniMax Speech 不接收 OpenAI 声音指令；如当前已有内容，请清空后再生成。
+                        </p>
+                    ) : null}
                     <textarea
                         value={config.audioInstructions || ""}
                         placeholder="例如：自然、温暖、适合旁白。"

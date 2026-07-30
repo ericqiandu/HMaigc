@@ -98,9 +98,25 @@ type PublicModelChannel struct {
 	ConcurrencyLimit int                        `json:"concurrencyLimit"`
 	Models           []string                   `json:"models"`
 	ModelCosts       []PublicChannelModelPrice  `json:"modelCosts"`
+	Voices           []PublicChannelVoice       `json:"voices"`
 	HasAPIKey        bool                       `json:"hasApiKey"`
 	CreatedAt        time.Time                  `json:"createdAt"`
 	UpdatedAt        time.Time                  `json:"updatedAt"`
+}
+
+type PublicChannelVoice struct {
+	ID               string                  `json:"id"`
+	VoiceKey         string                  `json:"voiceKey"`
+	DisplayName      string                  `json:"displayName"`
+	Description      string                  `json:"description"`
+	Language         string                  `json:"language"`
+	Kind             string                  `json:"kind"`
+	AccessPolicy     model.ModelAccessPolicy `json:"accessPolicy"`
+	Accessible       bool                    `json:"accessible"`
+	CompatibleModels []string                `json:"compatibleModels"`
+	ProviderStatus   string                  `json:"providerStatus"`
+	Enabled          bool                    `json:"enabled"`
+	LastError        string                  `json:"lastError,omitempty"`
 }
 
 type PublicChannelModelPrice struct {
@@ -370,7 +386,16 @@ func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, 
 		if itemErr != nil {
 			return nil, itemErr
 		}
-		result = append(result, publicChannel(channel, false, items, hasMembership))
+		voices, voiceErr := s.repo.ChannelVoices(channel.ID, false)
+		if voiceErr != nil {
+			return nil, voiceErr
+		}
+		public := publicChannel(channel, false, items, hasMembership)
+		public.Voices, err = publicChannelVoices(voices, hasMembership, false)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, public)
 	}
 	return result, nil
 }
@@ -394,7 +419,16 @@ func (s *Service) AdminSystemChannelPage(actor *model.User, query AdminListQuery
 		if itemErr != nil {
 			return nil, itemErr
 		}
-		result = append(result, publicChannel(channel, true, items, true))
+		voices, voiceErr := s.repo.ChannelVoices(channel.ID, true)
+		if voiceErr != nil {
+			return nil, voiceErr
+		}
+		public := publicChannel(channel, true, items, true)
+		public.Voices, err = publicChannelVoices(voices, true, true)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, public)
 	}
 	return &AdminChannelPage{Channels: result, Total: total, Page: page, Limit: limit}, nil
 }
@@ -428,6 +462,14 @@ func (s *Service) CreateSystemChannel(actor *model.User, req ChannelRequest) (*P
 		return nil, err
 	}
 	public := publicChannel(channel, true, items, true)
+	voices, err := s.repo.ChannelVoices(channel.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	public.Voices, err = publicChannelVoices(voices, true, true)
+	if err != nil {
+		return nil, err
+	}
 	return &public, nil
 }
 
@@ -462,6 +504,14 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 		return nil, err
 	}
 	public := publicChannel(next, true, items, true)
+	voices, err := s.repo.ChannelVoices(next.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	public.Voices, err = publicChannelVoices(voices, true, true)
+	if err != nil {
+		return nil, err
+	}
 	return &public, nil
 }
 
@@ -600,7 +650,7 @@ func mergeChannelRequest(req ChannelRequest, channel model.ModelChannel) Channel
 
 func validChannelInterfaceType(value model.ChannelInterfaceType) bool {
 	switch value {
-	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
+	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceMiniMaxSpeech:
 		return true
 	default:
 		return false

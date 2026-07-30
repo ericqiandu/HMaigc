@@ -45,13 +45,12 @@ export function CanvasAudioComposerControls({
                     presentation="canvasImage"
                 />
                 <span className="canvas-image-toolbar-divider canvas-audio-control-divider" aria-hidden="true" />
-                <CanvasAudioVoicePicker value={config.audioVoice} onChange={(audioVoice) => onConfigChange({ audioVoice })} />
+                <CanvasAudioVoicePicker config={config} value={config.audioVoice} onChange={(audioVoice) => onConfigChange({ audioVoice })} />
             </div>
             <div className="canvas-audio-composer-secondary-controls">
                 <CanvasAudioSettingsPopover
                     config={config}
                     placement="topRight"
-                    includeVoice={false}
                     iconOnly
                     buttonClassName="canvas-audio-settings-trigger"
                     onConfigChange={(key, value) => onConfigChange(audioConfigPatch(key, value))}
@@ -81,7 +80,6 @@ export function CanvasAudioComposerControls({
 }
 
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string): Partial<CanvasNodeMetadata> {
-    if (key === "audioVoice") return { audioVoice: value };
     if (key === "audioFormat") return { audioFormat: value };
     if (key === "audioSpeed") return { audioSpeed: value };
     return { audioInstructions: value };

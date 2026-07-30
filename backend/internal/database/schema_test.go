@@ -25,6 +25,11 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	if !db.Migrator().HasColumn(&model.ChannelModel{}, "promotion_badge") {
 		t.Fatal("channel_models.promotion_badge was not migrated")
 	}
+	if !db.Migrator().HasTable(&model.ChannelVoice{}) ||
+		!db.Migrator().HasColumn(&model.ChannelVoice{}, "consent_confirmed_at") ||
+		!db.Migrator().HasColumn(&model.ChannelVoice{}, "idempotency_key") {
+		t.Fatal("channel_voices commercial audit schema was not migrated")
+	}
 	for _, table := range []interface{}{
 		&model.ReferralProfile{},
 		&model.ReferralRelationship{},
@@ -52,6 +57,14 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	}
 	if err := db.Create(&channel).Error; err != nil {
 		t.Fatalf("create channel: %v", err)
+	}
+	for _, voice := range []model.ChannelVoice{
+		{ID: "voice-a", ChannelID: channel.ID, VoiceKey: "voice-a", DisplayName: "Voice A", Kind: "system", AccessPolicy: model.ModelAccessAuthenticated, CompatibleModelsJSON: "[]", ProviderStatus: "active", Enabled: true},
+		{ID: "voice-b", ChannelID: channel.ID, VoiceKey: "voice-b", DisplayName: "Voice B", Kind: "system", AccessPolicy: model.ModelAccessAuthenticated, CompatibleModelsJSON: "[]", ProviderStatus: "active", Enabled: true},
+	} {
+		if err := db.Create(&voice).Error; err != nil {
+			t.Fatalf("create channel voice with empty idempotency key: %v", err)
+		}
 	}
 	legacyModel := model.ChannelModel{
 		ID:                    "model-image",

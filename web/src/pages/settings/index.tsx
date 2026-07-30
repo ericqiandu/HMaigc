@@ -5,8 +5,8 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { UserOSSSettingsForm } from "@/components/layout/user-oss-settings-form";
 import { PageHeader } from "@/components/layout/workspace-page";
-import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { defaultConfig, useConfigStore } from "@/stores/use-config-store";
+import { audioFormatOptionsForInterface, audioSpeedRangeForInterface, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { defaultConfig, resolveModelChannel, useConfigStore } from "@/stores/use-config-store";
 
 type SettingsSection = "preferences" | "storage";
 
@@ -99,6 +99,10 @@ type PreferencesSettingsProps = {
 };
 
 function PreferencesSettings({ config, updateConfig }: PreferencesSettingsProps) {
+    const audioChannel = resolveModelChannel(config, config.audioModel);
+    const audioFormatOptions = audioFormatOptionsForInterface(audioChannel.interfaceType);
+    const audioSpeedRange = audioSpeedRangeForInterface(audioChannel.interfaceType);
+
     return (
         <Form className="settings-preferences-form" layout="vertical" requiredMark={false}>
             <section className="settings-preference-section border-b border-border pb-6">
@@ -123,22 +127,19 @@ function PreferencesSettings({ config, updateConfig }: PreferencesSettingsProps)
                     <h2 className="settings-preference-title text-sm font-semibold">音频默认值</h2>
                     <p className="settings-preference-description mt-1 text-xs text-foreground/55">用于新建音频节点和未单独设置参数的任务。</p>
                 </div>
-                <div className="settings-audio-grid grid gap-4 md:grid-cols-3">
-                    <Form.Item label="默认声音" className="settings-audio-field mb-0">
-                        <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
-                    </Form.Item>
+                <div className="settings-audio-grid grid gap-4 md:grid-cols-2">
                     <Form.Item label="文件格式" className="settings-audio-field mb-0">
                         <Select value={config.audioFormat} options={audioFormatOptions} onChange={(value) => updateConfig("audioFormat", value)} />
                     </Form.Item>
                     <Form.Item label="语速" className="settings-audio-field mb-0">
                         <InputNumber
-                            min={0.25}
-                            max={4}
+                            min={audioSpeedRange.min}
+                            max={audioSpeedRange.max}
                             step={0.05}
                             precision={2}
                             className="settings-audio-speed-input w-full"
                             value={Number(config.audioSpeed)}
-                            onChange={(value) => updateConfig("audioSpeed", normalizeAudioSpeedValue(String(value ?? defaultConfig.audioSpeed)))}
+                            onChange={(value) => updateConfig("audioSpeed", normalizeAudioSpeedValue(String(value ?? defaultConfig.audioSpeed), audioChannel.interfaceType))}
                         />
                     </Form.Item>
                 </div>

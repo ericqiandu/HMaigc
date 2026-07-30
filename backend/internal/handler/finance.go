@@ -1,16 +1,20 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 const channelModelIconUploadBodyLimit = (1 << 20) + (1 << 20)
+const channelVoiceCloneUploadBodyLimit = (20 << 20) + (2 << 20)
 
 func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/wallet", func(c *gin.Context) {
@@ -274,6 +278,94 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"ok": true})
 	})
+	r.GET("/admin/channels/:id/voices", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		voices, err := svc.AdminChannelVoices(user, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"voices": voices})
+	})
+	r.POST("/admin/channels/:id/voices/sync", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "admin-channel-voices-sync:"+user.ID+":"+c.Param("id"), 6, time.Minute) {
+			return
+		}
+		voices, err := svc.SyncMiniMaxChannelVoices(c.Request.Context(), user, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"voices": voices})
+	})
+	r.POST("/admin/channels/:id/voices", func(c *gin.Context) {
+		saveChannelVoice(c, svc, "")
+	})
+	r.PATCH("/admin/channels/:id/voices/:voiceId", func(c *gin.Context) {
+		saveChannelVoice(c, svc, c.Param("voiceId"))
+	})
+	r.POST("/admin/channels/:id/voices/clone", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "admin-channel-voice-clone:"+user.ID+":"+c.Param("id"), 3, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelVoiceCloneUploadBodyLimit)
+		fileHeader, err := c.FormFile("file")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		file, err := fileHeader.Open()
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		defer file.Close()
+		var compatibleModels []string
+		if value := strings.TrimSpace(c.PostForm("compatibleModels")); value != "" {
+			if err := json.Unmarshal([]byte(value), &compatibleModels); err != nil {
+				fail(c, http.StatusBadRequest, service.BadAuthRequest("兼容模型列表格式无效"))
+				return
+			}
+		}
+		voice, err := svc.CloneMiniMaxChannelVoice(c.Request.Context(), user, c.Param("id"), service.CloneChannelVoiceRequest{
+			VoiceKey: c.PostForm("voiceKey"), DisplayName: c.PostForm("displayName"),
+			Description: c.PostForm("description"), Language: c.PostForm("language"),
+			AccessPolicy: model.ModelAccessPolicy(c.PostForm("accessPolicy")), CompatibleModels: compatibleModels,
+			ConsentConfirmed: strings.EqualFold(c.PostForm("consentConfirmed"), "true"),
+			IdempotencyKey:   c.PostForm("idempotencyKey"),
+		}, file, fileHeader.Filename)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"voice": voice})
+	})
+	r.DELETE("/admin/channels/:id/voices/:voiceId", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if err := svc.DeleteAdminChannelVoice(c.Request.Context(), user, c.Param("id"), c.Param("voiceId")); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"ok": true})
+	})
 
 	r.GET("/admin/redeem-batches", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
@@ -405,6 +497,25 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"order": order})
 	})
+}
+
+func saveChannelVoice(c *gin.Context, svc *service.Service, id string) {
+	user, err := currentUser(c, svc)
+	if err != nil {
+		failService(c, err)
+		return
+	}
+	var req service.ChannelVoiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	voice, err := svc.SaveAdminChannelVoice(user, c.Param("id"), id, req)
+	if err != nil {
+		failService(c, err)
+		return
+	}
+	ok(c, gin.H{"voice": voice})
 }
 
 func saveChannelModel(c *gin.Context, svc *service.Service, id string) {

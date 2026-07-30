@@ -9,18 +9,17 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
-export type CanvasAudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioInstructions";
+export type CanvasAudioSettingKey = "audioFormat" | "audioSpeed" | "audioInstructions";
 
 type CanvasAudioSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: CanvasAudioSettingKey, value: string) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
-    includeVoice?: boolean;
     iconOnly?: boolean;
 };
 
-export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft", includeVoice = true, iconOnly = false }: CanvasAudioSettingsPopoverProps) {
+export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft", iconOnly = false }: CanvasAudioSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -48,7 +47,7 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <AudioSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} includeVoice={includeVoice} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <AudioSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>
@@ -79,7 +78,6 @@ function AudioSettingsPortal({
     placement,
     theme,
     config,
-    includeVoice,
     onConfigChange,
 }: {
     buttonRect: DOMRect;
@@ -87,7 +85,6 @@ function AudioSettingsPortal({
     placement: CanvasAudioSettingsPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
-    includeVoice: boolean;
     onConfigChange: (key: CanvasAudioSettingKey, value: string) => void;
 }) {
     const width = 356;
@@ -121,7 +118,7 @@ function AudioSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <AudioSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} includeVoice={includeVoice} className="canvas-audio-settings-panel space-y-4" />
+            <AudioSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="canvas-audio-settings-panel space-y-4" />
         </div>,
         document.body,
     );

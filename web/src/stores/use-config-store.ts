@@ -7,7 +7,22 @@ import { scopedLocalStorage } from "@/lib/user-scope";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "newapi-channel-1" | "newapi-channel-2" | "xai-video" | "ai-open-platform-video";
+export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "newapi-channel-1" | "newapi-channel-2" | "xai-video" | "ai-open-platform-video" | "minimax-speech";
+
+export type ChannelVoice = {
+    id: string;
+    voiceKey: string;
+    displayName: string;
+    description: string;
+    language: string;
+    kind: "system" | "voice_cloning" | "voice_generation";
+    accessPolicy: "authenticated" | "member";
+    accessible: boolean;
+    compatibleModels: string[];
+    providerStatus: "active" | "pending_activation" | "creating" | "uncertain" | "failed" | "missing" | "deleted";
+    enabled: boolean;
+    lastError?: string;
+};
 
 export type ModelChannel = {
     id: string;
@@ -38,6 +53,7 @@ export type ModelChannel = {
             unitPriceMicrocredits: number;
         }>;
     }>;
+    voices?: ChannelVoice[];
 };
 
 export type AiConfig = {
@@ -94,7 +110,7 @@ export const defaultConfig: AiConfig = {
     videoModel: "",
     textModel: "",
     audioModel: "",
-    audioVoice: "alloy",
+    audioVoice: "",
     audioFormat: "mp3",
     audioSpeed: "1",
     audioInstructions: "",
@@ -328,6 +344,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         enabled: channel?.enabled !== false,
         hasApiKey: channel?.hasApiKey,
         modelCosts: channel?.modelCosts,
+        voices: channel?.voices,
     };
 }
 
@@ -441,6 +458,7 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 
 export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfaceType) {
     if (interfaceType === "apimart-image") return "https://api.apimart.ai/v1";
+    if (interfaceType === "minimax-speech") return "https://api.minimaxi.com/v1";
     if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video") return "";
     return OPENAI_BASE_URL;
 }
@@ -449,6 +467,7 @@ function capabilityForChannelInterface(interfaceType?: ChannelInterfaceType): Mo
     if (interfaceType === "chat-completion" || interfaceType === "openai-response") return "text";
     if (interfaceType === "openai-image" || interfaceType === "apimart-image") return "image";
     if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video") return "video";
+    if (interfaceType === "minimax-speech") return "audio";
     return undefined;
 }
 
@@ -457,7 +476,7 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
 }
 
 function normalizeChannelInterfaceType(value: unknown): ChannelInterfaceType | undefined {
-    return value === "chat-completion" || value === "openai-response" || value === "openai-image" || value === "apimart-image" || value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video" ? value : undefined;
+    return value === "chat-completion" || value === "openai-response" || value === "openai-image" || value === "apimart-image" || value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video" || value === "minimax-speech" ? value : undefined;
 }
 
 function uniqueRawModels(models: string[]) {

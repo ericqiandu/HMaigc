@@ -226,6 +226,7 @@ func migrations() []tableMigration {
 		migrateTable[model.ModelChannel]("model_channels"),
 		migrateTable[model.ChannelModel]("channel_models"),
 		migrateTable[model.ChannelModelPriceTier]("channel_model_price_tiers"),
+		migrateTable[model.ChannelVoice]("channel_voices"),
 		migrateTable[model.ApiCallLog]("api_call_logs"),
 		migrateTable[model.ModelPricing]("model_pricings"),
 		migrateTable[model.ModelPricingTier]("model_pricing_tiers"),

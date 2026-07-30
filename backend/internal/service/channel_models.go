@@ -457,6 +457,8 @@ func capabilityForChannel(channel model.ModelChannel) string {
 		return "image"
 	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
 		return "video"
+	case model.ChannelInterfaceMiniMaxSpeech:
+		return "audio"
 	default:
 		return "text"
 	}

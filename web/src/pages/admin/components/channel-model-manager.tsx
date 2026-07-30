@@ -341,6 +341,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 function capabilityFromInterface(value?: ModelChannel["interfaceType"]): ChannelModel["capability"] {
     if (value === "openai-image" || value === "apimart-image") return "image";
     if (value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video") return "video";
+    if (value === "minimax-speech") return "audio";
     return "text";
 }
 

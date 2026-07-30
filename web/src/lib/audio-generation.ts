@@ -23,23 +23,35 @@ export const audioFormatOptions = [
     { value: "pcm", label: "PCM" },
 ];
 
+const miniMaxSpeechInterface = "minimax-speech";
+
 export function normalizeAudioVoiceValue(value: string) {
-    return audioVoiceOptions.some((item) => item.value === value) ? value : "alloy";
+    return typeof value === "string" ? value.trim() : "";
 }
 
 export function normalizeAudioFormatValue(value: string) {
     return audioFormatOptions.some((item) => item.value === value) ? value : "mp3";
 }
 
-export function normalizeAudioSpeedValue(value: string) {
+export function audioFormatOptionsForInterface(interfaceType?: string) {
+    if (interfaceType !== miniMaxSpeechInterface) return audioFormatOptions;
+    return audioFormatOptions.filter((item) => item.value === "mp3" || item.value === "wav" || item.value === "flac");
+}
+
+export function audioSpeedRangeForInterface(interfaceType?: string) {
+    return interfaceType === miniMaxSpeechInterface ? { min: 0.5, max: 2 } : { min: 0.25, max: 4 };
+}
+
+export function normalizeAudioSpeedValue(value: string, interfaceType?: string) {
     const speed = Number(value);
     if (!Number.isFinite(speed)) return "1";
-    return String(Math.max(0.25, Math.min(4, Number(speed.toFixed(2)))));
+    const range = audioSpeedRangeForInterface(interfaceType);
+    return String(Math.max(range.min, Math.min(range.max, Number(speed.toFixed(2)))));
 }
 
 export function audioVoiceLabel(value: string) {
     const voice = normalizeAudioVoiceValue(value);
-    return audioVoiceOptions.find((item) => item.value === voice)?.label || voice;
+    return audioVoiceOptions.find((item) => item.value === voice)?.label || voice || "选择音色";
 }
 
 export function audioFormatLabel(value: string) {

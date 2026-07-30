@@ -20,6 +20,7 @@ const interfaceTypeOptions = [
     { label: "文本", options: [{ label: "Chat Completions", value: "chat-completion" }, { label: "OpenAI Responses", value: "openai-response" }] },
     { label: "图片", options: [{ label: "OpenAI Images", value: "openai-image" }, { label: "APIMart 异步图片", value: "apimart-image" }] },
     { label: "视频", options: [{ label: "NewAPI 视频", value: "newapi" }, { label: "NewAPI 渠道 1", value: "newapi-channel-1" }, { label: "NewAPI 渠道 2", value: "newapi-channel-2" }, { label: "xAI / Sub2API 视频", value: "xai-video" }, { label: "AI 开放平台视频（原生）", value: "ai-open-platform-video" }] },
+    { label: "音频", options: [{ label: "MiniMax Speech", value: "minimax-speech" }] },
 ];
 
 export default function ChannelsPage() {
@@ -185,5 +186,5 @@ export default function ChannelsPage() {
 function positiveInt(value: string | null, fallback: number) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback; }
 function normalizePageSize(value: string | null) { const parsed = positiveInt(value, 20); return [20, 50, 100].includes(parsed) ? parsed : 20; }
 function normalizeStatus(value: string | null): "all" | "enabled" | "disabled" { return value === "enabled" || value === "disabled" ? value : "all"; }
-function normalizeInterface(value: string | null): "all" | ChannelInterfaceType { return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video", "ai-open-platform-video"].includes(value || "") ? value as ChannelInterfaceType : "all"; }
-function interfaceTypeLabel(value?: ChannelInterfaceType) { return ({ "chat-completion": "Chat Completions", "openai-response": "OpenAI Responses", "openai-image": "OpenAI Images", "apimart-image": "APIMart 异步图片", newapi: "NewAPI 视频", "newapi-channel-1": "NewAPI 渠道 1", "newapi-channel-2": "NewAPI 渠道 2", "xai-video": "xAI / Sub2API 视频", "ai-open-platform-video": "AI 开放平台视频（原生）" } as Record<string, string>)[value || ""] || "未设置"; }
+function normalizeInterface(value: string | null): "all" | ChannelInterfaceType { return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video", "ai-open-platform-video", "minimax-speech"].includes(value || "") ? value as ChannelInterfaceType : "all"; }
+function interfaceTypeLabel(value?: ChannelInterfaceType) { return ({ "chat-completion": "Chat Completions", "openai-response": "OpenAI Responses", "openai-image": "OpenAI Images", "apimart-image": "APIMart 异步图片", newapi: "NewAPI 视频", "newapi-channel-1": "NewAPI 渠道 1", "newapi-channel-2": "NewAPI 渠道 2", "xai-video": "xAI / Sub2API 视频", "ai-open-platform-video": "AI 开放平台视频（原生）", "minimax-speech": "MiniMax Speech" } as Record<string, string>)[value || ""] || "未设置"; }

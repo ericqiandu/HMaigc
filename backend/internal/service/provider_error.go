@@ -11,6 +11,12 @@ const contentModerationRetryMessage = "内容审核未通过，请修改提示�
 
 // 只提取供应商明确返回的错误码和短消息，避免把完整响应或用户输入复制到调用日志。
 func providerFailureDetails(payload map[string]any) (string, string) {
+	if baseResponse, ok := payload["base_resp"].(map[string]any); ok {
+		code := normalizedProviderErrorCode(baseResponse["status_code"])
+		if code != "" {
+			return code, truncateRunes(strings.TrimSpace(stringField(baseResponse, "status_msg")), 500)
+		}
+	}
 	candidates := make([]map[string]any, 0, 3)
 	for _, key := range []string{"error", "data"} {
 		if nested, ok := payload[key].(map[string]any); ok {

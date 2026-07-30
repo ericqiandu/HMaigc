@@ -70,6 +70,7 @@ const (
 	ChannelInterfaceNewAPIChannel2 ChannelInterfaceType = "newapi-channel-2"
 	ChannelInterfaceXAIVideo       ChannelInterfaceType = "xai-video"
 	ChannelInterfaceAIOpenVideo    ChannelInterfaceType = "ai-open-platform-video"
+	ChannelInterfaceMiniMaxSpeech  ChannelInterfaceType = "minimax-speech"
 
 	ModelAccessAuthenticated ModelAccessPolicy = "authenticated"
 	ModelAccessMember        ModelAccessPolicy = "member"
@@ -247,6 +248,31 @@ type ChannelModel struct {
 	UpdatedAt             time.Time               `json:"updatedAt"`
 	DeletedAt             gorm.DeletedAt          `json:"-" gorm:"index"`
 	PriceTiers            []ChannelModelPriceTier `json:"priceTiers" gorm:"foreignKey:ChannelModelID;constraint:OnDelete:CASCADE"`
+}
+
+// ChannelVoice 是系统音频渠道可供用户选择的音色目录。
+// 上游密钥、克隆源文件与同意凭证不向用户端暴露；目录仅保存调用所需标识和运营属性。
+type ChannelVoice struct {
+	ID                   string            `json:"id" gorm:"primaryKey;size:36"`
+	ChannelID            string            `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_voice_key_active,priority:1,where:deleted_at IS NULL;uniqueIndex:idx_channel_voice_idempotency,priority:1,where:idempotency_key <> '' AND deleted_at IS NULL"`
+	VoiceKey             string            `json:"voiceKey" gorm:"size:256;uniqueIndex:idx_channel_voice_key_active,priority:2,where:deleted_at IS NULL"`
+	DisplayName          string            `json:"displayName" gorm:"size:160"`
+	Description          string            `json:"description" gorm:"size:500"`
+	Language             string            `json:"language" gorm:"size:40"`
+	Kind                 string            `json:"kind" gorm:"size:32;index"`
+	AccessPolicy         ModelAccessPolicy `json:"accessPolicy" gorm:"size:24;index;not null;default:authenticated"`
+	CompatibleModelsJSON string            `json:"compatibleModelsJson" gorm:"type:text"`
+	ProviderStatus       string            `json:"providerStatus" gorm:"size:32;index"`
+	Enabled              bool              `json:"enabled" gorm:"index"`
+	SourceFilename       string            `json:"sourceFilename" gorm:"size:240"`
+	SourceSHA256         string            `json:"-" gorm:"size:64"`
+	SourceBytes          int64             `json:"sourceBytes"`
+	ConsentConfirmedAt   *time.Time        `json:"consentConfirmedAt"`
+	IdempotencyKey       string            `json:"-" gorm:"size:80;uniqueIndex:idx_channel_voice_idempotency,priority:2,where:idempotency_key <> '' AND deleted_at IS NULL"`
+	LastError            string            `json:"lastError" gorm:"size:500"`
+	CreatedAt            time.Time         `json:"createdAt"`
+	UpdatedAt            time.Time         `json:"updatedAt"`
+	DeletedAt            gorm.DeletedAt    `json:"-" gorm:"index"`
 }
 
 type ChannelModelPriceTier struct {

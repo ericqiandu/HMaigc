@@ -16,6 +16,7 @@ import PaymentSettingsPage from "@/pages/admin/settings/payment-settings-page";
 import SiteSettingsPage from "@/pages/admin/settings/site-settings-page";
 import StoryboardPromptsPage from "@/pages/admin/storyboard-prompts/storyboard-prompts-page";
 import UsersPage from "@/pages/admin/users/users-page";
+import VoicesPage from "@/pages/admin/voices/voices-page";
 import AssetsPage from "@/pages/assets";
 import { AuthScene } from "@/pages/auth/auth-scene";
 import LoginPage from "@/pages/auth/login";
@@ -77,6 +78,7 @@ export const router = createBrowserRouter([
                     { index: true, element: <AnalyticsPage /> },
                     { path: "users", element: <UsersPage /> },
                     { path: "models", element: <ChannelsPage /> },
+                    { path: "voices", element: <VoicesPage /> },
                     { path: "model-pricing", element: <ModelPricingPage /> },
                     { path: "storyboard-prompts", element: <StoryboardPromptsPage /> },
                     { path: "announcements", element: <AnnouncementsPage /> },

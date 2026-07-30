@@ -995,13 +995,16 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 		log.OutputTokens = firstInt64(usageMetadata, "candidatesTokenCount")
 		log.CachedTokens = firstInt64(usageMetadata, "cachedContentTokenCount")
 	}
-	log.ProviderRequestID = firstNonEmpty(stringField(payload, "task_id"), stringField(payload, "id"), stringField(payload, "request_id"))
+	log.ProviderRequestID = firstNonEmpty(stringField(payload, "task_id"), stringField(payload, "id"), stringField(payload, "request_id"), stringField(payload, "trace_id"))
 	if log.Capability == "image" {
 		if data, ok := payload["data"].([]any); ok {
 			log.MediaCount = len(data)
 		} else if images, ok := payload["images"].([]any); ok {
 			log.MediaCount = len(images)
 		}
+	}
+	if log.Capability == "audio" && log.Status == model.ApiCallStatusSucceeded {
+		log.MediaCount = 1
 	}
 }
 

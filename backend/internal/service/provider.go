@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -31,30 +34,30 @@ type canvasGenerationInput struct {
 }
 
 type providerConfig struct {
-	ChannelID             string `json:"channelId"`
-	APIFormat             string `json:"apiFormat"`
-	InterfaceType         string `json:"interfaceType"`
-	BaseURL               string `json:"baseUrl"`
-	APIKey                string `json:"apiKey"`
-	Model                 string `json:"model"`
-	Size                  string `json:"size"`
-	Quality               string `json:"quality"`
-	TransparentBackground string `json:"transparentBackground"`
-	Count                 string `json:"count"`
-	VideoSeconds          string `json:"videoSeconds"`
-	VQuality              string `json:"vquality"`
-	VideoGenerateAudio    string `json:"videoGenerateAudio"`
-	VideoWatermark        string `json:"videoWatermark"`
+	ChannelID                      string `json:"channelId"`
+	APIFormat                      string `json:"apiFormat"`
+	InterfaceType                  string `json:"interfaceType"`
+	BaseURL                        string `json:"baseUrl"`
+	APIKey                         string `json:"apiKey"`
+	Model                          string `json:"model"`
+	Size                           string `json:"size"`
+	Quality                        string `json:"quality"`
+	TransparentBackground          string `json:"transparentBackground"`
+	Count                          string `json:"count"`
+	VideoSeconds                   string `json:"videoSeconds"`
+	VQuality                       string `json:"vquality"`
+	VideoGenerateAudio             string `json:"videoGenerateAudio"`
+	VideoWatermark                 string `json:"videoWatermark"`
 	VideoSuperResolutionEnabled    string `json:"videoSuperResolutionEnabled"`
 	VideoSuperResolutionResolution string `json:"videoSuperResolutionResolution"`
 	VideoSuperResolutionScene      string `json:"videoSuperResolutionScene"`
 	VideoSuperResolutionVersion    string `json:"videoSuperResolutionVersion"`
 	VideoSuperResolutionFPS        string `json:"videoSuperResolutionFps"`
-	AudioVoice            string `json:"audioVoice"`
-	AudioFormat           string `json:"audioFormat"`
-	AudioSpeed            string `json:"audioSpeed"`
-	AudioInstructions     string `json:"audioInstructions"`
-	SystemPrompt          string `json:"systemPrompt"`
+	AudioVoice                     string `json:"audioVoice"`
+	AudioFormat                    string `json:"audioFormat"`
+	AudioSpeed                     string `json:"audioSpeed"`
+	AudioInstructions              string `json:"audioInstructions"`
+	SystemPrompt                   string `json:"systemPrompt"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
@@ -162,6 +165,11 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	input.Config = config
+	if input.Mode == "audio" {
+		if err := s.validateAudioTaskVoice(userID, input.Config); err != nil {
+			return nil, err
+		}
+	}
 	if input.Config.APIFormat == "gemini" {
 		return nil, errors.New("后端任务队列暂不支持 Gemini 调用格式，请使用 OpenAI 兼容渠道")
 	}
@@ -569,6 +577,9 @@ func runAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]
 			return nil, errors.New("角色配音缺少已解析的声音绑定")
 		}
 	}
+	if input.Config.InterfaceType == string(model.ChannelInterfaceMiniMaxSpeech) {
+		return runMiniMaxAudioTask(ctx, input)
+	}
 	format := defaultString(input.Config.AudioFormat, "mp3")
 	body := map[string]interface{}{
 		"model":           input.Config.Model,
@@ -588,6 +599,94 @@ func runAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		return nil, err
 	}
 	return map[string]interface{}{"mode": "audio", "audio": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType, "format": format}}, nil
+}
+
+func runMiniMaxAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if strings.TrimSpace(input.Prompt) == "" {
+		return nil, errors.New("MiniMax 语音文本不能为空")
+	}
+	if utf8.RuneCountInString(input.Prompt) >= 10000 {
+		return nil, errors.New("MiniMax 同步语音文本必须少于 10000 个字符")
+	}
+	speed := 1.0
+	if rawSpeed := strings.TrimSpace(input.Config.AudioSpeed); rawSpeed != "" {
+		parsedSpeed, err := strconv.ParseFloat(rawSpeed, 64)
+		if err != nil || math.IsNaN(parsedSpeed) || math.IsInf(parsedSpeed, 0) {
+			return nil, errors.New("MiniMax 语速必须是 0.5 到 2.0 之间的数字")
+		}
+		speed = parsedSpeed
+	}
+	if speed < 0.5 || speed > 2 {
+		return nil, errors.New("MiniMax 语速必须在 0.5 到 2.0 之间")
+	}
+	format := strings.ToLower(defaultString(input.Config.AudioFormat, "mp3"))
+	switch format {
+	case "mp3", "wav", "flac":
+	default:
+		return nil, fmt.Errorf("MiniMax 非流式语音仅支持 mp3、wav 或 flac，当前为 %s", format)
+	}
+	if strings.TrimSpace(input.Config.AudioVoice) == "" {
+		return nil, errors.New("MiniMax 语音生成必须选择后台启用的音色")
+	}
+	if strings.TrimSpace(input.Config.AudioInstructions) != "" {
+		return nil, errors.New("MiniMax Speech 不支持 OpenAI instructions 参数，请清空额外语音指令后重试")
+	}
+	body := map[string]interface{}{
+		"model":  input.Config.Model,
+		"text":   input.Prompt,
+		"stream": false,
+		"voice_setting": map[string]interface{}{
+			"voice_id": input.Config.AudioVoice,
+			"speed":    speed,
+			"vol":      1,
+			"pitch":    0,
+		},
+		"audio_setting": map[string]interface{}{
+			"sample_rate": 32000,
+			"bitrate":     128000,
+			"format":      format,
+			"channel":     1,
+		},
+		"output_format": "hex",
+	}
+	var response map[string]interface{}
+	if err := postJSON(ctx, input.Config, "/t2a_v2", body, &response); err != nil {
+		return nil, err
+	}
+	data, _ := response["data"].(map[string]interface{})
+	if status := firstInt64(data, "status"); status != 2 {
+		return nil, fmt.Errorf("MiniMax 语音接口返回未完成状态：%d", status)
+	}
+	audioHex := stringField(data, "audio")
+	if audioHex == "" {
+		return nil, errors.New("MiniMax 语音接口成功响应缺少音频数据")
+	}
+	audio, err := hex.DecodeString(audioHex)
+	if err != nil {
+		return nil, fmt.Errorf("解析 MiniMax 音频数据失败：%w", err)
+	}
+	if len(audio) == 0 {
+		return nil, errors.New("MiniMax 语音接口返回空音频")
+	}
+	traceID := stringField(response, "trace_id")
+	return map[string]interface{}{
+		"mode": "audio",
+		"audio": map[string]interface{}{
+			"dataUrl": dataURL(miniMaxAudioMimeType(format), audio), "mimeType": miniMaxAudioMimeType(format),
+			"format": format, "traceId": traceID,
+		},
+	}, nil
+}
+
+func miniMaxAudioMimeType(format string) string {
+	switch format {
+	case "wav":
+		return "audio/wav"
+	case "flac":
+		return "audio/flac"
+	default:
+		return "audio/mpeg"
+	}
 }
 
 func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
@@ -1022,6 +1121,7 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 		"text":  {"chat-completion": true, "openai-response": true},
 		"image": {"openai-image": true, "apimart-image": true},
 		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "ai-open-platform-video": true},
+		"audio": {"minimax-speech": true},
 	}
 	if allowed[mode] != nil && !allowed[mode][interfaceType] {
 		return fmt.Errorf("接口类型 %s 不支持%s生成", interfaceType, mode)
@@ -1276,6 +1376,9 @@ func doJSON(req *http.Request, target interface{}) error {
 		}
 	}
 	if payload, ok := target.(*map[string]interface{}); ok {
+		if code, message := miniMaxBusinessError(*payload); code != "" {
+			return fmt.Errorf("MiniMax 接口错误（%s）：%s", code, defaultString(message, "请求失败"))
+		}
 		if code, ok := (*payload)["code"].(float64); ok && code != 0 {
 			return errors.New(defaultString(stringField(*payload, "msg"), "请求失败"))
 		}
@@ -1394,6 +1497,15 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 			errorText = safeProviderLogError(requestErr)
 		}
 	}
+	if requestErr == nil && statusCode >= 200 && statusCode < 300 && len(responseBody) > 0 {
+		var payload map[string]interface{}
+		if json.Unmarshal(responseBody, &payload) == nil {
+			if code, message := miniMaxBusinessError(payload); code != "" {
+				status = model.ApiCallStatusFailed
+				errorText = fmt.Sprintf("MiniMax 接口错误（%s）：%s", code, defaultString(message, "请求失败"))
+			}
+		}
+	}
 	requestKind := providerRequestKind(req.Method, req.URL.Path)
 	if metadata.RequestKind != "" {
 		requestKind = metadata.RequestKind
@@ -1428,6 +1540,18 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 			_ = metadata.Service.MarkBillingUncertain(metadata.BillingOrderID, "上游调用日志写入失败，费用状态待核对")
 		}
 	}
+}
+
+func miniMaxBusinessError(payload map[string]interface{}) (string, string) {
+	baseResponse, ok := payload["base_resp"].(map[string]interface{})
+	if !ok {
+		return "", ""
+	}
+	code := firstInt64(baseResponse, "status_code")
+	if code == 0 {
+		return "", ""
+	}
+	return strconv.FormatInt(code, 10), stringField(baseResponse, "status_msg")
 }
 
 func safeProviderLogError(err error) string {
