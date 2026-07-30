@@ -1,0 +1,24 @@
+@media (max-width: 720px) {
+    .canvas-node-prompt-controls-row--video {
+        gap: 2px;
+    }
+
+    .canvas-node-prompt-controls-row--video .canvas-video-toolbar-divider {
+        margin-inline: 1px;
+    }
+
+    .canvas-node-prompt-panel--video .canvas-video-settings-trigger--composer.ant-btn {
+        width: 32px !important;
+        min-width: 32px !important;
+        padding: 0 !important;
+        justify-content: center !important;
+    }
+
+    .canvas-node-prompt-panel--video .canvas-video-settings-trigger--composer.ant-btn > span:not(.ant-btn-icon) {
+        display: none;
+    }
+
+    .canvas-node-prompt-panel--video .canvas-video-settings-trigger--composer.ant-btn .ant-btn-icon {
+        margin-inline-end: 0 !important;
+    }
+}

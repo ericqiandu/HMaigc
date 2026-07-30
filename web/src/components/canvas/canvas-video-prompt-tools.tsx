@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Image as ImageIcon } from "lucide-react";
 
@@ -38,33 +38,46 @@ export function CanvasVideoPromptTools({ metadata, frameOptions, onMetadataChang
 
     const setFrame = (key: "videoStartFrameNodeId" | "videoEndFrameNodeId", value: string) => {
         const next = value === EMPTY_FRAME_VALUE ? undefined : value;
-        onMetadataChange(key === "videoStartFrameNodeId" ? { videoStartFrameNodeId: next } : { videoEndFrameNodeId: next });
+        if (key === "videoStartFrameNodeId") {
+            onMetadataChange(next ? { videoStartFrameNodeId: next } : { videoStartFrameNodeId: undefined, videoEndFrameNodeId: undefined });
+            return;
+        }
+        onMetadataChange({ videoEndFrameNodeId: next });
     };
 
-    if (!frameOptions.length) return null;
+    if (!frameOptions.length || (startFrame === EMPTY_FRAME_VALUE && endFrame === EMPTY_FRAME_VALUE)) return null;
 
     return (
         <div
-            className="grid min-w-0 grid-cols-2 items-center gap-1"
+            className="canvas-video-frame-strip thin-scrollbar flex h-[42px] min-w-0 shrink-0 items-center gap-1.5 overflow-x-auto px-2.5 pt-1.5"
+            role="group"
+            aria-label="视频参考帧"
             data-canvas-no-zoom
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            <FrameMenu label="首帧" value={startFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoStartFrameNodeId", value)} />
-            <FrameMenu label="尾帧" value={endFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoEndFrameNodeId", value)} />
+            {startFrame !== EMPTY_FRAME_VALUE ? (
+                <FrameMenu label="首帧" badge="首" value={startFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoStartFrameNodeId", value)} />
+            ) : null}
+            {endFrame !== EMPTY_FRAME_VALUE ? (
+                <>
+                    <span className="canvas-video-frame-direction shrink-0 text-[11px]" style={{ color: theme.node.faint }} aria-hidden="true">→</span>
+                    <FrameMenu label="尾帧" badge="尾" value={endFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoEndFrameNodeId", value)} />
+                </>
+            ) : null}
         </div>
     );
 }
 
-function FrameMenu({ label, value, options, theme, onChange }: { label: string; value: string; options: VideoFrameOption[]; theme: CanvasTheme; onChange: (value: string) => void }) {
+function FrameMenu({ label, badge, value, options, theme, onChange }: { label: string; badge: string; value: string; options: VideoFrameOption[]; theme: CanvasTheme; onChange: (value: string) => void }) {
     const selected = options.find((item) => item.nodeId === value);
     const items = [{ value: EMPTY_FRAME_VALUE, label: "不指定" }, ...options.map((option) => ({ value: option.nodeId, label: `${option.label} · ${option.title}`, previewUrl: option.previewUrl }))];
     return (
         <CompactMenuButton
             theme={theme}
             title={label}
-            label={selected?.label || label}
-            icon={<ImageIcon className="size-3.5 shrink-0 opacity-90" />}
+            badge={badge}
+            previewUrl={selected?.previewUrl}
             value={value}
             items={items}
             menuWidth={220}
@@ -77,8 +90,8 @@ function FrameMenu({ label, value, options, theme, onChange }: { label: string; 
 function CompactMenuButton({
     theme,
     title,
-    label,
-    icon,
+    badge,
+    previewUrl,
     value,
     items,
     menuWidth,
@@ -87,8 +100,8 @@ function CompactMenuButton({
 }: {
     theme: CanvasTheme;
     title: string;
-    label: string;
-    icon: ReactNode;
+    badge: string;
+    previewUrl?: string;
     value?: string;
     items: CompactMenuItem[];
     menuWidth: number;
@@ -141,9 +154,8 @@ function CompactMenuButton({
     }, [open, items.length, maxMenuHeight, menuWidth]);
 
     const buttonStyle: CSSProperties = {
-        ...CONTROL_TEXT_STYLE,
         background: theme.toolbar.itemHover,
-        color: theme.node.muted,
+        color: theme.node.text,
         outlineColor: theme.accent.primary,
     };
     const menuStyle: CSSProperties | undefined = position
@@ -209,16 +221,27 @@ function CompactMenuButton({
             <button
                 ref={triggerRef}
                 type="button"
-                className="inline-flex h-6 w-full min-w-0 items-center gap-1 rounded-md border-0 px-1.5 shadow-none transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                className="canvas-video-frame-trigger group relative size-[34px] shrink-0 overflow-hidden rounded-md border-0 p-0 shadow-none transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
                 style={buttonStyle}
-                title={title}
+                title={`更换${title}`}
+                aria-label={`更换${title}`}
                 onClick={() => setOpen((value) => !value)}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
             >
-                {icon}
-                <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-                <ChevronDown className="size-3 shrink-0 opacity-55" />
+                {previewUrl ? (
+                    <img src={previewUrl} alt="" className="canvas-video-frame-preview size-full object-cover" />
+                ) : (
+                    <span className="canvas-video-frame-placeholder grid size-full place-items-center">
+                        <ImageIcon className="size-3.5 opacity-70" />
+                    </span>
+                )}
+                <span className="canvas-video-frame-badge absolute left-0.5 top-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-[8px] font-semibold text-white backdrop-blur-sm">
+                    {badge}
+                </span>
+                <span className="canvas-video-frame-chevron absolute bottom-0.5 right-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                    <ChevronDown className="size-2.5" />
+                </span>
             </button>
             {menu}
         </>

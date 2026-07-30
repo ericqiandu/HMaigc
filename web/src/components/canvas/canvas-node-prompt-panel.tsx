@@ -20,6 +20,7 @@ import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-pic
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-composer.css";
+import "./canvas-video-composer.css";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -77,8 +78,21 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         title: item.title,
         previewUrl: item.previewUrl,
     }));
+    const activeVideoFrameNodeIds = useMemo(
+        () => new Set([node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId].filter((value): value is string => Boolean(value))),
+        [node.metadata?.videoEndFrameNodeId, node.metadata?.videoStartFrameNodeId],
+    );
+    const nonFrameMentionReferences = useMemo(
+        () => mentionReferences.filter((item) => !activeVideoFrameNodeIds.has(item.nodeId)),
+        [activeVideoFrameNodeIds, mentionReferences],
+    );
     const composerSurface = theme.spatial.dropzone;
-    const referenceShelfHeight = activeReferenceCount ? 42 : 0;
+    const activeNonFrameReferenceCount = nonFrameMentionReferences.filter((item) => item.active && item.kind !== "skill").length;
+    const videoFrameShelfVisible = isVideoMode && activeVideoFrameNodeIds.size > 0;
+    const referenceShelfRows = isVideoMode
+        ? Number(videoFrameShelfVisible) + Number(activeNonFrameReferenceCount > 0)
+        : Number(activeReferenceCount > 0);
+    const referenceShelfHeight = referenceShelfRows * 42;
     const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 122 : 82) : (isImageMode ? 76 : isAudioMode ? 92 : 58);
     const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
@@ -248,7 +262,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     ) : (
         <div className={`flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
             <div className={`${expanded ? "max-w-[320px]" : mode === "image" ? "w-[114px] max-w-[114px] flex-none" : mode === "video" ? "w-[114px] max-w-[114px] flex-none" : "max-w-[174px]"} min-w-[88px] flex-1`}>
-                <ModelPicker className={`!h-7 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode ? "canvas-image-model-picker" : isVideoMode ? "canvas-video-model-picker" : ""}`} fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} presentation={isImageMode || isVideoMode ? "canvasImage" : "default"} />
+                <ModelPicker className={`!h-8 !w-full !min-w-0 !text-[10px] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3 ${isImageMode || isVideoMode ? "canvas-image-model-picker" : ""}`} fullWidth config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} showSelectedPrice={false} presentation={isImageMode || isVideoMode ? "canvasImage" : "default"} />
             </div>
             {isImageMode || isVideoMode ? <span className={isVideoMode ? "canvas-video-toolbar-divider" : "canvas-image-toolbar-divider"} aria-hidden="true" /> : null}
             <div className={`ml-auto flex min-w-0 shrink-0 items-center gap-0.5 ${isImageMode ? "canvas-image-toolbar-actions flex-1" : ""}`}>
@@ -315,7 +329,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "canvas-node-prompt-editor--image mt-1 max-h-[180px]" : isVideoMode ? "canvas-node-prompt-editor--video mt-1 max-h-[180px]" : isAudioMode ? "canvas-node-prompt-editor--audio max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
                 style={{ height: composerHeight, background: isImageMode || isVideoMode || isAudioMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
-                <ConnectedReferenceShelf references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                {isVideoMode && !simpleMode ? (
+                    <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
+                ) : null}
+                <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
                 <CanvasResourceMentionTextarea
                     value={prompt}
                     references={mentionReferences}
@@ -327,12 +344,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     onContentSizeChange={updatePromptContentHeight}
                 />
             </div>
-
-            {mode === "video" && !simpleMode ? (
-                <div className="canvas-video-frame-tools mt-1 rounded-md p-0.5" style={{ background: composerSurface }}>
-                    <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
-                </div>
-            ) : null}
 
             <div className={`canvas-node-prompt-controls ${isImageMode ? "canvas-node-prompt-controls--image mt-1" : isAudioMode ? "canvas-node-prompt-controls--audio" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
 
@@ -353,7 +364,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-lg border focus-within:outline focus-within:outline-1"
                         style={{ borderColor: theme.toolbar.border, outlineColor: theme.accent.primary }}
                     >
-                        <ConnectedReferenceShelf references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                        {isVideoMode && !simpleMode ? (
+                            <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
+                        ) : null}
+                        <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
                         <CanvasResourceMentionTextarea
                             value={prompt}
                             references={mentionReferences}
@@ -365,11 +379,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             aria-label={`${modeDisplayName(mode)}提示词`}
                         />
                     </div>
-                    {mode === "video" && !simpleMode ? (
-                        <div className="shrink-0 rounded-md p-0.5">
-                            <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
-                        </div>
-                    ) : null}
                     <div className="shrink-0">{renderComposerControls(true)}</div>
                 </div>
             </Modal>
