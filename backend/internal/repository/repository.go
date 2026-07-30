@@ -538,8 +538,12 @@ func (r *Repository) ApiCallLogs(userID string, admin bool, limit int) ([]model.
 
 func (r *Repository) SystemSetting(key string) (*model.SystemSetting, error) {
 	var setting model.SystemSetting
-	if err := r.db.First(&setting, "key = ?", key).Error; err != nil {
-		return nil, err
+	result := r.db.Where("key = ?", key).Limit(1).Find(&setting)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return &setting, nil
 }
