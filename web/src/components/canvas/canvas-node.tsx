@@ -16,6 +16,7 @@ import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
+import "./canvas-audio-node.css";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
@@ -196,8 +197,8 @@ export const CanvasNode = React.memo(function CanvasNode({
 
             const dx = (event.clientX - resizeRef.current.startX) / scale;
             const dy = (event.clientY - resizeRef.current.startY) / scale;
-            const minWidth = data.type === CanvasNodeType.Script ? 800 : 220;
-            const minHeight = scriptMinHeight || 160;
+            const minWidth = data.type === CanvasNodeType.Script ? 800 : data.type === CanvasNodeType.Audio ? 300 : 220;
+            const minHeight = scriptMinHeight || (data.type === CanvasNodeType.Audio ? 220 : 160);
             const startRight = resizeRef.current.startLeft + resizeRef.current.startWidth;
             const startBottom = resizeRef.current.startTop + resizeRef.current.startHeight;
             const fromLeft = resizeRef.current.corner.includes("left");
@@ -283,9 +284,15 @@ export const CanvasNode = React.memo(function CanvasNode({
             }}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
+            {data.type === CanvasNodeType.Audio ? (
+                <div className="canvas-audio-node-heading">
+                    <Music2 className="canvas-audio-node-heading-icon size-3.5 shrink-0" />
+                    <span className="canvas-audio-node-heading-label">{audioNodeTitle(data)}</span>
+                </div>
+            ) : null}
             <CometCard
                 containerClassName="overflow-visible"
-                className={`canvas-node-shell relative h-full w-full overflow-visible rounded-[18px] ${flushMediaContent ? "border-0" : "border"} ${isGeneratingNode ? "canvas-node-shell-generating" : ""}`}
+                className={`canvas-node-shell relative h-full w-full overflow-visible rounded-[18px] ${data.type === CanvasNodeType.Audio ? "canvas-node-shell--audio" : ""} ${flushMediaContent ? "border-0" : "border"} ${isGeneratingNode ? "canvas-node-shell-generating" : ""}`}
                 rotateDepth={cometDepth}
                 translateDepth={cometTranslate}
                 disabled={cometDisabled}
@@ -871,7 +878,7 @@ function VideoNodeContent({ node, theme, reduceMediaEffects }: NodeContentRender
     return <video ref={videoRef} src={url} controls preload={reduceMediaEffects ? "none" : "metadata"} className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
-function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
+function AudioNodeContent({ node }: NodeContentRendererProps) {
     const audioRef = useRef<HTMLAudioElement>(null);
     const playWhenReadyRef = useRef(false);
     const { url, loading, load } = useNodeResourceUrl(node, false);
@@ -882,23 +889,38 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
     }, [url]);
     if (!node.metadata?.content)
         return (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
-                <Music2 className="size-7 opacity-35" />
-                <span className="canvas-node-empty-label">空音频节点</span>
+            <div className="canvas-audio-node-empty">
+                <div className="canvas-audio-node-empty-visual">
+                    <Music2 className="canvas-audio-node-empty-icon size-10" />
+                </div>
+                <div className="canvas-audio-node-empty-guide">
+                    <span className="canvas-audio-node-empty-label">尝试：</span>
+                    <span className="canvas-audio-node-empty-action">
+                        <Play className="canvas-audio-node-empty-action-icon size-3.5 fill-current" />
+                        输入文字生成音频
+                    </span>
+                </div>
             </div>
         );
     if (!url) {
         return <DeferredMediaLoad icon={loading ? <LoaderCircle className="size-5 animate-spin" /> : <Play className="size-5 fill-current" />} label={loading ? "正在缓存音频" : "加载并缓存音频"} disabled={loading} onClick={() => { playWhenReadyRef.current = true; void load(); }} />;
     }
     return (
-        <div className="flex h-full w-full flex-col justify-center gap-3 px-4" style={{ background: theme.node.fill, color: theme.node.text }}>
-            <div className="flex min-w-0 items-center gap-2 text-sm opacity-70">
-                <Music2 className="size-4 shrink-0" />
-                <span className="truncate">{node.title || "音频"}</span>
+        <div className="canvas-audio-node-player">
+            <div className="canvas-audio-node-player-copy">
+                <span className="canvas-audio-node-player-icon">
+                    <Music2 className="canvas-audio-node-player-wave size-4" />
+                </span>
+                <span className="canvas-audio-node-player-title">{audioNodeTitle(node)}</span>
             </div>
-            <audio ref={audioRef} src={url} controls preload="metadata" className="w-full" data-canvas-no-zoom />
+            <audio ref={audioRef} src={url} controls preload="metadata" className="canvas-audio-node-player-control" data-canvas-no-zoom />
         </div>
     );
+}
+
+function audioNodeTitle(node: CanvasNodeData) {
+    const title = node.title?.trim();
+    return !title || title.toLocaleLowerCase() === "audio" ? "音频节点" : title;
 }
 
 function ImageContent({

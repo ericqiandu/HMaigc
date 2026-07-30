@@ -16,7 +16,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Skill]: { width: 360, height: 220, title: "技能" },
     [CanvasNodeType.Config]: { width: 340, height: 300, title: "生成配置" },
     [CanvasNodeType.Video]: { width: 420, height: 236, title: "Video" },
-    [CanvasNodeType.Audio]: { width: 340, height: 120, title: "Audio" },
+    [CanvasNodeType.Audio]: { width: 340, height: 220, title: "音频节点" },
     [CanvasNodeType.Frame]: { width: 760, height: 520, title: "未命名背板" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 

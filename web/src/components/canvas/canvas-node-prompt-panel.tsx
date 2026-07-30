@@ -10,7 +10,7 @@ import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-ge
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
+import { CanvasAudioComposerControls } from "./canvas-audio-composer-controls";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasVideoGenerationModePicker } from "./canvas-video-generation-mode-picker";
@@ -19,6 +19,7 @@ import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import "./canvas-audio-composer.css";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -46,6 +47,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const mode = defaultMode(node.type);
     const isImageMode = mode === "image";
     const isVideoMode = mode === "video";
+    const isAudioMode = mode === "audio";
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
@@ -77,10 +79,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     }));
     const composerSurface = theme.spatial.dropzone;
     const referenceShelfHeight = activeReferenceCount ? 42 : 0;
-    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : 82) : (isImageMode ? 76 : 58);
-    const composerHeight = Math.min(isImageMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
+    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 122 : 82) : (isImageMode ? 76 : isAudioMode ? 92 : 58);
+    const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
-    const canExpandPrompt = mode === "image" || mode === "video";
+    const canExpandPrompt = mode === "image" || mode === "video" || mode === "audio";
     const updatePromptContentHeight = useCallback((height: number) => {
         setPromptContentHeight((current) => Math.abs(current - height) < 1 ? current : height);
     }, []);
@@ -124,6 +126,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         updatePrompt(basePrompt ? `${basePrompt} ${insertText}` : insertText);
     };
 
+    const appendAudioText = (fragment: string) => updatePrompt(prompt ? `${prompt}${fragment}` : fragment.trimStart());
+
     const updateVideoFrameMetadata = useCallback((patch: Partial<CanvasNodeMetadata>) => {
         const frameNodeIds = [patch.videoStartFrameNodeId, patch.videoEndFrameNodeId]
             .filter((value): value is string => Boolean(value));
@@ -166,6 +170,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     />
                     <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
+            ) : isAudioMode ? (
+                <CanvasAudioTextTools onInsert={appendAudioText} />
             ) : (
                 <div
                     className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium"
@@ -194,7 +200,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <Tooltip title="放大编辑">
                         <button
                             type="button"
-                            className="grid size-6 shrink-0 place-items-center rounded-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                            className={`grid size-6 shrink-0 place-items-center rounded-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 ${isAudioMode ? "canvas-audio-expand-button" : ""}`}
                             style={{ background: theme.toolbar.itemHover, color: theme.node.muted, outlineColor: theme.accent.primary }}
                             onClick={() => setExpandedPromptOpen(true)}
                             aria-label="放大编辑提示词"
@@ -207,7 +213,21 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         </div>
     );
 
-    const renderComposerControls = (expanded: boolean) => simpleMode ? (
+    const renderComposerControls = (expanded: boolean) => isAudioMode ? (
+        <CanvasAudioComposerControls
+            config={config}
+            credits={credits}
+            promptLength={prompt.length}
+            isRunning={isRunning}
+            submitDisabled={isSubmitDisabled}
+            onConfigChange={(patch) => onConfigChange(node.id, patch)}
+            onSubmit={() => {
+                if (expanded) submitExpandedPrompt();
+                else submit();
+            }}
+            onStop={() => onStop(node.id)}
+        />
+    ) : simpleMode ? (
         <div className="flex min-w-0 items-center justify-between gap-2 px-0.5">
             <span className="min-w-0 truncate px-2 text-[10px]" style={{ color: theme.node.muted }}>
                 {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
@@ -249,8 +269,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         <span className="canvas-video-toolbar-divider" aria-hidden="true" />
                     </>
-                ) : mode === "audio" ? (
-                    <CanvasAudioSettingsPopover config={config} buttonClassName="!h-7 !w-[138px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !text-[10px] !font-normal !shadow-none [&>span]:min-w-0 [&_.lucide]:!size-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                 ) : null}
                 {isImageMode ? <span className="canvas-image-toolbar-divider" aria-hidden="true" /> : null}
                 {isImageMode ? (
@@ -285,7 +303,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     return (
         <div
-            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "canvas-node-prompt-panel--image rounded-2xl p-2" : isVideoMode ? "canvas-node-prompt-panel--video rounded-2xl p-2" : "rounded-lg p-1.5"}`}
+            className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "canvas-node-prompt-panel--image rounded-2xl p-2" : isVideoMode ? "canvas-node-prompt-panel--video rounded-2xl p-2" : isAudioMode ? "canvas-node-prompt-panel--audio p-2.5" : "rounded-lg p-1.5"}`}
             style={{ background: theme.spatial.elevated, color: theme.node.text, boxShadow: `0 20px 64px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.07)` }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
@@ -294,8 +312,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             {renderComposerHeader(false)}
 
             <div
-                className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "canvas-node-prompt-editor--image mt-1 max-h-[180px]" : isVideoMode ? "canvas-node-prompt-editor--video mt-1 max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
-                style={{ height: composerHeight, background: isImageMode || isVideoMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
+                className={`canvas-node-prompt-editor relative flex flex-col overflow-hidden transition-[height,outline-color] duration-150 motion-reduce:transition-none ${isImageMode ? "canvas-node-prompt-editor--image mt-1 max-h-[180px]" : isVideoMode ? "canvas-node-prompt-editor--video mt-1 max-h-[180px]" : isAudioMode ? "canvas-node-prompt-editor--audio max-h-[180px]" : "mt-1.5 max-h-36 rounded-lg focus-within:outline focus-within:outline-1"}`}
+                style={{ height: composerHeight, background: isImageMode || isVideoMode || isAudioMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
                 <ConnectedReferenceShelf references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
                 <CanvasResourceMentionTextarea
@@ -303,7 +321,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     references={mentionReferences}
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
-                    className={`canvas-node-prompt-textarea thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35 ${isImageMode ? "canvas-node-prompt-textarea--image px-0.5 py-1.5" : isVideoMode ? "canvas-node-prompt-textarea--video px-0.5 py-1.5" : "px-2.5 py-2"}`}
+                    className={`canvas-node-prompt-textarea thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35 ${isImageMode ? "canvas-node-prompt-textarea--image px-0.5 py-1.5" : isVideoMode ? "canvas-node-prompt-textarea--video px-0.5 py-1.5" : isAudioMode ? "canvas-node-prompt-textarea--audio" : "px-2.5 py-2"}`}
                     style={{ color: theme.node.text }}
                     placeholder={promptPlaceholder(mode, hasTextContent)}
                     onContentSizeChange={updatePromptContentHeight}
@@ -316,7 +334,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 </div>
             ) : null}
 
-            <div className={`canvas-node-prompt-controls ${isImageMode ? "canvas-node-prompt-controls--image mt-1" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
+            <div className={`canvas-node-prompt-controls ${isImageMode ? "canvas-node-prompt-controls--image mt-1" : isAudioMode ? "canvas-node-prompt-controls--audio" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
 
             <Modal
                 className="canvas-prompt-editor-modal"
@@ -368,6 +386,21 @@ function ComposerPill({ theme, icon, label, active = false }: { theme: CanvasThe
             {icon}
             {label}
         </span>
+    );
+}
+
+function CanvasAudioTextTools({ onInsert }: { onInsert: (fragment: string) => void }) {
+    return (
+        <div className="canvas-audio-text-tools flex min-w-0 items-center gap-1.5" role="group" aria-label="音频文本工具">
+            <button type="button" className="canvas-audio-text-tool" onClick={() => onInsert("……")} aria-label="插入停顿">
+                <span className="canvas-audio-text-tool-symbol" aria-hidden="true">&lt;#&gt;</span>
+                <span className="canvas-audio-text-tool-label">停顿</span>
+            </button>
+            <button type="button" className="canvas-audio-text-tool" onClick={() => onInsert(" 嗯，")} aria-label="插入语气词">
+                <span className="canvas-audio-text-tool-symbol" aria-hidden="true">()</span>
+                <span className="canvas-audio-text-tool-label">语气词</span>
+            </button>
+        </div>
     );
 }
 
@@ -597,7 +630,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
 
 function promptPlaceholder(mode: CanvasNodeGenerationMode, hasTextContent: boolean) {
     if (mode === "video") return "描述要生成的视频内容";
-    if (mode === "audio") return "描述要生成的音频内容";
+    if (mode === "audio") return "输入要合成的文本";
     if (mode === "image") return "可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
 }
@@ -613,11 +646,4 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSuperResolutionVersion") return { superResolutionVersion: value };
     if (key === "videoSuperResolutionFps") return { superResolutionFps: value };
     return { [key]: value };
-}
-
-function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
-    if (key === "audioVoice") return { audioVoice: value };
-    if (key === "audioFormat") return { audioFormat: value };
-    if (key === "audioSpeed") return { audioSpeed: value };
-    return { audioInstructions: value };
 }

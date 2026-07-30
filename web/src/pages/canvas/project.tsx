@@ -1562,8 +1562,8 @@ function InfiniteCanvasPage() {
                         node={dialogNode}
                         viewport={viewport}
                         containerRef={containerRef}
-                        panelWidth={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video ? 660 : 520}
-                        panelMargin={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video ? 4 : 12}
+                        panelWidth={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video || dialogNode.type === CanvasNodeType.Audio ? 660 : 520}
+                        panelMargin={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video || dialogNode.type === CanvasNodeType.Audio ? 4 : 12}
                     >
                         {renderCanvasNodePanel(dialogNode)}
                     </CanvasNodePanelOverlay>

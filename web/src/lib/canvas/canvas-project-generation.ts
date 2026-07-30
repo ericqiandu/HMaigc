@@ -371,8 +371,15 @@ export function supportsVideoReferenceAudio(config: AiConfig) {
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     const configHeight = NODE_DEFAULT_SIZE[CanvasNodeType.Config].height;
+    const audioSize = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
     return nodes.map((node) => {
-        const resizedNode = node.type === CanvasNodeType.Config && node.height < configHeight ? { ...node, height: configHeight } : node.type === CanvasNodeType.Script && node.height < NODE_DEFAULT_SIZE[CanvasNodeType.Script].height ? { ...node, height: NODE_DEFAULT_SIZE[CanvasNodeType.Script].height } : node;
+        const resizedNode = node.type === CanvasNodeType.Config && node.height < configHeight
+            ? { ...node, height: configHeight }
+            : node.type === CanvasNodeType.Script && node.height < NODE_DEFAULT_SIZE[CanvasNodeType.Script].height
+              ? { ...node, height: NODE_DEFAULT_SIZE[CanvasNodeType.Script].height }
+              : node.type === CanvasNodeType.Audio && (node.width < audioSize.width || node.height < audioSize.height)
+                ? { ...node, width: Math.max(node.width, audioSize.width), height: Math.max(node.height, audioSize.height) }
+                : node;
         return resizedNode.metadata?.status === "loading" ? { ...resizedNode, metadata: { ...resizedNode.metadata, errorDetails: "正在从任务中心恢复生成状态..." } } : resizedNode;
     });
 }
