@@ -20,6 +20,7 @@ import {
     type CanvasRealtimeEnvelope,
 } from "@/services/api/canvas-collaboration";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { removeRetiredCanvasNodes } from "@/lib/canvas/canvas-retired-content-migration";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
@@ -111,20 +112,22 @@ export function useCanvasCollaboration({
     }, [selectedNodeIds]);
 
     const applyDocument = useCallback((document: CanvasCollaborationDocument, metadata?: Partial<CanvasProject>) => {
-        setNodes(document.nodes);
-        setConnections(document.connections);
+        const migratedGraph = removeRetiredCanvasNodes(document);
+        const migratedDocument = { ...document, ...migratedGraph };
+        setNodes(migratedDocument.nodes);
+        setConnections(migratedDocument.connections);
         setBackgroundMode(document.backgroundMode);
         setShowImageInfo(document.showImageInfo);
         updateProject(projectId, {
             title: document.title,
-            nodes: document.nodes,
-            connections: document.connections,
+            nodes: migratedDocument.nodes,
+            connections: migratedDocument.connections,
             backgroundMode: document.backgroundMode,
             showImageInfo: document.showImageInfo,
             directorScenes: document.directorScenes,
             ...metadata,
         });
-        currentDocumentRef.current = document;
+        currentDocumentRef.current = migratedDocument;
     }, [projectId, setBackgroundMode, setConnections, setNodes, setShowImageInfo, updateProject]);
 
     const applySnapshot = useCallback((state: CanvasCollaborationState) => {

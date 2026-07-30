@@ -4,6 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { removeRetiredCanvasProjectContent } from "@/lib/canvas/canvas-retired-content-migration";
 import type { CanvasAgentLaunchRequest, CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
@@ -131,11 +132,20 @@ export const useCanvasStore = create<CanvasStore>()(
                     viewport: source.viewport || initialViewport,
                     directorScenes: source.directorScenes || [],
                 };
-                set((state) => ({ projects: [project, ...state.projects] }));
-                return project.id;
+                const migratedProject = removeRetiredCanvasProjectContent(project);
+                set((state) => ({ projects: [migratedProject, ...state.projects] }));
+                return migratedProject.id;
             },
             openProject: (id) => {
-                return get().projects.find((item) => item.id === id) || null;
+                const project = get().projects.find((item) => item.id === id);
+                if (!project) return null;
+                const migratedProject = removeRetiredCanvasProjectContent(project);
+                if (migratedProject !== project) {
+                    set((state) => ({
+                        projects: state.projects.map((item) => item.id === id ? migratedProject : item),
+                    }));
+                }
+                return migratedProject;
             },
             renameProject: (id, title) =>
                 set((state) => ({
@@ -146,7 +156,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     const projects = state.projects.filter((project) => !ids.includes(project.id));
                     return { projects };
                 }),
-            replaceProjects: (projects) => set({ projects }),
+            replaceProjects: (projects) => set({ projects: projects.map((project) => removeRetiredCanvasProjectContent(project)) }),
             updateProject: (id, patch) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
@@ -160,7 +170,8 @@ export const useCanvasStore = create<CanvasStore>()(
                     projects: state.projects,
                 }) as StorageValue<CanvasStore>["state"],
             onRehydrateStorage: () => () => {
-                useCanvasStore.setState({ hydrated: true });
+                const projects = useCanvasStore.getState().projects.map((project) => removeRetiredCanvasProjectContent(project));
+                useCanvasStore.setState({ projects, hydrated: true });
             },
         },
     ),
