@@ -555,8 +555,34 @@
     }
 
     .app-user-content,
-    .app-workspace-grid {
-        background: transparent;
+    .settings-workspace-page {
+        --workbench-page-background: #f1f1f1;
+        --workbench-surface: #ffffff;
+        --workbench-surface-muted: #f7f7f7;
+        --workbench-control-background: #ffffff;
+        --workbench-control-border: rgba(0, 0, 0, 0.12);
+        --workbench-control-border-hover: rgba(0, 0, 0, 0.22);
+        --workbench-primary: #0071e3;
+        --workbench-primary-hover: #0077ed;
+        --workbench-primary-foreground: #ffffff;
+        background: var(--workbench-page-background);
+    }
+
+    .dark .app-user-content,
+    .dark .settings-workspace-page {
+        --workbench-page-background: #000000;
+        --workbench-surface: #171717;
+        --workbench-surface-muted: #1d1d1f;
+        --workbench-control-background: #1d1d1f;
+        --workbench-control-border: rgba(255, 255, 255, 0.13);
+        --workbench-control-border-hover: rgba(255, 255, 255, 0.24);
+        --workbench-primary: #2997ff;
+        --workbench-primary-hover: #3ca1ff;
+        --workbench-primary-foreground: #000000;
+    }
+
+    .app-user-content.app-workspace-grid {
+        background: var(--workbench-page-background);
     }
 
     .app-workspace-surface {
@@ -724,6 +750,234 @@
 
     .task-table-surface .ant-table-tbody > tr:hover > td {
         background: color-mix(in srgb, var(--foreground) 2.5%, var(--background)) !important;
+    }
+
+    .app-user-content .app-page-header,
+    .settings-workspace-page .app-page-header {
+        min-height: 44px;
+    }
+
+    .app-user-content .page-header-copy,
+    .settings-workspace-page .page-header-copy {
+        gap: 10px;
+    }
+
+    .app-user-content .page-header-back,
+    .settings-workspace-page .page-header-back {
+        border-radius: 8px;
+    }
+
+    .app-user-content .page-header-title,
+    .settings-workspace-page .page-header-title {
+        font-size: 16px;
+        line-height: 22px;
+        letter-spacing: -0.02em;
+    }
+
+    .app-user-content .page-header-actions,
+    .settings-workspace-page .page-header-actions {
+        gap: 8px;
+    }
+
+    .app-user-content .workspace-list-toolbar,
+    .settings-workspace-page .workspace-list-toolbar {
+        min-height: 36px;
+        margin-top: 14px;
+    }
+
+    .app-user-content .workspace-list-toolbar-fields,
+    .app-user-content .workspace-list-toolbar-actions,
+    .settings-workspace-page .workspace-list-toolbar-fields,
+    .settings-workspace-page .workspace-list-toolbar-actions {
+        gap: 8px;
+    }
+
+    .app-user-content :where(.ant-btn:not(.ant-btn-sm):not(.ant-btn-lg)),
+    .settings-workspace-page :where(.ant-btn:not(.ant-btn-sm):not(.ant-btn-lg)) {
+        min-height: 36px;
+        padding-inline: 14px;
+        border-radius: 8px !important;
+        box-shadow: none !important;
+        font-size: 13px;
+        font-weight: 500;
+    }
+
+    .app-user-content :where(.ant-btn-default:not(:disabled)),
+    .settings-workspace-page :where(.ant-btn-default:not(:disabled)) {
+        border-color: var(--workbench-control-border) !important;
+        background: var(--workbench-control-background) !important;
+        color: var(--foreground) !important;
+    }
+
+    .app-user-content :where(.ant-btn-default:not(:disabled):hover),
+    .settings-workspace-page :where(.ant-btn-default:not(:disabled):hover) {
+        border-color: var(--workbench-control-border-hover) !important;
+        background: var(--workbench-surface-muted) !important;
+        color: var(--foreground) !important;
+    }
+
+    .app-user-content :where(.ant-btn-primary:not(:disabled)),
+    .settings-workspace-page :where(.ant-btn-primary:not(:disabled)) {
+        border-color: var(--workbench-primary) !important;
+        background: var(--workbench-primary) !important;
+        color: var(--workbench-primary-foreground) !important;
+        box-shadow: none !important;
+    }
+
+    .app-user-content :where(.ant-btn-primary:not(:disabled):hover),
+    .settings-workspace-page :where(.ant-btn-primary:not(:disabled):hover) {
+        border-color: var(--workbench-primary-hover) !important;
+        background: var(--workbench-primary-hover) !important;
+        color: var(--workbench-primary-foreground) !important;
+    }
+
+    .app-user-content .workspace-list-toolbar :where(.ant-input-affix-wrapper),
+    .app-user-content .workspace-list-toolbar :where(.ant-select-single .ant-select-selector),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-input-affix-wrapper),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-select-single .ant-select-selector) {
+        height: 36px;
+        border-color: var(--workbench-control-border) !important;
+        border-radius: 8px !important;
+        background: var(--workbench-control-background) !important;
+        box-shadow: none !important;
+    }
+
+    .app-user-content .workspace-list-toolbar :where(.ant-input-affix-wrapper:hover),
+    .app-user-content .workspace-list-toolbar :where(.ant-select-single:hover .ant-select-selector),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-input-affix-wrapper:hover),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-select-single:hover .ant-select-selector) {
+        border-color: var(--workbench-control-border-hover) !important;
+    }
+
+    .app-user-content .workspace-list-toolbar :where(.ant-input-affix-wrapper-focused),
+    .app-user-content .workspace-list-toolbar :where(.ant-select-focused .ant-select-selector),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-input-affix-wrapper-focused),
+    .settings-workspace-page .workspace-list-toolbar :where(.ant-select-focused .ant-select-selector) {
+        border-color: var(--workbench-primary) !important;
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--workbench-primary) 16%, transparent) !important;
+    }
+
+    .app-user-content .workspace-list-toolbar .ant-segmented,
+    .settings-workspace-page .workspace-list-toolbar .ant-segmented {
+        min-height: 36px;
+        padding: 3px;
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--foreground) 5%, transparent);
+    }
+
+    .app-user-content .workspace-list-toolbar .ant-segmented-item,
+    .settings-workspace-page .workspace-list-toolbar .ant-segmented-item {
+        min-height: 30px;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 30px;
+    }
+
+    .app-user-content .workspace-list-toolbar .ant-segmented-item-selected,
+    .settings-workspace-page .workspace-list-toolbar .ant-segmented-item-selected {
+        background: var(--workbench-control-background);
+        box-shadow: none;
+    }
+
+    .app-user-content .app-table-surface,
+    .settings-workspace-page .app-table-surface {
+        border-radius: 12px;
+        background: var(--workbench-surface);
+        box-shadow: none;
+    }
+
+    .app-user-content .task-table-surface,
+    .settings-workspace-page .task-table-surface {
+        border-radius: 12px;
+    }
+
+    .app-user-content .task-table-surface .ant-table-thead > tr > th,
+    .settings-workspace-page .task-table-surface .ant-table-thead > tr > th {
+        background: var(--workbench-surface-muted) !important;
+    }
+
+    .app-user-content .task-table-surface .ant-table-tbody > tr > td,
+    .settings-workspace-page .task-table-surface .ant-table-tbody > tr > td {
+        background: var(--workbench-surface);
+    }
+
+    .app-user-content .app-collection-card,
+    .settings-workspace-page .app-collection-card {
+        border-color: transparent;
+        border-radius: 12px;
+        background: var(--workbench-surface);
+        box-shadow: none;
+    }
+
+    .app-user-content .app-collection-card:hover,
+    .app-user-content .app-collection-card:focus-within,
+    .settings-workspace-page .app-collection-card:hover,
+    .settings-workspace-page .app-collection-card:focus-within {
+        border-color: transparent;
+        background: var(--workbench-surface-muted);
+        box-shadow: none;
+    }
+
+    .app-user-content .canvas-library-new-button {
+        border-radius: 12px;
+        background: var(--workbench-surface);
+    }
+
+    .app-user-content .canvas-library-new-button:hover {
+        background: var(--workbench-surface-muted);
+    }
+
+    .app-user-content .app-pagination-bar,
+    .settings-workspace-page .app-pagination-bar {
+        background: color-mix(in srgb, var(--workbench-page-background) 92%, transparent);
+    }
+
+    .settings-workspace-page .settings-section-nav,
+    .settings-workspace-page .settings-content-panel {
+        border-radius: 12px;
+        background: var(--workbench-surface);
+    }
+
+    .settings-workspace-page .settings-content-panel {
+        padding: 24px;
+    }
+
+    .settings-workspace-page .settings-section-button {
+        border-radius: 8px;
+    }
+
+    .settings-workspace-page .settings-section-button[aria-current="page"] {
+        background: var(--workbench-surface-muted) !important;
+        color: var(--foreground) !important;
+    }
+
+    .settings-workspace-page .settings-section-button[aria-current="page"] .settings-section-icon {
+        color: var(--workbench-primary);
+    }
+
+    .settings-workspace-page .settings-section-button[aria-current="page"] .settings-section-description {
+        color: color-mix(in srgb, var(--foreground) 48%, transparent) !important;
+    }
+
+    .settings-workspace-page .settings-watermark-option {
+        border-radius: 8px;
+        background: var(--workbench-surface-muted);
+    }
+
+    .app-user-content [aria-label="技能分类"] button {
+        border-radius: 8px;
+    }
+
+    .app-user-content [aria-label="技能分类"] button.bg-foreground {
+        background: var(--workbench-surface) !important;
+        color: var(--workbench-primary) !important;
+        font-weight: 600;
+    }
+
+    @media (max-width: 767px) {
+        .settings-workspace-page .settings-content-panel {
+            padding: 18px;
+        }
     }
 
     .task-media-preview-modal .ant-modal-body {
@@ -1589,7 +1843,14 @@
     .canvas-video-model-picker .canvas-model-picker-label,
     .canvas-video-model-picker .canvas-model-picker-placeholder,
     .canvas-video-model-picker .ant-select-placeholder {
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        font-family:
+            Inter,
+            ui-sans-serif,
+            system-ui,
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif !important;
         font-size: 12px !important;
         font-weight: 500 !important;
         line-height: 16px !important;
@@ -1630,7 +1891,14 @@
     .canvas-video-mode-trigger,
     .canvas-node-prompt-panel--video .canvas-video-settings-trigger--composer.ant-btn {
         color: color-mix(in srgb, var(--foreground) 86%, transparent) !important;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        font-family:
+            Inter,
+            ui-sans-serif,
+            system-ui,
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif !important;
         font-size: 12px !important;
         font-weight: 500 !important;
         line-height: 16px !important;
@@ -1728,7 +1996,14 @@
         border-color: color-mix(in srgb, var(--foreground) 16%, transparent) !important;
         background: color-mix(in srgb, var(--background) 95%, var(--foreground) 5%) !important;
         box-shadow: 0 18px 44px color-mix(in srgb, var(--foreground) 22%, transparent) !important;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family:
+            Inter,
+            ui-sans-serif,
+            system-ui,
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif;
     }
 
     .canvas-video-generation-settings {
@@ -1996,14 +2271,20 @@
         --canvas-node-text-title-size: 14px;
         --canvas-node-text-body-size: 12px;
         --canvas-node-text-meta-size: 11px;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family:
+            Inter,
+            ui-sans-serif,
+            system-ui,
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif;
         font-weight: 500;
         letter-spacing: 0;
         font-variant-numeric: tabular-nums;
     }
 
-    :where(.canvas-node-shell, .canvas-frame-shell, .canvas-node-prompt-panel, .canvas-node-toolbar, .canvas-image-settings-popover)
-    :where(button, input, textarea, select) {
+    :where(.canvas-node-shell, .canvas-frame-shell, .canvas-node-prompt-panel, .canvas-node-toolbar, .canvas-image-settings-popover) :where(button, input, textarea, select) {
         font-family: inherit;
         letter-spacing: inherit;
     }
@@ -2305,6 +2586,45 @@
 }
 
 @media (max-width: 639px) {
+    .app-user-content .app-page-header,
+    .settings-workspace-page .app-page-header {
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .app-user-content .page-header-copy,
+    .settings-workspace-page .page-header-copy {
+        width: 100%;
+    }
+
+    .app-user-content .page-header-actions,
+    .settings-workspace-page .page-header-actions {
+        width: 100%;
+        margin-left: 0;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        overflow: visible;
+        padding-bottom: 0;
+    }
+
+    .app-user-content .page-header-actions > :where(.ant-btn, .ant-dropdown-trigger),
+    .settings-workspace-page .page-header-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+        min-width: 0;
+        min-height: 44px;
+        flex: 1 1 calc(50% - 4px);
+        justify-content: center;
+    }
+
+    .app-user-content .page-header-actions > :where(.ant-btn, .ant-dropdown-trigger):only-child,
+    .settings-workspace-page .page-header-actions > :where(.ant-btn, .ant-dropdown-trigger):only-child {
+        flex: 0 0 auto;
+    }
+
+    .app-user-content .workspace-list-toolbar-fields,
+    .settings-workspace-page .workspace-list-toolbar-fields {
+        width: 100%;
+    }
+
     .admin-workspace .workspace-list-toolbar-actions {
         width: 100%;
     }

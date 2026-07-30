@@ -62,10 +62,10 @@ export const canvasThemes = {
             panel: "#202020",
             stroke: "rgba(255,255,255,.13)",
             activeStroke: "#f5f5f5",
-            placeholder: "#777777",
+            placeholder: "#8b8b8b",
             text: "#f5f5f5",
             muted: "#a3a3a3",
-            faint: "#666666",
+            faint: "#7b7b7b",
         },
         frame: {
             fill: "rgba(255,255,255,.025)",
@@ -76,7 +76,7 @@ export const canvasThemes = {
         },
         toolbar: {
             panel: "rgba(36,36,36,.94)",
-            border: "rgba(255,255,255,.12)",
+            border: "rgba(255,255,255,.16)",
             item: "#d4d4d4",
             itemHover: "rgba(255,255,255,.08)",
             activeBg: "rgba(255,255,255,.13)",

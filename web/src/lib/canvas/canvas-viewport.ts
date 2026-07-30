@@ -12,6 +12,10 @@ export type CanvasViewportSize = {
     height: number;
 };
 
+const MOBILE_CANVAS_BREAKPOINT = 640;
+const MOBILE_MINIMUM_READABLE_SCALE = 0.6;
+const DESKTOP_MINIMUM_READABLE_SCALE = 0.5;
+
 export function getCanvasNodesBounds(nodes: CanvasNodeData[]): CanvasBounds | null {
     if (!nodes.length) return null;
     let left = Number.POSITIVE_INFINITY;
@@ -57,6 +61,12 @@ export function viewportAtScale(viewport: ViewportTransform, viewportSize: Canva
         y: viewportSize.height / 2 - centerWorldY * k,
         k,
     };
+}
+
+export function normalizeRestoredCanvasViewport(viewport: ViewportTransform, viewportSize: CanvasViewportSize): ViewportTransform {
+    const minimumScale = viewportSize.width < MOBILE_CANVAS_BREAKPOINT ? MOBILE_MINIMUM_READABLE_SCALE : DESKTOP_MINIMUM_READABLE_SCALE;
+    if (viewport.k >= minimumScale) return viewport;
+    return viewportAtScale(viewport, viewportSize, minimumScale);
 }
 
 export function interpolateViewport(from: ViewportTransform, to: ViewportTransform, progress: number): ViewportTransform {

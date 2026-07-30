@@ -14,9 +14,10 @@ export type FloatingDockCommand = {
     active?: boolean;
     disabled?: boolean;
     danger?: boolean;
+    responsiveClassName?: string;
 };
 
-export type FloatingDockEntry = FloatingDockCommand | { kind: "separator"; id: string };
+export type FloatingDockEntry = FloatingDockCommand | { kind: "separator"; id: string; responsiveClassName?: string };
 
 type FloatingDockProps = {
     items: FloatingDockEntry[];
@@ -73,15 +74,27 @@ export const FloatingDock = forwardRef<HTMLDivElement, FloatingDockProps>(functi
                 embedded ? "shadow-none" : "border backdrop-blur-2xl",
                 showLabels
                     ? embedded
-                        ? size === "compact" ? "h-9 gap-0.5 px-0.5" : "h-10 gap-0.5 px-0.5"
-                        : size === "compact" ? "h-10 gap-0.5 rounded-[13px] px-1.5" : "h-11 gap-0.5 rounded-[15px] px-2"
+                        ? size === "compact"
+                            ? "h-9 gap-0.5 px-0.5"
+                            : "h-10 gap-0.5 px-0.5"
+                        : size === "compact"
+                          ? "h-10 gap-0.5 rounded-[13px] px-1.5"
+                          : "h-11 gap-0.5 rounded-[15px] px-2"
                     : coarsePointer
-                    ? embedded
-                        ? size === "compact" ? "h-10 gap-1 px-0.5" : "h-11 gap-1 px-0.5"
-                        : size === "compact" ? "h-11 gap-1 rounded-[15px] px-1.5 pb-1" : "h-12 gap-1 rounded-[17px] px-2 pb-1"
-                    : embedded
-                        ? size === "compact" ? "h-8 gap-0.5 px-0.5 pb-0.5" : "h-9 gap-0.5 px-0.5 pb-0.5"
-                        : size === "compact" ? "h-8 gap-0.5 rounded-[12px] px-1 pb-1" : "h-10 gap-0.5 rounded-[14px] px-1.5 pb-1",
+                      ? embedded
+                          ? size === "compact"
+                              ? "h-10 gap-1 px-0.5"
+                              : "h-11 gap-1 px-0.5"
+                          : size === "compact"
+                            ? "h-11 gap-1 rounded-[15px] px-1.5 pb-1"
+                            : "h-12 gap-1 rounded-[17px] px-2 pb-1"
+                      : embedded
+                        ? size === "compact"
+                            ? "h-8 gap-0.5 px-0.5 pb-0.5"
+                            : "h-9 gap-0.5 px-0.5 pb-0.5"
+                        : size === "compact"
+                          ? "h-8 gap-0.5 rounded-[12px] px-1 pb-1"
+                          : "h-10 gap-0.5 rounded-[14px] px-1.5 pb-1",
                 className,
             )}
             style={style}
@@ -90,7 +103,13 @@ export const FloatingDock = forwardRef<HTMLDivElement, FloatingDockProps>(functi
             }}
             onPointerLeave={() => mouseX.set(Number.POSITIVE_INFINITY)}
         >
-            {items.map((item) => item.kind === "separator" ? <DockSeparator key={item.id} compact={size === "compact"} labeled={showLabels} /> : <DockCommandButton key={item.id} command={item} mouseX={mouseX} metrics={metrics} motionEnabled={motionEnabled && !showLabels} compact={size === "compact"} showLabel={showLabels} />)}
+            {items.map((item) =>
+                item.kind === "separator" ? (
+                    <DockSeparator key={item.id} compact={size === "compact"} labeled={showLabels} responsiveClassName={item.responsiveClassName} />
+                ) : (
+                    <DockCommandButton key={item.id} command={item} mouseX={mouseX} metrics={metrics} motionEnabled={motionEnabled && !showLabels} compact={size === "compact"} showLabel={showLabels} />
+                ),
+            )}
         </motion.div>
     );
 });
@@ -112,7 +131,7 @@ function DockCommandButton({ command, mouseX, metrics, motionEnabled, compact, s
 
     if (showLabel) {
         return (
-            <motion.span ref={ref} className="relative block h-8 shrink-0">
+            <motion.span ref={ref} className={cn("relative block h-8 shrink-0", command.responsiveClassName)}>
                 <motion.button
                     type="button"
                     aria-label={command.label}
@@ -135,7 +154,7 @@ function DockCommandButton({ command, mouseX, metrics, motionEnabled, compact, s
     }
 
     return (
-        <motion.span ref={ref} className="relative block shrink-0" style={{ width: itemSize, height: itemSize }}>
+        <motion.span ref={ref} className={cn("relative block shrink-0", command.responsiveClassName)} style={{ width: itemSize, height: itemSize }}>
             {/* 放大项留在 Flex 流内，由布局推开邻项，保持 Aceternity Floating Dock 的空间关系。 */}
             <motion.button
                 type="button"
@@ -161,7 +180,10 @@ function DockCommandButton({ command, mouseX, metrics, motionEnabled, compact, s
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 4, scale: 0.96 }}
                             transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }}
-                            className={cn("aceternity-dock-tooltip pointer-events-none absolute left-1/2 z-[140] -translate-x-1/2 whitespace-nowrap border font-medium shadow-xl backdrop-blur-xl", compact ? "-top-7 rounded-md px-1.5 py-0.5 text-[9px]" : "-top-8 rounded-md px-2 py-1 text-[10px]")}
+                            className={cn(
+                                "aceternity-dock-tooltip pointer-events-none absolute left-1/2 z-[140] -translate-x-1/2 whitespace-nowrap border font-medium shadow-xl backdrop-blur-xl",
+                                compact ? "-top-7 rounded-md px-1.5 py-0.5 text-[9px]" : "-top-8 rounded-md px-2 py-1 text-[10px]",
+                            )}
                         >
                             {command.label}
                         </motion.span>
@@ -172,8 +194,8 @@ function DockCommandButton({ command, mouseX, metrics, motionEnabled, compact, s
     );
 }
 
-function DockSeparator({ compact, labeled }: { compact: boolean; labeled: boolean }) {
-    return <span aria-hidden className={cn("aceternity-dock-separator shrink-0 self-center", labeled ? "mx-1.5 h-6 w-px" : compact ? "mx-0.5 mb-0.5 h-3.5 w-px" : "mx-0.5 mb-0.5 h-4 w-px")} />;
+function DockSeparator({ compact, labeled, responsiveClassName }: { compact: boolean; labeled: boolean; responsiveClassName?: string }) {
+    return <span aria-hidden className={cn("aceternity-dock-separator shrink-0 self-center", labeled ? "mx-1.5 h-6 w-px" : compact ? "mx-0.5 mb-0.5 h-3.5 w-px" : "mx-0.5 mb-0.5 h-4 w-px", responsiveClassName)} />;
 }
 
 function proximitySize(distance: number, base: number, magnified: number, range: number, enabled: boolean) {

@@ -1,0 +1,122 @@
+.project-workbench-page {
+    background: var(--workbench-page-background);
+}
+
+.project-workbench-shell {
+    letter-spacing: -0.01em;
+}
+
+.project-workbench-page .app-page-header {
+    min-height: 44px;
+}
+
+.project-workbench-page .page-header-copy {
+    gap: 10px;
+}
+
+.project-workbench-page .page-header-back {
+    border-radius: 8px;
+}
+
+.project-workbench-page .page-header-actions .ant-btn-primary {
+    border-color: var(--workbench-primary);
+    background: var(--workbench-primary);
+    box-shadow: none;
+    color: var(--workbench-primary-foreground);
+}
+
+.project-workbench-page .page-header-actions .ant-btn-primary:hover {
+    border-color: var(--workbench-primary-hover);
+    background: var(--workbench-primary-hover);
+}
+
+.project-workbench-tabs {
+    gap: 14px;
+}
+
+.project-workbench-tab {
+    border-radius: 6px 6px 0 0;
+}
+
+.project-workbench-tab.is-active::after {
+    background: var(--workbench-primary);
+}
+
+.project-workbench-content {
+    scrollbar-gutter: stable;
+}
+
+.project-overview-command,
+.project-overview-unit-list,
+.project-overview-empty {
+    background: var(--workbench-surface);
+}
+
+.project-overview-command-main {
+    min-height: 192px;
+}
+
+.project-overview-progress {
+    background: var(--workbench-surface-muted);
+}
+
+.project-overview-primary-action {
+    background: var(--workbench-primary);
+    color: var(--workbench-primary-foreground);
+}
+
+.project-overview-primary-action:hover {
+    background: var(--workbench-primary-hover);
+    opacity: 1;
+}
+
+.project-overview-empty .workspace-state {
+    min-height: 220px;
+    padding-block: 28px;
+}
+
+.project-overview-empty .workspace-state h2 {
+    margin-top: 12px;
+}
+
+.project-overview-empty .workspace-state > div:last-child {
+    margin-top: 16px;
+}
+
+.project-overview-unit-list a {
+    min-height: 88px;
+}
+
+.project-overview-unit-list a:hover {
+    background: var(--workbench-surface-muted);
+}
+
+@media (max-width: 1023px) {
+    .project-overview-command-main {
+        min-height: auto;
+    }
+}
+
+@media (max-width: 640px) {
+    .project-workbench-shell {
+        padding-top: 68px;
+    }
+
+    .project-workbench-page .app-page-header {
+        align-items: stretch;
+    }
+
+    .project-workbench-page .page-header-actions {
+        margin-left: 0;
+        justify-content: flex-start;
+    }
+
+    .project-workbench-tabs {
+        gap: 2px;
+    }
+
+    .project-overview-command-title {
+        font-size: 21px;
+        line-height: 27px;
+    }
+}

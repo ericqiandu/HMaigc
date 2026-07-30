@@ -1,5 +1,5 @@
 import { Form, Input, InputNumber, Select } from "antd";
-import { Cloud, SlidersHorizontal } from "lucide-react";
+import { Cloud, SlidersHorizontal, Stamp } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -7,11 +7,13 @@ import { UserOSSSettingsForm } from "@/components/layout/user-oss-settings-form"
 import { PageHeader } from "@/components/layout/workspace-page";
 import { audioFormatOptionsForInterface, audioSpeedRangeForInterface, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { defaultConfig, resolveModelChannel, useConfigStore } from "@/stores/use-config-store";
+import { WatermarkSettings } from "./watermark-settings";
 
-type SettingsSection = "preferences" | "storage";
+type SettingsSection = "preferences" | "watermark" | "storage";
 
 const settingsSections: Array<{ key: SettingsSection; label: string; description: string; icon: ReactNode }> = [
     { key: "preferences", label: "生成偏好", description: "画布与音频默认值", icon: <SlidersHorizontal className="size-4" /> },
+    { key: "watermark", label: "AI 水印", description: "视频生成水印策略", icon: <Stamp className="size-4" /> },
     { key: "storage", label: "我的 OSS", description: "管理个人媒体存储", icon: <Cloud className="size-4" /> },
 ];
 
@@ -47,12 +49,7 @@ export default function SettingsPage() {
 
     return (
         <main className="settings-workspace-page flex h-full min-h-0 flex-col bg-background px-4 pb-8 pt-20 text-foreground sm:px-6 md:px-[104px] md:pt-[90px]">
-            <PageHeader
-                title="个人设置"
-                description="管理生成偏好与个人媒体存储"
-                onBack={shouldReturnToCreation ? () => navigate(-1) : undefined}
-                backLabel={shouldReturnToCreation ? "返回创作页面" : "返回首页"}
-            />
+            <PageHeader title="个人设置" description="管理生成偏好与个人媒体存储" onBack={shouldReturnToCreation ? () => navigate(-1) : undefined} backLabel={shouldReturnToCreation ? "返回创作页面" : "返回首页"} />
             <div className="settings-page-body mt-4 flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
                 <aside className="settings-section-nav w-full shrink-0 bg-muted/[.18] p-2 md:w-[208px] md:rounded-lg" aria-label="个人设置分类">
                     <nav className="thin-scrollbar flex gap-1 overflow-x-auto md:block md:space-y-1">
@@ -79,13 +76,13 @@ export default function SettingsPage() {
 
                 <section className="settings-content-panel min-h-0 min-w-0 flex-1">
                     <div className="settings-content-scroll thin-scrollbar h-full overflow-y-auto">
-                        {activeSection === "preferences" ? (
-                            <PreferencesSettings config={config} updateConfig={updateConfig} />
-                        ) : (
+                        {activeSection === "preferences" ? <PreferencesSettings config={config} updateConfig={updateConfig} /> : null}
+                        {activeSection === "watermark" ? <WatermarkSettings enabled={config.videoWatermark === "true"} onEnabledChange={(enabled) => updateConfig("videoWatermark", String(enabled))} /> : null}
+                        {activeSection === "storage" ? (
                             <div className="settings-storage-pane">
                                 <UserOSSSettingsForm />
                             </div>
-                        )}
+                        ) : null}
                     </div>
                 </section>
             </div>
