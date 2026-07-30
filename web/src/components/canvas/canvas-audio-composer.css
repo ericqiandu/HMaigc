@@ -2,7 +2,6 @@
     --canvas-audio-panel: color-mix(in srgb, var(--background) 92%, var(--foreground) 8%);
     --canvas-audio-control: color-mix(in srgb, var(--foreground) 7%, transparent);
     --canvas-audio-control-hover: color-mix(in srgb, var(--foreground) 11%, transparent);
-    --canvas-audio-divider: color-mix(in srgb, var(--foreground) 14%, transparent);
     display: flex;
     min-height: 190px;
     flex-direction: column;
@@ -80,10 +79,10 @@
 .canvas-audio-composer-controls {
     display: flex;
     min-width: 0;
-    min-height: 34px;
+    min-height: 32px;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px;
 }
 
 .canvas-audio-composer-primary-controls,
@@ -95,49 +94,22 @@
 
 .canvas-audio-composer-primary-controls {
     flex: 1 1 auto;
-    gap: 5px;
+    gap: 4px;
 }
 
 .canvas-audio-composer-secondary-controls {
     flex: 0 0 auto;
-    gap: 5px;
+    gap: 4px;
 }
 
 .canvas-audio-model-picker {
-    width: 188px;
-    max-width: 188px;
-    flex: 0 1 188px;
-}
-
-.canvas-audio-model-picker .canvas-composer-model-picker.ant-select {
-    width: 100%;
-}
-
-.canvas-audio-model-picker .ant-select-selector,
-.canvas-audio-model-picker .ant-select-content {
-    min-height: 32px !important;
-    border: 0 !important;
-    border-radius: 8px !important;
-    background: transparent !important;
-    box-shadow: none !important;
-}
-
-.canvas-audio-model-picker .ant-select-content:hover {
-    background: var(--canvas-audio-control) !important;
-}
-
-.canvas-audio-model-picker .canvas-model-picker-label {
-    gap: 7px;
-    color: color-mix(in srgb, var(--foreground) 90%, transparent);
-    font-size: 12px;
-    font-weight: 600;
+    width: 114px;
+    max-width: 114px;
+    flex: 0 0 114px;
 }
 
 .canvas-audio-control-divider {
-    width: 1px;
-    height: 18px;
-    flex: 0 0 1px;
-    background: var(--canvas-audio-divider);
+    margin-inline: 0;
 }
 
 .canvas-audio-voice-trigger {
@@ -184,22 +156,22 @@
 .canvas-audio-character-count,
 .canvas-audio-generation-cost {
     display: inline-flex;
-    height: 26px;
+    height: 32px;
     flex: 0 0 auto;
     align-items: center;
     gap: 3px;
     color: color-mix(in srgb, var(--foreground) 48%, transparent);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
-    line-height: 14px;
+    line-height: 16px;
     font-variant-numeric: tabular-nums;
 }
 
 .canvas-audio-submit-button.ant-btn {
     display: inline-flex !important;
-    width: 34px !important;
-    min-width: 34px !important;
-    height: 34px !important;
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
     align-items: center !important;
     justify-content: center !important;
     padding: 0 !important;
@@ -471,9 +443,9 @@
     }
 
     .canvas-audio-model-picker {
-        width: 142px;
-        max-width: 142px;
-        flex-basis: 142px;
+        width: 114px;
+        max-width: 114px;
+        flex-basis: 114px;
     }
 
     .canvas-audio-character-count {

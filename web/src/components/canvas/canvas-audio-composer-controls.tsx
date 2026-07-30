@@ -34,7 +34,7 @@ export function CanvasAudioComposerControls({
         <div className="canvas-audio-composer-controls">
             <div className="canvas-audio-composer-primary-controls">
                 <ModelPicker
-                    className="canvas-audio-model-picker"
+                    className="canvas-image-model-picker canvas-audio-model-picker"
                     fullWidth
                     config={config}
                     value={config.model}
@@ -44,7 +44,7 @@ export function CanvasAudioComposerControls({
                     showSelectedPrice={false}
                     presentation="canvasImage"
                 />
-                <span className="canvas-audio-control-divider" aria-hidden="true" />
+                <span className="canvas-image-toolbar-divider canvas-audio-control-divider" aria-hidden="true" />
                 <CanvasAudioVoicePicker value={config.audioVoice} onChange={(audioVoice) => onConfigChange({ audioVoice })} />
             </div>
             <div className="canvas-audio-composer-secondary-controls">
