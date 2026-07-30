@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -503,7 +504,29 @@ func publicChannelVoicesForUser(voices []model.ChannelVoice, hasMembership bool,
 		}
 		result = append(result, public)
 	}
+	sort.SliceStable(result, func(left int, right int) bool {
+		leftRank := publicChannelVoiceLanguageRank(result[left].Language)
+		rightRank := publicChannelVoiceLanguageRank(result[right].Language)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if result[left].DisplayName != result[right].DisplayName {
+			return result[left].DisplayName < result[right].DisplayName
+		}
+		return result[left].VoiceKey < result[right].VoiceKey
+	})
 	return result, nil
+}
+
+func publicChannelVoiceLanguageRank(language string) int {
+	switch language {
+	case "Chinese":
+		return 0
+	case "Chinese,Yue":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func publicChannelVoice(voice model.ChannelVoice, hasMembership bool, includeAdminDetails bool) (PublicChannelVoice, error) {

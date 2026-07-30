@@ -468,6 +468,9 @@ func (s *Service) CreateSystemChannel(actor *model.User, req ChannelRequest) (*P
 	if err := s.syncInitialChannelModels(&channel, req.Models); err != nil {
 		return nil, err
 	}
+	if err := s.ensureDefaultChannelVoicesForChannel(&channel); err != nil {
+		return nil, err
+	}
 	items, err := s.repo.ChannelModels(channel.ID, true)
 	if err != nil {
 		return nil, err
@@ -508,6 +511,9 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 		return nil, err
 	}
 	if err := s.syncInitialChannelModels(&next, req.Models); err != nil {
+		return nil, err
+	}
+	if err := s.ensureDefaultChannelVoicesForChannel(&next); err != nil {
 		return nil, err
 	}
 	items, err := s.repo.ChannelModels(next.ID, true)

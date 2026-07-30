@@ -1,0 +1,1820 @@
+[
+  {
+    "voiceKey": "Chinese (Mandarin)_Unrestrained_Young_Man",
+    "displayName": "不羁青年",
+    "description": "一位潇洒不羁的青年男性声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "junlang_nanyou",
+    "displayName": "俊朗男友",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "qiaopi_mengmei",
+    "displayName": "俏皮萌妹",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Mature_Woman",
+    "displayName": "傲娇御姐",
+    "description": "一位妩媚成熟的青年御姐声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "lengdan_xiongzhang",
+    "displayName": "冷淡学长",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Southern_Young_Man",
+    "displayName": "南方小哥",
+    "description": "一位质朴的青年男性声音，带有南方口音的中文。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "cartoon_pig",
+    "displayName": "卡通猪小琪",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "cute_boy",
+    "displayName": "可爱男童",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "diadia_xuemei",
+    "displayName": "嗲嗲学妹",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Stubborn_Friend",
+    "displayName": "嘴硬竹马",
+    "description": "一位嘴硬心软、不羁的青年竹马声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Arrogant_Miss",
+    "displayName": "嚣张小姐",
+    "description": "一位嚣张自信的青年女性声音，标准普通话，展现出优越感。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "wumei_yujie",
+    "displayName": "妩媚御姐",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-shaonv",
+    "displayName": "少女音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-shaonv-jingpin",
+    "displayName": "少女音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-yujie",
+    "displayName": "御姐音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-yujie-jingpin",
+    "displayName": "御姐音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Cute_Spirit",
+    "displayName": "憨憨萌兽",
+    "description": "一位呆萌可爱的少年男声，适合憨厚的萌兽角色。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-chengshu",
+    "displayName": "成熟女性音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-chengshu-jingpin",
+    "displayName": "成熟女性音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Lyrical_Voice",
+    "displayName": "抒情男声",
+    "description": "一位磁性抒情的青年男性声音，标准普通话，流畅而富有表现力。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Humorous_Elder",
+    "displayName": "搞笑大爷",
+    "description": "一位爽朗幽默的老年男性大爷声音，带有北方口音的中文，充满个性。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Male_Announcer",
+    "displayName": "播报男声",
+    "description": "一位富有磁性的中年男性播报员声音，标准普通话，清晰而权威。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_News_Anchor",
+    "displayName": "新闻女声",
+    "description": "一位专业、播音腔的中年女性新闻主播，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Robot_Armor",
+    "displayName": "机械战甲",
+    "description": "一位电子化、机器人般的青年男性声音，适合科幻或未来主义内容的标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Reliable_Executive",
+    "displayName": "沉稳高管",
+    "description": "一位沉稳可靠的中年男性高管声音，标准普通话，传递出值得信赖的感觉。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "danya_xuejie",
+    "displayName": "淡雅学姐",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Pure-hearted_Boy",
+    "displayName": "清澈邻家弟弟",
+    "description": "一位认真清澈的邻家少年弟弟声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Crisp_Girl",
+    "displayName": "清脆少女",
+    "description": "一位温暖清脆的少女声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Warm_Girl",
+    "displayName": "温暖少女",
+    "description": "一位温柔温暖的少年女声，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Warm_Bestie",
+    "displayName": "温暖闺蜜",
+    "description": "一位温暖清脆的青年女性闺蜜声音，标准普通话，友好而清晰。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Gentle_Senior",
+    "displayName": "温柔学姐",
+    "description": "一位温暖温柔的青年学姐声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Gentleman",
+    "displayName": "温润男声",
+    "description": "一位温润磁性的青年男性声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Gentle_Youth",
+    "displayName": "温润青年",
+    "description": "一位温柔的青年男性声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_HK_Flight_Attendant",
+    "displayName": "港普空姐",
+    "description": "一位礼貌的中年女性空乘员声音，带有港式普通话口音，清晰而有礼。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Kind-hearted_Antie",
+    "displayName": "热心大婶",
+    "description": "一位温和善良的中年大婶声音，标准普通话，温暖而体贴。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Straightforward_Boy",
+    "displayName": "率真弟弟",
+    "description": "一位认真率真的少年弟弟声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "tianxin_xiaoling",
+    "displayName": "甜心小玲",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Sweet_Lady",
+    "displayName": "甜美女声",
+    "description": "一位温柔甜美的青年女性声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-tianmei",
+    "displayName": "甜美女性音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "female-tianmei-jingpin",
+    "displayName": "甜美女性音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Radio_Host",
+    "displayName": "电台男主播",
+    "description": "一位富有诗意的青年男性电台主播声音，标准普通话，声音流畅引人入胜。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "bingjiao_didi",
+    "displayName": "病娇弟弟",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Sincere_Adult",
+    "displayName": "真诚青年",
+    "description": "一位真诚、富有鼓励性的青年男性声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-jingying",
+    "displayName": "精英青年音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-jingying-jingpin",
+    "displayName": "精英青年音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "chunzhen_xuedi",
+    "displayName": "纯真学弟",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "clever_boy",
+    "displayName": "聪明男童",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Kind-hearted_Elder",
+    "displayName": "花甲奶奶",
+    "description": "一位慈祥和蔼的老年女性奶奶声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "lovely_girl",
+    "displayName": "萌萌女童",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Soft_Girl",
+    "displayName": "软软女孩",
+    "description": "一位温暖柔软的青年女性声音，带有南方口音的中文。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Chinese (Mandarin)_Wise_Women",
+    "displayName": "阅历姐姐",
+    "description": "一位富有阅历、声音抒情的中年姐姐声音，标准普通话。",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "badao_shaoye",
+    "displayName": "霸道少爷",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-badao",
+    "displayName": "霸道青年音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-badao-jingpin",
+    "displayName": "霸道青年音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-daxuesheng",
+    "displayName": "青年大学生音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-daxuesheng-jingpin",
+    "displayName": "青年大学生音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-qingse",
+    "displayName": "青涩青年音色",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "male-qn-qingse-jingpin",
+    "displayName": "青涩青年音色-beta",
+    "description": "",
+    "language": "Chinese"
+  },
+  {
+    "voiceKey": "Cantonese_ProfessionalHost（F)",
+    "displayName": "专业女主持",
+    "description": "一位中性、专业的青年女性粤语主持人声音。",
+    "language": "Chinese,Yue"
+  },
+  {
+    "voiceKey": "Cantonese_ProfessionalHost（M)",
+    "displayName": "专业男主持",
+    "description": "一位中性、专业的青年男性粤语主持人声音。",
+    "language": "Chinese,Yue"
+  },
+  {
+    "voiceKey": "Cantonese_CuteGirl",
+    "displayName": "可爱女孩",
+    "description": "一位柔和可爱的青年女性粤语声音。",
+    "language": "Chinese,Yue"
+  },
+  {
+    "voiceKey": "Cantonese_KindWoman",
+    "displayName": "善良女声",
+    "description": "一位亲切善良的青年女性粤语声音。",
+    "language": "Chinese,Yue"
+  },
+  {
+    "voiceKey": "Cantonese_PlayfulMan",
+    "displayName": "活泼男声",
+    "description": "一位活泼深情的青年男性粤语声音。",
+    "language": "Chinese,Yue"
+  },
+  {
+    "voiceKey": "Cantonese_GentleLady",
+    "displayName": "温柔女声",
+    "description": "一位平静温柔的青年女性粤语声音。",
+    "language": "Chinese,Yue"
+  },
+  {
+    "voiceKey": "Korean_AirheadedGirl",
+    "displayName": "Airheaded Girl",
+    "description": "一位呆萌可爱的天然呆女孩声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Russian_AmbitiousWoman",
+    "displayName": "Ambitious Woman",
+    "description": "一位强势、雄心勃勃的青年女性声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Portuguese_AngryMan",
+    "displayName": "Angry Man",
+    "description": "一位严肃愤怒的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_AngryMan",
+    "displayName": "Angry Man",
+    "description": "一位语气激烈的青年男性声音，传达愤怒，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_AnimeCharacter",
+    "displayName": "Anime Character",
+    "description": "一位灵动的中年女性声音，适合动漫角色，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_AnimeCharacter",
+    "displayName": "Anime Character",
+    "description": "一位灵动的中年女性声音，适合动漫角色，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Arnold",
+    "displayName": "Arnold",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_Arnold",
+    "displayName": "Arnold",
+    "description": "一位稳重的青年男性声音，阿诺德风格，强壮而坚定，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Arnold",
+    "displayName": "Arnold",
+    "description": "一位稳重的青年男性声音，阿诺德风格，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_AssertiveQueen",
+    "displayName": "Assertive Queen",
+    "description": "一位坚定果断的青年女王声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_AssertiveQueen",
+    "displayName": "Assertive Queen",
+    "description": "一位坚定、果断的青年女王声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_AthleticGirl",
+    "displayName": "Athletic Girl",
+    "description": "一位健美的运动少女声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_AthleticStudent",
+    "displayName": "Athletic Student",
+    "description": "一位充满活力的青年运动学生声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Attractive_Girl",
+    "displayName": "Attractive Girl",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_AttractiveGirl",
+    "displayName": "Attractive Girl",
+    "description": "一位迷人有魅力的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Russian_AttractiveGuy",
+    "displayName": "Attractive Guy",
+    "description": "一位富有磁性、迷人的青年男性声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "English_Aussie_Bloke",
+    "displayName": "Aussie Bloke",
+    "description": "一位阳光开朗的青年男性，带有独特的澳大利亚口音。",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Russian_Bad-temperedBoy",
+    "displayName": "Bad-tempered Boy",
+    "description": "一位脾气暴躁的青年男性声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Indonesian_BossyLeader",
+    "displayName": "Bossy Leader",
+    "description": "一位权威的青年男性领导者声音，印尼语。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Portuguese_BossyLeader",
+    "displayName": "Bossy Leader",
+    "description": "一位冷静正式的青年男性专横领导者声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_BossyLeader",
+    "displayName": "Bossy Leader",
+    "description": "一位干练、专横的青年男性领导者声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Dutch_bossy_leader",
+    "displayName": "Bossy leader",
+    "description": "一位严肃专横的青年男性领导者声音，荷兰语。",
+    "language": "Dutch"
+  },
+  {
+    "voiceKey": "Korean_BraveAdventurer",
+    "displayName": "Brave Adventurer",
+    "description": "一位活泼勇敢的青年女冒险家声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_BraveFemaleWarrior",
+    "displayName": "Brave Female Warrior",
+    "description": "一位坚定的青年女战士声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Italian_BraveHeroine",
+    "displayName": "Brave Heroine",
+    "description": "一位沉稳勇敢的中年女英雄声音，意大利语。",
+    "language": "Italian"
+  },
+  {
+    "voiceKey": "Korean_BraveYouth",
+    "displayName": "Brave Youth",
+    "description": "一位强有力的青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Russian_BrightHeroine",
+    "displayName": "Bright Queen",
+    "description": "一位傲慢明艳的青年女王声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Korean_CalmGentleman",
+    "displayName": "Calm Gentleman",
+    "description": "一位沉稳冷静的中年绅士声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Japanese_CalmLady",
+    "displayName": "Calm Lady",
+    "description": "一位沉静迷人的青年女性声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_CalmLady",
+    "displayName": "Calm Lady",
+    "description": "一位沉静坚定的青年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_CalmLeader",
+    "displayName": "Calm Leader",
+    "description": "一位沉稳冷静的中年男性领导者声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Arabic_CalmWoman",
+    "displayName": "Calm Woman",
+    "description": "一位宁静的青年女性阿拉伯语声音。",
+    "language": "Arabic"
+  },
+  {
+    "voiceKey": "Indonesian_CalmWoman",
+    "displayName": "Calm Woman",
+    "description": "一位宁静的青年女性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Turkish_CalmWoman",
+    "displayName": "Calm Woman",
+    "description": "一位宁静的青年女性土耳其语声音，非常适合有声读物。",
+    "language": "Turkish"
+  },
+  {
+    "voiceKey": "Ukrainian_CalmWoman",
+    "displayName": "Calm Woman",
+    "description": "一位宁静的青年女性乌克兰语声音，非常适合有声读物。",
+    "language": "Ukrainian"
+  },
+  {
+    "voiceKey": "Portuguese_CaptivatingStoryteller",
+    "displayName": "Captivating Storyteller",
+    "description": "一位迷人的中年男性叙述者声音，非常适合讲故事，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_CaptivatingStoryteller",
+    "displayName": "Captivating Storyteller",
+    "description": "一位迷人的中年男性叙事者声音，非常适合讲故事，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_CaringGirlfriend",
+    "displayName": "Caring Girlfriend",
+    "description": "一位梦幻般的中年女性关怀女友声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_CaringGirlfriend",
+    "displayName": "Caring Girlfriend",
+    "description": "一位梦幻般的青年女性关怀女友声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Indonesian_CaringMan",
+    "displayName": "Caring Man",
+    "description": "一位充满关怀的青年男性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Korean_CaringWoman",
+    "displayName": "Caring Woman",
+    "description": "一位灵动体贴的青年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "French_CasualMan",
+    "displayName": "Casual Man",
+    "description": "一位悠闲放松的中年男性法语声音。",
+    "language": "French"
+  },
+  {
+    "voiceKey": "Korean_CharmingElderSister",
+    "displayName": "Charming Elder Sister",
+    "description": "一位调皮迷人的中年姐姐声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Indonesian_CharmingGirl",
+    "displayName": "Charming Girl",
+    "description": "一位迷人的青年女性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Charming_Lady",
+    "displayName": "Charming Lady",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_CharmingLady",
+    "displayName": "Charming Lady",
+    "description": "一位迷人的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_CharmingQueen",
+    "displayName": "Charming Queen",
+    "description": "一位迷人有魅力的青年女王声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Charming_Santa",
+    "displayName": "Charming Santa",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_CharmingSanta",
+    "displayName": "Charming Santa",
+    "description": "一位迷人有魅力的中年男性圣诞老人声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_CharmingSister",
+    "displayName": "Charming Sister",
+    "description": "一位富有魅惑力的中年姐姐声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_ChattyGirl",
+    "displayName": "Chatty Girl",
+    "description": "一位健谈的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_ChattyGirl",
+    "displayName": "Chatty Girl",
+    "description": "一位健谈的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_CheerfulBoyfriend",
+    "displayName": "Cheerful Boyfriend",
+    "description": "一位犀利开朗的中年男性男友声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_CheerfulCoolJunior",
+    "displayName": "Cheerful Cool Junior",
+    "description": "一位充满活力的开朗酷学弟声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_CheerfulLittleSister",
+    "displayName": "Cheerful Little Sister",
+    "description": "一位活泼开朗的小妹妹声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_ChildhoodFriendGirl",
+    "displayName": "Childhood Friend Girl",
+    "description": "一位温柔的青梅竹马女孩声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_CockyGuy",
+    "displayName": "Cocky Guy",
+    "description": "一位调皮自大的青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_ColdGirl",
+    "displayName": "Cold Girl",
+    "description": "一位冷漠的青年女孩声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Japanese_ColdQueen",
+    "displayName": "Cold Queen",
+    "description": "一位冷漠的青年女王声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_ColdYoungMan",
+    "displayName": "Cold Young Man",
+    "description": "一位冷静的青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_Comedian",
+    "displayName": "Comedian",
+    "description": "一位幽默的青年男性喜剧演员声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Comedian",
+    "displayName": "Comedian",
+    "description": "一位幽默的青年男性喜剧演员声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_CompellingGirl",
+    "displayName": "Compelling Girl",
+    "description": "一位富有说服力、引人注目的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_CompellingGirl",
+    "displayName": "Compelling Girl",
+    "description": "一位富有说服力、引人注目的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_ConfidentBoss",
+    "displayName": "Confident Boss",
+    "description": "一位深沉有力的自信中年老板声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Indonesian_ConfidentWoman",
+    "displayName": "Confident Woman",
+    "description": "一位自信的青年女性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Portuguese_ConfidentWoman",
+    "displayName": "Confident Woman",
+    "description": "一位清晰坚定的自信青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_ConfidentWoman",
+    "displayName": "Confident Woman",
+    "description": "一位清晰坚定、自信的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_Conscientiousinstructor",
+    "displayName": "Conscientious Instructor",
+    "description": "一位年轻尽责的青年女性导师声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_ConsiderateSenior",
+    "displayName": "Considerate Senior",
+    "description": "一位温柔成熟的体贴学长声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Russian_CrazyQueen",
+    "displayName": "Crazy Girl",
+    "description": "一位充满活力的青年“疯狂女孩”声音，狂野而不可预测，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Cute_Elf",
+    "displayName": "Cute Elf",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_Debator",
+    "displayName": "Debator",
+    "description": "一位强硬的中年男性辩手声音，强壮而果断，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Debator",
+    "displayName": "Debator",
+    "description": "一位坚定、强硬的中年男性辩手声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Japanese_DecisivePrincess",
+    "displayName": "Decisive Princess",
+    "description": "一位坚定果断的青年公主声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_DecisiveQueen",
+    "displayName": "Decisive Queen",
+    "description": "一位甜美果断的青年女王声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Spanish_Deep-tonedMan",
+    "displayName": "Deep-toned Man",
+    "description": "一位富有魅力、声调深沉的中年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_Deep-VoicedGentleman",
+    "displayName": "Deep-voiced Gentleman",
+    "description": "一位声音低沉的青年绅士声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Japanese_DependableWoman",
+    "displayName": "Dependable Woman",
+    "description": "一位稳重可靠的青年女性声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Indonesian_DeterminedBoy",
+    "displayName": "Determined Boy",
+    "description": "一位坚定的青年男性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Portuguese_DeterminedManager",
+    "displayName": "Determined Manager",
+    "description": "一位自信果决的中年女性经理声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_DeterminedManager",
+    "displayName": "Determined Manager",
+    "description": "一位职业、果断的中年女性经理声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Italian_DiligentLeader",
+    "displayName": "Diligent Leader",
+    "description": "一位冷静勤奋的青年女性领导者声音，意大利语。",
+    "language": "Italian"
+  },
+  {
+    "voiceKey": "English_Diligent_Man",
+    "displayName": "Diligent Man",
+    "description": "一位真诚勤奋的青年男性，带有印度口音。",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Japanese_DominantMan",
+    "displayName": "Dominant Man",
+    "description": "一位成熟强势的中年男性声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_DominantMan",
+    "displayName": "Dominant Man",
+    "description": "一位成熟权威的强势青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_Dramatist",
+    "displayName": "Dramatist",
+    "description": "一位古怪的中年男性戏剧家声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_ElegantGirl",
+    "displayName": "Elegant Girl",
+    "description": "一位富有戏剧性、优雅的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_ElegantPrincess",
+    "displayName": "Elegant Princess",
+    "description": "一位优雅的青年公主声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_EnchantingSister",
+    "displayName": "Enchanting Sister",
+    "description": "一位迷人的青年姐姐声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_EnergeticBoy",
+    "displayName": "Energetic Boy",
+    "description": "一位活泼充满活力的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_EnergeticBoy",
+    "displayName": "Energetic Boy",
+    "description": "一位活泼充满活力的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_EnthusiasticTeen",
+    "displayName": "Enthusiastic Teen",
+    "description": "一位热情活泼的青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_FascinatingBoy",
+    "displayName": "Fascinating Boy",
+    "description": "一位亲切迷人的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "French_FemaleAnchor",
+    "displayName": "Female Anchor",
+    "description": "一位成熟的女性法语主播声音。",
+    "language": "French"
+  },
+  {
+    "voiceKey": "Portuguese_FragileBoy",
+    "displayName": "Fragile Boy",
+    "description": "一位温柔脆弱的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_FrankLady",
+    "displayName": "Frank Lady",
+    "description": "一位激动坦率的中年女士声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_FrankLady",
+    "displayName": "Frank Lady",
+    "description": "一位激动、坦率的青年女士声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_FriendlyBigSister",
+    "displayName": "Friendly Big Sister",
+    "description": "一位迷人友好的中年大姐姐声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Arabic_FriendlyGuy",
+    "displayName": "Friendly Guy",
+    "description": "一位沉稳友好的青年男性阿拉伯语声音。",
+    "language": "Arabic"
+  },
+  {
+    "voiceKey": "German_FriendlyMan",
+    "displayName": "Friendly Man",
+    "description": "一位真诚友好的中年男性德语声音。",
+    "language": "German"
+  },
+  {
+    "voiceKey": "Portuguese_FriendlyNeighbor",
+    "displayName": "Friendly Neighbor",
+    "description": "一位充满活力的友好青年女性邻居声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_Fussyhostess",
+    "displayName": "Fussy hostess",
+    "description": "一位语气强烈、挑剔的中年女主人声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Fussyhostess",
+    "displayName": "Fussy hostess",
+    "description": "一位语气激烈、挑剔的中年女主人声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Japanese_GenerousIzakayaOwner",
+    "displayName": "Generous Izakaya Owner",
+    "description": "一位俏皮大方的中年男性居酒屋老板声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_GentleBoss",
+    "displayName": "Gentle Boss",
+    "description": "一位高贵温柔的中年老板声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Japanese_GentleButler",
+    "displayName": "Gentle Butler",
+    "description": "一位迷人温柔的青年男性管家声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Indonesian_GentleGirl",
+    "displayName": "Gentle Girl",
+    "description": "一位柔和的青年女性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Portuguese_GentleTeacher",
+    "displayName": "Gentle Teacher",
+    "description": "一位温和温柔的青年男性教师声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_GentleWoman",
+    "displayName": "Gentle Woman",
+    "description": "一位坚毅温柔的青年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "English_Gentle-voiced_man",
+    "displayName": "Gentle-voiced man",
+    "description": "一位声音温柔、富有磁性的青年男性，带通用美式口音。",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_Ghost",
+    "displayName": "Ghost",
+    "description": "一位性感的青年男性鬼魂声音，神秘而诱人，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Ghost",
+    "displayName": "Ghost",
+    "description": "一位沙哑的青年男性鬼魂声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_Godfather",
+    "displayName": "Godfather",
+    "description": "一位严肃的中年男性教父声音，充满权威感，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_GorgeousLady",
+    "displayName": "Gorgeous Lady",
+    "description": "一位俏皮华丽的青年女性声音，散发自信，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "English_Graceful_Lady",
+    "displayName": "Graceful Lady",
+    "description": "一位优雅的中年女士，带有经典的英式口音，散发着成熟的魅力。",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Japanese_GracefulMaiden",
+    "displayName": "Graceful Maiden",
+    "description": "一位甜美优雅的青年少女声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Portuguese_GrimReaper",
+    "displayName": "Grim Reaper",
+    "description": "一位阴森的青年男性死神声音，黑暗而不祥，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Grinch",
+    "displayName": "Grinch",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Portuguese_Grinch",
+    "displayName": "Grinch",
+    "description": "一位狡黠的青年男性格林奇式声音，淘气而狡猾，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Russian_HandsomeChildhoodFriend",
+    "displayName": "Handsome Childhood Friend",
+    "description": "一位为英俊青梅竹马角色设计的迷人少女声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Korean_HaughtyLady",
+    "displayName": "Haughty Lady",
+    "description": "一位高傲冷漠的青年女士声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_HumorousElder",
+    "displayName": "Humorous Elder",
+    "description": "一位滑稽幽默的中年男性长者声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_HumorousElder",
+    "displayName": "Humorous Elder",
+    "description": "一位古怪幽默的老年男性长者声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Japanese_InnocentBoy",
+    "displayName": "Innocent Boy",
+    "description": "一位亲切天真的青年男性声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_InnocentBoy",
+    "displayName": "Innocent Boy",
+    "description": "一位纯真无邪的青年男孩声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_InspiringLady",
+    "displayName": "Inspiring Lady",
+    "description": "一位威严、鼓舞人心的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_IntellectualMan",
+    "displayName": "Intellectual Man",
+    "description": "一位好斗的知性中年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Japanese_IntellectualSenior",
+    "displayName": "Intellectual Senior",
+    "description": "一位成熟知性的青年男性日语声音，听起来少年老成。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_IntellectualSenior",
+    "displayName": "Intellectual Senior",
+    "description": "一位具有磁性、知性的青年学长声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Spanish_Intonategirl",
+    "displayName": "Intonate Girl",
+    "description": "一位声线多变的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_Jovialman",
+    "displayName": "Jovial Man",
+    "description": "一位开朗快活的中年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Jovialman",
+    "displayName": "Jovial Man",
+    "description": "一位沙哑、快活的老年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Japanese_KindLady",
+    "displayName": "Kind Lady",
+    "description": "一位迷人善良的青年女性声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Portuguese_Kind-heartedGirl",
+    "displayName": "Kind-hearted Girl",
+    "description": "一位平和善良的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Kind-heartedGirl",
+    "displayName": "Kind-hearted Girl",
+    "description": "一位明亮善良的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Dutch_kindhearted_girl",
+    "displayName": "Kind-hearted girl",
+    "description": "一位温暖善良的少女荷兰语声音。",
+    "language": "Dutch"
+  },
+  {
+    "voiceKey": "Vietnamese_kindhearted_girl",
+    "displayName": "Kind-hearted girl",
+    "description": "一位温暖善良的少女越南语声音。",
+    "language": "Vietnamese"
+  },
+  {
+    "voiceKey": "French_Male_Speech_New",
+    "displayName": "Level-Headed Man",
+    "description": "一位理智的青年男性法语声音。",
+    "language": "French"
+  },
+  {
+    "voiceKey": "Korean_LonelyWarrior",
+    "displayName": "Lonely Warrior",
+    "description": "一位青春无畏的孤独战士声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_LovelyLady",
+    "displayName": "Lovely Lady",
+    "description": "一位迷人可爱的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Japanese_LoyalKnight",
+    "displayName": "Loyal Knight",
+    "description": "一位年轻忠诚的青年男性骑士声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "French_MaleNarrator",
+    "displayName": "Male Narrator",
+    "description": "一位适合叙述的青年男性法语声音。",
+    "language": "French"
+  },
+  {
+    "voiceKey": "Korean_MatureLady",
+    "displayName": "Mature Lady",
+    "description": "一位优雅成熟的中年女士声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_MaturePartner",
+    "displayName": "Mature Partner",
+    "description": "一位成熟的中年男性伴侣声音，可靠而温暖，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_MaturePartner",
+    "displayName": "Mature Partner",
+    "description": "一位温暖成熟的中年男性伴侣声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "French_MovieLeadFemale",
+    "displayName": "Movie Lead Female",
+    "description": "一位坚定、适合电影角色的少女法语声音。",
+    "language": "French"
+  },
+  {
+    "voiceKey": "Korean_MysteriousGirl",
+    "displayName": "Mysterious Girl",
+    "description": "一位灵动神秘的青年女孩声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Italian_Narrator",
+    "displayName": "Narrator",
+    "description": "一位适合叙述的中年男性意大利语声音。",
+    "language": "Italian"
+  },
+  {
+    "voiceKey": "Portuguese_Narrator",
+    "displayName": "Narrator",
+    "description": "一位适合叙事的中年女性叙述者声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Narrator",
+    "displayName": "Narrator",
+    "description": "一位适合叙述的中年女性叙述者声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_NaughtySchoolgirl",
+    "displayName": "Naughty Schoolgirl",
+    "description": "一位诱人顽皮的青年女学生声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Japanese_OptimisticYouth",
+    "displayName": "Optimistic Youth",
+    "description": "一位开朗乐观的青年男性声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_OptimisticYouth",
+    "displayName": "Optimistic Youth",
+    "description": "一位开朗乐观的青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_PassionateWarrior",
+    "displayName": "Passionate Warrior",
+    "description": "一位热情充满激情的青年男性战士声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_PassionateWarrior",
+    "displayName": "Passionate Warrior",
+    "description": "一位热情、充满激情的青年男性战士声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "French_Female_News Anchor",
+    "displayName": "Patient Female Presenter",
+    "description": "一位耐心的青年女性法语主持人，沉静而清晰。",
+    "language": "French"
+  },
+  {
+    "voiceKey": "Russian_PessimisticGirl",
+    "displayName": "Pessimistic Girl",
+    "description": "一位富有同情心的青年“悲观女孩”声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Korean_PlayboyCharmer",
+    "displayName": "Playboy Charmer",
+    "description": "一位富有诱惑力的青年花花公子声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_PlayfulGirl",
+    "displayName": "Playful Girl",
+    "description": "一位俏皮可爱的青年女孩声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "German_PlayfulMan",
+    "displayName": "Playful Man",
+    "description": "一位活泼的青年男性德语声音。",
+    "language": "German"
+  },
+  {
+    "voiceKey": "Portuguese_PlayfulSpirit",
+    "displayName": "Playful Spirit",
+    "description": "一位灵动俏皮的青年女性精灵声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_Pompouslady",
+    "displayName": "Pompous lady",
+    "description": "一位夸张自负的青年女性声音，充满个性，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_PossessiveMan",
+    "displayName": "Possessive Man",
+    "description": "一位权威、占有欲强的中年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_PowerfulSoldier",
+    "displayName": "Powerful Soldier",
+    "description": "一位年轻有力的青年男性强大士兵声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_PowerfulSoldier",
+    "displayName": "Powerful Soldier",
+    "description": "一位年轻有力的青年男性强大士兵声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_PowerfulVeteran",
+    "displayName": "Powerful Veteran",
+    "description": "一位强劲有力的中年男性退伍军人声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_PowerfulVeteran",
+    "displayName": "Powerful Veteran",
+    "description": "一位强劲有力的中年男性退伍军人声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_QuirkyGirl",
+    "displayName": "Quirky Girl",
+    "description": "一位可爱古怪的青年女孩声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_RationalMan",
+    "displayName": "Rational Man",
+    "description": "一位深思熟虑、理性的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_RationalMan",
+    "displayName": "Rational Man",
+    "description": "一位深思熟虑、理性的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_ReliableMan",
+    "displayName": "Reliable Man",
+    "description": "一位稳重可靠的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Russian_ReliableMan",
+    "displayName": "Reliable Man",
+    "description": "一位稳重可靠的中年男性声音，俄语。",
+    "language": "Russian"
+  },
+  {
+    "voiceKey": "Spanish_ReliableMan",
+    "displayName": "Reliable Man",
+    "description": "一位稳重可靠的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_ReliableSister",
+    "displayName": "Reliable Sister",
+    "description": "一位权威可靠的中年姐姐声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Korean_ReliableYouth",
+    "displayName": "Reliable Youth",
+    "description": "一位温柔可靠的青年男性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Indonesian_ReservedYoungMan",
+    "displayName": "Reserved Young Man",
+    "description": "一位冷峻的青年男性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Portuguese_ReservedYoungMan",
+    "displayName": "Reserved Young Man",
+    "description": "一位冷静内敛的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_ReservedYoungMan",
+    "displayName": "Reserved Young Man",
+    "description": "一位宁静、内敛的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_RomanticHusband",
+    "displayName": "Romantic Husband",
+    "description": "一位深情的中年男性浪漫丈夫声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_RomanticHusband",
+    "displayName": "Romantic Husband",
+    "description": "一位深情的中年男性浪漫丈夫声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_Rudolph",
+    "displayName": "Rudolph",
+    "description": "一位天真的青年男性声音，鲁道夫风格，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Rudolph",
+    "displayName": "Rudolph",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Spanish_Rudolph",
+    "displayName": "Rudolph",
+    "description": "一位天真的青年男性声音，鲁道夫风格，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_SadTeen",
+    "displayName": "Sad Teen",
+    "description": "一位沮丧悲伤的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_SantaClaus",
+    "displayName": "Santa Claus",
+    "description": "一位欢乐的中年男性圣诞老人声音，充满节日气氛，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Santa_Claus",
+    "displayName": "Santa Claus",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Spanish_SantaClaus",
+    "displayName": "Santa Claus",
+    "description": "一位欢乐的老年男性圣诞老人声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_SassyGirl",
+    "displayName": "Sassy Girl",
+    "description": "一位温柔的青年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_SensibleManager",
+    "displayName": "Sensible Manager",
+    "description": "一位富有魅力、理智的中年男性经理声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_SensibleManager",
+    "displayName": "Sensible Manager",
+    "description": "一位富有魅力、理智的青年男性经理声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_SentimentalLady",
+    "displayName": "Sentimental Lady",
+    "description": "一位优雅感性的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_SereneElder",
+    "displayName": "Serene Elder",
+    "description": "一位沉静深思的中年男性长者声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_SereneElder",
+    "displayName": "Serene Elder",
+    "description": "一位沉思、宁静的老年男性长者声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_SereneWoman",
+    "displayName": "Serene Woman",
+    "description": "一位宁静平和的青年女性声音，平静而沉着，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Serene_Woman",
+    "displayName": "Serene Woman",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Spanish_SereneWoman",
+    "displayName": "Serene Woman",
+    "description": "一位舒缓宁静的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Japanese_SeriousCommander",
+    "displayName": "Serious Commander",
+    "description": "一位严肃可靠的青年男性指挥官声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Korean_ShyGirl",
+    "displayName": "Shy Girl",
+    "description": "一位腼腆害羞的青年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Spanish_SincereTeen",
+    "displayName": "Sincere Teen",
+    "description": "一位真诚的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_SmartYoungGirl",
+    "displayName": "Smart Young Girl",
+    "description": "一位聪慧的青年女孩声音，敏锐而清晰，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_SoothingLady",
+    "displayName": "Soothing Lady",
+    "description": "一位迷人舒缓的中年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Spanish_SophisticatedLady",
+    "displayName": "Sophisticated Lady",
+    "description": "一位优雅、精致的青年女士声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Japanese_SportyStudent",
+    "displayName": "Sporty Student",
+    "description": "一位亲切运动的青年男性学生声音，日语。",
+    "language": "Japanese"
+  },
+  {
+    "voiceKey": "Portuguese_Steadymentor",
+    "displayName": "Steady Mentor",
+    "description": "一位傲慢但稳重的青年男性导师声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Steadymentor",
+    "displayName": "Steady Mentor",
+    "description": "一位傲慢但稳重的青年男性导师声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_StressedLady",
+    "displayName": "Stressed Lady",
+    "description": "一位不安、紧张的中年女士声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Korean_StrictBoss",
+    "displayName": "Strict Boss",
+    "description": "一位严厉的中年男性老板声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_StrictBoss",
+    "displayName": "Strict Boss",
+    "description": "一位机械般严格的青年女性老板声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_StrictBoss",
+    "displayName": "Strict Boss",
+    "description": "一位权威、严格的青年女性老板声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_Strong-WilledBoy",
+    "displayName": "Strong-willed Boy",
+    "description": "一位成熟坚定的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_Strong-WilledBoy",
+    "displayName": "Strong-willed Boy",
+    "description": "一位成熟、意志坚定的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Indonesian_SweetGirl",
+    "displayName": "Sweet Girl",
+    "description": "一位甜美可爱的青年女性印尼语声音。",
+    "language": "Indonesian"
+  },
+  {
+    "voiceKey": "Korean_SweetGirl",
+    "displayName": "Sweet Girl",
+    "description": "一位温柔甜美的中年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_SweetGirl",
+    "displayName": "Sweet Girl",
+    "description": "一位甜美可爱的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Sweet_Girl",
+    "displayName": "Sweet Girl",
+    "description": "",
+    "language": "English"
+  },
+  {
+    "voiceKey": "German_SweetLady",
+    "displayName": "Sweet Lady",
+    "description": "一位灵动甜美的青年女性德语声音。",
+    "language": "German"
+  },
+  {
+    "voiceKey": "Portuguese_TheatricalActor",
+    "displayName": "Theatrical Actor",
+    "description": "一位生动的中年男性戏剧演员声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Portuguese_ThoughtfulLady",
+    "displayName": "Thoughtful Lady",
+    "description": "一位忧虑体贴的中年女士声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_ThoughtfulLady",
+    "displayName": "Thoughtful Lady",
+    "description": "一位忧虑、体贴的青年女士声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_ThoughtfulMan",
+    "displayName": "Thoughtful Man",
+    "description": "一位温柔体贴的青年男性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_ThoughtfulMan",
+    "displayName": "Thoughtful Man",
+    "description": "一位冷静、体贴的青年男性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Korean_ThoughtfulWoman",
+    "displayName": "Thoughtful Woman",
+    "description": "一位成熟体贴的青年女性声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_ToughBoss",
+    "displayName": "Tough Boss",
+    "description": "一位成熟强硬的中年女性老板声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_ToughBoss",
+    "displayName": "Tough Boss",
+    "description": "一位成熟、强硬的中年女性老板声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "English_Trustworthy_Man",
+    "displayName": "Trustworthy Man",
+    "description": "一位值得信赖、富有磁性的青年男性声音，带通用美式口音。",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Turkish_Trustworthyman",
+    "displayName": "Trustworthy man",
+    "description": "一位富有磁性、值得信赖的青年男性土耳其语声音。",
+    "language": "Turkish"
+  },
+  {
+    "voiceKey": "Portuguese_UpsetGirl",
+    "displayName": "Upset Girl",
+    "description": "一位悲伤的青年女性声音，传达不安情绪，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Italian_WanderingSorcerer",
+    "displayName": "Wandering Sorcerer",
+    "description": "一位冷酷无情的青年女性流浪巫师声音，意大利语。",
+    "language": "Italian"
+  },
+  {
+    "voiceKey": "Portuguese_WhimsicalGirl",
+    "displayName": "Whimsical Girl",
+    "description": "一位可爱奇特的青年女性声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_WhimsicalGirl",
+    "displayName": "Whimsical Girl",
+    "description": "一位机智、奇特的青年女性声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "English_Whispering_girl",
+    "displayName": "Whispering girl",
+    "description": "一位青年女性的轻柔耳语声，带通用美式口音，非常适合ASMR内容。",
+    "language": "English"
+  },
+  {
+    "voiceKey": "Korean_WiseElf",
+    "displayName": "Wise Elf",
+    "description": "一位甜美空灵的智慧精灵声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Spanish_Wiselady",
+    "displayName": "Wise Lady",
+    "description": "一位中性、智慧的中年女士声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Portuguese_WiseScholar",
+    "displayName": "Wise Scholar",
+    "description": "一位亲切健谈的青年男性智慧学者声音，葡萄牙语。",
+    "language": "Portuguese"
+  },
+  {
+    "voiceKey": "Spanish_WiseScholar",
+    "displayName": "Wise Scholar",
+    "description": "一位亲切健谈的青年男性智慧学者声音，西班牙语。",
+    "language": "Spanish"
+  },
+  {
+    "voiceKey": "Ukrainian_WiseScholar",
+    "displayName": "Wise Scholar",
+    "description": "一位亲切健谈的青年男性智慧学者声音，乌克兰语。",
+    "language": "Ukrainian"
+  },
+  {
+    "voiceKey": "Korean_WiseTeacher",
+    "displayName": "Wise Teacher",
+    "description": "一位睿智的的中年男教师声音，韩语。",
+    "language": "Korean"
+  },
+  {
+    "voiceKey": "Portuguese_Wiselady",
+    "displayName": "Wise lady",
+    "description": "一位柔和智慧的中年女士声音，葡萄牙语。",
+    "language": "Portuguese"
+  }
+]

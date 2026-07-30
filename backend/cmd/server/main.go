@@ -60,6 +60,9 @@ func main() {
 	if err := svc.EnsureSystemChannelModels(); err != nil {
 		log.Fatal(err)
 	}
+	if err := svc.EnsureDefaultChannelVoices(); err != nil {
+		log.Fatal(err)
+	}
 	if err := svc.EnsureDefaultStoryboardPromptTemplate(); err != nil {
 		log.Fatal(err)
 	}

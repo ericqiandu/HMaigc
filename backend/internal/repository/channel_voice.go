@@ -2,6 +2,8 @@ package repository
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -17,6 +19,83 @@ func (r *Repository) ChannelVoices(channelID string, includeDisabled bool) ([]mo
 		query = query.Where("enabled = ? AND provider_status IN ?", true, []string{"active", "pending_activation"})
 	}
 	return voices, query.Find(&voices).Error
+}
+
+// EnsureDefaultChannelVoices 只创建缺失的内置系统音色，并补齐排序与调用所需的历史空字段。
+// 运营修改过的名称、描述、启用状态、访问策略和兼容模型均保持不变。
+func (r *Repository) EnsureDefaultChannelVoices(defaults []model.ChannelVoice) error {
+	if len(defaults) == 0 {
+		return errors.New("默认音色目录不能为空")
+	}
+	channelID := strings.TrimSpace(defaults[0].ChannelID)
+	if channelID == "" {
+		return errors.New("默认音色缺少渠道 ID")
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var existing []model.ChannelVoice
+		if err := tx.Unscoped().Where("channel_id = ?", channelID).Find(&existing).Error; err != nil {
+			return err
+		}
+		byKey := make(map[string]*model.ChannelVoice, len(existing))
+		for index := range existing {
+			current := byKey[existing[index].VoiceKey]
+			if current == nil || (current.DeletedAt.Valid && !existing[index].DeletedAt.Valid) {
+				byKey[existing[index].VoiceKey] = &existing[index]
+			}
+		}
+		for index := range defaults {
+			desired := &defaults[index]
+			if desired.ChannelID != channelID {
+				return errors.New("默认音色目录包含多个渠道")
+			}
+			current := byKey[desired.VoiceKey]
+			if current == nil {
+				result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(desired)
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected == 0 {
+					var concurrent model.ChannelVoice
+					if err := tx.First(&concurrent, "channel_id = ? AND voice_key = ?", channelID, desired.VoiceKey).Error; err != nil {
+						return err
+					}
+					if err := validateDefaultChannelVoiceTarget(concurrent); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if current.DeletedAt.Valid {
+				continue
+			}
+			if err := validateDefaultChannelVoiceTarget(*current); err != nil {
+				return err
+			}
+			backfill := model.ChannelVoice{}
+			fields := make([]string, 0, 2)
+			if strings.TrimSpace(current.Language) == "" {
+				backfill.Language = desired.Language
+				fields = append(fields, "language")
+			}
+			if strings.TrimSpace(current.CompatibleModelsJSON) == "" {
+				backfill.CompatibleModelsJSON = desired.CompatibleModelsJSON
+				fields = append(fields, "compatible_models_json")
+			}
+			if len(fields) > 0 {
+				if err := tx.Model(&model.ChannelVoice{}).Where("id = ?", current.ID).Select(fields).Updates(&backfill).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func validateDefaultChannelVoiceTarget(voice model.ChannelVoice) error {
+	if strings.TrimSpace(voice.OwnerUserID) != "" || voice.Kind != "system" {
+		return fmt.Errorf("默认音色标识 %s 与非系统音色冲突", voice.VoiceKey)
+	}
+	return nil
 }
 
 func (r *Repository) ChannelVoicesForUser(channelID string, userID string, includeDisabled bool) ([]model.ChannelVoice, error) {
