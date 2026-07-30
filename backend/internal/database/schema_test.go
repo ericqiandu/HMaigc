@@ -27,8 +27,12 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	}
 	if !db.Migrator().HasTable(&model.ChannelVoice{}) ||
 		!db.Migrator().HasColumn(&model.ChannelVoice{}, "consent_confirmed_at") ||
-		!db.Migrator().HasColumn(&model.ChannelVoice{}, "idempotency_key") {
+		!db.Migrator().HasColumn(&model.ChannelVoice{}, "idempotency_key") ||
+		!db.Migrator().HasColumn(&model.ChannelVoice{}, "owner_user_id") {
 		t.Fatal("channel_voices commercial audit schema was not migrated")
+	}
+	if !db.Migrator().HasTable(&model.UserVoiceFavorite{}) {
+		t.Fatal("user_voice_favorites schema was not migrated")
 	}
 	if !db.Migrator().HasTable(&model.ChannelVoicePreview{}) ||
 		!db.Migrator().HasColumn(&model.ChannelVoicePreview{}, "provider_trace_id") {

@@ -254,7 +254,8 @@ type ChannelModel struct {
 // 上游密钥、克隆源文件与同意凭证不向用户端暴露；目录仅保存调用所需标识和运营属性。
 type ChannelVoice struct {
 	ID                   string            `json:"id" gorm:"primaryKey;size:36"`
-	ChannelID            string            `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_voice_key_active,priority:1,where:deleted_at IS NULL;uniqueIndex:idx_channel_voice_idempotency,priority:1,where:idempotency_key <> '' AND deleted_at IS NULL"`
+	ChannelID            string            `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_voice_key_active,priority:1,where:deleted_at IS NULL;uniqueIndex:idx_channel_voice_owner_idempotency,priority:1,where:idempotency_key <> '' AND deleted_at IS NULL"`
+	OwnerUserID          string            `json:"ownerUserId" gorm:"size:36;index;uniqueIndex:idx_channel_voice_owner_idempotency,priority:2,where:idempotency_key <> '' AND deleted_at IS NULL"`
 	VoiceKey             string            `json:"voiceKey" gorm:"size:256;uniqueIndex:idx_channel_voice_key_active,priority:2,where:deleted_at IS NULL"`
 	DisplayName          string            `json:"displayName" gorm:"size:160"`
 	Description          string            `json:"description" gorm:"size:500"`
@@ -268,11 +269,20 @@ type ChannelVoice struct {
 	SourceSHA256         string            `json:"-" gorm:"size:64"`
 	SourceBytes          int64             `json:"sourceBytes"`
 	ConsentConfirmedAt   *time.Time        `json:"consentConfirmedAt"`
-	IdempotencyKey       string            `json:"-" gorm:"size:80;uniqueIndex:idx_channel_voice_idempotency,priority:2,where:idempotency_key <> '' AND deleted_at IS NULL"`
+	IdempotencyKey       string            `json:"-" gorm:"size:80;uniqueIndex:idx_channel_voice_owner_idempotency,priority:3,where:idempotency_key <> '' AND deleted_at IS NULL"`
 	LastError            string            `json:"lastError" gorm:"size:500"`
 	CreatedAt            time.Time         `json:"createdAt"`
 	UpdatedAt            time.Time         `json:"updatedAt"`
 	DeletedAt            gorm.DeletedAt    `json:"-" gorm:"index"`
+}
+
+// UserVoiceFavorite 保存用户对可见音色的收藏关系。
+// 音色目录与收藏分离，避免把用户偏好写进全局渠道配置并确保多用户隔离。
+type UserVoiceFavorite struct {
+	ID             string    `json:"id" gorm:"primaryKey;size:36"`
+	UserID         string    `json:"userId" gorm:"size:36;index;uniqueIndex:idx_user_voice_favorite,priority:1"`
+	ChannelVoiceID string    `json:"channelVoiceId" gorm:"size:36;index;uniqueIndex:idx_user_voice_favorite,priority:2"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // ChannelVoicePreview 缓存按音色与模型生成的固定试听音频。

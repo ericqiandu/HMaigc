@@ -105,18 +105,21 @@ type PublicModelChannel struct {
 }
 
 type PublicChannelVoice struct {
-	ID               string                  `json:"id"`
-	VoiceKey         string                  `json:"voiceKey"`
-	DisplayName      string                  `json:"displayName"`
-	Description      string                  `json:"description"`
-	Language         string                  `json:"language"`
-	Kind             string                  `json:"kind"`
-	AccessPolicy     model.ModelAccessPolicy `json:"accessPolicy"`
-	Accessible       bool                    `json:"accessible"`
-	CompatibleModels []string                `json:"compatibleModels"`
-	ProviderStatus   string                  `json:"providerStatus"`
-	Enabled          bool                    `json:"enabled"`
-	LastError        string                  `json:"lastError,omitempty"`
+	ID                 string                  `json:"id"`
+	VoiceKey           string                  `json:"voiceKey"`
+	DisplayName        string                  `json:"displayName"`
+	Description        string                  `json:"description"`
+	Language           string                  `json:"language"`
+	Kind               string                  `json:"kind"`
+	AccessPolicy       model.ModelAccessPolicy `json:"accessPolicy"`
+	Accessible         bool                    `json:"accessible"`
+	CompatibleModels   []string                `json:"compatibleModels"`
+	ProviderStatus     string                  `json:"providerStatus"`
+	Enabled            bool                    `json:"enabled"`
+	OwnedByCurrentUser bool                    `json:"ownedByCurrentUser"`
+	Favorited          bool                    `json:"favorited"`
+	OwnerUserID        string                  `json:"ownerUserId,omitempty"`
+	LastError          string                  `json:"lastError,omitempty"`
 }
 
 type PublicChannelModelPrice struct {
@@ -386,12 +389,20 @@ func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, 
 		if itemErr != nil {
 			return nil, itemErr
 		}
-		voices, voiceErr := s.repo.ChannelVoices(channel.ID, false)
+		voices, voiceErr := s.repo.ChannelVoicesForUser(channel.ID, user.ID, false)
 		if voiceErr != nil {
 			return nil, voiceErr
 		}
+		voiceIDs := make([]string, 0, len(voices))
+		for _, voice := range voices {
+			voiceIDs = append(voiceIDs, voice.ID)
+		}
+		favorites, favoriteErr := s.repo.UserVoiceFavoriteIDs(user.ID, voiceIDs)
+		if favoriteErr != nil {
+			return nil, favoriteErr
+		}
 		public := publicChannel(channel, false, items, hasMembership)
-		public.Voices, err = publicChannelVoices(voices, hasMembership, false)
+		public.Voices, err = publicChannelVoicesForUser(voices, hasMembership, false, user.ID, favorites)
 		if err != nil {
 			return nil, err
 		}

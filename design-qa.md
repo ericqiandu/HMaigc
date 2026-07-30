@@ -175,6 +175,61 @@ No actionable P0, P1 or P2 issue remains in the requested first-page workbench s
 
 final result: passed
 
+## Audio Voice Library And Clone Dialog QA (2026-07-30)
+
+- Source visual truth:
+  - `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-0aaf8cad-9933-47e1-aa92-eab9337a5d4f.png`
+  - `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-90ade7d7-3ff2-4720-8582-c0e7ad6f56fa.png`
+- Implementation screenshots:
+  - `qa-artifacts/audio-voice-library-20260730/implementation-clone-dark-1280x720.png`
+  - `qa-artifacts/audio-voice-library-20260730/implementation-catalog-light-1280x720.png`
+- Focused same-density comparison: `qa-artifacts/audio-voice-library-20260730/comparison-clone-dark.png`.
+- Viewport: 1280 × 720 CSS px at device scale factor 1.
+- Source pixels: 654 × 446; the visible source dialog is 620 × 426 px.
+- Implementation pixels: 1280 × 720; the visible clone dialog is 620 × 438 CSS px.
+- Normalization: the comparison crops both dialogs at their real rendered size without scaling; the 12 px height increase is intentional space for the explicit recording-duration and destination notice.
+- State: authenticated real canvas, selected MiniMax audio node, dark clone dialog and light catalog empty state; no microphone capture and no upstream clone request.
+
+### Findings
+
+No actionable P0, P1, or P2 differences remain for the requested voice-library and clone-dialog scope.
+
+- Fonts and typography: both dialogs use the repository SF Pro Text / PingFang SC hierarchy with 16 px semibold titles, 13 px body copy and 10–12 px legal or status text. The reading script keeps the source's centered emphasis without leaking provider terminology.
+- Spacing and layout rhythm: the catalog is an 800 × 620 single-surface modal with one header, one toolbar, one scroll region and one footer. The clone dialog preserves the source's 620 px width, compact header, 210 px recording region and bottom-aligned consent/action row.
+- Colors and visual tokens: dark and light surfaces come from the live canvas theme. Interactive controls now use the design-system Apple Blue tokens (`#2997ff` dark, `#0071e3` light) instead of an unrelated purple accent.
+- Image and icon fidelity: controls use the existing Lucide icon library; no handcrafted SVG, CSS drawing, emoji or placeholder asset was introduced.
+- Copy and content: tabs, search, language filter, preview, favorite, selection, recording limits, consent and result destination use real product behavior. The active MiniMax channel currently contains zero published voices, so the implementation evidence intentionally shows the real explicit empty state rather than fabricated rows.
+- Accessibility: modal regions and tabs have names, icon-only actions have `aria-label`, keyboard focus remains visible, disabled states are explicit, and the catalog does not expose inaccessible private voices.
+
+### Comparison history
+
+#### Initial pass
+
+- P2: the first implementation inherited the canvas purple accent, while the repository design truth permits one blue interactive accent.
+- P2: automatic stop at the five-minute recording limit did not enter the visible processing state before MediaRecorder completion.
+
+#### Fixes
+
+- Mapped the modal interaction token to `#2997ff` in dark mode and `#0071e3` in light mode.
+- Moved the recorder into the explicit `processing` state before the automatic maximum-duration stop.
+
+#### Post-fix evidence
+
+- The focused comparison shows matching modal proportions, header hierarchy, script block, recording action, authorization copy and bottom action placement.
+- The real-browser interaction pass verified text refresh, tab selection, language-filter visibility and both theme surfaces.
+- Browser logs remained empty through dark/light mode, catalog, filter and clone-dialog interactions.
+
+### Residual test gap
+
+- P3: populated voice-row visual states were not captured because the active MiniMax channel has no published voice records. Repository tests cover private ownership, favorites, membership access and cross-user denial; a later operations QA pass should sync real provider voices before capturing preview, selected, favorite and member-only row states.
+- The in-app browser session used for this pass exposes a fixed desktop viewport. The 820 px and 560 px CSS breakpoints were inspected and production-built, but a separate narrow-viewport browser capture remains part of the documented manual release checklist.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains in the requested voice-library and clone-dialog scope.
+
+final result: passed
+
 ## Canvas Shortcuts Modal QA (2026-07-30)
 
 - Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-97701fb5-35dd-444f-b6ba-3f334d805991.png`.

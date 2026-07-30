@@ -46,6 +46,13 @@ type CloneChannelVoiceRequest struct {
 	IdempotencyKey   string
 }
 
+type CloneUserChannelVoiceRequest struct {
+	DisplayName      string
+	Language         string
+	ConsentConfirmed bool
+	IdempotencyKey   string
+}
+
 func (s *Service) AdminChannelVoices(actor *model.User, channelID string) ([]PublicChannelVoice, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
@@ -100,6 +107,7 @@ func (s *Service) SaveAdminChannelVoice(actor *model.User, channelID string, id 
 			return nil, findErr
 		}
 		voice.ID = current.ID
+		voice.OwnerUserID = current.OwnerUserID
 		voice.CreatedAt = current.CreatedAt
 		voice.ProviderStatus = current.ProviderStatus
 		voice.SourceFilename = current.SourceFilename
@@ -162,6 +170,26 @@ func (s *Service) CloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
+	return s.cloneMiniMaxChannelVoice(ctx, actor, channelID, "", req, file, filename)
+}
+
+func (s *Service) CloneUserMiniMaxChannelVoice(ctx context.Context, user *model.User, channelID string, req CloneUserChannelVoiceRequest, file multipart.File, filename string) (*PublicChannelVoice, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	voiceID := "HM" + strings.ReplaceAll(newID(), "-", "")
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = "我的克隆音色"
+	}
+	return s.cloneMiniMaxChannelVoice(ctx, user, channelID, user.ID, CloneChannelVoiceRequest{
+		VoiceKey: voiceID, DisplayName: displayName, Language: strings.TrimSpace(req.Language),
+		AccessPolicy: model.ModelAccessAuthenticated, ConsentConfirmed: req.ConsentConfirmed,
+		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
+	}, file, filename)
+}
+
+func (s *Service) cloneMiniMaxChannelVoice(ctx context.Context, actor *model.User, channelID string, ownerUserID string, req CloneChannelVoiceRequest, file multipart.File, filename string) (*PublicChannelVoice, error) {
 	channel, err := s.requireMiniMaxSpeechChannel(channelID)
 	if err != nil {
 		return nil, err
@@ -178,11 +206,11 @@ func (s *Service) CloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 	if req.DisplayName == "" || req.IdempotencyKey == "" {
 		return nil, BadAuthRequest("展示名称和幂等键不能为空")
 	}
-	if existing, findErr := s.repo.ChannelVoiceByIdempotencyKey(channelID, req.IdempotencyKey); findErr == nil {
+	if existing, findErr := s.repo.ChannelVoiceByIdempotencyKey(channelID, ownerUserID, req.IdempotencyKey); findErr == nil {
 		if existing.ProviderStatus != "active" && existing.ProviderStatus != "pending_activation" {
 			return nil, BadAuthRequest("该克隆请求已存在但未确认成功，请先同步供应商音色或人工核对，禁止重复提交")
 		}
-		public, publicErr := publicChannelVoice(*existing, true, true)
+		public, publicErr := publicChannelVoiceForUser(*existing, true, ownerUserID == "", ownerUserID, false)
 		if publicErr != nil {
 			return nil, publicErr
 		}
@@ -205,26 +233,29 @@ func (s *Service) CloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 	}
 	now := time.Now()
 	voice := model.ChannelVoice{
-		ID: newID(), ChannelID: channelID, VoiceKey: req.VoiceKey, DisplayName: req.DisplayName,
+		ID: newID(), ChannelID: channelID, OwnerUserID: ownerUserID, VoiceKey: req.VoiceKey, DisplayName: req.DisplayName,
 		Description: strings.TrimSpace(req.Description), Language: strings.TrimSpace(req.Language),
 		Kind: "voice_cloning", AccessPolicy: normalizeModelAccessPolicy(req.AccessPolicy),
 		CompatibleModelsJSON: string(compatibleModelsJSON), ProviderStatus: "creating", Enabled: false,
 		SourceFilename: filepath.Base(filename), SourceSHA256: digest, SourceBytes: int64(len(data)),
 		ConsentConfirmedAt: &now, IdempotencyKey: req.IdempotencyKey, CreatedAt: now, UpdatedAt: now,
 	}
-	attemptAudit, err := newAdminAuditEvent(actor, "channel_voice.clone_attempt", "channel_voice", voice.ID, "提交 MiniMax 音色克隆", map[string]any{
-		"channelId": channelID, "voiceKey": voice.VoiceKey, "sourceFilename": voice.SourceFilename,
-		"sourceBytes": voice.SourceBytes, "sourceSha256": voice.SourceSHA256, "consentConfirmedAt": voice.ConsentConfirmedAt,
-	})
-	if err != nil {
-		return nil, err
+	var attemptAudit *model.AdminAuditEvent
+	if ownerUserID == "" {
+		attemptAudit, err = newAdminAuditEvent(actor, "channel_voice.clone_attempt", "channel_voice", voice.ID, "提交 MiniMax 音色克隆", map[string]any{
+			"channelId": channelID, "voiceKey": voice.VoiceKey, "sourceFilename": voice.SourceFilename,
+			"sourceBytes": voice.SourceBytes, "sourceSha256": voice.SourceSHA256, "consentConfirmedAt": voice.ConsentConfirmedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.SaveChannelVoiceWithAudit(&voice, attemptAudit); err != nil {
-		if existing, findErr := s.repo.ChannelVoiceByIdempotencyKey(channelID, req.IdempotencyKey); findErr == nil {
+		if existing, findErr := s.repo.ChannelVoiceByIdempotencyKey(channelID, ownerUserID, req.IdempotencyKey); findErr == nil {
 			if existing.ProviderStatus != "active" && existing.ProviderStatus != "pending_activation" {
 				return nil, BadAuthRequest("该克隆请求已存在但未确认成功，请先同步供应商音色或人工核对，禁止重复提交")
 			}
-			public, publicErr := publicChannelVoice(*existing, true, true)
+			public, publicErr := publicChannelVoiceForUser(*existing, true, ownerUserID == "", ownerUserID, false)
 			if publicErr != nil {
 				return nil, publicErr
 			}
@@ -232,7 +263,11 @@ func (s *Service) CloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 		}
 		return nil, err
 	}
-	fileID, uploadErr := uploadMiniMaxCloneAudio(ctx, *channel, data, filepath.Base(filename))
+	uploadContext := context.WithValue(ctx, providerAnalyticsKey{}, providerAnalyticsContext{
+		Service: s, Source: "voice-clone", UserID: actor.ID, ChannelID: channel.ID,
+		Capability: "audio", Operation: "voice_clone_upload", RequestKind: "generation",
+	})
+	fileID, uploadErr := uploadMiniMaxCloneAudio(uploadContext, *channel, data, filepath.Base(filename))
 	if uploadErr != nil {
 		voice.ProviderStatus = "failed"
 		voice.LastError = truncateRunes(uploadErr.Error(), 500)
@@ -241,7 +276,11 @@ func (s *Service) CloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 		return nil, fmt.Errorf("上传 MiniMax 克隆音频失败：%w", uploadErr)
 	}
 	var response map[string]interface{}
-	cloneErr := postJSON(ctx, providerConfig{BaseURL: channel.BaseURL, APIKey: channel.APIKey}, "/voice_clone", map[string]interface{}{
+	cloneContext := context.WithValue(ctx, providerAnalyticsKey{}, providerAnalyticsContext{
+		Service: s, Source: "voice-clone", UserID: actor.ID, ChannelID: channel.ID,
+		Capability: "audio", Operation: "voice_clone", RequestKind: "generation",
+	})
+	cloneErr := postJSON(cloneContext, providerConfig{BaseURL: channel.BaseURL, APIKey: channel.APIKey}, "/voice_clone", map[string]interface{}{
 		"file_id": fileID, "voice_id": req.VoiceKey, "need_noise_reduction": false, "need_volume_normalization": false,
 	}, &response)
 	if cloneErr != nil {
@@ -258,17 +297,20 @@ func (s *Service) CloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 	voice.Enabled = true
 	voice.LastError = ""
 	voice.UpdatedAt = time.Now()
-	audit, err := newAdminAuditEvent(actor, "channel_voice.clone", "channel_voice", voice.ID, "创建 MiniMax 克隆音色", map[string]any{
-		"channelId": channelID, "voiceKey": voice.VoiceKey, "sourceFilename": voice.SourceFilename,
-		"sourceBytes": voice.SourceBytes, "sourceSha256": voice.SourceSHA256, "consentConfirmedAt": voice.ConsentConfirmedAt,
-	})
-	if err != nil {
-		return nil, err
+	var audit *model.AdminAuditEvent
+	if ownerUserID == "" {
+		audit, err = newAdminAuditEvent(actor, "channel_voice.clone", "channel_voice", voice.ID, "创建 MiniMax 克隆音色", map[string]any{
+			"channelId": channelID, "voiceKey": voice.VoiceKey, "sourceFilename": voice.SourceFilename,
+			"sourceBytes": voice.SourceBytes, "sourceSha256": voice.SourceSHA256, "consentConfirmedAt": voice.ConsentConfirmedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.SaveChannelVoiceWithAudit(&voice, audit); err != nil {
 		return nil, err
 	}
-	public, err := publicChannelVoice(voice, true, true)
+	public, err := publicChannelVoiceForUser(voice, true, ownerUserID == "", ownerUserID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +385,9 @@ func (s *Service) validateAudioTaskVoice(userID string, config providerConfig) e
 	if err != nil {
 		return err
 	}
+	if voice.OwnerUserID != "" && voice.OwnerUserID != userID {
+		return BadAuthRequest("所选音色不存在或已被删除，请刷新音色列表后重试")
+	}
 	if !voice.Enabled || (voice.ProviderStatus != "active" && voice.ProviderStatus != "pending_activation") {
 		return BadAuthRequest("所选音色当前不可用，请联系管理员检查供应商状态")
 	}
@@ -388,10 +433,71 @@ func (s *Service) validateAudioTaskInput(userID string, input map[string]any) er
 	return s.validateAudioTaskVoice(userID, resolved)
 }
 
+func (s *Service) UserChannelVoices(user *model.User, channelID string) ([]PublicChannelVoice, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	if _, err := s.requireMiniMaxSpeechChannel(channelID); err != nil {
+		return nil, err
+	}
+	hasMembership, err := s.HasActiveMembership(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	voices, err := s.repo.ChannelVoicesForUser(channelID, user.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	voiceIDs := make([]string, 0, len(voices))
+	for _, voice := range voices {
+		voiceIDs = append(voiceIDs, voice.ID)
+	}
+	favorites, err := s.repo.UserVoiceFavoriteIDs(user.ID, voiceIDs)
+	if err != nil {
+		return nil, err
+	}
+	return publicChannelVoicesForUser(voices, hasMembership, false, user.ID, favorites)
+}
+
+func (s *Service) SetUserChannelVoiceFavorite(user *model.User, channelID string, voiceID string, favorite bool) (*PublicChannelVoice, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	if _, err := s.requireMiniMaxSpeechChannel(channelID); err != nil {
+		return nil, err
+	}
+	voice, err := s.repo.ChannelVoiceByIDForUser(channelID, strings.TrimSpace(voiceID), user.ID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, BadAuthRequest("音色不存在或不可见")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !voice.Enabled || (voice.ProviderStatus != "active" && voice.ProviderStatus != "pending_activation") {
+		return nil, BadAuthRequest("当前音色不可收藏")
+	}
+	if err := s.repo.SetUserVoiceFavorite(user.ID, voice.ID, favorite, time.Now()); err != nil {
+		return nil, err
+	}
+	hasMembership, err := s.HasActiveMembership(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	public, err := publicChannelVoiceForUser(*voice, hasMembership, false, user.ID, favorite)
+	if err != nil {
+		return nil, err
+	}
+	return &public, nil
+}
+
 func publicChannelVoices(voices []model.ChannelVoice, hasMembership bool, includeAdminDetails bool) ([]PublicChannelVoice, error) {
+	return publicChannelVoicesForUser(voices, hasMembership, includeAdminDetails, "", nil)
+}
+
+func publicChannelVoicesForUser(voices []model.ChannelVoice, hasMembership bool, includeAdminDetails bool, currentUserID string, favorites map[string]bool) ([]PublicChannelVoice, error) {
 	result := make([]PublicChannelVoice, 0, len(voices))
 	for _, voice := range voices {
-		public, err := publicChannelVoice(voice, hasMembership, includeAdminDetails)
+		public, err := publicChannelVoiceForUser(voice, hasMembership, includeAdminDetails, currentUserID, favorites[voice.ID])
 		if err != nil {
 			return nil, err
 		}
@@ -401,6 +507,10 @@ func publicChannelVoices(voices []model.ChannelVoice, hasMembership bool, includ
 }
 
 func publicChannelVoice(voice model.ChannelVoice, hasMembership bool, includeAdminDetails bool) (PublicChannelVoice, error) {
+	return publicChannelVoiceForUser(voice, hasMembership, includeAdminDetails, "", false)
+}
+
+func publicChannelVoiceForUser(voice model.ChannelVoice, hasMembership bool, includeAdminDetails bool, currentUserID string, favorited bool) (PublicChannelVoice, error) {
 	var compatibleModels []string
 	if err := json.Unmarshal([]byte(voice.CompatibleModelsJSON), &compatibleModels); err != nil {
 		return PublicChannelVoice{}, fmt.Errorf("音色 %s 的兼容模型配置损坏：%w", voice.VoiceKey, err)
@@ -410,8 +520,11 @@ func publicChannelVoice(voice model.ChannelVoice, hasMembership bool, includeAdm
 		Language: miniMaxVoiceLanguage(voice.VoiceKey, voice.Language), Kind: voice.Kind, AccessPolicy: voice.AccessPolicy,
 		Accessible:       voice.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
 		CompatibleModels: compatibleModels, ProviderStatus: voice.ProviderStatus, Enabled: voice.Enabled,
+		OwnedByCurrentUser: currentUserID != "" && voice.OwnerUserID == currentUserID,
+		Favorited:          favorited,
 	}
 	if includeAdminDetails {
+		public.OwnerUserID = voice.OwnerUserID
 		public.LastError = voice.LastError
 	}
 	return public, nil

@@ -17,6 +17,72 @@ const channelModelIconUploadBodyLimit = (1 << 20) + (1 << 20)
 const channelVoiceCloneUploadBodyLimit = (20 << 20) + (2 << 20)
 
 func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.GET("/channels/:id/voices", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		voices, err := svc.UserChannelVoices(user, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"voices": voices})
+	})
+	r.PUT("/channels/:id/voices/:voiceId/favorite", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<10)
+		var req struct {
+			Favorite bool `json:"favorite"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		voice, err := svc.SetUserChannelVoiceFavorite(user, c.Param("id"), c.Param("voiceId"), req.Favorite)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"voice": voice})
+	})
+	r.POST("/channels/:id/voices/clone", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "channel-voice-clone:"+user.ID+":"+c.Param("id"), 3, time.Hour) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelVoiceCloneUploadBodyLimit)
+		fileHeader, err := c.FormFile("file")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		file, err := fileHeader.Open()
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		defer file.Close()
+		voice, err := svc.CloneUserMiniMaxChannelVoice(c.Request.Context(), user, c.Param("id"), service.CloneUserChannelVoiceRequest{
+			DisplayName: c.PostForm("displayName"), Language: c.PostForm("language"),
+			ConsentConfirmed: strings.EqualFold(c.PostForm("consentConfirmed"), "true"),
+			IdempotencyKey:   c.PostForm("idempotencyKey"),
+		}, file, fileHeader.Filename)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"voice": voice})
+	})
 	r.GET("/wallet", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

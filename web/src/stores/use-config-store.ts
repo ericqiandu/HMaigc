@@ -21,6 +21,9 @@ export type ChannelVoice = {
     compatibleModels: string[];
     providerStatus: "active" | "pending_activation" | "creating" | "uncertain" | "failed" | "missing" | "deleted";
     enabled: boolean;
+    ownedByCurrentUser: boolean;
+    favorited: boolean;
+    ownerUserId?: string;
     lastError?: string;
 };
 

@@ -24,6 +24,7 @@ func Models() []any {
 		&model.ModelChannel{},
 		&model.ChannelModel{},
 		&model.ChannelVoice{},
+		&model.UserVoiceFavorite{},
 		&model.ChannelVoicePreview{},
 		&model.ChannelModelPriceTier{},
 		&model.ApiCallLog{},
@@ -96,6 +97,9 @@ func MigrateSchema(db *gorm.DB) error {
 		return err
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS idx_channel_voices_idempotency_key").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_channel_voice_idempotency").Error; err != nil {
 		return err
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS idx_users_email").Error; err != nil {

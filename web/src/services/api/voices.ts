@@ -84,3 +84,30 @@ export function deleteAdminChannelVoice(channelId: string, voiceId: string) {
 export function previewChannelVoice(channelId: string, voiceId: string, model: string, signal?: AbortSignal) {
     return request<{ preview: ChannelVoicePreview }>(api.post(`/channels/${encodeURIComponent(channelId)}/voices/${encodeURIComponent(voiceId)}/preview`, { model }, { signal }));
 }
+
+export function listUserChannelVoices(channelId: string) {
+    return request<{ voices: ChannelVoice[] }>(api.get(`/channels/${encodeURIComponent(channelId)}/voices`));
+}
+
+export function setChannelVoiceFavorite(channelId: string, voiceId: string, favorite: boolean) {
+    return request<{ voice: ChannelVoice }>(api.put(`/channels/${encodeURIComponent(channelId)}/voices/${encodeURIComponent(voiceId)}/favorite`, { favorite }));
+}
+
+export function cloneUserChannelVoice(
+    channelId: string,
+    input: {
+        file: File;
+        displayName?: string;
+        language?: string;
+        consentConfirmed: boolean;
+        idempotencyKey: string;
+    },
+) {
+    const form = new FormData();
+    form.append("file", input.file);
+    if (input.displayName) form.append("displayName", input.displayName);
+    if (input.language) form.append("language", input.language);
+    form.append("consentConfirmed", String(input.consentConfirmed));
+    form.append("idempotencyKey", input.idempotencyKey);
+    return request<{ voice: ChannelVoice }>(api.post(`/channels/${encodeURIComponent(channelId)}/voices/clone`, form));
+}

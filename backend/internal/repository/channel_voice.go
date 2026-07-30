@@ -19,9 +19,28 @@ func (r *Repository) ChannelVoices(channelID string, includeDisabled bool) ([]mo
 	return voices, query.Find(&voices).Error
 }
 
+func (r *Repository) ChannelVoicesForUser(channelID string, userID string, includeDisabled bool) ([]model.ChannelVoice, error) {
+	var voices []model.ChannelVoice
+	query := r.db.
+		Where("channel_id = ? AND (owner_user_id = '' OR owner_user_id = ?)", channelID, userID).
+		Order("display_name asc, created_at asc")
+	if !includeDisabled {
+		query = query.Where("enabled = ? AND provider_status IN ?", true, []string{"active", "pending_activation"})
+	}
+	return voices, query.Find(&voices).Error
+}
+
 func (r *Repository) ChannelVoiceByID(channelID string, id string) (*model.ChannelVoice, error) {
 	var voice model.ChannelVoice
 	if err := r.db.First(&voice, "id = ? AND channel_id = ?", id, channelID).Error; err != nil {
+		return nil, err
+	}
+	return &voice, nil
+}
+
+func (r *Repository) ChannelVoiceByIDForUser(channelID string, id string, userID string) (*model.ChannelVoice, error) {
+	var voice model.ChannelVoice
+	if err := r.db.First(&voice, "id = ? AND channel_id = ? AND (owner_user_id = '' OR owner_user_id = ?)", id, channelID, userID).Error; err != nil {
 		return nil, err
 	}
 	return &voice, nil
@@ -35,12 +54,43 @@ func (r *Repository) ChannelVoiceByKey(channelID string, voiceKey string) (*mode
 	return &voice, nil
 }
 
-func (r *Repository) ChannelVoiceByIdempotencyKey(channelID string, key string) (*model.ChannelVoice, error) {
+func (r *Repository) ChannelVoiceByIdempotencyKey(channelID string, ownerUserID string, key string) (*model.ChannelVoice, error) {
 	var voice model.ChannelVoice
-	if err := r.db.First(&voice, "channel_id = ? AND idempotency_key = ?", channelID, key).Error; err != nil {
+	if err := r.db.First(&voice, "channel_id = ? AND owner_user_id = ? AND idempotency_key = ?", channelID, ownerUserID, key).Error; err != nil {
 		return nil, err
 	}
 	return &voice, nil
+}
+
+func (r *Repository) UserVoiceFavoriteIDs(userID string, voiceIDs []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	if len(voiceIDs) == 0 {
+		return result, nil
+	}
+	var favorites []model.UserVoiceFavorite
+	if err := r.db.Where("user_id = ? AND channel_voice_id IN ?", userID, voiceIDs).Find(&favorites).Error; err != nil {
+		return nil, err
+	}
+	for _, favorite := range favorites {
+		result[favorite.ChannelVoiceID] = true
+	}
+	return result, nil
+}
+
+func (r *Repository) SetUserVoiceFavorite(userID string, channelVoiceID string, favorite bool, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if favorite {
+			item := model.UserVoiceFavorite{
+				ID: newRepositoryID(), UserID: userID, ChannelVoiceID: channelVoiceID, CreatedAt: now,
+			}
+			return tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "user_id"}, {Name: "channel_voice_id"}},
+				DoNothing: true,
+			}).Create(&item).Error
+		}
+		return tx.Where("user_id = ? AND channel_voice_id = ?", userID, channelVoiceID).
+			Delete(&model.UserVoiceFavorite{}).Error
+	})
 }
 
 func (r *Repository) ChannelVoicePreview(channelVoiceID string, modelKey string) (*model.ChannelVoicePreview, error) {
@@ -105,7 +155,7 @@ func (r *Repository) UpsertChannelVoices(voices []model.ChannelVoice, audit *mod
 			}
 		}
 		if err := tx.Model(&model.ChannelVoice{}).
-			Where("channel_id = ? AND provider_status = ? AND voice_key NOT IN ?", channelID, "active", voiceKeys).
+			Where("channel_id = ? AND owner_user_id = '' AND provider_status = ? AND voice_key NOT IN ?", channelID, "active", voiceKeys).
 			Updates(map[string]any{
 				"enabled": false, "provider_status": "missing", "last_error": "供应商音色目录已不再返回该音色", "updated_at": time.Now(),
 			}).Error; err != nil {
@@ -133,6 +183,9 @@ func (r *Repository) DeleteChannelVoice(channelID string, id string, audit *mode
 			return err
 		}
 		if err := tx.Where("channel_voice_id = ?", id).Delete(&model.ChannelVoicePreview{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("channel_voice_id = ?", id).Delete(&model.UserVoiceFavorite{}).Error; err != nil {
 			return err
 		}
 		if audit != nil {

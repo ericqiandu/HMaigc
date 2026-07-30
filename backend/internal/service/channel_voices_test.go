@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,13 +25,10 @@ func newChannelVoiceTestService(t *testing.T) (*Service, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(
-		&model.User{}, &model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelVoice{}, &model.ChannelVoicePreview{},
-		&model.AdminAuditEvent{}, &model.MembershipSubscription{}, &model.TeamMember{},
-	); err != nil {
+	if err := db.AutoMigrate(database.Models()...); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{repo: repository.New(db), dataDir: t.TempDir()}, db
+	return New(repository.New(db), t.TempDir()), db
 }
 
 func TestRunMiniMaxAudioTaskMapsRequestAndDecodesHexAudio(t *testing.T) {
@@ -265,6 +263,156 @@ func TestValidateAudioTaskVoiceEnforcesMembershipAndModelCompatibility(t *testin
 	config.Model = "speech-2.8-turbo"
 	if err := svc.validateAudioTaskVoice("user-1", config); err == nil || !strings.Contains(err.Error(), "不支持当前音频模型") {
 		t.Fatalf("incompatible model error = %v", err)
+	}
+}
+
+func TestUserChannelVoicesIsolateOwnedVoicesAndPersistFavorites(t *testing.T) {
+	svc, db := newChannelVoiceTestService(t)
+	user := &model.User{ID: "voice-owner", Username: "voice-owner", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	otherUser := &model.User{ID: "other-owner", Username: "other-owner", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	channel := model.ModelChannel{
+		ID: "channel-voice-scope", UserID: "admin", Scope: model.ChannelScopeSystem, Enabled: true,
+		Name: "MiniMax", BaseURL: "https://api.minimaxi.com/v1", APIKey: "test-key",
+		InterfaceType: model.ChannelInterfaceMiniMaxSpeech,
+	}
+	voices := []model.ChannelVoice{
+		{ID: "voice-global", ChannelID: channel.ID, VoiceKey: "SystemVoice001", DisplayName: "系统音色", Kind: "system", AccessPolicy: model.ModelAccessAuthenticated, CompatibleModelsJSON: "[]", ProviderStatus: "active", Enabled: true},
+		{ID: "voice-owned", ChannelID: channel.ID, OwnerUserID: user.ID, VoiceKey: "OwnedVoice001", DisplayName: "我的音色", Kind: "voice_cloning", AccessPolicy: model.ModelAccessAuthenticated, CompatibleModelsJSON: "[]", ProviderStatus: "pending_activation", Enabled: true},
+		{ID: "voice-other", ChannelID: channel.ID, OwnerUserID: otherUser.ID, VoiceKey: "OtherVoice001", DisplayName: "他人音色", Kind: "voice_cloning", AccessPolicy: model.ModelAccessAuthenticated, CompatibleModelsJSON: "[]", ProviderStatus: "active", Enabled: true},
+	}
+	for _, item := range []interface{}{user, otherUser, &channel, &voices[0], &voices[1], &voices[2]} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	catalog, err := svc.UserChannelVoices(user, channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 2 {
+		t.Fatalf("visible voices = %#v", catalog)
+	}
+	for _, voice := range catalog {
+		if voice.ID == "voice-other" {
+			t.Fatal("another user's private voice leaked into catalog")
+		}
+		if voice.ID == "voice-owned" && !voice.OwnedByCurrentUser {
+			t.Fatalf("owned voice response = %#v", voice)
+		}
+	}
+	favorited, err := svc.SetUserChannelVoiceFavorite(user, channel.ID, "voice-owned", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !favorited.Favorited || !favorited.OwnedByCurrentUser {
+		t.Fatalf("favorite response = %#v", favorited)
+	}
+	catalog, err = svc.UserChannelVoices(user, channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !catalog[1].Favorited && !catalog[0].Favorited {
+		t.Fatalf("favorite was not persisted: %#v", catalog)
+	}
+	config := providerConfig{
+		ChannelID: channel.ID, InterfaceType: string(model.ChannelInterfaceMiniMaxSpeech),
+		Model: "speech-2.8-hd", AudioVoice: "OwnedVoice001",
+	}
+	if err := svc.validateAudioTaskVoice(otherUser.ID, config); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("other user private voice validation error = %v", err)
+	}
+}
+
+func TestCloneUserMiniMaxChannelVoiceIsOwnedAndIdempotent(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/files/upload":
+			if err := request.ParseMultipartForm(21 << 20); err != nil {
+				t.Fatal(err)
+			}
+			if request.FormValue("purpose") != "voice_clone" {
+				t.Fatalf("upload purpose = %q", request.FormValue("purpose"))
+			}
+			_, _ = io.WriteString(w, `{"file":{"file_id":12345},"base_resp":{"status_code":0,"status_msg":"success"}}`)
+		case "/v1/voice_clone":
+			var body map[string]interface{}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(stringField(body, "voice_id"), "HM") {
+				t.Fatalf("voice clone payload = %#v", body)
+			}
+			_, _ = io.WriteString(w, `{"base_resp":{"status_code":0,"status_msg":"success"}}`)
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	svc, db := newChannelVoiceTestService(t)
+	user := &model.User{ID: "clone-user", Username: "clone-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	otherUser := &model.User{ID: "clone-user-other", Username: "clone-user-other", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	channel := model.ModelChannel{
+		ID: "clone-channel", UserID: "admin", Scope: model.ChannelScopeSystem, Enabled: true,
+		Name: "MiniMax", BaseURL: server.URL + "/v1", APIKey: "test-key", InterfaceType: model.ChannelInterfaceMiniMaxSpeech,
+	}
+	for _, item := range []interface{}{user, otherUser, &channel} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	audioPath := t.TempDir() + "/clone.wav"
+	if err := os.WriteFile(audioPath, []byte("RIFF-test-audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	openAudio := func() *os.File {
+		file, openErr := os.Open(audioPath)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		return file
+	}
+	request := CloneUserChannelVoiceRequest{
+		DisplayName: "我的克隆音色", Language: "Chinese", ConsentConfirmed: true, IdempotencyKey: "clone-idempotency-1",
+	}
+	firstFile := openAudio()
+	defer firstFile.Close()
+	first, err := svc.CloneUserMiniMaxChannelVoice(context.Background(), user, channel.ID, request, firstFile, "clone.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.OwnedByCurrentUser || first.OwnerUserID != "" || first.ProviderStatus != "pending_activation" {
+		t.Fatalf("public cloned voice = %#v", first)
+	}
+	secondFile := openAudio()
+	defer secondFile.Close()
+	second, err := svc.CloneUserMiniMaxChannelVoice(context.Background(), user, channel.ID, request, secondFile, "clone.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID || requests != 2 {
+		t.Fatalf("idempotent clone: first=%#v second=%#v requests=%d", first, second, requests)
+	}
+	otherFile := openAudio()
+	defer otherFile.Close()
+	other, err := svc.CloneUserMiniMaxChannelVoice(context.Background(), otherUser, channel.ID, request, otherFile, "clone.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.ID == first.ID || !other.OwnedByCurrentUser || requests != 4 {
+		t.Fatalf("cross-user idempotency scope: first=%#v other=%#v requests=%d", first, other, requests)
+	}
+	var saved model.ChannelVoice
+	if err := db.First(&saved, "id = ?", first.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if saved.OwnerUserID != user.ID || saved.ConsentConfirmedAt == nil || saved.SourceSHA256 == "" {
+		t.Fatalf("saved cloned voice = %#v", saved)
 	}
 }
 
