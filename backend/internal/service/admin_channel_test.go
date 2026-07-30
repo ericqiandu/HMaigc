@@ -55,6 +55,26 @@ func TestChannelFromRequestStoresXAIVideoInterfaceType(t *testing.T) {
 	}
 }
 
+func TestChannelFromRequestStoresAIOpenPlatformVolcengineInterfaceType(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+
+	channel, err := channelFromRequest(ChannelRequest{
+		Name:          "AI 开放平台火山兼容",
+		BaseURL:       server.URL,
+		APIKey:        "secret",
+		InterfaceType: "ai-open-platform-video-volcengine",
+		Models:        []string{"doubao-seedance-2-0-fast-260128"},
+	}, model.ModelChannel{})
+	if err != nil {
+		t.Fatalf("channelFromRequest() error = %v", err)
+	}
+	if channel.InterfaceType != model.ChannelInterfaceAIOpenVideoVolcengine {
+		t.Fatalf("InterfaceType = %q", channel.InterfaceType)
+	}
+}
+
 func TestMergeChannelRequestSupportsEnabledOnlyPatch(t *testing.T) {
 	enabled := false
 	req := mergeChannelRequest(ChannelRequest{Enabled: &enabled}, model.ModelChannel{

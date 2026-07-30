@@ -731,7 +731,7 @@ func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID st
 	switch channel.InterfaceType {
 	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage:
 		capability = "image"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine:
 		capability = "video"
 	}
 	requestKind := "create"

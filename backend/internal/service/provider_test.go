@@ -52,6 +52,164 @@ func TestAIOpenPlatformVideoBodyMapsModelAndOptions(t *testing.T) {
 	}
 }
 
+func TestRunAIOpenPlatformVolcengineVideoTaskUsesCompatibleContract(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case aiOpenPlatformVolcengineCreatePath:
+			if request.Header.Get("Authorization") != "Bearer test-key" {
+				t.Fatalf("create Authorization = %q", request.Header.Get("Authorization"))
+			}
+			if request.Method != http.MethodPost {
+				t.Fatalf("create method = %s", request.Method)
+			}
+			var payload map[string]interface{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode create payload: %v", err)
+			}
+			if payload["model"] != "doubao-seedance-2-0-fast-260128" ||
+				payload["resolution"] != "720p" ||
+				payload["ratio"] != "16:9" ||
+				payload["duration"] != float64(6) ||
+				payload["return_last_frame"] != true {
+				t.Fatalf("create payload = %#v", payload)
+			}
+			content, ok := payload["content"].([]interface{})
+			if !ok || len(content) != 1 {
+				t.Fatalf("content = %#v", payload["content"])
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"id":"kz-cgt-test","status":"queued"}`))
+		case aiOpenPlatformVolcenginePollPath + "kz-cgt-test":
+			if request.Header.Get("Authorization") != "Bearer test-key" {
+				t.Fatalf("poll Authorization = %q", request.Header.Get("Authorization"))
+			}
+			if request.Method != http.MethodGet {
+				t.Fatalf("poll method = %s", request.Method)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"id":"kz-cgt-test","status":"succeeded","content":{"video_url":"` + server.URL + `/temporary.mp4","kz_video_url":"` + server.URL + `/persistent.mp4","last_frame_url":"` + server.URL + `/last-frame.png"}}`))
+		case "/persistent.mp4":
+			response.Header().Set("Content-Type", "video/mp4")
+			_, _ = response.Write([]byte("video-bytes"))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	result, err := runAIOpenPlatformVolcengineVideoTask(context.Background(), canvasGenerationInput{
+		Prompt: "海面缓慢起伏",
+		Config: providerConfig{
+			BaseURL:            server.URL,
+			APIKey:             "test-key",
+			InterfaceType:      string(model.ChannelInterfaceAIOpenVideoVolcengine),
+			Model:              "doubao-seedance-2-0-fast-260128",
+			Size:               "16:9",
+			VQuality:           "720",
+			VideoSeconds:       "6",
+			VideoGenerateAudio: "true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("runAIOpenPlatformVolcengineVideoTask() error = %v", err)
+	}
+	video, ok := result["video"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("result = %#v", result)
+	}
+	if video["taskId"] != "kz-cgt-test" ||
+		video["sourceUrl"] != server.URL+"/persistent.mp4" ||
+		video["lastFrameUrl"] != server.URL+"/last-frame.png" {
+		t.Fatalf("video = %#v", video)
+	}
+}
+
+func TestRunAIOpenPlatformVolcengineVideoTaskRejectsInvalidParameters(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		ratio      string
+		resolution string
+		duration   string
+	}{
+		{
+			name:       "fast rejects 1080p",
+			model:      "doubao-seedance-2-0-fast-260128",
+			ratio:      "16:9",
+			resolution: "1080p",
+			duration:   "6",
+		},
+		{
+			name:       "rejects unsupported ratio",
+			model:      "doubao-seedance-2-0-260128",
+			ratio:      "2:1",
+			resolution: "1080p",
+			duration:   "6",
+		},
+		{
+			name:       "rejects duration outside contract",
+			model:      "doubao-seedance-2-0-260128",
+			ratio:      "16:9",
+			resolution: "1080p",
+			duration:   "16",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := runAIOpenPlatformVolcengineVideoTask(context.Background(), canvasGenerationInput{
+				Prompt: "海面缓慢起伏",
+				Config: providerConfig{
+					BaseURL:       "https://video.example.com",
+					APIKey:        "test-key",
+					InterfaceType: string(model.ChannelInterfaceAIOpenVideoVolcengine),
+					Model:         test.model,
+					Size:          test.ratio,
+					VQuality:      test.resolution,
+					VideoSeconds:  test.duration,
+				},
+			})
+			if err == nil {
+				t.Fatal("runAIOpenPlatformVolcengineVideoTask() error = nil")
+			}
+		})
+	}
+}
+
+func TestRunAIOpenPlatformVolcengineVideoTaskRejectsUnknownStatus(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case aiOpenPlatformVolcengineCreatePath:
+			_, _ = response.Write([]byte(`{"id":"kz-cgt-unknown","status":"queued"}`))
+		case aiOpenPlatformVolcenginePollPath + "kz-cgt-unknown":
+			_, _ = response.Write([]byte(`{"id":"kz-cgt-unknown","status":"unexpected"}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := runAIOpenPlatformVolcengineVideoTask(context.Background(), canvasGenerationInput{
+		Prompt: "海面缓慢起伏",
+		Config: providerConfig{
+			BaseURL:       server.URL,
+			APIKey:        "test-key",
+			InterfaceType: string(model.ChannelInterfaceAIOpenVideoVolcengine),
+			Model:         "doubao-seedance-2-0-fast-260128",
+			Size:          "16:9",
+			VQuality:      "720p",
+			VideoSeconds:  "6",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "未知状态") {
+		t.Fatalf("runAIOpenPlatformVolcengineVideoTask() error = %v", err)
+	}
+}
+
 func TestAIOpenPlatformVideoRejectsUnsupportedModelAndResolution(t *testing.T) {
 	if _, err := aiOpenPlatformVideoModelMode("unknown-model"); err == nil {
 		t.Fatal("aiOpenPlatformVideoModelMode() error = nil")

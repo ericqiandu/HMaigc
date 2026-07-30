@@ -74,6 +74,9 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
     if (result.blob) return uploadMediaFile(result.blob, "video");
+    // 后端任务以 data URL 返回生成结果时，必须先落入账号资源库并写回 storageKey；
+    // 否则项目保存虽会提取资源，节点仍会错误显示为“未同步”。
+    if (result.url?.startsWith("data:")) return uploadMediaFile(result.url, "video");
     if (result.url) return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
     throw new Error("视频接口没有返回可播放的视频");
 }

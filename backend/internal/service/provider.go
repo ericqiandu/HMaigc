@@ -185,7 +185,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	if resumedProviderRequestID(ctx) == "" {
-		requirePublicMedia := input.Config.InterfaceType == "newapi-channel-1" || input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo)
+		requirePublicMedia := input.Config.InterfaceType == "newapi-channel-1" ||
+			input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo) ||
+			input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine)
 		if err := s.hydrateGenerationMedia(userID, &input, requirePublicMedia); err != nil {
 			return nil, err
 		}
@@ -222,7 +224,7 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requirePublicURL bool) error {
 	if !strings.HasPrefix(media.StorageKey, "resource:") {
 		if requirePublicURL && strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
-			return errors.New("NewAPI 渠道 1 的参考素材不能使用内嵌数据，请先上传到 OSS 或提供公网素材地址")
+			return errors.New("当前生成渠道的参考素材不能使用内嵌数据，请先上传到 OSS 或提供公网素材地址")
 		}
 		return nil
 	}
@@ -236,18 +238,18 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requ
 			return errors.New("任务参考资源尚未上传完成")
 		}
 		if resource.Provider == "local" {
-			return errors.New("NewAPI 渠道 1 的参考素材需要公网可访问地址，请启用 OSS 后重新上传该素材")
+			return errors.New("当前生成渠道的参考素材需要公网可访问地址，请启用 OSS 后重新上传该素材")
 		}
 		setting, err := s.ossSettingForResource(userID, resource)
 		if err != nil {
 			return err
 		}
 		if setting.Provider != "aliyun" {
-			return errors.New("NewAPI 渠道 1 的参考素材暂时只支持阿里云 OSS 签名地址")
+			return errors.New("当前生成渠道的参考素材暂时只支持阿里云 OSS 签名地址")
 		}
 		signedURL, err := signedOSSObjectURL(setting, resource.ObjectKey, time.Now().Add(providerResourceURLTTL))
 		if err != nil {
-			return fmt.Errorf("生成 NewAPI 渠道 1 参考素材地址失败：%w", err)
+			return fmt.Errorf("生成当前渠道参考素材地址失败：%w", err)
 		}
 		media.URL = signedURL
 		media.DataURL = ""
@@ -609,6 +611,9 @@ func runAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]
 func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
 	if input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo) {
 		return runAIOpenPlatformVideoTask(ctx, input)
+	}
+	if input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine) {
+		return runAIOpenPlatformVolcengineVideoTask(ctx, input)
 	}
 	if input.Config.InterfaceType == "newapi-channel-2" {
 		return runNewAPIChannel2VideoTask(ctx, input)
@@ -1037,7 +1042,7 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 	allowed := map[string]map[string]bool{
 		"text":  {"chat-completion": true, "openai-response": true},
 		"image": {"openai-image": true, "apimart-image": true},
-		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "ai-open-platform-video": true},
+		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "ai-open-platform-video": true, "ai-open-platform-video-volcengine": true},
 		"audio": {"minimax-speech": true},
 	}
 	if allowed[mode] != nil && !allowed[mode][interfaceType] {
