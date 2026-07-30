@@ -87,6 +87,7 @@ func main() {
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterAuthRoutes(api, svc)
 	handler.RegisterAdminRoutes(api, svc)
+	handler.RegisterAdminReleaseRoutes(api, svc, env("CANVAS_CHANGELOG_PATH", "../CHANGELOG.md"))
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)

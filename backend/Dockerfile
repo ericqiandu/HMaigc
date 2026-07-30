@@ -30,6 +30,7 @@ ENV CANVAS_BACKEND_ADDR=:8080
 ENV CANVAS_BACKEND_DATA_DIR=/data
 
 RUN mkdir -p /data && chown -R app:app /data
+COPY CHANGELOG.md /app/CHANGELOG.md
 COPY --from=backend-build /out/hmaigc-backend /usr/local/bin/hmaigc-backend
 COPY --from=backend-build /out/hmaigc-migrate-sqlite-postgres /usr/local/bin/hmaigc-migrate-sqlite-postgres
 

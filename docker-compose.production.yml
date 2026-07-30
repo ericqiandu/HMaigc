@@ -35,6 +35,7 @@ services:
     environment:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
+      CANVAS_CHANGELOG_PATH: /app/CHANGELOG.md
       CANVAS_DATABASE_DRIVER: postgres
       DATABASE_URL: postgresql://${POSTGRES_USER:-hmaigc}:${POSTGRES_PASSWORD:?必须配置 PostgreSQL 密码}@postgres:5432/${POSTGRES_DB:-hmaigc}?sslmode=disable
       REDIS_URL: redis://redis:6379/0

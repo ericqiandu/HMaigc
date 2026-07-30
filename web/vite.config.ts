@@ -6,13 +6,11 @@ import { defineConfig } from "vite";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
-const appChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
 
 export default defineConfig({
     plugins: [react()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
-        __APP_CHANGELOG__: JSON.stringify(appChangelog),
     },
     server: {
         proxy: {

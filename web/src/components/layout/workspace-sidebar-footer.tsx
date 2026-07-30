@@ -3,7 +3,6 @@ import { BookOpenCheck, ChevronRight, Coins, Gem, LogIn, LogOut, Moon, Settings2
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
@@ -29,9 +28,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
     const { message } = App.useApp();
     const [menuOpen, setMenuOpen] = useState(false);
     const { availableMicrocredits } = useWalletBalance(user?.id, true);
-    const balance = availableMicrocredits === null
-        ? "--"
-        : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+    const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 
     const handleLogout = async () => {
         try {
@@ -77,12 +74,15 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                         placement={compact ? "bottomRight" : "rightBottom"}
                         open={menuOpen}
                         onOpenChange={setMenuOpen}
-                        content={(
+                        content={
                             <div className="workspace-account-popover-content w-[232px] py-0.5">
                                 <div className="workspace-account-popover-summary flex items-center gap-3 border-b border-border/65 px-1 pb-3">
                                     <UserAvatar user={user} className="size-8" />
                                     <div className="workspace-account-popover-copy min-w-0 flex-1">
-                                        <div className="workspace-account-popover-name-row flex min-w-0 items-center gap-1.5"><span className="workspace-account-popover-name truncate text-sm font-medium">{user.displayName || user.username}</span><IdentityProviderBadge user={user} /></div>
+                                        <div className="workspace-account-popover-name-row flex min-w-0 items-center gap-1.5">
+                                            <span className="workspace-account-popover-name truncate text-sm font-medium">{user.displayName || user.username}</span>
+                                            <IdentityProviderBadge user={user} />
+                                        </div>
                                         <div className="workspace-account-popover-balance mt-0.5 truncate text-[11px] tabular-nums text-foreground/45">可用 {balance} 积分</div>
                                     </div>
                                 </div>
@@ -95,20 +95,23 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                                     {user.role === "admin" ? <MenuLink to="/admin" icon={<ShieldCheck />} label="管理员后台" onNavigate={() => setMenuOpen(false)} /> : null}
                                 </nav>
 
-                                <div className="workspace-account-popover-changelog border-y border-border/65 py-2">
-                                    <AppChangelogButton className="workspace-account-popover-changelog-button flex h-8 w-full items-center gap-2 rounded px-2 text-[11px] text-foreground/58 hover:bg-foreground/[.055] hover:text-foreground [&_svg]:size-3.5" showLabel showVersion versionClassName="workspace-account-popover-version ml-auto text-[9px] tabular-nums text-foreground/32" />
-                                </div>
-
                                 <div className="workspace-account-popover-theme flex h-10 items-center px-2">
                                     {theme === "dark" ? <Moon className="workspace-account-popover-theme-icon size-3.5 text-foreground/45" /> : <Sun className="workspace-account-popover-theme-icon size-3.5 text-foreground/45" />}
                                     <span className="workspace-account-popover-theme-label ml-2 flex-1 text-xs text-foreground/65">深色模式</span>
                                     <Switch className="workspace-account-popover-theme-switch" size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
                                 </div>
-                                <button type="button" className="workspace-account-popover-logout flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-red-500/[.08] hover:text-red-600" onClick={() => void handleLogout()}><LogOut className="workspace-account-popover-logout-icon size-3.5" /><span className="workspace-account-popover-logout-label">退出登录</span></button>
+                                <button type="button" className="workspace-account-popover-logout flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-red-500/[.08] hover:text-red-600" onClick={() => void handleLogout()}>
+                                    <LogOut className="workspace-account-popover-logout-icon size-3.5" />
+                                    <span className="workspace-account-popover-logout-label">退出登录</span>
+                                </button>
                             </div>
-                        )}
+                        }
                     >
-                        <button type="button" className={cn("workspace-account-trigger flex min-h-10 w-full min-w-0 items-center overflow-hidden rounded-md text-left transition-colors hover:bg-foreground/[.045]", accountClassName)} title={`${user.displayName || user.username} · ${balance} 积分`}>
+                        <button
+                            type="button"
+                            className={cn("workspace-account-trigger flex min-h-10 w-full min-w-0 items-center overflow-hidden rounded-md text-left transition-colors hover:bg-foreground/[.045]", accountClassName)}
+                            title={`${user.displayName || user.username} · ${balance} 积分`}
+                        >
                             <UserAvatar user={user} className="size-7" />
                             <span className={cn("workspace-account-trigger-copy min-w-0 flex-1 flex-col", expandedClassName)}>
                                 <span className="workspace-account-trigger-name truncate text-xs font-medium">{user.displayName || user.username}</span>
@@ -120,7 +123,8 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                 </div>
             ) : (
                 <Link to="/login" className={cn("workspace-account-login flex h-10 items-center rounded-md text-xs text-foreground/65 hover:bg-foreground/[.05] hover:text-foreground", collapsedClassName)} title="登录">
-                    <LogIn className="workspace-account-login-icon size-4 shrink-0" /><span className={cn("workspace-account-login-label", expandedClassName)}>登录</span>
+                    <LogIn className="workspace-account-login-icon size-4 shrink-0" />
+                    <span className={cn("workspace-account-login-label", expandedClassName)}>登录</span>
                 </Link>
             )}
         </div>
@@ -128,7 +132,13 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
 }
 
 function MenuLink({ to, icon, label, onNavigate }: { to: string; icon: ReactNode; label: string; onNavigate: () => void }) {
-    return <Link to={to} onClick={onNavigate} className="flex h-9 items-center gap-2.5 rounded px-2 text-xs text-foreground/62 hover:bg-foreground/[.055] hover:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">{icon}<span className="flex-1">{label}</span><ChevronRight className="!size-3 text-foreground/25" /></Link>;
+    return (
+        <Link to={to} onClick={onNavigate} className="flex h-9 items-center gap-2.5 rounded px-2 text-xs text-foreground/62 hover:bg-foreground/[.055] hover:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">
+            {icon}
+            <span className="flex-1">{label}</span>
+            <ChevronRight className="!size-3 text-foreground/25" />
+        </Link>
+    );
 }
 
 function UserAvatar({ user, className }: { user: LocalUser; className: string }) {
@@ -140,11 +150,7 @@ function UserAvatar({ user, className }: { user: LocalUser; className: string })
     return (
         <span className={`relative grid shrink-0 place-items-center ${className}`}>
             <span className="grid size-full place-items-center overflow-hidden rounded-full bg-muted text-foreground/55">
-                {avatarUrl && !failed ? (
-                    <img src={avatarUrl} alt="" referrerPolicy="no-referrer" className="size-full object-cover" onError={() => setFailed(true)} />
-                ) : (
-                    <UserRound className="size-[52%]" aria-hidden />
-                )}
+                {avatarUrl && !failed ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer" className="size-full object-cover" onError={() => setFailed(true)} /> : <UserRound className="size-[52%]" aria-hidden />}
             </span>
             <IdentityProviderBadge user={user} compact className="absolute -bottom-1 -right-1" />
         </span>
