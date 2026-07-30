@@ -1,0 +1,40 @@
+.canvas-connection-cut-control-anchor {
+    contain: layout paint;
+    backface-visibility: hidden;
+    will-change: transform;
+}
+
+.canvas-connection-cut-control {
+    opacity: 1;
+    transform: translateZ(0) scale(1);
+    transition:
+        background-color 120ms ease-out,
+        border-color 120ms ease-out,
+        color 120ms ease-out,
+        box-shadow 120ms ease-out,
+        transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: canvas-connection-cut-control-enter 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    will-change: transform;
+}
+
+.canvas-connection-cut-control:hover {
+    transform: translateZ(0) scale(1.06);
+}
+
+.canvas-connection-cut-control:active {
+    transform: translateZ(0) scale(0.94);
+}
+
+@keyframes canvas-connection-cut-control-enter {
+    from {
+        opacity: 0;
+        transform: translateZ(0) scale(0.78);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .canvas-connection-cut-control {
+        animation: none;
+        transition-duration: 0.01ms;
+    }
+}
