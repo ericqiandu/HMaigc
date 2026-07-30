@@ -1,9 +1,11 @@
 import { Alert, Button, Empty, message, Segmented, Spin } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ChevronLeft, Crown, ImageIcon, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { useSiteSettings } from "@/components/site/site-settings-provider";
+import { membershipQueryKey } from "@/hooks/use-membership-action";
 import { cancelMembershipOrder, createMembershipOrder, createTeam, getMyMembership, listMembershipPlans, type MembershipAudience, type MembershipBillingCycle, type MembershipOverview, type MembershipPlan } from "@/services/api/membership";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -26,6 +28,7 @@ const paidCycleOrder: MembershipBillingCycle[] = ["year", "month"];
 
 export default function MembershipPage() {
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
     const [searchParams] = useSearchParams();
     const requestedAudience = searchParams.get("audience") === "team" ? "team" : "personal";
     const requestedTeamId = searchParams.get("teamId") || undefined;
@@ -54,6 +57,9 @@ export default function MembershipPage() {
             const [nextPlans, nextOverview] = await Promise.all([listMembershipPlans(), user ? getMyMembership() : Promise.resolve(null)]);
             setPlans(nextPlans);
             setOverview(nextOverview);
+            if (user && nextOverview) {
+                queryClient.setQueryData(membershipQueryKey(user.id), nextOverview);
+            }
             setTeamSeats((current) => {
                 const next = { ...current };
                 nextPlans
@@ -70,7 +76,7 @@ export default function MembershipPage() {
         } finally {
             setLoading(false);
         }
-    }, [user]);
+    }, [queryClient, user]);
 
     useEffect(() => {
         void load();

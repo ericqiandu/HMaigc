@@ -4,7 +4,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
+import { useMembershipAction } from "@/hooks/use-membership-action";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
+import type { MembershipAction } from "@/lib/membership-action";
 import { applyUserSession } from "@/lib/user-session";
 import { logout } from "@/services/api/auth";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -20,6 +22,7 @@ export function UpdreamAccountActions() {
     const setTheme = useThemeStore((state) => state.setTheme);
     const [menuOpen, setMenuOpen] = useState(false);
     const { availableMicrocredits } = useWalletBalance(user?.id, Boolean(user));
+    const membershipAction = useMembershipAction(user?.id);
     const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 
     const handleLogout = async () => {
@@ -68,9 +71,9 @@ export function UpdreamAccountActions() {
                     <Zap className="updream-account-balance-icon size-4 fill-white text-white" aria-hidden />
                     <span className="updream-account-balance-value">{balance}</span>
                 </Link>
-                <Link to="/membership" className="updream-account-member flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium transition-opacity hover:opacity-70">
+                <Link to="/membership" className="updream-account-member flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium transition-opacity hover:opacity-70" aria-label={membershipAction.label} title={membershipAction.title}>
                     <MembershipIcon className="updream-account-member-icon size-4" />
-                    <span className="updream-account-member-label hidden sm:inline">升级会员</span>
+                    <span className="updream-account-member-label hidden sm:inline">{membershipAction.label}</span>
                 </Link>
                 <Popover
                     className="updream-account-popover"
@@ -78,7 +81,7 @@ export function UpdreamAccountActions() {
                     placement="bottomRight"
                     open={menuOpen}
                     onOpenChange={setMenuOpen}
-                    content={<AccountMenu user={user} balance={balance} theme={theme} setTheme={setTheme} close={() => setMenuOpen(false)} invite={() => void handleInvite()} logout={() => void handleLogout()} />}
+                    content={<AccountMenu user={user} balance={balance} membershipAction={membershipAction} theme={theme} setTheme={setTheme} close={() => setMenuOpen(false)} invite={() => void handleInvite()} logout={() => void handleLogout()} />}
                 >
                     <button type="button" className="updream-account-trigger flex h-8 items-center gap-1 pl-1 pr-1.5 text-left transition-opacity hover:opacity-75" aria-label={`打开 ${user.displayName || user.username} 的账户菜单`}>
                         <UpdreamUserAvatar user={user} className="size-7" />
@@ -93,6 +96,7 @@ export function UpdreamAccountActions() {
 function AccountMenu({
     user,
     balance,
+    membershipAction,
     theme,
     setTheme,
     close,
@@ -101,6 +105,7 @@ function AccountMenu({
 }: {
     user: LocalUser;
     balance: string;
+    membershipAction: MembershipAction;
     theme: "light" | "dark";
     setTheme: (theme: "light" | "dark") => void;
     close: () => void;
@@ -122,7 +127,7 @@ function AccountMenu({
             </div>
             <nav className="updream-account-menu-nav py-1" aria-label="账户菜单">
                 <AccountMenuLink to="/wallet" icon={<Coins className="updream-account-menu-icon size-4" />} label="积分中心" onNavigate={close} />
-                <AccountMenuLink to="/membership" icon={<MembershipIcon className="updream-account-menu-icon size-4" />} label="升级会员" onNavigate={close} />
+                <AccountMenuLink to="/membership" icon={<MembershipIcon className="updream-account-menu-icon size-4" />} label={membershipAction.label} onNavigate={close} />
                 <AccountMenuButton icon={<UserPlus className="updream-account-menu-icon size-4" />} label="邀请好友" onClick={invite} />
                 <AccountMenuLink to="/settings" icon={<Settings2 className="updream-account-menu-icon size-4" />} label="账户设置" onNavigate={close} />
                 <AccountMenuLink to="/settings?section=watermark" icon={<Stamp className="updream-account-menu-icon size-4" />} label="AI 水印设置" onNavigate={close} />

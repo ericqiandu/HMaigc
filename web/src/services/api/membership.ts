@@ -53,6 +53,7 @@ export type MembershipEntitlement = {
     planName: string;
     tier: string;
     audience: MembershipAudience;
+    isActiveMember: boolean;
     imageConcurrency: number;
     videoConcurrency: number;
     topupDiscountBasisPoints: number;

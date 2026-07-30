@@ -128,6 +128,25 @@ func TestEnsureDefaultMembershipPlansIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestMembershipEntitlementMarksOriginUserAsNonMember(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "user-origin", Username: "origin", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	entitlement, err := svc.MembershipEntitlement(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entitlement.IsActiveMember {
+		t.Fatalf("Origin user was marked as an active member: %#v", entitlement)
+	}
+}
+
 func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
@@ -162,6 +181,9 @@ func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.
 	}
 	if entitlement.Tier != "pro" || entitlement.ImageConcurrency != 6 || entitlement.VideoConcurrency != 4 {
 		t.Fatalf("unexpected entitlement: %#v", entitlement)
+	}
+	if !entitlement.IsActiveMember {
+		t.Fatalf("paid subscription was not marked as an active member: %#v", entitlement)
 	}
 	var account model.CreditAccount
 	if err := db.First(&account, "user_id = ?", user.ID).Error; err != nil {

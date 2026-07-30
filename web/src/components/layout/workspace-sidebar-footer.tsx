@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router";
 
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
+import { useMembershipAction } from "@/hooks/use-membership-action";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
 import { applyUserSession } from "@/lib/user-session";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
     const { message } = App.useApp();
     const [menuOpen, setMenuOpen] = useState(false);
     const { availableMicrocredits } = useWalletBalance(user?.id, true);
+    const membershipAction = useMembershipAction(user?.id);
     const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 
     const handleLogout = async () => {
@@ -63,9 +65,9 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                                 <Zap className="workspace-top-bar-balance-icon" aria-hidden="true" />
                                 <span className="workspace-top-bar-balance-value">{balance}</span>
                             </Link>
-                            <Link to="/membership" className="workspace-top-bar-membership" aria-label="升级会员" title="升级会员">
+                            <Link to="/membership" className="workspace-top-bar-membership" aria-label={membershipAction.label} title={membershipAction.title}>
                                 <Gem className="workspace-top-bar-membership-icon" aria-hidden="true" />
-                                <span className="workspace-top-bar-membership-label">升级会员</span>
+                                <span className="workspace-top-bar-membership-label">{membershipAction.label}</span>
                             </Link>
                         </>
                     ) : null}

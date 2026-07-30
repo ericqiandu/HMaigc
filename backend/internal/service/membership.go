@@ -24,6 +24,7 @@ type MembershipEntitlement struct {
 	PlanName                  string                   `json:"planName"`
 	Tier                      string                   `json:"tier"`
 	Audience                  model.MembershipAudience `json:"audience"`
+	IsActiveMember            bool                     `json:"isActiveMember"`
 	ImageConcurrency          int                      `json:"imageConcurrency"`
 	VideoConcurrency          int                      `json:"videoConcurrency"`
 	UnlimitedTaskQueue        bool                     `json:"unlimitedTaskQueue"`
@@ -197,7 +198,7 @@ func (s *Service) MembershipEntitlement(user *model.User) (*MembershipEntitlemen
 	}
 	for _, plan := range plans {
 		if plan.Code == "origin-free" {
-			return entitlementFromPlan(plan, "", nil), nil
+			return entitlementFromPlan(plan, false, "", nil), nil
 		}
 	}
 	return nil, errors.New("缺少启用的 Origin 基础套餐，无法确定并发权益")
@@ -240,7 +241,7 @@ func membershipEntitlementFromSubscription(subscription model.MembershipSubscrip
 	if snapshot.TopupDiscountBasisPoints < 0 || snapshot.TopupDiscountBasisPoints > 10000 {
 		return nil, fmt.Errorf("有效订阅 %s 的套餐快照充值折扣无效", subscription.ID)
 	}
-	return entitlementFromPlan(snapshot, subscription.TeamID, subscription.EndsAt), nil
+	return entitlementFromPlan(snapshot, true, subscription.TeamID, subscription.EndsAt), nil
 }
 
 func (s *Service) billingTeamID(userID string, now time.Time) (string, error) {
@@ -264,9 +265,10 @@ func (s *Service) billingTeamID(userID string, now time.Time) (string, error) {
 	return selected.TeamID, nil
 }
 
-func entitlementFromPlan(plan model.MembershipPlan, teamID string, expiresAt *time.Time) *MembershipEntitlement {
+func entitlementFromPlan(plan model.MembershipPlan, isActiveMember bool, teamID string, expiresAt *time.Time) *MembershipEntitlement {
 	return &MembershipEntitlement{
 		PlanID: plan.ID, PlanName: plan.Name, Tier: plan.Tier, Audience: plan.Audience,
+		IsActiveMember:   isActiveMember,
 		ImageConcurrency: plan.ImageConcurrency, VideoConcurrency: plan.VideoConcurrency,
 		UnlimitedTaskQueue: plan.UnlimitedTaskQueue, TeamStorageBytes: plan.TeamStorageBytes,
 		SharedAssetsEnabled: plan.SharedAssetsEnabled, ProjectPermissionsEnabled: plan.ProjectPermissionsEnabled,
