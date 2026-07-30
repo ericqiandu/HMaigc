@@ -175,6 +175,34 @@ No actionable P0, P1 or P2 issue remains in the requested first-page workbench s
 
 final result: passed
 
+## Asset Library Navigation Overlap Fix QA (2026-07-30)
+
+- User-reported source: `qa-artifacts/assets-library-overlap-fix-20260730/source-user-report-1096x909.png`.
+- Reproduction before fix: `qa-artifacts/assets-library-overlap-fix-20260730/reproduction-before-1096x909.png`.
+- Implementation after fix: `qa-artifacts/assets-library-overlap-fix-20260730/implementation-after-1095x910.png`.
+- Same-size comparison: `qa-artifacts/assets-library-overlap-fix-20260730/comparison-report-vs-fix.png`.
+- Source and implementation viewport: 1095 × 910 CSS px at device scale factor 1.
+- State: dark asset library, empty real local asset dataset, floating workspace navigation visible.
+
+### Root cause and fix
+
+- P1: at widths from 1025px through 1279px, the fixed workspace navigation occupied x=40–88 while the shared workspace frame started at x=43.83. The asset category controls therefore rendered underneath the navigation.
+- The fault was in the shared workspace responsive contract, not in the asset page. The fix reserves a 104px left inset for all affected workspace frames in that breakpoint, matching the established wide-screen frame and avoiding a page-specific patch.
+
+### Verified result
+
+- At the reported size, the workspace content now starts at x=104 while the navigation ends at x=88, leaving a 16px safety gap.
+- Measured navigation/content collisions changed from 2 before the fix to 0 after the fix.
+- Adjacent breakpoint checks at 1024, 1025, 1096, 1199, 1279 and 1280px show no navigation overlap and no document-level horizontal overflow.
+- Typography, color tokens, icons, copy and asset behavior are unchanged.
+- The fix applies consistently to projects, canvas library, tasks, assets, skills, settings, teams and wallet workspaces that use the shared frame.
+
+### Final result
+
+No actionable P0, P1 or P2 issue remains for the reported medium-width navigation overlap.
+
+final result: passed
+
 ## Workspace UI Rollout QA (2026-07-30)
 
 - Scope: projects, canvas library, tasks, assets, skills, settings, teams and wallet workspaces.

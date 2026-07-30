@@ -229,6 +229,18 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
     }
 }
 
+@media (min-width: 1025px) and (max-width: 1279px) {
+    .workspace-ui-scope .workspace-page-frame,
+    .workspace-ui-scope.canvas-library-page .canvas-library-content,
+    .settings-workspace-page {
+        padding-left: 104px !important;
+    }
+
+    .workspace-ui-scope.project-workbench-page .project-workbench-shell {
+        padding-left: 104px !important;
+    }
+}
+
 @media (max-width: 1023px) {
     :where(.workspace-ui-scope, .settings-workspace-page) .app-page-header {
         align-items: flex-start;
