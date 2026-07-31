@@ -52,13 +52,35 @@
     box-shadow: 0 16px 46px color-mix(in srgb, #000 36%, transparent) !important;
 }
 
+.canvas-audio-text-popover--pause .ant-popover-arrow {
+    display: none;
+}
+
+.canvas-audio-text-popover--pause .ant-popover-container,
+.canvas-audio-text-popover--pause .ant-popover-inner {
+    width: 120px;
+    padding: 4px !important;
+    border: 1px solid color-mix(in srgb, var(--foreground) 24%, transparent) !important;
+    border-radius: 16px !important;
+    background: color-mix(in srgb, var(--background) 95%, var(--foreground) 5%) !important;
+    box-shadow:
+        0 4px 10px color-mix(in srgb, #000 25%, transparent),
+        0 2px 4px color-mix(in srgb, #000 30%, transparent) !important;
+    backdrop-filter: blur(32px);
+}
+
+.canvas-audio-text-popover--pause .ant-popover-content {
+    border: 0 !important;
+    background: transparent !important;
+}
+
 .canvas-audio-insert-menu {
     color: var(--foreground);
     font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .canvas-audio-insert-menu--pause {
-    width: 120px;
+    width: 110px;
 }
 
 .canvas-audio-insert-menu--vocal {
@@ -90,18 +112,20 @@
 .canvas-audio-insert-menu-list {
     display: flex;
     flex-direction: column;
-    padding: 8px 0;
+    gap: 2px;
+    padding: 0;
 }
 
 .canvas-audio-insert-option {
     display: flex;
-    min-height: 36px;
+    width: 100%;
+    height: 32px;
     align-items: center;
-    padding: 0 12px;
+    padding: 0 8px;
     border: 0;
-    border-radius: 0;
+    border-radius: 8px;
     background: transparent;
-    color: color-mix(in srgb, var(--foreground) 82%, transparent);
+    color: var(--foreground);
     cursor: pointer;
     text-align: left;
     transition:
@@ -118,14 +142,77 @@
 .canvas-audio-insert-option:hover,
 .canvas-audio-insert-option:focus-visible {
     outline: none;
-    color: var(--workspace-accent, #2997ff);
+}
+
+.canvas-audio-insert-option:focus-visible {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-audio-popover-accent) 72%, transparent);
+}
+
+.canvas-audio-insert-option--active {
+    color: var(--canvas-audio-popover-accent);
 }
 
 .canvas-audio-insert-option-duration {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 400;
     line-height: 20px;
     font-variant-numeric: tabular-nums;
+}
+
+.canvas-audio-custom-pause {
+    display: flex;
+    min-height: 32px;
+    align-items: center;
+    padding: 0 8px;
+    border: 1px solid color-mix(in srgb, var(--foreground) 24%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.canvas-audio-custom-pause--invalid {
+    flex-wrap: wrap;
+    padding-block: 5px;
+}
+
+.canvas-audio-custom-pause-input {
+    width: 100%;
+    min-width: 0;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--foreground);
+    font-size: 13px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+}
+
+.canvas-audio-custom-pause-input::placeholder {
+    color: color-mix(in srgb, var(--foreground) 44%, transparent);
+}
+
+.canvas-audio-custom-pause-error {
+    flex: 0 0 100%;
+    color: var(--destructive);
+    font-size: 10px;
+    line-height: 14px;
+}
+
+.canvas-audio-pause-token {
+    display: inline-flex;
+    height: 1.55em;
+    align-items: center;
+    margin-inline: 0.06em;
+    padding-inline: 0.22em;
+    transform: translateY(0.18em);
+    border-radius: 0.28em;
+    background: color-mix(in srgb, var(--workspace-accent) 12%, transparent);
+    color: var(--workspace-accent);
+    font-size: 0.92em;
+    font-weight: 500;
+    line-height: 1;
+    user-select: none;
 }
 
 .canvas-audio-vocal-list {

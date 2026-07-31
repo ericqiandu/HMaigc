@@ -1,11 +1,12 @@
-import { forwardRef, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent, KeyboardEvent, MouseEvent, PointerEvent, TextareaHTMLAttributes } from "react";
+import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ClipboardEvent, KeyboardEvent, MouseEvent, PointerEvent, Ref, TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Music2, Sparkles, UserRound, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { parseAudioPauseToken, replaceTextRange, type TextRange } from "@/lib/audio-pause";
 import { CanvasNodeType } from "@/types/canvas";
 
 type MentionState = {
@@ -13,12 +14,7 @@ type MentionState = {
     query: string;
 };
 
-type EditableSelection = {
-    start: number;
-    end: number;
-};
-
-type MentionTextPart =
+type EditableTextPart =
     | {
           type: "text";
           text: string;
@@ -27,6 +23,10 @@ type MentionTextPart =
           type: "mention";
           token: string;
           reference: CanvasResourceReference;
+      }
+    | {
+          type: "audioPause";
+          token: string;
       };
 
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> & {
@@ -36,11 +36,18 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     onSubmit?: () => void;
     containerClassName?: string;
     highlightLabels?: boolean;
+    highlightAudioPauseTokens?: boolean;
     onContentSizeChange?: (height: number) => void;
+    editorHandleRef?: Ref<CanvasResourceMentionTextareaHandle>;
+};
+
+export type CanvasResourceMentionTextareaHandle = {
+    replaceSelection: (text: string) => TextRange;
+    replaceRange: (range: TextRange, text: string) => TextRange;
 };
 
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, onContentSizeChange, ...props },
+    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, highlightAudioPauseTokens = false, onContentSizeChange, editorHandleRef, ...props },
     forwardedRef,
 ) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -60,7 +67,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         return activeItems.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
     }, [mention, references]);
     const activeReferences = useMemo(() => (highlightLabels ? references.filter((item) => item.active) : []), [highlightLabels, references]);
-    const useRichEditor = Boolean(activeReferences.length);
+    const useRichEditor = Boolean(activeReferences.length || highlightAudioPauseTokens);
     const reportContentSize = useCallback((element: HTMLElement | null) => {
         if (!element || !onContentSizeChange) return;
         const previousHeight = element.style.height;
@@ -81,12 +88,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
             return;
         }
         const selection = pendingSelectionRef.current ?? (isFocused ? getEditableSelection(editor)?.start ?? null : null);
-        renderEditableContent(editor, value, activeReferences);
+        renderEditableContent(editor, value, activeReferences, highlightAudioPauseTokens);
         lastRenderedValueRef.current = value;
         if (isFocused && selection !== null) setEditableSelection(editor, selection);
         pendingSelectionRef.current = null;
         reportContentSize(editor);
-    }, [activeReferences, reportContentSize, useRichEditor, value]);
+    }, [activeReferences, highlightAudioPauseTokens, reportContentSize, useRichEditor, value]);
 
     useLayoutEffect(() => {
         const element = useRichEditor ? editorRef.current : textareaRef.current;
@@ -117,6 +124,42 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         onChange(next);
         if (typeof selectionStart === "number") focusEditor(selectionStart);
     };
+
+    const currentValueAndSelection = () => {
+        if (useRichEditor) {
+            const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
+            return {
+                value: currentValue,
+                selection: getEditableSelection(editorRef.current) ?? { start: currentValue.length, end: currentValue.length },
+            };
+        }
+        const textarea = textareaRef.current;
+        const currentValue = textarea?.value ?? value;
+        return {
+            value: currentValue,
+            selection: {
+                start: textarea?.selectionStart ?? currentValue.length,
+                end: textarea?.selectionEnd ?? currentValue.length,
+            },
+        };
+    };
+
+    const replaceRange = (range: TextRange, text: string) => {
+        const result = replaceTextRange(currentValueAndSelection().value, range, text);
+        updateValue(result.value, result.range.end);
+        return result.range;
+    };
+
+    useImperativeHandle(
+        editorHandleRef,
+        () => ({
+            replaceSelection: (text) => {
+                const current = currentValueAndSelection();
+                return replaceRange(current.selection, text);
+            },
+            replaceRange,
+        }),
+    );
 
     const closeMention = () => {
         setMention(null);
@@ -353,6 +396,7 @@ function createInlineMentionChip(reference: CanvasResourceReference, token: stri
     const chip = document.createElement("span");
     chip.contentEditable = "false";
     chip.dataset.mentionToken = token;
+    chip.dataset.inlineToken = token;
     chip.className = "mx-[0.06em] inline-flex h-[1.55em] translate-y-[0.18em] select-none items-center gap-[0.18em] rounded-[0.38em] bg-black/[0.06] px-[0.22em] text-[0.92em] font-medium leading-none text-current align-baseline dark:bg-white/[0.1]";
 
     const at = document.createElement("span");
@@ -367,6 +411,16 @@ function createInlineMentionChip(reference: CanvasResourceReference, token: stri
     label.textContent = reference.label;
     chip.appendChild(label);
 
+    return chip;
+}
+
+function createInlineAudioPauseChip(token: string) {
+    const chip = document.createElement("span");
+    chip.contentEditable = "false";
+    chip.dataset.audioPauseToken = token;
+    chip.dataset.inlineToken = token;
+    chip.className = "canvas-audio-pause-token";
+    chip.textContent = token;
     return chip;
 }
 
@@ -465,8 +519,8 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     );
 }
 
-function splitMentionText(value: string, references: CanvasResourceReference[]) {
-    if (!references.length || !value) return value ? [{ type: "text", text: value } as MentionTextPart] : [];
+function splitEditableText(value: string, references: CanvasResourceReference[], highlightAudioPauseTokens: boolean) {
+    if ((!references.length && !highlightAudioPauseTokens) || !value) return value ? [{ type: "text", text: value } as EditableTextPart] : [];
     const referenceByToken = new Map<string, { reference: CanvasResourceReference; serializedToken: string }>();
     references.forEach((reference) => {
         const serializedToken = canvasResourceMentionToken(reference);
@@ -474,27 +528,41 @@ function splitMentionText(value: string, references: CanvasResourceReference[]) 
         referenceByToken.set(`@${reference.label}`, { reference, serializedToken });
     });
     const tokens = [...referenceByToken.keys()].sort((a, b) => b.length - a.length);
-    const parts: MentionTextPart[] = [];
+    const parts: EditableTextPart[] = [];
     let index = 0;
     while (index < value.length) {
         const token = tokens.find((item) => value.startsWith(item, index) && hasMentionBoundary(value, index + item.length));
-        if (!token) {
-            const nextTokenIndex = findNextMentionIndex(value, tokens, index + 1);
-            const end = nextTokenIndex < 0 ? value.length : nextTokenIndex;
-            parts.push({ type: "text", text: value.slice(index, end) });
-            index = end;
+        if (token) {
+            const matched = referenceByToken.get(token);
+            if (!matched) throw new Error(`未找到画布引用标记：${token}`);
+            parts.push({ type: "mention", token: matched.serializedToken, reference: matched.reference });
+            index += token.length;
             continue;
         }
-        const matched = referenceByToken.get(token)!;
-        parts.push({ type: "mention", token: matched.serializedToken, reference: matched.reference });
-        index += token.length;
+        const audioPauseToken = highlightAudioPauseTokens ? audioPauseTokenAt(value, index) : null;
+        if (audioPauseToken) {
+            parts.push({ type: "audioPause", token: audioPauseToken });
+            index += audioPauseToken.length;
+            continue;
+        }
+        const nextMentionIndex = findNextMentionIndex(value, tokens, index + 1);
+        const nextAudioPauseIndex = highlightAudioPauseTokens ? findNextAudioPauseIndex(value, index + 1) : -1;
+        const nextTokenIndexes = [nextMentionIndex, nextAudioPauseIndex].filter((candidate) => candidate >= 0);
+        const end = nextTokenIndexes.length ? Math.min(...nextTokenIndexes) : value.length;
+        if (end <= index) {
+            parts.push({ type: "text", text: value[index] });
+            index += 1;
+        } else {
+            parts.push({ type: "text", text: value.slice(index, end) });
+            index = end;
+        }
     }
     return parts;
 }
 
-function renderEditableContent(editor: HTMLElement, value: string, references: CanvasResourceReference[]) {
-    const parts = splitMentionText(value, references);
-    const nodes = parts.map((part) => (part.type === "mention" ? createInlineMentionChip(part.reference, part.token) : document.createTextNode(part.text)));
+function renderEditableContent(editor: HTMLElement, value: string, references: CanvasResourceReference[], highlightAudioPauseTokens: boolean) {
+    const parts = splitEditableText(value, references, highlightAudioPauseTokens);
+    const nodes = parts.map((part) => (part.type === "mention" ? createInlineMentionChip(part.reference, part.token) : part.type === "audioPause" ? createInlineAudioPauseChip(part.token) : document.createTextNode(part.text)));
     editor.replaceChildren(...nodes);
 }
 
@@ -505,6 +573,23 @@ function findNextMentionIndex(value: string, tokens: string[], fromIndex: number
         if (index >= 0 && hasMentionBoundary(value, index + token.length) && (next < 0 || index < next)) next = index;
     });
     return next;
+}
+
+function audioPauseTokenAt(value: string, index: number) {
+    if (!value.startsWith("<#", index)) return null;
+    const tokenEnd = value.indexOf("#>", index + 2);
+    if (tokenEnd < 0) return null;
+    const token = value.slice(index, tokenEnd + 2);
+    return parseAudioPauseToken(token) === null ? null : token;
+}
+
+function findNextAudioPauseIndex(value: string, fromIndex: number) {
+    let candidate = value.indexOf("<#", fromIndex);
+    while (candidate >= 0) {
+        if (audioPauseTokenAt(value, candidate)) return candidate;
+        candidate = value.indexOf("<#", candidate + 2);
+    }
+    return -1;
 }
 
 function hasMentionBoundary(value: string, index: number) {
@@ -527,13 +612,13 @@ function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[]) {
 function serializeNode(node: ChildNode): string {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
     if (!(node instanceof HTMLElement)) return "";
-    const token = node.dataset.mentionToken;
+    const token = node.dataset.inlineToken;
     if (token) return token;
     if (node.tagName === "BR") return "\n";
     return serializeNodeList(node.childNodes);
 }
 
-function getEditableSelection(root: HTMLElement | null): EditableSelection | null {
+function getEditableSelection(root: HTMLElement | null): TextRange | null {
     if (!root) return null;
     const selection = window.getSelection();
     if (!selection || !selection.rangeCount) return null;
@@ -580,7 +665,7 @@ function pointForOffset(root: Node, offset: number): { node: Node; offset: numbe
             remaining -= length;
             continue;
         }
-        if (isMentionElement(child)) return { node: root, offset: remaining <= length / 2 ? index : index + 1 };
+        if (isInlineTokenElement(child)) return { node: root, offset: remaining <= length / 2 ? index : index + 1 };
         return pointForOffset(child, remaining);
     }
     return { node: root, offset: children.length };
@@ -589,15 +674,15 @@ function pointForOffset(root: Node, offset: number): { node: Node; offset: numbe
 function plainTextLength(node: Node): number {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length || 0;
     if (node instanceof HTMLElement) {
-        const token = node.dataset.mentionToken;
+        const token = node.dataset.inlineToken;
         if (token) return token.length;
         if (node.tagName === "BR") return 1;
     }
     return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child), 0);
 }
 
-function isMentionElement(node: Node): node is HTMLElement {
-    return node instanceof HTMLElement && Boolean(node.dataset.mentionToken);
+function isInlineTokenElement(node: Node): node is HTMLElement {
+    return node instanceof HTMLElement && Boolean(node.dataset.inlineToken);
 }
 
 function clamp(value: number, min: number, max: number) {

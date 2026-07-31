@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Square, UserRound, Video } from "lucide-react";
 import { Button, Modal, Popover, Tooltip } from "antd";
 
@@ -12,7 +12,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioComposerControls } from "./canvas-audio-composer-controls";
 import { CanvasAudioTextTools } from "./canvas-audio-text-tools";
-import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasResourceMentionTextarea, type CanvasResourceMentionTextareaHandle } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasVideoGenerationModePicker } from "./canvas-video-generation-mode-picker";
 import { CanvasVideoSuperResolutionPopover } from "./canvas-video-super-resolution-popover";
@@ -72,6 +72,8 @@ export function CanvasNodePromptPanel({
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
     const [promptContentHeight, setPromptContentHeight] = useState(0);
+    const promptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
+    const expandedPromptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
     const credits = requestCreditCost({
@@ -156,6 +158,16 @@ export function CanvasNodePromptPanel({
 
     const appendAudioText = (fragment: string) => updatePrompt(prompt ? `${prompt}${fragment}` : fragment.trimStart());
 
+    const audioPromptEditor = (expanded: boolean) => {
+        const editor = expanded ? expandedPromptEditorRef.current : promptEditorRef.current;
+        if (!editor) throw new Error("音频文本编辑器尚未就绪");
+        return editor;
+    };
+
+    const insertAudioPause = (expanded: boolean, fragment: string) => audioPromptEditor(expanded).replaceSelection(fragment);
+
+    const replaceAudioPause = (expanded: boolean, range: { start: number; end: number }, fragment: string) => audioPromptEditor(expanded).replaceRange(range, fragment);
+
     const updateVideoFrameMetadata = useCallback(
         (patch: Partial<CanvasNodeMetadata>) => {
             const frameNodeIds = [patch.videoStartFrameNodeId, patch.videoEndFrameNodeId].filter((value): value is string => Boolean(value));
@@ -195,7 +207,13 @@ export function CanvasNodePromptPanel({
                     <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : isAudioMode ? (
-                <CanvasAudioTextTools model={modelOptionName(config.model)} theme={theme} onInsert={appendAudioText} />
+                <CanvasAudioTextTools
+                    model={modelOptionName(config.model)}
+                    theme={theme}
+                    onInsert={appendAudioText}
+                    onInsertPause={(fragment) => insertAudioPause(expanded, fragment)}
+                    onReplacePause={(range, fragment) => replaceAudioPause(expanded, range, fragment)}
+                />
             ) : (
                 <div className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     <span className="canvas-node-composer-mode-icon grid size-3.5 shrink-0 place-items-center">
@@ -347,8 +365,10 @@ export function CanvasNodePromptPanel({
                 {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
                 <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
                 <CanvasResourceMentionTextarea
+                    editorHandleRef={promptEditorRef}
                     value={prompt}
                     references={mentionReferences}
+                    highlightAudioPauseTokens={isAudioMode}
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
                     className={`canvas-node-prompt-textarea thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent text-[13px] leading-5 outline-none placeholder:text-current placeholder:opacity-35 ${isImageMode ? "canvas-node-prompt-textarea--image px-0.5 py-1.5" : isVideoMode ? "canvas-node-prompt-textarea--video px-0.5 py-1.5" : isAudioMode ? "canvas-node-prompt-textarea--audio" : "px-2.5 py-2"}`}
@@ -380,8 +400,10 @@ export function CanvasNodePromptPanel({
                         {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
                         <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
                         <CanvasResourceMentionTextarea
+                            editorHandleRef={expandedPromptEditorRef}
                             value={prompt}
                             references={mentionReferences}
+                            highlightAudioPauseTokens={isAudioMode}
                             onChange={updatePrompt}
                             containerClassName="min-h-0 flex-1"
                             className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-current placeholder:opacity-35"
