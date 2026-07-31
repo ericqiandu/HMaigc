@@ -1,4 +1,85 @@
-@media (max-width: 389px) {
+@media (max-width: 1023px) {
+    .auth-scene {
+        min-height: 100dvh;
+        overflow-y: auto;
+    }
+
+    .auth-media-pane {
+        display: none;
+    }
+
+    .auth-pane {
+        width: 100%;
+        min-width: 0;
+        min-height: 100dvh;
+        padding: 88px 32px 48px;
+    }
+}
+
+@media (max-width: 480px) {
+    .auth-scene {
+        min-height: 620px;
+    }
+
+    .auth-pane {
+        min-height: 620px;
+        padding: 84px 24px 40px;
+    }
+
+    .auth-page-actions {
+        top: 16px;
+        right: 16px;
+    }
+
+    .auth-home-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        margin: -1px;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .auth-home-link {
+        width: 44px;
+        padding: 0;
+    }
+
+    .auth-content {
+        max-width: none;
+    }
+
+    .auth-site-logo {
+        width: 44px;
+        height: 44px;
+    }
+
+    .auth-site-name {
+        font-size: 24px;
+        line-height: 30px;
+    }
+
+    .auth-heading {
+        margin-top: 44px;
+    }
+
+    .auth-title {
+        font-size: 34px;
+        line-height: 52px;
+    }
+
+    .auth-route-tabs {
+        margin-top: 24px;
+    }
+}
+
+@media (max-width: 359px) {
+    .auth-pane {
+        padding-right: 18px;
+        padding-left: 18px;
+    }
+
     .auth-code-field {
         grid-template-columns: minmax(0, 1fr) 104px;
     }
