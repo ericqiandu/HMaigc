@@ -1,11 +1,12 @@
-import { type FormEvent, useEffect, useState, type ReactNode } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { App, Button, Divider, Input } from "antd";
-import { ArrowRight, LockKeyhole, UserRound } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router";
+import { LockKeyhole, UserRound } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, login } from "@/services/api/auth";
-import { LinuxDOIcon } from "./auth-scene";
+
+import { AuthField, AuthLegalCopy, AuthNotice, LinuxDOIcon } from "./auth-components";
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -15,12 +16,26 @@ export default function LoginPage() {
     const [password, setPassword] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [linuxdoEnabled, setLinuxdoEnabled] = useState(false);
+    const [settingsError, setSettingsError] = useState("");
     const next = safeNext(params.get("next"));
 
     useEffect(() => {
-        void getAuthSettings().then((settings) => setLinuxdoEnabled(settings.linuxdoEnabled)).catch(() => undefined);
+        let cancelled = false;
+        void getAuthSettings()
+            .then((settings) => {
+                if (cancelled) return;
+                setLinuxdoEnabled(settings.linuxdoEnabled);
+                setSettingsError("");
+            })
+            .catch((error: unknown) => {
+                if (cancelled) return;
+                setSettingsError(error instanceof Error ? error.message : "登录配置加载失败");
+            });
         const oauthError = params.get("oauth_error");
         if (oauthError) message.error(oauthError);
+        return () => {
+            cancelled = true;
+        };
     }, [message, params]);
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -39,17 +54,42 @@ export default function LoginPage() {
     };
 
     return (
-        <form onSubmit={submit} className="space-y-5">
-            <AuthField label="用户名 / 邮箱"><Input size="large" prefix={<UserRound className="size-4 text-white/35" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="用户名或邮箱" autoComplete="username" required /></AuthField>
-            <AuthField label="密码"><Input.Password size="large" prefix={<LockKeyhole className="size-4 text-white/35" />} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" autoComplete="current-password" required /></AuthField>
-            <Button type="primary" htmlType="submit" size="large" block loading={submitting} icon={<ArrowRight className="size-4" />} iconPosition="end">登录</Button>
-            {linuxdoEnabled ? <><Divider plain className="!border-white/10 !text-white/30">或</Divider><Button size="large" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next)}>使用 Linux.do 登录</Button></> : null}
+        <form onSubmit={submit} className="auth-form">
+            {settingsError ? <AuthNotice tone="error">{settingsError}</AuthNotice> : null}
+            <div className="auth-fields">
+                <AuthField label="用户名或邮箱">
+                    <Input className="auth-input" prefix={<UserRound className="auth-input-icon" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="用户名或邮箱" autoComplete="username" required />
+                </AuthField>
+                <AuthField label="密码">
+                    <Input.Password className="auth-input" prefix={<LockKeyhole className="auth-input-icon" />} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" autoComplete="current-password" required />
+                </AuthField>
+            </div>
+
+            <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting}>
+                登录
+            </Button>
+
+            <p className="auth-switch-copy">
+                <span className="auth-switch-muted">还没有账号？</span>
+                <Link className="auth-switch-link" to={{ pathname: "/register", search: params.toString() ? `?${params.toString()}` : "" }}>
+                    立即注册
+                </Link>
+            </p>
+
+            {linuxdoEnabled ? (
+                <div className="auth-oauth-section">
+                    <Divider plain className="auth-divider">
+                        或
+                    </Divider>
+                    <Button className="auth-oauth-button" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next)}>
+                        使用 Linux.do 登录
+                    </Button>
+                </div>
+            ) : null}
+
+            <AuthLegalCopy action="登录" />
         </form>
     );
-}
-
-function AuthField({ label, children }: { label: string; children: ReactNode }) {
-    return <label className="block space-y-2"><span className="text-xs font-medium text-white/62">{label}</span>{children}</label>;
 }
 
 function safeNext(value: string | null) {

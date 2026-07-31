@@ -1,11 +1,12 @@
-import { type FormEvent, useEffect, useState, type ReactNode } from "react";
-import { App, Button, Divider, Input } from "antd";
-import { ArrowRight, Info, LockKeyhole, Mail, ShieldCheck, TriangleAlert, UserRound } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router";
+import { type FormEvent, useEffect, useState } from "react";
+import { App, Button, Divider } from "antd";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, register, sendRegistrationEmailCode } from "@/services/api/auth";
-import { LinuxDOIcon } from "./auth-scene";
+
+import { AuthLegalCopy, AuthNotice, LinuxDOIcon } from "./auth-components";
+import { RegisterFields } from "./register-fields";
 
 type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
 
@@ -14,6 +15,7 @@ export default function RegisterPage() {
     const [params] = useSearchParams();
     const { message } = App.useApp();
     const [settings, setSettings] = useState<AuthSettings | null>(null);
+    const [settingsError, setSettingsError] = useState("");
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
     const [emailCode, setEmailCode] = useState("");
@@ -28,9 +30,20 @@ export default function RegisterPage() {
 
     useEffect(() => {
         let cancelled = false;
-        void getAuthSettings().then((value) => !cancelled && setSettings(value)).catch((error) => !cancelled && message.error(error instanceof Error ? error.message : "读取注册设置失败"));
-        return () => { cancelled = true; };
-    }, [message]);
+        void getAuthSettings()
+            .then((value) => {
+                if (cancelled) return;
+                setSettings(value);
+                setSettingsError("");
+            })
+            .catch((error: unknown) => {
+                if (cancelled) return;
+                setSettingsError(error instanceof Error ? error.message : "注册配置加载失败");
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         if (countdown <= 0) return;
@@ -76,50 +89,66 @@ export default function RegisterPage() {
     };
 
     const registrationClosed = settings?.registrationEnabled === false;
-    const mailUnavailable = Boolean(settings && !settings.firstUser && settings.emailCodeRequired && !settings.emailEnabled);
-    const disabled = registrationClosed || mailUnavailable;
+    const mailUnavailable = Boolean(settings && !registrationClosed && !settings.firstUser && settings.emailCodeRequired && !settings.emailEnabled);
+    const disabled = settings === null || registrationClosed || mailUnavailable || Boolean(settingsError);
     const requireCode = Boolean(settings && !settings.firstUser && settings.emailCodeRequired);
 
     return (
-        <form onSubmit={submit} className="space-y-4">
-            {settings?.firstUser ? <Notice icon={<Info className="size-3.5" />} tone="blue">首个账号自动成为管理员，邮箱验证码暂不要求。</Notice> : null}
-            {registrationClosed ? <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">当前已关闭普通注册，请联系管理员创建账号。</Notice> : null}
-            {mailUnavailable ? <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">管理员尚未配置注册邮件，普通邮箱注册暂不可用。</Notice> : null}
-            {inviteCode ? <Notice icon={<UserRound className="size-3.5" />} tone="blue">已通过邀请码 <strong className="font-semibold tracking-[0.08em]">{inviteCode}</strong> 进入，注册成功后邀请关系不可更换。</Notice> : null}
-
-            <div className="grid gap-4 sm:grid-cols-2">
-                <AuthField label="用户名"><Input size="large" prefix={<UserRound className="size-4 text-white/35" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="3-32 位字符" autoComplete="username" required disabled={disabled} /></AuthField>
-                <AuthField label="显示名称"><Input size="large" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="不填则使用用户名" disabled={disabled} /></AuthField>
+        <form onSubmit={submit} className="auth-form auth-register-form">
+            <div className="auth-notices">
+                {settingsError ? <AuthNotice tone="error">{settingsError}</AuthNotice> : null}
+                {settings?.firstUser ? <AuthNotice tone="info">首个账号将自动成为管理员，无需邮箱验证码。</AuthNotice> : null}
+                {registrationClosed ? <AuthNotice tone="warning">当前已关闭普通注册，请联系管理员创建账号。</AuthNotice> : null}
+                {mailUnavailable ? <AuthNotice tone="warning">注册邮件尚未配置，邮箱注册暂不可用。</AuthNotice> : null}
+                {inviteCode ? <AuthNotice tone="info">已绑定邀请码 {inviteCode}，注册成功后不可更换。</AuthNotice> : null}
             </div>
 
-            <AuthField label="邮箱"><Input size="large" prefix={<Mail className="size-4 text-white/35" />} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="用于登录与安全验证" autoComplete="email" required={!settings?.firstUser} disabled={disabled} /></AuthField>
+            <RegisterFields
+                username={username}
+                displayName={displayName}
+                email={email}
+                emailCode={emailCode}
+                password={password}
+                confirmPassword={confirmPassword}
+                requireEmail={!settings?.firstUser}
+                requireCode={requireCode}
+                disabled={disabled}
+                sendingCode={sendingCode}
+                countdown={countdown}
+                onUsernameChange={setUsername}
+                onDisplayNameChange={setDisplayName}
+                onEmailChange={setEmail}
+                onEmailCodeChange={setEmailCode}
+                onPasswordChange={setPassword}
+                onConfirmPasswordChange={setConfirmPassword}
+                onSendCode={() => void sendCode()}
+            />
 
-            {requireCode ? (
-                <AuthField label="邮箱验证码">
-                    <div className="grid grid-cols-[minmax(0,1fr)_116px] gap-2">
-                        <Input size="large" prefix={<ShieldCheck className="size-4 text-white/35" />} value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 位验证码" inputMode="numeric" autoComplete="one-time-code" required disabled={disabled} />
-                        <Button size="large" loading={sendingCode} disabled={disabled || countdown > 0} onClick={() => void sendCode()}>{countdown > 0 ? `${countdown}s` : "获取验证码"}</Button>
-                    </div>
-                </AuthField>
+            <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting} disabled={disabled}>
+                创建账号
+            </Button>
+
+            <p className="auth-switch-copy">
+                <span className="auth-switch-muted">已经有账号？</span>
+                <Link className="auth-switch-link" to={{ pathname: "/login", search: params.toString() ? `?${params.toString()}` : "" }}>
+                    立即登录
+                </Link>
+            </p>
+
+            {settings?.linuxdoEnabled ? (
+                <div className="auth-oauth-section">
+                    <Divider plain className="auth-divider">
+                        或
+                    </Divider>
+                    <Button className="auth-oauth-button" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next, inviteCode)}>
+                        使用 Linux.do 注册或登录
+                    </Button>
+                </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-                <AuthField label="密码"><Input.Password size="large" prefix={<LockKeyhole className="size-4 text-white/35" />} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位" autoComplete="new-password" required disabled={disabled} /></AuthField>
-                <AuthField label="确认密码"><Input.Password size="large" prefix={<LockKeyhole className="size-4 text-white/35" />} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入密码" autoComplete="new-password" required disabled={disabled} /></AuthField>
-            </div>
-
-            <Button type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled} icon={<ArrowRight className="size-4" />} iconPosition="end">创建账号</Button>
-            {settings?.linuxdoEnabled ? <><Divider plain className="!border-white/10 !text-white/30">或</Divider><Button size="large" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next, inviteCode)}>使用 Linux.do 注册 / 登录</Button></> : null}
+            <AuthLegalCopy action="注册" />
         </form>
     );
-}
-
-function AuthField({ label, children }: { label: string; children: ReactNode }) {
-    return <label className="block space-y-2"><span className="text-xs font-medium text-white/62">{label}</span>{children}</label>;
-}
-
-function Notice({ icon, tone, children }: { icon: ReactNode; tone: "blue" | "amber"; children: ReactNode }) {
-    return <div className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5 ${tone === "blue" ? "border-blue-300/15 bg-blue-300/[0.06] text-blue-100/78" : "border-amber-300/15 bg-amber-300/[0.06] text-amber-100/78"}`}><span className="mt-0.5 shrink-0">{icon}</span>{children}</div>;
 }
 
 function safeNext(value: string | null) {
