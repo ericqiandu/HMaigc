@@ -80,13 +80,13 @@ function RecentProjectCard({ summary }: { summary: ProjectSummary }) {
 
     return (
         <Link
-            className="updream-recent-project-card group flex h-56 flex-col rounded-[16px] p-2.5 transition-transform duration-200 hover:scale-[1.02]"
+            className="updream-recent-project-card group flex h-56 flex-col gap-2 rounded-[16px] p-2.5 transition-transform duration-200 hover:scale-[1.02]"
             to={`/projects/${summary.project.id}/overview`}
         >
-            <span className="updream-recent-project-preview flex min-h-0 flex-1 items-center justify-center rounded-xl">
+            <span className="updream-recent-project-preview flex h-[124px] shrink-0 items-center justify-center rounded-xl">
                 <Clapperboard className="updream-recent-project-preview-icon size-8 transition-transform group-hover:scale-105" />
             </span>
-            <span className="updream-recent-project-meta block px-1 pb-1 pt-3">
+            <span className="updream-recent-project-meta block flex-1 px-1 pb-1">
                 <strong className="updream-recent-project-name block truncate text-sm font-semibold leading-5">
                     {summary.project.name}
                 </strong>
