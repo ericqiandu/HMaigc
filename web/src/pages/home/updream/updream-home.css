@@ -83,19 +83,8 @@
 }
 
 .updream-hero {
-    min-height: 550px;
-    padding-top: 192px !important;
-}
-
-.updream-hero-description {
-    margin-top: 12px !important;
-    color: rgba(23, 32, 51, 0.66);
-    text-shadow: 0 1px 16px rgba(255, 255, 255, 0.5);
-}
-
-.dark .updream-hero-description {
-    color: rgba(255, 255, 255, 0.68);
-    text-shadow: 0 1px 18px rgba(0, 0, 0, 0.76);
+    min-height: 632px;
+    padding-top: 315px;
 }
 
 .updream-header-logo {
@@ -165,16 +154,20 @@
 }
 
 .updream-home-page .updream-hero-title {
-    background-image: linear-gradient(95deg, #2563eb 0%, #4f46e5 46%, #0891b2 100%);
+    margin: 0;
+    background-image: linear-gradient(95deg, #d4a000, #e07000, #d64090, #5060d0, #0090a0, #d4a000);
+    background-position: 0 50%;
+    background-size: 300% 100%;
     font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    font-size: 32px !important;
-    font-weight: 400 !important;
-    line-height: 38px !important;
-    letter-spacing: -0.025em;
+    font-size: 32px;
+    font-weight: 400;
+    line-height: 38.4px;
+    letter-spacing: 0;
+    animation: updream-title-gradient-shift 9s linear infinite;
 }
 
 .updream-home-agent-composer {
-    margin-top: 24px !important;
+    margin-top: 49.6px;
 }
 
 .updream-home-page .canvas-agent-composer-wrap {
@@ -299,7 +292,7 @@
 }
 
 .dark .updream-home-page .updream-hero-title {
-    background-image: linear-gradient(95deg, #b588f5 0%, #9aa8f7 46%, #6fd5f0 100%);
+    background-image: linear-gradient(95deg, #c4b5fd, #93c5fd, #67e8f9, #c4b5fd);
 }
 
 .dark .updream-home-page .canvas-agent-composer {
@@ -407,14 +400,22 @@
     .updream-video-background-media {
         transform: none;
     }
+
+    .updream-home-page .updream-hero-title {
+        animation: none;
+    }
 }
 
 @media (min-width: 1025px) {
     .updream-recent-projects-inner,
     .updream-skills {
         max-width: 1448px !important;
-        padding-right: 104px !important;
-        padding-left: 104px !important;
+        padding-right: 101px !important;
+        padding-left: 101px !important;
+    }
+
+    .updream-skill-card {
+        height: 180px !important;
     }
 
     .updream-home-page .workspace-floating-navigation {
@@ -454,21 +455,31 @@
     }
 
     .updream-hero {
-        min-height: 560px;
-        padding-top: 126px !important;
+        min-height: 548px;
+        padding-top: 240px;
     }
 
     .updream-home-page .updream-hero-title {
-        font-size: 30px !important;
-        line-height: 36px !important;
+        font-size: 24px;
+        line-height: 28.8px;
     }
 
     .updream-home-agent-composer {
-        margin-top: 20px !important;
+        margin-top: 51.2px;
     }
 
     .updream-home-page .canvas-agent-composer {
-        min-height: 140px;
+        min-height: 144px;
         padding: 16px 14px 10px;
+    }
+
+    .updream-skill-card {
+        height: 180px !important;
+    }
+}
+
+@keyframes updream-title-gradient-shift {
+    to {
+        background-position: 100% 50%;
     }
 }
