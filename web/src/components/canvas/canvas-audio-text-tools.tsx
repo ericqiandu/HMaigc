@@ -1,9 +1,9 @@
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { Popover, Tooltip } from "antd";
 
-import { miniMaxVocalTags } from "@/lib/audio-generation";
 import { defaultAudioPauseToken, normalizeAudioPauseInput, type TextRange } from "@/lib/audio-pause";
 import type { CanvasTheme } from "@/lib/canvas-theme";
+import { CanvasAudioVocalTool } from "./canvas-audio-vocal-tool";
 
 type CanvasAudioTextToolsProps = {
     model: string;
@@ -26,17 +26,11 @@ type AudioPauseMenuStyle = CSSProperties & {
 
 export function CanvasAudioTextTools({ model, theme, onInsert, onInsertPause, onReplacePause }: CanvasAudioTextToolsProps) {
     const [pauseOpen, setPauseOpen] = useState(false);
-    const [vocalOpen, setVocalOpen] = useState(false);
     const [activePauseRange, setActivePauseRange] = useState<TextRange | null>(null);
     const [activePauseValue, setActivePauseValue] = useState(defaultAudioPauseToken);
     const [customPauseMode, setCustomPauseMode] = useState(false);
     const [customPauseValue, setCustomPauseValue] = useState("");
     const [customPauseError, setCustomPauseError] = useState("");
-    const supportsVocalTags = model.startsWith("speech-2.8-");
-    const popoverStyle: CSSProperties = {
-        background: theme.toolbar.panel,
-        border: `1px solid ${theme.toolbar.border}`,
-    };
     const pauseMenuStyle: AudioPauseMenuStyle = {
         "--canvas-audio-popover-accent": theme.accent.primary,
     };
@@ -164,48 +158,7 @@ export function CanvasAudioTextTools({ model, theme, onInsert, onInsertPause, on
                 </Tooltip>
             </Popover>
 
-            <Popover
-                open={vocalOpen}
-                onOpenChange={supportsVocalTags ? setVocalOpen : undefined}
-                trigger="click"
-                placement="topLeft"
-                overlayClassName="canvas-audio-text-popover"
-                content={
-                    <section className="canvas-audio-insert-menu canvas-audio-insert-menu--vocal" aria-label="选择语气词">
-                        <header className="canvas-audio-insert-menu-header">
-                            <span className="canvas-audio-insert-menu-title">语气词</span>
-                            <span className="canvas-audio-insert-menu-hint">MiniMax Speech 2.8</span>
-                        </header>
-                        <div className="canvas-audio-vocal-list thin-scrollbar">
-                            {miniMaxVocalTags.map((option) => (
-                                <button
-                                    key={option.value}
-                                    type="button"
-                                    className="canvas-audio-vocal-option"
-                                    title={option.value}
-                                    onClick={() => {
-                                        onInsert(option.value);
-                                        setVocalOpen(false);
-                                    }}
-                                >
-                                    <span className="canvas-audio-vocal-option-label">{option.label}</span>
-                                    <span className="canvas-audio-vocal-option-code">{option.value}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </section>
-                }
-                styles={{ content: { padding: 0, ...popoverStyle } }}
-            >
-                <Tooltip title={supportsVocalTags ? "插入 MiniMax 语气词" : "当前模型不支持语气词标记"}>
-                    <button type="button" className="canvas-audio-text-tool" disabled={!supportsVocalTags} aria-label="插入语气词">
-                        <span className="canvas-audio-text-tool-symbol" aria-hidden="true">
-                            ()
-                        </span>
-                        <span className="canvas-audio-text-tool-label">语气词</span>
-                    </button>
-                </Tooltip>
-            </Popover>
+            <CanvasAudioVocalTool model={model} onInsert={onInsert} />
         </div>
     );
 }

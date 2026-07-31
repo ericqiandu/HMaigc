@@ -133,7 +133,7 @@ export function CanvasNodePromptPanel({
     const updatePrompt = (value: string) => {
         setPrompt(value);
         onPromptChange(node.id, value);
-        if (/(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
+        if (!isAudioMode && /(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
             if (expandedPromptOpen) setExpandedPresetOpen(true);
             else setPresetOpen(true);
         }
@@ -222,7 +222,7 @@ export function CanvasNodePromptPanel({
                     <span className="canvas-node-composer-mode-label truncate">{modeDisplayName(mode)}创作</span>
                 </div>
             )}
-            {!simpleMode ? (
+            {!simpleMode && !isAudioMode ? (
                 <CanvasPresetPicker
                     mode={mode}
                     skillReferences={skillReferences}
