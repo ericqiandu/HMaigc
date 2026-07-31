@@ -1,4 +1,5 @@
 import { Button, Form, Input, InputNumber, message, Modal, Space, Switch, Table, Tabs, Tag } from "antd";
+import { Plus, SquarePen, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
@@ -114,28 +115,38 @@ export default function MembershipAdminPage() {
                                     columns={[
                                         {
                                             title: "套餐",
+                                            width: 190,
                                             render: (_, row) => (
-                                                <Space>
-                                                    <strong>{row.name}</strong>
-                                                    <Tag>{row.audience === "team" ? "团队" : "个人"}</Tag>
-                                                    <span>{row.billingCycle}</span>
-                                                </Space>
+                                                <div className="admin-membership-plan-cell">
+                                                    <strong className="admin-membership-plan-name">{row.name}</strong>
+                                                    <span className="admin-membership-plan-meta">
+                                                        {row.audience === "team" ? "团队套餐" : "个人套餐"} · {billingCycleLabel(row.billingCycle)}
+                                                    </span>
+                                                </div>
                                             ),
                                         },
-                                        { title: "价格", render: (_, row) => money(row.priceCents) },
-                                        { title: "周期积分", render: (_, row) => credits(row.creditsPerPeriod) },
-                                        { title: "图片 / 视频并发", render: (_, row) => `${row.imageConcurrency} / ${row.videoConcurrency}` },
-                                        { title: "席位", render: (_, row) => (row.audience === "team" ? `${row.minSeats}–${row.maxSeats}` : "单人") },
-                                        { title: "状态", render: (_, row) => <Tag color={row.enabled ? "green" : "default"}>{row.enabled ? "上架" : "下架"}</Tag> },
+                                        { title: "价格", width: 110, render: (_, row) => <span className="admin-membership-table-number is-price">{money(row.priceCents)}</span> },
+                                        { title: "周期积分", width: 130, render: (_, row) => <span className="admin-membership-table-number">{credits(row.creditsPerPeriod)}</span> },
+                                        { title: "图片 / 视频并发", width: 140, render: (_, row) => <span className="admin-membership-table-number">{row.imageConcurrency} / {row.videoConcurrency}</span> },
+                                        { title: "席位", width: 90, render: (_, row) => <span className="admin-membership-seat-count">{row.audience === "team" ? `${row.minSeats}–${row.maxSeats}` : "1"}</span> },
+                                        { title: "状态", width: 80, render: (_, row) => <Tag className="admin-membership-plan-status" color={row.enabled ? "green" : "default"}>{row.enabled ? "上架" : "下架"}</Tag> },
                                         {
                                             title: "操作",
+                                            width: 64,
+                                            align: "center",
                                             render: (_, row) => (
-                                                <Button type="link" onClick={() => openPlan(row)}>
-                                                    编辑
-                                                </Button>
+                                                <Button
+                                                    className="admin-membership-edit-button"
+                                                    type="text"
+                                                    icon={<SquarePen className="admin-membership-edit-icon size-4" />}
+                                                    aria-label={`编辑${row.name}套餐`}
+                                                    title="编辑套餐"
+                                                    onClick={() => openPlan(row)}
+                                                />
                                             ),
                                         },
                                     ]}
+                                    scroll={{ x: 804 }}
                                 />
                             </TableSurface>
                         ),
@@ -258,43 +269,43 @@ export default function MembershipAdminPage() {
                     },
                 ]}
             />
-            <Modal className="admin-membership-plan-modal" title={`编辑 ${editing?.name ?? ""}`} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => void savePlan()} okText="保存">
+            <Modal className="admin-membership-plan-modal" width={640} title={`编辑 ${editing?.name ?? ""}`} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => void savePlan()} okText="保存">
                 <Form className="admin-membership-plan-form" form={form} layout="vertical">
                     <Form.Item className="admin-membership-form-item" name="name" label="名称" rules={[{ required: true }]}>
-                        <Input />
+                        <Input className="admin-membership-name-input" />
                     </Form.Item>
-                    <Space className="admin-membership-form-row" wrap>
-                        <Form.Item name="priceCents" label="售价（分）" rules={[{ required: true }]}>
-                            <InputNumber min={0} />
+                    <div className="admin-membership-form-grid">
+                        <Form.Item className="admin-membership-grid-field" name="priceCents" label="售价（分）" rules={[{ required: true }]}>
+                            <InputNumber className="admin-membership-number-input" min={0} />
                         </Form.Item>
-                        <Form.Item name="originalPriceCents" label="原价（分）">
-                            <InputNumber min={0} />
+                        <Form.Item className="admin-membership-grid-field" name="originalPriceCents" label="原价（分）">
+                            <InputNumber className="admin-membership-number-input" min={0} />
                         </Form.Item>
-                        <Form.Item name="creditsPerPeriod" label="周期积分（微积分）">
-                            <InputNumber min={0} />
+                        <Form.Item className="admin-membership-grid-field" name="creditsPerPeriod" label="周期积分（微积分）">
+                            <InputNumber className="admin-membership-number-input" min={0} />
                         </Form.Item>
-                        <Form.Item name="imageConcurrency" label="图片并发">
-                            <InputNumber min={1} />
+                        <Form.Item className="admin-membership-grid-field" name="imageConcurrency" label="图片并发">
+                            <InputNumber className="admin-membership-number-input" min={1} />
                         </Form.Item>
-                        <Form.Item name="videoConcurrency" label="视频并发">
-                            <InputNumber min={1} />
+                        <Form.Item className="admin-membership-grid-field" name="videoConcurrency" label="视频并发">
+                            <InputNumber className="admin-membership-number-input" min={1} />
                         </Form.Item>
-                        <Form.Item name="topupDiscountBasisPoints" label="充值折扣基点">
-                            <InputNumber min={1} max={10000} />
+                        <Form.Item className="admin-membership-grid-field" name="topupDiscountBasisPoints" label="充值折扣基点">
+                            <InputNumber className="admin-membership-number-input" min={1} max={10000} />
                         </Form.Item>
-                        <Form.Item name="minSeats" label="最少席位">
-                            <InputNumber min={0} />
+                        <Form.Item className="admin-membership-grid-field" name="minSeats" label="最少席位">
+                            <InputNumber className="admin-membership-number-input" min={0} />
                         </Form.Item>
-                        <Form.Item name="maxSeats" label="最多席位">
-                            <InputNumber min={0} />
+                        <Form.Item className="admin-membership-grid-field" name="maxSeats" label="最多席位">
+                            <InputNumber className="admin-membership-number-input" min={0} />
                         </Form.Item>
-                        <Form.Item name="teamStorageTB" label="团队存储（TB）">
-                            <InputNumber min={0} precision={1} />
+                        <Form.Item className="admin-membership-grid-field" name="teamStorageTB" label="团队存储（TB）">
+                            <InputNumber className="admin-membership-number-input" min={0} precision={1} />
                         </Form.Item>
-                        <Form.Item name="sortOrder" label="排序">
-                            <InputNumber />
+                        <Form.Item className="admin-membership-grid-field" name="sortOrder" label="排序">
+                            <InputNumber className="admin-membership-number-input" />
                         </Form.Item>
-                    </Space>
+                    </div>
                     {editing?.audience === "team" ? (
                         <div className="admin-membership-team-entitlements grid grid-cols-2 gap-x-5">
                             <Form.Item className="admin-membership-entitlement-field" name="unlimitedTaskQueue" label="无限任务排队" valuePropName="checked">
@@ -325,15 +336,43 @@ export default function MembershipAdminPage() {
                         <Form.List name="benefits">
                             {(fields, { add, remove }) => (
                                 <div className="admin-membership-benefits">
-                                    {fields.map(({ key, ...field }) => (
-                                        <Space className="admin-membership-benefit-row" key={key}>
-                                            <Form.Item {...field} rules={[{ required: true }]}>
-                                                <Input placeholder="套餐权益" />
-                                            </Form.Item>
-                                            <Button onClick={() => remove(field.name)}>移除</Button>
-                                        </Space>
-                                    ))}
-                                    <Button onClick={() => add("")}>添加权益</Button>
+                                    <div className="admin-membership-benefit-header">
+                                        <div className="admin-membership-benefit-heading">
+                                            <strong className="admin-membership-benefit-title">套餐权益</strong>
+                                            <span className="admin-membership-benefit-summary">将展示在用户端套餐说明中</span>
+                                        </div>
+                                        <Button
+                                            className="admin-membership-benefit-add"
+                                            icon={<Plus className="admin-membership-benefit-action-icon" size={15} strokeWidth={1.8} />}
+                                            onClick={() => add("")}
+                                        >
+                                            添加权益
+                                        </Button>
+                                    </div>
+                                    <div className="admin-membership-benefit-list">
+                                        {fields.map(({ key, ...field }, index) => (
+                                            <div className="admin-membership-benefit-row" key={key}>
+                                                <Form.Item
+                                                    className="admin-membership-benefit-field"
+                                                    {...field}
+                                                    rules={[{ required: true, message: "请输入套餐权益" }]}
+                                                >
+                                                    <Input
+                                                        className="admin-membership-benefit-input"
+                                                        placeholder={`权益 ${index + 1}`}
+                                                    />
+                                                </Form.Item>
+                                                <Button
+                                                    className="admin-membership-benefit-remove"
+                                                    type="text"
+                                                    icon={<Trash2 className="admin-membership-benefit-action-icon" size={15} strokeWidth={1.8} />}
+                                                    aria-label={`移除权益 ${index + 1}`}
+                                                    title="移除权益"
+                                                    onClick={() => remove(field.name)}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                         </Form.List>
@@ -362,4 +401,11 @@ export default function MembershipAdminPage() {
             </Modal>
         </AdminPageFrame>
     );
+}
+
+function billingCycleLabel(cycle: MembershipPlan["billingCycle"]) {
+    if (cycle === "free") return "免费";
+    if (cycle === "month") return "月付";
+    if (cycle === "year") return "年付";
+    return cycle;
 }

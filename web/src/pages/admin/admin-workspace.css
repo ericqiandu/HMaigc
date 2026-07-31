@@ -430,6 +430,64 @@
         background: var(--workspace-ui-control);
     }
 
+    .admin-workspace .admin-membership-plan-cell {
+        display: grid;
+        min-width: 0;
+        gap: 2px;
+    }
+
+    .admin-workspace .admin-membership-plan-name {
+        overflow: hidden;
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 20px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-workspace .admin-membership-plan-meta {
+        overflow: hidden;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-workspace .admin-membership-table-number,
+    .admin-workspace .admin-membership-seat-count {
+        color: var(--workspace-ui-text-secondary);
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        line-height: 20px;
+        white-space: nowrap;
+    }
+
+    .admin-workspace .admin-membership-table-number.is-price {
+        color: var(--workspace-ui-text);
+        font-weight: 600;
+    }
+
+    .admin-workspace .admin-membership-plan-status {
+        min-width: 42px;
+        margin-inline-end: 0;
+        text-align: center;
+    }
+
+    .admin-workspace .admin-membership-edit-button.ant-btn {
+        width: 32px;
+        min-width: 32px;
+        height: 32px;
+        padding: 0;
+        color: var(--workspace-ui-text-secondary);
+    }
+
+    .admin-workspace .admin-membership-edit-button.ant-btn:hover {
+        background: var(--workspace-ui-control-hover);
+        color: var(--workspace-ui-text);
+    }
+
     .admin-workspace .app-table-surface .ant-table-pagination,
     .admin-workspace .app-pagination-bar {
         border-top-color: var(--workspace-ui-divider);
@@ -675,6 +733,111 @@
 
     .admin-workspace .ant-tabs-ink-bar {
         background: var(--workspace-ui-accent);
+    }
+
+    .admin-membership-plan-modal .ant-modal-content {
+        padding: 20px;
+    }
+
+    .admin-membership-plan-modal .ant-modal-header {
+        margin-bottom: 20px;
+    }
+
+    .admin-membership-plan-form .admin-membership-form-item {
+        margin-bottom: 20px;
+    }
+
+    .admin-membership-form-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px 12px;
+        margin-bottom: 24px;
+    }
+
+    .admin-membership-form-grid .admin-membership-grid-field {
+        min-width: 0;
+        margin-bottom: 0;
+    }
+
+    .admin-membership-name-input,
+    .admin-membership-number-input {
+        width: 100%;
+    }
+
+    .admin-membership-plan-form .admin-membership-benefits,
+    .admin-membership-plan-form .admin-membership-team-entitlements {
+        margin-bottom: 20px;
+    }
+
+    .admin-membership-benefit-header,
+    .admin-membership-benefit-row {
+        display: flex;
+        align-items: center;
+    }
+
+    .admin-membership-benefit-header {
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 10px;
+    }
+
+    .admin-membership-benefit-heading {
+        display: grid;
+        min-width: 0;
+        gap: 2px;
+    }
+
+    .admin-membership-benefit-title {
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        line-height: 20px;
+        font-weight: 600;
+    }
+
+    .admin-membership-benefit-summary {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+    }
+
+    .admin-membership-benefit-add {
+        flex: 0 0 auto;
+    }
+
+    .admin-membership-benefit-list {
+        display: grid;
+        gap: 8px;
+    }
+
+    .admin-membership-benefit-row {
+        gap: 6px;
+    }
+
+    .admin-membership-plan-form .admin-membership-benefit-field {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin-bottom: 0;
+    }
+
+    .admin-membership-benefit-input {
+        width: 100%;
+    }
+
+    .admin-membership-benefit-remove {
+        width: 32px;
+        min-width: 32px;
+        height: 32px;
+        padding: 0;
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .admin-membership-benefit-remove:hover {
+        background: var(--workspace-ui-control-hover) !important;
+        color: var(--workspace-ui-danger) !important;
+    }
+
+    .admin-membership-benefit-action-icon {
+        display: block;
     }
 
     .admin-workspace .admin-row-primary-action {
@@ -1071,6 +1234,10 @@
     }
 
     @media (max-width: 639px) {
+        .admin-membership-form-grid {
+            grid-template-columns: 1fr;
+        }
+
         .admin-page-frame {
             padding: 20px 16px 40px;
         }
