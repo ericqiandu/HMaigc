@@ -658,7 +658,8 @@ func (r *Repository) Resources(userID string, limit int) ([]model.Resource, erro
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	err := r.db.Order("created_at desc").Limit(limit).Find(&resources, "user_id = ?", userID).Error
+	err := r.db.Where("user_id = ? AND status <> ?", userID, model.ResourceStatusDeleted).
+		Order("created_at desc").Limit(limit).Find(&resources).Error
 	return resources, err
 }
 

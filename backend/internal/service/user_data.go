@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -93,7 +94,11 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 }
 
 func (s *Service) DeleteUserAsset(userID string, id string) error {
-	if _, err := s.repo.AssetForUser(userID, id); err != nil {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+
+	asset, err := s.repo.AssetForUser(userID, id)
+	if err != nil {
 		return err
 	}
 	references, err := s.repo.AssetReferenceCount(id)
@@ -103,7 +108,20 @@ func (s *Service) DeleteUserAsset(userID string, id string) error {
 	if references > 0 {
 		return BadAuthRequest("素材仍被项目或镜头引用，请先解除引用")
 	}
-	return s.repo.DeleteAsset(userID, id)
+	resources, err := s.assetExclusiveResources(asset)
+	if err != nil {
+		return err
+	}
+	for index := range resources {
+		if err := s.deleteStoredResourceObject(userID, &resources[index]); err != nil {
+			return fmt.Errorf("删除素材资源 %s 失败：%w", resources[index].ID, err)
+		}
+	}
+	resourceIDs := make([]string, 0, len(resources))
+	for index := range resources {
+		resourceIDs = append(resourceIDs, resources[index].ID)
+	}
+	return s.repo.DeleteAssetAndMarkResourcesDeleted(userID, id, resourceIDs, time.Now())
 }
 
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {
