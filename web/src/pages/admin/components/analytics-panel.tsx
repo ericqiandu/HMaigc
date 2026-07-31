@@ -180,16 +180,18 @@ export default function AnalyticsPanel({ users, channels }: Props) {
             <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-efficiency-title">
                 <div className="admin-analytics-section-heading">
                     <h2 id="admin-analytics-efficiency-title" className="admin-analytics-section-title">
-                        运行效率
+                        运行概览
                     </h2>
-                    <p className="admin-analytics-section-description">关注用户活跃、任务规模、请求稳定性与实时队列。</p>
+                    <div className="admin-analytics-queue-status" aria-label={`当前队列 ${data?.kpi.currentQueuedTasks ?? "--"}`}>
+                        <span className="admin-analytics-queue-label">当前队列</span>
+                        <strong className="admin-analytics-queue-value">{data?.kpi.currentQueuedTasks ?? "--"}</strong>
+                    </div>
                 </div>
                 <div className="admin-analytics-metrics">
                     <Metric label="活跃用户" value={data?.kpi.activeUsers ?? "--"} detail={data ? `DAU ${data.kpi.dau} · WAU ${data.kpi.wau} · MAU ${data.kpi.mau}` : undefined} />
                     <Metric label="生成任务" value={data?.kpi.generationTasks ?? "--"} detail={data ? `上游请求 ${data.kpi.upstreamRequests}` : undefined} />
                     <Metric label="请求成功率" value={data ? percent(data.kpi.successRate) : "--"} />
                     <Metric label="P95 耗时" value={data ? formatDuration(data.kpi.p95DurationMs) : "--"} />
-                    <Metric label="当前队列" value={data?.kpi.currentQueuedTasks ?? "--"} detail="排队 + 运行中" />
                 </div>
             </section>
 
@@ -198,17 +200,15 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                     <h2 id="admin-analytics-business-title" className="admin-analytics-section-title">
                         商业指标
                     </h2>
-                    <p className="admin-analytics-section-description">成本以供应商货币记录，积分营收按已结算计费订单统计。</p>
                 </div>
                 <div className="admin-analytics-metrics">
-                    <Metric label="上游估算成本" value={data ? formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable) : "--"} detail="供应商货币成本，不与积分混算" />
+                    <Metric label="上游估算成本" value={data ? formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable) : "--"} />
                     <Metric label="已结算积分营收" value={data ? formatCredits(data.kpi.settledRevenueMicrocredits) : "--"} detail={data ? `${data.kpi.settledBillingOrders} 笔已结算订单` : undefined} />
-                    <Metric label="基础积分成本" value={data ? formatCredits(data.kpi.settledBaseCostMicrocredits) : "--"} detail="按订单计费快照统计" />
-                    <Metric label="积分毛利" value={data ? formatCredits(data.kpi.grossProfitMicrocredits) : "--"} detail="积分营收 − 基础积分成本" />
+                    <Metric label="积分毛利" value={data ? formatCredits(data.kpi.grossProfitMicrocredits) : "--"} detail={data ? `基础成本 ${formatCredits(data.kpi.settledBaseCostMicrocredits)}` : undefined} />
                     <Metric
                         label="冻结积分"
                         value={data ? formatCredits(data.kpi.pendingAmountMicrocredits + data.kpi.reviewAmountMicrocredits) : "--"}
-                        detail={data ? `处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${formatCredits(data.kpi.reviewAmountMicrocredits)} / ${data.kpi.reviewBillingOrders} 笔` : undefined}
+                        detail={data ? `处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${data.kpi.reviewBillingOrders} 笔` : undefined}
                     />
                 </div>
             </section>

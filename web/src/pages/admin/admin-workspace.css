@@ -565,7 +565,8 @@
 
     .admin-workspace .admin-analytics-section-heading {
         display: flex;
-        align-items: baseline;
+        min-height: 28px;
+        align-items: center;
         justify-content: space-between;
         gap: 16px;
         padding: 0;
@@ -581,24 +582,39 @@
         line-height: 20px;
     }
 
-    .admin-workspace .admin-analytics-section-description {
-        margin: 0;
-        color: var(--workspace-ui-text-tertiary);
+    .admin-workspace .admin-analytics-queue-status {
+        display: inline-flex;
+        min-height: 28px;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        background: var(--workspace-ui-control);
+        padding: 0 10px;
         font-size: 12px;
         line-height: 17px;
-        text-align: right;
+    }
+
+    .admin-workspace .admin-analytics-queue-label {
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .admin-workspace .admin-analytics-queue-value {
+        color: var(--workspace-ui-text);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
     }
 
     .admin-workspace .admin-analytics-metrics {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         min-width: 0;
         gap: 8px;
     }
 
     .admin-workspace .admin-analytics-metric {
         min-width: 0;
-        min-height: 108px;
+        min-height: 104px;
         border: 0;
         border-radius: var(--workspace-ui-radius-surface);
         background: var(--workspace-ui-surface);
@@ -1050,7 +1066,7 @@
         }
 
         .admin-workspace .admin-analytics-metrics {
-            grid-template-columns: repeat(5, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
         }
     }
 
@@ -1158,15 +1174,6 @@
         .admin-workspace .admin-analytics-metric {
             min-height: 104px;
             padding: 16px;
-        }
-
-        .admin-workspace .admin-analytics-section-heading {
-            display: grid;
-            gap: 2px;
-        }
-
-        .admin-workspace .admin-analytics-section-description {
-            text-align: left;
         }
 
         .admin-workspace .admin-analytics-chart {
