@@ -10,6 +10,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 
 const minimumRecordingSeconds = 10;
 const maximumRecordingSeconds = 300;
+const voiceCloneTermsUrl = "https://www.minimaxi.com/audio/doc/voice_clone_terms_of_service.html";
 const readingScripts = [
     "欢迎收听今天的节目。我们常说灵感很重要，但真正让灵感变成作品的，往往是清晰的方法和持续的修改。一个想法刚出现时可能很模糊，只要把它写下来，拆成几个步骤，再一点点完善，它就会慢慢变成可以被看见、被听见的内容。",
     "清晨的风从窗边吹进来，街道还没有完全醒来。远处传来车辆经过的声音，桌上的咖啡散发着温暖的香气。我打开新的文档，把昨晚想到的故事认真记录下来，希望今天能让这个故事拥有更清楚的节奏和更真实的情绪。",
@@ -297,7 +298,18 @@ export function CanvasAudioVoiceCloneDialog({ open, channelId, onCancel, onCreat
                         </div>
                     ) : null}
                     <Checkbox className="canvas-audio-voice-clone-consent" checked={consentConfirmed} disabled={state === "submitting"} onChange={(event) => setConsentConfirmed(event.target.checked)}>
-                        我已阅读并同意《声音克隆功能使用规则》；我确认上传的声音样本具有充分、合法、必要的权利或授权，并同意将其用于本次音色克隆。
+                        我已阅读并同意《
+                        <a
+                            className="canvas-audio-voice-clone-consent-link"
+                            href={voiceCloneTermsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="查看声音克隆功能使用规则（新窗口）"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            声音克隆功能使用规则
+                        </a>
+                        》；我确认上传的声音样本具有充分、合法、必要的权利或授权，并同意将其用于本次音色克隆。
                     </Checkbox>
                     <footer className="canvas-audio-voice-clone-footer">
                         <span className="canvas-audio-voice-clone-limit">录音需为 10 秒至 5 分钟，生成后可在“我的音色”中使用</span>

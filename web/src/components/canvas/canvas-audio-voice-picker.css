@@ -576,11 +576,11 @@
 }
 
 .canvas-audio-voice-clone-record-status {
-    max-width: 150px;
     color: var(--audio-voice-muted);
     font-size: 11px;
     line-height: 16px;
     text-align: left;
+    white-space: nowrap;
 }
 
 .canvas-audio-voice-clone-error {
@@ -596,6 +596,17 @@
 
 .canvas-audio-voice-clone-consent .ant-checkbox + span {
     padding-inline-start: 8px;
+}
+
+.canvas-audio-voice-clone-consent-link {
+    color: var(--audio-voice-accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
+.canvas-audio-voice-clone-consent-link:hover {
+    text-decoration-thickness: 2px;
 }
 
 .canvas-audio-voice-clone-footer {
@@ -637,7 +648,7 @@
 }
 
 .canvas-audio-voice-dialog :where(button, input):focus-visible,
-.canvas-audio-voice-clone-dialog :where(button, input):focus-visible {
+.canvas-audio-voice-clone-dialog :where(button, input, a):focus-visible {
     outline: 2px solid var(--audio-voice-accent);
     outline-offset: 2px;
 }
