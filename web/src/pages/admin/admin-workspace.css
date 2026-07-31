@@ -499,7 +499,7 @@
     .admin-workspace .admin-analytics-layout {
         display: grid;
         min-width: 0;
-        gap: 20px;
+        gap: 24px;
     }
 
     .admin-workspace .admin-analytics-layout > * {
@@ -516,16 +516,18 @@
 
     .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
         margin-bottom: 0;
-        flex-direction: column;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: end;
+        gap: 12px;
     }
 
     .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-fields {
         width: 100%;
         display: grid;
-        grid-template-columns: minmax(240px, 1.35fr) repeat(4, minmax(132px, 1fr));
+        grid-template-columns: minmax(240px, 1.5fr) repeat(4, minmax(116px, 1fr));
         align-items: end;
-        gap: 12px;
+        gap: 8px;
     }
 
     .admin-workspace .admin-analytics-filter {
@@ -547,19 +549,27 @@
     }
 
     .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-actions {
+        min-height: var(--workspace-ui-control-height);
         width: auto;
         margin-left: auto;
+        align-self: end;
     }
 
     .admin-workspace .admin-analytics-metric-section {
         display: grid;
-        grid-template-columns: 168px minmax(0, 1fr);
-        overflow: hidden;
+        gap: 12px;
+        overflow: visible;
+        border-radius: 0;
+        background: transparent;
     }
 
     .admin-workspace .admin-analytics-section-heading {
-        padding: 20px;
-        background: var(--workspace-ui-surface-subtle);
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0;
+        background: transparent;
     }
 
     .admin-workspace .admin-analytics-section-title {
@@ -572,23 +582,27 @@
     }
 
     .admin-workspace .admin-analytics-section-description {
-        margin: 6px 0 0;
+        margin: 0;
         color: var(--workspace-ui-text-tertiary);
-        font-size: 11px;
+        font-size: 12px;
         line-height: 17px;
+        text-align: right;
     }
 
     .admin-workspace .admin-analytics-metrics {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
         min-width: 0;
+        gap: 8px;
     }
 
     .admin-workspace .admin-analytics-metric {
         min-width: 0;
-        min-height: 112px;
-        border-left: 1px solid var(--workspace-ui-divider);
-        padding: 18px 16px;
+        min-height: 108px;
+        border: 0;
+        border-radius: var(--workspace-ui-radius-surface);
+        background: var(--workspace-ui-surface);
+        padding: 16px;
     }
 
     .admin-workspace .admin-analytics-metric-label {
@@ -597,12 +611,13 @@
     }
 
     .admin-workspace .admin-analytics-metric-value {
-        margin-top: 8px;
+        margin-top: 6px;
         color: var(--workspace-ui-text);
         overflow: hidden;
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 600;
-        line-height: 26px;
+        font-variant-numeric: tabular-nums;
+        line-height: 28px;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
@@ -980,8 +995,22 @@
         line-height: 14px;
     }
     @media (max-width: 1439px) {
+        .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+            grid-template-columns: minmax(0, 1fr) auto;
+        }
+
         .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-fields {
-            grid-template-columns: minmax(240px, 1.4fr) repeat(2, minmax(160px, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .admin-workspace .admin-analytics-date-filter {
+            grid-column: span 2;
+        }
+    }
+
+    @media (min-width: 1024px) and (max-width: 1439px) {
+        .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-fields {
+            grid-template-columns: repeat(6, minmax(0, 1fr));
         }
     }
 
@@ -992,37 +1021,36 @@
         }
 
         .admin-page-header {
-            margin-bottom: 20px;
+            margin-bottom: 16px;
+        }
+
+        .admin-page-breadcrumb {
+            display: none;
+        }
+
+        .admin-page-heading {
+            flex-basis: 100%;
         }
 
         .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-fields {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
         }
 
         .admin-workspace .admin-analytics-date-filter {
-            grid-column: 1 / -1;
+            grid-column: span 2;
         }
 
         .admin-workspace .admin-analytics-metric-section {
-            grid-template-columns: 1fr;
+            gap: 10px;
         }
 
         .admin-workspace .admin-analytics-section-heading {
-            border-bottom: 1px solid var(--workspace-ui-divider);
-            padding: 16px 20px;
+            border-bottom: 0;
+            padding: 0;
         }
 
         .admin-workspace .admin-analytics-metrics {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-
-        .admin-workspace .admin-analytics-metric:nth-child(4),
-        .admin-workspace .admin-analytics-metric:nth-child(5) {
-            border-top: 1px solid var(--workspace-ui-divider);
-        }
-
-        .admin-workspace .admin-analytics-metric:nth-child(3n + 1) {
-            border-left: 0;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
         }
     }
 
@@ -1092,6 +1120,10 @@
             padding: 10px;
         }
 
+        .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+            grid-template-columns: 1fr;
+        }
+
         .admin-workspace .workspace-list-toolbar-fields {
             width: 100%;
         }
@@ -1125,16 +1157,16 @@
 
         .admin-workspace .admin-analytics-metric {
             min-height: 104px;
-            border-top: 1px solid var(--workspace-ui-divider);
             padding: 16px;
         }
 
-        .admin-workspace .admin-analytics-metric:nth-child(odd) {
-            border-left: 0;
+        .admin-workspace .admin-analytics-section-heading {
+            display: grid;
+            gap: 2px;
         }
 
-        .admin-workspace .admin-analytics-metric:nth-child(-n + 2) {
-            border-top: 0;
+        .admin-workspace .admin-analytics-section-description {
+            text-align: left;
         }
 
         .admin-workspace .admin-analytics-chart {
