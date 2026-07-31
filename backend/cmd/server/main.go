@@ -82,6 +82,7 @@ func main() {
 		log.Printf("storage migration completed: tasks=%d assets=%d projects=%d backup=%s", summary.Tasks, summary.Assets, summary.Projects, summary.Backup)
 	}
 	svc.StartWorker()
+	svc.StartStorageMigrationWorker()
 
 	r := gin.New()
 	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
@@ -96,6 +97,7 @@ func main() {
 	handler.RegisterAdminRoutes(api, svc)
 	handler.RegisterAdminReleaseRoutes(api, svc, env("CANVAS_CHANGELOG_PATH", "../CHANGELOG.md"))
 	handler.RegisterAdminOperationsRoutes(api, svc)
+	handler.RegisterAdminStorageMigrationRoutes(api, svc)
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)

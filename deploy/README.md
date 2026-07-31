@@ -31,14 +31,14 @@ chmod 600 .env.production
 
 ```bash
 # 首次安装
-bash deploy/hmaigc-ops.sh install v1.0.12
+bash deploy/hmaigc-ops.sh install v1.0.13
 
 # 状态与环境验收
 bash deploy/hmaigc-ops.sh status
 bash deploy/hmaigc-ops.sh verify
 
 # 命令行升级、备份和回滚（后台页面也通过同一控制器队列执行）
-bash deploy/hmaigc-ops.sh upgrade v1.0.12
+bash deploy/hmaigc-ops.sh upgrade v1.0.13
 bash deploy/hmaigc-ops.sh backup
 bash deploy/hmaigc-ops.sh rollback
 ```
@@ -48,6 +48,41 @@ bash deploy/hmaigc-ops.sh rollback
 升级失败会在 Web 重新开放前自动恢复升级前的数据与版本。回滚前也会先为当前版本创建安全恢复点；若目标旧版本验收失败，会恢复到回滚前状态。
 
 后台 `/admin/operations` 提供版本检查、升级、回滚、实时日志、备份状态和审计记录。每次调用都由业务后端重新校验管理员身份；首次安装不会开放给后台页面，只允许服务器命令行引导。
+
+## 静态资源 OSS/CDN 发布
+
+从 `v1.0.13` 起，正式标签发布会先把 Web 构建产物写入独立静态资源 Bucket，再构建引用该不可变目录的 Web 镜像。用户媒体 Bucket 保持私有且通过业务接口鉴权读取，禁止与公开静态资源 Bucket 混用。
+
+建议静态 Bucket 使用 `hmaigc-prod-static`，对象前缀使用 `hmaigc/web`，并把 `static.hmaigc.ai` 的 CDN 回源根目录指向该 Bucket。仓库需要配置：
+
+| 类型 | 名称 | 示例 |
+| --- | --- | --- |
+| Repository variable | `HMAIGC_STATIC_ASSET_BASE_URL` | `https://static.hmaigc.ai/hmaigc/web` |
+| Repository variable | `HMAIGC_STATIC_OSS_ENDPOINT` | `https://oss-cn-hongkong.aliyuncs.com` |
+| Repository variable | `HMAIGC_STATIC_OSS_BUCKET` | `hmaigc-prod-static` |
+| Repository variable | `HMAIGC_STATIC_OSS_PREFIX` | `hmaigc/web` |
+| Repository secret | `HMAIGC_STATIC_OSS_ACCESS_KEY_ID` | 仅允许该 Bucket 写入与读取元数据的 RAM AccessKey |
+| Repository secret | `HMAIGC_STATIC_OSS_ACCESS_KEY_SECRET` | 对应 Secret |
+
+`HMAIGC_STATIC_ASSET_BASE_URL` 末尾不能带 `/`，并且 URL 路径必须与 CDN 回源后的 `HMAIGC_STATIC_OSS_PREFIX` 一致。Bucket/CDN 还必须满足：
+
+- CDN 对 `hmaigc/web/releases/*` 缓存 365 天；对象名与版本目录不可变，不执行覆盖发布；
+- 允许 `https://hmaigc.ai` 和实际启用的 `www` 域名跨域 GET/HEAD，禁止开放写方法；
+- `index.html` 不上传 OSS，继续由版本化 Web 镜像提供且不得配置长期缓存；
+- 发布器逐文件 PUT 后执行 HEAD 大小和 ETag 校验，最后才写 `manifest.json`；清单经 CDN 无法读取时镜像发布被阻止；
+- 旧版本目录不自动删除，因此镜像回滚可继续读取同版本静态资源。
+
+生产服务器不需要保存静态 Bucket 的 AccessKey。密钥只存在于 GitHub Actions secrets，业务服务器仍只配置用户媒体 OSS。
+
+## 历史媒体迁移
+
+升级到 `v1.0.13` 后，数据库会新增迁移任务与迁移明细表。管理员先在“系统配置 → 存储服务”确认平台 OSS 已启用，再由“历史资源迁移”创建快照任务：
+
+1. 系统只选择创建任务时仍为 `local + ready` 的资源；
+2. Worker 复制文件、校验源大小和 SHA-256，再核对 OSS HEAD 大小与 ETag；
+3. 校验通过后才在数据库事务中切换该资源引用；
+4. 失败资源保持本地引用并记录原因，可由管理员重试；
+5. 原数据卷文件不会自动删除，升级与回滚备份仍包含它们。
 
 ## 控制器自身升级
 

@@ -6,8 +6,14 @@ import { defineConfig } from "vite";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
+const staticAssetBaseURL = (process.env.VITE_STATIC_ASSET_BASE_URL || "").trim();
+
+if (staticAssetBaseURL && !staticAssetBaseURL.startsWith("https://")) {
+    throw new Error("VITE_STATIC_ASSET_BASE_URL 必须使用 HTTPS");
+}
 
 export default defineConfig({
+    base: staticAssetBaseURL ? `${staticAssetBaseURL.replace(/\/+$/, "")}/` : "/",
     plugins: [react()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),

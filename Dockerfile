@@ -4,6 +4,8 @@
 FROM oven/bun:1.3.13 AS web-build
 
 WORKDIR /app/web
+ARG VITE_STATIC_ASSET_BASE_URL
+ENV VITE_STATIC_ASSET_BASE_URL=$VITE_STATIC_ASSET_BASE_URL
 COPY web/package.json web/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
 COPY VERSION /app/VERSION

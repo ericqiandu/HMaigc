@@ -20,6 +20,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -626,6 +627,31 @@ type ossObjectStream struct {
 	acceptRanges  string
 }
 
+type ossObjectMetadata struct {
+	contentLength int64
+	etag          string
+}
+
+func headOSSObject(setting ossSettingValue, objectKey string) (ossObjectMetadata, error) {
+	req, err := newOSSRequest(http.MethodHead, setting, objectKey, "", nil)
+	if err != nil {
+		return ossObjectMetadata{}, err
+	}
+	resp, err := OutboundHTTPClient(30 * time.Second).Do(req)
+	if err != nil {
+		return ossObjectMetadata{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return ossObjectMetadata{}, fmt.Errorf("OSS 对象校验失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
+	}
+	return ossObjectMetadata{
+		contentLength: resp.ContentLength,
+		etag:          strings.Trim(resp.Header.Get("ETag"), `"`),
+	}, nil
+}
+
 func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
 	req, err := newOSSRequest(http.MethodGet, setting, objectKey, "", nil)
 	if err != nil {
@@ -693,6 +719,10 @@ func signedOSSObjectURL(setting ossSettingValue, objectKey string, expiresAt tim
 }
 
 func newOSSRequest(method string, setting ossSettingValue, objectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	return newOSSRequestWithHeaders(method, setting, objectKey, contentType, body, nil)
+}
+
+func newOSSRequestWithHeaders(method string, setting ossSettingValue, objectKey string, contentType string, body io.Reader, ossHeaders map[string]string) (*http.Request, error) {
 	baseURL, err := ossBucketBaseURL(setting)
 	if err != nil {
 		return nil, err
@@ -707,7 +737,33 @@ func newOSSRequest(method string, setting ossSettingValue, objectKey string, con
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	stringToSign := strings.Join([]string{method, "", contentType, date, "/" + setting.Bucket + "/" + objectKey}, "\n")
+	canonicalHeaderNames := make([]string, 0, len(ossHeaders))
+	canonicalHeaders := make(map[string]string, len(ossHeaders))
+	for name, value := range ossHeaders {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if !strings.HasPrefix(name, "x-oss-") {
+			return nil, fmt.Errorf("OSS 签名头无效：%s", name)
+		}
+		value = strings.TrimSpace(value)
+		req.Header.Set(name, value)
+		canonicalHeaderNames = append(canonicalHeaderNames, name)
+		canonicalHeaders[name] = value
+	}
+	sort.Strings(canonicalHeaderNames)
+	var canonicalOSSHeaders strings.Builder
+	for _, name := range canonicalHeaderNames {
+		canonicalOSSHeaders.WriteString(name)
+		canonicalOSSHeaders.WriteByte(':')
+		canonicalOSSHeaders.WriteString(canonicalHeaders[name])
+		canonicalOSSHeaders.WriteByte('\n')
+	}
+	stringToSign := strings.Join([]string{
+		method,
+		"",
+		contentType,
+		date,
+		canonicalOSSHeaders.String() + "/" + setting.Bucket + "/" + objectKey,
+	}, "\n")
 	mac := hmac.New(sha1.New, []byte(setting.AccessKeySecret))
 	_, _ = mac.Write([]byte(stringToSign))
 	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))

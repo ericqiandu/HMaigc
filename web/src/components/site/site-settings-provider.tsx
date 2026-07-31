@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 
+import { staticAssetURL } from "@/lib/static-assets";
 import { getPublicSiteSettings, publicSiteSettingsQueryKey, type SiteSettings } from "@/services/api/site-settings";
 
 const bootstrapSiteSettings: SiteSettings = {
@@ -39,7 +40,7 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
         document.title = settings.siteName;
         const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
         if (favicon) {
-            favicon.href = settings.logoUrl || "/logo.svg";
+            favicon.href = settings.logoUrl || staticAssetURL("/logo.svg");
         }
     }, [settings.logoUrl, settings.siteName]);
 
@@ -72,5 +73,5 @@ export function useSiteSettings() {
 }
 
 export function siteLogoURL(settings: SiteSettings) {
-    return settings.logoUrl || "/logo.svg";
+    return settings.logoUrl || staticAssetURL("/logo.svg");
 }

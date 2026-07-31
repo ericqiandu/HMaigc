@@ -1,6 +1,7 @@
 import { useState, type ComponentProps, type ReactNode } from "react";
 import { Button, Popover } from "antd";
 
+import { staticAssetURL } from "@/lib/static-assets";
 import type { AiConfig } from "@/stores/use-config-store";
 import type {
     CanvasAgentExecutionMode,
@@ -45,7 +46,7 @@ export function CanvasAgentComposerControls({
         <div className="canvas-agent-composer-controls">
             <ComposerPopover
                 label="选择模型"
-                icon="/icons/agent-model.svg?v=2"
+                icon={`${staticAssetURL("/icons/agent-model.svg")}?v=2`}
                 iconVariant="model"
                 placement={placement}
                 open={activePopover === "models"}
@@ -55,7 +56,7 @@ export function CanvasAgentComposerControls({
             />
             <ComposerPopover
                 label="Skills"
-                icon="/icons/agent-skills.svg"
+                icon={staticAssetURL("/icons/agent-skills.svg")}
                 iconVariant="skills"
                 placement={placement}
                 open={activePopover === "skills"}
@@ -65,7 +66,7 @@ export function CanvasAgentComposerControls({
             />
             <ComposerPopover
                 label="生成模式"
-                icon={executionMode === "guided" ? "/icons/agent-mode-manual.svg" : "/icons/agent-mode-automatic.svg"}
+                icon={staticAssetURL(executionMode === "guided" ? "/icons/agent-mode-manual.svg" : "/icons/agent-mode-automatic.svg")}
                 iconVariant="mode"
                 placement={placement}
                 open={activePopover === "mode"}

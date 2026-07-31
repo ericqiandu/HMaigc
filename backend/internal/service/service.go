@@ -24,24 +24,26 @@ import (
 )
 
 type Service struct {
-	repo               *repository.Repository
-	dataDir            string
-	cancelMu           sync.Mutex
-	registrationMu     sync.Mutex
-	emailCodeMu        sync.Mutex
-	redeemBatchMu      sync.Mutex
-	storageMu          sync.Mutex
-	sessionCreateMu    sync.Mutex
-	characterTaskMu    sync.Mutex
-	siteSettingMu      sync.Mutex
-	voicePreviewGroup  singleflight.Group
-	activeCancels      map[string]context.CancelFunc
-	pendingStorage     map[string]int64
-	pendingTeamStorage map[string]int64
-	coordinator        *runtimeCoordinator
-	runtimeErr         error
-	workerID           string
-	operationsClient   opsprotocol.Client
+	repo                 *repository.Repository
+	dataDir              string
+	cancelMu             sync.Mutex
+	registrationMu       sync.Mutex
+	emailCodeMu          sync.Mutex
+	redeemBatchMu        sync.Mutex
+	storageMu            sync.Mutex
+	storageMigrationMu   sync.Mutex
+	storageMigrationOnce sync.Once
+	sessionCreateMu      sync.Mutex
+	characterTaskMu      sync.Mutex
+	siteSettingMu        sync.Mutex
+	voicePreviewGroup    singleflight.Group
+	activeCancels        map[string]context.CancelFunc
+	pendingStorage       map[string]int64
+	pendingTeamStorage   map[string]int64
+	coordinator          *runtimeCoordinator
+	runtimeErr           error
+	workerID             string
+	operationsClient     opsprotocol.Client
 }
 
 const taskWorkerConcurrency = 3

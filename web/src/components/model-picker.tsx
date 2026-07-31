@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Coins, Cpu } from "lucide-react";
 import { Select } from "antd";
 
+import { staticAssetURL } from "@/lib/static-assets";
 import { cn } from "@/lib/utils";
 import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
@@ -212,18 +213,18 @@ function isMemberModel(config: AiConfig, model: string) {
 function MemberDiamond() {
     return (
         <span className="canvas-model-picker-member-diamond inline-flex size-4 shrink-0 items-center justify-center" role="img" aria-label="会员专属模型" title="会员专属模型">
-            <img className="canvas-model-picker-member-diamond-image size-3.5 object-contain" src="/icons/member-diamond.svg" alt="" aria-hidden="true" />
+            <img className="canvas-model-picker-member-diamond-image size-3.5 object-contain" src={staticAssetURL("/icons/member-diamond.svg")} alt="" aria-hidden="true" />
         </span>
     );
 }
 
 function resolveModelIcon(model: string) {
     const name = model.toLowerCase();
-    if (name.includes("claude") || name.includes("anthropic")) return "/icons/claude.svg";
-    if (name.includes("gemini") || name.includes("google")) return "/icons/gemini.svg";
-    if (name.includes("gpt") || name.includes("openai")) return "/icons/openai.svg";
-    if (name.includes("grok") || name.includes("grok")) return "/icons/grok.svg";
-    if (name.includes("deepseek") || name.includes("deepseek")) return "/icons/deepseek.svg";
-    if (name.includes("glm") || name.includes("glm")) return "/icons/glm.svg";
+    if (name.includes("claude") || name.includes("anthropic")) return staticAssetURL("/icons/claude.svg");
+    if (name.includes("gemini") || name.includes("google")) return staticAssetURL("/icons/gemini.svg");
+    if (name.includes("gpt") || name.includes("openai")) return staticAssetURL("/icons/openai.svg");
+    if (name.includes("grok") || name.includes("grok")) return staticAssetURL("/icons/grok.svg");
+    if (name.includes("deepseek") || name.includes("deepseek")) return staticAssetURL("/icons/deepseek.svg");
+    if (name.includes("glm") || name.includes("glm")) return staticAssetURL("/icons/glm.svg");
     return "";
 }

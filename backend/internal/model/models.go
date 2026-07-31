@@ -15,6 +15,8 @@ type ChannelInterfaceType string
 type ModelAccessPolicy string
 type ApiCallStatus string
 type ResourceStatus string
+type StorageMigrationStatus string
+type StorageMigrationItemStatus string
 type BillingStatus string
 type CreditLedgerType string
 type RedeemCodeStatus string
@@ -83,6 +85,18 @@ const (
 	ResourceStatusReady   ResourceStatus = "ready"
 	ResourceStatusFailed  ResourceStatus = "failed"
 	ResourceStatusDeleted ResourceStatus = "deleted"
+
+	StorageMigrationPreparing     StorageMigrationStatus = "preparing"
+	StorageMigrationQueued        StorageMigrationStatus = "queued"
+	StorageMigrationRunning       StorageMigrationStatus = "running"
+	StorageMigrationSucceeded     StorageMigrationStatus = "succeeded"
+	StorageMigrationPartialFailed StorageMigrationStatus = "partial_failed"
+	StorageMigrationFailed        StorageMigrationStatus = "failed"
+
+	StorageMigrationItemPending   StorageMigrationItemStatus = "pending"
+	StorageMigrationItemRunning   StorageMigrationItemStatus = "running"
+	StorageMigrationItemCommitted StorageMigrationItemStatus = "committed"
+	StorageMigrationItemFailed    StorageMigrationItemStatus = "failed"
 
 	BillingStatusReserved  BillingStatus = "reserved"
 	BillingStatusRunning   BillingStatus = "running"
@@ -541,6 +555,46 @@ type Resource struct {
 	Error            string    `json:"error"`
 	CreatedAt        time.Time `json:"createdAt" gorm:"index:idx_resources_user_created,priority:2;index:idx_resources_team_created,priority:2"`
 	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+// StorageMigrationJob 是一次从后端本地数据卷迁往平台 OSS 的不可变资源快照。
+// 原文件不会由迁移任务删除，后续清理必须经过独立的人工确认流程。
+type StorageMigrationJob struct {
+	ID             string                 `json:"id" gorm:"primaryKey;size:36"`
+	Status         StorageMigrationStatus `json:"status" gorm:"index;size:32"`
+	RequestedBy    string                 `json:"requestedBy" gorm:"index;size:36"`
+	TargetProvider string                 `json:"targetProvider" gorm:"size:24"`
+	TargetEndpoint string                 `json:"targetEndpoint"`
+	TargetBucket   string                 `json:"targetBucket" gorm:"size:160"`
+	TargetPrefix   string                 `json:"targetPrefix"`
+	TotalItems     int64                  `json:"totalItems"`
+	CommittedItems int64                  `json:"committedItems"`
+	FailedItems    int64                  `json:"failedItems"`
+	TotalBytes     int64                  `json:"totalBytes"`
+	CommittedBytes int64                  `json:"committedBytes"`
+	Error          string                 `json:"error"`
+	StartedAt      *time.Time             `json:"startedAt,omitempty"`
+	CompletedAt    *time.Time             `json:"completedAt,omitempty"`
+	CreatedAt      time.Time              `json:"createdAt" gorm:"index"`
+	UpdatedAt      time.Time              `json:"updatedAt"`
+}
+
+type StorageMigrationItem struct {
+	ID              string                     `json:"id" gorm:"primaryKey;size:36"`
+	JobID           string                     `json:"jobId" gorm:"index;size:36;uniqueIndex:idx_storage_migration_job_resource,priority:1"`
+	ResourceID      string                     `json:"resourceId" gorm:"index;size:36;uniqueIndex:idx_storage_migration_job_resource,priority:2"`
+	Status          StorageMigrationItemStatus `json:"status" gorm:"index;size:32"`
+	SourceObjectKey string                     `json:"sourceObjectKey"`
+	TargetObjectKey string                     `json:"targetObjectKey"`
+	Size            int64                      `json:"size"`
+	SourceSHA256    string                     `json:"sourceSha256" gorm:"size:64"`
+	TargetETag      string                     `json:"targetEtag" gorm:"size:160"`
+	AttemptCount    int                        `json:"attemptCount"`
+	Error           string                     `json:"error"`
+	StartedAt       *time.Time                 `json:"startedAt,omitempty"`
+	CompletedAt     *time.Time                 `json:"completedAt,omitempty"`
+	CreatedAt       time.Time                  `json:"createdAt"`
+	UpdatedAt       time.Time                  `json:"updatedAt"`
 }
 
 type Asset struct {

@@ -55,6 +55,8 @@ func Models() []any {
 		&model.UserDailyUploadUsage{},
 		&model.UserSkillState{},
 		&model.Resource{},
+		&model.StorageMigrationJob{},
+		&model.StorageMigrationItem{},
 		&model.Asset{},
 		&model.ProjectAssetLink{},
 		&model.ProjectAssetCandidate{},

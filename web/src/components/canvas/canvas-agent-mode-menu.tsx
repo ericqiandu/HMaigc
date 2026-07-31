@@ -1,11 +1,12 @@
 import { Check } from "lucide-react";
 
+import { staticAssetURL } from "@/lib/static-assets";
 import { cn } from "@/lib/utils";
 import type { CanvasAgentExecutionMode } from "@/types/canvas";
 
 const modes: Array<{ value: CanvasAgentExecutionMode; label: string; description: string; icon: string }> = [
-    { value: "guided", label: "手动模式", description: "Agent 在每次生成前询问", icon: "/icons/agent-mode-manual.svg" },
-    { value: "automatic", label: "自动模式", description: "Agent 完全自动生成", icon: "/icons/agent-mode-automatic.svg" },
+    { value: "guided", label: "手动模式", description: "Agent 在每次生成前询问", icon: staticAssetURL("/icons/agent-mode-manual.svg") },
+    { value: "automatic", label: "自动模式", description: "Agent 完全自动生成", icon: staticAssetURL("/icons/agent-mode-automatic.svg") },
 ];
 
 export function CanvasAgentModeMenu({

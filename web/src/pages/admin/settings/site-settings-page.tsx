@@ -3,6 +3,7 @@ import { Alert, App, Button, Form, Input, Skeleton, Tag } from "antd";
 import { FileCheck2, FileText, Image as ImageIcon, RefreshCw, Save, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, type ChangeEvent } from "react";
 
+import { staticAssetURL } from "@/lib/static-assets";
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
 import { SettingsSectionCard } from "../components/admin-ui";
@@ -141,7 +142,7 @@ export default function SiteSettingsPage() {
                                     <span className="site-settings-logo-label mb-2 block text-sm text-foreground/85">站点 Logo</span>
                                     <div className="site-settings-logo-row flex items-center gap-3">
                                         <span className="site-settings-logo-preview grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted/45">
-                                            <img className="site-settings-logo-image max-h-11 max-w-11 object-contain" src={setting?.logoUrl || "/logo.svg"} alt={`${setting?.siteName || "站点"} Logo`} />
+                                            <img className="site-settings-logo-image max-h-11 max-w-11 object-contain" src={setting?.logoUrl || staticAssetURL("/logo.svg")} alt={`${setting?.siteName || "站点"} Logo`} />
                                         </span>
                                         <div className="site-settings-logo-actions flex min-w-0 flex-col items-start gap-2">
                                             <input ref={logoInputRef} className="site-settings-logo-input !hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={selectLogo} />

@@ -1,5 +1,9 @@
 import { useState } from "react";
 
+import { staticAssetURL } from "@/lib/static-assets";
+
+const heroVideoURL = staticAssetURL("/videos/hero.mp4");
+
 export function UpdreamVideoBackground() {
     const [loadFailed, setLoadFailed] = useState(false);
 
@@ -15,13 +19,13 @@ export function UpdreamVideoBackground() {
                 onCanPlay={() => setLoadFailed(false)}
                 onError={() => setLoadFailed(true)}
             >
-                <source className="updream-video-background-source" src="/videos/hero.mp4" type="video/mp4" />
+                <source className="updream-video-background-source" src={heroVideoURL} type="video/mp4" />
             </video>
             <div className="updream-video-background-scrim" />
             <div className="updream-video-background-glow" />
             {loadFailed ? (
                 <p className="updream-video-background-error" role="alert">
-                    首页背景视频加载失败，请检查 /videos/hero.mp4。
+                    首页背景视频加载失败。
                 </p>
             ) : null}
         </div>

@@ -3,6 +3,7 @@ import { Check, Clapperboard, Eye, Palette, Sparkles } from "lucide-react";
 import { Button, Modal } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { staticAssetURL } from "@/lib/static-assets";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 export type CanvasStylePreset = {
@@ -18,7 +19,7 @@ export type CanvasStylePreset = {
 // 分类按短剧制作语境组织：先看媒介，再看题材与视觉气质，避免用品牌名称代替画风。
 const PROJECT_STYLE_SCOPE = "【使用边界】本规范是全项目美术与影像风格基线，用于统一角色资产、服装材质、建筑世界观、色彩语言和成片质感；它不是某张图片或某个镜头的提示词。具体场景内容、构图、景别、机位、运镜、动作、光源位置、天气和单场情绪由剧情与分镜节点决定，不得从本规范机械复制。";
 
-export const canvasStylePresets: CanvasStylePreset[] = [
+const canvasStylePresetDefinitions: CanvasStylePreset[] = [
     {
         id: "urban-live-action",
         title: "都市真人短剧",
@@ -362,6 +363,11 @@ export const canvasStylePresets: CanvasStylePreset[] = [
         imageUrl: "/short-drama-styles/real-life.jpg",
     },
 ];
+
+export const canvasStylePresets: CanvasStylePreset[] = canvasStylePresetDefinitions.map((preset) => ({
+    ...preset,
+    imageUrl: staticAssetURL(preset.imageUrl),
+}));
 
 export function CanvasStylePickerModal({ open, value, onClose, onSelect }: { open: boolean; value?: string; onClose: () => void; onSelect: (preset: CanvasStylePreset) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasAgentOperationImpact } from "@/lib/canvas/canvas-agent-ops";
+import { staticAssetURL } from "@/lib/static-assets";
 import type { LocalUser } from "@/stores/use-user-store";
 import { CanvasAgentTooltip } from "./canvas-agent-tooltip";
 import "./canvas-agent-panel.css";
@@ -302,7 +303,7 @@ function AgentDetailBlock({ detail, theme }: { detail: unknown; theme: (typeof c
 function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
         <span className="canvas-agent-avatar grid shrink-0 place-items-center" role="img" aria-label="OpenAI">
-            <span className="canvas-agent-avatar-mark size-5 opacity-80" style={{ background: theme.node.text, WebkitMask: "url(/icons/openai.svg) center / contain no-repeat", mask: "url(/icons/openai.svg) center / contain no-repeat" }} />
+            <span className="canvas-agent-avatar-mark size-5 opacity-80" style={{ background: theme.node.text, WebkitMask: `url(${staticAssetURL("/icons/openai.svg")}) center / contain no-repeat`, mask: `url(${staticAssetURL("/icons/openai.svg")}) center / contain no-repeat` }} />
         </span>
     );
 }

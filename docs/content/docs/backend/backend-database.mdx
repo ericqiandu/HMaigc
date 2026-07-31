@@ -1,5 +1,21 @@
 # 后端数据库
 
+## 历史资源 OSS 迁移
+
+`storage_migration_jobs` 保存一次由管理员创建的本地资源迁移快照与执行事实：
+
+- 目标渠道、Endpoint、Bucket 与路径前缀在任务创建时固化；执行期间平台 OSS 目标发生变化时任务显式失败；
+- `total_items`、`committed_items`、`failed_items`、总字节与已提交字节用于展示可核对进度；
+- `preparing`、`queued`、`running`、`succeeded`、`partial_failed`、`failed` 是唯一合法状态；
+- 进程异常中断时，启动恢复只把 `running` 任务重新排队，不推测上传已经完成。
+
+`storage_migration_items` 以 `job_id + resource_id` 唯一标识快照内的资源：
+
+- 保存原本地对象键、目标 OSS 对象键、大小、源文件 SHA-256、目标 ETag、尝试次数和最后一次失败原因；
+- 上传并通过 HEAD 大小与 ETag 校验后，在同一事务中把 `resources` 切换到 OSS 并把明细标记为 `committed`；
+- 事务提交前会锁定并核对资源仍为 `local + ready` 且对象键、大小未变化；并发变更会显式失败；
+- 迁移不删除数据卷原文件。任何后续空间回收都必须作为独立、再次确认且可审计的操作实现。
+
 ## 模型展示与访问策略
 
 `channel_models` 同时保存系统模型的展示配置与服务端访问策略：
