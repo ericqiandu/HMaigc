@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { App, Button, Divider, Input } from "antd";
 import { LockKeyhole, UserRound } from "lucide-react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, login } from "@/services/api/auth";
@@ -68,13 +68,6 @@ export default function LoginPage() {
             <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting}>
                 登录
             </Button>
-
-            <p className="auth-switch-copy">
-                <span className="auth-switch-muted">还没有账号？</span>
-                <Link className="auth-switch-link" to={{ pathname: "/register", search: params.toString() ? `?${params.toString()}` : "" }}>
-                    立即注册
-                </Link>
-            </p>
 
             {linuxdoEnabled ? (
                 <div className="auth-oauth-section">

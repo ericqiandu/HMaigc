@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { App, Button, Divider } from "antd";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, register, sendRegistrationEmailCode } from "@/services/api/auth";
@@ -117,13 +117,6 @@ export default function RegisterPage() {
             <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting} disabled={disabled}>
                 创建账号
             </Button>
-
-            <p className="auth-switch-copy">
-                <span className="auth-switch-muted">已经有账号？</span>
-                <Link className="auth-switch-link" to={{ pathname: "/login", search: params.toString() ? `?${params.toString()}` : "" }}>
-                    立即登录
-                </Link>
-            </p>
 
             {settings?.linuxdoEnabled ? (
                 <div className="auth-oauth-section">
