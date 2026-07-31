@@ -58,7 +58,7 @@
 }
 
 .canvas-audio-insert-menu--pause {
-    width: 248px;
+    width: 120px;
 }
 
 .canvas-audio-insert-menu--vocal {
@@ -90,37 +90,41 @@
 .canvas-audio-insert-menu-list {
     display: flex;
     flex-direction: column;
-    padding: 4px;
+    padding: 8px 0;
 }
 
 .canvas-audio-insert-option {
     display: flex;
     min-height: 36px;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 0 9px;
+    padding: 0 12px;
     border: 0;
-    border-radius: 7px;
+    border-radius: 0;
     background: transparent;
-    color: var(--foreground);
+    color: color-mix(in srgb, var(--foreground) 82%, transparent);
     cursor: pointer;
     text-align: left;
+    transition:
+        background-color 120ms ease,
+        color 120ms ease;
 }
 
 .canvas-audio-insert-option:hover,
+.canvas-audio-insert-option:focus-visible,
 .canvas-audio-vocal-option:hover {
     background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
 
-.canvas-audio-insert-option-label {
-    font-size: 12px;
-    font-weight: 500;
+.canvas-audio-insert-option:hover,
+.canvas-audio-insert-option:focus-visible {
+    outline: none;
+    color: var(--workspace-accent, #2997ff);
 }
 
-.canvas-audio-insert-option-meta {
-    color: color-mix(in srgb, var(--foreground) 46%, transparent);
-    font-size: 10px;
+.canvas-audio-insert-option-duration {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
     font-variant-numeric: tabular-nums;
 }
 

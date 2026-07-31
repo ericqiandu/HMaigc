@@ -11,10 +11,10 @@ type CanvasAudioTextToolsProps = {
 };
 
 const pauseOptions = [
-    { value: "<#0.3#>", label: "短停顿", description: "0.3 秒" },
-    { value: "<#0.5#>", label: "自然停顿", description: "0.5 秒" },
-    { value: "<#1#>", label: "长停顿", description: "1 秒" },
-    { value: "<#2#>", label: "段落停顿", description: "2 秒" },
+    { value: "<#0.3#>", label: "短停顿", duration: "0.3s" },
+    { value: "<#0.5#>", label: "自然停顿", duration: "0.5s" },
+    { value: "<#1#>", label: "长停顿", duration: "1.0s" },
+    { value: "<#2#>", label: "段落停顿", duration: "2.0s" },
 ] as const;
 
 export function CanvasAudioTextTools({ model, theme, onInsert }: CanvasAudioTextToolsProps) {
@@ -29,27 +29,24 @@ export function CanvasAudioTextTools({ model, theme, onInsert }: CanvasAudioText
                 open={pauseOpen}
                 onOpenChange={setPauseOpen}
                 trigger="click"
-                placement="topLeft"
-                overlayClassName="canvas-audio-text-popover"
+                placement="bottomLeft"
+                overlayClassName="canvas-audio-text-popover canvas-audio-text-popover--pause"
                 content={
                     <section className="canvas-audio-insert-menu canvas-audio-insert-menu--pause" aria-label="选择停顿时长">
-                        <header className="canvas-audio-insert-menu-header">
-                            <span className="canvas-audio-insert-menu-title">停顿时长</span>
-                            <span className="canvas-audio-insert-menu-hint">插入到光标</span>
-                        </header>
                         <div className="canvas-audio-insert-menu-list">
-                            {pauseOptions.map((option) => (
+                            {pauseOptions.map((option, index) => (
                                 <button
                                     key={option.value}
                                     type="button"
                                     className="canvas-audio-insert-option"
+                                    aria-label={`插入${option.label}，${option.duration}`}
+                                    autoFocus={index === 0}
                                     onClick={() => {
                                         onInsert(option.value);
                                         setPauseOpen(false);
                                     }}
                                 >
-                                    <span className="canvas-audio-insert-option-label">{option.label}</span>
-                                    <span className="canvas-audio-insert-option-meta">{option.description}</span>
+                                    <span className="canvas-audio-insert-option-duration">{option.duration}</span>
                                 </button>
                             ))}
                         </div>
