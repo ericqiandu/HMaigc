@@ -84,7 +84,7 @@ export function AuthScene() {
                         transition={{ duration: aceternityMotion.duration.panel, ease: aceternityMotion.easing.enter }}
                         className="my-auto w-full max-w-[460px]"
                     >
-                        <ConfigProvider theme={getAntThemeConfig(true)}>
+                        <ConfigProvider theme={getAntThemeConfig(true)} button={{ autoInsertSpace: false }}>
                             <SpotlightSurface spotlightColor="rgba(96,165,250,.14)" spotlightRadius={300} className="flex h-auto rounded-[26px]">
                                 <CometCard
                                     rotateDepth={1.8}
