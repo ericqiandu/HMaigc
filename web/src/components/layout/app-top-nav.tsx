@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
 import { WorkspaceFloatingNavigation } from "@/components/layout/workspace-floating-navigation";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 
@@ -25,23 +24,14 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     }, [navigate]);
 
     return (
-        <>
-            <div className="app-product-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden">
-                {!hideChrome ? (
-                    <>
-                        <WorkspaceTopBar />
-                        <WorkspaceFloatingNavigation />
-                    </>
-                ) : null}
-                <div className="app-product-content relative min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
-            </div>
-            <ModelSetupGuide
-                hidden={pathname === "/"
-                    || pathname === "/login"
-                    || pathname === "/register"
-                    || pathname === "/membership"
-                    || pathname.startsWith("/admin")}
-            />
-        </>
+        <div className="app-product-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden">
+            {!hideChrome ? (
+                <>
+                    <WorkspaceTopBar />
+                    <WorkspaceFloatingNavigation />
+                </>
+            ) : null}
+            <div className="app-product-content relative min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+        </div>
     );
 }
