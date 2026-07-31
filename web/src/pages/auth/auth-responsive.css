@@ -111,10 +111,6 @@
         gap: 20px;
     }
 
-    .auth-field-grid {
-        grid-template-columns: 1fr;
-    }
-
     .auth-panel .auth-input.ant-input-affix-wrapper,
     .auth-panel .auth-input.ant-input,
     .auth-panel .auth-primary-button.ant-btn,

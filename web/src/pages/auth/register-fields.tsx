@@ -5,55 +5,27 @@ import { AuthField } from "./auth-components";
 
 type RegisterFieldsProps = {
     username: string;
-    displayName: string;
     email: string;
     emailCode: string;
     password: string;
-    confirmPassword: string;
     requireEmail: boolean;
     requireCode: boolean;
     disabled: boolean;
     sendingCode: boolean;
     countdown: number;
     onUsernameChange: (value: string) => void;
-    onDisplayNameChange: (value: string) => void;
     onEmailChange: (value: string) => void;
     onEmailCodeChange: (value: string) => void;
     onPasswordChange: (value: string) => void;
-    onConfirmPasswordChange: (value: string) => void;
     onSendCode: () => void;
 };
 
-export function RegisterFields({
-    username,
-    displayName,
-    email,
-    emailCode,
-    password,
-    confirmPassword,
-    requireEmail,
-    requireCode,
-    disabled,
-    sendingCode,
-    countdown,
-    onUsernameChange,
-    onDisplayNameChange,
-    onEmailChange,
-    onEmailCodeChange,
-    onPasswordChange,
-    onConfirmPasswordChange,
-    onSendCode,
-}: RegisterFieldsProps) {
+export function RegisterFields({ username, email, emailCode, password, requireEmail, requireCode, disabled, sendingCode, countdown, onUsernameChange, onEmailChange, onEmailCodeChange, onPasswordChange, onSendCode }: RegisterFieldsProps) {
     return (
         <div className="auth-fields">
-            <div className="auth-field-grid">
-                <AuthField label="用户名">
-                    <Input className="auth-input" prefix={<UserRound className="auth-input-icon" />} value={username} onChange={(event) => onUsernameChange(event.target.value)} placeholder="用户名" autoComplete="username" required disabled={disabled} />
-                </AuthField>
-                <AuthField label="显示名称">
-                    <Input className="auth-input" value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} placeholder="显示名称（选填）" disabled={disabled} />
-                </AuthField>
-            </div>
+            <AuthField label="用户名">
+                <Input className="auth-input" prefix={<UserRound className="auth-input-icon" />} value={username} onChange={(event) => onUsernameChange(event.target.value)} placeholder="用户名" autoComplete="username" required disabled={disabled} />
+            </AuthField>
 
             <AuthField label="邮箱">
                 <Input className="auth-input" prefix={<Mail className="auth-input-icon" />} value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="邮箱地址" autoComplete="email" required={requireEmail} disabled={disabled} />
@@ -80,32 +52,19 @@ export function RegisterFields({
                 </AuthField>
             ) : null}
 
-            <div className="auth-field-grid">
-                <AuthField label="密码">
-                    <Input.Password
-                        className="auth-input"
-                        prefix={<LockKeyhole className="auth-input-icon" />}
-                        value={password}
-                        onChange={(event) => onPasswordChange(event.target.value)}
-                        placeholder="设置密码"
-                        autoComplete="new-password"
-                        required
-                        disabled={disabled}
-                    />
-                </AuthField>
-                <AuthField label="确认密码">
-                    <Input.Password
-                        className="auth-input"
-                        prefix={<LockKeyhole className="auth-input-icon" />}
-                        value={confirmPassword}
-                        onChange={(event) => onConfirmPasswordChange(event.target.value)}
-                        placeholder="再次输入密码"
-                        autoComplete="new-password"
-                        required
-                        disabled={disabled}
-                    />
-                </AuthField>
-            </div>
+            <AuthField label="密码">
+                <Input.Password
+                    className="auth-input"
+                    prefix={<LockKeyhole className="auth-input-icon" />}
+                    value={password}
+                    onChange={(event) => onPasswordChange(event.target.value)}
+                    placeholder="设置密码（至少 8 位）"
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                    disabled={disabled}
+                />
+            </AuthField>
         </div>
     );
 }

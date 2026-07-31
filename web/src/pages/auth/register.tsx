@@ -19,9 +19,7 @@ export default function RegisterPage() {
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
     const [emailCode, setEmailCode] = useState("");
-    const [displayName, setDisplayName] = useState("");
     const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [sendingCode, setSendingCode] = useState(false);
     const [countdown, setCountdown] = useState(0);
@@ -70,13 +68,9 @@ export default function RegisterPage() {
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (password !== confirmPassword) {
-            message.error("两次输入的密码不一致");
-            return;
-        }
         setSubmitting(true);
         try {
-            await register({ username, email, emailCode, displayName, password, inviteCode });
+            await register({ username, email, emailCode, password, inviteCode });
             await applyUserSession(await getAuthSession());
             if (!settings?.firstUser) window.sessionStorage.setItem("infinite-canvas:model-setup-guide", "1");
             message.success(settings?.firstUser ? "管理员账号已创建" : "注册成功");
@@ -105,22 +99,18 @@ export default function RegisterPage() {
 
             <RegisterFields
                 username={username}
-                displayName={displayName}
                 email={email}
                 emailCode={emailCode}
                 password={password}
-                confirmPassword={confirmPassword}
                 requireEmail={!settings?.firstUser}
                 requireCode={requireCode}
                 disabled={disabled}
                 sendingCode={sendingCode}
                 countdown={countdown}
                 onUsernameChange={setUsername}
-                onDisplayNameChange={setDisplayName}
                 onEmailChange={setEmail}
                 onEmailCodeChange={setEmailCode}
                 onPasswordChange={setPassword}
-                onConfirmPasswordChange={setConfirmPassword}
                 onSendCode={() => void sendCode()}
             />
 
