@@ -27,7 +27,7 @@ cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ## 2. 启动与健康检查
 
 ```bash
-bash deploy/hmaigc-ops.sh install v1.0.11
+bash deploy/hmaigc-ops.sh install v1.0.12
 bash deploy/hmaigc-ops.sh verify
 ```
 

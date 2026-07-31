@@ -195,18 +195,6 @@ health_version() {
     sed -n 's/.*"version":"\([^"]*\)".*/\1/p'
 }
 
-public_base_url() {
-    local host port
-    host="${CANVAS_HTTP_HOST:-$(env_value CANVAS_HTTP_HOST)}"
-    port="${CANVAS_HTTP_PORT:-$(env_value CANVAS_HTTP_PORT)}"
-    host="${host:-127.0.0.1}"
-    port="${port:-3000}"
-    if [[ "$host" == "0.0.0.0" || "$host" == "::" ]]; then
-        host="127.0.0.1"
-    fi
-    printf 'http://%s:%s\n' "$host" "$port"
-}
-
 verify_backend_release() {
     local expected="$1"
     local response actual
@@ -218,17 +206,16 @@ verify_backend_release() {
     }
 }
 
-verify_public_release() {
+verify_web_release() {
     local expected="$1"
-    local base response actual
-    base="$(public_base_url)"
-    response="$(curl --fail --silent --show-error --max-time 10 "$base/api/health")" || return 1
+    local response actual
+    response="$(compose exec -T web wget -qO- http://127.0.0.1:3000/api/health)" || return 1
     actual="$(printf '%s' "$response" | health_version)"
     [[ "$actual" == "$expected" ]] || {
-        log "公网入口版本不匹配：期望 $expected，实际 ${actual:-未返回}"
+        log "Web 入口版本不匹配：期望 $expected，实际 ${actual:-未返回}"
         return 1
     }
-    curl --fail --silent --show-error --max-time 10 "$base/canvas/" |
+    compose exec -T web wget -qO- http://127.0.0.1:3000/canvas/ |
         grep -Fq '<div id="root"></div>'
 }
 
@@ -237,7 +224,7 @@ verify_running_release() {
     export HMAIGC_VERSION="$expected"
     log "核对当前运行版本：$expected"
     verify_backend_release "$expected" || return 1
-    verify_public_release "$expected"
+    verify_web_release "$expected"
 }
 
 start_release() {
@@ -249,5 +236,5 @@ start_release() {
     verify_backend_release "$version" || return 1
     log "启动并验活 Web：$version"
     compose up -d web --wait
-    verify_public_release "$version"
+    verify_web_release "$version"
 }

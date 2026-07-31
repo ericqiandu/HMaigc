@@ -65,8 +65,8 @@ func (e ScriptExecutor) Execute(ctx context.Context, action opsprotocol.Action, 
 	waitGroup.Add(2)
 	go scan("stdout", stdout)
 	go scan("stderr", stderr)
-	waitErr := command.Wait()
 	waitGroup.Wait()
+	waitErr := command.Wait()
 	if len(scanErrors) > 0 {
 		return ExecutionResult{ExitCode: command.ProcessState.ExitCode()}, errors.Join(scanErrors...)
 	}

@@ -21,7 +21,7 @@ cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-填写真实镜像仓库、业务版本、控制器版本、数据库密码、HTTPS Origin 和本机监听端口。`HMAIGC_BACKEND_GID` 必须保持与发布镜像中的固定值 `101` 一致。业务卷和 `HMAIGC_OPS_STATE_VOLUME` 启用后不得随意改变，否则控制器会失去发布状态、审计日志或生产恢复点。
+填写真实镜像仓库、业务版本、控制器版本、数据库密码、HTTPS Origin 和本机监听端口。`HMAIGC_BACKEND_GID` 必须保持与发布镜像中的固定值 `101` 一致。控制器启动时会把只读挂载的生产配置复制到独立运维卷并收紧为 `600`，避免 Docker Desktop 与不同宿主机的 bind mount 权限语义影响发布校验。业务卷和 `HMAIGC_OPS_STATE_VOLUME` 启用后不得随意改变，否则控制器会失去发布状态、审计日志或生产恢复点。
 
 私有 GitHub 仓库若要在后台检查最新 Release，填写只读的 `HMAIGC_RELEASES_API_TOKEN`。不配置时版本检查会明确显示“未配置”，不会假装已经是最新版本。
 
@@ -31,7 +31,7 @@ chmod 600 .env.production
 
 ```bash
 # 首次安装
-bash deploy/hmaigc-ops.sh install v1.0.11
+bash deploy/hmaigc-ops.sh install v1.0.12
 
 # 状态与环境验收
 bash deploy/hmaigc-ops.sh status

@@ -38,6 +38,7 @@ RUN apk add --no-cache \
 WORKDIR /opt/hmaigc
 COPY docker-compose.production.yml /opt/hmaigc/docker-compose.production.yml
 COPY deploy /opt/hmaigc/deploy
+RUN chmod 0755 /opt/hmaigc/deploy/ops-entrypoint.sh
 COPY --from=ops-build /out/hmaigc-ops-controller /usr/local/bin/hmaigc-ops-controller
 COPY --from=ops-build /out/hmaigc-opsctl /usr/local/bin/hmaigc-opsctl
 
@@ -48,8 +49,9 @@ ENV HMAIGC_RELEASE_STATE_FILE=/var/lib/hmaigc-ops/release/release.env
 ENV HMAIGC_STATE_DIR=/var/lib/hmaigc-ops/release
 ENV HMAIGC_BACKUP_DIR=/var/lib/hmaigc-ops/backups
 ENV HMAIGC_DEPLOY_SCRIPT=/opt/hmaigc/deploy/hmaigc.sh
-ENV HMAIGC_ENV_FILE=/opt/hmaigc/.env.production
+ENV HMAIGC_ENV_FILE=/var/lib/hmaigc-ops/deployment.env
 
 VOLUME ["/var/lib/hmaigc-ops"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD hmaigc-opsctl status >/dev/null || exit 1
+ENTRYPOINT ["/opt/hmaigc/deploy/ops-entrypoint.sh"]
 CMD ["hmaigc-ops-controller"]

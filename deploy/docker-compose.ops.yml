@@ -11,16 +11,17 @@ services:
       HMAIGC_OPS_SOCKET: /var/lib/hmaigc-ops/controller.sock
       HMAIGC_OPS_SOCKET_MODE: "0660"
       HMAIGC_OPS_SHARED_SECRET_FILE: /var/lib/hmaigc-ops/shared-secret
+      HMAIGC_OPS_SOURCE_ENV_FILE: /run/hmaigc-config/.env.production
       HMAIGC_RELEASE_STATE_FILE: /var/lib/hmaigc-ops/release/release.env
       HMAIGC_STATE_DIR: /var/lib/hmaigc-ops/release
       HMAIGC_BACKUP_DIR: /var/lib/hmaigc-ops/backups
       HMAIGC_DEPLOY_SCRIPT: /opt/hmaigc/deploy/hmaigc.sh
-      HMAIGC_ENV_FILE: /opt/hmaigc/.env.production
+      HMAIGC_ENV_FILE: /var/lib/hmaigc-ops/deployment.env
       HMAIGC_RELEASES_API_URL: ${HMAIGC_RELEASES_API_URL:-}
       HMAIGC_RELEASES_API_TOKEN: ${HMAIGC_RELEASES_API_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../.env.production:/opt/hmaigc/.env.production:ro
+      - ${HMAIGC_HOST_ENV_FILE:-../.env.production}:/run/hmaigc-config/.env.production:ro
       - ops-state:/var/lib/hmaigc-ops
     read_only: true
     tmpfs:

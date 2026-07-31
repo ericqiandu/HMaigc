@@ -54,7 +54,7 @@ install_release() {
 
 upgrade_release() {
     local target="${1:-}"
-    [[ -n "$target" ]] || fail "upgrade 必须显式指定目标版本，例如 v1.0.11"
+    [[ -n "$target" ]] || fail "upgrade 必须显式指定目标版本，例如 v1.0.12"
     configure_deploy_runtime "$target"
     start_operation_log upgrade
     acquire_deploy_lock
@@ -166,7 +166,7 @@ verify_release() {
     local current
     current="$(state_value CURRENT_VERSION)"
     verify_backend_release "$current"
-    verify_public_release "$current"
+    verify_web_release "$current"
     log "版本与健康检查通过：$current"
 }
 

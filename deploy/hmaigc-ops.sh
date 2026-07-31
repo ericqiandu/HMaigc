@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="${HMAIGC_ENV_FILE:-$ROOT_DIR/.env.production}"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.ops.yml"
+export HMAIGC_HOST_ENV_FILE="$ENV_FILE"
 
 fail() {
     printf '错误：%s\n' "$*" >&2

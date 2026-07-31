@@ -22,6 +22,16 @@ case "$arguments" in
             printf '{"code":0,"data":{"status":"ok","version":"%s","commit":"test"},"msg":"ok"}' "$HMAIGC_VERSION"
         fi
         ;;
+    *" compose "*" exec -T web wget "*"api/health"*)
+        if [[ "${HMAIGC_VERSION:-}" == "${FAKE_FAIL_VERSION:-never}" ]]; then
+            printf '{"code":0,"data":{"status":"ok","version":"broken","commit":"test"},"msg":"ok"}'
+        else
+            printf '{"code":0,"data":{"status":"ok","version":"%s","commit":"test"},"msg":"ok"}' "$HMAIGC_VERSION"
+        fi
+        ;;
+    *" compose "*" exec -T web wget "*"canvas/"*)
+        printf '<html><body><div id="root"></div></body></html>'
+        ;;
     *" compose "*" exec -T postgres "*"pg_dump"*)
         printf 'fake-postgres-dump'
         ;;
