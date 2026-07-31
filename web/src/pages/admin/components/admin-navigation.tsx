@@ -16,6 +16,7 @@ import {
     MessageSquareText,
     RadioTower,
     Search,
+    ServerCog,
     Settings2,
     ShieldCheck,
     TicketCheck,
@@ -85,6 +86,7 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
             { path: "/admin/settings/email", label: "邮件服务", description: "注册验证码与 SMTP 发信配置", icon: Mail },
             { path: "/admin/settings/storage", label: "存储服务", description: "OSS、公开资源与云存储参数", icon: HardDrive },
             { path: "/admin/settings/runtime-policy", label: "运行策略", description: "并发、频控、配额、队列与超时", icon: Settings2 },
+            { path: "/admin/operations", label: "运维升级", description: "版本检查、备份、升级、回滚与操作审计", icon: ServerCog },
         ],
     },
 ];

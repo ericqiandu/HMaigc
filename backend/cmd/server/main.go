@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/handler"
+	"infinite-canvas/backend/internal/opsprotocol"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
 
@@ -54,6 +55,9 @@ func main() {
 
 	repo := repository.New(db)
 	svc := service.New(repo, dataDir)
+	if err := configureOperationsClient(svc); err != nil {
+		log.Fatal(err)
+	}
 	if err := svc.ValidateRuntime(); err != nil {
 		log.Fatal(err)
 	}
@@ -91,6 +95,7 @@ func main() {
 	handler.RegisterAuthRoutes(api, svc)
 	handler.RegisterAdminRoutes(api, svc)
 	handler.RegisterAdminReleaseRoutes(api, svc, env("CANVAS_CHANGELOG_PATH", "../CHANGELOG.md"))
+	handler.RegisterAdminOperationsRoutes(api, svc)
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)
@@ -118,6 +123,27 @@ func main() {
 	if err := runHTTPServer(newHTTPServer(addr, r)); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureOperationsClient(svc *service.Service) error {
+	socketPath := strings.TrimSpace(os.Getenv("HMAIGC_OPS_SOCKET"))
+	secretPath := strings.TrimSpace(os.Getenv("HMAIGC_OPS_SHARED_SECRET_FILE"))
+	if socketPath == "" && secretPath == "" {
+		return nil
+	}
+	if socketPath == "" || secretPath == "" {
+		return errors.New("HMAIGC_OPS_SOCKET 与 HMAIGC_OPS_SHARED_SECRET_FILE 必须同时配置")
+	}
+	secret, err := os.ReadFile(secretPath)
+	if err != nil {
+		return fmt.Errorf("读取运维控制器共享密钥失败: %w", err)
+	}
+	client, err := opsprotocol.NewUnixClient(socketPath, []byte(strings.TrimSpace(string(secret))))
+	if err != nil {
+		return err
+	}
+	svc.ConfigureOperationsClient(client)
+	return nil
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

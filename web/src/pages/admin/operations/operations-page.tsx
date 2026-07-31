@@ -1,0 +1,410 @@
+import { Alert, App, Button, Empty, Input, Modal, Table, Tag } from "antd";
+import {
+    ArchiveRestore,
+    CloudDownload,
+    DatabaseBackup,
+    RefreshCw,
+    RotateCcw,
+    ServerCog,
+    ShieldCheck,
+    TerminalSquare,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
+import { SettingsSectionCard } from "@/pages/admin/components/admin-ui";
+import {
+    actionLabels,
+    backupColumns,
+    createOperationColumns,
+    formatLogTime,
+    formatTime,
+    OperationActionButton,
+    OperationStatusTag,
+    OverviewMetric,
+    releaseCheckDetail,
+    shortCommit,
+} from "@/pages/admin/operations/operations-presenters";
+import {
+    getOperation,
+    getOperationsOverview,
+    listOperationBackups,
+    listOperationLogs,
+    listOperations,
+    startOperation,
+    type OperationsAction,
+    type OperationsBackup,
+    type OperationsLog,
+    type OperationsOverview,
+    type OperationsRecord,
+} from "@/services/api/operations";
+
+type PendingAction = {
+    action: OperationsAction;
+    title: string;
+    description: string;
+    targetVersion?: string;
+    expectedConfirmation: string;
+    danger?: boolean;
+};
+
+export default function OperationsPage() {
+    const { message } = App.useApp();
+    const [overview, setOverview] = useState<OperationsOverview | null>(null);
+    const [operations, setOperations] = useState<OperationsRecord[]>([]);
+    const [backups, setBackups] = useState<OperationsBackup[]>([]);
+    const [selectedOperationId, setSelectedOperationId] = useState("");
+    const [selectedOperation, setSelectedOperation] = useState<OperationsRecord | null>(null);
+    const [logs, setLogs] = useState<OperationsLog[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [loadError, setLoadError] = useState("");
+    const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+    const [confirmation, setConfirmation] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+    const logCursorRef = useRef(0);
+    const logLoadingRef = useRef(false);
+    const logRequestVersionRef = useRef(0);
+    const selectedOperationIdRef = useRef("");
+    const logViewportRef = useRef<HTMLDivElement | null>(null);
+
+    const loadDashboard = useCallback(async (silent = false) => {
+        if (!silent) setRefreshing(true);
+        try {
+            const [nextOverview, operationPage, nextBackups] = await Promise.all([
+                getOperationsOverview(),
+                listOperations(50),
+                listOperationBackups(50),
+            ]);
+            setOverview(nextOverview);
+            setOperations(operationPage.items);
+            setBackups(nextBackups);
+            setLoadError("");
+            setSelectedOperationId((current) => current || nextOverview.activeOperation?.id || nextOverview.latestOperation?.id || operationPage.items[0]?.id || "");
+        } catch (error) {
+            setLoadError(error instanceof Error ? error.message : "读取运维状态失败");
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, []);
+
+    const loadSelectedOperation = useCallback(async (operationId: string) => {
+        if (!operationId) {
+            setSelectedOperation(null);
+            setLogs([]);
+            logCursorRef.current = 0;
+            return;
+        }
+        if (logLoadingRef.current) return;
+        logLoadingRef.current = true;
+        const requestVersion = logRequestVersionRef.current;
+        const cursor = logCursorRef.current;
+        try {
+            const [operation, logPage] = await Promise.all([
+                getOperation(operationId),
+                listOperationLogs(operationId, cursor, 500),
+            ]);
+            if (selectedOperationIdRef.current !== operationId || logRequestVersionRef.current !== requestVersion) return;
+            setSelectedOperation(operation);
+            if (logPage.items.length > 0) {
+                setLogs((current) => {
+                    const knownSequences = new Set(current.map((entry) => entry.sequence));
+                    return [...current, ...logPage.items.filter((entry) => !knownSequences.has(entry.sequence))];
+                });
+                logCursorRef.current = logPage.nextCursor;
+            }
+        } catch (error) {
+            if (selectedOperationIdRef.current === operationId && logRequestVersionRef.current === requestVersion && error instanceof Error) {
+                setLoadError(error.message);
+            }
+        } finally {
+            if (logRequestVersionRef.current === requestVersion) logLoadingRef.current = false;
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadDashboard();
+    }, [loadDashboard]);
+
+    useEffect(() => {
+        selectedOperationIdRef.current = selectedOperationId;
+        logRequestVersionRef.current += 1;
+        logCursorRef.current = 0;
+        logLoadingRef.current = false;
+        setLogs([]);
+        void loadSelectedOperation(selectedOperationId);
+    }, [loadSelectedOperation, selectedOperationId]);
+
+    const hasActiveOperation = Boolean(overview?.activeOperation);
+
+    useEffect(() => {
+        if (!hasActiveOperation && selectedOperation?.status !== "queued" && selectedOperation?.status !== "running") return;
+        const timer = window.setInterval(() => {
+            void loadDashboard(true);
+            if (selectedOperationId) void loadSelectedOperation(selectedOperationId);
+        }, 1500);
+        return () => window.clearInterval(timer);
+    }, [hasActiveOperation, loadDashboard, loadSelectedOperation, selectedOperation?.status, selectedOperationId]);
+
+    useEffect(() => {
+        const viewport = logViewportRef.current;
+        if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    }, [logs]);
+
+    const openAction = (action: OperationsAction) => {
+        if (!overview) return;
+        const current = overview.release.currentVersion || "";
+        const latest = overview.release.latestVersion || "";
+        if (action === "upgrade") {
+            const targetVersion = latest;
+            if (!targetVersion) {
+                message.error("尚未获取到可升级版本，请先修复版本检查配置");
+                return;
+            }
+            setPendingAction({
+                action,
+                title: `升级到 ${targetVersion}`,
+                description: `控制器将先核对当前版本 ${current || "未知"}，拉取不可变镜像、停止业务写入、创建一致性备份，再启动并验活新版本。失败时自动恢复原版本。`,
+                targetVersion,
+                expectedConfirmation: `UPGRADE ${targetVersion}`,
+            });
+        } else if (action === "rollback") {
+            setPendingAction({
+                action,
+                title: `回滚到 ${overview.previousVersion || "上一版本"}`,
+                description: "控制器会先为当前版本创建安全备份，再恢复升级前的数据库、资源卷和镜像。该操作会短暂停止业务服务。",
+                expectedConfirmation: "ROLLBACK",
+                danger: true,
+            });
+        } else if (action === "backup") {
+            setPendingAction({
+                action,
+                title: "创建一致性备份",
+                description: "控制器会短暂停止 Web 与业务后端写入，校验 PostgreSQL 与资源卷备份后恢复当前版本。",
+                expectedConfirmation: "BACKUP",
+            });
+        } else {
+            setPendingAction({
+                action,
+                title: "执行生产环境校验",
+                description: "检查当前运行版本、依赖服务、业务健康接口和 SPA 深链接，不会修改业务数据。",
+                expectedConfirmation: "VERIFY",
+            });
+        }
+        setConfirmation("");
+    };
+
+    const submitAction = async () => {
+        if (!pendingAction || confirmation !== pendingAction.expectedConfirmation) return;
+        setSubmitting(true);
+        try {
+            const operation = await startOperation({
+                action: pendingAction.action,
+                targetVersion: pendingAction.targetVersion,
+                confirmation,
+                idempotencyKey: crypto.randomUUID(),
+            });
+            setPendingAction(null);
+            setConfirmation("");
+            setSelectedOperationId(operation.id);
+            message.success("运维任务已进入独立控制器队列");
+            await loadDashboard(true);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "创建运维任务失败");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const operationColumns = useMemo(() => createOperationColumns(setSelectedOperationId), []);
+
+    return (
+        <AdminPageFrame
+            title="运维升级中心"
+            description="由独立部署控制器执行版本检查、备份、升级与回滚"
+            actions={
+                <Button className="operations-refresh-button" icon={<RefreshCw className="operations-refresh-icon size-4" />} loading={refreshing} onClick={() => void loadDashboard()}>
+                    刷新状态
+                </Button>
+            }
+        >
+            <div className="operations-page mx-auto max-w-6xl space-y-5">
+                {loadError ? (
+                    <Alert
+                        className="operations-load-error"
+                        type="error"
+                        showIcon
+                        message="独立运维控制器不可用"
+                        description={loadError}
+                        action={<Button className="operations-load-retry" size="small" onClick={() => void loadDashboard()}>重新连接</Button>}
+                    />
+                ) : null}
+
+                <section className="operations-overview-grid grid grid-cols-1 gap-px overflow-hidden rounded-[10px] bg-border/70 md:grid-cols-2 xl:grid-cols-4" aria-label="运维状态概览">
+                    <OverviewMetric
+                        icon={<ServerCog className="operations-metric-icon-svg size-4" />}
+                        label="控制器"
+                        value={overview?.controller.status === "ok" ? "在线" : loading ? "连接中" : "离线"}
+                        detail={overview ? `${overview.controller.version} · ${shortCommit(overview.controller.commit)}` : "等待状态"}
+                        tone={overview?.controller.status === "ok" ? "success" : "neutral"}
+                    />
+                    <OverviewMetric
+                        icon={<CloudDownload className="operations-metric-icon-svg size-4" />}
+                        label="当前 / 最新"
+                        value={`${overview?.release.currentVersion || "--"} / ${overview?.release.latestVersion || "--"}`}
+                        detail={releaseCheckDetail(overview)}
+                        tone={overview?.release.updateAvailable ? "warning" : overview?.release.status === "ok" ? "success" : "neutral"}
+                    />
+                    <OverviewMetric
+                        icon={<DatabaseBackup className="operations-metric-icon-svg size-4" />}
+                        label="最近备份"
+                        value={overview?.latestBackup?.version || "--"}
+                        detail={overview?.latestBackup ? formatTime(overview.latestBackup.createdAt) : "暂无有效恢复点"}
+                        tone={overview?.latestBackup?.checksumStatus === "verified" ? "success" : "neutral"}
+                    />
+                    <OverviewMetric
+                        icon={<ArchiveRestore className="operations-metric-icon-svg size-4" />}
+                        label="回滚状态"
+                        value={overview?.rollbackReady ? "可回滚" : "不可回滚"}
+                        detail={overview ? `${overview.rollbackStatus}${overview.rollbackReady ? ` · 目标 ${overview.previousVersion}` : ""}` : "等待状态"}
+                        tone={overview?.rollbackReady ? "success" : "neutral"}
+                    />
+                </section>
+
+                <SettingsSectionCard
+                    className="operations-actions-card"
+                    icon={<ShieldCheck className="operations-actions-icon size-4" />}
+                    title="受控操作"
+                    description="业务后端仅校验管理员并签发请求；Docker、备份和服务重启只由独立控制器执行。"
+                    status={hasActiveOperation ? <Tag className="operations-active-tag" color="processing" variant="filled">任务执行中</Tag> : <Tag className="operations-idle-tag" variant="filled">无活动任务</Tag>}
+                >
+                    <div className="operations-actions-grid grid grid-cols-1 gap-px bg-border/60 sm:grid-cols-2 xl:grid-cols-4">
+                        <OperationActionButton
+                            icon={<CloudDownload className="operations-action-icon-svg size-4" />}
+                            title="升级"
+                            description={overview?.release.latestVersion ? `升级到 ${overview.release.latestVersion}` : "等待版本检查"}
+                            disabled={hasActiveOperation || !overview?.release.updateAvailable}
+                            onClick={() => openAction("upgrade")}
+                        />
+                        <OperationActionButton
+                            icon={<RotateCcw className="operations-action-icon-svg size-4" />}
+                            title="回滚"
+                            description={overview?.previousVersion ? `恢复 ${overview.previousVersion}` : "没有可用恢复点"}
+                            disabled={hasActiveOperation || !overview?.rollbackReady}
+                            onClick={() => openAction("rollback")}
+                        />
+                        <OperationActionButton
+                            icon={<DatabaseBackup className="operations-action-icon-svg size-4" />}
+                            title="立即备份"
+                            description="PostgreSQL 与资源卷"
+                            disabled={hasActiveOperation || !overview?.release.currentVersion}
+                            onClick={() => openAction("backup")}
+                        />
+                        <OperationActionButton
+                            icon={<ShieldCheck className="operations-action-icon-svg size-4" />}
+                            title="环境校验"
+                            description="版本、健康与深链接"
+                            disabled={hasActiveOperation || !overview?.release.currentVersion}
+                            onClick={() => openAction("verify")}
+                        />
+                    </div>
+                </SettingsSectionCard>
+
+                <SettingsSectionCard
+                    className="operations-log-card"
+                    icon={<TerminalSquare className="operations-log-card-icon size-4" />}
+                    title="实时执行日志"
+                    description={selectedOperation ? `${actionLabels[selectedOperation.action]} · ${selectedOperation.phase}` : "选择一条审计记录查看控制器日志"}
+                    status={selectedOperation ? <OperationStatusTag status={selectedOperation.status} /> : null}
+                >
+                    <div ref={logViewportRef} className="operations-log-viewport thin-scrollbar" role="log" aria-live="polite">
+                        {logs.length > 0 ? logs.map((entry) => (
+                            <div key={entry.sequence} className={`operations-log-line is-${entry.stream}`}>
+                                <time className="operations-log-time" dateTime={entry.createdAt}>{formatLogTime(entry.createdAt)}</time>
+                                <span className="operations-log-stream">{entry.stream}</span>
+                                <span className="operations-log-message">{entry.message}</span>
+                            </div>
+                        )) : (
+                            <div className="operations-log-empty">{selectedOperation ? "等待控制器日志..." : "暂无选中的运维任务"}</div>
+                        )}
+                    </div>
+                    {selectedOperation?.error ? <Alert className="operations-operation-error" type="error" showIcon message="任务失败" description={selectedOperation.error} /> : null}
+                </SettingsSectionCard>
+
+                <SettingsSectionCard
+                    className="operations-audit-card"
+                    icon={<ServerCog className="operations-audit-card-icon size-4" />}
+                    title="操作审计"
+                    description="控制器独立数据库中的不可编辑执行记录，业务数据库回滚不会清除这些证据。"
+                >
+                    <Table<OperationsRecord>
+                        className="operations-audit-table"
+                        rowKey="id"
+                        columns={operationColumns}
+                        dataSource={operations}
+                        loading={loading}
+                        pagination={false}
+                        size="middle"
+                        scroll={{ x: 900 }}
+                        rowClassName={(record) => record.id === selectedOperationId ? "operations-audit-row is-selected" : "operations-audit-row"}
+                        onRow={(record) => ({ onClick: () => setSelectedOperationId(record.id) })}
+                        locale={{ emptyText: <Empty className="operations-audit-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运维操作" /> }}
+                    />
+                </SettingsSectionCard>
+
+                <SettingsSectionCard
+                    className="operations-backups-card"
+                    icon={<DatabaseBackup className="operations-backups-card-icon size-4" />}
+                    title="备份状态"
+                    description="恢复点按清单与 SHA-256 校验；校验失败的备份不会作为可用恢复依据。"
+                >
+                    <Table<OperationsBackup>
+                        className="operations-backups-table"
+                        rowKey="path"
+                        columns={backupColumns}
+                        dataSource={backups}
+                        loading={loading}
+                        pagination={false}
+                        size="middle"
+                        scroll={{ x: 720 }}
+                        locale={{ emptyText: <Empty className="operations-backups-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无备份" /> }}
+                    />
+                </SettingsSectionCard>
+            </div>
+
+            <Modal
+                className="operations-confirm-modal"
+                title={pendingAction?.title}
+                open={Boolean(pendingAction)}
+                okText="提交到控制器"
+                cancelText="取消"
+                okButtonProps={{ danger: pendingAction?.danger, disabled: confirmation !== pendingAction?.expectedConfirmation }}
+                confirmLoading={submitting}
+                onOk={() => void submitAction()}
+                onCancel={() => {
+                    if (submitting) return;
+                    setPendingAction(null);
+                    setConfirmation("");
+                }}
+                destroyOnHidden
+            >
+                <div className="operations-confirm-content space-y-4">
+                    <Alert className="operations-confirm-warning" type={pendingAction?.danger ? "warning" : "info"} showIcon message={pendingAction?.description} />
+                    <div className="operations-confirm-field">
+                        <label className="operations-confirm-label mb-1.5 block text-xs font-medium" htmlFor="operations-confirmation">输入确认短语</label>
+                        <Input
+                            className="operations-confirm-input"
+                            id="operations-confirmation"
+                            autoComplete="off"
+                            placeholder={pendingAction?.expectedConfirmation}
+                            value={confirmation}
+                            onChange={(event) => setConfirmation(event.target.value)}
+                        />
+                        <p className="operations-confirm-hint mt-1.5 text-xs text-foreground/45">必须完整输入：{pendingAction?.expectedConfirmation}</p>
+                    </div>
+                </div>
+            </Modal>
+        </AdminPageFrame>
+    );
+}

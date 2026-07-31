@@ -8,6 +8,7 @@ import ChannelsPage from "@/pages/admin/channels/channels-page";
 import LogsPage from "@/pages/admin/logs/logs-page";
 import MembershipAdminPage from "@/pages/admin/membership/membership-page";
 import ModelPricingPage from "@/pages/admin/model-pricing/model-pricing-page";
+import OperationsPage from "@/pages/admin/operations/operations-page";
 import RedemptionCodesPage from "@/pages/admin/redemption-codes/redemption-codes-page";
 import ReferralProgramPage from "@/pages/admin/referrals/referral-program-page";
 import RuntimePolicySettingsPage from "@/pages/admin/settings/runtime-policy-settings-page";
@@ -87,6 +88,7 @@ export const router = createBrowserRouter([
                     { path: "referrals", element: <ReferralProgramPage /> },
                     { path: "logs", element: <LogsPage /> },
                     { path: "membership", element: <MembershipAdminPage /> },
+                    { path: "operations", element: <OperationsPage /> },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },
                     { path: "settings/concurrency", element: <Navigate to="/admin/settings/runtime-policy" replace /> },
                     { path: "settings/runtime-policy", element: <RuntimePolicySettingsPage /> },

@@ -39,11 +39,12 @@ prune_backups_if_configured() {
 
 create_backup() {
     local version="$1"
-    local stamp backup_path temporary
+    local stamp backup_path temporary temporary_relative
     validate_release_version "$version"
     stamp="$(date -u +'%Y%m%d-%H%M%S')-$$"
     backup_path="$BACKUP_DIR/${stamp}--${version}"
     temporary="${backup_path}.tmp"
+    temporary_relative="$(ops_volume_relative_path "$temporary")"
     mkdir -p "$temporary"
     chmod 700 "$temporary"
 
@@ -56,9 +57,10 @@ create_backup() {
     log "创建后端资源卷恢复点"
     docker run --rm \
         --mount "type=volume,src=$HMAIGC_BACKEND_DATA_VOLUME,dst=/source,readonly" \
-        --mount "type=bind,src=$temporary,dst=/backup" \
+        --mount "type=volume,src=$HMAIGC_OPS_STATE_VOLUME,dst=/ops" \
+        --env "BACKUP_RELATIVE=$temporary_relative" \
         "$BACKUP_HELPER_IMAGE" \
-        sh -ceu 'tar -czf /backup/backend-data.tgz -C /source .'
+        sh -ceu 'tar -czf "/ops/$BACKUP_RELATIVE/backend-data.tgz" -C /source .'
 
     {
         printf 'VERSION=%s\n' "$version"
@@ -78,7 +80,7 @@ create_backup() {
 
 restore_backup() {
     local backup_path="$1"
-    local expected_version backup_version backup_postgres_volume backup_backend_volume
+    local expected_version backup_version backup_postgres_volume backup_backend_volume backup_relative
     expected_version="$2"
     verify_backup "$backup_path"
     backup_version="$(backup_manifest_value "$backup_path" VERSION)"
@@ -86,6 +88,7 @@ restore_backup() {
         fail "备份版本不匹配：期望 $expected_version，备份属于 ${backup_version:-未知版本}"
     backup_postgres_volume="$(backup_manifest_value "$backup_path" POSTGRES_VOLUME)"
     backup_backend_volume="$(backup_manifest_value "$backup_path" BACKEND_VOLUME)"
+    backup_relative="$(ops_volume_relative_path "$backup_path")"
     [[ "$backup_postgres_volume" == "$HMAIGC_POSTGRES_DATA_VOLUME" ]] ||
         fail "PostgreSQL 卷不匹配：当前 $HMAIGC_POSTGRES_DATA_VOLUME，备份属于 $backup_postgres_volume"
     [[ "$backup_backend_volume" == "$HMAIGC_BACKEND_DATA_VOLUME" ]] ||
@@ -106,10 +109,11 @@ restore_backup() {
     log "恢复后端资源卷：$backup_path"
     docker run --rm \
         --mount "type=volume,src=$HMAIGC_BACKEND_DATA_VOLUME,dst=/target" \
-        --mount "type=bind,src=$backup_path,dst=/backup,readonly" \
+        --mount "type=volume,src=$HMAIGC_OPS_STATE_VOLUME,dst=/ops,readonly" \
+        --env "BACKUP_RELATIVE=$backup_relative" \
         "$BACKUP_HELPER_IMAGE" \
         sh -ceu '
             find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-            tar -xzf /backup/backend-data.tgz -C /target
+            tar -xzf "/ops/$BACKUP_RELATIVE/backend-data.tgz" -C /target
         '
 }

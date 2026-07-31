@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/opsprotocol"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -40,6 +41,7 @@ type Service struct {
 	coordinator        *runtimeCoordinator
 	runtimeErr         error
 	workerID           string
+	operationsClient   opsprotocol.Client
 }
 
 const taskWorkerConcurrency = 3
@@ -157,6 +159,10 @@ type agentStoryboardShot struct {
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
 	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
+}
+
+func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
+	s.operationsClient = client
 }
 
 func (s *Service) StartWorker() {

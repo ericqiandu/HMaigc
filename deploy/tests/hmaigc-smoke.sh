@@ -34,18 +34,17 @@ case "$arguments" in
     *" compose "*" ps "*)
         printf 'fake services healthy\n'
         ;;
-    *" run "*"tar -czf /backup/backend-data.tgz"*)
+    *" run "*"tar -czf "*"backend-data.tgz"*)
         for argument in "$@"; do
             case "$argument" in
-                type=bind,src=*,dst=/backup)
-                    backup_path="${argument#type=bind,src=}"
-                    backup_path="${backup_path%,dst=/backup}"
-                    printf 'fake-backend-data' >"$backup_path/backend-data.tgz"
+                BACKUP_RELATIVE=*)
+                    backup_relative="${argument#BACKUP_RELATIVE=}"
+                    printf 'fake-backend-data' >"$HMAIGC_OPS_STATE_DIR/$backup_relative/backend-data.tgz"
                     ;;
             esac
         done
         ;;
-    *" run "*"tar -xzf /backup/backend-data.tgz"*)
+    *" run "*"tar -xzf "*"backend-data.tgz"*)
         exit 0
         ;;
     *)
@@ -84,6 +83,8 @@ HMAIGC_COMPOSE_PROJECT_NAME=hmaigc-test
 HMAIGC_BACKEND_DATA_VOLUME=hmaigc-test-backend
 HMAIGC_POSTGRES_DATA_VOLUME=hmaigc-test-postgres
 HMAIGC_REDIS_DATA_VOLUME=hmaigc-test-redis
+HMAIGC_OPS_STATE_VOLUME=hmaigc-test-ops
+HMAIGC_OPS_STATE_DIR=$TEST_ROOT
 POSTGRES_DB=hmaigc
 POSTGRES_USER=hmaigc
 POSTGRES_PASSWORD=test-only

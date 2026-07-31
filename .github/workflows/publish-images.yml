@@ -55,9 +55,21 @@ jobs:
         env:
           HMAIGC_IMAGE_REGISTRY: ghcr.io/example
           HMAIGC_VERSION: v0.0.0-ci
+          HMAIGC_OPS_VERSION: v0.0.0-ci
           POSTGRES_PASSWORD: ci-only-password
           CANVAS_CORS_ORIGINS: https://ci.example.invalid
-        run: docker compose -f docker-compose.production.yml config -q
+        run: |
+          docker compose -f docker-compose.production.yml config -q
+          docker compose -f deploy/docker-compose.ops.yml config -q
+
+      - name: Build operations controller image
+        run: >-
+          docker build
+          --file backend/Dockerfile.ops
+          --build-arg APP_VERSION=v0.0.0-ci
+          --build-arg APP_COMMIT=${{ github.sha }}
+          --tag hmaigc-ops-controller:ci
+          .
 
       - name: Test install upgrade and rollback orchestration
         run: bash deploy/tests/hmaigc-smoke.sh
@@ -83,6 +95,8 @@ jobs:
             dockerfile: Dockerfile
           - image: hmaigc-backend
             dockerfile: backend/Dockerfile
+          - image: hmaigc-ops-controller
+            dockerfile: backend/Dockerfile.ops
 
     steps:
       - name: Checkout repository
@@ -112,8 +126,8 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,prefix=sha-
 
-      - name: Build and push backend image
-        if: matrix.image == 'hmaigc-backend'
+      - name: Build and push Go service image
+        if: matrix.image == 'hmaigc-backend' || matrix.image == 'hmaigc-ops-controller'
         uses: docker/build-push-action@v6
         with:
           context: .

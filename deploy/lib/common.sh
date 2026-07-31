@@ -48,6 +48,27 @@ resolve_from_root() {
     esac
 }
 
+require_path_inside_ops_state() {
+    local path="$1"
+    local normalized_root normalized_path
+    normalized_root="$(realpath -m "$OPS_STATE_DIR")"
+    normalized_path="$(realpath -m "$path")"
+    case "$normalized_path" in
+        "$normalized_root" | "$normalized_root"/*) ;;
+        *) fail "部署状态路径必须位于独立 ops-state 卷内：$normalized_path" ;;
+    esac
+}
+
+ops_volume_relative_path() {
+    local path="$1"
+    local normalized_root normalized_path
+    normalized_root="$(realpath -m "$OPS_STATE_DIR")"
+    normalized_path="$(realpath -m "$path")"
+    require_path_inside_ops_state "$normalized_path"
+    [[ "$normalized_path" != "$normalized_root" ]] || fail "不能把 ops-state 卷根目录作为备份路径"
+    printf '%s\n' "${normalized_path#"$normalized_root"/}"
+}
+
 validate_release_version() {
     local version="$1"
     [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
@@ -66,19 +87,26 @@ configure_deploy_runtime() {
     export HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-$(env_value HMAIGC_BACKEND_DATA_VOLUME)}"
     export HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-$(env_value HMAIGC_POSTGRES_DATA_VOLUME)}"
     export HMAIGC_REDIS_DATA_VOLUME="${HMAIGC_REDIS_DATA_VOLUME:-$(env_value HMAIGC_REDIS_DATA_VOLUME)}"
+    export HMAIGC_OPS_STATE_VOLUME="${HMAIGC_OPS_STATE_VOLUME:-$(env_value HMAIGC_OPS_STATE_VOLUME)}"
 
     : "${HMAIGC_IMAGE_REGISTRY:?生产配置必须填写 HMAIGC_IMAGE_REGISTRY}"
+    : "${HMAIGC_OPS_STATE_VOLUME:?生产配置必须填写 HMAIGC_OPS_STATE_VOLUME}"
     HMAIGC_COMPOSE_PROJECT_NAME="${HMAIGC_COMPOSE_PROJECT_NAME:-hmaigc}"
     HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-hmaigc-backend-data}"
     HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-hmaigc-postgres-data}"
     HMAIGC_REDIS_DATA_VOLUME="${HMAIGC_REDIS_DATA_VOLUME:-hmaigc-redis-data}"
     export HMAIGC_COMPOSE_PROJECT_NAME HMAIGC_BACKEND_DATA_VOLUME HMAIGC_POSTGRES_DATA_VOLUME HMAIGC_REDIS_DATA_VOLUME
 
-    local configured_state configured_backups
+    local configured_ops_state configured_state configured_backups
+    configured_ops_state="${HMAIGC_OPS_STATE_DIR:-$(env_value HMAIGC_OPS_STATE_DIR)}"
     configured_state="${HMAIGC_STATE_DIR:-$(env_value HMAIGC_STATE_DIR)}"
     configured_backups="${HMAIGC_BACKUP_DIR:-$(env_value HMAIGC_BACKUP_DIR)}"
-    STATE_DIR="$(resolve_from_root "${configured_state:-.deploy}")"
-    BACKUP_DIR="$(resolve_from_root "${configured_backups:-.deploy/backups}")"
+    OPS_STATE_DIR="$(resolve_from_root "${configured_ops_state:-/var/lib/hmaigc-ops}")"
+    STATE_DIR="$(resolve_from_root "${configured_state:-$OPS_STATE_DIR/release}")"
+    BACKUP_DIR="$(resolve_from_root "${configured_backups:-$OPS_STATE_DIR/backups}")"
+    export OPS_STATE_DIR HMAIGC_OPS_STATE_DIR="$OPS_STATE_DIR"
+    require_path_inside_ops_state "$STATE_DIR"
+    require_path_inside_ops_state "$BACKUP_DIR"
     STATE_FILE="$STATE_DIR/release.env"
     LOCK_FILE="$STATE_DIR/deploy.lock"
     LOG_DIR="$STATE_DIR/logs"
@@ -120,7 +148,7 @@ write_release_state() {
 
 preflight() {
     local command
-    for command in docker curl awk grep sed sha256sum tar flock tee stat; do
+    for command in docker curl awk grep sed sha256sum tar flock tee stat realpath; do
         require_command "$command"
     done
     if [[ "$(uname -s)" == "Linux" ]]; then

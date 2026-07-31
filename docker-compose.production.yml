@@ -45,9 +45,12 @@ services:
       CANVAS_ALLOW_PRIVATE_UPSTREAMS: ${CANVAS_ALLOW_PRIVATE_UPSTREAMS:-false}
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
       CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:?必须配置生产站点 Origin}
+      HMAIGC_OPS_SOCKET: /run/hmaigc-ops/controller.sock
+      HMAIGC_OPS_SHARED_SECRET_FILE: /run/hmaigc-ops/shared-secret
       GIN_MODE: release
     volumes:
       - backend-data:/data
+      - ops-state:/run/hmaigc-ops:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -85,3 +88,6 @@ volumes:
     name: ${HMAIGC_POSTGRES_DATA_VOLUME:-hmaigc-postgres-data}
   redis-data:
     name: ${HMAIGC_REDIS_DATA_VOLUME:-hmaigc-redis-data}
+  ops-state:
+    external: true
+    name: ${HMAIGC_OPS_STATE_VOLUME:-hmaigc-ops-state}

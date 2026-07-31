@@ -1,0 +1,34 @@
+name: ${HMAIGC_OPS_COMPOSE_PROJECT_NAME:-hmaigc-ops}
+
+services:
+  ops-controller:
+    image: ${HMAIGC_IMAGE_REGISTRY:?必须配置镜像仓库}/hmaigc-ops-controller:${HMAIGC_OPS_VERSION:?必须配置控制器版本}
+    pull_policy: missing
+    environment:
+      HMAIGC_BACKEND_GID: ${HMAIGC_BACKEND_GID:-101}
+      HMAIGC_OPS_STATE_VOLUME: ${HMAIGC_OPS_STATE_VOLUME:-hmaigc-ops-state}
+      HMAIGC_OPS_STATE_DIR: /var/lib/hmaigc-ops
+      HMAIGC_OPS_SOCKET: /var/lib/hmaigc-ops/controller.sock
+      HMAIGC_OPS_SOCKET_MODE: "0660"
+      HMAIGC_OPS_SHARED_SECRET_FILE: /var/lib/hmaigc-ops/shared-secret
+      HMAIGC_RELEASE_STATE_FILE: /var/lib/hmaigc-ops/release/release.env
+      HMAIGC_STATE_DIR: /var/lib/hmaigc-ops/release
+      HMAIGC_BACKUP_DIR: /var/lib/hmaigc-ops/backups
+      HMAIGC_DEPLOY_SCRIPT: /opt/hmaigc/deploy/hmaigc.sh
+      HMAIGC_ENV_FILE: /opt/hmaigc/.env.production
+      HMAIGC_RELEASES_API_URL: ${HMAIGC_RELEASES_API_URL:-}
+      HMAIGC_RELEASES_API_TOKEN: ${HMAIGC_RELEASES_API_TOKEN:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../.env.production:/opt/hmaigc/.env.production:ro
+      - ops-state:/var/lib/hmaigc-ops
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  ops-state:
+    name: ${HMAIGC_OPS_STATE_VOLUME:-hmaigc-ops-state}
