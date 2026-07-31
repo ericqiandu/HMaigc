@@ -82,18 +82,18 @@ export function AuthScene() {
                         animate={{ opacity: 1, y: 0 }}
                         layout={!reducedMotion}
                         transition={{ duration: aceternityMotion.duration.panel, ease: aceternityMotion.easing.enter }}
-                        className="my-auto w-full max-w-[460px]"
+                        className="my-auto w-full max-w-[400px]"
                     >
                         <ConfigProvider theme={getAntThemeConfig(true)} button={{ autoInsertSpace: false }}>
-                            <SpotlightSurface spotlightColor="rgba(96,165,250,.14)" spotlightRadius={300} className="flex h-auto rounded-[26px]">
+                            <SpotlightSurface spotlightColor="rgba(96,165,250,.14)" spotlightRadius={300} className="flex h-auto rounded-xl">
                                 <CometCard
                                     rotateDepth={1.8}
                                     translateDepth={1.5}
                                     glare={!reducedMotion}
                                     containerClassName="h-auto"
-                                    className="auth-card-dark h-auto overflow-hidden rounded-[26px] border border-white/12 bg-[#111216]/88 shadow-[0_40px_120px_rgba(0,0,0,.48)] backdrop-blur-2xl"
+                                    className="auth-card-dark h-auto overflow-hidden rounded-xl border border-white/12 bg-[#111216]/88 shadow-[0_40px_120px_rgba(0,0,0,.48)] backdrop-blur-2xl"
                                 >
-                                    <section className="flex min-h-[620px] flex-col sm:min-h-[640px]" aria-label={copy.title}>
+                                    <section className="flex flex-col" aria-label={copy.title}>
                                         <header className="px-6 pb-5 pt-6 sm:px-8 sm:pt-7">
                                             <p className="text-xs font-semibold tracking-[0.18em] text-blue-300/80">{copy.eyebrow}</p>
                                             <h2 className="mt-2 text-3xl font-semibold">{copy.title}</h2>
