@@ -68,7 +68,7 @@ export function UpdreamAccountActions() {
             />
             <div className="updream-account-pill flex h-10 items-center rounded-full bg-foreground/[.07] px-1.5 text-[#172033] shadow-[inset_0_0_0_1px_rgba(23,32,51,0.06)] backdrop-blur-xl dark:text-white dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">
                 <Link to="/wallet" className="updream-account-balance flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium tabular-nums transition-opacity hover:opacity-70" title={`${balance} 积分`}>
-                    <Zap className="updream-account-balance-icon size-4 fill-white text-white" aria-hidden />
+                    <Zap className="updream-account-balance-icon size-4" aria-hidden />
                     <span className="updream-account-balance-value">{balance}</span>
                 </Link>
                 <Link to="/membership" className="updream-account-member flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium transition-opacity hover:opacity-70" aria-label={membershipAction.label} title={membershipAction.title}>
