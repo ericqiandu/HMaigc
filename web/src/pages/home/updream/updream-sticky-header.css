@@ -141,23 +141,9 @@
     }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
     .updream-sticky-stack .updream-announcement {
-        min-height: 40px;
-        padding: 6px 42px 6px 12px;
-    }
-
-    .updream-announcement-content {
-        flex-wrap: nowrap;
-        gap: 6px;
-    }
-
-    .updream-announcement-copy {
         display: none;
-    }
-
-    .updream-announcement-close {
-        right: 12px;
     }
 }
 

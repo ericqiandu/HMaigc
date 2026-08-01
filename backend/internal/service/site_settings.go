@@ -20,12 +20,15 @@ import (
 )
 
 const (
-	siteSettingKey      = "site"
-	siteLogoMaxBytes    = 2 << 20
-	siteAgreementMaxLen = 50_000
-	siteLegalHTMLMaxLen = 256 << 10
-	siteRecordNoMaxLen  = 100
-	siteRecordURLMaxLen = 500
+	siteSettingKey         = "site"
+	siteLogoMaxBytes       = 2 << 20
+	siteAgreementMaxLen    = 50_000
+	siteLegalHTMLMaxLen    = 256 << 10
+	siteRecordNoMaxLen     = 100
+	siteRecordURLMaxLen    = 500
+	siteBannerLabelMaxLen  = 20
+	siteBannerTextMaxLen   = 200
+	siteBannerActionMaxLen = 20
 )
 
 var ErrSiteLogoNotConfigured = errors.New("站点 Logo 尚未配置")
@@ -37,6 +40,13 @@ type SiteSettingRequest struct {
 	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
 	PublicSecurityRegistrationNumber string `json:"publicSecurityRegistrationNumber"`
 	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
+	HomeBannerEnabled                bool   `json:"homeBannerEnabled"`
+	HomeBannerLabel                  string `json:"homeBannerLabel"`
+	HomeBannerText                   string `json:"homeBannerText"`
+	HomeBannerPrimaryActionLabel     string `json:"homeBannerPrimaryActionLabel"`
+	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
+	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
+	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
 }
 
 type LegalContentSettingRequest struct {
@@ -54,6 +64,13 @@ type PublicSiteSetting struct {
 	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
 	UserAgreement                    string `json:"userAgreement"`
 	PrivacyPolicy                    string `json:"privacyPolicy"`
+	HomeBannerEnabled                bool   `json:"homeBannerEnabled"`
+	HomeBannerLabel                  string `json:"homeBannerLabel"`
+	HomeBannerText                   string `json:"homeBannerText"`
+	HomeBannerPrimaryActionLabel     string `json:"homeBannerPrimaryActionLabel"`
+	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
+	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
+	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
 	UpdatedBy                        string `json:"updatedBy"`
 	CreatedAt                        string `json:"createdAt"`
 	UpdatedAt                        string `json:"updatedAt"`
@@ -70,6 +87,13 @@ type siteSettingValue struct {
 	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
 	UserAgreement                    string `json:"userAgreement"`
 	PrivacyPolicy                    string `json:"privacyPolicy"`
+	HomeBannerEnabled                bool   `json:"homeBannerEnabled"`
+	HomeBannerLabel                  string `json:"homeBannerLabel"`
+	HomeBannerText                   string `json:"homeBannerText"`
+	HomeBannerPrimaryActionLabel     string `json:"homeBannerPrimaryActionLabel"`
+	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
+	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
+	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
 }
 
 func (s *Service) PublicSiteSetting() (*PublicSiteSetting, error) {
@@ -109,6 +133,13 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		PublicSecurityRegistrationURL:    strings.TrimSpace(req.PublicSecurityRegistrationURL),
 		UserAgreement:                    current.UserAgreement,
 		PrivacyPolicy:                    current.PrivacyPolicy,
+		HomeBannerEnabled:                req.HomeBannerEnabled,
+		HomeBannerLabel:                  strings.TrimSpace(req.HomeBannerLabel),
+		HomeBannerText:                   strings.TrimSpace(req.HomeBannerText),
+		HomeBannerPrimaryActionLabel:     strings.TrimSpace(req.HomeBannerPrimaryActionLabel),
+		HomeBannerPrimaryActionURL:       strings.TrimSpace(req.HomeBannerPrimaryActionURL),
+		HomeBannerSecondaryActionLabel:   strings.TrimSpace(req.HomeBannerSecondaryActionLabel),
+		HomeBannerSecondaryActionURL:     strings.TrimSpace(req.HomeBannerSecondaryActionURL),
 	}
 	if err := validateSiteSetting(next); err != nil {
 		return nil, BadAuthRequest(err.Error())
@@ -118,7 +149,7 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		return nil, err
 	}
 	result := publicSiteSetting(setting, next)
-	if err := s.appendAdminAudit(actor, "site_setting.update", "system_setting", siteSettingKey, "更新站点基础信息与备案", result); err != nil {
+	if err := s.appendAdminAudit(actor, "site_setting.update", "system_setting", siteSettingKey, "更新站点品牌、首页横幅与备案", result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -263,7 +294,7 @@ func (s *Service) readSiteSetting() (*model.SystemSetting, siteSettingValue, err
 	if err != nil {
 		return nil, siteSettingValue{}, err
 	}
-	var value siteSettingValue
+	value := defaultSiteSetting()
 	if err := json.Unmarshal([]byte(setting.ValueJSON), &value); err != nil {
 		return nil, siteSettingValue{}, fmt.Errorf("站点配置数据损坏: %w", err)
 	}
@@ -293,8 +324,11 @@ func (s *Service) saveSiteSetting(actor *model.User, current *model.SystemSettin
 
 func defaultSiteSetting() siteSettingValue {
 	return siteSettingValue{
-		SiteName:        "HMaigc",
-		FooterCopyright: fmt.Sprintf("© %d HMaigc. 保留所有权利。", time.Now().Year()),
+		SiteName:          "HMaigc",
+		FooterCopyright:   fmt.Sprintf("© %d HMaigc. 保留所有权利。", time.Now().Year()),
+		HomeBannerEnabled: true,
+		HomeBannerLabel:   "招募中",
+		HomeBannerText:    "招增长伙伴：懂冷启动、内容增长或海外增长，欢迎加入 HMaigc。",
 	}
 }
 
@@ -305,6 +339,21 @@ func validateSiteSetting(value siteSettingValue) error {
 	}
 	if len([]rune(value.FooterCopyright)) > 200 {
 		return errors.New("底部版权不能超过 200 个字符")
+	}
+	if len([]rune(value.HomeBannerLabel)) > siteBannerLabelMaxLen {
+		return fmt.Errorf("首页横幅状态标签不能超过 %d 个字符", siteBannerLabelMaxLen)
+	}
+	if len([]rune(value.HomeBannerText)) > siteBannerTextMaxLen {
+		return fmt.Errorf("首页横幅文案不能超过 %d 个字符", siteBannerTextMaxLen)
+	}
+	if value.HomeBannerEnabled && value.HomeBannerText == "" {
+		return errors.New("启用首页横幅时必须填写展示文案")
+	}
+	if err := validateSiteBannerAction("首页横幅主按钮", value.HomeBannerPrimaryActionLabel, value.HomeBannerPrimaryActionURL); err != nil {
+		return err
+	}
+	if err := validateSiteBannerAction("首页横幅次按钮", value.HomeBannerSecondaryActionLabel, value.HomeBannerSecondaryActionURL); err != nil {
+		return err
 	}
 	if len([]rune(value.ICPRegistrationNumber)) > siteRecordNoMaxLen {
 		return fmt.Errorf("ICP备案号不能超过 %d 个字符", siteRecordNoMaxLen)
@@ -414,6 +463,16 @@ func validateSiteRecordURL(label string, rawURL string) error {
 	return nil
 }
 
+func validateSiteBannerAction(label string, actionLabel string, rawURL string) error {
+	if len([]rune(actionLabel)) > siteBannerActionMaxLen {
+		return fmt.Errorf("%s名称不能超过 %d 个字符", label, siteBannerActionMaxLen)
+	}
+	if (actionLabel == "") != (rawURL == "") {
+		return fmt.Errorf("%s名称与跳转链接必须同时填写", label)
+	}
+	return validateSiteRecordURL(label+"跳转链接", rawURL)
+}
+
 func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) PublicSiteSetting {
 	result := PublicSiteSetting{
 		SiteName:                         value.SiteName,
@@ -424,6 +483,13 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 		PublicSecurityRegistrationURL:    value.PublicSecurityRegistrationURL,
 		UserAgreement:                    value.UserAgreement,
 		PrivacyPolicy:                    value.PrivacyPolicy,
+		HomeBannerEnabled:                value.HomeBannerEnabled,
+		HomeBannerLabel:                  value.HomeBannerLabel,
+		HomeBannerText:                   value.HomeBannerText,
+		HomeBannerPrimaryActionLabel:     value.HomeBannerPrimaryActionLabel,
+		HomeBannerPrimaryActionURL:       value.HomeBannerPrimaryActionURL,
+		HomeBannerSecondaryActionLabel:   value.HomeBannerSecondaryActionLabel,
+		HomeBannerSecondaryActionURL:     value.HomeBannerSecondaryActionURL,
 	}
 	if setting != nil {
 		result.UpdatedBy = setting.UpdatedBy

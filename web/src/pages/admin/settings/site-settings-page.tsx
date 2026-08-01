@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, App, Button, Form, Input, Skeleton, Tag } from "antd";
-import { FileCheck2, FileText, Image as ImageIcon, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { Alert, App, Button, Form, Input, Skeleton, Switch, Tag } from "antd";
+import { FileCheck2, FileText, Image as ImageIcon, Megaphone, RefreshCw, Save, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, type ChangeEvent } from "react";
 
 import { staticAssetURL } from "@/lib/static-assets";
@@ -91,7 +91,7 @@ export default function SiteSettingsPage() {
 
     const setting = settingQuery.data;
     return (
-        <AdminPageFrame title="站点与品牌" description="管理站点名称、品牌标识、底部版权与网站备案">
+        <AdminPageFrame title="站点与品牌" description="管理站点名称、品牌标识、首页运营横幅、底部版权与网站备案">
             <div className="site-settings-page mx-auto max-w-5xl space-y-5">
                 {settingQuery.error ? (
                     <Alert
@@ -159,6 +159,34 @@ export default function SiteSettingsPage() {
                             </div>
                         </SettingsSectionCard>
 
+                        <SettingsSectionCard
+                            icon={<Megaphone className="site-settings-banner-icon size-4" />}
+                            title="首页顶部横幅"
+                            description="配置桌面端首页顶部的运营横幅；手机端固定不展示，避免内容拥挤和截断。"
+                            status={<Form.Item className="site-settings-banner-switch-field mb-0" name="homeBannerEnabled" valuePropName="checked"><Switch className="site-settings-banner-switch" checkedChildren="展示" unCheckedChildren="隐藏" /></Form.Item>}
+                        >
+                            <div className="site-settings-banner-fields grid gap-x-6 gap-y-4 px-6 py-6 lg:grid-cols-2">
+                                <Form.Item className="site-settings-banner-label-field mb-0" name="homeBannerLabel" label="状态标签" rules={[{ max: 20, message: "状态标签不能超过 20 个字符" }]}>
+                                    <Input className="site-settings-banner-label-input" maxLength={20} showCount placeholder="例如：招募中" />
+                                </Form.Item>
+                                <Form.Item className="site-settings-banner-text-field mb-0 lg:col-span-2" name="homeBannerText" label="展示文案" dependencies={["homeBannerEnabled"]} rules={[{ max: 200, message: "展示文案不能超过 200 个字符" }, requiredWhenEnabled(form)]}>
+                                    <Input.TextArea className="site-settings-banner-text-input" autoSize={{ minRows: 2, maxRows: 4 }} maxLength={200} showCount placeholder="输入桌面端首页顶部展示的运营文案" />
+                                </Form.Item>
+                                <Form.Item className="site-settings-banner-primary-label-field mb-0" name="homeBannerPrimaryActionLabel" label="主按钮名称" dependencies={["homeBannerPrimaryActionUrl"]} rules={[{ max: 20, message: "主按钮名称不能超过 20 个字符" }, pairedActionFieldRule("主按钮", () => form.getFieldValue("homeBannerPrimaryActionUrl"))]}>
+                                    <Input className="site-settings-banner-primary-label-input" maxLength={20} placeholder="例如：立即投递" />
+                                </Form.Item>
+                                <Form.Item className="site-settings-banner-primary-url-field mb-0" name="homeBannerPrimaryActionUrl" label="主按钮链接" dependencies={["homeBannerPrimaryActionLabel"]} rules={[{ max: 500, message: "主按钮链接不能超过 500 个字符" }, pairedActionURLRule("主按钮", () => form.getFieldValue("homeBannerPrimaryActionLabel"))]}>
+                                    <Input className="site-settings-banner-primary-url-input" maxLength={500} placeholder="https://example.com/apply" />
+                                </Form.Item>
+                                <Form.Item className="site-settings-banner-secondary-label-field mb-0" name="homeBannerSecondaryActionLabel" label="次按钮名称" dependencies={["homeBannerSecondaryActionUrl"]} rules={[{ max: 20, message: "次按钮名称不能超过 20 个字符" }, pairedActionFieldRule("次按钮", () => form.getFieldValue("homeBannerSecondaryActionUrl"))]}>
+                                    <Input className="site-settings-banner-secondary-label-input" maxLength={20} placeholder="例如：了解详情" />
+                                </Form.Item>
+                                <Form.Item className="site-settings-banner-secondary-url-field mb-0" name="homeBannerSecondaryActionUrl" label="次按钮链接" dependencies={["homeBannerSecondaryActionLabel"]} rules={[{ max: 500, message: "次按钮链接不能超过 500 个字符" }, pairedActionURLRule("次按钮", () => form.getFieldValue("homeBannerSecondaryActionLabel"))]}>
+                                    <Input className="site-settings-banner-secondary-url-input" maxLength={500} placeholder="https://example.com/details" />
+                                </Form.Item>
+                            </div>
+                        </SettingsSectionCard>
+
                         <SettingsSectionCard icon={<FileText className="site-settings-footer-icon size-4" />} title="底部版权" description="显示在首页底部，支持公司名称、年份和版权声明。">
                             <div className="site-settings-footer-fields px-6 py-6">
                                 <Form.Item className="site-settings-copyright-field mb-0" name="footerCopyright" label="版权文案" rules={[{ max: 200, message: "版权文案不能超过 200 个字符" }]}>
@@ -219,6 +247,53 @@ function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
         icpRegistrationUrl: setting.icpRegistrationUrl,
         publicSecurityRegistrationNumber: setting.publicSecurityRegistrationNumber,
         publicSecurityRegistrationUrl: setting.publicSecurityRegistrationUrl,
+        homeBannerEnabled: setting.homeBannerEnabled,
+        homeBannerLabel: setting.homeBannerLabel,
+        homeBannerText: setting.homeBannerText,
+        homeBannerPrimaryActionLabel: setting.homeBannerPrimaryActionLabel,
+        homeBannerPrimaryActionUrl: setting.homeBannerPrimaryActionUrl,
+        homeBannerSecondaryActionLabel: setting.homeBannerSecondaryActionLabel,
+        homeBannerSecondaryActionUrl: setting.homeBannerSecondaryActionUrl,
+    };
+}
+
+function requiredWhenEnabled(form: ReturnType<typeof Form.useForm<UpdateSiteSettingsInput>>[0]) {
+    return {
+        async validator(_rule: unknown, value?: string) {
+            if (form.getFieldValue("homeBannerEnabled") && !value?.trim()) {
+                throw new Error("启用首页横幅时必须填写展示文案");
+            }
+        },
+    };
+}
+
+function pairedActionFieldRule(label: string, getURL: () => string | undefined) {
+    return {
+        async validator(_rule: unknown, value?: string) {
+            if (Boolean(value?.trim()) !== Boolean(getURL()?.trim())) {
+                throw new Error(`${label}名称与链接必须同时填写`);
+            }
+        },
+    };
+}
+
+function pairedActionURLRule(label: string, getLabel: () => string | undefined) {
+    return {
+        async validator(_rule: unknown, value?: string) {
+            const normalized = value?.trim();
+            if (Boolean(normalized) !== Boolean(getLabel()?.trim())) {
+                throw new Error(`${label}名称与链接必须同时填写`);
+            }
+            if (!normalized) return;
+            try {
+                const parsed = new URL(normalized);
+                if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) {
+                    throw new Error("invalid action URL");
+                }
+            } catch {
+                throw new Error(`${label}链接必须是有效的 HTTP 或 HTTPS 地址`);
+            }
+        },
     };
 }
 

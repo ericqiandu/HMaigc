@@ -153,6 +153,14 @@
     color: #1f2d3d;
 }
 
+.updream-announcement-badge {
+    background: #ec4899;
+}
+
+.updream-announcement-submit {
+    background: #9333ea;
+}
+
 .updream-home-page .updream-hero-title {
     margin: 0;
     background-image: linear-gradient(95deg, #d4a000, #e07000, #d64090, #5060d0, #0090a0, #d4a000);

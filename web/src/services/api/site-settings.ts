@@ -21,6 +21,13 @@ export type SiteSettings = {
     publicSecurityRegistrationUrl: string;
     userAgreement: string;
     privacyPolicy: string;
+    homeBannerEnabled: boolean;
+    homeBannerLabel: string;
+    homeBannerText: string;
+    homeBannerPrimaryActionLabel: string;
+    homeBannerPrimaryActionUrl: string;
+    homeBannerSecondaryActionLabel: string;
+    homeBannerSecondaryActionUrl: string;
     updatedBy: string;
     createdAt: string;
     updatedAt: string;
@@ -28,7 +35,19 @@ export type SiteSettings = {
 
 export type UpdateSiteSettingsInput = Pick<
     SiteSettings,
-    "siteName" | "footerCopyright" | "icpRegistrationNumber" | "icpRegistrationUrl" | "publicSecurityRegistrationNumber" | "publicSecurityRegistrationUrl"
+    | "siteName"
+    | "footerCopyright"
+    | "icpRegistrationNumber"
+    | "icpRegistrationUrl"
+    | "publicSecurityRegistrationNumber"
+    | "publicSecurityRegistrationUrl"
+    | "homeBannerEnabled"
+    | "homeBannerLabel"
+    | "homeBannerText"
+    | "homeBannerPrimaryActionLabel"
+    | "homeBannerPrimaryActionUrl"
+    | "homeBannerSecondaryActionLabel"
+    | "homeBannerSecondaryActionUrl"
 >;
 
 export type UpdateLegalSettingsInput = Pick<SiteSettings, "userAgreement" | "privacyPolicy">;

@@ -81,7 +81,7 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
         id: "system",
         label: "系统设置",
         items: [
-            { path: "/admin/settings/site", label: "站点与品牌", description: "站点名称、Logo、版权与备案", icon: Globe2 },
+            { path: "/admin/settings/site", label: "站点与品牌", description: "站点名称、Logo、首页横幅、版权与备案", icon: Globe2 },
             { path: "/admin/settings/access", label: "登录与注册", description: "注册策略、管理员账号与 Linux.do", icon: ShieldCheck },
             { path: "/admin/settings/payment", label: "支付配置", description: "收银台、微信与支付宝商户参数", icon: CreditCard },
             { path: "/admin/settings/email", label: "邮件服务", description: "注册验证码与 SMTP 发信配置", icon: Mail },

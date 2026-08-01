@@ -37,6 +37,9 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	if defaults.SiteName != "HMaigc" || defaults.FooterCopyright == "" || defaults.LogoURL != "" {
 		t.Fatalf("unexpected defaults: %#v", defaults)
 	}
+	if !defaults.HomeBannerEnabled || defaults.HomeBannerText == "" {
+		t.Fatalf("unexpected home banner defaults: %#v", defaults)
+	}
 
 	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
 	updated, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{
@@ -46,11 +49,16 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 		ICPRegistrationURL:               "https://beian.miit.gov.cn/",
 		PublicSecurityRegistrationNumber: "川公网安备51000000000000号",
 		PublicSecurityRegistrationURL:    "http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=51000000000000",
+		HomeBannerEnabled:                true,
+		HomeBannerLabel:                  "活动中",
+		HomeBannerText:                   "商业合作伙伴招募计划",
+		HomeBannerPrimaryActionLabel:     "查看详情",
+		HomeBannerPrimaryActionURL:       "https://hmaigc.ai/partner",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" {
+	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" || updated.HomeBannerText != "商业合作伙伴招募计划" {
 		t.Fatalf("unexpected updated setting: %#v", updated)
 	}
 	updated, err = svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: "<p>第一条 用户权利与义务</p>", PrivacyPolicy: "<p>第一条 信息处理规则</p>"})
@@ -62,7 +70,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	}
 	legalAgreement := updated.UserAgreement
 	legalPrivacy := updated.PrivacyPolicy
-	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技"})
+	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技", HomeBannerEnabled: true, HomeBannerText: "新版运营公告"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +133,15 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "https://beian.miit.gov.cn/"}); err == nil {
 		t.Fatal("registration URL without registration number should be rejected")
 	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerEnabled: true}); err == nil {
+		t.Fatal("enabled home banner without text should be rejected")
+	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看"}); err == nil {
+		t.Fatal("home banner action label without URL should be rejected")
+	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看", HomeBannerPrimaryActionURL: "javascript:alert(1)"}); err == nil {
+		t.Fatal("unsafe home banner action URL should be rejected")
+	}
 }
 
 func TestSiteLogoUploadAndRemoval(t *testing.T) {
@@ -165,6 +182,21 @@ func TestSiteSettingDoesNotHideCorruptedStoredData(t *testing.T) {
 	}
 	if _, err := svc.PublicSiteSetting(); err == nil {
 		t.Fatal("corrupted setting should fail explicitly")
+	}
+}
+
+func TestSiteSettingAppliesNewFieldDefaultsToStoredConfiguration(t *testing.T) {
+	svc, db := newSiteSettingTestService(t)
+	stored := `{"siteName":"弘梦","footerCopyright":"© 弘梦科技"}`
+	if err := db.Create(&model.SystemSetting{Key: siteSettingKey, ValueJSON: stored}).Error; err != nil {
+		t.Fatal(err)
+	}
+	setting, err := svc.PublicSiteSetting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setting.SiteName != "弘梦" || !setting.HomeBannerEnabled || setting.HomeBannerText == "" {
+		t.Fatalf("stored setting did not receive current schema defaults: %#v", setting)
 	}
 }
 
