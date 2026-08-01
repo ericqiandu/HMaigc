@@ -208,15 +208,58 @@ verify_backend_release() {
 
 verify_web_release() {
     local expected="$1"
-    local response actual
+    local response actual entry_html entry_asset entry_asset_count
     response="$(compose exec -T web wget -qO- http://127.0.0.1:3000/api/health)" || return 1
     actual="$(printf '%s' "$response" | health_version)"
     [[ "$actual" == "$expected" ]] || {
         log "Web 入口版本不匹配：期望 $expected，实际 ${actual:-未返回}"
         return 1
     }
-    compose exec -T web wget -qO- http://127.0.0.1:3000/canvas/ |
-        grep -Fq '<div id="root"></div>'
+    entry_html="$(compose exec -T web wget -qO- http://127.0.0.1:3000/canvas/)" || return 1
+    printf '%s' "$entry_html" | grep -Fq '<div id="root"></div>' || {
+        log "Web SPA 入口缺少根节点"
+        return 1
+    }
+
+    entry_asset_count=0
+    while IFS= read -r entry_asset; do
+        [[ -n "$entry_asset" ]] || continue
+        entry_asset_count=$((entry_asset_count + 1))
+        case "$entry_asset" in
+            https://* | http://*)
+                curl --fail --silent --show-error --location --retry 3 --retry-all-errors "$entry_asset" >/dev/null || {
+                    log "Web 入口资源不可访问：$entry_asset"
+                    return 1
+                }
+                ;;
+            //*)
+                curl --fail --silent --show-error --location --retry 3 --retry-all-errors "https:${entry_asset}" >/dev/null || {
+                    log "Web 入口资源不可访问：https:${entry_asset}"
+                    return 1
+                }
+                ;;
+            /*)
+                compose exec -T web wget -qO- "http://127.0.0.1:3000${entry_asset}" >/dev/null || {
+                    log "Web 入口资源不可访问：$entry_asset"
+                    return 1
+                }
+                ;;
+            *)
+                compose exec -T web wget -qO- "http://127.0.0.1:3000/${entry_asset}" >/dev/null || {
+                    log "Web 入口资源不可访问：$entry_asset"
+                    return 1
+                }
+                ;;
+        esac
+    done < <(
+        printf '%s' "$entry_html" |
+            grep -Eo '(src|href)="[^"]+\.(js|css)(\?[^"]*)?"' |
+            sed -E 's/^[^=]+="([^"]+)"$/\1/'
+    )
+    (( entry_asset_count > 0 )) || {
+        log "Web SPA 入口未声明任何 JS/CSS 资源"
+        return 1
+    }
 }
 
 verify_running_release() {

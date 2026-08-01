@@ -1,0 +1,11 @@
+# syntax=docker/dockerfile:1.7
+
+# 标签发布镜像只接收已上传 OSS/CDN 且验证通过的唯一前端构建产物。
+# 禁止在此镜像内再次构建，以确保 index.html 与远端内容哈希资源严格一致。
+FROM nginx:1.27-alpine
+
+COPY release-web-dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1

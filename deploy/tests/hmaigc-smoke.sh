@@ -30,7 +30,14 @@ case "$arguments" in
         fi
         ;;
     *" compose "*" exec -T web wget "*"canvas/"*)
-        printf '<html><body><div id="root"></div></body></html>'
+        printf '<html><head><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"></div><script type="module" src="/assets/app.js"></script></body></html>'
+        ;;
+    *" compose "*" exec -T web wget "*"/assets/app.js"*)
+        [[ "${FAKE_MISSING_WEB_ASSET:-false}" != "true" ]] || exit 8
+        printf 'console.log("ready")'
+        ;;
+    *" compose "*" exec -T web wget "*"/assets/app.css"*)
+        printf 'body { color: black; }'
         ;;
     *" compose "*" exec -T postgres "*"pg_dump"*)
         printf 'fake-postgres-dump'
@@ -154,5 +161,11 @@ fi
 assert_state CURRENT_VERSION v1.0.10
 
 run_deploy verify
+
+if env "${TEST_ENV[@]}" FAKE_MISSING_WEB_ASSET=true "$DEPLOY_COMMAND" verify; then
+    printf 'verification unexpectedly accepted a release with a missing web entry asset\n' >&2
+    exit 1
+fi
+
 run_deploy status
 printf 'hmaigc deploy smoke test passed\n'
