@@ -1,0 +1,138 @@
+.admin-workspace.workspace-ui-scope,
+.admin-mobile-navigation-drawer.workspace-ui-scope {
+    --admin-panel-shadow: 0 1px 2px rgb(29 29 31 / 4%);
+    --workspace-ui-page: #f3f4f6;
+    --workspace-ui-surface-subtle: #f7f7f8;
+}
+
+.dark .admin-workspace.workspace-ui-scope,
+.dark .admin-mobile-navigation-drawer.workspace-ui-scope {
+    --admin-panel-shadow: none;
+    --workspace-ui-page: #0b0b0c;
+    --workspace-ui-surface: #171719;
+    --workspace-ui-surface-subtle: #202023;
+    --workspace-ui-surface-hover: #26262a;
+    --workspace-ui-divider: rgb(250 250 250 / 8%);
+    --workspace-ui-control: rgb(250 250 250 / 7%);
+    --workspace-ui-control-hover: rgb(250 250 250 / 11%);
+}
+
+.admin-workspace .admin-desktop-header {
+    background: color-mix(in srgb, var(--workspace-ui-surface) 94%, transparent);
+    backdrop-filter: blur(16px);
+}
+
+.admin-workspace .admin-page-header {
+    min-height: 52px;
+}
+
+.admin-workspace .workspace-list-toolbar,
+.admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+    border: 1px solid var(--workspace-ui-divider);
+    box-shadow: var(--admin-panel-shadow);
+}
+
+.admin-workspace .app-table-surface,
+.admin-workspace .admin-section-card,
+.admin-workspace .admin-analytics-metric-section,
+.admin-workspace .admin-analytics-trend {
+    border: 1px solid var(--workspace-ui-divider);
+    box-shadow: var(--admin-panel-shadow);
+}
+
+.admin-workspace .app-table-surface .ant-table-thead > tr > th {
+    background: color-mix(in srgb, var(--workspace-ui-surface-subtle) 92%, var(--workspace-ui-surface));
+}
+
+.admin-workspace .app-table-surface .ant-table-tbody > tr > td {
+    transition: background-color 140ms ease;
+}
+
+.admin-workspace .app-table-surface .ant-table-tbody > tr:last-child > td {
+    border-bottom: 0;
+}
+
+.admin-workspace .app-table-surface :where(.ant-table-pagination, .app-pagination-bar) {
+    min-height: 48px;
+    margin: 0;
+    padding: 8px 12px;
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav {
+    min-height: 44px;
+    margin-bottom: 16px;
+    border: 1px solid var(--workspace-ui-divider);
+    border-radius: 10px;
+    background: var(--workspace-ui-surface);
+    box-shadow: var(--admin-panel-shadow);
+    padding: 4px;
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav::before {
+    border-bottom: 0;
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav .ant-tabs-nav-list {
+    gap: 4px;
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav .ant-tabs-tab {
+    min-height: 34px;
+    margin: 0;
+    border-radius: var(--workspace-ui-radius-control);
+    padding: 7px 12px;
+    transition:
+        background-color 140ms ease,
+        color 140ms ease;
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav .ant-tabs-tab:hover {
+    background: var(--workspace-ui-control);
+    color: var(--workspace-ui-text);
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav .ant-tabs-tab-active {
+    background: var(--workspace-ui-control-hover);
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-nav .ant-tabs-ink-bar {
+    display: none;
+}
+
+.admin-workspace .admin-analytics-section-heading,
+.admin-workspace .admin-analytics-trend-heading,
+.admin-workspace .admin-section-card-header {
+    background: color-mix(in srgb, var(--workspace-ui-surface) 96%, var(--workspace-ui-surface-subtle));
+}
+
+.admin-workspace .admin-analytics-metric {
+    transition: background-color 140ms ease;
+}
+
+.admin-workspace .admin-analytics-metric:hover {
+    background: color-mix(in srgb, var(--workspace-ui-surface) 92%, var(--workspace-ui-surface-hover));
+}
+
+.admin-workspace .admin-row-more-action.ant-btn,
+.admin-workspace .admin-membership-edit-button.ant-btn {
+    border-radius: var(--workspace-ui-radius-control);
+}
+
+@media (max-width: 767px) {
+    .admin-workspace .admin-page-header {
+        min-height: 0;
+    }
+
+    .admin-workspace .workspace-list-toolbar,
+    .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+        padding: 12px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .admin-workspace .app-table-surface .ant-table-tbody > tr > td,
+    .admin-workspace .admin-membership-tabs > .ant-tabs-nav .ant-tabs-tab,
+    .admin-workspace .admin-analytics-metric {
+        transition: none;
+    }
+}

@@ -277,7 +277,7 @@ export default function ModelPricingPage() {
                 </Button>
             }
         >
-            <section className="model-pricing-metrics mb-7 grid grid-cols-2 gap-x-8 gap-y-5 border-b border-border/60 pb-7 lg:grid-cols-4">
+            <section className="model-pricing-metrics mb-5 grid grid-cols-2 lg:grid-cols-4" aria-label="模型商业定价概览">
                 <Metric label="全部模型" value={models.length} detail="已接入系统目录" />
                 <Metric label="定价完整" value={configuredCount} detail="成本、售价与利润可核算" />
                 <Metric label="利润预警" value={warningCount} detail={setting.configured ? `低于 ${setting.targetMarginBasisPoints / 100}% 目标` : "尚未配置利润基准"} tone="warning" />

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -45,14 +46,28 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 		ICPRegistrationURL:               "https://beian.miit.gov.cn/",
 		PublicSecurityRegistrationNumber: "川公网安备51000000000000号",
 		PublicSecurityRegistrationURL:    "http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=51000000000000",
-		UserAgreement:                    "第一条 用户权利与义务",
-		PrivacyPolicy:                    "第一条 信息处理规则",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" || updated.UserAgreement == "" || updated.PrivacyPolicy == "" {
+	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" {
 		t.Fatalf("unexpected updated setting: %#v", updated)
+	}
+	updated, err = svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: "<p>第一条 用户权利与义务</p>", PrivacyPolicy: "<p>第一条 信息处理规则</p>"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.UserAgreement == "" || updated.PrivacyPolicy == "" {
+		t.Fatalf("unexpected legal setting: %#v", updated)
+	}
+	legalAgreement := updated.UserAgreement
+	legalPrivacy := updated.PrivacyPolicy
+	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.UserAgreement != legalAgreement || updated.PrivacyPolicy != legalPrivacy {
+		t.Fatalf("brand update overwrote legal content: %#v", updated)
 	}
 	reloaded, err := svc.PublicSiteSetting()
 	if err != nil {
@@ -65,8 +80,15 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	if err := db.Model(&model.AdminAuditEvent{}).Where("action = ?", "site_setting.update").Count(&auditCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if auditCount != 1 {
-		t.Fatalf("audit count = %d, want 1", auditCount)
+	if auditCount != 2 {
+		t.Fatalf("audit count = %d, want 2", auditCount)
+	}
+	var legalAuditCount int64
+	if err := db.Model(&model.AdminAuditEvent{}).Where("action = ?", "site_setting.legal.update").Count(&legalAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legalAuditCount != 1 {
+		t.Fatalf("legal audit count = %d, want 1", legalAuditCount)
 	}
 }
 
@@ -81,8 +103,18 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 		t.Fatal("empty site name should be rejected")
 	}
 	oversizedAgreement := string(bytes.Repeat([]byte("字"), siteAgreementMaxLen+1))
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", UserAgreement: oversizedAgreement}); err == nil {
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: oversizedAgreement}); err == nil {
 		t.Fatal("oversized agreement should be rejected")
+	}
+	maximumRichText := "<p>" + strings.Repeat("协", siteAgreementMaxLen) + "</p>"
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: maximumRichText}); err != nil {
+		t.Fatalf("maximum visible rich text should be accepted: %v", err)
+	}
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: "<script>alert(1)</script>"}); err == nil {
+		t.Fatal("script tag should be rejected")
+	}
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: `<p class="external">协议</p>`}); err == nil {
+		t.Fatal("HTML attributes should be rejected")
 	}
 	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "javascript:alert(1)"}); err == nil {
 		t.Fatal("unsafe registration URL should be rejected")

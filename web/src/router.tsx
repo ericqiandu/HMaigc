@@ -15,6 +15,7 @@ import RuntimePolicySettingsPage from "@/pages/admin/settings/runtime-policy-set
 import StorageSettingsPage from "@/pages/admin/settings/storage-settings-page";
 import PaymentSettingsPage from "@/pages/admin/settings/payment-settings-page";
 import SiteSettingsPage from "@/pages/admin/settings/site-settings-page";
+import LegalSettingsPage from "@/pages/admin/settings/legal-settings-page";
 import StoryboardPromptsPage from "@/pages/admin/storyboard-prompts/storyboard-prompts-page";
 import UsersPage from "@/pages/admin/users/users-page";
 import VoicesPage from "@/pages/admin/voices/voices-page";
@@ -97,6 +98,7 @@ export const router = createBrowserRouter([
                     { path: "settings/storage", element: <StorageSettingsPage /> },
                     { path: "settings/payment", element: <PaymentSettingsPage /> },
                     { path: "settings/site", element: <SiteSettingsPage /> },
+                    { path: "settings/legal", element: <LegalSettingsPage /> },
                 ],
             },
         ],

@@ -44,18 +44,19 @@ export function createUserColumns({
                 </div>
             ),
         },
-        { key: "email", title: "邮箱", dataIndex: "email", render: (email) => email || <span className="text-foreground/40">未填写</span> },
+        { key: "email", title: "邮箱", dataIndex: "email", responsive: ["md"], render: (email) => email || <span className="text-foreground/40">未填写</span> },
         {
             key: "credits",
             title: "当前积分",
             dataIndex: "availableMicrocredits",
             width: 130,
             align: "right",
+            responsive: ["md"],
             render: (value, user) => <span className="tabular-nums" title={`冻结积分：${formatCredits(user.reservedMicrocredits)}`}>{formatCredits(value)}</span>,
         },
-        { key: "role", title: "角色", dataIndex: "role", width: 110, render: (role) => <Tag variant="filled" color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag> },
-        { key: "status", title: "状态", dataIndex: "status", width: 110, render: (status) => <Tag variant="filled" color={status === "active" ? "success" : "default"}>{status === "active" ? "已启用" : "已停用"}</Tag> },
-        { key: "createdAt", title: "注册时间", dataIndex: "createdAt", width: 180, render: formatTime },
+        { key: "role", title: "角色", dataIndex: "role", width: 110, responsive: ["lg"], render: (role) => <Tag variant="filled" color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag> },
+        { key: "status", title: "状态", dataIndex: "status", width: 110, responsive: ["sm"], render: (status) => <Tag variant="filled" color={status === "active" ? "success" : "default"}>{status === "active" ? "已启用" : "已停用"}</Tag> },
+        { key: "createdAt", title: "注册时间", dataIndex: "createdAt", width: 180, responsive: ["xl"], render: formatTime },
         {
             key: "actions",
             title: "操作",

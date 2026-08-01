@@ -1,4 +1,4 @@
-import { Button, Form, Input, InputNumber, message, Modal, Space, Switch, Table, Tabs, Tag } from "antd";
+import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Switch, Table, Tabs, Tag } from "antd";
 import { Plus, SquarePen, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -12,6 +12,15 @@ const credits = (value: number) => (value / 1_000_000).toLocaleString("zh-CN");
 const money = (value: number) => `¥${(value / 100).toLocaleString("zh-CN")}`;
 const tebibyte = 1024 ** 4;
 type PlanFormValues = Omit<UpdateMembershipPlanInput, "teamStorageBytes"> & { teamStorageTB: number };
+type MembershipSection = "plans" | "orders" | "invoices" | "transactions" | "webhooks";
+
+const membershipSectionOptions: Array<{ value: MembershipSection; label: string }> = [
+    { value: "plans", label: "套餐与权益" },
+    { value: "orders", label: "会员订单" },
+    { value: "invoices", label: "开票处理" },
+    { value: "transactions", label: "支付交易" },
+    { value: "webhooks", label: "回调审计" },
+];
 
 export default function MembershipAdminPage() {
     const [plans, setPlans] = useState<MembershipPlan[]>([]);
@@ -22,6 +31,7 @@ export default function MembershipAdminPage() {
     const [confirming, setConfirming] = useState<MembershipOrder | null>(null);
     const [closing, setClosing] = useState<MembershipOrder | null>(null);
     const [loading, setLoading] = useState(false);
+    const [activeSection, setActiveSection] = useState<MembershipSection>("plans");
     const [form] = Form.useForm<PlanFormValues>();
     const [confirmForm] = Form.useForm<{ providerTradeNo: string; note: string }>();
     const [closeForm] = Form.useForm<{ note: string }>();
@@ -97,8 +107,17 @@ export default function MembershipAdminPage() {
 
     return (
         <AdminPageFrame title="会员商业化" description="统一管理个人与团队套餐、并发权益及人工核款订单。">
+            <Select
+                className="admin-membership-mobile-section"
+                aria-label="选择会员管理功能"
+                value={activeSection}
+                options={membershipSectionOptions}
+                onChange={(value: MembershipSection) => setActiveSection(value)}
+            />
             <Tabs
                 className="admin-membership-tabs"
+                activeKey={activeSection}
+                onChange={(key) => setActiveSection(key as MembershipSection)}
                 items={[
                     {
                         key: "plans",
@@ -125,11 +144,11 @@ export default function MembershipAdminPage() {
                                                 </div>
                                             ),
                                         },
-                                        { title: "价格", width: 110, render: (_, row) => <span className="admin-membership-table-number is-price">{money(row.priceCents)}</span> },
-                                        { title: "周期积分", width: 130, render: (_, row) => <span className="admin-membership-table-number">{credits(row.creditsPerPeriod)}</span> },
-                                        { title: "图片 / 视频并发", width: 140, render: (_, row) => <span className="admin-membership-table-number">{row.imageConcurrency} / {row.videoConcurrency}</span> },
-                                        { title: "席位", width: 90, render: (_, row) => <span className="admin-membership-seat-count">{row.audience === "team" ? `${row.minSeats}–${row.maxSeats}` : "1"}</span> },
-                                        { title: "状态", width: 80, render: (_, row) => <Tag className="admin-membership-plan-status" color={row.enabled ? "green" : "default"}>{row.enabled ? "上架" : "下架"}</Tag> },
+                                        { title: "价格", width: 110, responsive: ["sm"], render: (_, row) => <span className="admin-membership-table-number is-price">{money(row.priceCents)}</span> },
+                                        { title: "周期积分", width: 130, responsive: ["md"], render: (_, row) => <span className="admin-membership-table-number">{credits(row.creditsPerPeriod)}</span> },
+                                        { title: "图片 / 视频并发", width: 140, responsive: ["lg"], render: (_, row) => <span className="admin-membership-table-number">{row.imageConcurrency} / {row.videoConcurrency}</span> },
+                                        { title: "席位", width: 90, responsive: ["lg"], render: (_, row) => <span className="admin-membership-seat-count">{row.audience === "team" ? `${row.minSeats}–${row.maxSeats}` : "1"}</span> },
+                                        { title: "状态", width: 80, responsive: ["sm"], render: (_, row) => <Tag className="admin-membership-plan-status" color={row.enabled ? "green" : "default"}>{row.enabled ? "上架" : "下架"}</Tag> },
                                         {
                                             title: "操作",
                                             width: 64,
@@ -146,7 +165,7 @@ export default function MembershipAdminPage() {
                                             ),
                                         },
                                     ]}
-                                    scroll={{ x: 804 }}
+                                    scroll={{ x: "max-content" }}
                                 />
                             </TableSurface>
                         ),
@@ -162,6 +181,7 @@ export default function MembershipAdminPage() {
                                     loading={loading}
                                     dataSource={orders}
                                     size="small"
+                                    scroll={{ x: 980 }}
                                     columns={[
                                         { title: "订单号", dataIndex: "orderNumber" },
                                         { title: "用户", dataIndex: "userId", ellipsis: true },
@@ -215,6 +235,7 @@ export default function MembershipAdminPage() {
                                     dataSource={transactions}
                                     size="small"
                                     pagination={{ pageSize: 30, hideOnSinglePage: true }}
+                                    scroll={{ x: 1080 }}
                                     columns={[
                                         { title: "商户订单号", dataIndex: "merchantOrderNo", ellipsis: true },
                                         { title: "渠道", render: (_, row) => <Tag className="admin-payment-provider-tag">{row.provider === "wechat" ? "微信" : "支付宝"}</Tag> },
@@ -248,6 +269,7 @@ export default function MembershipAdminPage() {
                                     dataSource={webhookEvents}
                                     size="small"
                                     pagination={{ pageSize: 30, hideOnSinglePage: true }}
+                                    scroll={{ x: 920 }}
                                     columns={[
                                         { title: "事件 ID", dataIndex: "providerEventId", ellipsis: true },
                                         { title: "渠道", render: (_, row) => <Tag className="admin-webhook-provider-tag">{row.provider === "wechat" ? "微信" : "支付宝"}</Tag> },

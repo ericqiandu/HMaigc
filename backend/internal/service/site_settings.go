@@ -4,15 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 
+	"golang.org/x/net/html"
 	"gorm.io/gorm"
 )
 
@@ -20,6 +23,7 @@ const (
 	siteSettingKey      = "site"
 	siteLogoMaxBytes    = 2 << 20
 	siteAgreementMaxLen = 50_000
+	siteLegalHTMLMaxLen = 256 << 10
 	siteRecordNoMaxLen  = 100
 	siteRecordURLMaxLen = 500
 )
@@ -33,8 +37,11 @@ type SiteSettingRequest struct {
 	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
 	PublicSecurityRegistrationNumber string `json:"publicSecurityRegistrationNumber"`
 	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
-	UserAgreement                    string `json:"userAgreement"`
-	PrivacyPolicy                    string `json:"privacyPolicy"`
+}
+
+type LegalContentSettingRequest struct {
+	UserAgreement string `json:"userAgreement"`
+	PrivacyPolicy string `json:"privacyPolicy"`
 }
 
 type PublicSiteSetting struct {
@@ -100,8 +107,8 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		ICPRegistrationURL:               strings.TrimSpace(req.ICPRegistrationURL),
 		PublicSecurityRegistrationNumber: strings.TrimSpace(req.PublicSecurityRegistrationNumber),
 		PublicSecurityRegistrationURL:    strings.TrimSpace(req.PublicSecurityRegistrationURL),
-		UserAgreement:                    strings.TrimSpace(req.UserAgreement),
-		PrivacyPolicy:                    strings.TrimSpace(req.PrivacyPolicy),
+		UserAgreement:                    current.UserAgreement,
+		PrivacyPolicy:                    current.PrivacyPolicy,
 	}
 	if err := validateSiteSetting(next); err != nil {
 		return nil, BadAuthRequest(err.Error())
@@ -111,7 +118,34 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		return nil, err
 	}
 	result := publicSiteSetting(setting, next)
-	if err := s.appendAdminAudit(actor, "site_setting.update", "system_setting", siteSettingKey, "更新站点基础信息、备案与法律内容", result); err != nil {
+	if err := s.appendAdminAudit(actor, "site_setting.update", "system_setting", siteSettingKey, "更新站点基础信息与备案", result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (s *Service) UpdateLegalContentSetting(actor *model.User, req LegalContentSettingRequest) (*PublicSiteSetting, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	s.siteSettingMu.Lock()
+	defer s.siteSettingMu.Unlock()
+	currentSetting, current, err := s.readSiteSetting()
+	if err != nil {
+		return nil, err
+	}
+	next := current
+	next.UserAgreement = strings.TrimSpace(req.UserAgreement)
+	next.PrivacyPolicy = strings.TrimSpace(req.PrivacyPolicy)
+	if err := validateSiteSetting(next); err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
+	setting, err := s.saveSiteSetting(actor, currentSetting, next)
+	if err != nil {
+		return nil, err
+	}
+	result := publicSiteSetting(setting, next)
+	if err := s.appendAdminAudit(actor, "site_setting.legal.update", "system_setting", siteSettingKey, "更新用户协议与隐私政策", result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -290,11 +324,11 @@ func validateSiteSetting(value siteSettingValue) error {
 	if err := validateSiteRecordURL("公安备案链接", value.PublicSecurityRegistrationURL); err != nil {
 		return err
 	}
-	if len([]rune(value.UserAgreement)) > siteAgreementMaxLen {
-		return fmt.Errorf("用户协议不能超过 %d 个字符", siteAgreementMaxLen)
+	if err := validateLegalRichText("用户协议", value.UserAgreement); err != nil {
+		return err
 	}
-	if len([]rune(value.PrivacyPolicy)) > siteAgreementMaxLen {
-		return fmt.Errorf("隐私政策不能超过 %d 个字符", siteAgreementMaxLen)
+	if err := validateLegalRichText("隐私政策", value.PrivacyPolicy); err != nil {
+		return err
 	}
 	if value.LogoFile != "" && filepath.Base(value.LogoFile) != value.LogoFile {
 		return errors.New("站点 Logo 文件配置无效")
@@ -303,6 +337,67 @@ func validateSiteSetting(value siteSettingValue) error {
 		return errors.New("站点 Logo 文件与类型不一致")
 	}
 	return nil
+}
+
+var legalRichTextTags = map[string]struct{}{
+	"blockquote": {},
+	"br":         {},
+	"code":       {},
+	"em":         {},
+	"h1":         {},
+	"h2":         {},
+	"h3":         {},
+	"hr":         {},
+	"li":         {},
+	"ol":         {},
+	"p":          {},
+	"pre":        {},
+	"s":          {},
+	"strong":     {},
+	"ul":         {},
+}
+
+func validateLegalRichText(label string, value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > siteLegalHTMLMaxLen {
+		return fmt.Errorf("%s内容不能超过 %d KiB", label, siteLegalHTMLMaxLen>>10)
+	}
+	tokenizer := html.NewTokenizer(strings.NewReader(value))
+	visibleCharacters := 0
+	for {
+		switch tokenizer.Next() {
+		case html.ErrorToken:
+			if errors.Is(tokenizer.Err(), io.EOF) {
+				if visibleCharacters > siteAgreementMaxLen {
+					return fmt.Errorf("%s不能超过 %d 个字符", label, siteAgreementMaxLen)
+				}
+				return nil
+			}
+			return fmt.Errorf("%s内容格式无效: %w", label, tokenizer.Err())
+		case html.TextToken:
+			visibleCharacters += utf8.RuneCount(tokenizer.Text())
+			if visibleCharacters > siteAgreementMaxLen {
+				return fmt.Errorf("%s不能超过 %d 个字符", label, siteAgreementMaxLen)
+			}
+		case html.StartTagToken, html.SelfClosingTagToken:
+			token := tokenizer.Token()
+			if _, allowed := legalRichTextTags[token.Data]; !allowed {
+				return fmt.Errorf("%s包含不支持的 HTML 标签 <%s>", label, token.Data)
+			}
+			if len(token.Attr) > 0 {
+				return fmt.Errorf("%s的 HTML 标签 <%s> 不能包含属性", label, token.Data)
+			}
+		case html.EndTagToken:
+			token := tokenizer.Token()
+			if _, allowed := legalRichTextTags[token.Data]; !allowed {
+				return fmt.Errorf("%s包含不支持的 HTML 标签 </%s>", label, token.Data)
+			}
+		case html.CommentToken, html.DoctypeToken:
+			return fmt.Errorf("%s包含不支持的 HTML 内容", label)
+		}
+	}
 }
 
 func validateSiteRecordURL(label string, rawURL string) error {

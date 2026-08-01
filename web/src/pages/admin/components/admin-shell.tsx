@@ -16,6 +16,9 @@ import { cn } from "@/lib/utils";
 import "@/styles/workspace-ui.css";
 import "@/styles/workspace-shell.css";
 import "../admin-workspace.css";
+import "../admin-responsive.css";
+import "../admin-art-layout.css";
+import "../admin-navigation-layout.css";
 import { AdminNavigation, findAdminNavigationGroup, findAdminNavigationItem } from "./admin-navigation";
 
 export function AdminShell() {
@@ -33,48 +36,63 @@ export function AdminShell() {
         <main className="app-user-workspace admin-workspace workspace-ui-scope flex h-full min-h-0 overflow-hidden text-foreground">
             <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden lg:flex", collapsed ? "w-16" : "w-[236px]")}>
                 <div className={cn("admin-sidebar-brand flex h-16 shrink-0 items-center", collapsed ? "justify-center" : "gap-2.5 px-4")}>
-                    {!collapsed ? (
-                        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2" title={settings.siteName}>
-                            <span className="admin-brand-mark grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-foreground/[.06]">
-                                <img className="admin-brand-image size-5 object-contain" src={siteLogoURL(settings)} alt="" />
-                            </span>
+                    <Link to="/" className={cn("admin-brand-link flex min-w-0 items-center", collapsed ? "justify-center" : "flex-1 gap-2.5")} title={settings.siteName}>
+                        <span className="admin-brand-mark grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-foreground/[.06]">
+                            <img className="admin-brand-image size-5 object-contain" src={siteLogoURL(settings)} alt="" />
+                        </span>
+                        {!collapsed ? (
                             <span className="admin-brand-copy min-w-0">
                                 <span className="admin-brand-name block truncate text-sm font-semibold">{settings.siteName}</span>
-                                <span className="admin-brand-caption block truncate text-[9px] font-medium tracking-[0.16em] text-foreground/38">ADMIN CONSOLE</span>
+                                <span className="admin-brand-caption block truncate text-[11px] font-medium tracking-[0.08em] text-foreground/45">ADMIN CONSOLE</span>
                             </span>
-                        </Link>
-                    ) : null}
-                    <Tooltip title={collapsed ? "展开侧栏" : "折叠侧栏"} placement="right">
-                        <button type="button" className="app-workspace-icon-button shrink-0" onClick={toggleCollapsed} aria-label={collapsed ? "展开侧栏" : "折叠侧栏"}>
-                            {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-                        </button>
-                    </Tooltip>
+                        ) : null}
+                    </Link>
                 </div>
                 <AdminNavigation collapsed={collapsed} />
                 <AdminNavigationFooter collapsed={collapsed} />
             </aside>
             <section className="admin-workspace-main flex min-w-0 flex-1 flex-col overflow-hidden">
                 <MobileAdminNavigation />
+                <AdminDesktopHeader collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
                 <Outlet />
             </section>
         </main>
     );
 }
 
-export function AdminPageFrame({ title, description, actions, children }: { title: string; description: string; actions?: ReactNode; children: ReactNode }) {
+function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boolean; onToggleCollapsed: () => void }) {
     const location = useLocation();
-    const currentGroup = findAdminNavigationGroup(location.pathname)?.label ?? "管理";
+    const currentGroup = findAdminNavigationGroup(location.pathname)?.label ?? "管理后台";
+    const currentItem = findAdminNavigationItem(location.pathname)?.label ?? "管理";
 
+    return (
+        <header className="admin-desktop-header hidden shrink-0 items-center justify-between lg:flex">
+            <div className="admin-desktop-header-leading flex min-w-0 items-center">
+                <Tooltip title={collapsed ? "展开侧栏" : "折叠侧栏"} placement="bottom">
+                    <button type="button" className="admin-desktop-collapse-button app-workspace-icon-button shrink-0" onClick={onToggleCollapsed} aria-label={collapsed ? "展开侧栏" : "折叠侧栏"}>
+                        {collapsed ? <PanelLeftOpen className="admin-desktop-collapse-icon size-4" /> : <PanelLeftClose className="admin-desktop-collapse-icon size-4" />}
+                    </button>
+                </Tooltip>
+                <div className="admin-desktop-location flex min-w-0 items-center" aria-label="当前位置">
+                    <span className="admin-desktop-location-group truncate">{currentGroup}</span>
+                    <ChevronRight className="admin-desktop-location-separator size-3" aria-hidden="true" />
+                    <span className="admin-desktop-location-current truncate">{currentItem}</span>
+                </div>
+            </div>
+            <NavLink to="/canvas" className="admin-desktop-return-link flex items-center">
+                <Home className="admin-desktop-return-icon size-3.5" />
+                <span className="admin-desktop-return-label">返回创作台</span>
+            </NavLink>
+        </header>
+    );
+}
+
+export function AdminPageFrame({ title, description, actions, children }: { title: string; description: string; actions?: ReactNode; children: ReactNode }) {
     return (
         <main className="admin-page thin-scrollbar h-full overflow-y-auto">
             <div className="admin-page-frame mx-auto w-full">
                 <header className="admin-page-header flex flex-wrap justify-between">
                     <div className="admin-page-heading min-w-0">
-                        <div className="admin-page-breadcrumb flex items-center">
-                            <span className="admin-page-breadcrumb-root">管理后台</span>
-                            <ChevronRight className="admin-page-breadcrumb-separator size-3" />
-                            <span className="admin-page-breadcrumb-current">{currentGroup}</span>
-                        </div>
                         <h1 className="admin-page-title">{title}</h1>
                         <p className="admin-page-description max-w-2xl">{description}</p>
                     </div>
@@ -139,12 +157,12 @@ function AdminNavigationFooter({ collapsed, onNavigate }: { collapsed: boolean; 
                     showVersion={!collapsed}
                 />
             </Tooltip>
-            <Tooltip title={collapsed ? "返回创作台" : undefined} placement="right">
-                <NavLink to="/canvas" onClick={onNavigate} className={cn("admin-sidebar-footer-action flex items-center transition-colors", collapsed ? "justify-center px-0" : "gap-2 px-2.5")}>
+            {onNavigate ? (
+                <NavLink to="/canvas" onClick={onNavigate} className="admin-sidebar-footer-action flex items-center gap-2 px-2.5 transition-colors">
                     <Home className="admin-sidebar-footer-icon size-3.5" />
-                    {!collapsed ? <span className="admin-sidebar-footer-label">返回创作台</span> : null}
+                    <span className="admin-sidebar-footer-label">返回创作台</span>
                 </NavLink>
-            </Tooltip>
+            ) : null}
         </div>
     );
 }

@@ -11,7 +11,7 @@ import {
 } from "@/services/api/auth";
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
-import { SettingsSectionCard } from "../components/admin-ui";
+import { AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
 
 type PolicyGroup = "resource" | "task" | "request";
 type PolicyField = {
@@ -166,10 +166,12 @@ export default function RuntimePolicySettingsPage() {
                     <PolicySection icon={<TimerReset className="size-4" />} title="任务超时" description="不同生成类型的最长执行时间。" fields={timeoutFields} />
                     <PolicySection icon={<ShieldCheck className="size-4" />} title="业务频控" description="账号与 IP 维度的固定窗口请求限制。" fields={rateFields} />
                     <PolicySection icon={<Network className="size-4" />} title="渠道中转与熔断" description="请求体、响应体、并发、超时和上游故障保护。" fields={relayFields} />
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-4">
-                        <div className="text-xs text-foreground/45">{setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "当前使用系统默认策略"}</div>
+                    <AdminSettingsActionBar
+                        meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "当前使用系统默认策略"}
+                        status={dirty ? "有未保存的策略变更" : "配置已同步"}
+                    >
                         <Button type="primary" icon={<Save className="size-4" />} loading={saving} disabled={loading || !dirty} onClick={() => void save()}>保存配置</Button>
-                    </div>
+                    </AdminSettingsActionBar>
                 </div>
             </Form>
         </AdminPageFrame>

@@ -2433,3 +2433,28 @@ html[data-theme-switching="true"] :where(.canvas-node-shell, .aceternity-comet-c
     animation: none !important;
     transition: none !important;
 }
+/* Public legal documents use the same constrained rich-text vocabulary as the admin editor. */
+.legal-document-rich-content {
+    color: inherit;
+    font: inherit;
+}
+
+.legal-document-rich-content h1,
+.legal-document-rich-content h2,
+.legal-document-rich-content h3 {
+    margin: 1.8em 0 0.7em;
+    color: var(--foreground);
+    font-weight: 650;
+    line-height: 1.35;
+    letter-spacing: -0.02em;
+}
+
+.legal-document-rich-content h1 { font-size: 1.65em; }
+.legal-document-rich-content h2 { font-size: 1.35em; }
+.legal-document-rich-content h3 { font-size: 1.12em; }
+.legal-document-rich-content p { margin: 0.85em 0; }
+.legal-document-rich-content ul,
+.legal-document-rich-content ol { margin: 1em 0; padding-left: 1.6em; }
+.legal-document-rich-content li { margin: 0.35em 0; }
+.legal-document-rich-content blockquote { margin: 1.2em 0; border-left: 2px solid currentColor; padding-left: 1em; opacity: 0.72; }
+.legal-document-rich-content hr { margin: 2em 0; border: 0; border-top: 1px solid var(--border); }

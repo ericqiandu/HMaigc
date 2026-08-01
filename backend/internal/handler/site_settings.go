@@ -74,6 +74,26 @@ func RegisterSiteSettingRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, result)
 	})
 
+	r.PUT("/admin/settings/legal", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, siteSettingBodyLimit)
+		var req service.LegalContentSettingRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.UpdateLegalContentSetting(actor, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
 	r.POST("/admin/settings/site/logo", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
 		if err != nil {

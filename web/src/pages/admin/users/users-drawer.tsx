@@ -72,6 +72,7 @@ export function AdminUserEditDrawer({
 
     return (
         <Drawer
+            className="admin-object-drawer admin-user-edit-drawer"
             title={user ? `编辑用户 · ${user.displayName || user.username}` : "编辑用户"}
             open={Boolean(user)}
             width="min(520px, 100vw)"

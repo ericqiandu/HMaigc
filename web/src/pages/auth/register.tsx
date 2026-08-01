@@ -5,7 +5,8 @@ import { useNavigate, useSearchParams } from "react-router";
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, register, sendRegistrationEmailCode } from "@/services/api/auth";
 
-import { AuthLegalCopy, AuthNotice, LinuxDOIcon } from "./auth-components";
+import { AuthLegalConsent, AuthNotice, LinuxDOIcon } from "./auth-components";
+import { validateAuthLegalConsent } from "./auth-legal-consent-policy";
 import { RegisterFields } from "./register-fields";
 
 type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
@@ -20,6 +21,7 @@ export default function RegisterPage() {
     const [email, setEmail] = useState("");
     const [emailCode, setEmailCode] = useState("");
     const [password, setPassword] = useState("");
+    const [legalConsentAccepted, setLegalConsentAccepted] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [sendingCode, setSendingCode] = useState(false);
     const [countdown, setCountdown] = useState(0);
@@ -68,6 +70,11 @@ export default function RegisterPage() {
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        const consentValidation = validateAuthLegalConsent(legalConsentAccepted);
+        if (!consentValidation.ok) {
+            message.warning(consentValidation.message);
+            return;
+        }
         setSubmitting(true);
         try {
             await register({ username, email, emailCode, password, inviteCode });
@@ -113,7 +120,9 @@ export default function RegisterPage() {
                 onSendCode={() => void sendCode()}
             />
 
-            <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting} disabled={disabled}>
+            <AuthLegalConsent checked={legalConsentAccepted} onChange={setLegalConsentAccepted} />
+
+            <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting} disabled={disabled || !legalConsentAccepted}>
                 创建账号
             </Button>
 
@@ -122,13 +131,11 @@ export default function RegisterPage() {
                     <Divider plain className="auth-divider">
                         或
                     </Divider>
-                    <Button className="auth-oauth-button" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next, inviteCode)}>
+                    <Button className="auth-oauth-button" block icon={<LinuxDOIcon />} href={legalConsentAccepted ? linuxDOLoginURL(next, inviteCode) : undefined} disabled={!legalConsentAccepted}>
                         使用 Linux.do 注册或登录
                     </Button>
                 </div>
             ) : null}
-
-            <AuthLegalCopy action="注册" />
         </form>
     );
 }

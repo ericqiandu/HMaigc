@@ -1,7 +1,9 @@
 import { lazy, Suspense } from "react";
+import { LoaderCircle } from "lucide-react";
 
 import { useAdminContext } from "./admin-context";
 import { AdminPageFrame } from "./components/admin-shell";
+import { AdminStatePanel } from "./components/admin-ui";
 
 const AnalyticsPanel = lazy(() => import("./components/analytics-panel"));
 const AdminAnnouncementsPanel = lazy(() => import("./components/admin-announcements-panel"));
@@ -10,7 +12,7 @@ const AccessSettingsPanel = lazy(() => import("./components/access-settings-pane
 const EmailSettingsPanel = lazy(() => import("./components/email-settings-panel"));
 
 function PageFallback({ label }: { label: string }) {
-    return <div className="py-16 text-center text-sm text-foreground/50">正在读取{label}...</div>;
+    return <AdminStatePanel loading icon={<LoaderCircle className="admin-page-fallback-icon size-5" />} title={`正在读取${label}`} description="页面资源加载完成后会自动显示，无需重复刷新。" />;
 }
 
 export function AnalyticsPage() {

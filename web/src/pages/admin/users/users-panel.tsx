@@ -203,7 +203,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                             columns={columns}
                             dataSource={users}
                             pagination={false}
-                            scroll={{ x: 860 }}
+                            scroll={{ x: "max-content" }}
                             locale={{ emptyText: <AdminTableEmpty filtered={hasFilters} /> }}
                         />
                         <PaginationBar

@@ -3,6 +3,7 @@ import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { Link } from "react-router";
 
 import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
+import { LegalRichTextViewer } from "@/components/legal/legal-rich-text-viewer";
 
 type LegalDocumentKind = "userAgreement" | "privacyPolicy";
 
@@ -63,7 +64,7 @@ export function LegalDocumentPage({ document }: { document: LegalDocumentKind })
                 {loading ? (
                     <Skeleton className="legal-document-skeleton mt-10" active paragraph={{ rows: 14 }} />
                 ) : content ? (
-                    <article className="legal-document-body mt-10 whitespace-pre-wrap text-[15px] leading-8 text-foreground/78">{content}</article>
+                    <article className="legal-document-body mt-10 text-[15px] leading-8 text-foreground/78"><LegalRichTextViewer content={content} /></article>
                 ) : (
                     <div className="legal-document-empty mt-10 bg-muted/20 py-16">
                         <Empty className="legal-document-empty-state" image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${meta.title}尚未配置，请联系平台管理员。`} />

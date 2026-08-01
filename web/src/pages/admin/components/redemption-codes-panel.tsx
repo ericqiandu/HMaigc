@@ -129,7 +129,7 @@ export default function RedemptionCodesPanel() {
     ];
 
     return (
-        <div className="admin-redemption-layout space-y-9">
+        <div className="admin-redemption-layout space-y-6">
             <SettingsSectionCard
                 icon={<KeyRound className="size-4" />}
                 title="生成兑换码批次"
@@ -158,10 +158,10 @@ export default function RedemptionCodesPanel() {
             </SettingsSectionCard>
 
             <section className="admin-redemption-records">
-                <div className="admin-redemption-records-heading mb-5 flex items-end justify-between gap-4">
+                <div className="admin-redemption-records-heading mb-4 flex items-center justify-between gap-4">
                     <div className="admin-redemption-records-copy">
-                        <h2 className="admin-redemption-records-title text-base font-semibold">批次记录</h2>
-                        <p className="admin-redemption-records-description mt-1.5 text-xs leading-5 text-foreground/55">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
+                        <h2 className="admin-redemption-records-title text-sm font-semibold">批次记录</h2>
+                        <p className="admin-redemption-records-description mt-1 text-xs leading-5 text-foreground/55">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
                     </div>
                     <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
                         刷新

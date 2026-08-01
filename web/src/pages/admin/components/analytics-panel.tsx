@@ -177,41 +177,49 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                 </ListToolbar>
             </div>
 
-            <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-efficiency-title">
-                <div className="admin-analytics-section-heading">
-                    <h2 id="admin-analytics-efficiency-title" className="admin-analytics-section-title">
-                        运行概览
-                    </h2>
-                    <div className="admin-analytics-queue-status" aria-label={`当前队列 ${data?.kpi.currentQueuedTasks ?? "--"}`}>
-                        <span className="admin-analytics-queue-label">当前队列</span>
-                        <strong className="admin-analytics-queue-value">{data?.kpi.currentQueuedTasks ?? "--"}</strong>
+            <div className="admin-analytics-overview-grid">
+                <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-efficiency-title">
+                    <div className="admin-analytics-section-heading">
+                        <div className="admin-analytics-section-copy">
+                            <h2 id="admin-analytics-efficiency-title" className="admin-analytics-section-title">
+                                运行概览
+                            </h2>
+                            <p className="admin-analytics-section-description">用户活跃度、任务量与服务性能</p>
+                        </div>
+                        <div className="admin-analytics-queue-status" aria-label={`当前队列 ${data?.kpi.currentQueuedTasks ?? "--"}`}>
+                            <span className="admin-analytics-queue-label">队列</span>
+                            <strong className="admin-analytics-queue-value">{data?.kpi.currentQueuedTasks ?? "--"}</strong>
+                        </div>
                     </div>
-                </div>
-                <div className="admin-analytics-metrics">
-                    <Metric label="活跃用户" value={data?.kpi.activeUsers ?? "--"} detail={data ? `DAU ${data.kpi.dau} · WAU ${data.kpi.wau} · MAU ${data.kpi.mau}` : undefined} />
-                    <Metric label="生成任务" value={data?.kpi.generationTasks ?? "--"} detail={data ? `上游请求 ${data.kpi.upstreamRequests}` : undefined} />
-                    <Metric label="请求成功率" value={data ? percent(data.kpi.successRate) : "--"} />
-                    <Metric label="P95 耗时" value={data ? formatDuration(data.kpi.p95DurationMs) : "--"} />
-                </div>
-            </section>
+                    <div className="admin-analytics-metrics">
+                        <Metric label="活跃用户" value={data?.kpi.activeUsers ?? "--"} detail={data ? `DAU ${data.kpi.dau} · WAU ${data.kpi.wau} · MAU ${data.kpi.mau}` : undefined} />
+                        <Metric label="生成任务" value={data?.kpi.generationTasks ?? "--"} detail={data ? `上游请求 ${data.kpi.upstreamRequests}` : undefined} />
+                        <Metric label="请求成功率" value={data ? percent(data.kpi.successRate) : "--"} />
+                        <Metric label="P95 耗时" value={data ? formatDuration(data.kpi.p95DurationMs) : "--"} />
+                    </div>
+                </section>
 
-            <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-business-title">
-                <div className="admin-analytics-section-heading">
-                    <h2 id="admin-analytics-business-title" className="admin-analytics-section-title">
-                        商业指标
-                    </h2>
-                </div>
-                <div className="admin-analytics-metrics">
-                    <Metric label="上游估算成本" value={data ? formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable) : "--"} />
-                    <Metric label="已结算积分营收" value={data ? formatCredits(data.kpi.settledRevenueMicrocredits) : "--"} detail={data ? `${data.kpi.settledBillingOrders} 笔已结算订单` : undefined} />
-                    <Metric label="积分毛利" value={data ? formatCredits(data.kpi.grossProfitMicrocredits) : "--"} detail={data ? `基础成本 ${formatCredits(data.kpi.settledBaseCostMicrocredits)}` : undefined} />
-                    <Metric
-                        label="冻结积分"
-                        value={data ? formatCredits(data.kpi.pendingAmountMicrocredits + data.kpi.reviewAmountMicrocredits) : "--"}
-                        detail={data ? `处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${data.kpi.reviewBillingOrders} 笔` : undefined}
-                    />
-                </div>
-            </section>
+                <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-business-title">
+                    <div className="admin-analytics-section-heading">
+                        <div className="admin-analytics-section-copy">
+                            <h2 id="admin-analytics-business-title" className="admin-analytics-section-title">
+                                商业指标
+                            </h2>
+                            <p className="admin-analytics-section-description">成本、营收、毛利与冻结资金</p>
+                        </div>
+                    </div>
+                    <div className="admin-analytics-metrics">
+                        <Metric label="上游估算成本" value={data ? formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable) : "--"} />
+                        <Metric label="已结算积分营收" value={data ? formatCredits(data.kpi.settledRevenueMicrocredits) : "--"} detail={data ? `${data.kpi.settledBillingOrders} 笔已结算订单` : undefined} />
+                        <Metric label="积分毛利" value={data ? formatCredits(data.kpi.grossProfitMicrocredits) : "--"} detail={data ? `基础成本 ${formatCredits(data.kpi.settledBaseCostMicrocredits)}` : undefined} />
+                        <Metric
+                            label="冻结积分"
+                            value={data ? formatCredits(data.kpi.pendingAmountMicrocredits + data.kpi.reviewAmountMicrocredits) : "--"}
+                            detail={data ? `处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${data.kpi.reviewBillingOrders} 笔` : undefined}
+                        />
+                    </div>
+                </section>
+            </div>
 
             <section className="admin-analytics-trend">
                 <div className="admin-analytics-trend-heading">
@@ -332,9 +340,9 @@ function FilterSelect({
 function Metric({ label, value, detail }: { label: string; value: string | number; detail?: string }) {
     return (
         <article className="admin-analytics-metric">
-            <div className="admin-analytics-metric-label">{label}</div>
-            <div className="admin-analytics-metric-value">{value}</div>
-            {detail ? <div className="admin-analytics-metric-detail">{detail}</div> : null}
+            <span className="admin-analytics-metric-label">{label}</span>
+            <strong className="admin-analytics-metric-value">{value}</strong>
+            {detail ? <span className="admin-analytics-metric-detail">{detail}</span> : null}
         </article>
     );
 }

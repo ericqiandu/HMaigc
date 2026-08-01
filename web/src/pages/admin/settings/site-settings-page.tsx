@@ -1,14 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button, Form, Input, Skeleton, Tag } from "antd";
-import { FileCheck2, FileText, Image as ImageIcon, RefreshCw, Save, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { FileCheck2, FileText, Image as ImageIcon, RefreshCw, Save, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, type ChangeEvent } from "react";
 
 import { staticAssetURL } from "@/lib/static-assets";
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
-import { SettingsSectionCard } from "../components/admin-ui";
-
-const { TextArea } = Input;
+import { AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
 
 export default function SiteSettingsPage() {
     const { message, modal } = App.useApp();
@@ -92,10 +90,8 @@ export default function SiteSettingsPage() {
     };
 
     const setting = settingQuery.data;
-    const legalConfigured = Boolean(setting?.userAgreement.trim() && setting?.privacyPolicy.trim());
-
     return (
-        <AdminPageFrame title="站点设置" description="统一管理站点品牌、底部版权、网站备案与公开法律内容">
+        <AdminPageFrame title="站点与品牌" description="管理站点名称、品牌标识、底部版权与网站备案">
             <div className="site-settings-page mx-auto max-w-5xl space-y-5">
                 {settingQuery.error ? (
                     <Alert
@@ -200,44 +196,14 @@ export default function SiteSettingsPage() {
                             </div>
                         </SettingsSectionCard>
 
-                        <SettingsSectionCard
-                            icon={<ShieldCheck className="site-settings-legal-icon size-4" />}
-                            title="法律内容"
-                            description="公开页面以纯文本安全展示，保存后首页底部链接立即可访问。"
-                            status={
-                                <Tag className="site-settings-legal-status" color={legalConfigured ? "success" : "warning"}>
-                                    {legalConfigured ? "内容完整" : "待完善"}
-                                </Tag>
-                            }
+                        <AdminSettingsActionBar
+                            meta={setting?.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "当前使用系统默认站点配置"}
+                            status="保存后立即同步到公开页面"
                         >
-                            <div className="site-settings-legal-fields grid gap-6 px-6 py-6 lg:grid-cols-2">
-                                <Form.Item
-                                    className="site-settings-agreement-field mb-0"
-                                    name="userAgreement"
-                                    label="用户协议"
-                                    extra="建议包含账号使用、内容权利、付费服务、违约处理和争议解决。"
-                                    rules={[{ max: 50_000, message: "用户协议不能超过 50000 个字符" }]}
-                                >
-                                    <TextArea className="site-settings-agreement-input" rows={16} showCount maxLength={50_000} placeholder="请输入用户协议正文" />
-                                </Form.Item>
-                                <Form.Item
-                                    className="site-settings-privacy-field mb-0"
-                                    name="privacyPolicy"
-                                    label="隐私政策"
-                                    extra="建议说明收集范围、处理目的、保存期限、共享规则与用户权利。"
-                                    rules={[{ max: 50_000, message: "隐私政策不能超过 50000 个字符" }]}
-                                >
-                                    <TextArea className="site-settings-privacy-input" rows={16} showCount maxLength={50_000} placeholder="请输入隐私政策正文" />
-                                </Form.Item>
-                            </div>
-                        </SettingsSectionCard>
-
-                        <div className="site-settings-actions flex flex-wrap items-center justify-between gap-4">
-                            <span className="site-settings-updated-at text-xs text-foreground/45">{setting?.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "当前使用系统默认站点配置"}</span>
                             <Button className="site-settings-save-button" type="primary" icon={<Save className="site-settings-save-icon size-4" />} loading={saveMutation.isPending} onClick={() => void save()}>
                                 保存并生效
                             </Button>
-                        </div>
+                        </AdminSettingsActionBar>
                     </Form>
                 )}
             </div>
@@ -253,8 +219,6 @@ function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
         icpRegistrationUrl: setting.icpRegistrationUrl,
         publicSecurityRegistrationNumber: setting.publicSecurityRegistrationNumber,
         publicSecurityRegistrationUrl: setting.publicSecurityRegistrationUrl,
-        userAgreement: setting.userAgreement,
-        privacyPolicy: setting.privacyPolicy,
     };
 }
 

@@ -251,7 +251,7 @@ export default function VoicesPage() {
                 </TableSurface>
             </div>
             <Drawer
-                className="admin-voice-editor"
+                className="admin-object-drawer admin-voice-editor"
                 title={editorMode === "clone" ? "克隆 MiniMax 音色" : editing ? "编辑音色" : "新增目录音色"}
                 open={drawerOpen}
                 width={560}

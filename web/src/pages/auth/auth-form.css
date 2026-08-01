@@ -473,12 +473,35 @@
     min-width: 0;
 }
 
-.auth-legal-copy {
+.auth-legal-consent {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
     margin: 0;
+}
+
+.auth-form-surface .auth-legal-checkbox.ant-checkbox-wrapper {
+    flex: 0 0 auto;
+    margin-top: 1px;
+}
+
+.auth-form-surface .auth-legal-checkbox .ant-checkbox-inner {
+    border-color: var(--auth-line-strong);
+    border-radius: 4px;
+    background: var(--auth-input);
+}
+
+.auth-form-surface .auth-legal-checkbox .ant-checkbox-checked .ant-checkbox-inner {
+    border-color: var(--auth-action);
+    background: var(--auth-action);
+}
+
+.auth-legal-consent-copy {
+    min-width: 0;
     color: var(--auth-muted);
-    font-size: 11px;
-    line-height: 18px;
-    text-align: center;
+    font-size: 12px;
+    line-height: 20px;
 }
 
 .auth-legal-link {

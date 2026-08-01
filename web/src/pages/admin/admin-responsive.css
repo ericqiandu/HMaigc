@@ -1,0 +1,75 @@
+.admin-membership-mobile-section {
+    display: none;
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+.admin-workspace .app-table-surface :where(.ant-table-content, .ant-table-body) {
+    overscroll-behavior-inline: contain;
+    scrollbar-color: var(--workspace-ui-text-tertiary) transparent;
+    scrollbar-width: thin;
+}
+
+@media (max-width: 1023px) {
+        .admin-workspace .workspace-list-toolbar-actions {
+            width: 100%;
+            margin-left: 0;
+            align-self: auto;
+            justify-content: flex-start;
+        }
+
+        .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+            min-height: 36px;
+        }
+
+        .admin-workspace .app-table-surface {
+            position: relative;
+        }
+
+        .admin-workspace .app-table-surface::after {
+            position: absolute;
+            z-index: 3;
+            top: 44px;
+            right: 0;
+            bottom: 0;
+            width: 18px;
+            background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--workspace-ui-surface) 88%, transparent));
+            content: "";
+            pointer-events: none;
+        }
+}
+
+@media (max-width: 767px) {
+        .admin-membership-mobile-section {
+            display: block;
+        }
+
+        .admin-membership-tabs > .ant-tabs-nav {
+            display: none;
+        }
+
+        .admin-workspace .admin-membership-tabs > .ant-tabs-content-holder {
+            border-top: 0;
+        }
+
+        .admin-workspace .admin-membership-tabs .app-table-surface {
+            margin-top: 0;
+        }
+}
+
+@media (max-width: 639px) {
+        .admin-workspace .workspace-list-toolbar-fields > :where(.app-list-search, .ant-select, .ant-dropdown-trigger) {
+            width: 100% !important;
+        }
+
+        .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+            min-height: 44px;
+            flex: 1 1 0;
+            justify-content: center;
+        }
+
+        .admin-workspace .app-table-surface .ant-table-thead > tr > th,
+        .admin-workspace .app-table-surface .ant-table-tbody > tr > td {
+            padding-inline: 12px;
+        }
+}

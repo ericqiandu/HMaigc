@@ -9,6 +9,31 @@ import { cn } from "@/lib/utils";
 
 export const configuredSecretText = "已配置 · 留空不改";
 
+export function AdminStatePanel({ icon, title, description, action, loading = false }: { icon: ReactNode; title: string; description: string; action?: ReactNode; loading?: boolean }) {
+    return (
+        <section className="admin-state-panel" aria-live={loading ? "polite" : undefined} aria-busy={loading || undefined}>
+            <span className={cn("admin-state-panel-icon", loading && "is-loading")}>{icon}</span>
+            <div className="admin-state-panel-copy">
+                <h1 className="admin-state-panel-title">{title}</h1>
+                <p className="admin-state-panel-description">{description}</p>
+            </div>
+            {action ? <div className="admin-state-panel-action">{action}</div> : null}
+        </section>
+    );
+}
+
+export function AdminSettingsActionBar({ meta, status, children }: { meta: ReactNode; status?: ReactNode; children: ReactNode }) {
+    return (
+        <div className="admin-settings-action-bar sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-4" role="region" aria-label="配置操作">
+            <div className="admin-settings-action-copy min-w-0">
+                {status ? <div className="admin-settings-action-status">{status}</div> : null}
+                <div className="admin-settings-action-meta">{meta}</div>
+            </div>
+            <div className="admin-settings-action-buttons flex flex-wrap items-center justify-end gap-2">{children}</div>
+        </div>
+    );
+}
+
 function isStatusConfig(value: ReactNode | { label: string; color?: string }): value is { label: string; color?: string } {
     if (!value || typeof value !== "object") return false;
     return typeof (value as { label?: unknown }).label === "string";

@@ -28,8 +28,10 @@ export type SiteSettings = {
 
 export type UpdateSiteSettingsInput = Pick<
     SiteSettings,
-    "siteName" | "footerCopyright" | "icpRegistrationNumber" | "icpRegistrationUrl" | "publicSecurityRegistrationNumber" | "publicSecurityRegistrationUrl" | "userAgreement" | "privacyPolicy"
+    "siteName" | "footerCopyright" | "icpRegistrationNumber" | "icpRegistrationUrl" | "publicSecurityRegistrationNumber" | "publicSecurityRegistrationUrl"
 >;
+
+export type UpdateLegalSettingsInput = Pick<SiteSettings, "userAgreement" | "privacyPolicy">;
 
 export const publicSiteSettingsQueryKey = ["public-site-settings"] as const;
 export const adminSiteSettingsQueryKey = ["admin-site-settings"] as const;
@@ -57,6 +59,10 @@ export function getAdminSiteSettings() {
 
 export function updateAdminSiteSettings(input: UpdateSiteSettingsInput) {
     return request<SiteSettings>(api.put("/admin/settings/site", input));
+}
+
+export function updateAdminLegalSettings(input: UpdateLegalSettingsInput) {
+    return request<SiteSettings>(api.put("/admin/settings/legal", input));
 }
 
 export function uploadAdminSiteLogo(file: File) {

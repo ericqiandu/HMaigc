@@ -6,7 +6,7 @@ import { CircleAlert, Coins, RefreshCw, Save, Search, Settings2, UserRoundCog } 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { AdminRowActions } from "@/pages/admin/components/admin-ui";
+import { AdminRowActions, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
 import { listAdminUsers, type AdminReferenceData, type LocalUser } from "@/services/api/auth";
 import { adjustAdminUserCredits, getAdminCreditPolicy, listAdminBillingOrders, resolveAdminBillingOrder, updateAdminCreditPolicy, type BillingOrder } from "@/services/api/wallet";
 
@@ -203,19 +203,10 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
     ];
 
     return (
-        <div className="credit-operations space-y-9">
+        <div className="credit-operations space-y-6">
             <div className="credit-operations-overview grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.85fr)]">
-                <section className="credit-policy-panel overflow-hidden rounded-[10px] border border-border/70 bg-background/75">
-                    <div className="credit-panel-heading flex items-start gap-4 px-6 pb-5 pt-6">
-                        <span className="credit-panel-icon grid size-9 place-items-center rounded-md bg-muted/35">
-                            <Settings2 className="size-4" />
-                        </span>
-                        <div className="credit-panel-heading-copy">
-                            <h2 className="credit-panel-title text-base font-semibold">积分策略</h2>
-                            <p className="credit-panel-description mt-1.5 text-xs leading-5 text-foreground/50">注册、签到与模型倍率统一在服务端结算。</p>
-                        </div>
-                    </div>
-                    <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form bg-foreground/[.018] px-6 pb-6 pt-5">
+                <SettingsSectionCard className="credit-policy-panel" icon={<Settings2 className="credit-policy-icon size-4" />} title="积分策略" description="注册、签到与模型倍率统一在服务端结算。">
+                    <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form admin-content-form">
                         <div className="credit-policy-fields grid gap-5 md:grid-cols-3">
                             <Form.Item
                                 name="signupBonus"
@@ -257,19 +248,23 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                             </Button>
                         </div>
                     </Form>
-                </section>
-                <section className="credit-adjustment-panel overflow-hidden rounded-[10px] border border-border/70 bg-background/75">
-                    <div className="credit-adjustment-content p-6">
-                        <div className="credit-panel-heading flex items-start gap-4">
-                            <span className="credit-panel-icon grid size-9 shrink-0 place-items-center rounded-md bg-muted/35">
-                                <UserRoundCog className="size-4" />
-                            </span>
-                            <div className="credit-panel-heading-copy">
-                                <h2 className="credit-panel-title text-base font-semibold">人工调整积分</h2>
-                                <p className="credit-panel-description mt-1.5 text-xs leading-5 text-foreground/50">所有变更都会写入不可修改的用户积分流水。</p>
+                </SettingsSectionCard>
+                <SettingsSectionCard
+                    className="credit-adjustment-panel"
+                    icon={<UserRoundCog className="credit-adjustment-icon size-4" />}
+                    title="人工调整积分"
+                    description="所有变更都会写入不可修改的用户积分流水。"
+                    footer={
+                        <div className="credit-adjustment-notice flex items-start gap-3.5">
+                            <CircleAlert className="credit-adjustment-notice-icon mt-0.5 size-4 shrink-0" />
+                            <div className="credit-adjustment-notice-copy">
+                                <h3 className="credit-adjustment-notice-title">写操作强校验</h3>
+                                <p className="credit-adjustment-notice-description">余额不足时不允许负向调整，建议在备注中填写工单号或处理依据。</p>
                             </div>
                         </div>
-                        <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form mt-6">
+                    }
+                >
+                        <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form admin-content-form">
                             <Form.Item name="userId" label="目标用户" rules={[{ required: true, message: "请选择用户" }]}>
                                 <Select
                                     showSearch
@@ -294,15 +289,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                 </Button>
                             </div>
                         </Form>
-                    </div>
-                    <div className="credit-adjustment-notice flex items-start gap-3.5 bg-amber-500/[.055] px-6 py-5">
-                        <CircleAlert className="credit-adjustment-notice-icon mt-0.5 size-4 shrink-0 text-amber-500" />
-                        <div className="credit-adjustment-notice-copy">
-                            <h3 className="credit-adjustment-notice-title text-xs font-semibold text-foreground/80">写操作强校验</h3>
-                            <p className="credit-adjustment-notice-description mt-1.5 text-[11px] leading-5 text-foreground/48">余额不足时不允许负向调整，建议在备注中填写工单号或处理依据。</p>
-                        </div>
-                    </div>
-                </section>
+                </SettingsSectionCard>
             </div>
 
             <section className="credit-orders-section pt-1">

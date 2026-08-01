@@ -119,7 +119,7 @@ export default function ReferralProgramPage() {
             render: (_, item) => (
                 <div className="referral-admin-user">
                     <div className="referral-admin-user-name text-xs font-medium">{item.inviteeDisplayName || item.inviteeUsername}</div>
-                    <div className="referral-admin-user-id mt-0.5 text-[10px] text-foreground/38">@{item.inviteeUsername}</div>
+                    <div className="referral-admin-user-id mt-0.5 text-xs text-foreground/45">@{item.inviteeUsername}</div>
                 </div>
             ),
         },
@@ -151,7 +151,7 @@ export default function ReferralProgramPage() {
             {loading && !data ? <Skeleton className="referral-admin-loading py-12" active paragraph={{ rows: 10 }} /> : null}
             {data ? (
                 <div className="referral-admin-content space-y-5">
-                    <section className="referral-admin-overview grid gap-px overflow-hidden rounded-[10px] bg-border/65 sm:grid-cols-3">
+                    <section className="referral-admin-overview grid gap-px overflow-hidden sm:grid-cols-3" aria-label="邀请活动概览">
                         <AdminMetric icon={<UsersRound className="size-4" />} label="邀请注册关系" value={data.summary.registeredCount.toLocaleString("zh-CN")} />
                         <AdminMetric icon={<ShoppingBag className="size-4" />} label="已触发首购" value={data.summary.purchasedCount.toLocaleString("zh-CN")} />
                         <AdminMetric icon={<Coins className="size-4" />} label="累计发放积分" value={formatCredits(data.summary.grantedTotalMicrocredits)} />
@@ -185,14 +185,14 @@ export default function ReferralProgramPage() {
                                     <div key={rule.membershipPlanId} className="referral-admin-rule grid items-center gap-4 px-6 py-4 lg:grid-cols-[minmax(150px,1fr)_160px_160px_86px_92px]">
                                         <div className="referral-admin-rule-plan min-w-0">
                                             <div className="referral-admin-rule-name truncate text-sm font-medium">{rule.planName} · {cycleLabel(rule.billingCycle)}</div>
-                                            <div className="referral-admin-rule-code mt-1 truncate text-[10px] text-foreground/38">{rule.planCode}</div>
+                                            <div className="referral-admin-rule-code mt-1 truncate text-xs text-foreground/45">{rule.planCode}</div>
                                         </div>
                                         <label className="referral-admin-rule-field">
-                                            <span className="referral-admin-rule-label mb-1 block text-[10px] text-foreground/42">好友奖励积分</span>
+                                            <span className="referral-admin-rule-label mb-1 block text-xs text-foreground/55">好友奖励积分</span>
                                             <InputNumber className="referral-admin-rule-input w-full" min={0} max={10_000_000} precision={0} value={draft.inviteeCredits} onChange={(value) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, inviteeCredits: value || 0 } }))} />
                                         </label>
                                         <label className="referral-admin-rule-field">
-                                            <span className="referral-admin-rule-label mb-1 block text-[10px] text-foreground/42">邀请人奖励积分</span>
+                                            <span className="referral-admin-rule-label mb-1 block text-xs text-foreground/55">邀请人奖励积分</span>
                                             <InputNumber className="referral-admin-rule-input w-full" min={0} max={10_000_000} precision={0} value={draft.inviterCredits} onChange={(value) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, inviterCredits: value || 0 } }))} />
                                         </label>
                                         <div className="referral-admin-rule-enabled flex items-center gap-2">
@@ -243,12 +243,12 @@ export default function ReferralProgramPage() {
 
 function AdminMetric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
     return (
-        <div className="referral-admin-metric bg-background px-5 py-4">
-            <div className="referral-admin-metric-label flex items-center gap-1.5 text-[11px] text-foreground/42">
+        <div className="referral-admin-metric px-5 py-4">
+            <div className="referral-admin-metric-label flex items-center gap-1.5">
                 <span className="referral-admin-metric-icon">{icon}</span>
                 <span className="referral-admin-metric-label-text">{label}</span>
             </div>
-            <div className="referral-admin-metric-value mt-2 text-xl font-semibold tabular-nums">{value}</div>
+            <div className="referral-admin-metric-value mt-2 tabular-nums">{value}</div>
         </div>
     );
 }

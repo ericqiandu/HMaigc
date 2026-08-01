@@ -1,5 +1,6 @@
 import { CircleAlert, Info, TriangleAlert, type LucideIcon } from "lucide-react";
-import { type ReactNode } from "react";
+import { Checkbox } from "antd";
+import { type ReactNode, useId } from "react";
 import { Link } from "react-router";
 
 export function LinuxDOIcon() {
@@ -21,18 +22,22 @@ export function AuthField({ label, children }: { label: string; children: ReactN
     );
 }
 
-export function AuthLegalCopy({ action }: { action: "登录" | "注册" }) {
+export function AuthLegalConsent({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+    const labelId = useId();
     return (
-        <p className="auth-legal-copy">
-            {action}即表示你已阅读并同意
-            <Link className="auth-legal-link" to="/legal/user-agreement">
-                《用户协议》
-            </Link>
-            和
-            <Link className="auth-legal-link" to="/legal/privacy-policy">
-                《隐私政策》
-            </Link>
-        </p>
+        <div className="auth-legal-consent">
+            <Checkbox className="auth-legal-checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} aria-labelledby={labelId} />
+            <span className="auth-legal-consent-copy" id={labelId}>
+                我已阅读并同意
+                <Link className="auth-legal-link" to="/legal/user-agreement" target="_blank" rel="noreferrer">
+                    《用户协议》
+                </Link>
+                和
+                <Link className="auth-legal-link" to="/legal/privacy-policy" target="_blank" rel="noreferrer">
+                    《隐私政策》
+                </Link>
+            </span>
+        </div>
     );
 }
 

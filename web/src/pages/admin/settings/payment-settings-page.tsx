@@ -11,7 +11,7 @@ import {
     type UpdatePaymentSettingInput,
 } from "@/services/api/payment";
 import { AdminPageFrame } from "../components/admin-shell";
-import { configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
+import { AdminSettingsActionBar, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
 
 type PaymentChannelFormValues = Partial<PaymentChannelSettingInput>;
 type PaymentFormValues = {
@@ -130,14 +130,11 @@ export default function PaymentSettingsPage() {
                             setting={setting?.alipay}
                         />
 
-                        <div className="payment-settings-actions flex items-center justify-between gap-4">
-                            <span className="payment-settings-updated-at text-xs text-foreground/45">
-                                {setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}` : "尚未保存支付配置"}
-                            </span>
+                        <AdminSettingsActionBar meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}` : "尚未保存支付配置"} status="商户参数仅对管理员可见">
                             <Button className="payment-settings-save-button" type="primary" loading={saving} onClick={() => void save()}>
                                 保存支付配置
                             </Button>
-                        </div>
+                        </AdminSettingsActionBar>
                     </Form>
                 )}
 

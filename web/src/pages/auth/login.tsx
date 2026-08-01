@@ -6,7 +6,8 @@ import { useNavigate, useSearchParams } from "react-router";
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, login } from "@/services/api/auth";
 
-import { AuthField, AuthLegalCopy, AuthNotice, LinuxDOIcon } from "./auth-components";
+import { AuthField, AuthLegalConsent, AuthNotice, LinuxDOIcon } from "./auth-components";
+import { validateAuthLegalConsent } from "./auth-legal-consent-policy";
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -14,6 +15,7 @@ export default function LoginPage() {
     const { message } = App.useApp();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [legalConsentAccepted, setLegalConsentAccepted] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [linuxdoEnabled, setLinuxdoEnabled] = useState(false);
     const [settingsError, setSettingsError] = useState("");
@@ -40,6 +42,11 @@ export default function LoginPage() {
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        const consentValidation = validateAuthLegalConsent(legalConsentAccepted);
+        if (!consentValidation.ok) {
+            message.warning(consentValidation.message);
+            return;
+        }
         setSubmitting(true);
         try {
             await login({ username, password });
@@ -65,7 +72,9 @@ export default function LoginPage() {
                 </AuthField>
             </div>
 
-            <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting}>
+            <AuthLegalConsent checked={legalConsentAccepted} onChange={setLegalConsentAccepted} />
+
+            <Button className="auth-primary-button" type="primary" htmlType="submit" block loading={submitting} disabled={!legalConsentAccepted}>
                 登录
             </Button>
 
@@ -74,13 +83,11 @@ export default function LoginPage() {
                     <Divider plain className="auth-divider">
                         或
                     </Divider>
-                    <Button className="auth-oauth-button" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next)}>
+                    <Button className="auth-oauth-button" block icon={<LinuxDOIcon />} href={legalConsentAccepted ? linuxDOLoginURL(next) : undefined} disabled={!legalConsentAccepted}>
                         使用 Linux.do 登录
                     </Button>
                 </div>
             ) : null}
-
-            <AuthLegalCopy action="登录" />
         </form>
     );
 }
