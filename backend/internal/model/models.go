@@ -233,7 +233,7 @@ type ModelChannel struct {
 	BaseURL          string               `json:"baseUrl"`
 	APIKey           string               `json:"-"`
 	APIFormat        string               `json:"apiFormat" gorm:"size:24"`
-	InterfaceType    ChannelInterfaceType `json:"interfaceType" gorm:"size:32"`
+	InterfaceType    ChannelInterfaceType `json:"interfaceType" gorm:"size:64"`
 	ConcurrencyLimit int                  `json:"concurrencyLimit"`
 	ModelsJSON       string               `json:"modelsJson" gorm:"type:text"`
 	CreatedAt        time.Time            `json:"createdAt"`
