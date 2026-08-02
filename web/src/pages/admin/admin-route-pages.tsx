@@ -26,11 +26,11 @@ export function AnnouncementsPage() {
 
 export function CreditOperationsPage() {
     const { references } = useAdminContext();
-    return <AdminPageFrame title="积分运营" description="人工调账与异常计费"><Suspense fallback={<PageFallback label="积分运营数据" />}><CreditOperationsPanel users={references.users} /></Suspense></AdminPageFrame>;
+    return <AdminPageFrame title="积分管理" description="积分规则、人工调账与异常计费"><Suspense fallback={<PageFallback label="积分管理数据" />}><CreditOperationsPanel users={references.users} /></Suspense></AdminPageFrame>;
 }
 
 export function AccessSettingsPage() {
-    return <AdminPageFrame title="登录与注册" description="注册策略与 Linux.do"><Suspense fallback={<PageFallback label="登录与注册配置" />}><AccessSettingsPanel /></Suspense></AdminPageFrame>;
+    return <AdminPageFrame title="登录与注册" description="管理账号准入策略与 Linux.do OAuth 登录"><Suspense fallback={<PageFallback label="登录与注册配置" />}><AccessSettingsPanel /></Suspense></AdminPageFrame>;
 }
 
 export function EmailSettingsPage() {

@@ -5,10 +5,6 @@
         margin-inline: 0;
     }
 
-    .admin-workspace .legal-settings-page > .admin-settings-action-bar {
-        position: static;
-    }
-
     .legal-settings-tabs > .ant-tabs-nav {
         margin: 0;
         padding: 0 22px;
@@ -129,7 +125,7 @@
     }
 
     .admin-legal-editor-surface {
-        height: clamp(320px, 44vh, 480px);
+        height: clamp(240px, 30vh, 360px);
         overflow-y: auto;
         background: var(--workspace-ui-surface);
     }
@@ -153,18 +149,54 @@
         line-height: 1.35;
     }
 
-    .admin-legal-editor-content h1 { font-size: 24px; }
-    .admin-legal-editor-content h2 { font-size: 19px; }
-    .admin-legal-editor-content h3 { font-size: 16px; }
+    .admin-legal-editor-content h1 {
+        font-size: 24px;
+    }
+    .admin-legal-editor-content h2 {
+        font-size: 19px;
+    }
+    .admin-legal-editor-content h3 {
+        font-size: 16px;
+    }
 
-    .admin-legal-editor-content p { margin: 0.7em 0; }
+    .admin-legal-editor-content p {
+        margin: 0.7em 0;
+    }
     .admin-legal-editor-content ul,
-    .admin-legal-editor-content ol { margin: 0.8em 0; padding-left: 1.5em; }
-    .admin-legal-editor-content blockquote { margin: 1em 0; border-left: 2px solid var(--workspace-ui-accent); padding-left: 14px; color: var(--workspace-ui-text-tertiary); }
-    .admin-legal-editor-content hr { margin: 24px 0; border: 0; border-top: 1px solid var(--workspace-ui-divider); }
-    .admin-legal-editor-content a { color: var(--workspace-ui-accent); text-decoration: underline; text-underline-offset: 2px; }
-    .admin-legal-editor-content img { display: block; max-width: 100%; height: auto; margin: 20px auto; object-fit: contain; }
-    .admin-legal-editor-content p.is-editor-empty:first-child::before { float: left; height: 0; color: var(--workspace-ui-text-tertiary); content: attr(data-placeholder); pointer-events: none; }
+    .admin-legal-editor-content ol {
+        margin: 0.8em 0;
+        padding-left: 1.5em;
+    }
+    .admin-legal-editor-content blockquote {
+        margin: 1em 0;
+        border-left: 2px solid var(--workspace-ui-accent);
+        padding-left: 14px;
+        color: var(--workspace-ui-text-tertiary);
+    }
+    .admin-legal-editor-content hr {
+        margin: 24px 0;
+        border: 0;
+        border-top: 1px solid var(--workspace-ui-divider);
+    }
+    .admin-legal-editor-content a {
+        color: var(--workspace-ui-accent);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+    .admin-legal-editor-content img {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        margin: 20px auto;
+        object-fit: contain;
+    }
+    .admin-legal-editor-content p.is-editor-empty:first-child::before {
+        float: left;
+        height: 0;
+        color: var(--workspace-ui-text-tertiary);
+        content: attr(data-placeholder);
+        pointer-events: none;
+    }
 
     .admin-legal-editor-footer {
         display: flex;
@@ -179,30 +211,90 @@
         line-height: 16px;
     }
 
-    .legal-settings-guidance {
-        background: var(--workspace-ui-divider);
-    }
-
-    .legal-guidance-item {
+    .legal-settings-header-actions {
         display: flex;
-        min-height: 88px;
-        align-items: flex-start;
-        gap: 12px;
-        background: var(--workspace-ui-surface);
-        padding: 16px;
+        align-items: center;
+        gap: 10px;
     }
 
-    .legal-guidance-symbol {
-        display: grid;
-        width: 32px;
-        height: 32px;
-        flex: 0 0 auto;
-        place-items: center;
+    .legal-settings-sync-status {
+        display: flex;
+        min-height: 44px;
+        align-items: center;
+        gap: 8px;
+        border-top: 1px solid var(--workspace-ui-divider);
+        padding: 10px 22px;
         color: var(--workspace-ui-text-tertiary);
     }
 
-    .legal-guidance-title { color: var(--workspace-ui-text); font-size: 12px; font-weight: 600; line-height: 18px; }
-    .legal-guidance-description { margin-top: 2px; color: var(--workspace-ui-text-tertiary); font-size: 12px; line-height: 17px; }
+    .legal-settings-sync-icon {
+        flex: 0 0 auto;
+        color: var(--workspace-ui-text-secondary);
+    }
+
+    .legal-settings-sync-label {
+        color: var(--workspace-ui-text);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 18px;
+    }
+
+    .legal-settings-sync-meta {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-channel-context {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(280px, 1.45fr);
+        min-width: 0;
+        overflow: hidden;
+        background: var(--workspace-ui-surface);
+        border-radius: var(--workspace-ui-radius-lg);
+    }
+
+    .admin-channel-context-item,
+    .admin-channel-context-note {
+        min-width: 0;
+        margin: 0;
+        padding: 16px 18px;
+    }
+
+    .admin-channel-context-item {
+        display: grid;
+        align-content: center;
+        gap: 4px;
+        border-right: 1px solid var(--workspace-ui-divider);
+    }
+
+    .admin-channel-context-label {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-channel-context-value {
+        overflow: hidden;
+        color: var(--workspace-ui-text);
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-channel-context-value.is-warning {
+        color: var(--workspace-ui-warning);
+    }
+
+    .admin-channel-context-note {
+        display: flex;
+        align-items: center;
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        line-height: 18px;
+    }
 
     .admin-channel-list-toolbar .workspace-list-toolbar-fields,
     .channel-model-manager-toolbar .workspace-list-toolbar-fields {
@@ -320,6 +412,22 @@
     }
 
     @media (max-width: 1279px) {
+        .admin-channel-context {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .admin-channel-context-item:nth-child(2) {
+            border-right: 0;
+        }
+
+        .admin-channel-context-item:nth-child(-n + 2) {
+            border-bottom: 1px solid var(--workspace-ui-divider);
+        }
+
+        .admin-channel-context-note {
+            border-left: 1px solid var(--workspace-ui-divider);
+        }
+
         .admin-channel-list-toolbar .workspace-list-toolbar-fields,
         .channel-model-manager-toolbar .workspace-list-toolbar-fields {
             grid-template-columns: minmax(0, 1fr) minmax(128px, 0.5fr);
@@ -408,6 +516,22 @@
     }
 
     @media (max-width: 639px) {
+        .admin-channel-context {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .admin-channel-context-item,
+        .admin-channel-context-item:nth-child(2),
+        .admin-channel-context-note {
+            border: 0;
+            border-bottom: 1px solid var(--workspace-ui-divider);
+            padding: 14px 16px;
+        }
+
+        .admin-channel-context-note {
+            border-bottom: 0;
+        }
+
         .admin-channel-list-toolbar .workspace-list-toolbar-fields,
         .channel-model-manager-toolbar .workspace-list-toolbar-fields {
             grid-template-columns: minmax(0, 1fr);
@@ -448,6 +572,29 @@
         .legal-settings-tabs > .ant-tabs-nav,
         .legal-settings-tabs > .ant-tabs-content-holder {
             padding-inline: 14px;
+        }
+
+        .legal-settings-header-actions {
+            width: 100%;
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .legal-settings-header-actions .legal-settings-save-button {
+            min-height: 44px;
+            width: 100%;
+            justify-content: center;
+        }
+
+        .legal-settings-sync-status {
+            align-items: flex-start;
+            flex-wrap: wrap;
+            padding-inline: 14px;
+        }
+
+        .legal-settings-sync-meta {
+            width: 100%;
+            padding-left: 22px;
         }
 
         .admin-legal-editor-surface,
@@ -527,13 +674,77 @@
         min-width: 0;
     }
 
+    .admin-redemption-layout {
+        display: grid;
+        gap: 28px;
+    }
+
     .admin-redemption-form {
-        padding: 20px 24px 4px;
+        gap: 0 24px;
+        padding: 24px 28px 8px;
+    }
+
+    .admin-redemption-form .ant-form-item {
+        margin-bottom: 18px;
+    }
+
+    .admin-redemption-note-field {
+        margin-top: 2px;
     }
 
     .admin-redemption-actions {
-        min-height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 64px;
+        padding-top: 4px;
         border-top: 1px solid var(--workspace-ui-divider);
+    }
+
+    .admin-redemption-records-heading {
+        display: flex;
+        min-height: 44px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 16px;
+    }
+
+    .admin-redemption-records-copy {
+        min-width: 0;
+    }
+
+    .admin-redemption-records-title {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .admin-redemption-records-description {
+        margin: 4px 0 0;
+    }
+
+    .admin-redemption-records-meta {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .admin-redemption-records-count {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .admin-redemption-search {
+        width: min(360px, 100%);
+    }
+
+    .admin-redemption-validity-filter {
+        width: 144px;
     }
 
     .admin-redemption-actions-note {
@@ -562,6 +773,7 @@
     }
 
     .admin-generated-codes-content {
+        resize: none;
         line-height: 20px;
     }
 
@@ -586,7 +798,8 @@
 
     @media (max-width: 767px) {
         .admin-redemption-form {
-            padding: 16px 16px 4px;
+            gap: 0;
+            padding: 20px 18px 8px;
         }
 
         .admin-redemption-form :where(.ant-input, .ant-input-number, .ant-picker),
@@ -602,13 +815,27 @@
             flex-direction: column;
         }
 
+        .admin-redemption-layout {
+            gap: 24px;
+        }
+
+        .admin-redemption-records-meta {
+            width: 100%;
+            justify-content: space-between;
+        }
+
         .admin-redemption-actions > .ant-btn,
         .admin-redemption-records-heading > .ant-btn,
+        .admin-redemption-refresh,
         .admin-redeem-codes-toolbar > .ant-select,
         .admin-generated-codes-actions,
         .admin-generated-codes-actions > .ant-btn,
         .admin-redeem-codes-actions,
         .admin-redeem-codes-actions > .ant-btn {
+            width: 100%;
+        }
+
+        .admin-redemption-validity-filter {
             width: 100%;
         }
 
@@ -624,5 +851,24 @@
         .admin-redeem-codes-actions {
             flex-direction: column-reverse;
         }
+    }
+}
+
+/* Ant Design component styles are unlayered and therefore outrank declarations
+   inside `@layer utilities`. Keep third-party layout corrections unlayered so
+   the spacing visible in the browser matches the admin design contract. */
+.admin-workspace .admin-redemption-form {
+    gap: 0 24px;
+    padding: 24px 28px 8px;
+}
+
+.admin-workspace .admin-redemption-form .ant-form-item {
+    margin-bottom: 18px;
+}
+
+@media (max-width: 767px) {
+    .admin-workspace .admin-redemption-form {
+        gap: 0;
+        padding: 20px 18px 8px;
     }
 }

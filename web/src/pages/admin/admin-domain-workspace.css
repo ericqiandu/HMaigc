@@ -209,10 +209,18 @@
     }
 
     .admin-workspace .referral-admin-overview {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
         overflow: hidden;
         border: 0;
         border-radius: var(--workspace-ui-radius-surface);
         background: var(--workspace-ui-divider);
+    }
+
+    .admin-workspace .referral-admin-content {
+        display: grid;
+        gap: 24px;
     }
 
     .admin-workspace .referral-admin-metric {
@@ -245,11 +253,41 @@
     }
 
     .admin-workspace .referral-admin-program {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
         min-height: 76px;
     }
 
+    .admin-workspace .referral-admin-program-copy {
+        min-width: 0;
+    }
+
+    .admin-workspace .referral-admin-program-title {
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 20px;
+    }
+
+    .admin-workspace .referral-admin-program-note {
+        margin-top: 4px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
     .admin-workspace .referral-admin-rule {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) 160px 160px 86px 92px;
+        align-items: center;
+        gap: 16px;
         min-height: 92px;
+    }
+
+    .admin-workspace .referral-admin-rule-field {
+        min-width: 0;
     }
 
     .admin-workspace .referral-admin-rule-input {
@@ -263,6 +301,29 @@
 
     .admin-workspace .referral-admin-refresh {
         min-height: 40px;
+    }
+
+    .admin-workspace .referral-admin-user-name,
+    .admin-workspace .referral-admin-plan {
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        line-height: 20px;
+    }
+
+    .admin-workspace .referral-admin-user-name {
+        font-weight: 600;
+    }
+
+    .admin-workspace .referral-admin-code,
+    .admin-workspace .referral-admin-ip,
+    .admin-workspace .referral-admin-reward,
+    .admin-workspace .referral-admin-user-id {
+        font-size: 11px;
+        line-height: 17px;
+    }
+
+    .admin-workspace .referral-admin-table .app-pagination-bar {
+        border-top: 1px solid var(--workspace-ui-divider);
     }
 
     .admin-workspace .referral-admin-rule-label {
@@ -337,9 +398,15 @@
     }
 
     .operations-overview-grid {
+        overflow: hidden;
+        border-radius: var(--workspace-ui-radius-surface);
         background: var(--workspace-ui-divider);
         border: 0;
         box-shadow: none;
+    }
+
+    .operations-page {
+        min-width: 0;
     }
 
     .operations-metric {
@@ -523,7 +590,8 @@
 
     .operations-log-viewport {
         height: 300px;
-        overflow: auto;
+        overflow-x: hidden;
+        overflow-y: auto;
         background: #111315;
         padding: 14px 16px;
         color: #d6d9dc;
@@ -535,6 +603,17 @@
     .operations-audit-card .admin-section-card-content,
     .operations-backups-card .admin-section-card-content {
         overflow: hidden;
+    }
+
+    .operations-log-card .admin-content-error {
+        margin: 12px 16px 16px;
+    }
+
+    .operations-section-count {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 17px;
+        white-space: nowrap;
     }
 
     .operations-audit-table .ant-table,
@@ -1059,6 +1138,8 @@
 
     .payment-settings-notice {
         margin: 0;
+        border: 0;
+        background: var(--workspace-ui-surface-subtle);
     }
 
     .payment-settings-form {
@@ -1077,34 +1158,27 @@
         font-weight: 500;
     }
 
-    .payment-settings-form :where(.payment-settings-checkout-fields, .payment-settings-wechat-fields, .payment-settings-alipay-fields) {
-        min-width: 0;
-        max-width: 100%;
-    }
-
-    .payment-settings-form :where(.payment-settings-checkout-fields, .payment-settings-wechat-fields, .payment-settings-alipay-fields) > * {
-        min-width: 0;
-    }
-
-    .payment-settings-wechat-scope-note,
-    .payment-settings-alipay-scope-note {
-        display: flex;
-        min-height: 32px;
-        align-items: center;
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 18px;
+    .payment-settings-checkout-field {
+        grid-column: 1 / -1;
     }
 
     .payment-settings-security-notes {
-        gap: 4px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+        padding: 4px 0;
     }
 
     .payment-settings-security-note {
         min-width: 0;
-        border-radius: 8px;
-        background: var(--workspace-ui-surface-subtle);
-        padding: 10px 12px;
+        padding: 0;
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .payment-settings-form .admin-settings-action-bar {
+        position: static;
+        bottom: auto;
+        z-index: auto;
     }
 
     @media (max-width: 767px) {
@@ -1114,17 +1188,6 @@
 
         .payment-settings-form {
             gap: 16px;
-        }
-
-        .payment-settings-form :where(.payment-settings-checkout-fields, .payment-settings-wechat-fields, .payment-settings-alipay-fields) {
-            display: block;
-            padding: 16px;
-        }
-
-        .payment-settings-wechat-scope-note,
-        .payment-settings-alipay-scope-note {
-            min-height: 0;
-            margin: -4px 0 16px;
         }
 
         .payment-settings-security-notes {
@@ -1157,43 +1220,6 @@
     .storage-settings-form .ant-form-item-label > label {
         font-size: 13px;
         font-weight: 500;
-    }
-
-    .storage-settings-groups {
-        display: grid;
-    }
-
-    .storage-settings-group {
-        min-width: 0;
-        padding: 20px 24px 4px;
-    }
-
-    .storage-settings-group + .storage-settings-group {
-        border-top: 1px solid var(--workspace-ui-border-subtle);
-    }
-
-    .storage-settings-group-heading {
-        margin-bottom: 16px;
-    }
-
-    .storage-settings-group-heading h3 {
-        margin: 0;
-        color: var(--workspace-ui-text-primary);
-        font-size: 14px;
-        font-weight: 600;
-        line-height: 20px;
-    }
-
-    .storage-settings-group-heading p {
-        max-width: 720px;
-        margin: 4px 0 0;
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 18px;
-    }
-
-    .storage-settings-fields > .ant-form-item {
-        min-width: 0;
     }
 
     .storage-settings-form .ant-form-item-extra,
@@ -1268,18 +1294,6 @@
 
         .admin-storage-guidance-content {
             gap: 12px;
-        }
-
-        .storage-settings-fields {
-            display: block;
-        }
-
-        .storage-settings-group {
-            padding: 16px 16px 0;
-        }
-
-        .storage-settings-group-heading {
-            margin-bottom: 12px;
         }
 
         .storage-migration-content {
@@ -1537,6 +1551,25 @@
         .admin-workspace .admin-analytics-overview-grid {
             grid-template-columns: 1fr;
         }
+
+        .admin-workspace .referral-admin-rule {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            padding: 18px 20px;
+        }
+
+        .admin-workspace .referral-admin-rule-plan {
+            grid-column: 1 / -1;
+        }
+
+        .admin-workspace .referral-admin-rule-enabled {
+            min-height: 40px;
+        }
+
+        .admin-workspace .referral-admin-rule-save {
+            width: 100%;
+            min-height: 44px;
+        }
     }
 
     @media (max-width: 639px) {
@@ -1770,6 +1803,10 @@
             padding: 16px;
         }
 
+        .admin-workspace .referral-admin-overview {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
         .admin-workspace .referral-admin-program {
             align-items: flex-start;
             gap: 16px;
@@ -1901,5 +1938,276 @@
         .admin-page-content {
             animation: none;
         }
+    }
+}
+
+/* Membership operations use one content rhythm across catalog, orders and payment facts. */
+.admin-workspace .admin-membership-content {
+    display: grid;
+    min-width: 0;
+    gap: 20px;
+}
+
+.admin-workspace .admin-membership-context {
+    display: grid;
+    grid-template-columns: minmax(150px, 0.55fr) minmax(150px, 0.55fr) minmax(320px, 1.9fr);
+    min-width: 0;
+    border: 1px solid var(--workspace-ui-divider);
+    border-radius: var(--workspace-ui-radius-surface);
+    background: var(--workspace-ui-surface);
+}
+
+.admin-workspace .admin-membership-context-item,
+.admin-workspace .admin-membership-context-note {
+    min-width: 0;
+    margin: 0;
+    padding: 14px 16px;
+}
+
+.admin-workspace .admin-membership-context-item {
+    display: grid;
+    align-content: center;
+    gap: 2px;
+    border-right: 1px solid var(--workspace-ui-divider);
+}
+
+.admin-workspace .admin-membership-context-label {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 11px;
+    line-height: 16px;
+}
+
+.admin-workspace .admin-membership-context-value {
+    color: var(--workspace-ui-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.admin-workspace .admin-membership-context-note {
+    align-self: center;
+    color: var(--workspace-ui-text-secondary);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.admin-workspace .admin-membership-refresh.ant-btn,
+.admin-workspace .admin-invoice-refresh.ant-btn {
+    min-height: var(--workspace-ui-control-height);
+}
+
+.admin-workspace .admin-membership-tabs {
+    min-width: 0;
+}
+
+.admin-workspace .admin-membership-tabs > .ant-tabs-content-holder,
+.admin-workspace .admin-membership-tabs > .ant-tabs-content-holder > .ant-tabs-content,
+.admin-workspace .admin-membership-tabs .ant-tabs-tabpane {
+    min-width: 0;
+}
+
+.admin-workspace .admin-membership-inline-error {
+    border-bottom: 1px solid var(--workspace-ui-divider);
+    background: color-mix(in srgb, var(--workspace-ui-danger) 7%, var(--workspace-ui-surface));
+    color: var(--workspace-ui-danger);
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.admin-workspace .admin-invoice-panel {
+    display: grid;
+    min-width: 0;
+    gap: 12px;
+}
+
+.admin-workspace .admin-invoice-toolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    min-width: 0;
+    gap: 16px;
+    margin: 0;
+}
+
+.admin-workspace .admin-invoice-toolbar-copy {
+    min-width: 0;
+}
+
+.admin-workspace .admin-invoice-toolbar-title {
+    margin: 0;
+    color: var(--workspace-ui-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.admin-workspace .admin-invoice-toolbar-description {
+    max-width: 72ch;
+    margin: 2px 0 0;
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.admin-workspace .admin-invoice-toolbar-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.admin-workspace .admin-invoice-status-filter {
+    width: 136px;
+}
+
+.admin-membership-form-intro,
+.admin-membership-order-impact {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--workspace-ui-divider);
+    padding-bottom: 16px;
+}
+
+.admin-membership-form-intro-title,
+.admin-membership-order-impact strong {
+    color: var(--workspace-ui-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.admin-membership-form-intro-copy,
+.admin-membership-order-impact span,
+.admin-membership-order-impact p {
+    margin: 0;
+    color: var(--workspace-ui-text-secondary);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.admin-membership-order-impact.is-danger strong {
+    color: var(--workspace-ui-danger);
+}
+
+@media (max-width: 1279px) {
+    .admin-workspace .admin-membership-context {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-workspace .admin-membership-context-note {
+        grid-column: 1 / -1;
+        border-top: 1px solid var(--workspace-ui-divider);
+    }
+
+    .admin-workspace .admin-membership-context-item:nth-child(2) {
+        border-right: 0;
+    }
+}
+
+@media (max-width: 639px) {
+    .admin-workspace .admin-membership-content {
+        gap: 16px;
+    }
+
+    .admin-workspace .admin-membership-context {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-workspace .admin-membership-context-item {
+        border-right: 0;
+        border-bottom: 1px solid var(--workspace-ui-divider);
+        padding: 12px 14px;
+    }
+
+    .admin-workspace .admin-membership-context-note {
+        grid-column: auto;
+        border-top: 0;
+        padding: 12px 14px;
+    }
+
+    .admin-workspace .admin-invoice-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .admin-workspace .admin-invoice-toolbar-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .admin-workspace .admin-invoice-status-filter {
+        width: 100%;
+    }
+
+    .admin-workspace .admin-membership-refresh.ant-btn,
+    .admin-workspace .admin-invoice-refresh.ant-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}
+
+/* Announcement management uses the same unlayered cascade as Ant Design. */
+.admin-workspace .admin-announcements-layout {
+    gap: 20px;
+}
+
+.admin-workspace .admin-announcements-heading {
+    padding: 4px 0 22px;
+}
+
+.admin-workspace .admin-announcements-search {
+    width: min(100%, 420px);
+    min-width: 260px;
+}
+
+.admin-workspace .admin-announcements-status-filter {
+    width: 144px;
+}
+
+.admin-announcement-modal .admin-announcement-form {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr);
+    gap: 18px 20px;
+    padding-top: 0;
+}
+
+.admin-announcement-modal .admin-announcement-impact,
+.admin-announcement-modal .admin-announcement-content-field {
+    grid-column: 1 / -1;
+}
+
+.admin-announcement-modal .admin-announcement-impact {
+    margin-bottom: 2px;
+    border: 0;
+    border-radius: var(--workspace-ui-radius-control);
+    background: var(--workspace-ui-surface-subtle);
+}
+
+.admin-announcement-modal .admin-announcement-form .ant-form-item {
+    min-width: 0;
+    margin-bottom: 0;
+}
+
+@media (max-width: 767px) {
+    .admin-workspace .admin-announcements-search {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-workspace .admin-announcements-status-filter {
+        flex: 1 1 144px;
+        width: auto;
+    }
+
+    .admin-announcement-modal .admin-announcement-form {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+    }
+
+    .admin-announcement-modal .admin-announcement-impact,
+    .admin-announcement-modal .admin-announcement-content-field {
+        grid-column: auto;
     }
 }

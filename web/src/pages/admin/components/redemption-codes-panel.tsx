@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Ban, Copy, Eye, KeyRound, RefreshCw, Search, TicketCheck } from "lucide-react";
@@ -26,18 +26,22 @@ export default function RedemptionCodesPanel() {
     const [pageSize, setPageSize] = useState(20);
     const [total, setTotal] = useState(0);
     const [form] = Form.useForm<RedeemFormValues>();
+    const listRequestId = useRef(0);
 
     const reload = async (targetPage = page, targetPageSize = pageSize) => {
+        const requestId = ++listRequestId.current;
         setLoading(true);
         try {
             const result = await listAdminRedeemBatches({ keyword: debouncedKeyword || undefined, validity: validity === "all" ? undefined : validity, page: targetPage, limit: targetPageSize });
+            if (requestId !== listRequestId.current) return;
             setBatches(result.batches);
             setTotal(result.total);
             setListError("");
         } catch (error) {
+            if (requestId !== listRequestId.current) return;
             setListError(error instanceof Error ? error.message : "读取兑换码批次失败");
         } finally {
-            setLoading(false);
+            if (requestId === listRequestId.current) setLoading(false);
         }
     };
 
@@ -50,7 +54,12 @@ export default function RedemptionCodesPanel() {
     }, [debouncedKeyword, validity, page, pageSize]);
 
     const createBatch = async () => {
-        const values = await form.validateFields();
+        let values: RedeemFormValues;
+        try {
+            values = await form.validateFields();
+        } catch {
+            return;
+        }
         setCreating(true);
         try {
             const result = await createAdminRedeemBatch(redeemBatchRequest(values));
@@ -68,12 +77,12 @@ export default function RedemptionCodesPanel() {
     };
 
     const columns: ColumnsType<RedeemBatch> = [
-        { title: "创建时间", dataIndex: "createdAt", width: 180, render: formatTime },
-        { title: "单码积分", dataIndex: "amountMicrocredits", width: 130, align: "right", render: (value) => <span className="font-medium tabular-nums">{formatCredits(value)}</span> },
-        { title: "数量", dataIndex: "count", width: 100, align: "right", render: (value) => <span className="tabular-nums">{value}</span> },
+        { title: "创建时间", dataIndex: "createdAt", width: 150, render: formatTime },
+        { title: "单码积分", dataIndex: "amountMicrocredits", width: 110, align: "right", render: (value) => <span className="font-medium tabular-nums">{formatCredits(value)}</span> },
+        { title: "数量", dataIndex: "count", width: 80, align: "right", render: (value) => <span className="tabular-nums">{value}</span> },
         {
             title: "核销状态",
-            width: 180,
+            width: 150,
             render: (_, batch) => (
                 <div className="flex items-center gap-2">
                     <span className="font-medium tabular-nums">
@@ -88,11 +97,11 @@ export default function RedemptionCodesPanel() {
                 </div>
             ),
         },
-        { title: "有效期", dataIndex: "expiresAt", width: 180, render: (value) => (value ? formatTime(value) : <Tag variant="filled">永久有效</Tag>) },
-        { title: "批次备注", dataIndex: "note", render: (value) => value || <span className="text-foreground/35">未填写</span> },
+        { title: "有效期", dataIndex: "expiresAt", width: 150, render: (value) => (value ? formatTime(value) : <Tag variant="filled">永久有效</Tag>) },
+        { title: "批次备注", dataIndex: "note", width: 140, ellipsis: true, render: (value) => value || <span className="text-foreground/35">未填写</span> },
         {
             title: "操作",
-            width: 210,
+            width: 180,
             fixed: "right",
             render: (_, batch) => (
                 <div className="admin-redemption-row-actions">
@@ -129,23 +138,35 @@ export default function RedemptionCodesPanel() {
     ];
 
     return (
-        <div className="admin-redemption-layout space-y-6">
-            <SettingsSectionCard
-                icon={<KeyRound className="size-4" />}
-                title="生成兑换码批次"
-                description="兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。"
-            >
-                <Form form={form} layout="vertical" requiredMark={false} disabled={creating} className="admin-redemption-form grid gap-x-5 md:grid-cols-12">
-                    <Form.Item name="amount" label="每个兑换码的积分" rules={[{ required: true, message: "请填写积分面额" }, { type: "number", min: 0.000001, message: "积分面额必须大于 0" }]} className="admin-redemption-amount-field md:col-span-3">
+        <div className="admin-redemption-layout">
+            <SettingsSectionCard icon={<KeyRound className="size-4" />} title="生成兑换码批次" description="兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。">
+                <Form form={form} layout="vertical" requiredMark={false} disabled={creating} className="admin-redemption-form grid md:grid-cols-12">
+                    <Form.Item
+                        name="amount"
+                        label="每个兑换码的积分"
+                        rules={[
+                            { required: true, message: "请填写积分面额" },
+                            { type: "number", min: 0.000001, message: "积分面额必须大于 0" },
+                        ]}
+                        className="admin-redemption-amount-field md:col-span-4"
+                    >
                         <InputNumber style={{ width: "100%" }} min={0.000001} precision={6} />
                     </Form.Item>
-                    <Form.Item name="count" label="生成数量" rules={[{ required: true, message: "请填写生成数量" }, { type: "number", min: 1, max: 5000, message: "单批生成数量必须为 1–5,000" }]} className="admin-redemption-count-field md:col-span-2">
+                    <Form.Item
+                        name="count"
+                        label="生成数量"
+                        rules={[
+                            { required: true, message: "请填写生成数量" },
+                            { type: "number", min: 1, max: 5000, message: "单批生成数量必须为 1–5,000" },
+                        ]}
+                        className="admin-redemption-count-field md:col-span-4"
+                    >
                         <InputNumber style={{ width: "100%" }} min={1} max={5000} precision={0} />
                     </Form.Item>
-                    <Form.Item name="expiresAt" label="过期时间" className="md:col-span-3">
+                    <Form.Item name="expiresAt" label="过期时间" className="admin-redemption-expiry-field md:col-span-4">
                         <Input type="datetime-local" />
                     </Form.Item>
-                    <Form.Item name="note" label="批次备注" className="md:col-span-4">
+                    <Form.Item name="note" label="批次备注" className="admin-redemption-note-field md:col-span-12">
                         <Input maxLength={500} placeholder="例如：7 月活动赠送" />
                     </Form.Item>
                     <div className="admin-redemption-actions flex items-center justify-between gap-5 md:col-span-12">
@@ -158,14 +179,17 @@ export default function RedemptionCodesPanel() {
             </SettingsSectionCard>
 
             <section className="admin-redemption-records">
-                <div className="admin-redemption-records-heading mb-4 flex items-center justify-between gap-4">
+                <div className="admin-redemption-records-heading">
                     <div className="admin-redemption-records-copy">
-                        <h2 className="admin-redemption-records-title text-sm font-semibold">批次记录</h2>
-                        <p className="admin-redemption-records-description mt-1 text-xs leading-5 text-foreground/55">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
+                        <h2 className="admin-redemption-records-title">批次记录</h2>
+                        <p className="admin-redemption-records-description">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
                     </div>
-                    <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
-                        刷新
-                    </Button>
+                    <div className="admin-redemption-records-meta">
+                        <span className="admin-redemption-records-count">共 {total} 个批次</span>
+                        <Button className="admin-redemption-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
+                            刷新
+                        </Button>
+                    </div>
                 </div>
                 <ListToolbar
                     active={Boolean(keyword || validity !== "all")}
@@ -177,7 +201,7 @@ export default function RedemptionCodesPanel() {
                 >
                     <Input
                         allowClear
-                        className="app-list-search"
+                        className="app-list-search admin-redemption-search"
                         prefix={<Search className="size-4 text-foreground/40" />}
                         value={keyword}
                         placeholder="搜索批次备注、积分或数量"
@@ -187,7 +211,8 @@ export default function RedemptionCodesPanel() {
                         }}
                     />
                     <Select
-                        className="w-36"
+                        className="admin-redemption-validity-filter"
+                        aria-label="筛选兑换码批次有效期"
                         value={validity}
                         onChange={(value) => {
                             setValidity(value);
@@ -201,31 +226,41 @@ export default function RedemptionCodesPanel() {
                     />
                 </ListToolbar>
                 {listError ? <AdminContentError title={batches.length ? "兑换码批次刷新失败" : "兑换码批次读取失败"} description={batches.length ? `${listError}；当前继续展示上次成功读取的批次。` : listError} onRetry={() => void reload()} /> : null}
-                {!listError || batches.length ? <TableSurface>
-                    {loading && !batches.length ? <AdminTableSkeleton rows={8} columns={7} /> : null}
-                    {!loading && !listError && !batches.length ? <AdminTableEmpty filtered={Boolean(keyword || validity !== "all")} title={keyword || validity !== "all" ? undefined : "暂无兑换码批次"} description={keyword || validity !== "all" ? undefined : "创建首个兑换码批次后，批次状态与核销记录会显示在这里。"} /> : null}
-                    {batches.length ? <Table
-                        className="app-data-table"
-                        rowKey="id"
-                        size="middle"
-                        loading={loading}
-                        columns={columns}
-                        dataSource={batches}
-                        pagination={{
-                            current: page,
-                            pageSize,
-                            total,
-                            showSizeChanger: true,
-                            pageSizeOptions: [20, 50, 100],
-                            showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 个批次`,
-                            onChange: (nextPage, nextPageSize) => {
-                                setPage(nextPageSize !== pageSize ? 1 : nextPage);
-                                setPageSize(nextPageSize);
-                            },
-                        }}
-                        scroll={{ x: 1080 }}
-                    /> : null}
-                </TableSurface> : null}
+                {!listError || batches.length ? (
+                    <TableSurface>
+                        {loading && !batches.length ? <AdminTableSkeleton rows={8} columns={7} /> : null}
+                        {!loading && !listError && !batches.length ? (
+                            <AdminTableEmpty
+                                filtered={Boolean(keyword || validity !== "all")}
+                                title={keyword || validity !== "all" ? undefined : "暂无兑换码批次"}
+                                description={keyword || validity !== "all" ? undefined : "创建首个兑换码批次后，批次状态与核销记录会显示在这里。"}
+                            />
+                        ) : null}
+                        {batches.length ? (
+                            <Table
+                                className="app-data-table"
+                                rowKey="id"
+                                size="middle"
+                                loading={loading}
+                                columns={columns}
+                                dataSource={batches}
+                                pagination={{
+                                    current: page,
+                                    pageSize,
+                                    total,
+                                    showSizeChanger: true,
+                                    pageSizeOptions: [20, 50, 100],
+                                    showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 个批次`,
+                                    onChange: (nextPage, nextPageSize) => {
+                                        setPage(nextPageSize !== pageSize ? 1 : nextPage);
+                                        setPageSize(nextPageSize);
+                                    },
+                                }}
+                                scroll={{ x: 960 }}
+                            />
+                        ) : null}
+                    </TableSurface>
+                ) : null}
             </section>
 
             <GeneratedCodesModal codes={generatedCodes} onClose={() => setGeneratedCodes([])} />
@@ -238,8 +273,12 @@ function GeneratedCodesModal({ codes, onClose }: { codes: string[]; onClose: () 
     const { message } = App.useApp();
     const content = codes.join("\n");
     const copy = async () => {
-        await navigator.clipboard.writeText(content);
-        message.success("兑换码已复制");
+        try {
+            await navigator.clipboard.writeText(content);
+            message.success("兑换码已复制");
+        } catch (error) {
+            message.error(error instanceof Error ? `复制失败：${error.message}` : "复制失败，请下载 TXT 文件");
+        }
     };
     return (
         <Modal
@@ -275,21 +314,25 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(50);
     const [total, setTotal] = useState(0);
+    const detailRequestId = useRef(0);
 
     const loadCodes = useCallback(async () => {
         if (!batch) return;
+        const requestId = ++detailRequestId.current;
         setLoading(true);
         try {
             const result = await listAdminRedeemBatchCodes(batch.id, { status: status === "all" ? undefined : status, page, limit: pageSize });
+            if (requestId !== detailRequestId.current) return;
             setCodes(result.codes);
             setTotal(result.total);
             setPlaintextAvailable(result.plaintextAvailable);
             setBatchSummary(result.batch);
             setLoadError("");
         } catch (error) {
+            if (requestId !== detailRequestId.current) return;
             setLoadError(error instanceof Error ? error.message : "读取兑换码明细失败");
         } finally {
-            setLoading(false);
+            if (requestId === detailRequestId.current) setLoading(false);
         }
     }, [batch, page, pageSize, status]);
 
@@ -299,8 +342,12 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
 
     const copyCode = async (code?: string) => {
         if (!code) return;
-        await navigator.clipboard.writeText(code);
-        message.success("兑换码已复制");
+        try {
+            await navigator.clipboard.writeText(code);
+            message.success("兑换码已复制");
+        } catch (error) {
+            message.error(error instanceof Error ? `复制失败：${error.message}` : "复制兑换码失败");
+        }
     };
     const copyPage = async () => {
         const content = codes
@@ -308,8 +355,12 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
             .filter(Boolean)
             .join("\n");
         if (!content) return;
-        await navigator.clipboard.writeText(content);
-        message.success("本页兑换码已复制");
+        try {
+            await navigator.clipboard.writeText(content);
+            message.success("本页兑换码已复制");
+        } catch (error) {
+            message.error(error instanceof Error ? `复制失败：${error.message}` : "复制本页兑换码失败");
+        }
     };
     const disableCode = async (item: AdminRedeemCode) => {
         if (!batch) return;
@@ -358,7 +409,15 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
             fixed: "right",
             render: (_, item) =>
                 item.status === "unused" ? (
-                    <Popconfirm rootClassName="admin-operation-popconfirm workspace-ui-scope" title="禁用这个兑换码？" description={redeemCodeDisableDescription(item)} okText="禁用" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void disableCode(item)}>
+                    <Popconfirm
+                        rootClassName="admin-operation-popconfirm workspace-ui-scope"
+                        title="禁用这个兑换码？"
+                        description={redeemCodeDisableDescription(item)}
+                        okText="禁用"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => void disableCode(item)}
+                    >
                         <Button type="text" size="small" danger loading={disablingCodeId === item.id} disabled={Boolean(disablingCodeId)} icon={<Ban className="size-3.5" />} aria-label={`禁用尾号 ${item.codeSuffix} 的兑换码`} />
                     </Popconfirm>
                 ) : (
@@ -419,27 +478,29 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
             {loadError ? <AdminContentError title={codes.length ? "兑换码明细刷新失败" : "兑换码明细读取失败"} description={codes.length ? `${loadError}；当前继续展示上次成功读取的明细。` : loadError} onRetry={() => void loadCodes()} /> : null}
             {loading && !codes.length ? <AdminTableSkeleton rows={7} columns={6} /> : null}
             {!loading && !loadError && !codes.length ? <AdminTableEmpty compact filtered={status !== "all"} title={status === "all" ? "该批次暂无兑换码" : undefined} /> : null}
-            {codes.length ? <Table
-                className="app-data-table"
-                rowKey="id"
-                size="small"
-                loading={loading}
-                columns={columns}
-                dataSource={codes}
-                pagination={{
-                    current: page,
-                    pageSize,
-                    total,
-                    showSizeChanger: true,
-                    pageSizeOptions: [20, 50, 100],
-                    showTotal: (value) => `共 ${value} 个兑换码`,
-                    onChange: (nextPage, nextSize) => {
-                        setPage(nextSize !== pageSize ? 1 : nextPage);
-                        setPageSize(nextSize);
-                    },
-                }}
-                scroll={{ x: 960, y: 460 }}
-            /> : null}
+            {codes.length ? (
+                <Table
+                    className="app-data-table"
+                    rowKey="id"
+                    size="small"
+                    loading={loading}
+                    columns={columns}
+                    dataSource={codes}
+                    pagination={{
+                        current: page,
+                        pageSize,
+                        total,
+                        showSizeChanger: true,
+                        pageSizeOptions: [20, 50, 100],
+                        showTotal: (value) => `共 ${value} 个兑换码`,
+                        onChange: (nextPage, nextSize) => {
+                            setPage(nextSize !== pageSize ? 1 : nextPage);
+                            setPageSize(nextSize);
+                        },
+                    }}
+                    scroll={{ x: 960, y: 460 }}
+                />
+            ) : null}
         </Modal>
     );
 }

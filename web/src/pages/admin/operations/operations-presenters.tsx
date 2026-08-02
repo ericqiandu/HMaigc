@@ -3,12 +3,7 @@ import type { ColumnsType } from "antd/es/table";
 import { CheckCircle2, CircleAlert, LoaderCircle } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type {
-    OperationsBackup,
-    OperationsOverview,
-    OperationsRecord,
-    OperationsStatus,
-} from "@/services/api/operations";
+import type { OperationsBackup, OperationsOverview, OperationsRecord, OperationsStatus } from "@/services/api/operations";
 
 export const actionLabels: Record<OperationsRecord["action"], string> = {
     install: "首次安装",
@@ -82,9 +77,18 @@ export const backupColumns: ColumnsType<OperationsBackup> = [
         title: "完整性",
         dataIndex: "checksumStatus",
         width: 110,
-        render: (value: OperationsBackup["checksumStatus"], record) => value === "verified"
-            ? <Tag className="operations-backup-status" color="success" variant="filled">校验通过</Tag>
-            : <Tooltip title={record.validationError}><Tag className="operations-backup-status" color="error" variant="filled">校验失败</Tag></Tooltip>,
+        render: (value: OperationsBackup["checksumStatus"], record) =>
+            value === "verified" ? (
+                <Tag className="operations-backup-status" color="success" variant="filled">
+                    校验通过
+                </Tag>
+            ) : (
+                <Tooltip title={record.validationError}>
+                    <Tag className="operations-backup-status" color="error" variant="filled">
+                        校验失败
+                    </Tag>
+                </Tooltip>
+            ),
     },
     {
         title: "大小",
@@ -124,19 +128,30 @@ export function OperationActionButton({ icon, title, description, disabled, disa
         </button>
     );
 
-    return disabled && disabledReason
-        ? <Tooltip title={disabledReason}><span className="operations-action-disabled-wrapper">{button}</span></Tooltip>
-        : button;
+    return disabled && disabledReason ? (
+        <Tooltip title={disabledReason}>
+            <span className="operations-action-disabled-wrapper">{button}</span>
+        </Tooltip>
+    ) : (
+        button
+    );
 }
 
 export function OperationStatusTag({ status }: { status: OperationsStatus }) {
-    const icon = status === "running" || status === "queued"
-        ? <LoaderCircle className="operations-status-icon size-3 animate-spin motion-reduce:animate-none" />
-        : status === "succeeded"
-            ? <CheckCircle2 className="operations-status-icon size-3" />
-            : <CircleAlert className="operations-status-icon size-3" />;
+    const icon =
+        status === "running" || status === "queued" ? (
+            <LoaderCircle className="operations-status-icon size-3 animate-spin motion-reduce:animate-none" />
+        ) : status === "succeeded" ? (
+            <CheckCircle2 className="operations-status-icon size-3" />
+        ) : (
+            <CircleAlert className="operations-status-icon size-3" />
+        );
     const color = status === "succeeded" ? "success" : status === "failed" ? "error" : "processing";
-    return <Tag className="operations-status-tag inline-flex items-center gap-1" icon={icon} color={color} variant="filled">{statusLabels[status]}</Tag>;
+    return (
+        <Tag className="operations-status-tag inline-flex items-center gap-1" icon={icon} color={color} variant="filled">
+            {statusLabels[status]}
+        </Tag>
+    );
 }
 
 export function releaseCheckDetail(overview: OperationsOverview | null) {

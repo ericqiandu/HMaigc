@@ -388,6 +388,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                     />
                     <Select
                         className="w-36"
+                        aria-label="筛选计费订单状态"
                         value={orderStatus}
                         onChange={(value) => {
                             setOrderStatus(value);
@@ -427,7 +428,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                 setPageSize(nextPageSize);
                             },
                         }}
-                        scroll={{ x: 1200 }}
+                        scroll={{ x: 1160 }}
                     /> : null}
                 </TableSurface> : null}
             </section>

@@ -7,7 +7,7 @@ import { getAdminOSSSetting, updateAdminOSSSetting, type AdminOSSSetting } from 
 import { getStorageMigrationOverview, retryStorageMigration, startStorageMigration, type StorageMigrationOverview, type StorageMigrationStatus } from "@/services/api/storage-migrations";
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, AdminSettingsSection, AdminSettingsSwitchPanel, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
 import { normalizeStorageFormValues, storageFieldErrors, storageFormValues, storageValuesEqual, type OSSFormValues } from "./storage-setting-form";
 
 export default function StorageSettingsPage() {
@@ -51,20 +51,17 @@ export default function StorageSettingsPage() {
         }
     }, [form, message]);
 
-    const refreshMigration = useCallback(
-        async (showLoading = true) => {
-            if (showLoading) setMigrationLoading(true);
-            setMigrationError(null);
-            try {
-                setMigration(await getStorageMigrationOverview());
-            } catch (error) {
-                setMigrationError(error instanceof Error ? error.message : "读取迁移状态失败");
-            } finally {
-                if (showLoading) setMigrationLoading(false);
-            }
-        },
-        [],
-    );
+    const refreshMigration = useCallback(async (showLoading = true) => {
+        if (showLoading) setMigrationLoading(true);
+        setMigrationError(null);
+        try {
+            setMigration(await getStorageMigrationOverview());
+        } catch (error) {
+            setMigrationError(error instanceof Error ? error.message : "读取迁移状态失败");
+        } finally {
+            if (showLoading) setMigrationLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         void loadSetting();
@@ -183,100 +180,90 @@ export default function StorageSettingsPage() {
                 </div>
                 {loading && !setting ? <AdminContentSkeleton rows={8} label="正在读取 OSS 配置" /> : null}
                 {settingError ? <AdminContentError title={setting ? "OSS 配置刷新失败" : "OSS 配置读取失败"} description={setting ? `${settingError}。当前保留上次成功读取的配置。` : settingError} onRetry={() => void loadSetting()} /> : null}
-                {!loading && setting ? <SettingsSectionCard
-                    icon={<Cloud className="size-4" />}
-                    title="平台 OSS"
-                    description="配置平台媒体资源的默认存储位置。"
-                    status={
-                        <Space size={6}>
-                            <Tag variant="filled" color={setting?.enabled ? "success" : "default"}>
-                                {setting?.enabled ? "已启用" : "未启用"}
-                            </Tag>
-                            <Tag variant="filled" color={setting?.hasAccessKeySecret ? "blue" : "warning"}>
-                                {setting?.hasAccessKeySecret ? configuredSecretText : "未保存密钥"}
-                            </Tag>
-                        </Space>
-                    }
-                >
-                    <Form
-                        className="admin-content-form storage-settings-form"
-                        form={form}
-                        layout="vertical"
-                        requiredMark={false}
-                        disabled={loading || saving}
-                        onValuesChange={(_, values: OSSFormValues) => setDirty(!storageValuesEqual(values, setting))}
+                {!loading && setting ? (
+                    <AdminSettingsSwitchPanel
+                        icon={<Cloud className="size-4" />}
+                        title="平台 OSS"
+                        description="配置平台媒体资源的默认存储位置。"
+                        status={
+                            <Space size={6}>
+                                <Tag variant="filled" color={setting.enabled ? "success" : "default"}>
+                                    {setting.enabled ? "已启用" : "未启用"}
+                                </Tag>
+                                <Tag variant="filled" color={setting.hasAccessKeySecret ? "blue" : "warning"}>
+                                    {setting.hasAccessKeySecret ? configuredSecretText : "未保存密钥"}
+                                </Tag>
+                            </Space>
+                        }
                     >
-                        <div className="storage-settings-groups">
-                            <section className="storage-settings-group" aria-labelledby="storage-connection-heading">
-                                <div className="storage-settings-group-heading">
-                                    <h3 id="storage-connection-heading">存储目标</h3>
-                                    <p>决定新资源的写入位置与对象路径，不影响已经保存的历史资源。</p>
-                                </div>
-                                <div className="storage-settings-fields grid grid-cols-1 gap-x-6 md:grid-cols-2">
-                                    <Form.Item name="enabled" label="启用 OSS" valuePropName="checked">
-                                        <Switch />
-                                    </Form.Item>
-                                    <Form.Item name="provider" label="存储渠道" rules={[{ required: true, message: "请选择存储渠道" }]}>
-                                        <Select options={[{ label: "阿里云 OSS", value: "aliyun" }]} />
-                                    </Form.Item>
-                                    <Form.Item name="region" label="Region">
-                                        <Input autoComplete="off" placeholder="例如：oss-cn-hangzhou" />
-                                    </Form.Item>
-                                    <Form.Item
-                                        name="endpoint"
-                                        label="Endpoint"
-                                        dependencies={["enabled"]}
-                                        rules={[{ validator: async (_, value: string | undefined) => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "endpoint", value) }]}
-                                        extra="填写 Bucket 所在地域的公网 Endpoint，保存时会自动移除末尾斜杠。"
-                                    >
-                                        <Input autoComplete="off" placeholder="https://oss-cn-hangzhou.aliyuncs.com" />
-                                    </Form.Item>
-                                    <Form.Item name="bucket" label="Bucket" dependencies={["enabled"]} rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "bucket") }]}>
-                                        <Input autoComplete="off" placeholder="例如：my-canvas-assets" />
-                                    </Form.Item>
-                                    <Form.Item name="pathPrefix" label="路径前缀" extra="可选。用于隔离环境或业务目录，例如 production/assets。">
-                                        <Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" />
-                                    </Form.Item>
-                                </div>
-                            </section>
-                            <section className="storage-settings-group" aria-labelledby="storage-credential-heading">
-                                <div className="storage-settings-group-heading">
-                                    <h3 id="storage-credential-heading">访问凭据</h3>
-                                    <p>建议使用只允许访问目标 Bucket 的 RAM 子账号，并按最小权限配置。</p>
-                                </div>
-                                <div className="storage-settings-fields grid grid-cols-1 gap-x-6 md:grid-cols-2">
-                                    <Form.Item name="accessKeyId" label="AccessKey ID" dependencies={["enabled"]} rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "accessKeyId") }]}>
-                                        <Input autoComplete="off" placeholder="阿里云 AccessKey ID" />
-                                    </Form.Item>
-                                    <Form.Item
-                                        name="accessKeySecret"
-                                        label={setting.hasAccessKeySecret ? `AccessKey Secret（${configuredSecretText}）` : "AccessKey Secret"}
-                                        dependencies={["enabled"]}
-                                        rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "accessKeySecret") }]}
-                                        extra={setting.hasAccessKeySecret ? "密钥不会回显；保持为空会继续使用当前已保存密钥。" : "密钥仅提交到后端加密保存，不会在页面中回显。"}
-                                    >
-                                        <Input.Password autoComplete="new-password" placeholder={setting.hasAccessKeySecret ? "留空保留原密钥" : "阿里云 AccessKey Secret"} />
-                                    </Form.Item>
-                                </div>
-                            </section>
-                        </div>
-                    </Form>
-                    <AdminSettingsActionBar
-                        status={dirty ? "有未保存的 OSS 配置变更" : "OSS 配置已同步"}
-                        meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存 OSS 配置"}
-                    >
-                        <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
-                            保存 OSS 配置
-                        </Button>
-                    </AdminSettingsActionBar>
-                </SettingsSectionCard> : null}
+                        <Form
+                            className="admin-content-form storage-settings-form"
+                            form={form}
+                            layout="vertical"
+                            requiredMark={false}
+                            disabled={loading || saving}
+                            onValuesChange={(_, values: OSSFormValues) => setDirty(!storageValuesEqual(values, setting))}
+                        >
+                            <AdminSettingsSection id="storage-connection-heading" icon={<Cloud className="size-4" />} title="存储目标" description="决定新资源的写入位置与对象路径，不影响已经保存的历史资源。">
+                                <Form.Item name="enabled" label="启用 OSS" valuePropName="checked">
+                                    <Switch />
+                                </Form.Item>
+                                <Form.Item name="provider" label="存储渠道" rules={[{ required: true, message: "请选择存储渠道" }]}>
+                                    <Select options={[{ label: "阿里云 OSS", value: "aliyun" }]} />
+                                </Form.Item>
+                                <Form.Item name="region" label="Region">
+                                    <Input autoComplete="off" placeholder="例如：oss-cn-hangzhou" />
+                                </Form.Item>
+                                <Form.Item
+                                    name="endpoint"
+                                    label="Endpoint"
+                                    dependencies={["enabled"]}
+                                    rules={[{ validator: async (_, value: string | undefined) => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "endpoint", value) }]}
+                                    extra="填写 Bucket 所在地域的公网 Endpoint，保存时会自动移除末尾斜杠。"
+                                >
+                                    <Input autoComplete="off" placeholder="https://oss-cn-hangzhou.aliyuncs.com" />
+                                </Form.Item>
+                                <Form.Item name="bucket" label="Bucket" dependencies={["enabled"]} rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "bucket") }]}>
+                                    <Input autoComplete="off" placeholder="例如：my-canvas-assets" />
+                                </Form.Item>
+                                <Form.Item name="pathPrefix" label="路径前缀" extra="可选。用于隔离环境或业务目录，例如 production/assets。">
+                                    <Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" />
+                                </Form.Item>
+                            </AdminSettingsSection>
+                            <AdminSettingsSection id="storage-credential-heading" icon={<KeyRound className="size-4" />} title="访问凭据" description="建议使用只允许访问目标 Bucket 的 RAM 子账号，并按最小权限配置。">
+                                <Form.Item name="accessKeyId" label="AccessKey ID" dependencies={["enabled"]} rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "accessKeyId") }]}>
+                                    <Input autoComplete="off" placeholder="阿里云 AccessKey ID" />
+                                </Form.Item>
+                                <Form.Item
+                                    name="accessKeySecret"
+                                    label={setting.hasAccessKeySecret ? `AccessKey Secret（${configuredSecretText}）` : "AccessKey Secret"}
+                                    dependencies={["enabled"]}
+                                    rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "accessKeySecret") }]}
+                                    extra={setting.hasAccessKeySecret ? "密钥不会回显；保持为空会继续使用当前已保存密钥。" : "密钥仅提交到后端加密保存，不会在页面中回显。"}
+                                >
+                                    <Input.Password autoComplete="new-password" placeholder={setting.hasAccessKeySecret ? "留空保留原密钥" : "阿里云 AccessKey Secret"} />
+                                </Form.Item>
+                            </AdminSettingsSection>
+                        </Form>
+                        <AdminSettingsActionBar
+                            status={dirty ? "有未保存的 OSS 配置变更" : "OSS 配置已同步"}
+                            meta={setting.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存 OSS 配置"}
+                        >
+                            <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
+                                保存 OSS 配置
+                            </Button>
+                        </AdminSettingsActionBar>
+                    </AdminSettingsSwitchPanel>
+                ) : null}
                 <SettingsSectionCard
                     icon={<DatabaseBackup className="size-4" />}
                     title="历史资源迁移"
                     description="将后端数据卷中的历史媒体复制到平台 OSS；校验成功后更新资源记录，原文件继续保留。"
                     status={
                         migrationError && !migration ? (
-                            <Tag color="error" variant="filled">读取失败</Tag>
+                            <Tag color="error" variant="filled">
+                                读取失败
+                            </Tag>
                         ) : migration?.active ? (
                             <Tag color="processing" variant="filled">
                                 迁移进行中
@@ -308,7 +295,9 @@ export default function StorageSettingsPage() {
                 >
                     <div className="storage-migration-content space-y-5 px-6 py-5">
                         {migrationLoading && !migration ? <AdminContentSkeleton compact rows={4} label="正在读取历史资源迁移状态" /> : null}
-                        {migrationError ? <AdminContentError title={migration ? "迁移状态刷新失败" : "迁移状态读取失败"} description={migration ? `${migrationError}。当前保留上次成功读取的迁移状态。` : migrationError} onRetry={() => void refreshMigration()} /> : null}
+                        {migrationError ? (
+                            <AdminContentError title={migration ? "迁移状态刷新失败" : "迁移状态读取失败"} description={migration ? `${migrationError}。当前保留上次成功读取的迁移状态。` : migrationError} onRetry={() => void refreshMigration()} />
+                        ) : null}
                         {migration?.active ? (
                             <div className="storage-migration-active-summary" role="status" aria-live="polite">
                                 <div className="storage-migration-active-title">活动任务正在执行</div>
@@ -418,22 +407,12 @@ export default function StorageSettingsPage() {
                 }}
             >
                 <div className="storage-migration-confirm space-y-4">
-                    <Alert
-                        type="warning"
-                        showIcon
-                        message={`将重新提交 ${migration?.latest?.failedItems || 0} 个失败资源`}
-                        description="只重试最近任务中的失败项；已迁移成功的资源不会重复写入。"
-                    />
+                    <Alert type="warning" showIcon message={`将重新提交 ${migration?.latest?.failedItems || 0} 个失败资源`} description="只重试最近任务中的失败项；已迁移成功的资源不会重复写入。" />
                     <div className="storage-migration-confirm-field">
                         <label className="mb-1.5 block text-xs font-medium" htmlFor="storage-migration-retry-confirmation">
                             输入确认短语 {migration?.latest ? `RETRY ${migration.latest.id}` : ""}
                         </label>
-                        <Input
-                            id="storage-migration-retry-confirmation"
-                            value={retryConfirmation}
-                            placeholder={migration?.latest ? `RETRY ${migration.latest.id}` : ""}
-                            onChange={(event) => setRetryConfirmation(event.target.value)}
-                        />
+                        <Input id="storage-migration-retry-confirmation" value={retryConfirmation} placeholder={migration?.latest ? `RETRY ${migration.latest.id}` : ""} onChange={(event) => setRetryConfirmation(event.target.value)} />
                     </div>
                 </div>
             </Modal>

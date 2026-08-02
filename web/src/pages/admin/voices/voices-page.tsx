@@ -30,6 +30,35 @@ const voiceKindLabels: Record<ChannelVoice["kind"], string> = {
     voice_generation: "生成音色",
 };
 
+const voiceProviderStatusLabels: Record<ChannelVoice["providerStatus"], string> = {
+    active: "可用",
+    pending_activation: "待激活",
+    creating: "创建中",
+    uncertain: "状态待确认",
+    failed: "创建失败",
+    missing: "供应商缺失",
+    deleted: "已从供应商删除",
+};
+
+const voiceLanguageLabels: Record<string, string> = {
+    Chinese: "中文",
+    English: "英文",
+    Japanese: "日文",
+    Korean: "韩文",
+    Spanish: "西班牙文",
+    French: "法文",
+    German: "德文",
+    Portuguese: "葡萄牙文",
+    Russian: "俄文",
+    Italian: "意大利文",
+    "zh-CN": "中文（普通话）",
+    "zh-TW": "中文（繁体）",
+    "en-US": "英文（美国）",
+    "en-GB": "英文（英国）",
+    "ja-JP": "日文",
+    "ko-KR": "韩文",
+};
+
 export default function VoicesPage() {
     const { message, modal } = App.useApp();
     const [channels, setChannels] = useState<ModelChannel[]>([]);
@@ -245,7 +274,7 @@ export default function VoicesPage() {
             ),
         },
         { title: "类型", dataIndex: "kind", width: 120, render: (kind: ChannelVoice["kind"]) => <Tag className="admin-voice-kind-tag">{voiceKindLabels[kind]}</Tag> },
-        { title: "语言", dataIndex: "language", width: 110, render: (value: string) => value || "未指定" },
+        { title: "语言", dataIndex: "language", width: 132, render: (value: string) => value ? voiceLanguageLabels[value] || value : "未指定" },
         { title: "权限", dataIndex: "accessPolicy", width: 110, render: (value: ChannelVoice["accessPolicy"]) => <Tag className="admin-voice-access-tag" color={value === "member" ? "gold" : "default"}>{value === "member" ? "会员专属" : "登录用户"}</Tag> },
         {
             title: "供应商状态",
@@ -253,7 +282,7 @@ export default function VoicesPage() {
             width: 180,
             render: (value: ChannelVoice["providerStatus"], voice) => (
                 <div className="admin-voice-status-cell flex min-w-0 flex-col items-start gap-1">
-                    <Tag className="admin-voice-status-tag" color={value === "active" ? "green" : value === "pending_activation" ? "blue" : value === "failed" || value === "uncertain" || value === "missing" ? "red" : "default"}>{value}</Tag>
+                    <Tag className="admin-voice-status-tag" color={value === "active" ? "green" : value === "pending_activation" || value === "creating" ? "blue" : value === "failed" || value === "uncertain" || value === "missing" ? "red" : "default"}>{voiceProviderStatusLabels[value]}</Tag>
                     {voice.lastError ? <span className="admin-voice-status-error block max-w-[160px] truncate text-[11px] text-red-500/80" title={voice.lastError}>{voice.lastError}</span> : null}
                 </div>
             ),

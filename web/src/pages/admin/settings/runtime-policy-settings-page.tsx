@@ -2,16 +2,10 @@ import { App, Button, Form, InputNumber, Tag } from "antd";
 import { Database, Gauge, Infinity as InfinityIcon, Network, RotateCcw, Save, ShieldCheck, TimerReset } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import {
-    getAdminRuntimePolicySetting,
-    getAdminSelfUseRuntimePolicy,
-    resetAdminRuntimePolicySetting,
-    updateAdminRuntimePolicySetting,
-    type RuntimePolicySetting,
-} from "@/services/api/auth";
+import { getAdminRuntimePolicySetting, getAdminSelfUseRuntimePolicy, resetAdminRuntimePolicySetting, updateAdminRuntimePolicySetting, type RuntimePolicySetting } from "@/services/api/auth";
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, AdminSettingsSection, AdminSettingsSwitchPanel } from "../components/admin-ui";
 
 type PolicyGroup = "resource" | "task" | "request";
 type PolicyField = {
@@ -167,52 +161,97 @@ export default function RuntimePolicySettingsPage() {
 
     return (
         <AdminPageFrame
-            title="资源与策略"
+            title="运行策略"
             description="账号配额、任务调度与请求安全策略"
-            actions={<div className="flex items-center gap-2"><Button icon={<RotateCcw className="size-4" />} disabled={loading || saving} onClick={reset}>重置</Button><Button icon={<InfinityIcon className="size-4" />} disabled={loading || saving} onClick={() => void useSelfMode()}>自用模式</Button></div>}
+            actions={
+                <div className="runtime-policy-page-actions flex items-center gap-2">
+                    <Button className="runtime-policy-reset-button" icon={<RotateCcw className="runtime-policy-reset-icon size-4" />} disabled={loading || saving} onClick={reset}>
+                        重置
+                    </Button>
+                    <Button className="runtime-policy-self-mode-button" icon={<InfinityIcon className="runtime-policy-self-mode-icon size-4" />} disabled={loading || saving} onClick={() => void useSelfMode()}>
+                        自用模式
+                    </Button>
+                </div>
+            }
         >
             {loading && !setting ? <AdminContentSkeleton rows={16} label="正在加载运行策略" /> : null}
             {loadError && !setting ? <AdminContentError title="运行策略读取失败" description={loadError} onRetry={() => void loadSetting()} /> : null}
-            {setting ? <Form className="runtime-policy-settings-form" form={form} layout="vertical" requiredMark={false} disabled={loading} onValuesChange={() => setDirty(true)}>
-                <div className="runtime-policy-settings-content admin-settings-page">
-                    {loadError ? <AdminContentError title="运行策略刷新失败" description={loadError} onRetry={() => void loadSetting()} /> : null}
-                    <nav className="runtime-policy-section-nav" aria-label="运行策略分区">
-                        <a className="runtime-policy-section-link" href="#runtime-policy-resource"><Database className="size-4" />资源配额</a>
-                        <a className="runtime-policy-section-link" href="#runtime-policy-concurrency"><Gauge className="size-4" />任务并发</a>
-                        <a className="runtime-policy-section-link" href="#runtime-policy-timeout"><TimerReset className="size-4" />任务超时</a>
-                        <a className="runtime-policy-section-link" href="#runtime-policy-rate"><ShieldCheck className="size-4" />业务频控</a>
-                        <a className="runtime-policy-section-link" href="#runtime-policy-relay"><Network className="size-4" />中转熔断</a>
-                    </nav>
-                    <PolicySection id="runtime-policy-resource" icon={<Database className="size-4" />} title="资源与账号配额" description="上传、文件容量、结构化数据和历史记录上限。" fields={resourceFields} />
-                    <PolicySection id="runtime-policy-concurrency" icon={<Gauge className="size-4" />} title="任务与并发" description="后台任务消费、渠道调度和单账号活动任务上限。" fields={concurrencyFields} status={<Tag variant="filled" color="blue">热更新</Tag>} />
-                    <PolicySection id="runtime-policy-timeout" icon={<TimerReset className="size-4" />} title="任务超时" description="不同生成类型的最长执行时间。" fields={timeoutFields} />
-                    <PolicySection id="runtime-policy-rate" icon={<ShieldCheck className="size-4" />} title="业务频控" description="账号与 IP 维度的固定窗口请求限制。" fields={rateFields} />
-                    <PolicySection id="runtime-policy-relay" icon={<Network className="size-4" />} title="渠道中转与熔断" description="请求体、响应体、并发、超时和上游故障保护。" fields={relayFields} />
-                    <AdminSettingsActionBar
-                        meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "当前使用系统默认策略"}
-                        status={dirty ? "有未保存的策略变更" : "配置已同步"}
-                    >
-                        <Button type="primary" icon={<Save className="size-4" />} loading={saving} disabled={loading || !dirty} onClick={() => void save()}>保存配置</Button>
-                    </AdminSettingsActionBar>
-                </div>
-            </Form> : null}
+            {setting ? (
+                <Form className="runtime-policy-settings-form" form={form} layout="vertical" requiredMark={false} disabled={loading} onValuesChange={() => setDirty(true)}>
+                    <div className="runtime-policy-settings-content admin-settings-page">
+                        {loadError ? <AdminContentError title="运行策略刷新失败" description={loadError} onRetry={() => void loadSetting()} /> : null}
+                        <nav className="runtime-policy-section-nav" aria-label="运行策略分区">
+                            <a className="runtime-policy-section-link" href="#runtime-policy-resource">
+                                <Database className="size-4" />
+                                资源配额
+                            </a>
+                            <a className="runtime-policy-section-link" href="#runtime-policy-concurrency">
+                                <Gauge className="size-4" />
+                                任务并发
+                            </a>
+                            <a className="runtime-policy-section-link" href="#runtime-policy-timeout">
+                                <TimerReset className="size-4" />
+                                任务超时
+                            </a>
+                            <a className="runtime-policy-section-link" href="#runtime-policy-rate">
+                                <ShieldCheck className="size-4" />
+                                业务频控
+                            </a>
+                            <a className="runtime-policy-section-link" href="#runtime-policy-relay">
+                                <Network className="size-4" />
+                                中转熔断
+                            </a>
+                        </nav>
+                        <AdminSettingsSwitchPanel
+                            icon={<ShieldCheck className="runtime-policy-panel-icon size-4" />}
+                            title="运行策略"
+                            description="统一维护资源配额、任务调度、频率限制和渠道故障保护；保存后由服务端即时应用。"
+                            status={
+                                <Tag className="runtime-policy-live-tag" variant="filled" color="blue">
+                                    即时生效
+                                </Tag>
+                            }
+                        >
+                            <PolicySection id="runtime-policy-resource" icon={<Database className="runtime-policy-resource-icon size-4" />} title="资源与账号配额" description="上传、文件容量、结构化数据和历史记录上限。" fields={resourceFields} />
+                            <PolicySection id="runtime-policy-concurrency" icon={<Gauge className="runtime-policy-concurrency-icon size-4" />} title="任务与并发" description="后台任务消费、渠道调度和单账号活动任务上限。" fields={concurrencyFields} />
+                            <PolicySection id="runtime-policy-timeout" icon={<TimerReset className="runtime-policy-timeout-icon size-4" />} title="任务超时" description="不同生成类型的最长执行时间。" fields={timeoutFields} />
+                            <PolicySection id="runtime-policy-rate" icon={<ShieldCheck className="runtime-policy-rate-icon size-4" />} title="业务频控" description="账号与 IP 维度的固定窗口请求限制。" fields={rateFields} />
+                            <PolicySection id="runtime-policy-relay" icon={<Network className="runtime-policy-relay-icon size-4" />} title="渠道中转与熔断" description="请求体、响应体、并发、超时和上游故障保护。" fields={relayFields} />
+                        </AdminSettingsSwitchPanel>
+                        <AdminSettingsActionBar
+                            meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "当前使用系统默认策略"}
+                            status={dirty ? "有未保存的策略变更" : "配置已同步"}
+                        >
+                            <Button className="runtime-policy-save-button" type="primary" icon={<Save className="runtime-policy-save-icon size-4" />} loading={saving} disabled={loading || !dirty} onClick={() => void save()}>
+                                保存配置
+                            </Button>
+                        </AdminSettingsActionBar>
+                    </div>
+                </Form>
+            ) : null}
         </AdminPageFrame>
     );
 }
 
-function PolicySection({ id, icon, title, description, fields, status }: { id: string; icon: ReactNode; title: string; description: string; fields: PolicyField[]; status?: ReactNode }) {
+function PolicySection({ id, icon, title, description, fields }: { id: string; icon: ReactNode; title: string; description: string; fields: PolicyField[] }) {
     return (
-        <section id={id} className="runtime-policy-section scroll-mt-6">
-        <SettingsSectionCard icon={icon} title={title} description={description} status={status}>
-            <div className="runtime-policy-settings-fields grid grid-cols-1 gap-x-6 md:grid-cols-2 xl:grid-cols-3">
-                {fields.map((field) => (
-                    <Form.Item key={`${field.group}.${field.name}`} name={[field.group, field.name]} label={field.label} extra={field.extra} rules={[{ required: true, message: `请填写${field.label}` }, { type: "number", min: 1, max: field.max, message: `${field.label}必须是 1-${field.max} 的整数` }]}>
-                        <InputNumber aria-label={field.label} className="w-full" min={1} max={field.max} precision={0} addonAfter={field.unit} />
-                    </Form.Item>
-                ))}
-            </div>
-        </SettingsSectionCard>
-        </section>
+        <AdminSettingsSection id={id} className="runtime-policy-section scroll-mt-6" icon={icon} title={title} description={description}>
+            {fields.map((field) => (
+                <Form.Item
+                    className="runtime-policy-field mb-0"
+                    key={`${field.group}.${field.name}`}
+                    name={[field.group, field.name]}
+                    label={field.label}
+                    extra={field.extra}
+                    rules={[
+                        { required: true, message: `请填写${field.label}` },
+                        { type: "number", min: 1, max: field.max, message: `${field.label}必须是 1-${field.max} 的整数` },
+                    ]}
+                >
+                    <InputNumber aria-label={field.label} className="runtime-policy-input w-full" min={1} max={field.max} precision={0} addonAfter={field.unit} />
+                </Form.Item>
+            ))}
+        </AdminSettingsSection>
     );
 }
 

@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Tabs, Tag } from "antd";
-import { ExternalLink, FileCheck2, Save, ShieldCheck } from "lucide-react";
+import { ExternalLink, Save, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useBlocker } from "react-router";
 
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, updateAdminLegalSettings, type SiteSettings } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, SettingsSectionCard } from "../components/admin-ui";
 import { LegalRichTextEditor } from "../components/legal-rich-text-editor";
 import { emptyLegalDraft, legalDraftsEqual, normalizeLegalDraft, type LegalDraft } from "./legal-draft";
 
@@ -90,7 +90,12 @@ export default function LegalSettingsPage() {
                             icon={<ShieldCheck className="legal-settings-card-icon size-4" />}
                             title="公开法律文档"
                             description="编辑内容会显示在登录、注册及站点底部链接对应的公开页面。"
-                            status={<Tag className="legal-settings-status" color={configuredCount === 2 ? "success" : "warning"}>{configuredCount === 2 ? "内容完整" : `${configuredCount}/2 已配置`}</Tag>}
+                            status={(
+                                <div className="legal-settings-header-actions">
+                                    <Tag className="legal-settings-status" color={configuredCount === 2 ? "success" : "warning"}>{configuredCount === 2 ? "内容完整" : `${configuredCount}/2 已配置`}</Tag>
+                                    <Button className="legal-settings-save-button" type="primary" icon={<Save className="legal-settings-save-icon size-4" />} loading={saveMutation.isPending} disabled={!dirty} onClick={() => saveMutation.mutate(normalizeLegalDraft(draft))}>保存并发布</Button>
+                                </div>
+                            )}
                         >
                             <Tabs
                                 className="legal-settings-tabs"
@@ -126,20 +131,12 @@ export default function LegalSettingsPage() {
                                     },
                                 ]}
                             />
+                            <div className="legal-settings-sync-status" role="status">
+                                <ShieldCheck className="legal-settings-sync-icon size-3.5" />
+                                <span className="legal-settings-sync-label">{dirty ? "有未保存的法律内容" : "公开内容已同步"}</span>
+                                <span className="legal-settings-sync-meta">{setting.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "尚未保存法律内容"}</span>
+                            </div>
                         </SettingsSectionCard>
-
-                        <div className="legal-settings-guidance grid gap-px overflow-hidden sm:grid-cols-3">
-                            <LegalGuidance icon={<FileCheck2 className="legal-guidance-icon size-4" />} title="独立保存" description="法律内容更新不会覆盖品牌、备案或 Logo 配置。" />
-                            <LegalGuidance icon={<ShieldCheck className="legal-guidance-icon size-4" />} title="安全展示" description="公开页面按受控富文本节点渲染，不执行任意脚本。" />
-                            <LegalGuidance icon={<ExternalLink className="legal-guidance-icon size-4" />} title="实时预览" description="保存后可从文档右上角打开公开页面核对。" />
-                        </div>
-
-                        <AdminSettingsActionBar
-                            meta={setting?.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "尚未保存法律内容"}
-                            status={dirty ? "有未保存的法律内容" : "公开内容已同步"}
-                        >
-                            <Button className="legal-settings-save-button" type="primary" icon={<Save className="legal-settings-save-icon size-4" />} loading={saveMutation.isPending} disabled={!dirty} onClick={() => saveMutation.mutate(normalizeLegalDraft(draft))}>保存并发布</Button>
-                        </AdminSettingsActionBar>
                     </>
                 ) : null}
             </div>
@@ -161,18 +158,6 @@ function LegalDocumentPane({ title, description, previewPath, children }: { titl
                 </Link>
             </div>
             <div className="legal-document-pane-editor">{children}</div>
-        </div>
-    );
-}
-
-function LegalGuidance({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
-    return (
-        <div className="legal-guidance-item">
-            <span className="legal-guidance-symbol">{icon}</span>
-            <div className="legal-guidance-copy">
-                <h3 className="legal-guidance-title">{title}</h3>
-                <p className="legal-guidance-description">{description}</p>
-            </div>
         </div>
     );
 }

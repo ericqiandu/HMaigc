@@ -288,27 +288,27 @@
         color: var(--workspace-ui-text);
     }
 
-.admin-page-frame {
-    box-sizing: border-box;
-    min-width: 0;
-    width: 100%;
-    max-width: 1304px;
-    margin-inline: auto;
-    padding: 24px 32px 56px;
-}
+    .admin-page-frame {
+        box-sizing: border-box;
+        min-width: 0;
+        width: 100%;
+        max-width: 1304px;
+        margin-inline: auto;
+        padding: 24px 32px 56px;
+    }
 
-.admin-page-content {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-}
+    .admin-page-content {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
 
-.admin-settings-page,
-.admin-data-page {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-}
+    .admin-settings-page,
+    .admin-data-page {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
 
     .admin-page-content > * {
         min-width: 0;
@@ -523,22 +523,106 @@
         flex: none;
     }
 
-    .admin-workspace .access-settings-page {
+    .admin-workspace .admin-settings-page {
+        display: grid;
         min-width: 0;
+        width: min(100%, 1240px);
+        margin-inline: auto;
+        gap: 20px;
     }
 
-    .admin-workspace .access-registration-card .admin-content-skeleton,
-    .admin-workspace .access-registration-card .admin-content-error,
+    .admin-workspace .admin-settings-switch-panel .admin-content-skeleton,
+    .admin-workspace .admin-settings-switch-panel .admin-content-error,
     .admin-workspace .access-linuxdo-card .admin-content-skeleton,
     .admin-workspace .access-linuxdo-card .admin-content-error {
         margin: 0;
     }
 
-    .admin-workspace .access-registration-control {
+    .admin-workspace .admin-settings-switch-panel {
+        min-width: 0;
+        overflow: hidden;
+        border: 1px solid var(--workspace-ui-border);
+        border-radius: var(--workspace-ui-radius-panel);
         background: var(--workspace-ui-surface);
     }
 
-    .admin-workspace .access-registration-title {
+    .admin-workspace .admin-settings-switch-panel-header {
+        display: flex;
+        min-height: 68px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 16px 24px;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-identity {
+        display: flex;
+        min-width: 0;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-icon {
+        flex: none;
+        margin-top: 2px;
+        color: var(--workspace-ui-text-secondary);
+    }
+
+    .admin-workspace .admin-settings-switch-panel-heading {
+        min-width: 0;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-title {
+        margin: 0;
+        color: var(--workspace-ui-text);
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-description {
+        margin: 2px 0 0;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-workspace .access-registration-status {
+        flex: none;
+        border-radius: 999px;
+        padding: 3px 8px;
+        background: var(--workspace-ui-control);
+        color: var(--workspace-ui-text-secondary);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 16px;
+    }
+
+    .admin-workspace .access-registration-status.is-enabled {
+        background: color-mix(in srgb, var(--workspace-ui-success) 12%, transparent);
+        color: var(--workspace-ui-success);
+    }
+
+    .admin-workspace .admin-settings-switch-panel-control {
+        display: flex;
+        min-height: 88px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        border-top: 1px solid var(--workspace-ui-divider);
+        background: var(--workspace-ui-surface-subtle);
+        padding: 16px 24px;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-eyebrow {
+        margin-bottom: 4px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 16px;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-control-title {
         margin: 0;
         color: var(--workspace-ui-text);
         font-size: 14px;
@@ -546,11 +630,26 @@
         line-height: 20px;
     }
 
-    .admin-workspace .access-registration-description,
+    .admin-workspace .admin-settings-switch-panel-control-description,
     .admin-workspace .admin-form-disclosure-description {
         margin: 4px 0 0;
         color: var(--workspace-ui-text-tertiary);
         font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-workspace .admin-settings-switch-panel-action,
+    .admin-workspace .access-registration-action {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .admin-workspace .access-registration-action-label {
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        font-weight: 500;
         line-height: 17px;
     }
 
@@ -559,24 +658,42 @@
     }
 
     .admin-workspace .access-linuxdo-card .admin-section-card-content > .access-settings-form {
-        padding: 24px;
+        padding: 0;
     }
 
-    .admin-workspace .access-settings-sections {
+    .admin-workspace .email-settings-card .admin-section-card-content > .email-settings-form {
+        padding: 0;
+    }
+
+    .admin-workspace .access-settings-sections,
+    .admin-workspace .email-settings-sections {
         min-width: 0;
     }
 
-    .admin-workspace .access-settings-sections > .admin-form-section {
-        padding-bottom: 8px;
+    .admin-workspace .admin-settings-form-section {
+        display: grid;
+        min-width: 0;
+        grid-template-columns: 220px minmax(0, 1fr);
+        column-gap: 24px;
+        padding: 28px 32px;
     }
 
-    .admin-workspace .access-settings-sections > .admin-form-section + .admin-form-section,
+    .admin-workspace .admin-settings-form-section + .admin-settings-form-section,
     .admin-workspace .access-settings-sections > .admin-form-disclosure {
-        margin-top: 28px;
-        padding-top: 24px;
+        margin-top: 0;
+        border-top: 1px solid var(--workspace-ui-divider);
     }
 
-    .admin-workspace .access-settings-grid {
+    .admin-workspace .email-settings-notes {
+        grid-column: 1 / -1;
+        display: grid;
+        gap: 8px;
+        margin-top: 4px;
+        padding-top: 16px;
+        border-top: 1px solid var(--workspace-ui-divider);
+    }
+
+    .admin-workspace .admin-settings-form-section-fields {
         display: grid;
         min-width: 0;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -584,15 +701,32 @@
         row-gap: 0;
     }
 
-    .admin-workspace .access-settings-section-title,
-    .admin-workspace .access-settings-wide-field {
-        grid-column: 1 / -1;
+    .admin-workspace .admin-settings-form-section-heading {
+        min-width: 0;
+        padding-right: 8px;
     }
 
-    .admin-workspace .access-settings-section-title {
+    .admin-workspace .admin-settings-form-section-fields > * {
+        min-width: 0;
+    }
+
+    .admin-workspace .access-settings-wide-field {
+        grid-column: 2 / -1 !important;
+    }
+
+    .admin-workspace .admin-settings-form-section-title {
         display: flex;
         align-items: center;
         gap: 8px;
+        margin-bottom: 2px;
+    }
+
+    .admin-workspace .admin-settings-form-section-description {
+        max-width: 24ch;
+        margin: 4px 0 0;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
     }
 
     .admin-workspace .access-settings-sync-state {
@@ -605,30 +739,98 @@
         min-width: 0;
     }
 
-    @media (max-width: 1023px) {
+    .admin-workspace .access-settings-mapping .access-settings-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-workspace .access-settings-mapping {
+        padding: 20px 24px;
+    }
+
+    .admin-workspace .access-settings-mapping .admin-form-disclosure-content {
+        margin-top: 16px;
+        padding: 20px;
+    }
+
+    /* 固定侧栏或窄桌面会压缩实际内容宽度，1280px 以下先收起说明列。 */
+    @media (max-width: 1279px) {
         .admin-workspace .access-linuxdo-card .admin-section-card-content > .access-settings-form {
-            padding: 20px;
+            padding: 0;
         }
 
-        .admin-workspace .access-settings-grid {
+        .admin-workspace .admin-settings-form-section {
             grid-template-columns: minmax(0, 1fr);
         }
 
-        .admin-workspace .access-settings-section-title,
+        .admin-workspace .admin-settings-form-section-heading,
         .admin-workspace .access-settings-wide-field {
             grid-column: auto;
+            grid-row: auto;
+        }
+
+        .admin-workspace .admin-settings-form-section-heading {
+            margin-bottom: 16px;
+            padding-right: 0;
+        }
+
+        .admin-workspace .admin-settings-form-section-description {
+            max-width: none;
+        }
+
+        .admin-workspace .access-settings-mapping .access-settings-grid {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+
+    @media (min-width: 768px) and (max-width: 1279px) {
+        .admin-workspace .admin-settings-form-section {
+            row-gap: 0;
+            padding: 24px;
+        }
+
+        .admin-workspace .admin-settings-form-section-fields {
+            column-gap: 20px;
         }
     }
 
     @media (max-width: 767px) {
-        .admin-workspace .access-linuxdo-card .admin-section-card-content > .access-settings-form {
+        .admin-workspace .access-settings-page {
+            gap: 12px;
+        }
+
+        .admin-workspace .admin-settings-switch-panel-control {
+            min-height: 0;
+            align-items: flex-start;
             padding: 16px;
         }
 
-        .admin-workspace .access-settings-sections > .admin-form-section + .admin-form-section,
-        .admin-workspace .access-settings-sections > .admin-form-disclosure {
-            margin-top: 24px;
-            padding-top: 20px;
+        .admin-workspace .admin-settings-switch-panel-header {
+            min-height: 0;
+            padding: 16px;
+        }
+
+        .admin-workspace .access-registration-action {
+            min-height: 44px;
+        }
+
+        .admin-workspace .access-registration-action-label {
+            display: none;
+        }
+
+        .admin-workspace .access-linuxdo-card .admin-section-card-content > .access-settings-form {
+            padding: 0;
+        }
+
+        .admin-workspace .admin-settings-form-section {
+            padding: 20px 16px;
+        }
+
+        .admin-workspace .admin-settings-form-section-fields {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .admin-workspace .access-settings-mapping {
+            padding: 12px 8px;
         }
     }
 
@@ -932,7 +1134,8 @@
 
     .admin-workspace .email-settings-page {
         min-width: 0;
-        max-width: 100%;
+        width: min(100%, 1240px);
+        margin-inline: auto;
     }
 
     .admin-workspace .email-settings-fields > * {
@@ -944,7 +1147,13 @@
     }
 
     .admin-workspace .email-settings-note {
+        display: flex;
+        align-items: center;
+        gap: 8px;
         min-height: 32px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
     }
 
     .admin-workspace .email-settings-note-icon {
@@ -956,6 +1165,24 @@
         min-width: 0;
         color: var(--workspace-ui-text-tertiary);
         line-height: 17px;
+    }
+
+    @media (max-width: 1279px) {
+        .admin-workspace .email-settings-page :where(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select-selector, .email-settings-save-button) {
+            min-height: 44px !important;
+        }
+
+        .admin-workspace .email-settings-page .ant-input-affix-wrapper > .ant-input {
+            min-height: 0 !important;
+        }
+
+        .admin-workspace .email-settings-page .ant-input-number-input {
+            height: 42px;
+        }
+
+        .admin-workspace .email-settings-page .ant-select-single .ant-select-selector {
+            align-items: center;
+        }
     }
 
     .admin-workspace .admin-analytics-layout {
@@ -1451,7 +1678,9 @@
         font-size: 13px;
         font-weight: 500;
         line-height: 20px;
-        transition: color 160ms ease, background-color 160ms ease;
+        transition:
+            color 160ms ease,
+            background-color 160ms ease;
     }
 
     .admin-workspace .runtime-policy-section-link:hover,
@@ -1461,42 +1690,43 @@
         outline: none;
     }
 
-    .admin-workspace .site-settings-section-nav {
-        display: flex;
+
+    .admin-workspace .site-settings-form {
+        display: grid;
         min-width: 0;
-        max-width: 100%;
-        gap: 4px;
-        overflow-x: auto;
-        padding: 4px;
-        border-radius: var(--workspace-ui-radius-control);
-        background: var(--workspace-ui-surface-subtle);
-        scrollbar-width: none;
+        gap: 20px;
     }
 
-    .admin-workspace .site-settings-section-nav::-webkit-scrollbar {
-        display: none;
-    }
-
-    .admin-workspace .site-settings-section-link {
-        display: inline-flex;
-        flex: 1 0 auto;
-        min-height: 38px;
+    .admin-workspace .site-settings-sync-status {
+        display: flex;
+        min-height: 40px;
         align-items: center;
-        justify-content: center;
-        padding: 0 14px;
-        border-radius: calc(var(--workspace-ui-radius-control) - 2px);
+        gap: 8px;
+        padding: 0 4px;
         color: var(--workspace-ui-text-secondary);
-        font-size: 13px;
-        font-weight: 500;
-        line-height: 20px;
-        transition: color 160ms ease, background-color 160ms ease;
     }
 
-    .admin-workspace .site-settings-section-link:hover,
-    .admin-workspace .site-settings-section-link:focus-visible {
+    .admin-workspace .site-settings-sync-icon {
+        flex: none;
+        color: var(--workspace-ui-success);
+    }
+
+    .admin-workspace .site-settings-sync-status.is-dirty .site-settings-sync-icon {
+        color: var(--workspace-ui-warning);
+    }
+
+    .admin-workspace .site-settings-sync-label {
         color: var(--workspace-ui-text);
-        background: var(--workspace-ui-surface);
-        outline: none;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 18px;
+    }
+
+    .admin-workspace .site-settings-sync-meta {
+        margin-left: auto;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 17px;
     }
 
     .admin-workspace .site-settings-section-anchor {
@@ -1505,14 +1735,9 @@
         scroll-margin-top: 20px;
     }
 
-    .admin-workspace :where(.site-settings-brand-fields, .site-settings-banner-fields, .site-settings-footer-fields, .site-settings-registration-fields) {
-        min-width: 0;
-        max-width: 100%;
-        padding: 20px 24px;
-    }
-
-    .admin-workspace :where(.site-settings-brand-fields, .site-settings-banner-fields, .site-settings-registration-fields) > * {
-        min-width: 0;
+    .admin-workspace .site-settings-banner-text-field,
+    .admin-workspace .site-settings-copyright-field {
+        grid-column: 1 / -1;
     }
 
     .admin-workspace .site-settings-logo-preview {
@@ -1529,14 +1754,11 @@
         max-width: 100%;
     }
 
-    .admin-workspace .runtime-policy-settings-fields {
-        min-width: 0;
-        max-width: 100%;
-        padding: 20px 24px 4px;
-    }
-
-    .admin-workspace .runtime-policy-settings-fields > * {
-        min-width: 0;
+    .admin-workspace .runtime-policy-field .ant-input-number-group-addon {
+        min-width: 72px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        text-align: center;
     }
 
     .admin-workspace .runtime-policy-settings-form .admin-settings-action-bar {
@@ -1575,6 +1797,79 @@
         font-weight: 600;
         line-height: 24px;
         font-variant-numeric: tabular-nums;
+    }
+
+    .admin-workspace .admin-log-summary-icon {
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .admin-workspace .admin-log-summary-item.is-success .admin-log-summary-icon {
+        color: var(--workspace-ui-success);
+    }
+
+    .admin-workspace .admin-log-summary-item.is-failed .admin-log-summary-icon {
+        color: var(--workspace-ui-error);
+    }
+
+    .admin-workspace .admin-log-toolbar {
+        margin-top: 16px;
+    }
+
+    .admin-workspace .admin-log-status-filter {
+        width: 136px;
+    }
+
+    .admin-workspace .admin-log-result-context {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 18px;
+        white-space: nowrap;
+    }
+
+    .admin-workspace .admin-log-selection-region {
+        min-height: 0;
+    }
+
+    .admin-workspace .admin-log-table-surface {
+        margin-top: 12px;
+    }
+
+    .admin-workspace .admin-log-load-error,
+    .admin-workspace .admin-log-refresh-error {
+        padding: 16px;
+    }
+
+    .admin-workspace .admin-log-refresh-error {
+        padding-bottom: 0;
+    }
+
+    .admin-workspace .admin-log-time,
+    .admin-workspace .admin-log-numeric-value {
+        font-variant-numeric: tabular-nums;
+    }
+
+    .admin-workspace .admin-log-time,
+    .admin-workspace .admin-log-error-code,
+    .admin-workspace .admin-log-numeric-value {
+        font-family: var(--workspace-ui-font-mono);
+        font-size: 12px;
+    }
+
+    .admin-workspace .admin-log-user,
+    .admin-workspace .admin-log-channel,
+    .admin-workspace .admin-log-model,
+    .admin-workspace .admin-log-stage {
+        color: var(--workspace-ui-text-secondary);
+    }
+
+    .admin-workspace .admin-log-muted-value,
+    .admin-workspace .admin-log-error-code {
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .admin-workspace .admin-log-status-tag {
+        margin-inline-end: 0;
+        white-space: nowrap;
     }
 
     .admin-workspace .admin-prompt-summary {
@@ -1719,19 +2014,6 @@
             grid-column: 1 / -1;
         }
 
-        .admin-workspace .site-settings-section-nav {
-            margin-inline: -4px;
-        }
-
-        .admin-workspace .site-settings-section-link {
-            min-height: 44px;
-            padding-inline: 12px;
-        }
-
-        .admin-workspace :where(.site-settings-brand-fields, .site-settings-banner-fields, .site-settings-footer-fields, .site-settings-registration-fields) {
-            padding: 16px;
-        }
-
         .admin-workspace .site-settings-logo-row {
             align-items: flex-start;
         }
@@ -1741,8 +2023,15 @@
             min-height: 44px;
         }
 
-        .admin-workspace .runtime-policy-settings-fields {
-            padding: 16px 16px 2px;
+        .admin-workspace .site-settings-sync-status {
+            min-height: 44px;
+            flex-wrap: wrap;
+            padding-inline: 0;
+        }
+
+        .admin-workspace .site-settings-sync-meta {
+            width: 100%;
+            margin-left: 24px;
         }
 
         .workspace-ui-scope .admin-settings-action-bar {

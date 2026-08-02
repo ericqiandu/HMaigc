@@ -401,6 +401,11 @@
         .admin-workspace .credit-adjustment-form {
             padding: 16px !important;
         }
+
+        .admin-workspace .ant-table .ant-btn-sm {
+            min-height: 40px;
+            padding-inline: 12px;
+        }
     }
 
     .admin-sidebar-footer {

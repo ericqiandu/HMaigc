@@ -269,3 +269,36 @@ export function SettingsSectionCard({
         </section>
     );
 }
+
+export function AdminSettingsSection({ id, icon, title, description, children, className }: { id: string; icon: ReactNode; title: string; description: string; children: ReactNode; className?: string }) {
+    return (
+        <section className={cn("admin-settings-form-section", className)} aria-labelledby={id}>
+            <div className="admin-settings-form-section-heading">
+                <h3 id={id} className="admin-settings-form-section-title">
+                    {icon}
+                    <span className="admin-settings-form-section-title-text">{title}</span>
+                </h3>
+                <p className="admin-settings-form-section-description">{description}</p>
+            </div>
+            <div className="admin-settings-form-section-fields">{children}</div>
+        </section>
+    );
+}
+
+export function AdminSettingsSwitchPanel({ icon, title, description, status, children }: { icon: ReactNode; title: string; description: string; status?: ReactNode; children: ReactNode }) {
+    return (
+        <section className="admin-settings-switch-panel">
+            <header className="admin-settings-switch-panel-header">
+                <div className="admin-settings-switch-panel-identity">
+                    <span className="admin-settings-switch-panel-icon">{icon}</span>
+                    <div className="admin-settings-switch-panel-heading">
+                        <h2 className="admin-settings-switch-panel-title">{title}</h2>
+                        <p className="admin-settings-switch-panel-description">{description}</p>
+                    </div>
+                </div>
+                {status ? <div className="admin-settings-switch-panel-status">{status}</div> : null}
+            </header>
+            {children}
+        </section>
+    );
+}
