@@ -24,7 +24,7 @@ type Props = {
 
 export function AssetPickerModal({ open, onInsert, onClose }: Props) {
     return (
-        <Modal title="选择素材" open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
+        <Modal rootClassName="canvas-overlay-modal" title="选择素材" open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
             <MyAssetsTab onInsert={onInsert} />
         </Modal>
     );

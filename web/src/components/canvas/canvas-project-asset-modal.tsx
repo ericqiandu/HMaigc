@@ -41,7 +41,7 @@ export function CanvasProjectAssetModal({ open, detail, initialCategory = "all",
         try { await onInsert(payloads); onClose(); } finally { setInserting(false); }
     };
 
-    return <Modal open={open} title={null} footer={null} destroyOnHidden onCancel={onClose} width="min(920px, calc(100vw - 24px))" styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
+    return <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--project-assets" open={open} title={null} footer={null} destroyOnHidden onCancel={onClose} width="min(920px, calc(100vw - 24px))" styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
         <div className="flex h-[min(620px,calc(100vh-80px))] min-h-[440px] flex-col overflow-hidden">
             <header className="flex h-12 shrink-0 items-center justify-between border-b border-border py-0 pl-4 pr-12"><h2 className="text-sm font-semibold">引用项目角色与资产</h2><span className="text-[11px] text-foreground/42">已选 {selectedIds.size} 项</span></header>
             <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[150px_minmax(0,1fr)] sm:grid-rows-1">

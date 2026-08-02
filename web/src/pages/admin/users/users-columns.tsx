@@ -38,9 +38,9 @@ export function createUserColumns({
             title: "用户",
             dataIndex: "username",
             render: (_, user) => (
-                <div>
-                    <div className="flex items-center gap-1.5"><span className="font-medium">{user.displayName || user.username}</span><IdentityProviderBadge user={user} /></div>
-                    <div className="text-xs text-foreground/45">@{user.username}</div>
+                <div className="admin-user-identity min-w-0">
+                    <div className="admin-user-identity-heading flex items-center gap-1.5"><span className="admin-user-display-name truncate font-medium">{user.displayName || user.username}</span><IdentityProviderBadge user={user} /></div>
+                    <div className="admin-user-handle truncate text-xs text-foreground/45">@{user.username}</div>
                 </div>
             ),
         },
@@ -76,7 +76,7 @@ export function createUserColumns({
                             disabled: user.id === actorId,
                             confirm: {
                                 title: user.status === "active" ? "停用这个用户？" : "重新启用这个用户？",
-                                description: user.status === "active" ? "停用后会清除该用户登录态，但保留身份、任务和积分流水。" : "启用后，该用户可以重新登录并继续使用原有数据。",
+                                description: user.status === "active" ? `目标用户：${user.displayName || user.username}（@${user.username}）。停用后会清除该用户登录态，但保留身份、任务和积分流水。` : `目标用户：${user.displayName || user.username}（@${user.username}）。启用后，该用户可以重新登录并继续使用原有数据。`,
                                 okText: user.status === "active" ? "确认停用" : "确认启用",
                             },
                             onClick: () => onToggleStatus(user),

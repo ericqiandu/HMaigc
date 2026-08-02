@@ -374,7 +374,7 @@ export function CanvasStylePickerModal({ open, value, onClose, onSelect }: { ope
     const [detailPreset, setDetailPreset] = useState<CanvasStylePreset | null>(null);
     return (
         <>
-            <Modal open={open} title={null} footer={null} centered width="min(1040px, calc(100vw - 24px))" onCancel={onClose} styles={{ body: { padding: 0 } }}>
+            <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--style-picker" open={open} title={null} footer={null} centered width="min(1040px, calc(100vw - 24px))" onCancel={onClose} styles={{ body: { padding: 0 } }}>
                 <div className="overflow-hidden rounded-lg" style={{ color: theme.node.text, background: theme.node.panel }}>
                     <header className="flex items-center gap-3 border-b px-4 py-4 sm:px-5" style={{ borderColor: theme.node.stroke }}>
                         <span className="grid size-9 shrink-0 place-items-center rounded-md" style={{ background: theme.toolbar.itemHover, color: theme.node.activeStroke }}><Palette className="size-4" /></span>
@@ -417,7 +417,7 @@ export function CanvasStyleDetailModal({ open, preset, selected = false, onClose
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const sections = preset ? parseStyleSections(preset.prompt) : [];
     return (
-        <Modal open={open} title={null} footer={null} centered destroyOnHidden width="min(920px, calc(100vw - 24px))" onCancel={onClose} styles={{ body: { padding: 0 } }}>
+        <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--style-detail" open={open} title={null} footer={null} centered destroyOnHidden width="min(920px, calc(100vw - 24px))" onCancel={onClose} styles={{ body: { padding: 0 } }}>
             {preset ? <div className="flex max-h-[82vh] flex-col overflow-hidden rounded-lg md:grid md:grid-cols-[300px_minmax(0,1fr)]" style={{ color: theme.node.text, background: theme.node.panel }}>
                 <aside className="shrink-0 border-b md:border-b-0 md:border-r" style={{ borderColor: theme.node.stroke, background: theme.canvas.background }}>
                     <div className="aspect-[16/7] overflow-hidden md:aspect-auto md:h-full md:min-h-[540px]"><img src={preset.imageUrl} width="960" height="640" alt={`${preset.title}画风示意`} className="h-full w-full object-cover" style={preset.id === "black-white-noir" ? { filter: "grayscale(1) contrast(1.08)" } : undefined} /></div>

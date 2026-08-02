@@ -1,4 +1,4 @@
-import { Avatar, Badge, Tooltip } from "antd";
+import { Avatar, Badge } from "antd";
 import { Eye, UsersRound, Wifi, WifiOff } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -6,6 +6,7 @@ import type { CanvasCollaborationConnectionStatus } from "@/pages/canvas/use-can
 import type { CanvasAccess, CanvasPresence } from "@/services/api/canvas-collaboration";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
+import { CanvasAgentTooltip } from "./canvas-agent-tooltip";
 
 type PresenceButtonProps = {
     status: CanvasCollaborationConnectionStatus;
@@ -23,7 +24,7 @@ export function CanvasCollaborationPresenceButton({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (status === "personal") {
         return (
-            <Tooltip title="启用团队多人协作">
+            <CanvasAgentTooltip title="启用团队多人协作">
                 <button
                     type="button"
                     className="canvas-collaboration-entry grid size-10 place-items-center rounded-xl transition hover:bg-black/5 dark:hover:bg-white/10"
@@ -33,14 +34,14 @@ export function CanvasCollaborationPresenceButton({
                 >
                     <UsersRound className="size-4" />
                 </button>
-            </Tooltip>
+            </CanvasAgentTooltip>
         );
     }
 
     const online = status === "online" || status === "readonly";
     const statusText = collaborationStatusLabel(status, access);
     return (
-        <Tooltip title={`${statusText}${presence.length ? ` · ${presence.length} 人在线` : ""}`}>
+        <CanvasAgentTooltip title={`${statusText}${presence.length ? ` · ${presence.length} 人在线` : ""}`}>
             <button
                 type="button"
                 className="canvas-collaboration-presence-button flex h-10 items-center gap-2 rounded-xl px-2 transition hover:bg-black/5 dark:hover:bg-white/10"
@@ -65,7 +66,7 @@ export function CanvasCollaborationPresenceButton({
                 </Avatar.Group>
                 {!presence.length ? <span className="canvas-collaboration-status-label hidden text-xs xl:inline">{statusText}</span> : null}
             </button>
-        </Tooltip>
+        </CanvasAgentTooltip>
     );
 }
 

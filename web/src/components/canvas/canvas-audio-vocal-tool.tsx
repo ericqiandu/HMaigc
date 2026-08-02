@@ -18,7 +18,7 @@ export function CanvasAudioVocalTool({ model, onInsert }: CanvasAudioVocalToolPr
             onOpenChange={supported ? setOpen : undefined}
             trigger="click"
             placement="topLeft"
-            overlayClassName="canvas-audio-text-popover canvas-audio-text-popover--vocal"
+            rootClassName="canvas-overlay-popover canvas-audio-text-popover canvas-audio-text-popover--vocal"
             content={
                 <section className="canvas-audio-insert-menu canvas-audio-insert-menu--vocal" aria-label="选择语气词">
                     <div className="canvas-audio-vocal-list">

@@ -22,6 +22,7 @@ import {
     supportsVideoReferenceAudio,
 } from "@/lib/canvas/canvas-project-generation";
 import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
+import { selectVideoGenerationContext } from "@/lib/canvas/canvas-video-generation-mode";
 import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/generation-error";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
@@ -145,12 +146,14 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const videoGenerationMetadata = buildVideoGenerationMetadata(node, videoContext);
-                    const result = await runBackendCanvasGenerationTask({ projectId, nodeId: node.id, mode: "video", prompt, config: generationConfig, referenceImages: videoContext?.referenceImages || [], referenceVideos: videoContext?.referenceVideos || [], referenceAudios: videoContext?.referenceAudios || [], signal: controller.signal, metadata: { retry: true, sourceNodeId: sourceNode.id, resolvedCharacterVersions: context?.resolvedCharacterVersions || [], resolvedCharacterVoices: context?.resolvedCharacterVoices || [], ...videoGenerationMetadata }, onTaskCreated: (task) => bindGenerationTask(node.id, task) });
+                    if (!videoContext) throw new Error("视频重试缺少生成上下文");
+                    const selectedVideoContext = selectVideoGenerationContext(node.metadata, videoContext);
+                    const videoGenerationMetadata = buildVideoGenerationMetadata(node, selectedVideoContext);
+                    const result = await runBackendCanvasGenerationTask({ projectId, nodeId: node.id, mode: "video", prompt, config: generationConfig, referenceImages: selectedVideoContext.referenceImages, referenceVideos: selectedVideoContext.referenceVideos, referenceAudios: selectedVideoContext.referenceAudios, signal: controller.signal, metadata: { retry: true, sourceNodeId: sourceNode.id, resolvedCharacterVersions: context?.resolvedCharacterVersions || [], resolvedCharacterVoices: context?.resolvedCharacterVoices || [], ...videoGenerationMetadata }, onTaskCreated: (task) => bindGenerationTask(node.id, task) });
                     if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
                     const video = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                    setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, superResolutionEnabled: generationConfig.videoSuperResolutionEnabled, superResolutionResolution: generationConfig.videoSuperResolutionResolution, superResolutionScene: generationConfig.videoSuperResolutionScene, superResolutionVersion: generationConfig.videoSuperResolutionVersion, superResolutionFps: generationConfig.videoSuperResolutionFps, ...videoGenerationMetadata, references: videoContext ? generationReferenceUrls(videoContext) : item.metadata?.references } } : item)));
+                    setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, superResolutionEnabled: generationConfig.videoSuperResolutionEnabled, superResolutionResolution: generationConfig.videoSuperResolutionResolution, superResolutionScene: generationConfig.videoSuperResolutionScene, superResolutionVersion: generationConfig.videoSuperResolutionVersion, superResolutionFps: generationConfig.videoSuperResolutionFps, ...videoGenerationMetadata, references: generationReferenceUrls(selectedVideoContext) } } : item)));
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {

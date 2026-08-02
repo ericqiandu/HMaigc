@@ -1,15 +1,17 @@
 .canvas-agent-composer-tooltip-content {
-    min-height: 24px;
-    padding: 4px 8px !important;
-    border-radius: 6px !important;
+    min-height: 28px;
+    padding: 6px 10px !important;
+    border: 1px solid rgb(255 255 255 / 12%);
+    border-radius: 8px !important;
     background: #05070b !important;
     color: #ffffff !important;
     font-size: 12px;
     font-weight: 600;
     line-height: 16px;
-    box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 42%), 0 2px 8px rgb(0 0 0 / 28%);
 }
 
 .canvas-agent-composer-tooltip-arrow::before {
     background: #05070b !important;
+    box-shadow: -1px -1px 0 rgb(255 255 255 / 12%);
 }

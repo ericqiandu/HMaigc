@@ -1,0 +1,628 @@
+@layer utilities {
+    .admin-workspace .legal-settings-page {
+        width: 100%;
+        max-width: none;
+        margin-inline: 0;
+    }
+
+    .admin-workspace .legal-settings-page > .admin-settings-action-bar {
+        position: static;
+    }
+
+    .legal-settings-tabs > .ant-tabs-nav {
+        margin: 0;
+        padding: 0 22px;
+    }
+
+    .legal-settings-tabs > .ant-tabs-content-holder {
+        padding: 0 22px 22px;
+    }
+
+    .legal-document-pane {
+        padding-top: 18px;
+    }
+
+    .legal-document-pane-heading {
+        margin-bottom: 14px;
+    }
+
+    .legal-document-pane-title {
+        color: var(--workspace-ui-text);
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+    }
+
+    .legal-document-pane-description {
+        max-width: 720px;
+        margin-top: 3px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 18px;
+    }
+
+    .legal-document-preview-link {
+        display: inline-flex;
+        min-height: 32px;
+        align-items: center;
+        gap: 6px;
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .legal-document-preview-link:hover {
+        color: var(--workspace-ui-accent);
+    }
+
+    .admin-legal-editor {
+        overflow: hidden;
+        border: 1px solid var(--workspace-ui-divider);
+        border-radius: var(--workspace-ui-radius-control);
+        background: var(--workspace-ui-surface-subtle);
+    }
+
+    .admin-legal-editor-toolbar {
+        display: flex;
+        min-height: 42px;
+        align-items: center;
+        gap: 2px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--workspace-ui-divider);
+        padding: 6px 8px;
+    }
+
+    .admin-legal-editor-tool,
+    .admin-legal-editor-block-button {
+        display: inline-flex;
+        min-width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: var(--workspace-ui-radius-control);
+        background: transparent;
+        color: var(--workspace-ui-text-secondary);
+        cursor: pointer;
+    }
+
+    .admin-legal-editor-align {
+        gap: 1px;
+    }
+
+    .admin-legal-editor-popover-trigger {
+        display: inline-flex;
+        flex: 0 0 auto;
+    }
+
+    .admin-legal-editor-block-button {
+        min-width: 76px;
+        gap: 5px;
+        padding: 0 8px;
+        font-size: 12px;
+    }
+
+    .admin-legal-editor-tool:hover,
+    .admin-legal-editor-block-button:hover,
+    .admin-legal-editor-tool.is-active {
+        background: var(--workspace-ui-control-hover);
+        color: var(--workspace-ui-text);
+    }
+
+    .admin-legal-editor-tool.is-active {
+        color: var(--workspace-ui-accent);
+    }
+
+    .admin-legal-editor-tool:disabled,
+    .admin-legal-editor-block-button:disabled {
+        cursor: default;
+        opacity: 0.38;
+    }
+
+    .admin-legal-editor-divider {
+        width: 1px;
+        height: 18px;
+        flex: 0 0 auto;
+        margin: 0 4px;
+        background: var(--workspace-ui-divider);
+    }
+
+    .admin-legal-editor-surface {
+        height: clamp(320px, 44vh, 480px);
+        overflow-y: auto;
+        background: var(--workspace-ui-surface);
+    }
+
+    .admin-legal-editor-content {
+        min-height: 100%;
+        width: min(100%, 960px);
+        margin-inline: auto;
+        padding: 24px 32px 40px;
+        color: var(--workspace-ui-text-secondary);
+        font-size: 14px;
+        line-height: 1.9;
+    }
+
+    .admin-legal-editor-content h1,
+    .admin-legal-editor-content h2,
+    .admin-legal-editor-content h3 {
+        margin: 1.6em 0 0.65em;
+        color: var(--workspace-ui-text);
+        font-weight: 600;
+        line-height: 1.35;
+    }
+
+    .admin-legal-editor-content h1 { font-size: 24px; }
+    .admin-legal-editor-content h2 { font-size: 19px; }
+    .admin-legal-editor-content h3 { font-size: 16px; }
+
+    .admin-legal-editor-content p { margin: 0.7em 0; }
+    .admin-legal-editor-content ul,
+    .admin-legal-editor-content ol { margin: 0.8em 0; padding-left: 1.5em; }
+    .admin-legal-editor-content blockquote { margin: 1em 0; border-left: 2px solid var(--workspace-ui-accent); padding-left: 14px; color: var(--workspace-ui-text-tertiary); }
+    .admin-legal-editor-content hr { margin: 24px 0; border: 0; border-top: 1px solid var(--workspace-ui-divider); }
+    .admin-legal-editor-content a { color: var(--workspace-ui-accent); text-decoration: underline; text-underline-offset: 2px; }
+    .admin-legal-editor-content img { display: block; max-width: 100%; height: auto; margin: 20px auto; object-fit: contain; }
+    .admin-legal-editor-content p.is-editor-empty:first-child::before { float: left; height: 0; color: var(--workspace-ui-text-tertiary); content: attr(data-placeholder); pointer-events: none; }
+
+    .admin-legal-editor-footer {
+        display: flex;
+        min-height: 36px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-top: 1px solid var(--workspace-ui-divider);
+        padding: 7px 10px;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+    }
+
+    .legal-settings-guidance {
+        background: var(--workspace-ui-divider);
+    }
+
+    .legal-guidance-item {
+        display: flex;
+        min-height: 88px;
+        align-items: flex-start;
+        gap: 12px;
+        background: var(--workspace-ui-surface);
+        padding: 16px;
+    }
+
+    .legal-guidance-symbol {
+        display: grid;
+        width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+        place-items: center;
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .legal-guidance-title { color: var(--workspace-ui-text); font-size: 12px; font-weight: 600; line-height: 18px; }
+    .legal-guidance-description { margin-top: 2px; color: var(--workspace-ui-text-tertiary); font-size: 12px; line-height: 17px; }
+
+    .admin-channel-list-toolbar .workspace-list-toolbar-fields,
+    .channel-model-manager-toolbar .workspace-list-toolbar-fields {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) repeat(2, minmax(128px, 160px));
+        align-items: center;
+    }
+
+    .admin-channel-list-toolbar :where(.app-list-search, .ant-select),
+    .channel-model-manager-toolbar :where(.app-list-search, .ant-select) {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-channel-result-count,
+    .channel-model-result-count {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .admin-channel-identity,
+    .channel-model-copy {
+        display: grid;
+        min-width: 0;
+        gap: 2px;
+    }
+
+    .admin-channel-name,
+    .channel-model-name {
+        overflow: hidden;
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 19px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-channel-base-url,
+    .channel-model-key,
+    .admin-channel-concurrency-default {
+        overflow: hidden;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-channel-base-url,
+    .channel-model-key {
+        font-family: var(--workspace-ui-font-mono);
+    }
+
+    .channel-model-manager {
+        display: grid;
+        min-width: 0;
+        gap: 16px;
+    }
+
+    .channel-model-manager-header {
+        display: flex;
+        min-width: 0;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        border-bottom: 1px solid var(--workspace-ui-divider);
+        padding-bottom: 20px;
+    }
+
+    .channel-model-manager-heading {
+        display: flex;
+        min-width: 0;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .channel-model-manager-copy {
+        display: grid;
+        min-width: 0;
+        gap: 3px;
+    }
+
+    .channel-model-manager-title {
+        overflow: hidden;
+        margin: 0;
+        color: var(--workspace-ui-text);
+        font-family: var(--workspace-ui-font-display);
+        font-size: 17px;
+        font-weight: 600;
+        line-height: 24px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .channel-model-manager-description {
+        margin: 0;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 18px;
+    }
+
+    .channel-model-manager-actions {
+        display: flex;
+        flex: 0 0 auto;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .channel-model-manager > .admin-content-error,
+    .admin-page-content > .admin-content-error {
+        margin-top: 16px;
+    }
+
+    @media (max-width: 1279px) {
+        .admin-channel-list-toolbar .workspace-list-toolbar-fields,
+        .channel-model-manager-toolbar .workspace-list-toolbar-fields {
+            grid-template-columns: minmax(0, 1fr) minmax(128px, 0.5fr);
+        }
+
+        .channel-model-manager-header {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+    }
+
+    .admin-voice-page-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .admin-voice-list-toolbar .workspace-list-toolbar-fields {
+        display: grid;
+        grid-template-columns: minmax(220px, 1.2fr) minmax(240px, 1.4fr) minmax(132px, 0.7fr) minmax(132px, 0.7fr);
+        align-items: center;
+    }
+
+    .admin-voice-list-toolbar :where(.admin-voice-channel-select, .admin-voice-search-input, .admin-voice-kind-filter, .admin-voice-status-filter) {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-voice-result-count {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .admin-voice-name-cell {
+        display: flex;
+        min-width: 220px;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .admin-voice-name-icon {
+        flex: 0 0 auto;
+        color: var(--workspace-ui-text-tertiary);
+    }
+
+    .admin-voice-name-copy {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .admin-voice-display-name,
+    .admin-voice-key {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-voice-display-name {
+        color: var(--workspace-ui-text);
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 18px;
+    }
+
+    .admin-voice-key {
+        max-width: 280px;
+        color: var(--workspace-ui-text-tertiary);
+        font-family: var(--workspace-ui-font-mono);
+        font-size: 12px;
+        line-height: 17px;
+    }
+
+    .admin-voice-table-surface > .admin-content-error {
+        min-height: 176px;
+    }
+
+    @media (max-width: 1279px) {
+        .admin-voice-list-toolbar .workspace-list-toolbar-fields {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 639px) {
+        .admin-channel-list-toolbar .workspace-list-toolbar-fields,
+        .channel-model-manager-toolbar .workspace-list-toolbar-fields {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .admin-channel-result-count,
+        .channel-model-result-count,
+        .channel-model-manager-actions,
+        .channel-model-manager-actions > .ant-space-item,
+        .channel-model-manager-actions > .ant-space-item > :where(.ant-btn, .channel-model-pricing-link),
+        .channel-model-manager-actions > .ant-space-item > .channel-model-pricing-link > .ant-btn {
+            width: 100%;
+        }
+
+        .channel-model-manager-actions > .ant-space-item > .ant-btn,
+        .channel-model-manager-actions > .ant-space-item > .channel-model-pricing-link > .ant-btn {
+            justify-content: center;
+        }
+
+        .admin-voice-page-actions,
+        .admin-voice-page-actions > .ant-space-item {
+            width: 100%;
+        }
+
+        .admin-voice-page-actions > .ant-space-item > .ant-btn {
+            width: 100%;
+            justify-content: center;
+        }
+
+        .admin-voice-list-toolbar .workspace-list-toolbar-fields {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .admin-voice-result-count {
+            width: 100%;
+        }
+
+        .legal-settings-tabs > .ant-tabs-nav,
+        .legal-settings-tabs > .ant-tabs-content-holder {
+            padding-inline: 14px;
+        }
+
+        .admin-legal-editor-surface,
+        .admin-legal-editor-content {
+            min-height: 320px;
+        }
+
+        .admin-legal-editor-surface {
+            height: min(46vh, 400px);
+        }
+
+        .admin-legal-editor-toolbar {
+            gap: 4px;
+            padding: 8px;
+        }
+
+        .admin-legal-editor-tool,
+        .admin-legal-editor-block-button {
+            min-height: 44px;
+        }
+
+        .admin-legal-editor-tool {
+            min-width: 44px;
+        }
+
+        .admin-legal-editor-divider {
+            height: 24px;
+            margin-inline: 2px;
+        }
+
+        .admin-legal-editor-content {
+            padding: 20px 16px 44px;
+        }
+
+        .admin-legal-editor-format {
+            display: none;
+        }
+
+        .admin-legal-editor-footer {
+            justify-content: flex-end;
+        }
+
+        .admin-workspace .credit-policy-fields,
+        .admin-workspace .credit-adjustment-fields {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .admin-workspace .credit-policy-actions,
+        .admin-workspace .credit-orders-toolbar-trailing {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .admin-workspace .credit-policy-actions .ant-btn,
+        .admin-workspace .credit-orders-toolbar-trailing,
+        .admin-workspace .credit-orders-refresh,
+        .admin-workspace .credit-orders-result-count {
+            width: 100%;
+        }
+
+        .admin-workspace .credit-orders-refresh {
+            min-height: 44px;
+            justify-content: center;
+        }
+
+        .credit-adjustment-confirm-row,
+        .credit-resolution-summary-item {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 4px;
+        }
+    }
+
+    .admin-redemption-layout,
+    .admin-redemption-records,
+    .admin-redemption-form > *,
+    .admin-redeem-codes-modal .ant-modal-content {
+        min-width: 0;
+    }
+
+    .admin-redemption-form {
+        padding: 20px 24px 4px;
+    }
+
+    .admin-redemption-actions {
+        min-height: 60px;
+        border-top: 1px solid var(--workspace-ui-divider);
+    }
+
+    .admin-redemption-actions-note {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 18px;
+    }
+
+    .admin-redemption-row-actions,
+    .admin-generated-codes-actions,
+    .admin-redeem-codes-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .admin-generated-codes-notice,
+    .admin-redeem-codes-notice {
+        margin-bottom: 16px;
+        padding: 10px 12px;
+        background: color-mix(in srgb, var(--workspace-ui-warning) 10%, transparent);
+        color: color-mix(in srgb, var(--workspace-ui-warning) 82%, var(--workspace-ui-text));
+        font-size: 12px;
+        line-height: 18px;
+    }
+
+    .admin-generated-codes-content {
+        line-height: 20px;
+    }
+
+    .admin-redeem-codes-toolbar {
+        margin-bottom: 12px;
+    }
+
+    .admin-redemption-records > .admin-content-error,
+    .admin-redeem-codes-modal .admin-content-error {
+        margin-bottom: 12px;
+    }
+
+    @media (max-width: 1279px) {
+        .admin-redemption-form :where(.ant-input, .ant-input-number, .ant-picker),
+        .admin-redemption-records :where(.ant-input, .ant-select-selector),
+        .admin-redemption-actions > .ant-btn,
+        .admin-redemption-records-heading > .ant-btn,
+        .admin-redeem-codes-modal :where(.ant-select-selector) {
+            min-height: 44px;
+        }
+    }
+
+    @media (max-width: 767px) {
+        .admin-redemption-form {
+            padding: 16px 16px 4px;
+        }
+
+        .admin-redemption-form :where(.ant-input, .ant-input-number, .ant-picker),
+        .admin-redemption-records :where(.ant-input, .ant-select-selector),
+        .admin-redeem-codes-modal :where(.ant-select-selector) {
+            min-height: 44px;
+        }
+
+        .admin-redemption-actions,
+        .admin-redemption-records-heading,
+        .admin-redeem-codes-toolbar {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .admin-redemption-actions > .ant-btn,
+        .admin-redemption-records-heading > .ant-btn,
+        .admin-redeem-codes-toolbar > .ant-select,
+        .admin-generated-codes-actions,
+        .admin-generated-codes-actions > .ant-btn,
+        .admin-redeem-codes-actions,
+        .admin-redeem-codes-actions > .ant-btn {
+            width: 100%;
+        }
+
+        .admin-redemption-actions > .ant-btn,
+        .admin-redemption-records-heading > .ant-btn,
+        .admin-generated-codes-actions > .ant-btn,
+        .admin-redeem-codes-actions > .ant-btn {
+            min-height: 44px;
+            justify-content: center;
+        }
+
+        .admin-generated-codes-actions,
+        .admin-redeem-codes-actions {
+            flex-direction: column-reverse;
+        }
+    }
+}

@@ -114,7 +114,7 @@ function ComposerPopover({
                 open={open}
                 onOpenChange={onOpenChange}
                 content={content}
-                overlayClassName="canvas-agent-composer-popover"
+                rootClassName="canvas-overlay-popover canvas-agent-composer-popover"
             >
                 <Button
                     type="text"

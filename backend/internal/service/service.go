@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,8 @@ type CreateSessionRequest struct {
 	References      []string          `json:"references"`
 	Requirements    string            `json:"requirements"`
 	CanvasAssets    []storyboardAsset `json:"canvasAssets"`
+	ExecutionMode   string            `json:"executionMode"`
+	DeliverySpec    agentDeliverySpec `json:"deliverySpec"`
 	Config          providerConfig    `json:"config"`
 }
 
@@ -120,6 +123,14 @@ type agentStoryboardInput struct {
 	Config         providerConfig    `json:"config"`
 	ShotDuration   int               `json:"shotDurationSeconds"`
 	ShotCount      int               `json:"shotCount"`
+	ExecutionMode  string            `json:"executionMode"`
+	DeliverySpec   agentDeliverySpec `json:"deliverySpec"`
+}
+
+type agentDeliverySpec struct {
+	AspectRatio     string `json:"aspectRatio"`
+	Resolution      string `json:"resolution"`
+	DurationSeconds int    `json:"durationSeconds"`
 }
 
 type storyboardAsset struct {
@@ -261,7 +272,7 @@ func (s *Service) CreateSession(userID string, req CreateSessionRequest) (*Sessi
 		return nil, err
 	}
 	s.storageMu.Unlock()
-	taskReq := CreateTaskRequest{SessionID: session.ID, ProjectID: req.ProjectID, Type: "agent_storyboard", Operation: "storyboard", Prompt: prompt, Provider: "openai-compatible", Model: req.Config.Model, Input: map[string]any{"references": req.References, "canvasSnapshot": compactedSnapshot, "requirements": req.Requirements, "canvasAssets": req.CanvasAssets, "config": req.Config}}
+	taskReq := CreateTaskRequest{SessionID: session.ID, ProjectID: req.ProjectID, Type: "agent_storyboard", Operation: "storyboard", Prompt: prompt, Provider: "openai-compatible", Model: req.Config.Model, Input: map[string]any{"references": req.References, "canvasSnapshot": compactedSnapshot, "requirements": req.Requirements, "canvasAssets": req.CanvasAssets, "executionMode": req.ExecutionMode, "deliverySpec": req.DeliverySpec, "config": req.Config}}
 	if _, err := s.CreateTask(userID, taskReq); err != nil {
 		s.storageMu.Lock()
 		cleanupErr := s.repo.DeleteSessionDraft(userID, session.ID)
@@ -328,6 +339,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		return nil, BadAuthRequest("任务输入不能包含内嵌媒体，请先上传到资源存储")
 	}
 	if err := validateSystemProviderInput(normalizedInput); err != nil {
+		return nil, err
+	}
+	if err := validateVideoGenerationModeInput(normalizedInput); err != nil {
 		return nil, err
 	}
 	if err := s.validateAudioTaskInput(userID, normalizedInput); err != nil {
@@ -1029,7 +1043,7 @@ func (s *Service) processAgentStoryboardTask(ctx context.Context, task model.Tas
 	if err != nil {
 		return nil, nil, err
 	}
-	return buildAgentStoryboardResult(task, plan, assets)
+	return buildAgentStoryboardResult(task, plan, assets, input.ExecutionMode, input.DeliverySpec)
 }
 
 func (s *Service) processStoryboardRowsTask(ctx context.Context, task model.Task) (map[string]interface{}, []map[string]interface{}, error) {
@@ -1158,6 +1172,46 @@ func validateSystemProviderInput(input map[string]any) error {
 	return nil
 }
 
+func validateVideoGenerationModeInput(input map[string]any) error {
+	if strings.TrimSpace(stringField(input, "mode")) != "video" {
+		return nil
+	}
+	metadata, _ := input["metadata"].(map[string]any)
+	mode := strings.TrimSpace(stringField(metadata, "videoGenerationMode"))
+	if mode == "" {
+		return nil
+	}
+	images, _ := input["referenceImages"].([]any)
+	videos, _ := input["referenceVideos"].([]any)
+	audios, _ := input["referenceAudios"].([]any)
+	totalReferences := len(images) + len(videos) + len(audios)
+	switch mode {
+	case "text":
+		if totalReferences != 0 {
+			return BadAuthRequest("文生视频模式不能提交参考素材")
+		}
+	case "image":
+		if len(images) != 1 || len(videos) != 0 || len(audios) != 0 || strings.TrimSpace(stringField(metadata, "videoStartFrameNodeId")) == "" {
+			return BadAuthRequest("图生视频模式必须提交一张首帧图片")
+		}
+	case "first_last_frame":
+		if len(images) != 2 || len(videos) != 0 || len(audios) != 0 || strings.TrimSpace(stringField(metadata, "videoStartFrameNodeId")) == "" || strings.TrimSpace(stringField(metadata, "videoEndFrameNodeId")) == "" {
+			return BadAuthRequest("首尾帧模式必须提交两张不同的帧图片")
+		}
+	case "image_reference":
+		if len(images) == 0 || len(videos) != 0 || len(audios) != 0 {
+			return BadAuthRequest("图片参考模式只能提交至少一张参考图片")
+		}
+	case "omni_reference":
+		if totalReferences == 0 {
+			return BadAuthRequest("全能参考模式必须提交至少一个参考素材")
+		}
+	default:
+		return BadAuthRequest("不支持的视频生成模式")
+	}
+	return nil
+}
+
 func parseAgentStoryboardPlan(raw string) (agentStoryboardPlan, error) {
 	jsonText, err := extractJSONText(raw)
 	if err != nil {
@@ -1237,7 +1291,7 @@ func extractJSONText(raw string) (string, error) {
 	return trimmed[start : end+1], nil
 }
 
-func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, assets []storyboardAsset) (map[string]interface{}, []map[string]interface{}, error) {
+func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, assets []storyboardAsset, executionMode string, deliverySpec agentDeliverySpec) (map[string]interface{}, []map[string]interface{}, error) {
 	prefix := "agent-" + task.ID
 	scriptID := prefix + "-script"
 	sceneID := prefix + "-scenes"
@@ -1262,6 +1316,14 @@ func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, asset
 		for _, asset := range matchedAssets {
 			assetIDs = append(assetIDs, asset.ID)
 		}
+		videoOperation := "text_to_video"
+		if len(matchedAssets) > 0 {
+			videoOperation = "image_to_video"
+		}
+		durationSeconds := deliverySpec.DurationSeconds
+		if durationSeconds <= 0 {
+			durationSeconds = shot.Duration
+		}
 		ops = append(ops,
 			nodeOpWithMetadata(shotID, "config", fmt.Sprintf("镜头 %d · %s", index+1, shortTitle(shot.Title, 18)), index*360, 560, map[string]any{
 				"workflowKind":          "shot",
@@ -1271,7 +1333,10 @@ func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, asset
 				"generationMode":        "video",
 				"prompt":                buildStoryboardVideoPrompt(plan.StyleGuide, shot),
 				"composerContent":       shotComposerContent(buildStoryboardVideoPrompt(plan.StyleGuide, shot), matchedAssets),
-				"videoEditOperation":    "image_to_video",
+				"videoEditOperation":    videoOperation,
+				"size":                  strings.TrimSpace(deliverySpec.AspectRatio),
+				"vquality":              strings.TrimSpace(deliverySpec.Resolution),
+				"seconds":               strconv.Itoa(durationSeconds),
 				"assetTags":             shot.AssetTags,
 				"referenceAssetNodeIds": assetIDs,
 				"status":                "idle",
@@ -1281,6 +1346,9 @@ func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, asset
 		)
 		for _, asset := range matchedAssets {
 			ops = append(ops, connectOp(asset.ID, shotID))
+		}
+		if executionMode == "automatic" {
+			ops = append(ops, map[string]any{"type": "run_generation", "nodeId": shotID, "mode": "video", "prompt": buildStoryboardVideoPrompt(plan.StyleGuide, shot)})
 		}
 		resultShots = append(resultShots, map[string]any{"title": shot.Title, "description": shot.Description, "assetTags": shot.AssetTags, "referenceAssetNodeIds": assetIDs})
 	}

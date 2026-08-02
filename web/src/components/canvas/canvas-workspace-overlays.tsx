@@ -78,7 +78,7 @@ export function CanvasSelectionToolbar({ anchorRef, containerRef, count, childre
             onPointerDown={(event) => event.stopPropagation()}
         >
             <motion.div initial={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: anchor.placement === "above" ? 8 : -8 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={aceternityMotion.spring.panel} className="flex items-center gap-2">
-                <span className="aceternity-floating-panel shrink-0 rounded-full border px-2.5 py-1.5 text-[10px] font-semibold tabular-nums backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.spatial.glowStrong, color: theme.accent.primary, boxShadow: `0 14px 36px ${theme.spatial.shadow}` }}>已选 {count}</span>
+                <span className="aceternity-floating-panel shrink-0 rounded-full border px-2.5 py-1.5 text-[11px] font-semibold leading-4 tabular-nums backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.spatial.glowStrong, color: theme.accent.primary, boxShadow: `0 14px 36px ${theme.spatial.shadow}` }}>已选 {count}</span>
                 <div className="max-w-[min(560px,calc(100vw-90px))]">{children}</div>
             </motion.div>
         </div>
@@ -164,7 +164,7 @@ export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, co
             <div className="mb-1.5 flex items-center justify-between gap-2 px-1 py-0.5">
                 <span className="flex min-w-0 items-center gap-2">
                     <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border opacity-75" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}><WandSparkles className="size-3.5" /></span>
-                    <span className="min-w-0"><span className="block truncate text-[11px] font-semibold">创建下一步</span><span className="mt-0.5 block truncate text-[8px]" style={{ color: theme.node.muted }}>引用当前节点</span></span>
+                    <span className="min-w-0"><span className="block truncate text-xs font-semibold leading-4">创建下一步</span><span className="mt-0.5 block truncate text-[11px] leading-4" style={{ color: theme.node.muted }}>引用当前节点</span></span>
                 </span>
                 <button type="button" className="grid size-6 shrink-0 place-items-center rounded-full border opacity-55 transition-opacity hover:opacity-100" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }} onClick={onClose} aria-label="关闭连线创建菜单"><X className="size-3" /></button>
             </div>
@@ -209,8 +209,8 @@ function ConnectionCreateOption({ motionEnabled, icon, title, description, onCli
         <motion.button type="button" whileHover={motionEnabled ? { x: 2 } : undefined} whileTap={motionEnabled ? { scale: 0.98 } : undefined} transition={aceternityMotion.spring.dock} className="group flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-[9px] border border-transparent px-2 py-1.5 text-left outline-none hover:border-black/10 hover:bg-black/5 focus-visible:ring-2 dark:hover:border-white/10 dark:hover:bg-white/8" style={{ color: theme.node.text, "--tw-ring-color": theme.node.muted } as CSSProperties} onClick={onClick}>
             <span className="grid size-7 shrink-0 place-items-center rounded-[8px] opacity-65 transition-opacity group-hover:opacity-100 [&_svg]:size-3.5" style={{ background: theme.toolbar.itemHover }}>{icon}</span>
             <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2 text-[10px] font-semibold leading-4">{title}</span>
-                {description ? <span className="mt-0.5 block truncate text-[8px]" style={{ color: theme.node.muted }}>{description}</span> : null}
+                <span className="flex items-center gap-2 text-[11px] font-semibold leading-4">{title}</span>
+                {description ? <span className="mt-0.5 block truncate text-[11px] leading-4" style={{ color: theme.node.muted }}>{description}</span> : null}
             </span>
             <ChevronRight className="size-3.5 shrink-0 opacity-35 transition-transform group-hover:translate-x-0.5" />
         </motion.button>

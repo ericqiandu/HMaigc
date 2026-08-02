@@ -108,6 +108,7 @@ export function CanvasTextEditorModal({ node, open, onClose, onSave }: CanvasTex
 
     return (
         <Modal
+            rootClassName="canvas-overlay-modal canvas-overlay-modal--text-editor"
             className="canvas-text-editor-modal"
             open={open && Boolean(node)}
             title={null}
@@ -195,6 +196,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
             <EditorToolButton label="重做" onClick={() => editor?.chain().focus().redo().run()}><Redo2 /></EditorToolButton>
             <ToolbarDivider />
             <Dropdown
+                overlayClassName="canvas-overlay-dropdown canvas-overlay-dropdown--editor"
                 trigger={["click"]}
                 menu={{
                     selectedKeys: [blockLabel],
@@ -210,6 +212,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
             <EditorToolButton label="删除线" active={Boolean(editor?.isActive("strike"))} onClick={() => editor?.chain().focus().toggleStrike().run()}><Strikethrough /></EditorToolButton>
             <ToolbarDivider />
             <Dropdown
+                overlayClassName="canvas-overlay-dropdown canvas-overlay-dropdown--editor"
                 trigger={["click"]}
                 menu={{
                     selectedKeys: [alignment],
@@ -228,6 +231,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
             <EditorToolButton label="有序列表" active={Boolean(editor?.isActive("orderedList"))} onClick={() => editor?.chain().focus().toggleOrderedList().run()}><ListOrdered /></EditorToolButton>
             <EditorToolButton label="引用" active={Boolean(editor?.isActive("blockquote"))} onClick={() => editor?.chain().focus().toggleBlockquote().run()}><Quote /></EditorToolButton>
             <Popover
+                rootClassName="canvas-overlay-popover canvas-overlay-popover--editor"
                 open={linkOpen}
                 onOpenChange={(next) => { setLinkOpen(next); if (next) setLinkValue(String(editor?.getAttributes("link").href || "")); }}
                 trigger="click"
@@ -248,6 +252,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
                 </ColorPicker>
             </Tooltip>
             <Dropdown
+                overlayClassName="canvas-overlay-dropdown canvas-overlay-dropdown--editor"
                 trigger={["click"]}
                 placement="bottomRight"
                 menu={{

@@ -23,13 +23,14 @@ import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage, emotionGenerationSize } from "@/lib/canvas/canvas-emotion";
 import { captureVideoLastFrame } from "@/lib/canvas/canvas-video-frame";
 import { mergeVideos, type MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
+import { VIDEO_COMPOSITION_NODE_SIZE } from "@/lib/canvas/canvas-video-composition";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedVideo } from "@/services/api/video";
 import { getMediaBlob } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import type { GenerationTask } from "@/services/api/task-center";
 import { defaultConfig, resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ContextMenuState } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasVideoCompositionClip, type ContextMenuState } from "@/types/canvas";
 import type { StartCanvasUploadStatus } from "./use-canvas-upload";
 
 type UseCanvasMediaToolsOptions = {
@@ -97,6 +98,7 @@ export function useCanvasMediaTools({
     const [emotionNodeId, setEmotionNodeId] = useState<string | null>(null);
     const [extractingVideoFrameNodeId, setExtractingVideoFrameNodeId] = useState<string | null>(null);
     const [mergeVideoProgress, setMergeVideoProgress] = useState<MergeVideoProgress | null>(null);
+    const [mergeVideoTargetNodeId, setMergeVideoTargetNodeId] = useState<string | null>(null);
 
     const createImageReversePromptNodes = useCallback((node: CanvasNodeData) => {
         if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
@@ -196,44 +198,72 @@ export function useCanvasMediaTools({
         }
     }, [message, setConnections, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId, startUploadStatus]);
 
-    const mergeVideosByIds = useCallback(async (videoNodeIds: string[]) => {
+    const mergeVideosByIds = useCallback(async (videoNodeIds: string[], targetNodeId?: string, compositionClips?: CanvasVideoCompositionClip[]) => {
         if (mergeVideoRunningRef.current) return;
         const requestedIds = new Set(videoNodeIds);
-        const videos = nodesRef.current
-            .filter((node) => requestedIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content))
-            .sort((left, right) => {
+        const availableVideos = nodesRef.current.filter((node) => requestedIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content));
+        const videos = compositionClips
+            ? compositionClips.flatMap((clip) => {
+                  const source = availableVideos.find((node) => node.id === clip.sourceNodeId);
+                  return source ? [source] : [];
+              })
+            : availableVideos.sort((left, right) => {
                 const leftShot = left.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
                 const rightShot = right.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
                 return leftShot - rightShot || left.position.y - right.position.y || left.position.x - right.position.x;
             });
-        if (videos.length < 2) {
-            message.warning("请至少选择两个已有视频");
+        if (videos.length < (targetNodeId ? 1 : 2)) {
+            message.warning(targetNodeId ? "请至少连接一个已有视频" : "请至少选择两个已有视频");
             return;
         }
         mergeVideoRunningRef.current = true;
+        setMergeVideoTargetNodeId(targetNodeId || null);
         setMergeVideoProgress({ phase: "reading", progress: 0 });
+        if (targetNodeId) {
+            const nextNodes = nodesRef.current.map((node) => node.id === targetNodeId
+                ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } }
+                : node);
+            nodesRef.current = nextNodes;
+            setNodes(nextNodes);
+        }
         try {
-            const blob = await mergeVideos(videos.map((node) => ({ id: node.id, url: node.metadata?.content, storageKey: node.metadata?.storageKey })), setMergeVideoProgress);
+            const blob = await mergeVideos(videos.map((node, index) => ({
+                id: node.id,
+                url: node.metadata?.content,
+                storageKey: node.metadata?.storageKey,
+                trimStartMs: compositionClips?.[index]?.trimStartMs,
+                trimEndMs: compositionClips?.[index]?.trimEndMs,
+            })), setMergeVideoProgress);
             setMergeVideoProgress({ phase: "encoding", progress: 98 });
             const uploaded = await storeGeneratedVideo({ blob });
             const size = fitNodeSize(uploaded.width || 1280, uploaded.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
             const left = Math.max(...videos.map((node) => node.position.x + node.width)) + 120;
             const top = Math.min(...videos.map((node) => node.position.y));
-            const mergedNode = createCanvasNode(CanvasNodeType.Video, { x: left + size.width / 2, y: top + size.height / 2 }, {
+            const mergedMetadata = {
                 ...videoMetadata(uploaded),
                 prompt: `按选中顺序合并 ${videos.length} 段视频`,
                 workflowKind: "final",
-                workflowTitle: "合并成片",
+                workflowTitle: "视频合成",
                 videoEditOperation: "concat",
+                compositionSourceCount: videos.length,
+                compositionClips,
                 status: NODE_STATUS_SUCCESS,
-            });
-            mergedNode.title = `合并成片 · ${videos.length} 段`;
-            mergedNode.width = size.width;
-            mergedNode.height = size.height;
-            mergedNode.position = { x: left, y: top };
-            const links = videos.map((node) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: mergedNode.id }));
-            const nextNodes = [...nodesRef.current, mergedNode];
-            const nextConnections = [...connectionsRef.current, ...links];
+            } satisfies NonNullable<CanvasNodeData["metadata"]>;
+            const existingTarget = targetNodeId ? nodesRef.current.find((node) => node.id === targetNodeId) : undefined;
+            const mergedNode = existingTarget
+                ? { ...existingTarget, title: "视频合成", width: VIDEO_COMPOSITION_NODE_SIZE, height: VIDEO_COMPOSITION_NODE_SIZE, metadata: mergedMetadata }
+                : createCanvasNode(CanvasNodeType.Video, { x: left + size.width / 2, y: top + size.height / 2 }, mergedMetadata);
+            if (!existingTarget) {
+                mergedNode.title = "视频合成";
+                mergedNode.width = size.width;
+                mergedNode.height = size.height;
+                mergedNode.position = { x: left, y: top };
+            }
+            const links = existingTarget ? [] : videos.map((node) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: mergedNode.id }));
+            const nextNodes = existingTarget
+                ? nodesRef.current.map((node) => node.id === existingTarget.id ? mergedNode : node)
+                : [...nodesRef.current, mergedNode];
+            const nextConnections = links.length ? [...connectionsRef.current, ...links] : connectionsRef.current;
             nodesRef.current = nextNodes;
             connectionsRef.current = nextConnections;
             setNodes(nextNodes);
@@ -244,11 +274,25 @@ export function useCanvasMediaTools({
             setSelectedConnectionId(null);
             setDialogNodeId(null);
             setMergeVideoProgress({ phase: "encoding", progress: 100 });
-            message.success(`已合并 ${videos.length} 段视频，成片节点已添加`);
+            message.success(`已合成 ${videos.length} 段视频`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "视频合并失败");
+            const details = error instanceof Error
+                ? error.message
+                : typeof error === "string"
+                    ? error
+                    : `视频合成失败：${JSON.stringify(error)}`;
+            console.error("视频合成失败", { error, details, targetNodeId, videoNodeIds });
+            if (targetNodeId) {
+                const nextNodes = nodesRef.current.map((node) => node.id === targetNodeId
+                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: details } }
+                    : node);
+                nodesRef.current = nextNodes;
+                setNodes(nextNodes);
+            }
+            message.error(details);
         } finally {
             mergeVideoRunningRef.current = false;
+            setMergeVideoTargetNodeId(null);
             window.setTimeout(() => setMergeVideoProgress(null), 700);
         }
     }, [connectionsRef, message, nodesRef, selectedNodeIdsRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
@@ -440,6 +484,7 @@ export function useCanvasMediaTools({
         mergeSelectedVideos,
         mergeVideosByIds,
         mergeVideoProgress,
+        mergeVideoTargetNodeId,
         saveAnnotatedImageNode,
         setAngleNodeId,
         generateEmotionNode,

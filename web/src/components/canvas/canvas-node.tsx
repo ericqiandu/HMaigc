@@ -123,14 +123,18 @@ export const CanvasNode = React.memo(function CanvasNode({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [hovered, setHovered] = useState(false);
     const [isEditingContent, setIsEditingContent] = useState(false);
+    const isVideoComposition = data.type === CanvasNodeType.Video && data.metadata?.videoEditOperation === "concat";
     const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
-    const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
+    const hasVideoContent = data.type === CanvasNodeType.Video && !isVideoComposition && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
     const hasMediaContent = hasImageContent || hasVideoContent || hasAudioContent;
     const isGeneratingNode = data.type !== CanvasNodeType.Frame && data.metadata?.status === "loading";
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
-    const showStatusTrack = Boolean(resourceLabel || data.metadata?.locked || isBatchRoot || (isBatchChild && !readOnly) || (hasMediaContent && !readOnly));
+    const showStatusTrack = Boolean(
+        data.metadata?.locked
+        || (!isVideoComposition && (resourceLabel || isBatchRoot || (isBatchChild && !readOnly) || (hasMediaContent && !readOnly))),
+    );
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const flushMediaContent = hasImageContent || hasVideoContent;
     const mediaBorderColor = isActive ? theme.accent.primary : isRelated && !isBatchChild ? theme.accent.primary : "transparent";
@@ -281,6 +285,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                 <div className="canvas-audio-node-heading">
                     <Music2 className="canvas-audio-node-heading-icon size-3.5 shrink-0" />
                     <span className="canvas-audio-node-heading-label">{audioNodeTitle(data)}</span>
+                </div>
+            ) : null}
+            {isVideoComposition ? (
+                <div className="canvas-video-composition-heading">
+                    <Video className="canvas-video-composition-heading-icon" aria-hidden="true" />
+                    <span className="canvas-video-composition-heading-label">视频合成</span>
                 </div>
             ) : null}
             <CometCard
@@ -452,6 +462,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     const hasCustomContent = props.node.type === CanvasNodeType.Config
         || props.node.type === CanvasNodeType.Script
+        || props.node.metadata?.videoEditOperation === "concat"
         || (props.node.metadata?.workflowKind === "character" && Boolean(props.node.metadata.characterAssetId))
         || (props.node.metadata?.workflowKind === "story_input" && !props.isEditingContent)
         || (props.node.metadata?.workflowKind === "styleboard" && !props.node.metadata.content);

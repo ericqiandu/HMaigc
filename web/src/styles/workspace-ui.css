@@ -7,14 +7,27 @@
     --workspace-ui-surface-hover: #e8e8eb;
     --workspace-ui-text: #1d1d1f;
     --workspace-ui-text-secondary: rgb(29 29 31 / 62%);
-    --workspace-ui-text-tertiary: rgb(29 29 31 / 42%);
+    --workspace-ui-text-tertiary: rgb(29 29 31 / 48%);
+    --workspace-ui-text-disabled: rgb(29 29 31 / 36%);
     --workspace-ui-divider: rgb(29 29 31 / 10%);
     --workspace-ui-control: rgb(29 29 31 / 6%);
     --workspace-ui-control-hover: rgb(29 29 31 / 10%);
     --workspace-ui-accent: #0071e3;
     --workspace-ui-focus: rgb(0 113 227 / 32%);
+    --workspace-ui-success: #248a3d;
+    --workspace-ui-warning: #b65c00;
+    --workspace-ui-danger: #d70015;
+    --workspace-ui-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     --workspace-ui-radius-control: 8px;
     --workspace-ui-radius-surface: 12px;
+    --workspace-ui-shadow-soft: 0 8px 24px rgb(0 0 0 / 8%);
+    --workspace-ui-shadow-overlay: 0 18px 48px rgb(0 0 0 / 14%), 0 3px 12px rgb(0 0 0 / 8%);
+    --workspace-ui-motion-fast: 160ms;
+    --workspace-ui-motion-standard: 220ms;
+    --workspace-ui-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --workspace-ui-layer-sticky: 20;
+    --workspace-ui-layer-overlay: 40;
+    --workspace-ui-layer-modal: 100;
     --workspace-ui-space-1: 4px;
     --workspace-ui-space-2: 8px;
     --workspace-ui-space-3: 12px;
@@ -37,12 +50,18 @@
     --workspace-ui-surface-hover: #292929;
     --workspace-ui-text: #fafafa;
     --workspace-ui-text-secondary: rgb(250 250 250 / 62%);
-    --workspace-ui-text-tertiary: rgb(250 250 250 / 42%);
+    --workspace-ui-text-tertiary: rgb(250 250 250 / 54%);
+    --workspace-ui-text-disabled: rgb(250 250 250 / 38%);
     --workspace-ui-divider: rgb(250 250 250 / 10%);
     --workspace-ui-control: rgb(250 250 250 / 8%);
     --workspace-ui-control-hover: rgb(250 250 250 / 12%);
     --workspace-ui-accent: #2997ff;
     --workspace-ui-focus: rgb(41 151 255 / 34%);
+    --workspace-ui-success: #30d158;
+    --workspace-ui-warning: #ff9f0a;
+    --workspace-ui-danger: #ff453a;
+    --workspace-ui-shadow-soft: 0 8px 24px rgb(0 0 0 / 28%);
+    --workspace-ui-shadow-overlay: 0 22px 56px rgb(0 0 0 / 46%), 0 4px 14px rgb(0 0 0 / 30%);
 }
 
 :where(.workspace-ui-scope, .settings-workspace-page) :where(button, input, textarea, select) {

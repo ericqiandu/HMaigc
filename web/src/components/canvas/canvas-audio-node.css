@@ -55,9 +55,9 @@
 }
 
 .canvas-audio-node-empty-label {
-    color: color-mix(in srgb, var(--foreground) 44%, transparent);
-    font-size: 11px;
-    line-height: 16px;
+    color: color-mix(in srgb, var(--foreground) 64%, transparent);
+    font-size: 12px;
+    line-height: 17px;
 }
 
 .canvas-audio-node-empty-action {

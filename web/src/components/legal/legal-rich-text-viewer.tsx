@@ -1,12 +1,13 @@
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import { useEffect } from "react";
+
+import { createLegalRichTextExtensions } from "./legal-rich-text";
 
 export function LegalRichTextViewer({ content }: { content: string }) {
     const editor = useEditor({
         immediatelyRender: false,
         editable: false,
-        extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: false })],
+        extensions: createLegalRichTextExtensions(),
         content,
         editorProps: { attributes: { class: "legal-document-rich-content" } },
     });

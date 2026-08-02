@@ -70,7 +70,7 @@ export function CanvasAgentSkillMenu({
     };
 
     return (
-        <section className="canvas-agent-picker canvas-agent-skill-menu" aria-label="Skills">
+        <section className="canvas-overlay-panel canvas-agent-picker canvas-agent-skill-menu" aria-label="Skills">
             <header className="canvas-agent-skill-header">
                 <h3 className="canvas-agent-picker-title">Skill</h3>
                 <Link className="canvas-agent-skill-manage" to="/skills">

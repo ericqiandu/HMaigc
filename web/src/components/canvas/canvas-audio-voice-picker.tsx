@@ -121,6 +121,7 @@ export function CanvasAudioVoicePicker({ config, value, onChange, className = ""
                 <span className="canvas-audio-voice-trigger-label truncate">{selectedVoiceLabel}</span>
             </button>
             <Modal
+                rootClassName="canvas-overlay-modal canvas-overlay-modal--voice-picker"
                 className="canvas-audio-voice-modal"
                 open={open}
                 title={null}

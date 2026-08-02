@@ -34,12 +34,13 @@ import {
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
+import { waitForCanvasGeneration } from "@/lib/canvas/canvas-agent-generation-wait";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
-const ONLINE_AGENT_MAX_STEPS = 4;
+const ONLINE_AGENT_MAX_STEPS = 8;
 const ONLINE_AGENT_PROMPT =
-    "你是 HMaigc 网页内置在线画布助手。当前画布 JSON 会随用户消息提供。由你根据用户意图自主决定是否调用工具：普通问答可直接回答；需要读取画布事实时调用 canvas_get_state；需要改动画布时调用受支持的画布工具。需要生成内容时直接调用 canvas_generate_text、canvas_generate_image、canvas_generate_video、canvas_generate_audio 或 canvas_create_generation_flow；需要精确批量操作时调用 canvas_apply_ops。不要输出 JSON ops，不要编造执行结果。工具参数涉及已有节点时必须使用当前画布 JSON 中真实存在的 id；缺少必要 id 或用户意图不明确时直接说明需要用户明确选择或说明，不要猜测。调用工具后必须根据真实结果回答用户。";
+    "你是 HMaigc 网页内置在线画布助手。当前画布 JSON 会随用户消息提供。由你根据用户意图自主决定是否调用工具：普通问答可直接回答；需要读取画布事实时调用 canvas_get_state；需要改动画布时调用受支持的画布工具。需要生成内容时直接调用 canvas_generate_text、canvas_generate_image、canvas_generate_video、canvas_generate_audio 或 canvas_create_generation_flow；需要精确批量操作时调用 canvas_apply_ops。生成工具和 run_generation 只代表异步任务已经提交，不代表媒体已经生成成功。当用户要求得到实际文案、图片、视频或音频时，必须对生成节点调用 canvas_wait_for_generation，直到工具返回真实资产后才能宣告完成；失败或超时必须如实报告。不要输出 JSON ops，不要编造执行结果。工具参数涉及已有节点时必须使用当前画布 JSON 中真实存在的 id；缺少必要 id 或用户意图不明确时直接说明需要用户明确选择或说明，不要猜测。调用工具后必须根据真实结果回答用户。";
 const JSON_RECORD_SCHEMA = { type: "object", additionalProperties: true };
 const POSITION_SCHEMA = { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"], additionalProperties: false };
 const VIEWPORT_SCHEMA = { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, k: { type: "number" } }, required: ["x", "y", "k"], additionalProperties: false };
@@ -93,7 +94,7 @@ const CANVAS_OP_SCHEMA = {
     required: ["type"],
     additionalProperties: false,
 };
-const ONLINE_READ_TOOLS = new Set(["canvas_get_state", "canvas_get_selection", "canvas_export_snapshot"]);
+const ONLINE_READ_TOOLS = new Set(["canvas_get_state", "canvas_get_selection", "canvas_export_snapshot", "canvas_wait_for_generation"]);
 
 function toolDefinition(name: string, description: string, properties: Record<string, unknown>, required: string[] = [], strict = false): ResponseFunctionTool {
     return { type: "function", function: { name, description, parameters: { type: "object", properties, required, additionalProperties: false }, strict } };
@@ -121,6 +122,15 @@ const ONLINE_AGENT_TOOLS: ResponseFunctionTool[] = [
     toolDefinition("canvas_get_state", "读取当前网页画布的节点、连线、选区和视口。", {}),
     toolDefinition("canvas_get_selection", "读取当前网页画布选中的节点。", {}),
     toolDefinition("canvas_export_snapshot", "导出当前画布快照，用于理解布局。", {}),
+    toolDefinition(
+        "canvas_wait_for_generation",
+        "等待指定生成节点完成。仅当节点存在真实生成资产时返回成功；任务失败或超时会显式报错。应在生成工具或 run_generation 之后调用。",
+        {
+            nodeIds: { type: "array", minItems: 1, items: { type: "string" } },
+            timeoutSeconds: { type: "number", minimum: 1, maximum: 300 },
+        },
+        ["nodeIds"],
+    ),
     toolDefinition(
         "canvas_apply_ops",
         "批量操作当前网页画布。ops 支持 add_node、update_node、delete_node、delete_connections、connect_nodes、set_viewport、select_nodes、run_generation。",
@@ -421,6 +431,7 @@ export function CanvasAssistantPanel({
             const pending = session.pendingBackendSession;
             if (pending?.id !== backendSessionId) return session;
             const completedAt = new Date().toISOString();
+            const generationStarted = ops.some((op) => op.type === "run_generation");
             const summary = summarizeCanvasAgentOps(ops) || "影视项目已写回当前画布。";
             return {
                 ...session,
@@ -428,9 +439,9 @@ export function CanvasAssistantPanel({
                 messages: upsertAssistantMessage(session.messages, {
                     id: pending.messageId,
                     role: "assistant",
-                    title: recovered ? "影视项目已恢复并写回" : "影视项目已写回",
-                    text: recovered ? `页面重新连接后已恢复后台结果：${summary}` : summary,
-                    detail: { kind: "cinematic", backendSessionId, launchRequestId: pending.launchRequestId, executionMode: pending.executionMode, status: "completed", recovered, completedAt },
+                    title: generationStarted ? "视频生成任务已发起" : recovered ? "影视项目已恢复并写回" : "影视项目已写回",
+                    text: generationStarted ? `${summary}。真实媒体任务已提交，结果将由任务中心回写画布。` : recovered ? `页面重新连接后已恢复后台结果：${summary}` : summary,
+                    detail: { kind: "cinematic", backendSessionId, launchRequestId: pending.launchRequestId, executionMode: pending.executionMode, status: generationStarted ? "running" : "completed", recovered, completedAt },
                 }),
                 updatedAt: completedAt,
             };
@@ -502,6 +513,12 @@ export function CanvasAssistantPanel({
                     projectId,
                     prompt: text,
                     canvasSnapshot: compactSnapshot(current) as unknown as Record<string, unknown>,
+                    executionMode,
+                    deliverySpec: {
+                        aspectRatio: config.size,
+                        resolution: config.vquality,
+                        durationSeconds: Number.parseInt(config.videoSeconds, 10),
+                    },
                     config: systemProviderTaskConfig(requestConfig),
                 },
                 {
@@ -679,6 +696,12 @@ export function CanvasAssistantPanel({
         try {
             if (name === "canvas_get_state") return { ok: true, message: describeCanvasSnapshot(current), data: compactSnapshot(current) };
             if (name === "canvas_export_snapshot") return { ok: true, message: describeCanvasSnapshot(current), data: compactSnapshot(current) };
+            if (name === "canvas_wait_for_generation") {
+                const nodeIds = requireStringArray(args.nodeIds, "nodeIds");
+                const timeoutSeconds = Math.min(300, Math.max(1, numberOptional(args.timeoutSeconds) ?? 300));
+                const result = await waitForCanvasGeneration(() => snapshotRef.current, nodeIds, { timeoutMs: timeoutSeconds * 1_000 });
+                return { ok: true, message: `生成已完成，${result.nodes.length} 个节点已获得真实资产。`, data: result };
+            }
             if (name === "canvas_get_selection") {
                 const ids = new Set(current.selectedNodeIds || []);
                 return { ok: true, message: `当前选中 ${ids.size} 个节点。`, data: { nodes: compactSnapshot({ ...current, nodes: current.nodes.filter((node) => ids.has(node.id)) }).nodes } };
@@ -873,6 +896,7 @@ export function CanvasAssistantPanel({
             if (requestedExecutionMode === "guided") {
                 queueCinematicProposal(session.id, cinematic.backendSessionId, cinematic.ops);
             } else {
+                requireAutomaticGenerationOps(cinematic.ops);
                 const next = onApplyOps(cinematic.ops);
                 snapshotRef.current = next;
                 completeCinematicSession(session.id, cinematic.backendSessionId, cinematic.ops);
@@ -909,6 +933,7 @@ export function CanvasAssistantPanel({
             if (pending.executionMode === "guided") {
                 queueCinematicProposal(sessionId, pending.id, ops, true);
             } else if (pending.executionMode === "automatic") {
+                requireAutomaticGenerationOps(ops);
                 executeOps(ops);
                 completeCinematicSession(sessionId, pending.id, ops, true);
             } else {
@@ -1093,6 +1118,7 @@ export function CanvasAssistantPanel({
             ) : null}
 
             <Modal
+                rootClassName="canvas-overlay-modal canvas-overlay-confirm"
                 title="删除对话记录？"
                 open={deleteChatIds.length > 0}
                 centered
@@ -1472,6 +1498,12 @@ function runGenerationOp(nodeId: string, mode: "text" | "image" | "video" | "aud
     return { type: "run_generation", nodeId, mode, prompt };
 }
 
+function requireAutomaticGenerationOps(ops: CanvasAgentOp[]) {
+    if (!ops.some((op) => op.type === "run_generation")) {
+        throw new Error("自动 Agent 未返回真实生成动作，已停止写回，避免把方案节点误报为生成完成");
+    }
+}
+
 function isWritableToolCall(call: ResponseToolCall) {
     return !ONLINE_READ_TOOLS.has(call.function.name);
 }
@@ -1523,6 +1555,7 @@ function toolCallLabel(name: string) {
     if (name === "canvas_get_state") return "读取画布";
     if (name === "canvas_get_selection") return "读取选区";
     if (name === "canvas_export_snapshot") return "导出快照";
+    if (name === "canvas_wait_for_generation") return "等待生成完成";
     if (name === "canvas_create_cinematic_session") return "创建影视项目";
     if (name === "canvas_create_node") return "创建节点";
     if (name === "canvas_create_text_node") return "创建文本";
@@ -1761,6 +1794,12 @@ function compactMetadata(metadata: CanvasNodeData["metadata"]) {
         content: String(metadata?.content || "").slice(0, 500),
         prompt: String(metadata?.prompt || metadata?.composerContent || "").slice(0, 500),
         status: metadata?.status,
+        taskId: metadata?.taskId,
+        taskStatus: metadata?.taskStatus,
+        taskProgress: metadata?.taskProgress,
+        taskStage: metadata?.taskStage,
+        storageKey: metadata?.storageKey,
+        errorDetails: metadata?.errorDetails,
         skillName: metadata?.skillSnapshot?.name,
         skillVersion: metadata?.skillSnapshot?.version,
         generationMode: metadata?.generationMode,

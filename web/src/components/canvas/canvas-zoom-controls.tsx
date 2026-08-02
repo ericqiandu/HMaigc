@@ -76,7 +76,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
         {
             id: "zoom-precision",
             label: "精确缩放",
-            icon: <span className="flex items-baseline text-[9px] font-bold tabular-nums"><span ref={dockLabelRef}>{Math.round(scale * 100)}</span><span className="ml-px text-[7px] opacity-55">%</span></span>,
+            icon: <span className="inline-flex items-center text-[11px] font-semibold leading-4 tabular-nums"><span ref={dockLabelRef}>{Math.round(scale * 100)}</span><span>%</span></span>,
             active: precisionOpen,
             onClick: () => setPrecisionOpen((value) => !value),
         },
@@ -103,7 +103,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                                 <span className="canvas-overlay-panel-title">画布尺度</span>
                                 <span className="canvas-overlay-panel-description" style={{ color: theme.node.muted }}>精确控制视野密度</span>
                             </span>
-                            <span ref={panelLabelRef} className="rounded-full border px-2 py-0.5 text-[10px] font-semibold tabular-nums" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.accent.primary }}>
+                            <span ref={panelLabelRef} className="rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-4 tabular-nums" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.accent.primary }}>
                                 {Math.round(scale * 100)}%
                             </span>
                         </div>
@@ -127,7 +127,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                                     whileHover={{ y: -1 }}
                                     whileTap={{ scale: 0.95 }}
                                     transition={aceternityMotion.spring.dock}
-                                    className="h-7 rounded-[9px] border text-[9px] font-semibold tabular-nums outline-none focus-visible:ring-2"
+                                    className="h-8 rounded-lg border text-[11px] font-semibold leading-4 tabular-nums outline-none focus-visible:ring-2"
                                     style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.muted }}
                                     onClick={() => commitScale(level)}
                                 >

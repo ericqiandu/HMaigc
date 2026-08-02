@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { App, Button, Form, Input, InputNumber, Modal, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CircleAlert, Coins, RefreshCw, Save, Search, Settings2, UserRoundCog } from "lucide-react";
@@ -6,7 +6,7 @@ import { CircleAlert, Coins, RefreshCw, Save, Search, Settings2, UserRoundCog } 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { AdminRowActions, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminRowActions, AdminTableEmpty, AdminTableSkeleton, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
 import { listAdminUsers, type AdminReferenceData, type LocalUser } from "@/services/api/auth";
 import { adjustAdminUserCredits, getAdminCreditPolicy, listAdminBillingOrders, resolveAdminBillingOrder, updateAdminCreditPolicy, type BillingOrder } from "@/services/api/wallet";
 
@@ -14,10 +14,19 @@ type AdjustmentFormValues = { userId: string; amount: number; note: string };
 type ResolutionFormValues = { note: string };
 type PolicyFormValues = { signupBonus: number; checkinBonus: number; defaultMultiplier: number; modelMultipliers: string };
 
+const billingStatusLabels: Record<BillingOrder["status"], string> = {
+    uncertain: "待核对",
+    running: "运行中",
+    reserved: "已冻结",
+    settled: "已结算",
+    refunded: "已退款",
+};
+
 export default function CreditOperationsPanel({ users }: { users: AdminReferenceData["users"] }) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const [orders, setOrders] = useState<BillingOrder[]>([]);
     const [loading, setLoading] = useState(true);
+    const [ordersError, setOrdersError] = useState("");
     const [adjusting, setAdjusting] = useState(false);
     const [resolving, setResolving] = useState(false);
     const [keyword, setKeyword] = useState("");
@@ -33,17 +42,48 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
     const [resolutionForm] = Form.useForm<ResolutionFormValues>();
     const [policyForm] = Form.useForm<PolicyFormValues>();
     const [savingPolicy, setSavingPolicy] = useState(false);
+    const [policyLoading, setPolicyLoading] = useState(true);
+    const [policyLoaded, setPolicyLoaded] = useState(false);
+    const [policyError, setPolicyError] = useState("");
+    const [policyDirty, setPolicyDirty] = useState(false);
+    const ordersRequestSequence = useRef(0);
 
     const reload = async (targetPage = page, targetPageSize = pageSize) => {
+        const requestSequence = ++ordersRequestSequence.current;
         setLoading(true);
+        setOrdersError("");
         try {
             const result = await listAdminBillingOrders({ keyword: debouncedKeyword || undefined, status: orderStatus, page: targetPage, limit: targetPageSize });
+            if (requestSequence !== ordersRequestSequence.current) return;
             setOrders(result.orders);
             setTotal(result.total);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取待核对计费失败");
+            if (requestSequence !== ordersRequestSequence.current) return;
+            setOrdersError(error instanceof Error ? error.message : "读取待核对计费失败");
         } finally {
-            setLoading(false);
+            if (requestSequence === ordersRequestSequence.current) setLoading(false);
+        }
+    };
+
+    const loadPolicy = async () => {
+        setPolicyLoading(true);
+        setPolicyError("");
+        try {
+            const { policy } = await getAdminCreditPolicy();
+            policyForm.setFieldsValue({
+                signupBonus: policy.signupBonusMicrocredits / 1_000_000,
+                checkinBonus: policy.checkinBonusMicrocredits / 1_000_000,
+                defaultMultiplier: policy.defaultMultiplierBasisPoints / 10_000,
+                modelMultipliers: Object.entries(policy.modelMultiplierBasisPoints)
+                    .map(([model, value]) => `${model}=${value / 10_000}`)
+                    .join("\n"),
+            });
+            setPolicyLoaded(true);
+            setPolicyDirty(false);
+        } catch (error) {
+            setPolicyError(error instanceof Error ? error.message : "读取积分策略失败");
+        } finally {
+            setPolicyLoading(false);
         }
     };
 
@@ -56,19 +96,8 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
     }, [users]);
 
     useEffect(() => {
-        void getAdminCreditPolicy()
-            .then(({ policy }) =>
-                policyForm.setFieldsValue({
-                    signupBonus: policy.signupBonusMicrocredits / 1_000_000,
-                    checkinBonus: policy.checkinBonusMicrocredits / 1_000_000,
-                    defaultMultiplier: policy.defaultMultiplierBasisPoints / 10_000,
-                    modelMultipliers: Object.entries(policy.modelMultiplierBasisPoints)
-                        .map(([model, value]) => `${model}=${value / 10_000}`)
-                        .join("\n"),
-                }),
-            )
-            .catch((error) => message.error(error instanceof Error ? error.message : "读取积分策略失败"));
-    }, [message, policyForm]);
+        void loadPolicy();
+    }, [policyForm]);
 
     const savePolicy = async () => {
         const values = await policyForm.validateFields();
@@ -93,6 +122,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                 defaultMultiplierBasisPoints: Math.round(values.defaultMultiplier * 10_000),
                 modelMultiplierBasisPoints,
             });
+            setPolicyDirty(false);
             message.success("积分策略已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存积分策略失败");
@@ -113,8 +143,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
         }
     };
 
-    const adjust = async () => {
-        const values = await adjustmentForm.validateFields();
+    const executeAdjustment = async (values: AdjustmentFormValues) => {
         setAdjusting(true);
         try {
             await adjustAdminUserCredits(values.userId, { amountMicrocredits: Math.round(values.amount * 1_000_000), note: values.note.trim() });
@@ -122,9 +151,31 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
             message.success("用户积分已调整");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "调整积分失败");
+            throw error;
         } finally {
             setAdjusting(false);
         }
+    };
+
+    const adjust = async () => {
+        const values = await adjustmentForm.validateFields();
+        const target = adjustmentUsers.find((user) => user.id === values.userId);
+        const targetName = target ? `${target.displayName || target.username}（@${target.username}）` : values.userId;
+        modal.confirm({
+            className: "admin-operation-modal admin-credit-adjustment-confirm workspace-ui-scope",
+            title: values.amount >= 0 ? "确认增加用户积分" : "确认扣减用户积分",
+            content: (
+                <div className="credit-adjustment-confirm-summary">
+                    <div className="credit-adjustment-confirm-row"><span className="credit-adjustment-confirm-label">目标用户</span><strong className="credit-adjustment-confirm-value">{targetName}</strong></div>
+                    <div className="credit-adjustment-confirm-row"><span className="credit-adjustment-confirm-label">积分变化</span><strong className={`credit-adjustment-confirm-value ${values.amount >= 0 ? "is-positive" : "is-negative"}`}>{values.amount >= 0 ? "+" : ""}{values.amount}</strong></div>
+                    <div className="credit-adjustment-confirm-row"><span className="credit-adjustment-confirm-label">调整依据</span><span className="credit-adjustment-confirm-value">{values.note.trim()}</span></div>
+                </div>
+            ),
+            okText: values.amount >= 0 ? "确认增加" : "确认扣减",
+            cancelText: "返回检查",
+            okButtonProps: { danger: values.amount < 0 },
+            onOk: () => executeAdjustment(values),
+        });
     };
 
     const resolveBilling = async () => {
@@ -151,9 +202,9 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
             title: "模型 / 场景",
             width: 220,
             render: (_, order) => (
-                <div>
-                    <div className="font-medium">{order.model}</div>
-                    <div className="mt-0.5 text-xs text-foreground/50">{order.scene || order.capability}</div>
+                <div className="credit-order-model">
+                    <div className="credit-order-model-name">{order.model}</div>
+                    <div className="credit-order-model-scene">{order.scene || order.capability}</div>
                 </div>
             ),
         },
@@ -162,9 +213,9 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
             title: "状态",
             dataIndex: "status",
             width: 105,
-            render: (value) => (
-                <Tag variant="filled" color={value === "settled" ? "success" : value === "refunded" ? "default" : "warning"}>
-                    {({ uncertain: "待核对", running: "运行中", reserved: "已冻结", settled: "已结算", refunded: "已退款" } as Record<string, string>)[value] || "未知状态"}
+            render: (value: BillingOrder["status"]) => (
+                <Tag className="credit-order-status" variant="filled" color={value === "settled" ? "success" : value === "refunded" ? "default" : "warning"}>
+                    {billingStatusLabels[value]}
                 </Tag>
             ),
         },
@@ -204,9 +255,11 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
 
     return (
         <div className="credit-operations space-y-6">
-            <div className="credit-operations-overview grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.85fr)]">
+            <div className="credit-operations-overview grid min-w-0 items-start">
                 <SettingsSectionCard className="credit-policy-panel" icon={<Settings2 className="credit-policy-icon size-4" />} title="积分策略" description="注册、签到与模型倍率统一在服务端结算。">
-                    <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form admin-content-form">
+                    {policyLoading && !policyLoaded ? <AdminContentSkeleton rows={5} compact label="正在读取积分策略" /> : null}
+                    {policyError && !policyLoaded ? <AdminContentError title="积分策略读取失败" description={policyError} onRetry={() => void loadPolicy()} /> : null}
+                    {policyLoaded ? <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form admin-content-form" onValuesChange={() => setPolicyDirty(true)} onFinish={() => void savePolicy()}>
                         <div className="credit-policy-fields grid gap-5 md:grid-cols-3">
                             <Form.Item
                                 name="signupBonus"
@@ -243,11 +296,12 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                             <Input.TextArea rows={4} placeholder={"gpt-image-1=1.5\nseedance-1.0-pro=2"} />
                         </Form.Item>
                         <div className="admin-form-actions credit-policy-actions flex justify-end">
-                            <Button className="admin-form-submit" type="primary" icon={<Save className="size-4" />} loading={savingPolicy} onClick={() => void savePolicy()}>
+                            <span className={`credit-policy-sync-state ${policyDirty ? "is-dirty" : ""}`} role="status">{policyDirty ? "有未保存修改" : "已与服务端同步"}</span>
+                            <Button className="admin-form-submit" type="primary" htmlType="submit" icon={<Save className="size-4" />} loading={savingPolicy} disabled={!policyDirty}>
                                 保存积分策略
                             </Button>
                         </div>
-                    </Form>
+                    </Form> : null}
                 </SettingsSectionCard>
                 <SettingsSectionCard
                     className="credit-adjustment-panel"
@@ -264,7 +318,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                         </div>
                     }
                 >
-                        <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form admin-content-form">
+                        <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form admin-content-form" onFinish={() => void adjust()}>
                             <Form.Item name="userId" label="目标用户" rules={[{ required: true, message: "请选择用户" }]}>
                                 <Select
                                     showSearch
@@ -276,7 +330,10 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                 />
                             </Form.Item>
                             <div className="credit-adjustment-fields grid gap-5 sm:grid-cols-2 xl:grid-cols-1">
-                                <Form.Item name="amount" label="积分变化" extra="正数增加，负数扣减。" rules={[{ required: true, message: "请填写积分变化" }]}>
+                                <Form.Item name="amount" label="积分变化" extra="正数增加，负数扣减。" rules={[
+                                    { required: true, message: "请填写积分变化" },
+                                    { validator: (_rule, value?: number) => value === 0 ? Promise.reject(new Error("积分变化不能为 0")) : Promise.resolve() },
+                                ]}>
                                     <InputNumber className="w-full" precision={6} prefix={<Coins className="size-3.5 text-foreground/45" />} placeholder="例如 10 或 -2" />
                                 </Form.Item>
                                 <Form.Item name="note" label="调整原因" rules={[{ required: true, message: "请填写调整原因" }]}>
@@ -284,7 +341,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                 </Form.Item>
                             </div>
                             <div className="admin-form-actions credit-adjustment-actions flex justify-end">
-                                <Button className="admin-form-submit" type="primary" icon={<Coins className="size-4" />} loading={adjusting} onClick={() => void adjust()}>
+                                <Button className="admin-form-submit" type="primary" htmlType="submit" icon={<Coins className="size-4" />} loading={adjusting}>
                                     确认调整
                                 </Button>
                             </div>
@@ -292,7 +349,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                 </SettingsSectionCard>
             </div>
 
-            <section className="credit-orders-section pt-1">
+            <section className="credit-orders-section min-w-0 pt-1">
                 <div className="credit-orders-heading mb-5 flex flex-wrap items-end justify-between gap-4">
                     <div className="credit-orders-heading-copy">
                         <div className="credit-orders-title-row flex items-center gap-2">
@@ -312,9 +369,10 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                         setPage(1);
                     }}
                     trailing={
-                        <Button className="credit-orders-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
-                            刷新
-                        </Button>
+                        <div className="credit-orders-toolbar-trailing">
+                            <span className="credit-orders-result-count" role="status">共 {total} 条记录</span>
+                            <Button className="credit-orders-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>刷新</Button>
+                        </div>
                     }
                 >
                     <Input
@@ -346,14 +404,17 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                         ]}
                     />
                 </ListToolbar>
-                <TableSurface>
-                    <Table
-                        className="app-data-table"
+                {ordersError ? <AdminContentError title="计费订单读取失败" description={ordersError} onRetry={() => void reload()} /> : null}
+                {!ordersError || orders.length > 0 ? <TableSurface>
+                    {loading && orders.length === 0 ? <AdminTableSkeleton rows={7} columns={8} /> : null}
+                    {orders.length > 0 || !loading ? <Table
+                        className="credit-orders-table app-data-table"
                         rowKey="id"
                         size="middle"
                         loading={loading}
                         columns={columns}
                         dataSource={orders}
+                        locale={{ emptyText: <AdminTableEmpty filtered={Boolean(keyword || orderStatus !== "review")} /> }}
                         pagination={{
                             current: page,
                             pageSize,
@@ -367,19 +428,30 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                             },
                         }}
                         scroll={{ x: 1200 }}
-                    />
-                </TableSurface>
+                    /> : null}
+                </TableSurface> : null}
             </section>
 
             <Modal
+                className="admin-operation-modal admin-credit-resolution-modal workspace-ui-scope"
                 title={resolvingOrder?.action === "settle" ? "确认扣除冻结积分" : "确认退回冻结积分"}
                 open={Boolean(resolvingOrder)}
-                onCancel={() => setResolvingOrder(null)}
+                onCancel={() => { if (!resolving) setResolvingOrder(null); }}
                 onOk={() => void resolveBilling()}
                 confirmLoading={resolving}
+                keyboard={!resolving}
+                maskClosable={!resolving}
+                cancelButtonProps={{ disabled: resolving }}
+                okText={resolvingOrder?.action === "settle" ? "确认扣费" : "确认退款"}
+                cancelText="取消"
                 okButtonProps={{ danger: resolvingOrder?.action === "refund" }}
             >
-                <Form form={resolutionForm} layout="vertical" requiredMark={false}>
+                {resolvingOrder ? <div className="credit-resolution-summary">
+                    <div className="credit-resolution-summary-item"><span className="credit-resolution-summary-label">模型</span><strong className="credit-resolution-summary-value">{resolvingOrder.order.model}</strong></div>
+                    <div className="credit-resolution-summary-item"><span className="credit-resolution-summary-label">冻结积分</span><strong className="credit-resolution-summary-value">{formatCredits(resolvingOrder.order.amountMicrocredits)}</strong></div>
+                    <div className="credit-resolution-summary-item"><span className="credit-resolution-summary-label">请求号</span><span className="credit-resolution-summary-value is-mono">{resolvingOrder.order.providerRequestId || "未获取"}</span></div>
+                </div> : null}
+                <Form form={resolutionForm} layout="vertical" requiredMark={false} className="credit-resolution-form">
                     <Form.Item name="note" label="核对依据" rules={[{ required: true, message: "请填写供应商账单、任务状态或处理依据" }]}>
                         <Input.TextArea rows={4} maxLength={500} placeholder="例如：供应商后台确认该请求未产生费用" />
                     </Form.Item>

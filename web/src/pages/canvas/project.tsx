@@ -21,6 +21,8 @@ import { App } from "antd";
 import { getNodeSpec } from "@/constant/canvas";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
+import { CanvasVideoCompositionNode } from "@/components/canvas/canvas-video-composition-node";
+import { CanvasVideoCompositionEditor } from "@/components/canvas/canvas-video-composition-editor";
 import { CanvasAssistantPanel } from "@/components/canvas/canvas-assistant-panel";
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasAssetTray } from "@/components/canvas/canvas-asset-tray";
@@ -54,6 +56,7 @@ import { CanvasAlignmentGuides, CanvasConnectionCreateMenu, CanvasNodePanelOverl
 import { CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
 import { createCanvasNode, getInputSummary, isHiddenBatchChild, persistCanvasWorkspaceMode, readCanvasWorkspaceMode } from "@/lib/canvas/canvas-project-domain";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
+import { getCompositionSourceVideos, isVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
 import { CanvasAgentChangeToast, CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
 import { backendProviderConfig, getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { CanvasTopBar } from "./canvas-project-top-bar";
@@ -204,6 +207,7 @@ function InfiniteCanvasPage() {
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
+    const [compositionEditorNodeId, setCompositionEditorNodeId] = useState<string | null>(null);
     const [textEditorNodeId, setTextEditorNodeId] = useState<string | null>(null);
     const [characterReferenceNodeId, setCharacterReferenceNodeId] = useState<string | null>(null);
     const [stylePickerOpen, setStylePickerOpen] = useState(false);
@@ -520,6 +524,7 @@ function InfiniteCanvasPage() {
         mergeSelectedVideos,
         mergeVideosByIds,
         mergeVideoProgress,
+        mergeVideoTargetNodeId,
         saveAnnotatedImageNode,
         setAngleNodeId,
         setEmotionNodeId,
@@ -609,6 +614,16 @@ function InfiniteCanvasPage() {
         setDialogNodeId,
         onNodesDeleted: handleNodesDeleted,
     });
+
+    const createVideoCompositionNode = useCallback((position?: Position) => {
+        createNode(CanvasNodeType.Video, position, {
+            generationMode: "video",
+            videoEditOperation: "concat",
+            workflowKind: "final",
+            workflowTitle: "视频合成",
+            status: "idle",
+        });
+    }, [createNode]);
 
     const { cancelPendingConnectionCreate, closeConnectionCreateMenu, connectionTargetNodeId, connectingParams, connectExistingNodes, createConnectedNode, handleConnectStart, mouseWorld, pendingConnectionCreate, setConnecting } =
         useCanvasConnectionController({
@@ -1120,7 +1135,7 @@ function InfiniteCanvasPage() {
 
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
-            if (panelNode.type === CanvasNodeType.Script) return null;
+            if (panelNode.type === CanvasNodeType.Script || isVideoCompositionNode(panelNode)) return null;
             return panelNode.type === CanvasNodeType.Config ? (
                 <CanvasConfigComposer
                     value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
@@ -1157,6 +1172,18 @@ function InfiniteCanvasPage() {
 
     const renderCanvasNodeContent = useCallback(
         (contentNode: CanvasNodeData) => {
+            if (isVideoCompositionNode(contentNode)) {
+                const sourceVideos = getCompositionSourceVideos(contentNode.id, nodes, connections);
+                return (
+                    <CanvasVideoCompositionNode
+                        node={contentNode}
+                        sourceVideos={sourceVideos}
+                        isMerging={mergeVideoTargetNodeId === contentNode.id}
+                        progress={mergeVideoTargetNodeId === contentNode.id ? mergeVideoProgress : null}
+                        onOpenEditor={() => setCompositionEditorNodeId(contentNode.id)}
+                    />
+                );
+            }
             if (contentNode.metadata?.workflowKind === "character" && contentNode.metadata.characterAssetId) {
                 return <CanvasCharacterReferenceNodeContent node={contentNode} />;
             }
@@ -1252,6 +1279,10 @@ function InfiniteCanvasPage() {
             handleNodeResize,
             mentionReferencesByNodeId,
             mergeVideosByIds,
+            mergeVideoProgress,
+            mergeVideoTargetNodeId,
+            nodes,
+            connections,
             openDirectorWorkbench,
             openStoryInput,
             removeScriptRow,
@@ -1262,6 +1293,15 @@ function InfiniteCanvasPage() {
             viewport.k,
             workspaceMode,
         ],
+    );
+
+    const compositionEditorNode = useMemo(
+        () => compositionEditorNodeId ? nodes.find((node) => node.id === compositionEditorNodeId) || null : null,
+        [compositionEditorNodeId, nodes],
+    );
+    const compositionEditorSources = useMemo(
+        () => compositionEditorNode ? getCompositionSourceVideos(compositionEditorNode.id, nodes, connections) : [],
+        [compositionEditorNode, connections, nodes],
     );
 
     const handleCanvasNodeHoverStart = useCallback(
@@ -1654,6 +1694,7 @@ function InfiniteCanvasPage() {
                         showImageInfo={showImageInfo}
                         onAddImage={() => createNode(CanvasNodeType.Image)}
                         onAddVideo={() => createNode(CanvasNodeType.Video)}
+                        onAddVideoComposition={() => createVideoCompositionNode()}
                         onAddAudio={() => createNode(CanvasNodeType.Audio)}
                         onAddText={() => createNode(CanvasNodeType.Text)}
                         onChooseStyle={() => setStylePickerOpen(true)}
@@ -1716,6 +1757,7 @@ function InfiniteCanvasPage() {
                         screenToCanvas={screenToCanvas}
                         onClose={() => setContextMenu(null)}
                         onAddNode={(type, position) => createNode(type, position)}
+                        onAddVideoComposition={(position) => createVideoCompositionNode(position)}
                         onOpenDirector={createDirectorShot}
                         onUpload={(nodeId, position) => handleUploadRequest(nodeId, position)}
                         onOpenAssets={openAssetsAtPosition}
@@ -1807,6 +1849,22 @@ function InfiniteCanvasPage() {
                         focusCanvasNode(nodeId);
                     }}
                 />
+
+                {compositionEditorNode ? (
+                    <CanvasVideoCompositionEditor
+                        open
+                        node={compositionEditorNode}
+                        sourceVideos={compositionEditorSources}
+                        exporting={mergeVideoTargetNodeId === compositionEditorNode.id}
+                        onClose={() => setCompositionEditorNodeId(null)}
+                        onSave={(compositionClips) => handleConfigNodeChange(compositionEditorNode.id, { compositionClips })}
+                        onExport={(compositionClips) => void mergeVideosByIds(
+                            compositionEditorSources.map((source) => source.id),
+                            compositionEditorNode.id,
+                            compositionClips,
+                        )}
+                    />
+                ) : null}
 
                 <CanvasProjectMediaDialogs
                     cropNode={cropNode}

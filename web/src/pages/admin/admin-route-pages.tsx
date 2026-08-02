@@ -34,5 +34,5 @@ export function AccessSettingsPage() {
 }
 
 export function EmailSettingsPage() {
-    return <AdminPageFrame title="邮件服务" description="注册验证码 SMTP"><div className="mx-auto max-w-5xl"><Suspense fallback={<PageFallback label="邮件配置" />}><EmailSettingsPanel /></Suspense></div></AdminPageFrame>;
+    return <AdminPageFrame title="邮件服务" description="注册验证码 SMTP"><div className="admin-settings-page"><Suspense fallback={<PageFallback label="邮件配置" />}><EmailSettingsPanel /></Suspense></div></AdminPageFrame>;
 }

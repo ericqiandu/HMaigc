@@ -134,7 +134,7 @@ export function InvoiceAdminPanel() {
             </TableSurface>
 
             <Modal
-                className="admin-invoice-resolve-modal"
+                className="admin-operation-modal admin-invoice-resolve-modal workspace-ui-scope"
                 title={resolving?.status === "issued" ? "登记电子发票" : "驳回开票申请"}
                 open={Boolean(resolving)}
                 okText={resolving?.status === "issued" ? "确认已开具" : "确认驳回"}

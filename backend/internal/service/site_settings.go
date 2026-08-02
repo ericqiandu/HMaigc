@@ -389,6 +389,7 @@ func validateSiteSetting(value siteSettingValue) error {
 }
 
 var legalRichTextTags = map[string]struct{}{
+	"a":          {},
 	"blockquote": {},
 	"br":         {},
 	"code":       {},
@@ -397,6 +398,7 @@ var legalRichTextTags = map[string]struct{}{
 	"h2":         {},
 	"h3":         {},
 	"hr":         {},
+	"img":        {},
 	"li":         {},
 	"ol":         {},
 	"p":          {},
@@ -435,8 +437,8 @@ func validateLegalRichText(label string, value string) error {
 			if _, allowed := legalRichTextTags[token.Data]; !allowed {
 				return fmt.Errorf("%s包含不支持的 HTML 标签 <%s>", label, token.Data)
 			}
-			if len(token.Attr) > 0 {
-				return fmt.Errorf("%s的 HTML 标签 <%s> 不能包含属性", label, token.Data)
+			if err := validateLegalRichTextAttributes(label, token); err != nil {
+				return err
 			}
 		case html.EndTagToken:
 			token := tokenizer.Token()
@@ -447,6 +449,73 @@ func validateLegalRichText(label string, value string) error {
 			return fmt.Errorf("%s包含不支持的 HTML 内容", label)
 		}
 	}
+}
+
+func validateLegalRichTextAttributes(label string, token html.Token) error {
+	allowedAttributes := map[string]struct{}{}
+	switch token.Data {
+	case "a":
+		allowedAttributes = map[string]struct{}{"href": {}, "rel": {}, "target": {}}
+	case "img":
+		allowedAttributes = map[string]struct{}{"alt": {}, "src": {}, "title": {}}
+	case "p", "h1", "h2", "h3":
+		allowedAttributes = map[string]struct{}{"style": {}}
+	}
+	seen := make(map[string]struct{}, len(token.Attr))
+	for _, attribute := range token.Attr {
+		if _, duplicate := seen[attribute.Key]; duplicate {
+			return fmt.Errorf("%s的 HTML 标签 <%s> 包含重复属性 %s", label, token.Data, attribute.Key)
+		}
+		seen[attribute.Key] = struct{}{}
+		if _, allowed := allowedAttributes[attribute.Key]; !allowed || attribute.Namespace != "" {
+			return fmt.Errorf("%s的 HTML 标签 <%s> 包含不支持的属性 %s", label, token.Data, attribute.Key)
+		}
+		if err := validateLegalRichTextAttributeValue(label, token.Data, attribute.Key, attribute.Val); err != nil {
+			return err
+		}
+	}
+	if token.Data == "a" {
+		if _, exists := seen["href"]; !exists {
+			return fmt.Errorf("%s的链接缺少地址", label)
+		}
+	}
+	if token.Data == "img" {
+		if _, exists := seen["src"]; !exists {
+			return fmt.Errorf("%s的图片缺少地址", label)
+		}
+	}
+	return nil
+}
+
+func validateLegalRichTextAttributeValue(label string, tag string, key string, value string) error {
+	switch key {
+	case "href":
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "mailto" && parsed.Scheme != "tel") {
+			return fmt.Errorf("%s包含不安全的链接地址", label)
+		}
+	case "src":
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("%s包含不安全的图片地址", label)
+		}
+	case "target":
+		if value != "_blank" {
+			return fmt.Errorf("%s包含不支持的链接打开方式", label)
+		}
+	case "rel":
+		if value != "noopener noreferrer" && value != "noopener noreferrer nofollow" {
+			return fmt.Errorf("%s包含不支持的链接安全属性", label)
+		}
+	case "style":
+		if tag != "p" && tag != "h1" && tag != "h2" && tag != "h3" {
+			return fmt.Errorf("%s包含不支持的对齐位置", label)
+		}
+		if value != "text-align: left" && value != "text-align: center" && value != "text-align: right" && value != "text-align: justify" {
+			return fmt.Errorf("%s包含不支持的文本对齐样式", label)
+		}
+	}
+	return nil
 }
 
 func validateSiteRecordURL(label string, rawURL string) error {

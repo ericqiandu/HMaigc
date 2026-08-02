@@ -1,53 +1,103 @@
 import { Alert, App, Button, Form, Input, Modal, Progress, Select, Space, Switch, Tag } from "antd";
 import { ArchiveRestore, Cloud, DatabaseBackup, Info, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useBlocker } from "react-router";
 
 import { getAdminOSSSetting, updateAdminOSSSetting, type AdminOSSSetting } from "@/services/api/auth";
 import { getStorageMigrationOverview, retryStorageMigration, startStorageMigration, type StorageMigrationOverview, type StorageMigrationStatus } from "@/services/api/storage-migrations";
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
-import { configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
-
-type OSSFormValues = { enabled?: boolean; provider: "aliyun"; region?: string; endpoint?: string; bucket?: string; accessKeyId?: string; accessKeySecret?: string; pathPrefix?: string };
+import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
+import { normalizeStorageFormValues, storageFieldErrors, storageFormValues, storageValuesEqual, type OSSFormValues } from "./storage-setting-form";
 
 export default function StorageSettingsPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const { references } = useAdminContext();
     const [setting, setSetting] = useState<AdminOSSSetting | null>(null);
     const [loading, setLoading] = useState(true);
+    const [settingError, setSettingError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
+    const [dirty, setDirty] = useState(false);
     const [migration, setMigration] = useState<StorageMigrationOverview | null>(null);
     const [migrationLoading, setMigrationLoading] = useState(false);
+    const [migrationError, setMigrationError] = useState<string | null>(null);
     const [migrationOpen, setMigrationOpen] = useState(false);
     const [migrationConfirmation, setMigrationConfirmation] = useState("");
+    const [retryOpen, setRetryOpen] = useState(false);
+    const [retryConfirmation, setRetryConfirmation] = useState("");
     const [migrationSubmitting, setMigrationSubmitting] = useState(false);
     const [form] = Form.useForm<OSSFormValues>();
+    const dirtyRef = useRef(false);
+    const settingRef = useRef<AdminOSSSetting | null>(null);
     const userNameById = useMemo(() => new Map(references.users.map((user) => [user.id, user.displayName || user.username])), [references.users]);
+
+    const loadSetting = useCallback(async () => {
+        setLoading(true);
+        setSettingError(null);
+        try {
+            const result = await getAdminOSSSetting();
+            if (dirtyRef.current && settingRef.current) {
+                message.info("已保留当前未保存的 OSS 配置，未使用刷新结果覆盖输入");
+                return;
+            }
+            setSetting(result.setting);
+            settingRef.current = result.setting;
+            form.setFieldsValue(storageFormValues(result.setting));
+            setDirty(false);
+        } catch (error) {
+            setSettingError(error instanceof Error ? error.message : "读取 OSS 配置失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [form, message]);
 
     const refreshMigration = useCallback(
         async (showLoading = true) => {
             if (showLoading) setMigrationLoading(true);
+            setMigrationError(null);
             try {
                 setMigration(await getStorageMigrationOverview());
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "读取迁移状态失败");
+                setMigrationError(error instanceof Error ? error.message : "读取迁移状态失败");
             } finally {
                 if (showLoading) setMigrationLoading(false);
             }
         },
-        [message],
+        [],
     );
 
     useEffect(() => {
-        void Promise.all([getAdminOSSSetting(), getStorageMigrationOverview()])
-            .then(([{ setting: value }, migrationOverview]) => {
-                setSetting(value);
-                form.setFieldsValue(formValues(value));
-                setMigration(migrationOverview);
-            })
-            .catch((error) => message.error(error instanceof Error ? error.message : "读取 OSS 配置失败"))
-            .finally(() => setLoading(false));
-    }, [form, message]);
+        void loadSetting();
+        void refreshMigration();
+    }, [loadSetting, refreshMigration]);
+
+    useEffect(() => {
+        dirtyRef.current = dirty;
+    }, [dirty]);
+
+    const blocker = useBlocker(dirty && !saving);
+
+    useEffect(() => {
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (!dirty || saving) return;
+            event.preventDefault();
+        };
+        window.addEventListener("beforeunload", beforeUnload);
+        return () => window.removeEventListener("beforeunload", beforeUnload);
+    }, [dirty, saving]);
+
+    useEffect(() => {
+        if (blocker.state !== "blocked") return;
+        modal.confirm({
+            title: "离开并放弃未保存的 OSS 配置？",
+            content: "Endpoint、Bucket、路径前缀或密钥输入尚未保存，离开后这些修改将丢失。",
+            okText: "放弃修改并离开",
+            cancelText: "继续编辑",
+            okButtonProps: { danger: true },
+            onOk: () => blocker.proceed(),
+            onCancel: () => blocker.reset(),
+        });
+    }, [blocker, modal]);
 
     useEffect(() => {
         if (!migration?.active) return;
@@ -59,25 +109,24 @@ export default function StorageSettingsPage() {
 
     const save = async () => {
         const values = await form.validateFields();
-        if (values.enabled && !values.accessKeySecret?.trim() && !setting?.hasAccessKeySecret) return message.error("请填写 AccessKey Secret");
-        if (values.enabled && !values.endpoint?.trim()) return message.error("请填写 OSS Endpoint");
-        if (values.enabled && !values.bucket?.trim()) return message.error("请填写 OSS Bucket");
-        if (values.enabled && !values.accessKeyId?.trim()) return message.error("请填写 AccessKey ID");
+        const normalized = normalizeStorageFormValues(values);
         setSaving(true);
         try {
             const result = await updateAdminOSSSetting({
-                enabled: values.enabled === true,
-                provider: values.provider,
-                region: values.region?.trim() || "",
-                endpoint: values.endpoint?.trim() || "",
-                bucket: values.bucket?.trim() || "",
-                accessKeyId: values.accessKeyId?.trim() || "",
-                accessKeySecret: values.accessKeySecret?.trim() || "",
+                enabled: normalized.enabled === true,
+                provider: normalized.provider,
+                region: normalized.region,
+                endpoint: normalized.endpoint,
+                bucket: normalized.bucket,
+                accessKeyId: normalized.accessKeyId,
+                accessKeySecret: normalized.accessKeySecret,
                 publicBaseUrl: "",
-                pathPrefix: values.pathPrefix?.trim() || "",
+                pathPrefix: normalized.pathPrefix,
             });
             setSetting(result.setting);
-            form.setFieldsValue(formValues(result.setting));
+            settingRef.current = result.setting;
+            form.setFieldsValue(storageFormValues(result.setting));
+            setDirty(false);
             message.success("OSS 配置已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存 OSS 配置失败");
@@ -106,7 +155,9 @@ export default function StorageSettingsPage() {
         if (!job) return;
         setMigrationSubmitting(true);
         try {
-            await retryStorageMigration(job.id, `RETRY ${job.id}`);
+            await retryStorageMigration(job.id, retryConfirmation);
+            setRetryOpen(false);
+            setRetryConfirmation("");
             message.success("失败资源已重新进入迁移队列");
             await refreshMigration(false);
         } catch (error) {
@@ -118,10 +169,10 @@ export default function StorageSettingsPage() {
 
     return (
         <AdminPageFrame title="存储服务" description="OSS 与资源存储">
-            <div className="admin-storage-layout mx-auto max-w-5xl space-y-8">
-                <div className="admin-storage-guidance bg-muted/25 px-5 py-4 text-foreground/75">
+            <div className="admin-storage-layout admin-settings-page space-y-6">
+                <div className="admin-storage-guidance bg-muted/25 px-5 py-4 text-foreground/75" role="note">
                     <div className="admin-storage-guidance-content flex items-start gap-4">
-                        <span className="admin-storage-guidance-icon mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-muted/60">
+                        <span className="admin-storage-guidance-icon mt-0.5 grid size-5 shrink-0 place-items-center" aria-hidden="true">
                             <Info className="size-4" />
                         </span>
                         <div className="admin-storage-guidance-copy">
@@ -130,7 +181,9 @@ export default function StorageSettingsPage() {
                         </div>
                     </div>
                 </div>
-                <SettingsSectionCard
+                {loading && !setting ? <AdminContentSkeleton rows={8} label="正在读取 OSS 配置" /> : null}
+                {settingError ? <AdminContentError title={setting ? "OSS 配置刷新失败" : "OSS 配置读取失败"} description={setting ? `${settingError}。当前保留上次成功读取的配置。` : settingError} onRetry={() => void loadSetting()} /> : null}
+                {!loading && setting ? <SettingsSectionCard
                     icon={<Cloud className="size-4" />}
                     title="平台 OSS"
                     description="配置平台媒体资源的默认存储位置。"
@@ -144,52 +197,87 @@ export default function StorageSettingsPage() {
                             </Tag>
                         </Space>
                     }
-                    footer={
-                        <>
-                            <div className="text-xs text-foreground/45">
-                                {setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存 OSS 配置"}
-                            </div>
-                            <Button type="primary" loading={saving} onClick={() => void save()}>
-                                保存 OSS 配置
-                            </Button>
-                        </>
-                    }
                 >
-                    <Form form={form} layout="vertical" requiredMark={false} disabled={loading}>
-                        <div className="storage-settings-fields grid grid-cols-1 gap-x-6 px-6 pt-6 md:grid-cols-2">
-                            <Form.Item name="enabled" label="启用 OSS" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                            <Form.Item name="provider" label="存储渠道" rules={[{ required: true, message: "请选择存储渠道" }]}>
-                                <Select options={[{ label: "阿里云 OSS", value: "aliyun" }]} />
-                            </Form.Item>
-                            <Form.Item name="region" label="Region">
-                                <Input autoComplete="off" placeholder="例如：oss-cn-hangzhou" />
-                            </Form.Item>
-                            <Form.Item name="endpoint" label="Endpoint">
-                                <Input autoComplete="off" placeholder="https://oss-cn-hangzhou.aliyuncs.com" />
-                            </Form.Item>
-                            <Form.Item name="bucket" label="Bucket">
-                                <Input autoComplete="off" placeholder="例如：my-canvas-assets" />
-                            </Form.Item>
-                            <Form.Item name="pathPrefix" label="路径前缀">
-                                <Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" />
-                            </Form.Item>
-                            <Form.Item name="accessKeyId" label="AccessKey ID">
-                                <Input autoComplete="off" placeholder="阿里云 AccessKey ID" />
-                            </Form.Item>
-                            <Form.Item name="accessKeySecret" label={setting?.hasAccessKeySecret ? `AccessKey Secret（${configuredSecretText}）` : "AccessKey Secret"}>
-                                <Input.Password autoComplete="new-password" placeholder={setting?.hasAccessKeySecret ? "留空保留原密钥" : "阿里云 AccessKey Secret"} />
-                            </Form.Item>
+                    <Form
+                        className="admin-content-form storage-settings-form"
+                        form={form}
+                        layout="vertical"
+                        requiredMark={false}
+                        disabled={loading || saving}
+                        onValuesChange={(_, values: OSSFormValues) => setDirty(!storageValuesEqual(values, setting))}
+                    >
+                        <div className="storage-settings-groups">
+                            <section className="storage-settings-group" aria-labelledby="storage-connection-heading">
+                                <div className="storage-settings-group-heading">
+                                    <h3 id="storage-connection-heading">存储目标</h3>
+                                    <p>决定新资源的写入位置与对象路径，不影响已经保存的历史资源。</p>
+                                </div>
+                                <div className="storage-settings-fields grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                                    <Form.Item name="enabled" label="启用 OSS" valuePropName="checked">
+                                        <Switch />
+                                    </Form.Item>
+                                    <Form.Item name="provider" label="存储渠道" rules={[{ required: true, message: "请选择存储渠道" }]}>
+                                        <Select options={[{ label: "阿里云 OSS", value: "aliyun" }]} />
+                                    </Form.Item>
+                                    <Form.Item name="region" label="Region">
+                                        <Input autoComplete="off" placeholder="例如：oss-cn-hangzhou" />
+                                    </Form.Item>
+                                    <Form.Item
+                                        name="endpoint"
+                                        label="Endpoint"
+                                        dependencies={["enabled"]}
+                                        rules={[{ validator: async (_, value: string | undefined) => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "endpoint", value) }]}
+                                        extra="填写 Bucket 所在地域的公网 Endpoint，保存时会自动移除末尾斜杠。"
+                                    >
+                                        <Input autoComplete="off" placeholder="https://oss-cn-hangzhou.aliyuncs.com" />
+                                    </Form.Item>
+                                    <Form.Item name="bucket" label="Bucket" dependencies={["enabled"]} rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "bucket") }]}>
+                                        <Input autoComplete="off" placeholder="例如：my-canvas-assets" />
+                                    </Form.Item>
+                                    <Form.Item name="pathPrefix" label="路径前缀" extra="可选。用于隔离环境或业务目录，例如 production/assets。">
+                                        <Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" />
+                                    </Form.Item>
+                                </div>
+                            </section>
+                            <section className="storage-settings-group" aria-labelledby="storage-credential-heading">
+                                <div className="storage-settings-group-heading">
+                                    <h3 id="storage-credential-heading">访问凭据</h3>
+                                    <p>建议使用只允许访问目标 Bucket 的 RAM 子账号，并按最小权限配置。</p>
+                                </div>
+                                <div className="storage-settings-fields grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                                    <Form.Item name="accessKeyId" label="AccessKey ID" dependencies={["enabled"]} rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "accessKeyId") }]}>
+                                        <Input autoComplete="off" placeholder="阿里云 AccessKey ID" />
+                                    </Form.Item>
+                                    <Form.Item
+                                        name="accessKeySecret"
+                                        label={setting.hasAccessKeySecret ? `AccessKey Secret（${configuredSecretText}）` : "AccessKey Secret"}
+                                        dependencies={["enabled"]}
+                                        rules={[{ validator: async () => validateStorageField(form.getFieldsValue(true), setting.hasAccessKeySecret, "accessKeySecret") }]}
+                                        extra={setting.hasAccessKeySecret ? "密钥不会回显；保持为空会继续使用当前已保存密钥。" : "密钥仅提交到后端加密保存，不会在页面中回显。"}
+                                    >
+                                        <Input.Password autoComplete="new-password" placeholder={setting.hasAccessKeySecret ? "留空保留原密钥" : "阿里云 AccessKey Secret"} />
+                                    </Form.Item>
+                                </div>
+                            </section>
                         </div>
                     </Form>
-                </SettingsSectionCard>
+                    <AdminSettingsActionBar
+                        status={dirty ? "有未保存的 OSS 配置变更" : "OSS 配置已同步"}
+                        meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存 OSS 配置"}
+                    >
+                        <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
+                            保存 OSS 配置
+                        </Button>
+                    </AdminSettingsActionBar>
+                </SettingsSectionCard> : null}
                 <SettingsSectionCard
                     icon={<DatabaseBackup className="size-4" />}
                     title="历史资源迁移"
                     description="将后端数据卷中的历史媒体复制到平台 OSS；校验成功后更新资源记录，原文件继续保留。"
                     status={
-                        migration?.active ? (
+                        migrationError && !migration ? (
+                            <Tag color="error" variant="filled">读取失败</Tag>
+                        ) : migration?.active ? (
                             <Tag color="processing" variant="filled">
                                 迁移进行中
                             </Tag>
@@ -202,28 +290,42 @@ export default function StorageSettingsPage() {
                     footer={
                         <>
                             <div className="text-xs text-foreground/45">迁移失败会保留原资源地址和本地文件，不会伪造成功状态。</div>
-                            <Space size={8}>
+                            <div className="storage-migration-actions flex flex-wrap items-center justify-end gap-2">
                                 <Button icon={<RefreshCw className="size-3.5" />} loading={migrationLoading} onClick={() => void refreshMigration()}>
                                     刷新
                                 </Button>
                                 {migration?.latest && migration.latest.totalItems > 0 && (migration.latest.status === "failed" || migration.latest.status === "partial_failed") ? (
-                                    <Button icon={<ArchiveRestore className="size-3.5" />} loading={migrationSubmitting} onClick={() => void retryMigration()}>
+                                    <Button icon={<ArchiveRestore className="size-3.5" />} loading={migrationSubmitting} onClick={() => setRetryOpen(true)}>
                                         重试失败项
                                     </Button>
                                 ) : null}
-                                <Button type="primary" disabled={!setting?.enabled || Boolean(migration?.active) || !migration?.eligible.items} onClick={() => setMigrationOpen(true)}>
+                                <Button type="primary" disabled={Boolean(migrationError) || !setting?.enabled || Boolean(migration?.active) || !migration?.eligible.items} onClick={() => setMigrationOpen(true)}>
                                     开始迁移
                                 </Button>
-                            </Space>
+                            </div>
                         </>
                     }
                 >
                     <div className="storage-migration-content space-y-5 px-6 py-5">
-                        <div className="storage-migration-metrics grid gap-px overflow-hidden bg-border/60 sm:grid-cols-3">
-                            <MigrationMetric label="待迁移资源" value={`${migration?.eligible.items || 0} 个`} />
-                            <MigrationMetric label="待迁移容量" value={formatBytes(migration?.eligible.bytes || 0)} />
-                            <MigrationMetric label="当前目标" value={setting?.enabled ? `${setting.bucket}/${setting.pathPrefix || ""}`.replace(/\/$/, "") : "OSS 未启用"} />
-                        </div>
+                        {migrationLoading && !migration ? <AdminContentSkeleton compact rows={4} label="正在读取历史资源迁移状态" /> : null}
+                        {migrationError ? <AdminContentError title={migration ? "迁移状态刷新失败" : "迁移状态读取失败"} description={migration ? `${migrationError}。当前保留上次成功读取的迁移状态。` : migrationError} onRetry={() => void refreshMigration()} /> : null}
+                        {migration?.active ? (
+                            <div className="storage-migration-active-summary" role="status" aria-live="polite">
+                                <div className="storage-migration-active-title">活动任务正在执行</div>
+                                <div className="storage-migration-active-meta">
+                                    <span>任务 {migration.active.id}</span>
+                                    <span>发起人 {userNameById.get(migration.active.requestedBy) || migration.active.requestedBy}</span>
+                                    <span>开始于 {formatTime(migration.active.startedAt || migration.active.createdAt)}</span>
+                                </div>
+                            </div>
+                        ) : null}
+                        {migration ? (
+                            <div className="storage-migration-metrics grid gap-px overflow-hidden bg-border/60 sm:grid-cols-3">
+                                <MigrationMetric label="待迁移资源" value={`${migration.eligible.items} 个`} />
+                                <MigrationMetric label="待迁移容量" value={formatBytes(migration.eligible.bytes)} />
+                                <MigrationMetric label="当前目标" value={setting?.enabled ? `${setting.bucket}/${setting.pathPrefix || ""}`.replace(/\/$/, "") : "OSS 未启用"} />
+                            </div>
+                        ) : null}
                         {migration?.latest ? (
                             <div className="storage-migration-progress space-y-2">
                                 <div className="storage-migration-progress-heading flex items-center justify-between gap-3 text-xs">
@@ -265,14 +367,19 @@ export default function StorageSettingsPage() {
                 </div>
             </div>
             <Modal
+                className="admin-operation-modal admin-storage-migration-modal workspace-ui-scope"
                 title="迁移历史本地资源"
                 open={migrationOpen}
                 okText="创建迁移任务"
                 cancelText="取消"
                 confirmLoading={migrationSubmitting}
+                closable={!migrationSubmitting}
+                maskClosable={!migrationSubmitting}
+                keyboard={!migrationSubmitting}
                 okButtonProps={{ disabled: migrationConfirmation !== "MIGRATE LOCAL TO OSS" }}
                 onOk={() => void startMigration()}
                 onCancel={() => {
+                    if (migrationSubmitting) return;
                     setMigrationOpen(false);
                     setMigrationConfirmation("");
                 }}
@@ -292,21 +399,51 @@ export default function StorageSettingsPage() {
                     </div>
                 </div>
             </Modal>
+            <Modal
+                className="admin-operation-modal admin-storage-retry-modal workspace-ui-scope"
+                title="重试迁移失败资源"
+                open={retryOpen}
+                okText="确认重试"
+                cancelText="取消"
+                confirmLoading={migrationSubmitting}
+                closable={!migrationSubmitting}
+                maskClosable={!migrationSubmitting}
+                keyboard={!migrationSubmitting}
+                okButtonProps={{ disabled: !migration?.latest || retryConfirmation !== `RETRY ${migration.latest.id}` }}
+                onOk={() => void retryMigration()}
+                onCancel={() => {
+                    if (migrationSubmitting) return;
+                    setRetryOpen(false);
+                    setRetryConfirmation("");
+                }}
+            >
+                <div className="storage-migration-confirm space-y-4">
+                    <Alert
+                        type="warning"
+                        showIcon
+                        message={`将重新提交 ${migration?.latest?.failedItems || 0} 个失败资源`}
+                        description="只重试最近任务中的失败项；已迁移成功的资源不会重复写入。"
+                    />
+                    <div className="storage-migration-confirm-field">
+                        <label className="mb-1.5 block text-xs font-medium" htmlFor="storage-migration-retry-confirmation">
+                            输入确认短语 {migration?.latest ? `RETRY ${migration.latest.id}` : ""}
+                        </label>
+                        <Input
+                            id="storage-migration-retry-confirmation"
+                            value={retryConfirmation}
+                            placeholder={migration?.latest ? `RETRY ${migration.latest.id}` : ""}
+                            onChange={(event) => setRetryConfirmation(event.target.value)}
+                        />
+                    </div>
+                </div>
+            </Modal>
         </AdminPageFrame>
     );
 }
 
-function formValues(setting?: AdminOSSSetting | null): OSSFormValues {
-    return {
-        enabled: setting?.enabled || false,
-        provider: setting?.provider || "aliyun",
-        region: setting?.region || "",
-        endpoint: setting?.endpoint || "",
-        bucket: setting?.bucket || "",
-        accessKeyId: setting?.accessKeyId || "",
-        accessKeySecret: "",
-        pathPrefix: setting?.pathPrefix || "",
-    };
+function validateStorageField(values: OSSFormValues, hasSavedSecret: boolean, field: keyof OSSFormValues, value?: string): Promise<void> {
+    const errors = storageFieldErrors({ ...values, [field]: value ?? values[field] }, hasSavedSecret);
+    return errors[field] ? Promise.reject(new Error(errors[field])) : Promise.resolve();
 }
 
 function formatTime(value?: string) {

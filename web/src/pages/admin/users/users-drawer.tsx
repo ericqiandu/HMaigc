@@ -1,9 +1,8 @@
 import { App, Button, Drawer, Form, Input, Select } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
-
-type UserFormValues = Pick<LocalUser, "displayName" | "email" | "role" | "status">;
+import { describeAccessChanges, normalizeUserFormValues, toUserFormValues, userFormValuesEqual, type UserFormValues } from "./user-form-domain";
 
 export function AdminUserEditDrawer({
     user,
@@ -19,22 +18,20 @@ export function AdminUserEditDrawer({
     const { message, modal } = App.useApp();
     const [saving, setSaving] = useState(false);
     const [form] = Form.useForm<UserFormValues>();
+    const watchedValues = Form.useWatch([], form);
     const editingSelf = user?.id === actorId;
+    const initialValues = useMemo(() => user ? toUserFormValues(user) : null, [user]);
+    const dirty = Boolean(initialValues && watchedValues && !userFormValuesEqual(initialValues, normalizeUserFormValues(watchedValues, initialValues)));
 
     useEffect(() => {
         if (!user) return;
         form.resetFields();
-        form.setFieldsValue({
-            displayName: user.displayName,
-            email: user.email || "",
-            role: user.role,
-            status: user.status,
-        });
+        form.setFieldsValue(toUserFormValues(user));
     }, [form, user]);
 
     const close = () => {
         if (saving) return;
-        if (!form.isFieldsTouched()) {
+        if (!dirty) {
             onClose();
             return;
         }
@@ -50,12 +47,31 @@ export function AdminUserEditDrawer({
 
     const save = async () => {
         if (!user) return;
-        const values = await form.validateFields();
+        if (!initialValues) return;
+        const values = normalizeUserFormValues(await form.validateFields(), initialValues);
+        if (initialValues && userFormValuesEqual(initialValues, values)) return;
+        const accessChanged = values.role !== user.role || values.status !== user.status;
+        if (accessChanged) {
+            const accessChanges = describeAccessChanges(user, values);
+            const confirmed = await new Promise<boolean>((resolve) => {
+                modal.confirm({
+                    className: "admin-operation-modal workspace-ui-scope",
+                    title: "确认变更用户访问权限？",
+                    content: `目标用户：${user.displayName || user.username}（@${user.username}）。${accessChanges.join("；")}。`,
+                    okText: "确认并保存",
+                    cancelText: "返回检查",
+                    okButtonProps: { danger: values.status === "disabled" || (user.role === "admin" && values.role === "user") },
+                    onOk: () => resolve(true),
+                    onCancel: () => resolve(false),
+                });
+            });
+            if (!confirmed) return;
+        }
         setSaving(true);
         try {
             const result = await updateAdminUser(user.id, {
-                displayName: values.displayName.trim(),
-                email: values.email?.trim() || "",
+                displayName: values.displayName,
+                email: values.email,
                 role: values.role,
                 status: values.status,
             });
@@ -79,9 +95,9 @@ export function AdminUserEditDrawer({
             onClose={close}
             maskClosable={!saving}
             destroyOnHidden
-            extra={<Button type="primary" loading={saving} onClick={() => void save()}>保存</Button>}
+            extra={<Button className="admin-user-save-button" type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>保存</Button>}
         >
-            <Form form={form} layout="vertical" requiredMark={false}>
+            <Form className="admin-user-edit-form" form={form} layout="vertical" requiredMark={false}>
                 <Form.Item label="用户名">
                     <Input value={user ? `@${user.username}` : ""} disabled />
                 </Form.Item>

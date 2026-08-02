@@ -1,7 +1,7 @@
 import { App, Button, Input, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Eye, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { CircleCheck, CircleX, Eye, FileClock, RefreshCw, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
@@ -10,7 +10,7 @@ import { exportAdminApiLogs, listAdminApiLogs, type ApiCallLog } from "@/service
 import { useAdminContext } from "../admin-context";
 import { ApiLogDetailDrawer } from "../components/api-log-detail-drawer";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminBatchBar, AdminExportButton, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
+import { AdminBatchBar, AdminContentError, AdminExportButton, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 
 export default function LogsPage() {
     const { message } = App.useApp();
@@ -24,11 +24,16 @@ export default function LogsPage() {
     const [logs, setLogs] = useState<ApiCallLog[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [detailLogId, setDetailLogId] = useState<string | null>(null);
     const requestSequence = useRef(0);
     const hasFilters = Boolean(keyword || status !== "all");
     const userNameById = useMemo(() => new Map(references.users.map((user) => [user.id, user.displayName || user.username])), [references.users]);
+    const currentPageSummary = useMemo(() => {
+        const succeeded = logs.filter((log) => log.status === "succeeded").length;
+        return { succeeded, failed: logs.length - succeeded };
+    }, [logs]);
 
     const updateUrl = (patch: Record<string, string | number>, replace = false) => {
         const next = new URLSearchParams(searchParams);
@@ -40,20 +45,30 @@ export default function LogsPage() {
         setSearchParams(next, { replace });
     };
 
-    useEffect(() => {
+    const reload = useCallback(async () => {
         const sequence = ++requestSequence.current;
         setLoading(true);
-        void listAdminApiLogs({ keyword: debouncedKeyword || undefined, status: status === "all" ? undefined : status, page, limit: pageSize })
-            .then((result) => {
-                if (sequence !== requestSequence.current) return;
-                setLogs(result.logs);
-                setTotal(result.total);
-                setSelectedIds([]);
-                if (result.total > 0 && result.logs.length === 0 && page > 1) updateUrl({ page: 1 }, true);
-            })
-            .catch((error) => sequence === requestSequence.current && message.error(error instanceof Error ? error.message : "读取请求明细失败"))
-            .finally(() => sequence === requestSequence.current && setLoading(false));
-    }, [debouncedKeyword, status, page, pageSize]);
+        setLoadError("");
+        try {
+            const result = await listAdminApiLogs({ keyword: debouncedKeyword || undefined, status: status === "all" ? undefined : status, page, limit: pageSize });
+            if (sequence !== requestSequence.current) return;
+            setLogs(result.logs);
+            setTotal(result.total);
+            setSelectedIds([]);
+            if (result.total > 0 && result.logs.length === 0 && page > 1) updateUrl({ page: 1 }, true);
+        } catch (error) {
+            if (sequence !== requestSequence.current) return;
+            const reason = error instanceof Error ? error.message : "读取请求日志失败";
+            setLoadError(reason);
+            message.error(reason);
+        } finally {
+            if (sequence === requestSequence.current) setLoading(false);
+        }
+    }, [debouncedKeyword, message, page, pageSize, status]);
+
+    useEffect(() => {
+        void reload();
+    }, [reload]);
 
     const columns: ColumnsType<ApiCallLog> = [
         { title: "时间", dataIndex: "createdAt", width: 170, render: formatTime },
@@ -70,14 +85,20 @@ export default function LogsPage() {
     ];
 
     return (
-        <AdminPageFrame title="请求明细" description="上游调用与费用" actions={<AdminExportButton exportFile={() => exportAdminApiLogs({ keyword: debouncedKeyword || undefined, status: status === "all" ? undefined : status })} fileName={() => `请求明细-${new Date().toISOString().slice(0, 10)}.csv`} label="导出当前筛选" successMessage="已按当前筛选导出请求明细" errorMessage="导出请求明细失败" />}>
+        <AdminPageFrame title="请求日志" description="追踪上游调用、处理阶段、耗时、Token、费用与失败原因" actions={<div className="admin-page-action-group"><Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>刷新</Button><AdminExportButton exportFile={() => exportAdminApiLogs({ keyword: debouncedKeyword || undefined, status: status === "all" ? undefined : status })} fileName={() => `请求日志-${new Date().toISOString().slice(0, 10)}.csv`} label="导出当前筛选" successMessage="已按当前筛选导出请求日志" errorMessage="导出请求日志失败" /></div>}>
+            <section className="admin-log-summary" aria-label="请求日志摘要">
+                <div className="admin-log-summary-item"><FileClock className="size-4" /><span>筛选结果</span><strong>{total}</strong></div>
+                <div className="admin-log-summary-item"><CircleCheck className="size-4" /><span>当前页成功</span><strong>{currentPageSummary.succeeded}</strong></div>
+                <div className="admin-log-summary-item"><CircleX className="size-4" /><span>当前页失败</span><strong>{currentPageSummary.failed}</strong></div>
+            </section>
             <ListToolbar active={hasFilters} onReset={() => updateUrl({ filter: "", status: "all", page: 1 })}>
                 <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索用户、渠道、模型、路径或请求号" onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)} />
                 <Select className="w-32" value={status} onChange={(value) => updateUrl({ status: value, page: 1 })} options={[{ label: "全部结果", value: "all" }, { label: "成功", value: "succeeded" }, { label: "失败", value: "failed" }]} />
             </ListToolbar>
             <AdminBatchBar count={selectedIds.length} onClear={() => setSelectedIds([])}><AdminExportButton type="primary" size="small" exportFile={() => exportAdminApiLogs({ ids: selectedIds })} fileName={() => `请求明细-已选${selectedIds.length}条.csv`} label="导出已选" successMessage={`已导出选中的 ${selectedIds.length} 条请求明细`} errorMessage="导出请求明细失败" /></AdminBatchBar>
+            {loadError ? <AdminContentError title={logs.length ? "请求日志刷新失败" : "请求日志读取失败"} description={loadError} onRetry={() => void reload()} /> : null}
             <TableSurface>
-                {loading && logs.length === 0 ? <AdminTableSkeleton rows={8} columns={11} /> : <Table className="app-data-table" size="middle" rowKey="id" loading={loading} rowSelection={{ selectedRowKeys: selectedIds, preserveSelectedRowKeys: false, onChange: (keys) => setSelectedIds(keys.map(String)) }} columns={columns} dataSource={logs} locale={{ emptyText: <AdminTableEmpty filtered={hasFilters} /> }} pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`, onChange: (nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize }) }} scroll={{ x: 1280 }} />}
+                {loading && logs.length === 0 ? <AdminTableSkeleton rows={8} columns={11} /> : loadError && logs.length === 0 ? null : <Table className="app-data-table admin-log-table" size="middle" rowKey="id" loading={loading} rowSelection={{ selectedRowKeys: selectedIds, preserveSelectedRowKeys: false, onChange: (keys) => setSelectedIds(keys.map(String)) }} columns={columns} dataSource={logs} locale={{ emptyText: <AdminTableEmpty filtered={hasFilters} title={hasFilters ? "没有符合筛选条件的请求" : "暂无请求日志"} description={hasFilters ? "调整搜索词或状态筛选后再试。" : "模型调用发生后，请求阶段、耗时和费用会显示在这里。"} /> }} pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`, onChange: (nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize }) }} scroll={{ x: 1280 }} />}
             </TableSurface>
             <ApiLogDetailDrawer logId={detailLogId} onClose={() => setDetailLogId(null)} />
         </AdminPageFrame>

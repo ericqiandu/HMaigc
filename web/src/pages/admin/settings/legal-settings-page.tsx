@@ -1,50 +1,48 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, App, Button, Skeleton, Tabs, Tag } from "antd";
-import { ExternalLink, FileCheck2, RefreshCw, Save, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { App, Button, Tabs, Tag } from "antd";
+import { ExternalLink, FileCheck2, Save, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useBlocker } from "react-router";
 
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, updateAdminLegalSettings, type SiteSettings } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
 import { LegalRichTextEditor } from "../components/legal-rich-text-editor";
-
-type LegalDraft = {
-    userAgreement: string;
-    privacyPolicy: string;
-};
-
-const emptyDraft: LegalDraft = { userAgreement: "", privacyPolicy: "" };
+import { emptyLegalDraft, legalDraftsEqual, normalizeLegalDraft, type LegalDraft } from "./legal-draft";
 
 export default function LegalSettingsPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const queryClient = useQueryClient();
-    const [draft, setDraft] = useState<LegalDraft>(emptyDraft);
+    const [draft, setDraft] = useState<LegalDraft>(emptyLegalDraft);
+    const [baseline, setBaseline] = useState<LegalDraft>(emptyLegalDraft);
     const [characterCounts, setCharacterCounts] = useState({ userAgreement: 0, privacyPolicy: 0 });
-    const [dirty, setDirty] = useState(false);
     const settingQuery = useQuery({ queryKey: adminSiteSettingsQueryKey, queryFn: getAdminSiteSettings });
+    const dirty = useMemo(() => !legalDraftsEqual(draft, baseline), [baseline, draft]);
 
     useEffect(() => {
         if (!settingQuery.data || dirty) return;
-        setDraft({ userAgreement: settingQuery.data.userAgreement, privacyPolicy: settingQuery.data.privacyPolicy });
+        const synchronized = normalizeLegalDraft({ userAgreement: settingQuery.data.userAgreement, privacyPolicy: settingQuery.data.privacyPolicy });
+        setDraft(synchronized);
+        setBaseline(synchronized);
     }, [dirty, settingQuery.data]);
 
     const saveMutation = useMutation({
         mutationFn: updateAdminLegalSettings,
         onSuccess: (setting) => {
             synchronizeSetting(queryClient, setting);
-            setDraft({ userAgreement: setting.userAgreement, privacyPolicy: setting.privacyPolicy });
-            setDirty(false);
+            const synchronized = normalizeLegalDraft({ userAgreement: setting.userAgreement, privacyPolicy: setting.privacyPolicy });
+            setDraft(synchronized);
+            setBaseline(synchronized);
             message.success("法律内容已保存并同步到公开页面");
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "保存法律内容失败"),
     });
+    const blocker = useBlocker(dirty && !saveMutation.isPending);
 
     const updateDraft = (field: keyof LegalDraft) => (html: string, characterCount: number) => {
         setCharacterCounts((current) => ({ ...current, [field]: characterCount }));
         if (draft[field] === html) return;
         setDraft((current) => ({ ...current, [field]: html }));
-        setDirty(true);
     };
 
     const initializeCharacterCount = (field: keyof LegalDraft) => (characterCount: number) => {
@@ -54,24 +52,39 @@ export default function LegalSettingsPage() {
     const configuredCount = Number(characterCounts.userAgreement > 0) + Number(characterCounts.privacyPolicy > 0);
     const setting = settingQuery.data;
 
+    useEffect(() => {
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (!dirty || saveMutation.isPending) return;
+            event.preventDefault();
+        };
+        window.addEventListener("beforeunload", beforeUnload);
+        return () => window.removeEventListener("beforeunload", beforeUnload);
+    }, [dirty, saveMutation.isPending]);
+
+    useEffect(() => {
+        if (blocker.state !== "blocked") return;
+        const instance = modal.confirm({
+            title: "离开并放弃未保存的法律内容？",
+            content: "当前用户协议或隐私政策尚未保存，离开后本次修改将丢失。",
+            okText: "放弃修改并离开",
+            cancelText: "继续编辑",
+            okButtonProps: { danger: true },
+            onOk: () => blocker.proceed(),
+            onCancel: () => blocker.reset(),
+        });
+        return () => instance.destroy();
+    }, [blocker, modal]);
+
     return (
         <AdminPageFrame title="法律与协议" description="独立维护用户协议、隐私政策及其公开展示内容">
-            <div className="legal-settings-page mx-auto max-w-6xl space-y-5">
-                {settingQuery.error ? (
-                    <Alert
-                        className="legal-settings-load-error"
-                        type="error"
-                        showIcon
-                        title="法律内容加载失败"
-                        description={settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"}
-                        action={<Button className="legal-settings-retry-button" icon={<RefreshCw className="legal-settings-retry-icon size-4" />} onClick={() => void settingQuery.refetch()}>重试</Button>}
-                    />
-                ) : null}
-
+            <div className="legal-settings-page space-y-5">
                 {settingQuery.isLoading ? (
-                    <Skeleton className="legal-settings-skeleton" active paragraph={{ rows: 16 }} />
-                ) : (
+                    <AdminContentSkeleton rows={16} label="正在加载法律内容" />
+                ) : settingQuery.error && !setting ? (
+                    <AdminContentError title="法律内容加载失败" description={settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"} onRetry={() => void settingQuery.refetch()} />
+                ) : setting ? (
                     <>
+                        {settingQuery.error ? <AdminContentError title="法律内容刷新失败" description={`${settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"}；当前继续显示上次成功读取的内容。`} onRetry={() => void settingQuery.refetch()} /> : null}
                         <SettingsSectionCard
                             className="legal-settings-editor-card"
                             icon={<ShieldCheck className="legal-settings-card-icon size-4" />}
@@ -125,10 +138,10 @@ export default function LegalSettingsPage() {
                             meta={setting?.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "尚未保存法律内容"}
                             status={dirty ? "有未保存的法律内容" : "公开内容已同步"}
                         >
-                            <Button className="legal-settings-save-button" type="primary" icon={<Save className="legal-settings-save-icon size-4" />} loading={saveMutation.isPending} disabled={!dirty} onClick={() => saveMutation.mutate(draft)}>保存并发布</Button>
+                            <Button className="legal-settings-save-button" type="primary" icon={<Save className="legal-settings-save-icon size-4" />} loading={saveMutation.isPending} disabled={!dirty} onClick={() => saveMutation.mutate(normalizeLegalDraft(draft))}>保存并发布</Button>
                         </AdminSettingsActionBar>
                     </>
-                )}
+                ) : null}
             </div>
         </AdminPageFrame>
     );

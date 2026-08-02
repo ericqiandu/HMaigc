@@ -16,6 +16,7 @@ export function CanvasCharacterReferenceModal({ node, open, onClose }: { node: C
 
     return (
         <Modal
+            rootClassName="canvas-overlay-modal canvas-overlay-modal--character-reference"
             open={open}
             title={null}
             footer={null}

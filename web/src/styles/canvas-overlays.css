@@ -14,10 +14,67 @@
 
 .canvas-overlay-panel,
 .canvas-overlay-dropdown,
+.canvas-overlay-popover,
 .canvas-overlay-modal {
     font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
     font-size: 12px;
     line-height: 1.45;
+}
+
+/* Canvas overlays keep wheel, trackpad and touch scrolling without exposing
+   native tracks. Horizontal overflow remains owned by explicit inner strips. */
+.canvas-overlay-scroll-surface,
+.canvas-overlay-panel,
+.canvas-overlay-dropdown,
+.canvas-overlay-popover,
+.canvas-overlay-modal,
+:is(.canvas-overlay-panel, .canvas-overlay-dropdown, .canvas-overlay-popover, .canvas-overlay-modal) :where(*) {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.canvas-overlay-scroll-surface::-webkit-scrollbar,
+.canvas-overlay-panel::-webkit-scrollbar,
+.canvas-overlay-dropdown::-webkit-scrollbar,
+.canvas-overlay-popover::-webkit-scrollbar,
+.canvas-overlay-modal::-webkit-scrollbar,
+:is(.canvas-overlay-panel, .canvas-overlay-dropdown, .canvas-overlay-popover, .canvas-overlay-modal) :where(*)::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.canvas-overlay-panel,
+.canvas-overlay-dropdown,
+.canvas-overlay-popover,
+.canvas-overlay-modal {
+    overflow-x: hidden;
+}
+
+.canvas-overlay-popover :where(.ant-popover-container, .ant-popover-inner) {
+    overflow: hidden;
+    border: 1px solid var(--canvas-overlay-border);
+    border-radius: var(--canvas-overlay-radius) !important;
+    padding: 8px;
+    background: var(--canvas-overlay-elevated);
+    box-shadow: var(--canvas-overlay-shadow) !important;
+    color: inherit;
+    backdrop-filter: saturate(150%) blur(18px);
+    -webkit-backdrop-filter: saturate(150%) blur(18px);
+}
+
+.canvas-overlay-popover :where(.ant-popover-content, .ant-popover-inner-content) {
+    color: inherit;
+    font-size: 13px;
+    line-height: 20px;
+}
+
+.canvas-overlay-popover .ant-popover-arrow::before {
+    background: var(--canvas-overlay-elevated) !important;
+}
+
+.canvas-overlay-popover :where(.ant-btn, button, input, .ant-input, .ant-input-affix-wrapper, .ant-select-selector) {
+    border-radius: var(--canvas-overlay-control-radius) !important;
 }
 
 .canvas-overlay-panel {
@@ -55,15 +112,15 @@
     display: block;
     margin-top: 1px;
     color: var(--canvas-overlay-muted);
-    font-size: 10px;
-    line-height: 15px;
+    font-size: 11px;
+    line-height: 16px;
 }
 
 .canvas-overlay-section-label {
     margin: 8px 0 4px;
     padding-inline: 4px;
     color: var(--canvas-overlay-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     line-height: 16px;
 }
@@ -125,8 +182,8 @@
     display: block;
     margin-top: 1px;
     color: var(--canvas-overlay-muted);
-    font-size: 10px;
-    line-height: 15px;
+    font-size: 11px;
+    line-height: 16px;
 }
 
 .canvas-overlay-panel .canvas-overlay-option[data-active="true"] {
@@ -182,6 +239,14 @@
     box-shadow: 0 24px 72px color-mix(in srgb, #000000 28%, transparent) !important;
 }
 
+.canvas-overlay-modal .ant-modal-container {
+    overflow: hidden;
+    border: 1px solid var(--canvas-overlay-border);
+    border-radius: var(--canvas-overlay-radius);
+    background: var(--canvas-overlay-elevated);
+    box-shadow: 0 24px 72px color-mix(in srgb, #000000 28%, transparent) !important;
+}
+
 .canvas-overlay-modal .ant-modal-header {
     display: flex;
     min-height: 48px;
@@ -222,6 +287,23 @@
 .canvas-overlay-modal :where(.ant-input, .ant-input-affix-wrapper, .ant-select-selector, .ant-btn) {
     min-height: 34px;
     border-radius: var(--canvas-overlay-control-radius) !important;
+}
+
+.canvas-overlay-modal :where(.ant-btn-primary) {
+    box-shadow: none;
+}
+
+.canvas-overlay-modal :where(.ant-modal-body, .ant-modal-footer) {
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.canvas-overlay-modal :where(.ant-modal-body) {
+    scrollbar-width: none;
+}
+
+.canvas-overlay-modal :where(.ant-modal-body)::-webkit-scrollbar {
+    display: none;
 }
 
 .canvas-overlay-modal .canvas-overlay-body {
@@ -316,6 +398,7 @@
 @media (prefers-reduced-motion: reduce) {
     .canvas-overlay-panel,
     .canvas-overlay-dropdown,
+    .canvas-overlay-popover,
     .canvas-overlay-modal {
         scroll-behavior: auto;
     }

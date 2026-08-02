@@ -7,6 +7,8 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasGenerationMode } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
+import "./canvas-preset-picker.css";
+
 export type CanvasPromptPreset = {
     id: string;
     name: string;
@@ -87,35 +89,35 @@ export function CanvasPresetPicker({ mode, skillReferences = [], open, onOpenCha
     }, [mode, query, skillReferences]);
 
     const content = (
-        <div data-canvas-no-zoom className="w-[320px] max-w-[calc(100vw-32px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-            <Input autoFocus allowClear size="small" prefix={<Search className="size-3.5 opacity-45" />} placeholder="搜索预设或已激活技能" value={query} onChange={(event) => setQuery(event.target.value)} />
-            <div className="thin-scrollbar mt-2 max-h-72 overflow-y-auto space-y-1">
+        <div data-canvas-no-zoom className="canvas-preset-menu" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            <Input className="canvas-preset-search" autoFocus allowClear prefix={<Search className="canvas-preset-search-icon size-4" />} placeholder="搜索预设或已激活技能" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <div className="canvas-preset-list hide-scrollbar">
                 {presets.length ? presets.map((preset) => (
                     <button
                         key={preset.id}
                         type="button"
-                        className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition hover:bg-black/5 dark:hover:bg-white/10"
+                        className="canvas-preset-option"
                         onClick={() => {
                             onSelect(preset);
                             setOpen(false);
                         }}
                     >
-                        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md" style={{ background: theme.toolbar.itemHover, color: theme.node.activeStroke }}><WandSparkles className="size-3.5" /></span>
-                        <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: theme.node.text }}>
-                                <span className="truncate">{preset.name}</span>
-                                <span className="shrink-0 text-[9px] font-medium" style={{ color: theme.node.faint }}>{preset.source === "skill" ? "技能" : "预设"}</span>
+                        <span className="canvas-preset-option-icon" style={{ color: theme.node.activeStroke }}><WandSparkles className="canvas-preset-option-icon-svg size-4" /></span>
+                        <span className="canvas-preset-option-copy">
+                            <span className="canvas-preset-option-heading" style={{ color: theme.node.text }}>
+                                <span className="canvas-preset-option-name">{preset.name}</span>
+                                {preset.source === "skill" ? <span className="canvas-preset-option-badge" style={{ color: theme.node.muted }}>技能</span> : null}
                             </span>
-                            <span className="mt-0.5 block line-clamp-2 text-[10px] leading-4" style={{ color: theme.node.muted }}>{preset.description}</span>
+                            <span className="canvas-preset-option-description" style={{ color: theme.node.muted }}>{preset.description}</span>
                         </span>
                     </button>
-                )) : <div className="py-8 text-center text-xs" style={{ color: theme.node.muted }}>没有匹配的预设</div>}
+                )) : <div className="canvas-preset-empty" style={{ color: theme.node.muted }}>没有匹配的预设</div>}
             </div>
         </div>
     );
 
     return (
-        <Popover open={actualOpen} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 8, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
+        <Popover rootClassName="canvas-overlay-popover canvas-overlay-popover--preset" open={actualOpen} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content}>
             <button type="button" className={`canvas-preset-picker-trigger inline-flex shrink-0 items-center justify-center gap-1 rounded-md border-0 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 ${compact ? "size-6" : dense ? "h-6 px-1.5" : "h-7 px-2"}`} style={{ background: theme.toolbar.itemHover, color: theme.node.muted, outlineColor: theme.accent.primary }} title="预设（输入 / 也可打开）" aria-label="打开预设">
                 <WandSparkles className={dense ? "size-3" : "size-3.5"} />
                 {compact ? null : <span className="canvas-preset-picker-label text-[10px] font-medium">{label}</span>}

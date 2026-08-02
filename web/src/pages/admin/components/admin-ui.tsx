@@ -1,7 +1,7 @@
-import { App, Button, Dropdown, Tag } from "antd";
+import { App, Button, Dropdown, Skeleton, Tag } from "antd";
 import type { ButtonProps, MenuProps } from "antd";
 import { saveAs } from "file-saver";
-import { CheckSquare2, Download, MoreHorizontal, SearchX, X } from "lucide-react";
+import { CheckSquare2, CircleAlert, Download, MoreHorizontal, RefreshCw, SearchX, X } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -84,11 +84,11 @@ export function AdminExportButton({
     );
 }
 
-export function AdminTableEmpty({ filtered = false, title, description, action }: { filtered?: boolean; title?: string; description?: string; action?: ReactNode }) {
+export function AdminTableEmpty({ filtered = false, compact = false, title, description, action }: { filtered?: boolean; compact?: boolean; title?: string; description?: string; action?: ReactNode }) {
     return (
-        <div className="admin-table-empty flex min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
-            <span className="admin-table-empty-icon grid size-10 place-items-center">
-                <SearchX className="admin-table-empty-icon-symbol size-[18px]" />
+        <div className={cn("admin-table-empty flex flex-col items-center justify-center px-6 text-center", compact ? "is-compact min-h-32 py-6" : "min-h-56 py-10")}>
+            <span className="admin-table-empty-icon grid size-7 place-items-center" aria-hidden="true">
+                <SearchX className="admin-table-empty-icon-symbol size-5" />
             </span>
             <div className="admin-table-empty-title mt-3 text-sm font-medium">{title || (filtered ? "没有符合筛选条件的数据" : "暂无数据")}</div>
             <p className="admin-table-empty-description mt-1 max-w-sm text-xs leading-5">{description || (filtered ? "调整搜索词或筛选条件后再试。" : "数据产生后会显示在这里。")}</p>
@@ -100,18 +100,43 @@ export function AdminTableEmpty({ filtered = false, title, description, action }
 export function AdminTableSkeleton({ rows = 8, columns = 6 }: { rows?: number; columns?: number }) {
     return (
         <div className="admin-table-skeleton animate-pulse motion-reduce:animate-none" aria-label="正在加载表格" role="status">
-            <div className="admin-table-skeleton-header grid h-11 items-center gap-4 px-4" style={{ gridTemplateColumns: `repeat(${columns}, minmax(72px, 1fr))` }}>
+            <div className="admin-table-skeleton-header grid h-11 items-center gap-4 px-4" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
                 {Array.from({ length: columns }).map((_, index) => (
                     <span key={index} className="admin-table-skeleton-heading h-3 w-16 max-w-full" />
                 ))}
             </div>
-            {Array.from({ length: Math.max(8, rows) }).map((_, rowIndex) => (
-                <div key={rowIndex} className="admin-table-skeleton-row grid min-h-14 items-center gap-4 px-4" style={{ gridTemplateColumns: `repeat(${columns}, minmax(72px, 1fr))` }}>
+            {Array.from({ length: Math.max(1, rows) }).map((_, rowIndex) => (
+                <div key={rowIndex} className="admin-table-skeleton-row grid min-h-14 items-center gap-4 px-4" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
                     {Array.from({ length: columns }).map((_, columnIndex) => (
                         <span key={columnIndex} className={cn("admin-table-skeleton-cell h-3", columnIndex === 0 ? "w-4/5" : columnIndex === columns - 1 ? "w-10" : "w-2/3")} />
                     ))}
                 </div>
             ))}
+        </div>
+    );
+}
+
+export function AdminContentSkeleton({ rows = 10, compact = false, label = "正在加载内容" }: { rows?: number; compact?: boolean; label?: string }) {
+    return (
+        <div className={cn("admin-content-skeleton", compact && "is-compact")} role="status" aria-label={label} aria-busy="true">
+            <Skeleton active title={{ width: compact ? "34%" : "26%" }} paragraph={{ rows }} />
+        </div>
+    );
+}
+
+export function AdminContentError({ title = "内容加载失败", description, onRetry }: { title?: string; description: string; onRetry?: () => void }) {
+    return (
+        <div className="admin-content-error" role="alert">
+            <CircleAlert className="admin-content-error-icon size-5" aria-hidden="true" />
+            <div className="admin-content-error-copy min-w-0">
+                <div className="admin-content-error-title">{title}</div>
+                <p className="admin-content-error-description">{description}</p>
+            </div>
+            {onRetry ? (
+                <Button className="admin-content-error-retry" icon={<RefreshCw className="size-4" />} onClick={onRetry}>
+                    重试
+                </Button>
+            ) : null}
         </div>
     );
 }
@@ -164,6 +189,7 @@ export function AdminRowActions({ primary, actions }: { primary?: { label: React
             return;
         }
         modal.confirm({
+            className: "admin-operation-modal workspace-ui-scope",
             title: action.confirm.title,
             content: action.confirm.description,
             okText: action.confirm.okText,
@@ -182,6 +208,7 @@ export function AdminRowActions({ primary, actions }: { primary?: { label: React
             ) : null}
             {actions.length ? (
                 <Dropdown
+                    rootClassName="admin-action-dropdown workspace-ui-scope"
                     trigger={["click"]}
                     menu={{
                         items,

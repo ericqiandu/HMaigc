@@ -144,7 +144,7 @@ export function CanvasAudioVoiceCatalog(props: CanvasAudioVoiceCatalogProps) {
                         <Search className="canvas-audio-voice-search-icon size-4" />
                         <input className="canvas-audio-voice-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索音色库" aria-label="搜索音色库" />
                     </label>
-                    <Popover placement="bottomRight" trigger="click" content={filterContent} overlayClassName="canvas-audio-voice-filter-popover">
+                    <Popover rootClassName="canvas-overlay-popover canvas-audio-voice-filter-popover" placement="bottomRight" trigger="click" content={filterContent}>
                         <button type="button" className={`canvas-audio-voice-filter-trigger ${language !== allLanguages ? "canvas-audio-voice-filter-trigger--active" : ""}`} aria-label="筛选音色">
                             <Filter className="canvas-audio-voice-filter-trigger-icon size-4" />
                             筛选

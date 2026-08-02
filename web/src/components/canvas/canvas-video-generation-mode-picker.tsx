@@ -1,79 +1,74 @@
 import { useState } from "react";
-import { Check, ChevronDown, FileText, Images, Image as ImageIcon } from "lucide-react";
+import { Box, ChevronDown, FileText, Images, Image as ImageIcon, PanelsTopLeft } from "lucide-react";
 import { Popover } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { resolveVideoGenerationMode, videoModeMetadataPatch, type VideoReferenceCounts } from "@/lib/canvas/canvas-video-generation-mode";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { CanvasNodeMetadata } from "@/types/canvas";
+import type { CanvasNodeMetadata, CanvasVideoGenerationMode } from "@/types/canvas";
 
-type VideoFrameOption = {
-    nodeId: string;
-};
+type VideoFrameOption = { nodeId: string };
 
 type CanvasVideoGenerationModePickerProps = {
     metadata?: CanvasNodeMetadata;
     frameOptions: VideoFrameOption[];
+    referenceCounts: VideoReferenceCounts;
     onMetadataChange: (patch: Partial<CanvasNodeMetadata>) => void;
 };
 
-type VideoGenerationMode = "text" | "image" | "firstLast";
-
 const modes = [
     { value: "text", label: "文生视频", icon: FileText },
+    { value: "omni_reference", label: "全能参考", icon: Box },
     { value: "image", label: "图生视频", icon: ImageIcon },
-    { value: "firstLast", label: "首尾帧", icon: Images },
-] as const;
+    { value: "first_last_frame", label: "首尾帧", icon: Images },
+    { value: "image_reference", label: "图片参考", icon: PanelsTopLeft },
+] satisfies Array<{ value: CanvasVideoGenerationMode; label: string; icon: typeof FileText }>;
 
-export function CanvasVideoGenerationModePicker({ metadata, frameOptions, onMetadataChange }: CanvasVideoGenerationModePickerProps) {
+export function CanvasVideoGenerationModePicker({ metadata, frameOptions, referenceCounts, onMetadataChange }: CanvasVideoGenerationModePickerProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [open, setOpen] = useState(false);
-    const mode = resolveMode(metadata);
+    const mode = resolveVideoGenerationMode(metadata);
     const current = modes.find((item) => item.value === mode) || modes[0];
     const CurrentIcon = current.icon;
 
-    const selectMode = (nextMode: VideoGenerationMode) => {
-        if (nextMode === "text") {
-            onMetadataChange({ videoStartFrameNodeId: undefined, videoEndFrameNodeId: undefined });
-            setOpen(false);
-            return;
-        }
-        const currentStart = metadata?.videoStartFrameNodeId;
-        const firstFrame = frameOptions.find((item) => item.nodeId === currentStart)?.nodeId || frameOptions[0]?.nodeId;
-        if (!firstFrame) return;
-        if (nextMode === "image") {
-            onMetadataChange({ videoStartFrameNodeId: firstFrame, videoEndFrameNodeId: undefined });
-            setOpen(false);
-            return;
-        }
-        const currentEnd = metadata?.videoEndFrameNodeId;
-        const endFrame = frameOptions.find((item) => item.nodeId === currentEnd && item.nodeId !== firstFrame)?.nodeId || frameOptions.find((item) => item.nodeId !== firstFrame)?.nodeId;
-        if (!endFrame) return;
-        onMetadataChange({ videoStartFrameNodeId: firstFrame, videoEndFrameNodeId: endFrame });
+    const disabledReason = (value: CanvasVideoGenerationMode) => {
+        if (value === "image" && frameOptions.length < 1) return "请先连接一张图片";
+        if (value === "first_last_frame" && frameOptions.length < 2) return "请先连接两张图片";
+        if (value === "image_reference" && referenceCounts.image < 1) return "请先添加图片参考";
+        if (value === "omni_reference" && referenceCounts.image + referenceCounts.video + referenceCounts.audio < 1) return "请先添加参考素材";
+        return undefined;
+    };
+
+    const selectMode = (nextMode: CanvasVideoGenerationMode) => {
+        if (disabledReason(nextMode)) return;
+        onMetadataChange(videoModeMetadataPatch({ mode: nextMode, metadata, frameNodeIds: frameOptions.map((item) => item.nodeId), counts: referenceCounts }));
         setOpen(false);
     };
 
     const content = (
-        <div className="canvas-video-mode-menu w-[162px] p-1">
-            <div className="canvas-video-mode-menu-title px-2 pb-1 pt-0.5">视频生成模式</div>
-            {modes.map((item) => {
-                const Icon = item.icon;
-                const selected = item.value === mode;
-                const disabled = item.value === "image" ? frameOptions.length < 1 : item.value === "firstLast" ? frameOptions.length < 2 : false;
-                return (
-                    <button
-                        key={item.value}
-                        type="button"
-                        className="canvas-video-mode-option flex h-8 w-full items-center gap-2 px-2 text-left transition-colors"
-                        disabled={disabled}
-                        style={{ background: selected ? theme.toolbar.itemHover : "transparent", color: selected ? theme.node.text : theme.node.muted }}
-                        onClick={() => selectMode(item.value)}
-                    >
-                        <Icon className="size-3.5 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                        {selected ? <Check className="size-3.5 shrink-0" /> : null}
-                    </button>
-                );
-            })}
+        <div className="canvas-video-mode-menu">
+            <div className="canvas-video-mode-menu-title">视频生成模式</div>
+            <div className="canvas-video-mode-list">
+                {modes.map((item) => {
+                    const Icon = item.icon;
+                    const selected = item.value === mode;
+                    const reason = disabledReason(item.value);
+                    return (
+                        <button
+                            key={item.value}
+                            type="button"
+                            className="canvas-video-mode-option"
+                            disabled={Boolean(reason)}
+                            title={reason}
+                            data-selected={selected}
+                            onClick={() => selectMode(item.value)}
+                        >
+                            <Icon className="canvas-video-mode-option-icon" />
+                            <span className="canvas-video-mode-option-label">{item.label}</span>
+                        </button>
+                    );
+                })}
+            </div>
         </div>
     );
 
@@ -82,22 +77,16 @@ export function CanvasVideoGenerationModePicker({ metadata, frameOptions, onMeta
             open={open}
             onOpenChange={setOpen}
             trigger="click"
-            placement="topLeft"
+            placement="bottomLeft"
             content={content}
-            overlayClassName="canvas-video-mode-popover"
-            styles={{ content: { padding: 0, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+            rootClassName="canvas-overlay-popover canvas-video-mode-popover"
+            styles={{ content: { padding: 0, background: theme.toolbar.panel } }}
         >
-            <button type="button" className="canvas-video-mode-trigger canvas-media-control inline-flex h-8 shrink-0 items-center gap-1 px-2 transition-colors" aria-label={`视频生成模式：${current.label}`}>
-                <CurrentIcon className="size-3.5 shrink-0" />
-                <span>{current.label}</span>
-                <ChevronDown className="size-3 shrink-0 opacity-55" />
+            <button type="button" className="canvas-video-mode-trigger canvas-media-control" aria-label={`视频生成模式：${current.label}`} aria-expanded={open}>
+                <CurrentIcon className="canvas-video-mode-trigger-icon" />
+                <span className="canvas-video-mode-trigger-label">{current.label}</span>
+                <ChevronDown className="canvas-video-mode-trigger-chevron" />
             </button>
         </Popover>
     );
-}
-
-function resolveMode(metadata?: CanvasNodeMetadata): VideoGenerationMode {
-    if (metadata?.videoStartFrameNodeId && metadata.videoEndFrameNodeId) return "firstLast";
-    if (metadata?.videoStartFrameNodeId) return "image";
-    return "text";
 }

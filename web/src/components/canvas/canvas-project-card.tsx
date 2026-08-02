@@ -71,6 +71,7 @@ export function CanvasProjectCard({ project, projectName, variant = "library", s
                         </div>
                     ) : (
                         <Dropdown
+                            overlayClassName="canvas-overlay-dropdown"
                             trigger={["click"]}
                             menu={{
                                 onClick: ({ domEvent }) => domEvent.stopPropagation(),

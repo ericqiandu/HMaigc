@@ -41,7 +41,7 @@ export function CanvasUploadStatusToast({ status, theme }: { status: CanvasUploa
                     <span className="block truncate text-sm font-semibold">{status.title}</span>
                     <span className="mt-1 block truncate text-[11px]" style={{ color: theme.node.muted }}>{status.detail}</span>
                 </span>
-                <span className="shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold tabular-nums" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.muted }}>{status.step}/{status.total}</span>
+                <span className="shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold leading-4 tabular-nums" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border, color: theme.node.muted }}>{status.step}/{status.total}</span>
             </div>
             <div className="mt-4 flex items-center gap-1.5">
                 {Array.from({ length: status.total }, (_, index) => (
@@ -54,7 +54,7 @@ export function CanvasUploadStatusToast({ status, theme }: { status: CanvasUploa
 }
 
 export function TaskDetailItem({ label, value }: { label: string; value: string }) {
-    return <div className="min-w-0"><div className="text-[10px] opacity-50">{label}</div><div className="mt-1 truncate text-xs font-medium" title={value}>{value}</div></div>;
+    return <div className="min-w-0"><div className="text-[11px] leading-4 opacity-60">{label}</div><div className="mt-1 truncate text-xs font-medium" title={value}>{value}</div></div>;
 }
 
 export function CanvasMergeStatusToast({ progress, theme }: { progress: MergeVideoProgress; theme: CanvasTheme }) {
@@ -70,7 +70,7 @@ export function CanvasMergeStatusToast({ progress, theme }: { progress: MergeVid
                     <span className="block truncate text-xs font-semibold">合并成片</span>
                     <span className="mt-0.5 block truncate text-[11px]" style={{ color: theme.node.muted }}>{detail}</span>
                 </span>
-                <span className="shrink-0 text-[10px] tabular-nums" style={{ color: theme.node.faint }}>{percent}%</span>
+                <span className="shrink-0 text-[11px] leading-4 tabular-nums" style={{ color: theme.node.muted }}>{percent}%</span>
             </div>
             <div className="mt-2 h-1 overflow-hidden rounded-full" style={{ background: theme.toolbar.itemHover }}>
                 <div className="h-full rounded-full transition-all duration-300" style={{ width: `${percent}%`, background: theme.node.activeStroke }} />

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { App, Descriptions, Drawer, Empty, Progress, Skeleton, Table, Tabs, Tag } from "antd";
+import { App, Descriptions, Drawer, Progress, Table, Tabs, Tag } from "antd";
 
 import { formatCredits } from "@/constant/credits";
 import { getAdminUserDetail, listAdminUserAuditEvents, listAdminUserLedger, listAdminUserTasks, type AdminAuditEvent, type AdminUserDetail, type AdminUserTask } from "@/services/api/auth";
 import type { CreditLedgerEntry } from "@/services/api/wallet";
+import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
 
 export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | null; onClose: () => void }) {
     const { message } = App.useApp();
@@ -12,6 +13,8 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
     const [tasks, setTasks] = useState<AdminUserTask[]>([]);
     const [events, setEvents] = useState<AdminAuditEvent[]>([]);
     const [loading, setLoading] = useState(false);
+    const [detailError, setDetailError] = useState<string | null>(null);
+    const [detailRetryToken, setDetailRetryToken] = useState(0);
     const [ledgerPage, setLedgerPage] = useState(1);
     const [ledgerTotal, setLedgerTotal] = useState(0);
     const [taskPage, setTaskPage] = useState(1);
@@ -24,6 +27,7 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
         let active = true;
         setLoading(true);
         setDetail(null);
+        setDetailError(null);
         setLedgerPage(1);
         setTaskPage(1);
         setAuditPage(1);
@@ -31,12 +35,16 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
             .then((nextDetail) => {
                 if (active) setDetail(nextDetail);
             })
-            .catch((error) => active && message.error(error instanceof Error ? error.message : "读取用户详情失败"))
+            .catch((error) => {
+                if (!active) return;
+                const reason = error instanceof Error ? error.message : "读取用户详情失败";
+                setDetailError(reason);
+            })
             .finally(() => active && setLoading(false));
         return () => {
             active = false;
         };
-    }, [message, userId]);
+    }, [detailRetryToken, message, userId]);
 
     useEffect(() => {
         if (!userId) return;
@@ -87,7 +95,9 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
     return (
         <Drawer className="admin-object-drawer admin-user-detail-drawer" title={detail ? `${detail.user.displayName || detail.user.username} · 用户详情` : "用户详情"} open={Boolean(userId)} onClose={onClose} size="min(920px, 100vw)" destroyOnHidden>
             {loading && !detail ? (
-                <Skeleton active paragraph={{ rows: 10 }} />
+                <AdminContentSkeleton compact rows={10} label="正在加载用户详情" />
+            ) : detailError ? (
+                <AdminContentError title="用户详情加载失败" description={detailError} onRetry={() => setDetailRetryToken((value) => value + 1)} />
             ) : detail ? (
                 <Tabs
                     items={[
@@ -111,11 +121,11 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
                                             { key: "login", label: "最后登录", children: formatTime(detail.user.lastLoginAt) },
                                         ]}
                                     />
-                                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                    <div className="admin-user-summary-grid grid grid-cols-2 gap-px overflow-hidden sm:grid-cols-4">
                                         {Object.entries({ 积分流水: detail.counts.ledgerEntries, 生成任务: detail.counts.tasks, 上游请求: detail.counts.apiCalls, 管理操作: detail.counts.auditEvents }).map(([label, value]) => (
-                                            <div key={label} className="rounded-md border border-border p-3">
-                                                <div className="text-xs text-foreground/50">{label}</div>
-                                                <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
+                                            <div key={label} className="admin-user-summary-item p-3">
+                                                <div className="admin-user-summary-label text-xs">{label}</div>
+                                                <div className="admin-user-summary-value mt-1 text-xl font-semibold tabular-nums">{value}</div>
                                             </div>
                                         ))}
                                     </div>
@@ -144,8 +154,8 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
                                     rowKey="id"
                                     size="small"
                                     dataSource={ledger}
-                                    pagination={{ current: ledgerPage, pageSize: 20, total: ledgerTotal, showSizeChanger: false, onChange: setLedgerPage }}
-                                    locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无积分流水" /> }}
+                                    pagination={{ current: ledgerPage, pageSize: 20, total: ledgerTotal, showSizeChanger: false, showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`, onChange: setLedgerPage }}
+                                    locale={{ emptyText: <AdminTableEmpty compact title="暂无积分流水" description="用户的积分收入与扣除记录会显示在这里。" /> }}
                                     columns={[
                                         { title: "时间", dataIndex: "createdAt", width: 170, render: formatTime },
                                         { title: "类型", dataIndex: "type", width: 130 },
@@ -164,8 +174,8 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
                                     rowKey="id"
                                     size="small"
                                     dataSource={tasks}
-                                    pagination={{ current: taskPage, pageSize: 20, total: taskTotal, showSizeChanger: false, onChange: setTaskPage }}
-                                    locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无生成任务" /> }}
+                                    pagination={{ current: taskPage, pageSize: 20, total: taskTotal, showSizeChanger: false, showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`, onChange: setTaskPage }}
+                                    locale={{ emptyText: <AdminTableEmpty compact title="暂无生成任务" description="用户发起模型生成后，任务记录会显示在这里。" /> }}
                                     columns={[
                                         { title: "时间", dataIndex: "createdAt", width: 170, render: formatTime },
                                         { title: "类型", dataIndex: "type", width: 180 },
@@ -185,8 +195,8 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
                                     rowKey="id"
                                     size="small"
                                     dataSource={events}
-                                    pagination={{ current: auditPage, pageSize: 20, total: auditTotal, showSizeChanger: false, onChange: setAuditPage }}
-                                    locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无管理员操作" /> }}
+                                    pagination={{ current: auditPage, pageSize: 20, total: auditTotal, showSizeChanger: false, showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`, onChange: setAuditPage }}
+                                    locale={{ emptyText: <AdminTableEmpty compact title="暂无管理员操作" description="针对该用户的后台操作会显示在这里。" /> }}
                                     columns={[
                                         { title: "时间", dataIndex: "createdAt", width: 170, render: formatTime },
                                         { title: "管理员", dataIndex: "actorUserId", width: 160, ellipsis: true },
@@ -200,7 +210,7 @@ export function AdminUserDetailDrawer({ userId, onClose }: { userId: string | nu
                     ]}
                 />
             ) : (
-                <Empty description="没有用户详情" />
+                <AdminTableEmpty compact title="没有用户详情" description="用户可能已被删除，或当前账号无权查看。" />
             )}
         </Drawer>
     );

@@ -88,6 +88,11 @@ export function CanvasNodePromptPanel({
         videoSuperResolutionResolution: config.videoSuperResolutionResolution,
     });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
+    const activeVideoReferenceCounts = useMemo(() => ({
+        image: mentionReferences.filter((item) => item.active && item.kind === "image").length,
+        video: mentionReferences.filter((item) => item.active && item.kind === "video").length,
+        audio: mentionReferences.filter((item) => item.active && item.kind === "audio").length,
+    }), [mentionReferences]);
     const activeVideoImageNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)), [mentionReferences]);
     const availableVideoImageReferences = useMemo(
         () => availableReferences.filter((item) => item.kind === "image" && item.nodeId !== node.id && Boolean(item.previewUrl)).map((item) => ({ ...item, active: activeVideoImageNodeIds.has(item.nodeId) })),
@@ -109,7 +114,7 @@ export function CanvasNodePromptPanel({
     const videoFrameShelfVisible = isVideoMode && activeVideoFrameNodeIds.size > 0;
     const referenceShelfRows = isVideoMode ? Number(videoFrameShelfVisible) + Number(activeNonFrameReferenceCount > 0) : Number(activeReferenceCount > 0);
     const referenceShelfHeight = referenceShelfRows * 42;
-    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 122 : 82) : isImageMode ? 76 : isAudioMode ? 92 : 58;
+    const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 106 : 82) : isImageMode || isAudioMode ? 76 : 58;
     const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
     const isSubmitDisabled = !isRunning && !prompt.trim();
     const canExpandPrompt = mode === "image" || mode === "video" || mode === "audio";
@@ -215,7 +220,7 @@ export function CanvasNodePromptPanel({
                     onReplacePause={(range, fragment) => replaceAudioPause(expanded, range, fragment)}
                 />
             ) : (
-                <div className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
+                <div className="canvas-node-composer-mode inline-flex h-6 min-w-0 shrink-0 items-center gap-1 rounded-md border-0 px-1.5 text-[11px] font-medium leading-4" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     <span className="canvas-node-composer-mode-icon grid size-3.5 shrink-0 place-items-center">
                         <GenerationModeIcon mode={mode} />
                     </span>
@@ -269,12 +274,12 @@ export function CanvasNodePromptPanel({
             />
         ) : simpleMode ? (
             <div className="flex min-w-0 items-center justify-between gap-2 px-0.5">
-                <span className="min-w-0 truncate px-2 text-[10px]" style={{ color: theme.node.muted }}>
+                <span className="min-w-0 truncate px-2 text-[11px] leading-4" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
                 <Button
                     type="text"
-                    className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-md !px-2.5 !text-[10px] !font-medium"
+                    className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-md !px-2.5 !text-[11px] !font-medium"
                     danger={isRunning}
                     disabled={isSubmitDisabled}
                     style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.node.activeStroke, color: isSubmitDisabled ? theme.node.faint : isRunning ? "#ffffff" : theme.canvas.background }}
@@ -306,14 +311,14 @@ export function CanvasNodePromptPanel({
                         <CanvasImageSettingsPopover
                             config={config}
                             placement={expanded ? "topRight" : "topLeft"}
-                            buttonClassName="canvas-image-settings-trigger--composer canvas-media-control !h-8 !w-[190px] !justify-start !rounded-md !border-0 !bg-transparent !px-1.5 !shadow-none [&>span]:min-w-0"
+                            buttonClassName="canvas-image-settings-trigger--composer canvas-media-control !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-1.5 !shadow-none [&>span]:min-w-0"
                             onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                             onMissingConfig={handleMissingSystemModel}
                             onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                         />
                     ) : mode === "video" ? (
                         <>
-                            <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} />
+                            <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} referenceCounts={activeVideoReferenceCounts} onMetadataChange={updateVideoFrameMetadata} />
                             <span className="canvas-video-toolbar-divider" aria-hidden="true" />
                             <CanvasVideoSettingsPopover
                                 config={config}
@@ -335,7 +340,7 @@ export function CanvasNodePromptPanel({
                     </span>
                     <Button
                         type="text"
-                        className={`canvas-node-submit-button canvas-media-control !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !border-0 !p-0 !shadow-none ${isImageMode ? "!rounded-full" : "!rounded-md"}`}
+                        className="canvas-node-submit-button canvas-media-control !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !rounded-lg !border-0 !p-0 !shadow-none"
                         danger={isRunning}
                         disabled={isSubmitDisabled}
                         style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.accent.primary, borderColor: "transparent", color: isSubmitDisabled ? theme.node.faint : "#ffffff" }}
@@ -381,6 +386,7 @@ export function CanvasNodePromptPanel({
             <div className={`canvas-node-prompt-controls ${isImageMode ? "canvas-node-prompt-controls--image mt-1" : isAudioMode ? "canvas-node-prompt-controls--audio" : "mt-1.5"}`}>{renderComposerControls(false)}</div>
 
             <Modal
+                rootClassName="canvas-overlay-modal canvas-overlay-modal--prompt-editor"
                 className="canvas-prompt-editor-modal"
                 open={expandedPromptOpen}
                 title={null}
@@ -421,7 +427,7 @@ export function CanvasNodePromptPanel({
 
 function ComposerPill({ theme, icon, label, active = false }: { theme: CanvasTheme; icon: ReactNode; label: string; active?: boolean }) {
     return (
-        <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[9px] font-medium" style={{ background: active ? theme.accent.primarySoft : theme.toolbar.itemHover, color: active ? theme.accent.primary : theme.node.muted }}>
+        <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-4" style={{ background: active ? theme.accent.primarySoft : theme.toolbar.itemHover, color: active ? theme.accent.primary : theme.node.muted }}>
             {icon}
             {label}
         </span>
@@ -449,7 +455,7 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
                     </span>
                     <span className="canvas-reference-picker-copy min-w-0 flex-1">
                         <span className="canvas-reference-picker-label block truncate text-[11px] font-medium">@{reference.label}</span>
-                        <span className="canvas-reference-picker-title block truncate text-[9px]" style={{ color: theme.node.muted }}>
+                        <span className="canvas-reference-picker-title block truncate text-[11px] leading-4" style={{ color: theme.node.muted }}>
                             {reference.title}
                         </span>
                     </span>
@@ -457,16 +463,16 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
             ))}
         </div>
     ) : (
-        <div className="canvas-reference-picker-empty w-52 px-2 py-1 text-[10px]" style={{ color: theme.node.muted }}>
+        <div className="canvas-reference-picker-empty w-52 px-2 py-1 text-[11px] leading-4" style={{ color: theme.node.muted }}>
             请先连接图片或素材节点
         </div>
     );
 
     return (
-        <Popover open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
+        <Popover rootClassName="canvas-overlay-popover canvas-overlay-popover--reference" open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
             <button
                 type="button"
-                className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[11px] font-medium leading-4 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
                 style={{ background: theme.toolbar.itemHover, color: theme.node.muted, outlineColor: theme.accent.primary }}
                 aria-label={`打开${label}选择`}
             >
@@ -513,12 +519,12 @@ function ReferenceConnectPicker({
                     </span>
                     <span className="canvas-reference-connect-copy min-w-0 flex-1">
                         <span className="canvas-reference-connect-label block truncate text-[11px] font-medium">@{reference.label}</span>
-                        <span className="canvas-reference-connect-title block truncate text-[9px]" style={{ color: theme.node.muted }}>
+                        <span className="canvas-reference-connect-title block truncate text-[11px] leading-4" style={{ color: theme.node.muted }}>
                             {reference.title}
                         </span>
                     </span>
                     {reference.active ? (
-                        <span className="canvas-reference-connect-status inline-flex shrink-0 items-center gap-1 text-[9px]">
+                        <span className="canvas-reference-connect-status inline-flex shrink-0 items-center gap-1 text-[11px] leading-4">
                             <Check className="canvas-reference-connect-check size-3" />
                             已连接
                         </span>
@@ -527,16 +533,16 @@ function ReferenceConnectPicker({
             ))}
         </div>
     ) : (
-        <div className="canvas-reference-connect-empty w-52 px-2 py-1 text-[10px]" style={{ color: theme.node.muted }}>
+        <div className="canvas-reference-connect-empty w-52 px-2 py-1 text-[11px] leading-4" style={{ color: theme.node.muted }}>
             画布中暂无已生成图片
         </div>
     );
 
     return (
-        <Popover open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
+        <Popover rootClassName="canvas-overlay-popover canvas-overlay-popover--reference" open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
             <button
                 type="button"
-                className="canvas-reference-connect-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-medium transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                className="canvas-reference-connect-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[11px] font-medium leading-4 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
                 style={{ background: theme.toolbar.itemHover, color: theme.node.muted, outlineColor: theme.accent.primary }}
                 aria-label={`打开${label}选择`}
             >
@@ -579,7 +585,7 @@ function ConnectedReferenceShelf({ references, theme, onInsert }: { references: 
                     <span className="block size-full overflow-hidden rounded-md">
                         <ReferenceThumbnail reference={reference} />
                     </span>
-                    <span className="absolute left-0.5 top-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-[8px] font-semibold text-white backdrop-blur-sm">{index + 1}</span>
+                    <span className="absolute left-0.5 top-0.5 grid size-4 place-items-center rounded-full bg-black/65 text-[11px] font-semibold leading-4 text-white backdrop-blur-sm">{index + 1}</span>
                     <span className="absolute bottom-0.5 right-0.5 grid size-3.5 place-items-center rounded-full bg-black/65 text-white backdrop-blur-sm">
                         <AtSign className="size-2" />
                     </span>
@@ -605,7 +611,7 @@ function ReferenceThumbnail({ reference }: { reference: CanvasResourceReference 
 function GenerationCostBadge({ credits, theme }: { credits: number | null; theme: CanvasTheme }) {
     if (credits === null) return null;
     return (
-        <span className="inline-flex h-6 shrink-0 items-center gap-0.5 px-1 text-[9px] font-medium tabular-nums" style={{ color: theme.node.muted }} title="本次生成消耗">
+        <span className="inline-flex h-6 shrink-0 items-center gap-0.5 px-1 text-[11px] font-medium leading-4 tabular-nums" style={{ color: theme.node.muted }} title="本次生成消耗">
             <CreditSymbol />
             {credits.toLocaleString()}
         </span>

@@ -18,6 +18,7 @@ import {
 import { listAdminChannelModels, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
+import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { imagePricingSpecifications, specificationsForStrategy, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
@@ -49,7 +50,10 @@ export default function ModelPricingPage() {
     const [models, setModels] = useState<CommercialModel[]>([]);
     const [setting, setSetting] = useState<ModelPricingOperationsSetting>(emptySetting);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [saving, setSaving] = useState(false);
+    const [pricingDirty, setPricingDirty] = useState(false);
+    const [settingsDirty, setSettingsDirty] = useState(false);
     const [editing, setEditing] = useState<CommercialModel | null>(null);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [keyword, setKeyword] = useState("");
@@ -74,8 +78,9 @@ export default function ModelPricingPage() {
             });
             setModels(nextModels);
             setSetting(settingResult.setting);
+            setLoadError("");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取模型商业定价失败");
+            setLoadError(error instanceof Error ? error.message : "读取模型商业定价失败");
         } finally {
             setLoading(false);
         }
@@ -105,6 +110,7 @@ export default function ModelPricingPage() {
             tierCosts: Object.fromEntries(pricing?.tiers.map((tier) => [tier.specification, fromMicro(tier.supplierCostMicros)]) || []),
             tierCredits: Object.fromEntries(model.priceTiers.map((tier) => [tier.resolution, fromMicro(tier.unitPriceMicrocredits)])),
         });
+        setPricingDirty(false);
     };
 
     const openSettings = () => {
@@ -113,6 +119,7 @@ export default function ModelPricingPage() {
             creditRevenue: fromMicro(setting.creditRevenueMicros),
             targetMarginPercent: setting.targetMarginBasisPoints / 100,
         });
+        setSettingsDirty(false);
         setSettingsOpen(true);
     };
 
@@ -126,6 +133,7 @@ export default function ModelPricingPage() {
                 targetMarginBasisPoints: Math.round(values.targetMarginPercent * 100),
             });
             setSetting(result.setting);
+            setSettingsDirty(false);
             setSettingsOpen(false);
             message.success("商业定价基准已更新");
         } catch (error) {
@@ -214,6 +222,7 @@ export default function ModelPricingPage() {
                 return;
             }
             setEditing(null);
+            setPricingDirty(false);
             await reload();
             message.success("模型成本与积分售价已同步更新");
         } catch (error) {
@@ -267,6 +276,17 @@ export default function ModelPricingPage() {
         },
     ];
 
+    if (loadError && models.length === 0) {
+        return (
+            <AdminPageFrame
+                title="模型商业定价"
+                description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。"
+            >
+                <AdminContentError title="模型商业定价加载失败" description={loadError} onRetry={() => void reload()} />
+            </AdminPageFrame>
+        );
+    }
+
     return (
         <AdminPageFrame
             title="模型商业定价"
@@ -277,6 +297,11 @@ export default function ModelPricingPage() {
                 </Button>
             }
         >
+            {loadError ? (
+                <div className="model-pricing-refresh-error mb-5">
+                    <AdminContentError title="模型商业定价刷新失败" description={loadError} onRetry={() => void reload()} />
+                </div>
+            ) : null}
             <section className="model-pricing-metrics mb-5 grid grid-cols-2 lg:grid-cols-4" aria-label="模型商业定价概览">
                 <Metric label="全部模型" value={models.length} detail="已接入系统目录" />
                 <Metric label="定价完整" value={configuredCount} detail="成本、售价与利润可核算" />
@@ -295,6 +320,7 @@ export default function ModelPricingPage() {
                 </div>
             ) : null}
             <ListToolbar
+                className="model-pricing-toolbar"
                 active={Boolean(keyword || capability !== "all" || status !== "all")}
                 onReset={() => {
                     setKeyword("");
@@ -302,9 +328,10 @@ export default function ModelPricingPage() {
                     setStatus("all");
                 }}
             >
-                <Input className="app-list-search" allowClear prefix={<Search className="size-4 text-foreground/40" />} placeholder="搜索模型或渠道" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                <Input className="app-list-search model-pricing-search" allowClear prefix={<Search className="size-4 text-foreground/40" />} placeholder="搜索模型或渠道" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
                 <Select
-                    className="w-32"
+                    aria-label="筛选模型类型"
+                    className="model-pricing-filter"
                     value={capability}
                     onChange={setCapability}
                     options={[
@@ -316,7 +343,8 @@ export default function ModelPricingPage() {
                     ]}
                 />
                 <Select
-                    className="w-36"
+                    aria-label="筛选定价状态"
+                    className="model-pricing-filter"
                     value={status}
                     onChange={setStatus}
                     options={[
@@ -327,23 +355,40 @@ export default function ModelPricingPage() {
                     ]}
                 />
             </ListToolbar>
-            <TableSurface>
-                <Table className="app-data-table" rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个模型` }} scroll={{ x: 1130 }} />
+            <TableSurface className="model-pricing-table-surface">
+                {loading && models.length === 0 ? (
+                    <AdminTableSkeleton rows={8} columns={8} />
+                ) : (
+                    <Table
+                        className="app-data-table model-pricing-table"
+                        rowKey="id"
+                        loading={loading}
+                        columns={columns}
+                        dataSource={rows}
+                        locale={{ emptyText: <AdminTableEmpty filtered={Boolean(keyword || capability !== "all" || status !== "all")} title={models.length === 0 ? "尚未接入可定价模型" : undefined} description={models.length === 0 ? "请先在 AI 模型配置中创建渠道并添加模型。" : undefined} /> }}
+                        pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型` }}
+                        scroll={{ x: 1130 }}
+                    />
+                )}
             </TableSurface>
-            <PricingDrawer model={editing} form={pricingForm} strategy={priceStrategy} saving={saving} onClose={() => setEditing(null)} onSave={() => void savePricing()} />
+            <PricingDrawer model={editing} form={pricingForm} strategy={priceStrategy} saving={saving} dirty={pricingDirty} onDirty={() => setPricingDirty(true)} onClose={() => setEditing(null)} onSave={() => void savePricing()} />
             <Drawer
-                className="model-pricing-settings-drawer"
+                className="admin-object-drawer model-pricing-settings-drawer"
                 title="商业定价基准"
                 open={settingsOpen}
                 width={460}
-                onClose={() => setSettingsOpen(false)}
+                onClose={() => {
+                    if (saving) return;
+                    setSettingsOpen(false);
+                }}
                 extra={
-                    <Button className="model-pricing-settings-save" type="primary" loading={saving} onClick={() => void saveSettings()}>
+                    <Button className="model-pricing-settings-save" type="primary" loading={saving} disabled={!settingsDirty} onClick={() => void saveSettings()}>
                         保存
                     </Button>
                 }
             >
-                <Form className="model-pricing-settings-form" form={settingsForm} layout="vertical" requiredMark={false}>
+                <div className="model-pricing-drawer-sync-state" role="status">{settingsDirty ? "有未保存变更" : "当前配置已同步"}</div>
+                <Form className="model-pricing-settings-form" form={settingsForm} layout="vertical" requiredMark={false} onValuesChange={() => setSettingsDirty(true)}>
                     <Form.Item
                         className="model-pricing-settings-field"
                         name="currency"
@@ -373,23 +418,27 @@ export default function ModelPricingPage() {
     );
 }
 
-function PricingDrawer({ model, form, strategy, saving, onClose, onSave }: { model: CommercialModel | null; form: FormInstance<PricingFormValues>; strategy: ChannelModel["priceStrategy"]; saving: boolean; onClose: () => void; onSave: () => void }) {
+function PricingDrawer({ model, form, strategy, saving, dirty, onDirty, onClose, onSave }: { model: CommercialModel | null; form: FormInstance<PricingFormValues>; strategy: ChannelModel["priceStrategy"]; saving: boolean; dirty: boolean; onDirty: () => void; onClose: () => void; onSave: () => void }) {
     const capability = model?.capability;
     const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     return (
         <Drawer
-            className="model-pricing-drawer"
+            className="admin-object-drawer model-pricing-drawer"
             title={model ? `配置 ${model.displayName || model.modelKey}` : "模型商业定价"}
             open={Boolean(model)}
             width={620}
-            onClose={onClose}
+            onClose={() => {
+                if (saving) return;
+                onClose();
+            }}
             extra={
-                <Button className="model-pricing-save-button" type="primary" loading={saving} onClick={onSave}>
+                <Button className="model-pricing-save-button" type="primary" loading={saving} disabled={!dirty} onClick={onSave}>
                     保存并生效
                 </Button>
             }
         >
-            <Form className="model-pricing-form" form={form} layout="vertical" requiredMark={false}>
+            <div className="model-pricing-drawer-sync-state" role="status">{dirty ? "有未保存变更" : "当前定价已同步"}</div>
+            <Form className="model-pricing-form" form={form} layout="vertical" requiredMark={false} onValuesChange={onDirty}>
                 <div className="model-pricing-section mb-7">
                     <h3 className="model-pricing-section-title mb-1 text-sm font-semibold">计费方式</h3>
                     <p className="model-pricing-section-description mb-4 text-xs leading-5 text-foreground/48">用户调用成功后，按这里配置的积分价格扣费。</p>

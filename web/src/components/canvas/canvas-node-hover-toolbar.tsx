@@ -3,6 +3,7 @@ import { App, Button, Input, Modal, Segmented, Tag } from "antd";
 import { Download, Ellipsis, FolderPlus, GalleryHorizontalEnd, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Unlock, Upload, UserRound, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { supportsVideoAssetUpload } from "@/lib/canvas/canvas-video-composition";
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
@@ -234,7 +235,7 @@ export function CanvasNodeHoverToolbar({
         ...(isEditableText && !simpleMode ? [{ id: "decreaseFont", title: "减小字号", label: "缩小", icon: <Minus className="size-3.5" />, onClick: () => onDecreaseFont(node) }] : []),
         ...(isEditableText && !simpleMode ? [{ id: "increaseFont", title: "增大字号", label: "放大", icon: <Plus className="size-3.5" />, onClick: () => onIncreaseFont(node) }] : []),
         ...(isImage && !hasImage ? [{ id: "uploadImage", title: "上传图片", label: "上传图片", icon: <Upload className="size-3.5" />, onClick: () => onUpload(node) }] : []),
-        ...(isVideo ? [{ id: "uploadVideo", title: hasVideo ? "替换视频" : "上传视频", label: hasVideo ? "替换视频" : "上传视频", icon: <Video className="size-3.5" />, onClick: () => onUpload(node) }] : []),
+        ...(supportsVideoAssetUpload(node) ? [{ id: "uploadVideo", title: hasVideo ? "替换视频" : "上传视频", label: hasVideo ? "替换视频" : "上传视频", icon: <Video className="size-3.5" />, onClick: () => onUpload(node) }] : []),
         ...(isAudio ? [{ id: "uploadAudio", title: hasAudio ? "替换音频" : "上传音频", label: hasAudio ? "替换音频" : "上传音频", icon: <Music2 className="size-3.5" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage && !simpleMode ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
@@ -289,7 +290,7 @@ export function CanvasNodeHoverToolbar({
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
             >
-                <div className={`aceternity-floating-dock thin-scrollbar relative flex max-w-full overflow-x-auto rounded-[14px] border backdrop-blur-2xl ${showDockLabels ? "h-11 items-center px-2 py-1" : "h-10 items-end gap-1 px-1.5 pb-1"}`} style={showDockLabels ? { ...dockShellStyle, boxShadow: `0 18px 52px ${theme.spatial.shadow}` } : dockShellStyle}>
+                <div className={`aceternity-floating-dock canvas-overlay-scroll-surface relative flex max-w-full overflow-x-auto overflow-y-hidden rounded-[14px] border backdrop-blur-2xl ${showDockLabels ? "h-11 items-center px-2 py-1" : "h-10 items-end gap-1 px-1.5 pb-1"}`} style={showDockLabels ? { ...dockShellStyle, boxShadow: `0 18px 52px ${theme.spatial.shadow}` } : dockShellStyle}>
                     {dockItems.length ? <FloatingDock embedded items={dockItems} size="compact" showLabels={showDockLabels} ariaLabel="节点快捷工具" className={`pointer-events-auto shrink-0 ${showDockLabels ? "" : "max-w-[min(calc(100vw-20px),400px)]"}`} style={embeddedDockStyle} /> : null}
                 </div>
             </div>
@@ -390,6 +391,7 @@ export function CanvasNodeInfoModal({ node, open, onClose, onMetadataChange, rea
 
     return (
         <Modal
+            rootClassName="canvas-overlay-modal canvas-overlay-modal--node-info"
             className="canvas-node-info-modal"
             title={title}
             open={open && Boolean(node)}

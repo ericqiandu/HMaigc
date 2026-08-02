@@ -22,7 +22,7 @@ type CanvasProjectStatusDialogsProps = {
 export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, superResolveNode, previewNode, clearConfirmOpen, onCloseTask, onCloseSuperResolve, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
     return (
         <>
-            <Modal title="任务详情" open={Boolean(task)} footer={null} width={760} onCancel={onCloseTask}>
+            <Modal rootClassName="canvas-overlay-modal" title="任务详情" open={Boolean(task)} footer={null} width={760} onCancel={onCloseTask}>
                 {task ? (
                     <div className="space-y-4 text-sm">
                         <div className="grid grid-cols-2 gap-3 rounded-lg border p-3" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
@@ -43,16 +43,17 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                 ) : null}
             </Modal>
 
-            <Modal title="AI 超分" open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={onCloseSuperResolve}>
+            <Modal rootClassName="canvas-overlay-modal" title="AI 超分" open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={onCloseSuperResolve}>
                 <div className="py-8 text-center text-base font-medium">暂未实现</div>
             </Modal>
 
-            <Modal title={previewNode?.type === CanvasNodeType.Video ? "视频预览" : "图片预览"} open={Boolean(previewNode?.metadata?.content)} centered onCancel={onClosePreview} footer={null} width="min(1200px, calc(100vw - 32px))" styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "84vh", overflow: "hidden", background: "#090909" } }}>
+            <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--media-preview" title={previewNode?.type === CanvasNodeType.Video ? "视频预览" : "图片预览"} open={Boolean(previewNode?.metadata?.content)} centered onCancel={onClosePreview} footer={null} width="min(1200px, calc(100vw - 32px))" styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "84vh", overflow: "hidden", background: "#090909" } }}>
                 {previewNode?.metadata?.content && previewNode.type === CanvasNodeType.Video ? <video src={previewNode.metadata.content} controls className="max-h-[84vh] max-w-full bg-black object-contain" /> : null}
                 {previewNode?.metadata?.content && previewNode.type === CanvasNodeType.Image ? <img src={previewNode.metadata.content} alt={previewNode.title || "图片"} className="max-h-[84vh] max-w-full object-contain" /> : null}
             </Modal>
 
             <Modal
+                rootClassName="canvas-overlay-modal"
                 title="清空画布？"
                 open={clearConfirmOpen}
                 centered

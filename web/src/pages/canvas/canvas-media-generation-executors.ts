@@ -5,6 +5,7 @@ import { audioMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-tas
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { nextCanvasVersionLabel } from "@/lib/canvas/canvas-layout";
 import { buildAudioGenerationMetadata, buildVideoGenerationMetadata, generationReferenceUrls, runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
+import { selectVideoGenerationContext } from "@/lib/canvas/canvas-video-generation-mode";
 import { storeGeneratedAudio } from "@/services/api/audio";
 import { storeGeneratedVideo } from "@/services/api/video";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -36,7 +37,8 @@ export async function executeVideoGeneration({
     const isExistingVideoNode = sourceNode?.type === CanvasNodeType.Video && Boolean(sourceNode.metadata?.content);
     const videoId = isEmptyVideoNode ? nodeId : nanoid();
     const parent = sourceNode?.position || { x: 0, y: 0 };
-    const videoGenerationMetadata = buildVideoGenerationMetadata(sourceNode, generationContext);
+    const selectedGenerationContext = selectVideoGenerationContext(sourceNode?.metadata, generationContext);
+    const videoGenerationMetadata = buildVideoGenerationMetadata(sourceNode, selectedGenerationContext);
     const videoNode: CanvasNodeData = {
         id: videoId,
         type: CanvasNodeType.Video,
@@ -62,7 +64,7 @@ export async function executeVideoGeneration({
             superResolutionScene: generationConfig.videoSuperResolutionScene,
             superResolutionVersion: generationConfig.videoSuperResolutionVersion,
             superResolutionFps: generationConfig.videoSuperResolutionFps,
-            references: generationReferenceUrls(generationContext),
+            references: generationReferenceUrls(selectedGenerationContext),
             ...videoGenerationMetadata,
         },
     };
@@ -84,14 +86,14 @@ export async function executeVideoGeneration({
 
     startGenerationRequest(videoId, nodeId, nodeId, controller);
     try {
-        const result = await runBackendCanvasGenerationTask({ projectId, nodeId: videoId, mode: "video", prompt: effectivePrompt, config: generationConfig, referenceImages: generationContext.referenceImages, referenceVideos: generationContext.referenceVideos, referenceAudios: generationContext.referenceAudios, signal: controller.signal, metadata: { sourceNodeId: nodeId, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, resolvedCharacterVoices: generationContext.resolvedCharacterVoices, ...videoGenerationMetadata }, onTaskCreated: (task) => bindGenerationTask(videoId, task) });
+        const result = await runBackendCanvasGenerationTask({ projectId, nodeId: videoId, mode: "video", prompt: effectivePrompt, config: generationConfig, referenceImages: selectedGenerationContext.referenceImages, referenceVideos: selectedGenerationContext.referenceVideos, referenceAudios: selectedGenerationContext.referenceAudios, signal: controller.signal, metadata: { sourceNodeId: nodeId, resolvedCharacterVersions: selectedGenerationContext.resolvedCharacterVersions, resolvedCharacterVoices: selectedGenerationContext.resolvedCharacterVoices, ...videoGenerationMetadata }, onTaskCreated: (task) => bindGenerationTask(videoId, task) });
         if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
         const video = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
         setNodes((current) => current.map((node) => {
             if (node.id !== videoId) return node;
             const geometry = node.metadata?.locked ? {} : { width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 } };
-            return { ...node, ...geometry, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, superResolutionEnabled: generationConfig.videoSuperResolutionEnabled, superResolutionResolution: generationConfig.videoSuperResolutionResolution, superResolutionScene: generationConfig.videoSuperResolutionScene, superResolutionVersion: generationConfig.videoSuperResolutionVersion, superResolutionFps: generationConfig.videoSuperResolutionFps, references: generationReferenceUrls(generationContext), ...videoGenerationMetadata } };
+            return { ...node, ...geometry, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, superResolutionEnabled: generationConfig.videoSuperResolutionEnabled, superResolutionResolution: generationConfig.videoSuperResolutionResolution, superResolutionScene: generationConfig.videoSuperResolutionScene, superResolutionVersion: generationConfig.videoSuperResolutionVersion, superResolutionFps: generationConfig.videoSuperResolutionFps, references: generationReferenceUrls(selectedGenerationContext), ...videoGenerationMetadata } };
         }));
     } finally {
         finishGenerationRequest(videoId, controller);

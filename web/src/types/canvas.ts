@@ -32,6 +32,13 @@ export type CanvasGenerationBatchItemStatus = "waiting" | "submitting" | "queued
 export type CanvasImageGenerationType = "generation" | "edit";
 export type CanvasWorkflowKind = "free" | "script" | "story_input" | "character" | "scene" | "storyboard" | "shot" | "final" | "styleboard" | "reference_set" | "action_board";
 export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat";
+export type CanvasVideoCompositionClip = {
+    id: string;
+    sourceNodeId: string;
+    trimStartMs: number;
+    trimEndMs?: number;
+};
+export type CanvasVideoGenerationMode = "text" | "omni_reference" | "image" | "first_last_frame" | "image_reference";
 export type CanvasSkillCategory = "writing" | "storyboard" | "image" | "video" | "utility";
 export type CanvasSkillOutputMode = "text" | "json" | "image_prompt" | "workflow";
 export type StoryboardColumn =
@@ -207,6 +214,9 @@ export type CanvasNodeMetadata = {
     taskUpdatedAt?: string;
     sessionId?: string;
     videoEditOperation?: CanvasVideoEditOperation;
+    compositionSourceCount?: number;
+    compositionClips?: CanvasVideoCompositionClip[];
+    videoGenerationMode?: CanvasVideoGenerationMode;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;
     videoStartFrameNodeId?: string;

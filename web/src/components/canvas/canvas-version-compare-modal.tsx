@@ -9,7 +9,7 @@ export function CanvasVersionCompareModal({ open, versions, onClose, onSetPrimar
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const modalWidth = Math.min(1180, Math.max(440, 112 + versions.length * 340));
     return (
-        <Modal title="版本对比" open={open} footer={null} width={modalWidth} centered onCancel={onClose} styles={{ body: { overflow: "hidden" } }}>
+        <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--version-compare" title="版本对比" open={open} footer={null} width={modalWidth} centered onCancel={onClose} styles={{ body: { overflow: "hidden" } }}>
             <div className="thin-scrollbar grid max-h-[70vh] grid-flow-col auto-cols-[328px] gap-3 overflow-x-auto pb-2">
                 {versions.map((node) => (
                     <article key={node.id} className="overflow-hidden rounded-lg border" style={{ borderColor: node.metadata?.versionPrimary ? theme.node.activeStroke : theme.node.stroke, background: theme.node.panel }}>

@@ -99,7 +99,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     };
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={980} centered destroyOnHidden>
+        <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--mask-edit" title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={980} centered destroyOnHidden>
             <div className="grid gap-5 lg:grid-cols-[minmax(360px,1fr)_320px]">
                 <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-black/10 bg-transparent p-0 dark:border-white/10">
                     <div className="relative inline-block max-w-full overflow-hidden rounded-lg bg-transparent select-none">

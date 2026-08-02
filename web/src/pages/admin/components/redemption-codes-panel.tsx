@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag } from "antd";
+import { useCallback, useEffect, useState } from "react";
+import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Ban, Copy, Eye, KeyRound, RefreshCw, Search, TicketCheck } from "lucide-react";
 
@@ -7,9 +7,8 @@ import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { createAdminRedeemBatch, disableAdminRedeemBatch, disableAdminRedeemCode, listAdminRedeemBatchCodes, listAdminRedeemBatches, type AdminRedeemCode, type RedeemBatch } from "@/services/api/wallet";
-import { AdminExportButton, SettingsSectionCard } from "./admin-ui";
-
-type RedeemFormValues = { amount: number; count: number; note?: string; expiresAt?: string };
+import { AdminContentError, AdminExportButton, AdminTableEmpty, AdminTableSkeleton, SettingsSectionCard } from "./admin-ui";
+import { redeemBatchDisableDescription, redeemBatchRequest, redeemCodeDisableDescription, type RedeemFormValues } from "./redemption-code-domain";
 
 export default function RedemptionCodesPanel() {
     const { message } = App.useApp();
@@ -17,7 +16,9 @@ export default function RedemptionCodesPanel() {
     const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
     const [selectedBatch, setSelectedBatch] = useState<RedeemBatch | null>(null);
     const [loading, setLoading] = useState(true);
+    const [listError, setListError] = useState("");
     const [creating, setCreating] = useState(false);
+    const [disablingBatchId, setDisablingBatchId] = useState("");
     const [keyword, setKeyword] = useState("");
     const debouncedKeyword = useDebouncedValue(keyword);
     const [validity, setValidity] = useState<"all" | "active" | "expired">("all");
@@ -32,8 +33,9 @@ export default function RedemptionCodesPanel() {
             const result = await listAdminRedeemBatches({ keyword: debouncedKeyword || undefined, validity: validity === "all" ? undefined : validity, page: targetPage, limit: targetPageSize });
             setBatches(result.batches);
             setTotal(result.total);
+            setListError("");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取兑换码批次失败");
+            setListError(error instanceof Error ? error.message : "读取兑换码批次失败");
         } finally {
             setLoading(false);
         }
@@ -51,17 +53,11 @@ export default function RedemptionCodesPanel() {
         const values = await form.validateFields();
         setCreating(true);
         try {
-            const result = await createAdminRedeemBatch({
-                amountMicrocredits: Math.round(values.amount * 1_000_000),
-                count: values.count,
-                note: values.note?.trim(),
-                expiresAt: values.expiresAt ? new Date(values.expiresAt).toISOString() : undefined,
-            });
+            const result = await createAdminRedeemBatch(redeemBatchRequest(values));
             setGeneratedCodes(result.codes);
-            const createdBatch: RedeemBatch = { ...result.batch, availableCount: result.batch.count, redeemedCount: 0, disabledCount: 0, expiredCount: 0 };
-            setBatches((current) => [createdBatch, ...current.filter((item) => item.id !== createdBatch.id)].slice(0, pageSize));
-            setTotal((current) => current + 1);
             setPage(1);
+            form.resetFields(["note", "expiresAt"]);
+            await reload(1, pageSize);
             message.success(`已生成 ${result.codes.length} 个兑换码`);
         } catch (error) {
             const detail = error instanceof Error ? error.message : "生成兑换码失败";
@@ -99,31 +95,35 @@ export default function RedemptionCodesPanel() {
             width: 210,
             fixed: "right",
             render: (_, batch) => (
-                <Space size={6}>
+                <div className="admin-redemption-row-actions">
                     <Button size="small" icon={<Eye className="size-3.5" />} onClick={() => setSelectedBatch(batch)}>
                         查看明细
                     </Button>
                     <Popconfirm
+                        rootClassName="admin-operation-popconfirm workspace-ui-scope"
                         title="禁用该批次的可用兑换码？"
-                        description="已核销和已过期记录不会变更。"
+                        description={redeemBatchDisableDescription(batch)}
                         okText="禁用"
                         cancelText="取消"
                         okButtonProps={{ danger: true }}
                         onConfirm={async () => {
+                            setDisablingBatchId(batch.id);
                             try {
                                 const result = await disableAdminRedeemBatch(batch.id);
                                 message.success(`已禁用 ${result.disabledCount} 个兑换码`);
                                 await reload();
                             } catch (error) {
                                 message.error(error instanceof Error ? error.message : "禁用批次失败");
+                            } finally {
+                                setDisablingBatchId("");
                             }
                         }}
                     >
-                        <Button size="small" danger icon={<Ban className="size-3.5" />} disabled={(batch.availableCount ?? 0) <= 0}>
+                        <Button size="small" danger icon={<Ban className="size-3.5" />} loading={disablingBatchId === batch.id} disabled={(batch.availableCount ?? 0) <= 0 || Boolean(disablingBatchId)}>
                             禁用
                         </Button>
                     </Popconfirm>
-                </Space>
+                </div>
             ),
         },
     ];
@@ -135,11 +135,11 @@ export default function RedemptionCodesPanel() {
                 title="生成兑换码批次"
                 description="兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。"
             >
-                <Form form={form} layout="vertical" requiredMark={false} className="admin-redemption-form grid gap-x-5 px-6 pb-1 pt-5 md:grid-cols-12">
-                    <Form.Item name="amount" label="每个兑换码的积分" rules={[{ required: true, message: "请填写积分面额" }]} className="md:col-span-3">
+                <Form form={form} layout="vertical" requiredMark={false} disabled={creating} className="admin-redemption-form grid gap-x-5 md:grid-cols-12">
+                    <Form.Item name="amount" label="每个兑换码的积分" rules={[{ required: true, message: "请填写积分面额" }, { type: "number", min: 0.000001, message: "积分面额必须大于 0" }]} className="admin-redemption-amount-field md:col-span-3">
                         <InputNumber style={{ width: "100%" }} min={0.000001} precision={6} />
                     </Form.Item>
-                    <Form.Item name="count" label="生成数量" rules={[{ required: true, message: "请填写生成数量" }]} className="md:col-span-2">
+                    <Form.Item name="count" label="生成数量" rules={[{ required: true, message: "请填写生成数量" }, { type: "number", min: 1, max: 5000, message: "单批生成数量必须为 1–5,000" }]} className="admin-redemption-count-field md:col-span-2">
                         <InputNumber style={{ width: "100%" }} min={1} max={5000} precision={0} />
                     </Form.Item>
                     <Form.Item name="expiresAt" label="过期时间" className="md:col-span-3">
@@ -148,8 +148,8 @@ export default function RedemptionCodesPanel() {
                     <Form.Item name="note" label="批次备注" className="md:col-span-4">
                         <Input maxLength={500} placeholder="例如：7 月活动赠送" />
                     </Form.Item>
-                    <div className="admin-redemption-actions flex items-center justify-between gap-5 py-4 md:col-span-12">
-                        <span className="text-xs text-foreground/45">单批最多生成 5,000 个。生成成功后会立即显示结果，请及时下载留存。</span>
+                    <div className="admin-redemption-actions flex items-center justify-between gap-5 md:col-span-12">
+                        <span className="admin-redemption-actions-note">单批最多生成 5,000 个。生成成功后会立即显示结果，请及时下载留存。</span>
                         <Button type="primary" loading={creating} icon={<TicketCheck className="size-4" />} onClick={() => void createBatch()}>
                             生成兑换码
                         </Button>
@@ -200,8 +200,11 @@ export default function RedemptionCodesPanel() {
                         ]}
                     />
                 </ListToolbar>
-                <TableSurface>
-                    <Table
+                {listError ? <AdminContentError title={batches.length ? "兑换码批次刷新失败" : "兑换码批次读取失败"} description={batches.length ? `${listError}；当前继续展示上次成功读取的批次。` : listError} onRetry={() => void reload()} /> : null}
+                {!listError || batches.length ? <TableSurface>
+                    {loading && !batches.length ? <AdminTableSkeleton rows={8} columns={7} /> : null}
+                    {!loading && !listError && !batches.length ? <AdminTableEmpty filtered={Boolean(keyword || validity !== "all")} title={keyword || validity !== "all" ? undefined : "暂无兑换码批次"} description={keyword || validity !== "all" ? undefined : "创建首个兑换码批次后，批次状态与核销记录会显示在这里。"} /> : null}
+                    {batches.length ? <Table
                         className="app-data-table"
                         rowKey="id"
                         size="middle"
@@ -221,8 +224,8 @@ export default function RedemptionCodesPanel() {
                             },
                         }}
                         scroll={{ x: 1080 }}
-                    />
-                </TableSurface>
+                    /> : null}
+                </TableSurface> : null}
             </section>
 
             <GeneratedCodesModal codes={generatedCodes} onClose={() => setGeneratedCodes([])} />
@@ -240,21 +243,22 @@ function GeneratedCodesModal({ codes, onClose }: { codes: string[]; onClose: () 
     };
     return (
         <Modal
+            className="admin-operation-modal admin-generated-codes-modal workspace-ui-scope"
             title={`已生成 ${codes.length} 个兑换码`}
             open={codes.length > 0}
             onCancel={onClose}
             footer={
-                <Space>
+                <div className="admin-generated-codes-actions">
                     <Button icon={<Copy className="size-4" />} onClick={() => void copy()}>
                         复制全部
                     </Button>
                     <AdminExportButton type="primary" exportFile={() => new Blob([content + "\n"], { type: "text/plain;charset=utf-8" })} fileName={() => `兑换码-${new Date().toISOString().slice(0, 10)}.txt`} label="下载 TXT" />
-                </Space>
+                </div>
             }
             width={680}
         >
-            <div className="mb-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">兑换码已加密保存，可在批次明细中再次查看；仍建议立即下载一份用于发放。</div>
-            <Input.TextArea value={content} readOnly autoSize={{ minRows: 10, maxRows: 18 }} className="font-mono text-xs" />
+            <div className="admin-generated-codes-notice">兑换码已加密保存，可在批次明细中再次查看；仍建议立即下载一份用于发放。</div>
+            <Input.TextArea value={content} readOnly autoSize={{ minRows: 10, maxRows: 18 }} className="admin-generated-codes-content font-mono text-xs" />
         </Modal>
     );
 }
@@ -264,30 +268,34 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
     const [batchSummary, setBatchSummary] = useState<RedeemBatch | null>(batch);
     const [codes, setCodes] = useState<AdminRedeemCode[]>([]);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState("");
+    const [disablingCodeId, setDisablingCodeId] = useState("");
     const [plaintextAvailable, setPlaintextAvailable] = useState(true);
     const [status, setStatus] = useState("all");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(50);
     const [total, setTotal] = useState(0);
 
-    useEffect(() => {
+    const loadCodes = useCallback(async () => {
         if (!batch) return;
-        let active = true;
         setLoading(true);
-        void listAdminRedeemBatchCodes(batch.id, { status: status === "all" ? undefined : status, page, limit: pageSize })
-            .then((result) => {
-                if (!active) return;
-                setCodes(result.codes);
-                setTotal(result.total);
-                setPlaintextAvailable(result.plaintextAvailable);
-                setBatchSummary(result.batch);
-            })
-            .catch((error) => active && message.error(error instanceof Error ? error.message : "读取兑换码明细失败"))
-            .finally(() => active && setLoading(false));
-        return () => {
-            active = false;
-        };
-    }, [batch, message, page, pageSize, status]);
+        try {
+            const result = await listAdminRedeemBatchCodes(batch.id, { status: status === "all" ? undefined : status, page, limit: pageSize });
+            setCodes(result.codes);
+            setTotal(result.total);
+            setPlaintextAvailable(result.plaintextAvailable);
+            setBatchSummary(result.batch);
+            setLoadError("");
+        } catch (error) {
+            setLoadError(error instanceof Error ? error.message : "读取兑换码明细失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [batch, page, pageSize, status]);
+
+    useEffect(() => {
+        void loadCodes();
+    }, [loadCodes]);
 
     const copyCode = async (code?: string) => {
         if (!code) return;
@@ -305,6 +313,7 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
     };
     const disableCode = async (item: AdminRedeemCode) => {
         if (!batch) return;
+        setDisablingCodeId(item.id);
         try {
             await disableAdminRedeemCode(batch.id, item.id);
             setCodes((current) => current.map((code) => (code.id === item.id ? { ...code, status: "disabled" } : code)));
@@ -312,6 +321,8 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
             message.success("兑换码已禁用");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "禁用兑换码失败");
+        } finally {
+            setDisablingCodeId("");
         }
     };
     const columns: ColumnsType<AdminRedeemCode> = [
@@ -347,8 +358,8 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
             fixed: "right",
             render: (_, item) =>
                 item.status === "unused" ? (
-                    <Popconfirm title="禁用这个兑换码？" okText="禁用" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void disableCode(item)}>
-                        <Button type="text" size="small" danger icon={<Ban className="size-3.5" />} aria-label="禁用兑换码" />
+                    <Popconfirm rootClassName="admin-operation-popconfirm workspace-ui-scope" title="禁用这个兑换码？" description={redeemCodeDisableDescription(item)} okText="禁用" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void disableCode(item)}>
+                        <Button type="text" size="small" danger loading={disablingCodeId === item.id} disabled={Boolean(disablingCodeId)} icon={<Ban className="size-3.5" />} aria-label={`禁用尾号 ${item.codeSuffix} 的兑换码`} />
                     </Popconfirm>
                 ) : (
                     <span className="text-xs text-foreground/35">--</span>
@@ -358,24 +369,28 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
 
     return (
         <Modal
+            className="admin-operation-modal admin-redeem-codes-modal workspace-ui-scope"
             title={batchSummary ? `兑换码明细 · ${batchSummary.note || formatTime(batchSummary.createdAt)}` : "兑换码明细"}
             open={Boolean(batch)}
             onCancel={onClose}
+            maskClosable={!disablingCodeId}
+            keyboard={!disablingCodeId}
+            closable={!disablingCodeId}
             footer={
-                <Space>
+                <div className="admin-redeem-codes-actions">
                     <Button icon={<Copy className="size-4" />} disabled={!codes.some((item) => item.code)} onClick={() => void copyPage()}>
                         复制本页
                     </Button>
-                    <Button type="primary" onClick={onClose}>
+                    <Button type="primary" disabled={Boolean(disablingCodeId)} onClick={onClose}>
                         关闭
                     </Button>
-                </Space>
+                </div>
             }
             width={1080}
         >
-            {!plaintextAvailable ? <div className="mb-4 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">该批次创建于加密回看功能上线前，系统当时只保存了哈希，无法恢复完整明文；核销状态和审计信息仍可查看。</div> : null}
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap gap-2">
+            {!plaintextAvailable ? <div className="admin-redeem-codes-notice">该批次创建于加密回看功能上线前，系统当时只保存了哈希，无法恢复完整明文；核销状态和审计信息仍可查看。</div> : null}
+            <div className="admin-redeem-codes-toolbar flex flex-wrap items-center justify-between gap-3">
+                <div className="admin-redeem-codes-summary flex flex-wrap gap-2">
                     <Tag variant="filled" color="green">
                         可用 {batchSummary?.availableCount ?? 0}
                     </Tag>
@@ -401,7 +416,10 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
                     ]}
                 />
             </div>
-            <Table
+            {loadError ? <AdminContentError title={codes.length ? "兑换码明细刷新失败" : "兑换码明细读取失败"} description={codes.length ? `${loadError}；当前继续展示上次成功读取的明细。` : loadError} onRetry={() => void loadCodes()} /> : null}
+            {loading && !codes.length ? <AdminTableSkeleton rows={7} columns={6} /> : null}
+            {!loading && !loadError && !codes.length ? <AdminTableEmpty compact filtered={status !== "all"} title={status === "all" ? "该批次暂无兑换码" : undefined} /> : null}
+            {codes.length ? <Table
                 className="app-data-table"
                 rowKey="id"
                 size="small"
@@ -421,7 +439,7 @@ function RedeemBatchCodesModal({ batch, onClose }: { batch: RedeemBatch | null; 
                     },
                 }}
                 scroll={{ x: 960, y: 460 }}
-            />
+            /> : null}
         </Modal>
     );
 }

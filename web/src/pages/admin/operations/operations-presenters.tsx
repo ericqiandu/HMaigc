@@ -113,9 +113,9 @@ export function OverviewMetric({ icon, label, value, detail, tone }: { icon: Rea
     );
 }
 
-export function OperationActionButton({ icon, title, description, disabled, onClick }: { icon: ReactNode; title: string; description: string; disabled: boolean; onClick: () => void }) {
-    return (
-        <button className="operations-action-button" type="button" disabled={disabled} onClick={onClick}>
+export function OperationActionButton({ icon, title, description, disabled, disabledReason, onClick }: { icon: ReactNode; title: string; description: string; disabled: boolean; disabledReason?: string; onClick: () => void }) {
+    const button = (
+        <button className="operations-action-button" type="button" disabled={disabled} aria-disabled={disabled} onClick={onClick}>
             <span className="operations-action-icon grid size-8 place-items-center">{icon}</span>
             <span className="operations-action-copy min-w-0 text-left">
                 <span className="operations-action-title block">{title}</span>
@@ -123,6 +123,10 @@ export function OperationActionButton({ icon, title, description, disabled, onCl
             </span>
         </button>
     );
+
+    return disabled && disabledReason
+        ? <Tooltip title={disabledReason}><span className="operations-action-disabled-wrapper">{button}</span></Tooltip>
+        : button;
 }
 
 export function OperationStatusTag({ status }: { status: OperationsStatus }) {

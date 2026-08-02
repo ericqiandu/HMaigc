@@ -1,6 +1,6 @@
 import { App, Button, Drawer, Form, Input, Select, Space, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { AudioLines, CloudDownload, Dna, Pencil, Plus, Trash2 } from "lucide-react";
+import { AudioLines, CloudDownload, Dna, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
@@ -17,10 +17,12 @@ import {
 } from "@/services/api/voices";
 import type { ChannelVoice, ModelChannel } from "@/stores/use-config-store";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminRowActions, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
+import { AdminContentError, AdminRowActions, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 
 type VoiceFormValues = ChannelVoiceInput & { consentConfirmed: boolean };
 type EditorMode = "manual" | "clone";
+type VoiceKindFilter = ChannelVoice["kind"] | "all";
+type VoiceStatusFilter = "all" | "enabled" | "disabled" | "attention";
 
 const voiceKindLabels: Record<ChannelVoice["kind"], string> = {
     system: "系统音色",
@@ -33,8 +35,18 @@ export default function VoicesPage() {
     const [channels, setChannels] = useState<ModelChannel[]>([]);
     const [channelId, setChannelId] = useState("");
     const [voices, setVoices] = useState<ChannelVoice[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [channelsLoading, setChannelsLoading] = useState(true);
+    const [voicesLoading, setVoicesLoading] = useState(false);
+    const [syncing, setSyncing] = useState(false);
+    const [channelsError, setChannelsError] = useState("");
+    const [voicesError, setVoicesError] = useState("");
+    const [keyword, setKeyword] = useState("");
+    const [kindFilter, setKindFilter] = useState<VoiceKindFilter>("all");
+    const [statusFilter, setStatusFilter] = useState<VoiceStatusFilter>("all");
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
     const [saving, setSaving] = useState(false);
+    const [editorDirty, setEditorDirty] = useState(false);
     const [editorMode, setEditorMode] = useState<EditorMode>("manual");
     const [editing, setEditing] = useState<ChannelVoice | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -46,35 +58,61 @@ export default function VoicesPage() {
         () => (selectedChannel?.models || []).map((model) => ({ label: model, value: model })),
         [selectedChannel?.models],
     );
+    const filteredVoices = useMemo(() => {
+        const normalizedKeyword = keyword.trim().toLocaleLowerCase();
+        return voices.filter((voice) => {
+            const matchesKeyword = !normalizedKeyword || [voice.displayName, voice.voiceKey, voice.description, voice.language]
+                .some((value) => value?.toLocaleLowerCase().includes(normalizedKeyword));
+            const matchesKind = kindFilter === "all" || voice.kind === kindFilter;
+            const needsAttention = voice.providerStatus === "failed" || voice.providerStatus === "uncertain" || voice.providerStatus === "missing";
+            const matchesStatus = statusFilter === "all"
+                || (statusFilter === "enabled" && voice.enabled)
+                || (statusFilter === "disabled" && !voice.enabled)
+                || (statusFilter === "attention" && needsAttention);
+            return matchesKeyword && matchesKind && matchesStatus;
+        });
+    }, [kindFilter, keyword, statusFilter, voices]);
+    const hasFilters = Boolean(keyword.trim() || kindFilter !== "all" || statusFilter !== "all");
+
+    useEffect(() => {
+        const lastPage = Math.max(1, Math.ceil(filteredVoices.length / pageSize));
+        setPage((current) => Math.min(current, lastPage));
+    }, [filteredVoices.length, pageSize]);
 
     const loadChannels = async () => {
-        const result = await listAdminChannels({ interfaceType: "minimax-speech", page: 1, limit: 100 });
-        setChannels(result.channels);
-        setChannelId((current) => current || result.channels[0]?.id || "");
+        setChannelsLoading(true);
+        setChannelsError("");
+        try {
+            const result = await listAdminChannels({ interfaceType: "minimax-speech", page: 1, limit: 100 });
+            setChannels(result.channels);
+            setChannelId((current) => result.channels.some((channel) => channel.id === current) ? current : result.channels[0]?.id || "");
+        } catch (error) {
+            setChannelsError(error instanceof Error ? error.message : "读取 MiniMax Speech 渠道失败");
+        } finally {
+            setChannelsLoading(false);
+        }
     };
 
     const loadVoices = async (targetChannelId: string) => {
         if (!targetChannelId) {
             setVoices([]);
-            setLoading(false);
+            setVoicesError("");
             return;
         }
-        setLoading(true);
+        setVoicesLoading(true);
+        setVoicesError("");
         try {
             const result = await listAdminChannelVoices(targetChannelId);
             setVoices(result.voices);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取音色目录失败");
+            setVoicesError(error instanceof Error ? error.message : "读取音色目录失败");
         } finally {
-            setLoading(false);
+            setVoicesLoading(false);
         }
     };
 
     useEffect(() => {
-        void loadChannels().catch((error: unknown) => {
-            setLoading(false);
-            message.error(error instanceof Error ? error.message : "读取 MiniMax Speech 渠道失败");
-        });
+        void loadChannels();
     }, []);
 
     useEffect(() => {
@@ -86,6 +124,7 @@ export default function VoicesPage() {
         setEditing(voice || null);
         setCloneFile(null);
         setCloneIdempotencyKey(mode === "clone" ? crypto.randomUUID() : "");
+        setEditorDirty(false);
         form.setFieldsValue({
             voiceKey: voice?.voiceKey || "",
             displayName: voice?.displayName || "",
@@ -131,6 +170,7 @@ export default function VoicesPage() {
                 message.success("音色已加入目录");
             }
             setDrawerOpen(false);
+            setEditorDirty(false);
             setCloneIdempotencyKey("");
             await Promise.all([loadVoices(channelId), publishCatalog()]);
         } catch (error) {
@@ -142,7 +182,8 @@ export default function VoicesPage() {
 
     const sync = async () => {
         if (!channelId) return;
-        setLoading(true);
+        setSyncing(true);
+        setVoicesError("");
         try {
             const result = await syncAdminChannelVoices(channelId);
             setVoices(result.voices);
@@ -151,8 +192,27 @@ export default function VoicesPage() {
         } catch (error) {
             message.error(error instanceof Error ? error.message : "同步音色失败");
         } finally {
-            setLoading(false);
+            setSyncing(false);
         }
+    };
+
+    const closeEditor = () => {
+        if (saving) return;
+        if (!editorDirty) {
+            setDrawerOpen(false);
+            return;
+        }
+        modal.confirm({
+            title: "放弃未保存的修改？",
+            content: "当前音色配置尚未发布，关闭后本次修改将丢失。",
+            okText: "放弃修改",
+            okButtonProps: { danger: true },
+            cancelText: "继续编辑",
+            onOk: () => {
+                setEditorDirty(false);
+                setDrawerOpen(false);
+            },
+        });
     };
 
     const remove = (voice: ChannelVoice) => {
@@ -219,36 +279,94 @@ export default function VoicesPage() {
             description="统一维护 MiniMax 系统音色、克隆音色、模型兼容范围和会员访问权限；用户端仅使用这里发布的音色。"
             actions={(
                 <Space className="admin-voice-page-actions">
-                    <Button className="admin-voice-sync-button" icon={<CloudDownload className="admin-voice-button-icon size-4" />} disabled={!channelId} loading={loading} onClick={() => void sync()}>同步供应商</Button>
+                    <Button className="admin-voice-sync-button" icon={<CloudDownload className="admin-voice-button-icon size-4" />} disabled={!channelId || voicesLoading} loading={syncing} onClick={() => void sync()}>同步供应商</Button>
                     <Button className="admin-voice-clone-button" icon={<Dna className="admin-voice-button-icon size-4" />} disabled={!channelId} onClick={() => openEditor("clone")}>克隆音色</Button>
                     <Button className="admin-voice-create-button" type="primary" icon={<Plus className="admin-voice-button-icon size-4" />} disabled={!channelId} onClick={() => openEditor("manual")}>新增目录音色</Button>
                 </Space>
             )}
         >
             <div className="admin-voice-toolbar">
-                <ListToolbar>
+                <ListToolbar
+                    className="admin-voice-list-toolbar"
+                    active={hasFilters}
+                    onReset={() => { setKeyword(""); setKindFilter("all"); setStatusFilter("all"); setPage(1); }}
+                    trailing={<span className="admin-voice-result-count">显示 {filteredVoices.length} / {voices.length} 个音色</span>}
+                >
                     <Select
                         className="admin-voice-channel-select min-w-72"
                         aria-label="选择 MiniMax Speech 渠道"
                         placeholder="请先创建 MiniMax Speech 渠道"
                         value={channelId || undefined}
+                        loading={channelsLoading}
+                        disabled={channelsLoading || Boolean(channelsError)}
                         options={channels.map((channel) => ({ label: channel.name, value: channel.id }))}
-                        onChange={setChannelId}
+                        onChange={(value) => { setChannelId(value); setPage(1); }}
+                    />
+                    <Input
+                        className="admin-voice-search-input"
+                        allowClear
+                        prefix={<Search className="admin-voice-search-icon size-4" />}
+                        placeholder="搜索名称、标识、语言或说明"
+                        value={keyword}
+                        onChange={(event) => { setKeyword(event.target.value); setPage(1); }}
+                    />
+                    <Select
+                        className="admin-voice-kind-filter"
+                        aria-label="筛选音色类型"
+                        value={kindFilter}
+                        options={[{ label: "全部类型", value: "all" }, ...Object.entries(voiceKindLabels).map(([value, label]) => ({ value, label }))]}
+                        onChange={(value: VoiceKindFilter) => { setKindFilter(value); setPage(1); }}
+                    />
+                    <Select
+                        className="admin-voice-status-filter"
+                        aria-label="筛选发布状态"
+                        value={statusFilter}
+                        options={[
+                            { label: "全部状态", value: "all" },
+                            { label: "已发布", value: "enabled" },
+                            { label: "已停用", value: "disabled" },
+                            { label: "需处理", value: "attention" },
+                        ]}
+                        onChange={(value: VoiceStatusFilter) => { setStatusFilter(value); setPage(1); }}
                     />
                 </ListToolbar>
             </div>
             <div className="admin-voice-table-surface">
-                <TableSurface>
-                <Table<ChannelVoice>
-                    className="admin-voice-table"
-                    rowKey="id"
-                    columns={columns}
-                    dataSource={voices}
-                    loading={loading ? { indicator: <AdminTableSkeleton /> } : false}
-                    locale={{ emptyText: <AdminTableEmpty title={channels.length ? "尚未发布音色" : "尚未创建 MiniMax Speech 渠道"} description={channels.length ? "可同步供应商音色或新增目录音色。" : "请先在 AI 模型配置中创建渠道并添加音频模型与积分价格。"} /> }}
-                    pagination={false}
-                />
-                </TableSurface>
+                {channelsError ? (
+                    <AdminContentError title="音频渠道读取失败" description={channelsError} onRetry={() => void loadChannels()} />
+                ) : voicesError ? (
+                    <AdminContentError title="音色目录读取失败" description={voicesError} onRetry={() => void loadVoices(channelId)} />
+                ) : (
+                    <TableSurface>
+                        {(channelsLoading || voicesLoading) && voices.length === 0 ? (
+                            <AdminTableSkeleton rows={8} columns={7} />
+                        ) : (
+                            <Table<ChannelVoice>
+                                className="admin-voice-table app-data-table"
+                                rowKey="id"
+                                columns={columns}
+                                dataSource={filteredVoices}
+                                loading={voicesLoading}
+                                locale={{ emptyText: <AdminTableEmpty title={hasFilters ? "没有符合条件的音色" : channels.length ? "尚未发布音色" : "尚未创建 MiniMax Speech 渠道"} description={hasFilters ? "调整筛选条件或清空搜索后重试。" : channels.length ? "可同步供应商音色或新增目录音色。" : "请先在 AI 模型配置中创建渠道并添加音频模型与积分价格。"} /> }}
+                                pagination={{
+                                    current: page,
+                                    pageSize,
+                                    total: filteredVoices.length,
+                                    showSizeChanger: true,
+                                    showLessItems: true,
+                                    responsive: true,
+                                    pageSizeOptions: [20, 50, 100],
+                                    showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个音色`,
+                                    onChange: (nextPage, nextPageSize) => {
+                                        setPage(nextPageSize !== pageSize ? 1 : nextPage);
+                                        setPageSize(nextPageSize);
+                                    },
+                                }}
+                                scroll={{ x: "max-content" }}
+                            />
+                        )}
+                    </TableSurface>
+                )}
             </div>
             <Drawer
                 className="admin-object-drawer admin-voice-editor"
@@ -256,10 +374,12 @@ export default function VoicesPage() {
                 open={drawerOpen}
                 width={560}
                 destroyOnHidden
-                onClose={() => setDrawerOpen(false)}
-                extra={<Button className="admin-voice-save-button" type="primary" loading={saving} onClick={() => void save()}>保存并发布</Button>}
+                maskClosable={!saving}
+                keyboard={!saving}
+                onClose={closeEditor}
+                extra={<Button className="admin-voice-save-button" type="primary" disabled={!editorDirty} loading={saving} onClick={() => void save()}>保存并发布</Button>}
             >
-                <Form<VoiceFormValues> className="admin-voice-form" form={form} layout="vertical" requiredMark={false}>
+                <Form<VoiceFormValues> className="admin-voice-form" form={form} layout="vertical" requiredMark={false} onValuesChange={() => setEditorDirty(true)}>
                     <Form.Item className="admin-voice-form-item" name="voiceKey" label="音色标识" rules={[{ required: true, message: "请输入音色标识" }]}>
                         <Input className="admin-voice-input" disabled={Boolean(editing)} placeholder="例如 HMVoice001" />
                     </Form.Item>
@@ -291,7 +411,7 @@ export default function VoicesPage() {
                                 className="admin-voice-file-input"
                                 type="file"
                                 accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/wav"
-                                onChange={(event) => setCloneFile(event.target.files?.[0] || null)}
+                                onChange={(event) => { setCloneFile(event.target.files?.[0] || null); setEditorDirty(true); }}
                             />
                             <p className="admin-voice-file-help">MiniMax 要求 10 秒至 5 分钟、20MB 以内；源文件只上传供应商，本系统仅留文件名、大小和 SHA-256 审计摘要。</p>
                             <Form.Item className="admin-voice-consent-item" name="consentConfirmed" valuePropName="checked" rules={[{ validator: (_, checked: boolean) => checked ? Promise.resolve() : Promise.reject(new Error("必须确认声音授权")) }]}>

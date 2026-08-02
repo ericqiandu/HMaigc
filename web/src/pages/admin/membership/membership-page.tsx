@@ -291,7 +291,7 @@ export default function MembershipAdminPage() {
                     },
                 ]}
             />
-            <Modal className="admin-membership-plan-modal" width={640} title={`编辑 ${editing?.name ?? ""}`} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => void savePlan()} okText="保存">
+            <Modal className="admin-operation-modal admin-membership-plan-modal workspace-ui-scope" width={640} title={`编辑 ${editing?.name ?? ""}`} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => void savePlan()} okText="保存">
                 <Form className="admin-membership-plan-form" form={form} layout="vertical">
                     <Form.Item className="admin-membership-form-item" name="name" label="名称" rules={[{ required: true }]}>
                         <Input className="admin-membership-name-input" />
@@ -404,7 +404,7 @@ export default function MembershipAdminPage() {
                     </Form.Item>
                 </Form>
             </Modal>
-            <Modal className="admin-membership-confirm-modal" title="确认会员订单收款" open={Boolean(confirming)} onCancel={() => setConfirming(null)} onOk={() => void confirmOrder()} okText="确认并开通">
+            <Modal className="admin-operation-modal admin-membership-confirm-modal workspace-ui-scope" title="确认会员订单收款" open={Boolean(confirming)} onCancel={() => setConfirming(null)} onOk={() => void confirmOrder()} okText="确认并开通">
                 <Form className="admin-membership-confirm-form" form={confirmForm} layout="vertical">
                     <Form.Item name="providerTradeNo" label="支付流水号" rules={[{ required: true, message: "请输入真实支付流水号" }]}>
                         <Input />
@@ -414,7 +414,7 @@ export default function MembershipAdminPage() {
                     </Form.Item>
                 </Form>
             </Modal>
-            <Modal className="admin-membership-close-modal" title="关闭待支付订单" open={Boolean(closing)} onCancel={() => setClosing(null)} onOk={() => void closeOrder()} okText="确认关闭" okButtonProps={{ danger: true }}>
+            <Modal className="admin-operation-modal admin-membership-close-modal workspace-ui-scope" title="关闭待支付订单" open={Boolean(closing)} onCancel={() => setClosing(null)} onOk={() => void closeOrder()} okText="确认关闭" okButtonProps={{ danger: true }}>
                 <Form className="admin-membership-close-form" form={closeForm} layout="vertical">
                     <Form.Item className="admin-membership-close-reason" name="note" label="关闭原因" rules={[{ required: true, message: "请输入关闭原因，便于后续审计" }]}>
                         <Input.TextArea className="admin-membership-close-input" rows={3} maxLength={500} showCount />

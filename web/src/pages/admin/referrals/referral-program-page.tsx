@@ -1,7 +1,7 @@
-import { App, Button, Input, InputNumber, Modal, Pagination, Skeleton, Switch, Table, Tag } from "antd";
+import { App, Button, Input, InputNumber, Modal, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Ban, Coins, Gift, Save, ShoppingBag, UserPlus, UsersRound } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Ban, Coins, Gift, RefreshCw, Save, ShoppingBag, UserPlus, UsersRound } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
     disqualifyAdminReferral,
@@ -13,7 +13,8 @@ import {
     type ReferralRule,
 } from "@/services/api/referral";
 import { AdminPageFrame } from "../components/admin-shell";
-import { SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminTableEmpty, SettingsSectionCard } from "../components/admin-ui";
+import { PaginationBar } from "@/components/layout/workspace-page";
 
 type RuleDraft = {
     inviterCredits: number;
@@ -27,6 +28,7 @@ export default function ReferralProgramPage() {
     const { message } = App.useApp();
     const [data, setData] = useState<AdminReferralProgramData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [page, setPage] = useState(1);
     const [savingProgram, setSavingProgram] = useState(false);
     const [savingPlanId, setSavingPlanId] = useState("");
@@ -34,11 +36,16 @@ export default function ReferralProgramPage() {
     const [disqualifyTarget, setDisqualifyTarget] = useState<ReferralInvitation | null>(null);
     const [disqualifyReason, setDisqualifyReason] = useState("");
     const [disqualifying, setDisqualifying] = useState(false);
+    const loadSequence = useRef(0);
 
     const load = useCallback(async (targetPage: number) => {
+        const sequence = loadSequence.current + 1;
+        loadSequence.current = sequence;
         setLoading(true);
+        setLoadError("");
         try {
             const next = await getAdminReferralProgram(targetPage, pageSize);
+            if (sequence !== loadSequence.current) return;
             setData(next);
             setDrafts(Object.fromEntries(next.rules.map((rule) => [rule.membershipPlanId, {
                 inviterCredits: fromMicrocredits(rule.inviterRewardMicrocredits),
@@ -46,9 +53,12 @@ export default function ReferralProgramPage() {
                 enabled: rule.enabled,
             }])));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取邀请奖励配置失败");
+            if (sequence !== loadSequence.current) return;
+            const description = error instanceof Error ? error.message : "读取邀请奖励配置失败";
+            setLoadError(description);
+            message.error(description);
         } finally {
-            setLoading(false);
+            if (sequence === loadSequence.current) setLoading(false);
         }
     }, [message]);
 
@@ -83,6 +93,10 @@ export default function ReferralProgramPage() {
                 ...current,
                 rules: current.rules.map((item) => item.membershipPlanId === rule.membershipPlanId ? result.rule : item),
             } : current);
+            setDrafts((current) => ({
+                ...current,
+                [rule.membershipPlanId]: draftFromRule(result.rule),
+            }));
             message.success(`${rule.planName}${cycleLabel(rule.billingCycle)}奖励规则已生效`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存套餐邀请奖励失败");
@@ -147,8 +161,17 @@ export default function ReferralProgramPage() {
     ], []);
 
     return (
-        <AdminPageFrame title="邀请有礼" description="管理邀请码、首购双边积分与异常邀请资格；不包含推广返佣。">
-            {loading && !data ? <Skeleton className="referral-admin-loading py-12" active paragraph={{ rows: 10 }} /> : null}
+        <AdminPageFrame
+            title="邀请有礼"
+            description="管理邀请码、首购双边积分与异常邀请资格；不包含推广返佣。"
+            actions={(
+                <Button className="referral-admin-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load(page)}>
+                    刷新数据
+                </Button>
+            )}
+        >
+            {loading && !data ? <AdminContentSkeleton rows={10} label="正在加载邀请活动" /> : null}
+            {loadError ? <AdminContentError title={data ? "邀请运营数据刷新失败" : "邀请运营数据读取失败"} description={loadError} onRetry={() => void load(page)} /> : null}
             {data ? (
                 <div className="referral-admin-content space-y-5">
                     <section className="referral-admin-overview grid gap-px overflow-hidden sm:grid-cols-3" aria-label="邀请活动概览">
@@ -181,6 +204,7 @@ export default function ReferralProgramPage() {
                         <div className="referral-admin-rules divide-y divide-border/55">
                             {data.rules.map((rule) => {
                                 const draft = drafts[rule.membershipPlanId] || { inviterCredits: 0, inviteeCredits: 0, enabled: false };
+                                const dirty = ruleDraftChanged(rule, draft);
                                 return (
                                     <div key={rule.membershipPlanId} className="referral-admin-rule grid items-center gap-4 px-6 py-4 lg:grid-cols-[minmax(150px,1fr)_160px_160px_86px_92px]">
                                         <div className="referral-admin-rule-plan min-w-0">
@@ -199,7 +223,7 @@ export default function ReferralProgramPage() {
                                             <Switch className="referral-admin-rule-switch" size="small" checked={draft.enabled} onChange={(checked) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, enabled: checked } }))} />
                                             <span className="referral-admin-rule-enabled-label text-xs text-foreground/55">{draft.enabled ? "启用" : "停用"}</span>
                                         </div>
-                                        <Button className="referral-admin-rule-save" icon={<Save className="size-3.5" />} loading={savingPlanId === rule.membershipPlanId} onClick={() => void saveRule(rule)}>保存</Button>
+                                        <Button className="referral-admin-rule-save" type={dirty ? "primary" : "default"} icon={<Save className="size-3.5" />} disabled={!dirty || Boolean(savingPlanId)} loading={savingPlanId === rule.membershipPlanId} onClick={() => void saveRule(rule)}>{dirty ? "保存" : "已保存"}</Button>
                                     </div>
                                 );
                             })}
@@ -213,26 +237,32 @@ export default function ReferralProgramPage() {
                         status={`${data.total.toLocaleString("zh-CN")} 条`}
                     >
                         <Table<ReferralInvitation>
-                            className="referral-admin-table"
+                            className="referral-admin-table app-data-table"
                             rowKey="id"
                             size="middle"
+                            loading={loading}
                             columns={columns}
                             dataSource={data.invites}
                             pagination={false}
                             scroll={{ x: 1040 }}
-                            locale={{ emptyText: "暂无邀请关系" }}
+                            locale={{ emptyText: <AdminTableEmpty compact title="暂无邀请关系" description="用户绑定邀请关系后，记录会显示在这里。" /> }}
                         />
                         {data.total > pageSize ? (
-                            <div className="referral-admin-pagination flex justify-end px-6 py-4">
-                                <Pagination className="referral-admin-pagination-control" current={page} pageSize={pageSize} total={data.total} showSizeChanger={false} onChange={setPage} />
-                            </div>
+                            <PaginationBar current={page} pageSize={pageSize} total={data.total} showSizeChanger={false} onChange={(nextPage) => setPage(nextPage)} />
                         ) : null}
                     </SettingsSectionCard>
                 </div>
             ) : null}
 
-            <Modal className="referral-admin-disqualify-modal" title="取消邀请奖励资格" open={Boolean(disqualifyTarget)} confirmLoading={disqualifying} okText="确认取消资格" cancelText="返回" okButtonProps={{ danger: true }} onOk={() => void confirmDisqualify()} onCancel={() => { setDisqualifyTarget(null); setDisqualifyReason(""); }}>
+            <Modal className="admin-operation-modal referral-admin-disqualify-modal workspace-ui-scope" title="取消邀请奖励资格" open={Boolean(disqualifyTarget)} confirmLoading={disqualifying} closable={!disqualifying} maskClosable={!disqualifying} keyboard={!disqualifying} okText="确认取消资格" cancelText="返回" okButtonProps={{ danger: true, disabled: !disqualifyReason.trim() }} cancelButtonProps={{ disabled: disqualifying }} onOk={() => void confirmDisqualify()} onCancel={() => { if (disqualifying) return; setDisqualifyTarget(null); setDisqualifyReason(""); }}>
                 <div className="referral-admin-disqualify-content pt-2">
+                    {disqualifyTarget ? (
+                        <div className="referral-admin-disqualify-fact">
+                            <span className="referral-admin-disqualify-fact-label">受邀用户</span>
+                            <strong className="referral-admin-disqualify-fact-value">{disqualifyTarget.inviteeDisplayName || disqualifyTarget.inviteeUsername}</strong>
+                            <span className="referral-admin-disqualify-fact-code">邀请码 {disqualifyTarget.referralCode}</span>
+                        </div>
+                    ) : null}
                     <p className="referral-admin-disqualify-description text-xs leading-5 text-foreground/55">该操作只允许在首购发奖前执行，不删除绑定事实，也不能对已发放奖励直接冲销。</p>
                     <Input.TextArea className="referral-admin-disqualify-reason mt-4" value={disqualifyReason} maxLength={500} showCount autoSize={{ minRows: 3, maxRows: 6 }} placeholder="填写可审计的取消原因" onChange={(event) => setDisqualifyReason(event.target.value)} />
                 </div>
@@ -259,6 +289,20 @@ function fromMicrocredits(value: number) {
 
 function toMicrocredits(value: number) {
     return Math.round(value * 1_000_000);
+}
+
+function draftFromRule(rule: ReferralRule): RuleDraft {
+    return {
+        inviterCredits: fromMicrocredits(rule.inviterRewardMicrocredits),
+        inviteeCredits: fromMicrocredits(rule.inviteeRewardMicrocredits),
+        enabled: rule.enabled,
+    };
+}
+
+function ruleDraftChanged(rule: ReferralRule, draft: RuleDraft) {
+    return toMicrocredits(draft.inviterCredits) !== rule.inviterRewardMicrocredits
+        || toMicrocredits(draft.inviteeCredits) !== rule.inviteeRewardMicrocredits
+        || draft.enabled !== rule.enabled;
 }
 
 function formatCredits(value: number) {

@@ -181,9 +181,9 @@
     background: color-mix(in srgb, var(--audio-voice-text) 13%, var(--audio-voice-fill));
 }
 
-.canvas-audio-voice-filter-popover .ant-popover-inner {
+.canvas-audio-voice-filter-popover :where(.ant-popover-container, .ant-popover-inner) {
     padding: 8px;
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--background);
     color: var(--foreground);
 }

@@ -124,6 +124,18 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: `<p class="external">协议</p>`}); err == nil {
 		t.Fatal("HTML attributes should be rejected")
 	}
+	legalRichContent := `<h2 style="text-align: center">协议标题</h2><p><a target="_blank" rel="noopener noreferrer" href="https://hmaigc.ai/help">帮助</a></p><img src="https://assets.hmaigc.ai/legal/example.png" alt="协议示例">`
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: legalRichContent}); err != nil {
+		t.Fatalf("safe legal links, alignment and images should be accepted: %v", err)
+	}
+	unsafeLegalContent := `<p><a href="javascript:alert(1)">危险链接</a></p>`
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: unsafeLegalContent}); err == nil {
+		t.Fatal("unsafe legal link should be rejected")
+	}
+	unsafeLegalImage := `<img src="data:image/png;base64,AAAA">`
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: unsafeLegalImage}); err == nil {
+		t.Fatal("inline legal image should be rejected")
+	}
 	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "javascript:alert(1)"}); err == nil {
 		t.Fatal("unsafe registration URL should be rejected")
 	}

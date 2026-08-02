@@ -90,7 +90,7 @@ export function CanvasAudioTextTools({ model, theme, onInsert, onInsertPause, on
                 onOpenChange={handlePauseOpenChange}
                 trigger="click"
                 placement="bottomLeft"
-                overlayClassName="canvas-audio-text-popover canvas-audio-text-popover--pause"
+                rootClassName="canvas-overlay-popover canvas-audio-text-popover canvas-audio-text-popover--pause"
                 content={
                     <section className="canvas-audio-insert-menu canvas-audio-insert-menu--pause" style={pauseMenuStyle} aria-label="选择停顿时长">
                         <div className="canvas-audio-insert-menu-list">

@@ -46,6 +46,7 @@ export function ImageToolSettingsModal({ open, tools, selectedIds, showLabels, o
 
     return (
         <Modal
+            rootClassName="canvas-overlay-modal canvas-overlay-modal--dock-settings"
             title={<span className="inline-flex h-6 items-center gap-2 text-sm font-semibold"><Settings2 className="size-3.5" />自定义节点 Dock</span>}
             open={open}
             centered

@@ -17,7 +17,7 @@ export function CanvasAgentModeMenu({
     onChange: (value: CanvasAgentExecutionMode) => void;
 }) {
     return (
-        <section className="canvas-agent-picker canvas-agent-mode-menu" aria-label="生成模式">
+        <section className="canvas-overlay-panel canvas-agent-picker canvas-agent-mode-menu" aria-label="生成模式">
             {modes.map((mode) => {
                 const selected = value === mode.value;
                 return (

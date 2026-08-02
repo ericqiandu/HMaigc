@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { hydrateAssistantImages, hydrateCanvasImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
+import { normalizeVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
 import { listActivatedSkills, type UpdreamSkill } from "@/services/api/skills";
 import { deleteRemoteCanvasProject } from "@/services/api/user-data";
 import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
@@ -110,7 +111,7 @@ export function useCanvasProjectLifecycle({
         };
 
         const restore = async () => {
-            const initialNodes = resetInterruptedGeneration(project.nodes);
+            const initialNodes = resetInterruptedGeneration(project.nodes).map(normalizeVideoCompositionNode);
             const initialSessions = project.chatSessions || [];
 
             // 先恢复可交互的节点和布局，媒体缓存/资源校验放到后台，避免首屏被远程资源拖住。

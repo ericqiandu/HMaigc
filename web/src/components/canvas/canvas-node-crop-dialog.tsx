@@ -54,7 +54,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
     };
 
     return (
-        <Modal title="裁剪图片" open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden>
+        <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--crop" title="裁剪图片" open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden>
             <div className="space-y-4">
                 <div className="flex justify-center">
                     <div ref={boxRef} className="relative inline-block max-w-full overflow-hidden rounded-lg bg-black select-none">

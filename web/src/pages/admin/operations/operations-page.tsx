@@ -1,6 +1,7 @@
-import { Alert, App, Button, Empty, Input, Modal, Table, Tag } from "antd";
+import { Alert, App, Button, Input, Modal, Table, Tag } from "antd";
 import {
     ArchiveRestore,
+    CircleAlert,
     CloudDownload,
     DatabaseBackup,
     RefreshCw,
@@ -12,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
-import { SettingsSectionCard } from "@/pages/admin/components/admin-ui";
+import { AdminTableEmpty, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
 import {
     actionLabels,
     backupColumns,
@@ -45,6 +46,7 @@ type PendingAction = {
     description: string;
     targetVersion?: string;
     expectedConfirmation: string;
+    impacts: string[];
     danger?: boolean;
 };
 
@@ -168,6 +170,7 @@ export default function OperationsPage() {
                 description: `控制器将先核对当前版本 ${current || "未知"}，拉取不可变镜像、停止业务写入、创建一致性备份，再启动并验活新版本。失败时自动恢复原版本。`,
                 targetVersion,
                 expectedConfirmation: `UPGRADE ${targetVersion}`,
+                impacts: ["暂停业务写入并创建一致性备份", `切换运行版本至 ${targetVersion}`, "新版本验活失败时自动恢复原版本"],
             });
         } else if (action === "rollback") {
             setPendingAction({
@@ -175,6 +178,7 @@ export default function OperationsPage() {
                 title: `回滚到 ${overview.previousVersion || "上一版本"}`,
                 description: "控制器会先为当前版本创建安全备份，再恢复升级前的数据库、资源卷和镜像。该操作会短暂停止业务服务。",
                 expectedConfirmation: "ROLLBACK",
+                impacts: ["暂停业务服务并备份当前状态", `恢复至 ${overview.previousVersion || "上一版本"}`, "数据库与资源卷恢复到对应恢复点"],
                 danger: true,
             });
         } else if (action === "backup") {
@@ -183,6 +187,7 @@ export default function OperationsPage() {
                 title: "创建一致性备份",
                 description: "控制器会短暂停止 Web 与业务后端写入，校验 PostgreSQL 与资源卷备份后恢复当前版本。",
                 expectedConfirmation: "BACKUP",
+                impacts: ["短暂停止 Web 与后端写入", "备份 PostgreSQL 与资源卷", "完成完整性校验后恢复当前版本"],
             });
         } else {
             setPendingAction({
@@ -190,6 +195,7 @@ export default function OperationsPage() {
                 title: "执行生产环境校验",
                 description: "检查当前运行版本、依赖服务、业务健康接口和 SPA 深链接，不会修改业务数据。",
                 expectedConfirmation: "VERIFY",
+                impacts: ["仅读取当前运行环境", "检查依赖、健康接口与 SPA 深链接", "不会修改业务数据或重启服务"],
             });
         }
         setConfirmation("");
@@ -218,6 +224,10 @@ export default function OperationsPage() {
     };
 
     const operationColumns = useMemo(() => createOperationColumns(setSelectedOperationId), []);
+    const activeOperation = overview?.activeOperation;
+    const activeOperationDescription = activeOperation
+        ? `${actionLabels[activeOperation.action]} · ${activeOperation.phase || "等待控制器响应"} · ${activeOperation.actorDisplayName}`
+        : "";
 
     return (
         <AdminPageFrame
@@ -229,7 +239,7 @@ export default function OperationsPage() {
                 </Button>
             }
         >
-            <div className="operations-page mx-auto max-w-6xl space-y-5">
+            <div className="operations-page admin-data-page space-y-5">
                 {loadError ? (
                     <Alert
                         className="operations-load-error"
@@ -279,12 +289,23 @@ export default function OperationsPage() {
                     description="业务后端仅校验管理员并签发请求；Docker、备份和服务重启只由独立控制器执行。"
                     status={hasActiveOperation ? <Tag className="operations-active-tag" color="processing" variant="filled">任务执行中</Tag> : <Tag className="operations-idle-tag" variant="filled">无活动任务</Tag>}
                 >
+                    {activeOperation ? (
+                        <div className="operations-active-operation" role="status" aria-live="polite">
+                            <span className="operations-active-operation-icon"><RefreshCw className="operations-active-operation-icon-svg size-4 animate-spin motion-reduce:animate-none" /></span>
+                            <span className="operations-active-operation-copy">
+                                <strong className="operations-active-operation-title">当前任务正在执行</strong>
+                                <span className="operations-active-operation-description">{activeOperationDescription}</span>
+                            </span>
+                            <button className="operations-active-operation-link" type="button" onClick={() => setSelectedOperationId(activeOperation.id)}>查看实时日志</button>
+                        </div>
+                    ) : null}
                     <div className="operations-actions-grid grid grid-cols-1 gap-px bg-border/60 sm:grid-cols-2 xl:grid-cols-4">
                         <OperationActionButton
                             icon={<CloudDownload className="operations-action-icon-svg size-4" />}
                             title="升级"
                             description={overview?.release.latestVersion ? `升级到 ${overview.release.latestVersion}` : "等待版本检查"}
                             disabled={hasActiveOperation || !overview?.release.updateAvailable}
+                            disabledReason={hasActiveOperation ? "已有运维任务正在执行" : overview?.release.updateAvailable ? undefined : "当前没有可升级版本"}
                             onClick={() => openAction("upgrade")}
                         />
                         <OperationActionButton
@@ -292,6 +313,7 @@ export default function OperationsPage() {
                             title="回滚"
                             description={overview?.previousVersion ? `恢复 ${overview.previousVersion}` : "没有可用恢复点"}
                             disabled={hasActiveOperation || !overview?.rollbackReady}
+                            disabledReason={hasActiveOperation ? "已有运维任务正在执行" : "当前没有通过校验的回滚恢复点"}
                             onClick={() => openAction("rollback")}
                         />
                         <OperationActionButton
@@ -299,6 +321,7 @@ export default function OperationsPage() {
                             title="立即备份"
                             description="PostgreSQL 与资源卷"
                             disabled={hasActiveOperation || !overview?.release.currentVersion}
+                            disabledReason={hasActiveOperation ? "已有运维任务正在执行" : "尚未识别当前运行版本"}
                             onClick={() => openAction("backup")}
                         />
                         <OperationActionButton
@@ -306,6 +329,7 @@ export default function OperationsPage() {
                             title="环境校验"
                             description="版本、健康与深链接"
                             disabled={hasActiveOperation || !overview?.release.currentVersion}
+                            disabledReason={hasActiveOperation ? "已有运维任务正在执行" : "尚未识别当前运行版本"}
                             onClick={() => openAction("verify")}
                         />
                     </div>
@@ -349,7 +373,7 @@ export default function OperationsPage() {
                         scroll={{ x: 900 }}
                         rowClassName={(record) => record.id === selectedOperationId ? "operations-audit-row is-selected" : "operations-audit-row"}
                         onRow={(record) => ({ onClick: () => setSelectedOperationId(record.id) })}
-                        locale={{ emptyText: <Empty className="operations-audit-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运维操作" /> }}
+                        locale={{ emptyText: <AdminTableEmpty compact title="暂无运维操作" description="升级、回滚、备份和环境校验记录会显示在这里。" /> }}
                     />
                 </SettingsSectionCard>
 
@@ -368,13 +392,13 @@ export default function OperationsPage() {
                         pagination={false}
                         size="middle"
                         scroll={{ x: 720 }}
-                        locale={{ emptyText: <Empty className="operations-backups-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无备份" /> }}
+                        locale={{ emptyText: <AdminTableEmpty compact title="暂无备份" description="执行升级或立即备份后，恢复点会显示在这里。" /> }}
                     />
                 </SettingsSectionCard>
             </div>
 
             <Modal
-                className="operations-confirm-modal"
+                className="admin-operation-modal operations-confirm-modal workspace-ui-scope"
                 title={pendingAction?.title}
                 open={Boolean(pendingAction)}
                 okText="提交到控制器"
@@ -391,6 +415,15 @@ export default function OperationsPage() {
             >
                 <div className="operations-confirm-content space-y-4">
                     <Alert className="operations-confirm-warning" type={pendingAction?.danger ? "warning" : "info"} showIcon message={pendingAction?.description} />
+                    <section className="operations-confirm-impact" aria-labelledby="operations-confirm-impact-title">
+                        <div className="operations-confirm-impact-heading">
+                            <CircleAlert className="operations-confirm-impact-icon size-4" />
+                            <strong className="operations-confirm-impact-title" id="operations-confirm-impact-title">本次操作影响</strong>
+                        </div>
+                        <ul className="operations-confirm-impact-list">
+                            {pendingAction?.impacts.map((impact) => <li className="operations-confirm-impact-item" key={impact}>{impact}</li>)}
+                        </ul>
+                    </section>
                     <div className="operations-confirm-field">
                         <label className="operations-confirm-label mb-1.5 block text-xs font-medium" htmlFor="operations-confirmation">输入确认短语</label>
                         <Input
@@ -399,9 +432,10 @@ export default function OperationsPage() {
                             autoComplete="off"
                             placeholder={pendingAction?.expectedConfirmation}
                             value={confirmation}
+                            aria-describedby="operations-confirmation-hint"
                             onChange={(event) => setConfirmation(event.target.value)}
                         />
-                        <p className="operations-confirm-hint mt-1.5 text-xs text-foreground/45">必须完整输入：{pendingAction?.expectedConfirmation}</p>
+                        <p className="operations-confirm-hint mt-1.5 text-xs text-foreground/45" id="operations-confirmation-hint">必须完整输入：<code className="operations-confirm-code">{pendingAction?.expectedConfirmation}</code></p>
                     </div>
                 </div>
             </Modal>

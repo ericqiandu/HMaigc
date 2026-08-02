@@ -1,0 +1,8 @@
+.canvas-video-editor-modal .ant-modal-content { height: calc(100vh - 32px); padding: 0; overflow: hidden; background: var(--canvas-editor-surface, #171717); }
+.canvas-video-editor-modal .ant-modal-body { height: 100%; }
+.canvas-video-editor-clip { min-width: 120px; flex-basis: calc(var(--clip-duration-ms) * var(--timeline-zoom) * 1px); }
+.canvas-video-editor-clip[aria-selected="true"] { outline: 2px solid #60a5fa; outline-offset: -2px; }
+@media (max-width: 768px) {
+  .canvas-video-editor-modal { max-width: none; margin: 0; padding: 0; }
+  .canvas-video-editor-modal .ant-modal-content { height: 100dvh; border-radius: 0; }
+}

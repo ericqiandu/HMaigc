@@ -1,6 +1,6 @@
 import { Button, Pagination } from "antd";
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 import { cn } from "@/lib/utils";
@@ -74,11 +74,11 @@ export function PageHeader({ title, description, meta, actions, backTo = "/", on
     );
 }
 
-export function ListToolbar({ children, trailing, active, onReset }: { children: ReactNode; trailing?: ReactNode; active?: boolean; onReset?: () => void }) {
+export function ListToolbar({ children, trailing, active, onReset, className }: { children: ReactNode; trailing?: ReactNode; active?: boolean; onReset?: () => void; className?: string }) {
     const hasActions = Boolean((active && onReset) || trailing);
 
     return (
-        <div className="workspace-list-toolbar mt-3 flex min-h-10 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className={cn("workspace-list-toolbar mt-3 flex min-h-10 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between", className)}>
             <div className="workspace-list-toolbar-fields flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
             {hasActions ? (
                 <div className="workspace-list-toolbar-actions flex shrink-0 flex-wrap items-center gap-2">
@@ -91,14 +91,52 @@ export function ListToolbar({ children, trailing, active, onReset }: { children:
 }
 
 export function TableSurface({ children, className }: { children: ReactNode; className?: string }) {
-    return <div className={cn("app-table-surface mt-4 min-w-0 overflow-hidden rounded-lg bg-foreground/[.025]", className)}>{children}</div>;
+    const surfaceRef = useRef<HTMLDivElement>(null);
+    const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+    const [scrollAcknowledged, setScrollAcknowledged] = useState(false);
+
+    useEffect(() => {
+        const surface = surfaceRef.current;
+        if (!surface) return;
+
+        const updateOverflowState = () => {
+            const scroller = surface.querySelector<HTMLElement>(".ant-table-content, .ant-table-body");
+            setHasHorizontalOverflow(Boolean(scroller && scroller.scrollWidth > scroller.clientWidth + 2));
+        };
+        const frame = window.requestAnimationFrame(updateOverflowState);
+        const observer = new ResizeObserver(updateOverflowState);
+        observer.observe(surface);
+        const scroller = surface.querySelector<HTMLElement>(".ant-table-content, .ant-table-body");
+        if (scroller) observer.observe(scroller);
+
+        return () => {
+            window.cancelAnimationFrame(frame);
+            observer.disconnect();
+        };
+    }, [children]);
+
+    return (
+        <div
+            ref={surfaceRef}
+            className={cn("app-table-surface mt-4 min-w-0 overflow-hidden rounded-lg bg-foreground/[.025]", className)}
+            onScrollCapture={(event) => {
+                const target = event.target;
+                if (target instanceof HTMLElement && target.scrollLeft > 8) setScrollAcknowledged(true);
+            }}
+        >
+            {hasHorizontalOverflow && !scrollAcknowledged ? (
+                <div className="app-table-scroll-hint" aria-hidden="true">左右滑动查看完整内容</div>
+            ) : null}
+            {children}
+        </div>
+    );
 }
 
 export function CollectionGrid({ children, className }: { children: ReactNode; className?: string }) {
     return <div className={cn("workspace-collection-grid mt-5 grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-[repeat(auto-fill,minmax(248px,1fr))]", className)}>{children}</div>;
 }
 
-export function PaginationBar({ current, pageSize, total, onChange, pageSizeOptions = [20, 50, 100] }: { current: number; pageSize: number; total: number; onChange: (page: number, pageSize: number) => void; pageSizeOptions?: number[] }) {
+export function PaginationBar({ current, pageSize, total, onChange, pageSizeOptions = [20, 50, 100], showSizeChanger = true }: { current: number; pageSize: number; total: number; onChange: (page: number, pageSize: number) => void; pageSizeOptions?: number[]; showSizeChanger?: boolean }) {
     if (total <= pageSize && current === 1) return null;
     return (
         <div className="app-pagination-bar sticky bottom-0 z-10 mt-4 flex min-w-0 justify-end bg-background/92 px-2 py-3 backdrop-blur-xl">
@@ -107,7 +145,7 @@ export function PaginationBar({ current, pageSize, total, onChange, pageSizeOpti
                 current={current}
                 pageSize={pageSize}
                 total={total}
-                showSizeChanger
+                showSizeChanger={showSizeChanger}
                 showLessItems
                 responsive
                 pageSizeOptions={pageSizeOptions.map(String)}

@@ -136,6 +136,13 @@ export type EmailSetting = {
     updatedAt?: string;
 };
 
+export type EmailSettingUpdateRequest = Pick<
+    EmailSetting,
+    "enabled" | "host" | "port" | "username" | "encryption" | "fromEmail" | "fromName"
+> & {
+    password: string;
+};
+
 export type RedeemBatch = {
     id: string;
     amountMicrocredits: number;
@@ -235,7 +242,7 @@ export function getAdminEmailSetting() {
     return request<{ setting: EmailSetting }>(api.get("/admin/settings/email"));
 }
 
-export function updateAdminEmailSetting(input: Partial<EmailSetting>) {
+export function updateAdminEmailSetting(input: EmailSettingUpdateRequest) {
     return request<{ setting: EmailSetting }>(api.patch("/admin/settings/email", input));
 }
 

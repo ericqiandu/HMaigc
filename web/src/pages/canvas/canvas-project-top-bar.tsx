@@ -1,10 +1,12 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Bot, Check, ChevronDown, Coins, FolderKanban, Gauge, Home, LayoutGrid, LoaderCircle, Menu, Pencil, Plus, Redo2, Search, Settings2, Share2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
-import { Button, Dropdown, Tooltip } from "antd";
+import { Bot, Check, ChevronDown, Coins, FolderKanban, Gauge, Home, LayoutGrid, LoaderCircle, Pencil, Plus, Redo2, Search, Settings2, Share2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
+import { Button, Dropdown } from "antd";
 
+import { CanvasAgentTooltip } from "@/components/canvas/canvas-agent-tooltip";
 import { CanvasShortcutsModal } from "@/components/canvas/canvas-shortcuts-modal";
+import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import type { CanvasContextSummary } from "@/lib/canvas/canvas-context-summary";
@@ -73,10 +75,12 @@ export function CanvasTopBar({
     collaborationControl,
 }: CanvasTopBarProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const { settings: siteSettings } = useSiteSettings();
     const user = useUserStore((state) => state.user);
     const { availableMicrocredits, refreshing } = useWalletBalance(user?.id);
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
+    const mediaPerformanceLabel = mediaPerformanceMode === "quality" ? "画质优先" : mediaPerformanceMode === "performance" ? "性能优先" : "自动性能";
 
     useEffect(() => {
         if (shortcutRequestNonce > 0) setShortcutsOpen(true);
@@ -111,7 +115,7 @@ export function CanvasTopBar({
                                 {
                                     key: "performance",
                                     icon: <Gauge className="size-4" />,
-                                    label: "媒体性能",
+                                    label: `媒体性能 · ${mediaPerformanceLabel}`,
                                     children: [
                                         { key: "performance-auto", label: "自动性能", onClick: () => onMediaPerformanceModeChange("auto") },
                                         { key: "performance-quality", label: "画质优先", onClick: () => onMediaPerformanceModeChange("quality") },
@@ -124,10 +128,20 @@ export function CanvasTopBar({
                             ],
                         }}
                     >
-                        <button type="button" className="canvas-top-bar-menu grid size-9 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
-                            <Menu className="size-5" />
+                        <button type="button" className="canvas-top-bar-menu flex size-9 items-center justify-center gap-0.5 rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
+                            <img className="canvas-top-bar-brand-image size-5 object-contain" src={siteLogoURL(siteSettings)} alt="" />
+                            <ChevronDown className="canvas-top-bar-brand-chevron size-2.5 opacity-55" />
                         </button>
                     </Dropdown>
+
+                    {projectContext ? (
+                        <>
+                            <Link className="canvas-top-bar-project max-w-[76px] truncate text-[13px] font-medium leading-5" to={`/projects/${projectContext.projectId}/overview`} title={`返回项目：${projectContext.projectName}`}>
+                                {projectContext.projectName}
+                            </Link>
+                            <span className="canvas-top-bar-identity-divider h-5 w-px shrink-0" aria-hidden />
+                        </>
+                    ) : null}
 
                     <div ref={titleRef} className="canvas-top-bar-title flex min-w-0 max-w-[112px] flex-col items-start sm:max-w-none">
                         {isTitleEditing ? (
@@ -147,14 +161,28 @@ export function CanvasTopBar({
                             />
                         ) : (
                             <div className="flex min-w-0 items-center gap-0.5">
-                                <button type="button" className="max-w-[84px] truncate text-left text-sm font-semibold tracking-normal transition-opacity hover:opacity-75 disabled:cursor-default disabled:hover:opacity-100 sm:max-w-[280px] sm:text-base" onClick={onStartTitleEditing} title={canEdit ? "点击修改画布名称" : "当前画布仅可查看"} disabled={!canEdit}>
+                                <button
+                                    type="button"
+                                    className="canvas-top-bar-title-button max-w-[96px] truncate text-left text-[13px] font-medium leading-5 tracking-normal transition-opacity hover:opacity-75 disabled:cursor-default disabled:hover:opacity-100 sm:max-w-[132px]"
+                                    onClick={onStartTitleEditing}
+                                    title={canEdit ? "点击修改画布名称" : "当前画布仅可查看"}
+                                    disabled={!canEdit}
+                                >
                                     {title}
                                 </button>
-                                {canEdit ? <Tooltip title="重命名画布">
-                                    <button type="button" className="hidden size-7 shrink-0 place-items-center rounded-md opacity-60 transition hover:bg-black/5 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 dark:hover:bg-white/10 sm:grid" style={{ color: theme.node.text }} onClick={onStartTitleEditing} aria-label="重命名画布">
-                                        <Pencil className="size-3.5" />
-                                    </button>
-                                </Tooltip> : null}
+                                {canEdit ? (
+                                    <CanvasAgentTooltip title="重命名画布">
+                                        <button
+                                            type="button"
+                                            className="hidden size-7 shrink-0 place-items-center rounded-md opacity-60 transition hover:bg-black/5 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 dark:hover:bg-white/10 sm:grid"
+                                            style={{ color: theme.node.text }}
+                                            onClick={onStartTitleEditing}
+                                            aria-label="重命名画布"
+                                        >
+                                            <Pencil className="size-3.5" />
+                                        </button>
+                                    </CanvasAgentTooltip>
+                                ) : null}
                             </div>
                         )}
                         {projectContext && !isTitleEditing ? (
@@ -177,54 +205,56 @@ export function CanvasTopBar({
                 <CanvasWorkspaceModeSwitch mode={workspaceMode} onChange={onWorkspaceModeChange} />
 
                 <div className="canvas-top-bar-actions pointer-events-auto flex items-center gap-1.5">
-                    <Button type="text" className="canvas-top-bar-action canvas-top-bar-wide-only !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Search className="size-4" />} onClick={onOpenSearch} aria-label="搜索画布节点" title="搜索画布节点" />
-                    <Dropdown
-                        trigger={["click"]}
-                        overlayClassName="canvas-overlay-dropdown canvas-overlay-dropdown--performance"
-                        menu={{
-                            selectable: true,
-                            selectedKeys: [mediaPerformanceMode],
-                            onClick: ({ key }) => onMediaPerformanceModeChange(key as CanvasMediaPerformanceMode),
-                            items: [
-                                { key: "auto", label: "自动性能" },
-                                { key: "quality", label: "画质优先" },
-                                { key: "performance", label: "性能优先" },
-                            ],
-                        }}
-                    >
-                        <Button type="text" className="canvas-top-bar-action canvas-top-bar-wide-only !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="媒体性能模式" title="媒体性能模式" />
-                    </Dropdown>
                     {collaborationControl}
-                    {user ? (
-                        <Link
-                            to="/wallet"
-                            className="canvas-top-bar-balance hidden h-9 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-medium tabular-nums transition hover:bg-black/5 dark:hover:bg-white/10 sm:inline-flex"
+                    <CanvasAgentTooltip title={canManage ? "分享画布" : "只有画布管理者可以公开分享"}>
+                        <Button
+                            disabled={!canManage}
+                            type="text"
+                            className="canvas-top-bar-action !p-0"
                             style={{ color: theme.node.text }}
-                            title="查看积分明细"
-                        >
-                            {refreshing && availableMicrocredits === null ? <LoaderCircle className="size-3.5 animate-spin opacity-60" /> : <Coins className="size-3.5" />}
-                            <span>{availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 })}</span>
-                        </Link>
+                            icon={<Share2 className="size-4" />}
+                            onClick={onShare}
+                            aria-label="分享画布"
+                        />
+                    </CanvasAgentTooltip>
+                    {user ? (
+                        <CanvasAgentTooltip title={`查看积分明细：${availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 })}`}>
+                            <Link
+                                to="/wallet"
+                                className="canvas-top-bar-balance items-center justify-center gap-1.5 text-xs font-medium tabular-nums transition hover:bg-black/5 dark:hover:bg-white/10"
+                                style={{ color: theme.node.text }}
+                            >
+                                {refreshing && availableMicrocredits === null ? <LoaderCircle className="size-3.5 animate-spin opacity-60" /> : <Coins className="size-3.5" />}
+                                <span>{availableMicrocredits === null ? "--" : formatCanvasBalance(availableMicrocredits / 1_000_000)}</span>
+                            </Link>
+                        </CanvasAgentTooltip>
                     ) : null}
-                    <Button disabled={!canManage} type="text" className="canvas-top-bar-action !h-9 !w-9 !min-w-9 !rounded-lg !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title={canManage ? "分享画布" : "只有画布管理者可以公开分享"} />
-                    <span className="canvas-top-bar-divider hidden h-6 w-px sm:block" style={{ background: theme.toolbar.border }} />
-                    <Button
-                        disabled={!canEdit}
-                        type="text"
-                        className="canvas-top-bar-agent !h-9 !w-9 !rounded-lg !px-0 !font-medium sm:!w-auto sm:!px-3"
-                        style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
-                        icon={<Bot className="size-4" />}
-                        onClick={onToggleAgent}
-                        aria-label="Agent"
-                        title="打开或关闭 Agent"
-                    >
-                        <span className="hidden sm:inline">Agent</span>
-                    </Button>
+                    <CanvasAgentTooltip title={agentOpen ? "关闭 Agent" : "打开 Agent"}>
+                        <Button
+                            disabled={!canEdit}
+                            type="text"
+                            className="canvas-top-bar-agent !px-3 !font-medium"
+                            style={{ color: theme.node.text }}
+                            data-active={agentOpen}
+                            icon={<Bot className="size-4" />}
+                            onClick={onToggleAgent}
+                            aria-label="Agent"
+                        >
+                            <span className="hidden sm:inline">Agent</span>
+                        </Button>
+                    </CanvasAgentTooltip>
                 </div>
             </div>
             <CanvasShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
         </>
     );
+}
+
+function formatCanvasBalance(value: number) {
+    return new Intl.NumberFormat("zh-CN", {
+        notation: "compact",
+        maximumFractionDigits: 1,
+    }).format(value);
 }
 
 function CanvasWorkspaceModeSwitch({ mode, onChange }: { mode: CanvasWorkspaceMode; onChange: (mode: CanvasWorkspaceMode) => void }) {
@@ -273,10 +303,17 @@ function CanvasWorkspaceModeSwitch({ mode, onChange }: { mode: CanvasWorkspaceMo
                     {simple ? <Sparkles className="size-3" /> : <Settings2 className="size-3" />}
                 </span>
                 <span className="min-w-0 flex-1">
-                    <span className="canvas-workspace-mode-eyebrow block text-[8px] leading-none" style={{ color: theme.node.muted }}>工作空间</span>
+                    <span className="canvas-workspace-mode-eyebrow block text-[8px] leading-none" style={{ color: theme.node.muted }}>
+                        工作空间
+                    </span>
                     <span className="canvas-workspace-mode-label mt-0.5 block text-[10px] font-semibold leading-none">{simple ? "简洁模式" : "专业模式"}</span>
                 </span>
-                <motion.span animate={{ rotate: open ? 180 : 0 }} transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.dock} className="canvas-workspace-mode-chevron grid size-5 place-items-center rounded-full" style={{ background: theme.toolbar.itemHover }}>
+                <motion.span
+                    animate={{ rotate: open ? 180 : 0 }}
+                    transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.dock}
+                    className="canvas-workspace-mode-chevron grid size-5 place-items-center rounded-full"
+                    style={{ background: theme.toolbar.itemHover }}
+                >
                     <ChevronDown className="size-2.5" />
                 </motion.span>
             </motion.button>
@@ -321,9 +358,21 @@ function ModeOption({ active, motionEnabled, icon, title, description, theme, on
             style={{ background: active ? theme.accent.primarySoft : "transparent", borderColor: active ? theme.spatial.glowStrong : "transparent", color: theme.node.text }}
             onClick={onClick}
         >
-            <span className="canvas-overlay-option-icon grid size-8 shrink-0 place-items-center [&_svg]:size-3.5" style={{ background: theme.spatial.surface, color: active ? theme.accent.primary : theme.node.muted }}>{icon}</span>
-            <span className="min-w-0 flex-1"><span className="canvas-overlay-option-title">{title}</span><span className="canvas-overlay-option-description" style={{ color: theme.node.muted }}>{description}</span></span>
-            <span className="grid size-5 shrink-0 place-items-center rounded-full border transition-opacity" style={{ background: active ? theme.accent.primary : theme.spatial.surface, borderColor: active ? theme.accent.primary : theme.toolbar.border, color: active ? "white" : theme.node.muted, opacity: active ? 1 : 0.28 }}><Check className="size-3" /></span>
+            <span className="canvas-overlay-option-icon grid size-8 shrink-0 place-items-center [&_svg]:size-3.5" style={{ background: theme.spatial.surface, color: active ? theme.accent.primary : theme.node.muted }}>
+                {icon}
+            </span>
+            <span className="min-w-0 flex-1">
+                <span className="canvas-overlay-option-title">{title}</span>
+                <span className="canvas-overlay-option-description" style={{ color: theme.node.muted }}>
+                    {description}
+                </span>
+            </span>
+            <span
+                className="grid size-5 shrink-0 place-items-center rounded-full border transition-opacity"
+                style={{ background: active ? theme.accent.primary : theme.spatial.surface, borderColor: active ? theme.accent.primary : theme.toolbar.border, color: active ? "white" : theme.node.muted, opacity: active ? 1 : 0.28 }}
+            >
+                <Check className="size-3" />
+            </span>
         </motion.button>
     );
 }

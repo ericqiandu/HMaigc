@@ -105,7 +105,7 @@ export default function CanvasPage() {
                             <Button className="canvas-library-selection-button !h-9 !px-3" type={selectionMode ? "primary" : "default"} icon={<CheckSquare2 className="canvas-library-selection-icon size-3.5" />} onClick={() => setSelectionMode((active) => !active)}>多选</Button>
                             <Button className="canvas-library-import-button !h-9 !px-3" disabled={!hydrated} icon={<FileUp className="canvas-library-import-icon size-3.5" />} onClick={() => inputRef.current?.click()}>导入</Button>
                             {projects.length ? (
-                                <Dropdown menu={{ items: [{ key: "delete-all", danger: true, icon: <Trash2 className="canvas-library-delete-icon size-3.5" />, label: "删除全部画布", onClick: () => setDeleteIds(projects.map((project) => project.id)) }] }} trigger={["click"]}>
+                                <Dropdown overlayClassName="canvas-overlay-dropdown" menu={{ items: [{ key: "delete-all", danger: true, icon: <Trash2 className="canvas-library-delete-icon size-3.5" />, label: "删除全部画布", onClick: () => setDeleteIds(projects.map((project) => project.id)) }] }} trigger={["click"]}>
                                     <Button className="canvas-library-more-button" aria-label="更多画布操作" title="更多操作" icon={<MoreHorizontal className="canvas-library-more-icon size-4" />} />
                                 </Dropdown>
                             ) : null}
@@ -120,6 +120,7 @@ export default function CanvasPage() {
                         <Input allowClear className="canvas-library-search-input !h-9" prefix={<Search className="canvas-library-search-icon size-3.5 text-foreground/40" />} value={keyword} placeholder="搜索画布" aria-label="搜索画布" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
                     </div>
                     <Popover
+                        rootClassName="canvas-overlay-popover"
                         trigger="click"
                         placement="bottomLeft"
                         content={(
@@ -174,7 +175,7 @@ export default function CanvasPage() {
                 <PaginationBar current={page} pageSize={pageSize} total={filteredProjects.length} pageSizeOptions={[12, 24, 48]} onChange={(nextPage, nextPageSize) => { setPage(nextPageSize !== pageSize ? 1 : nextPage); setPageSize(nextPageSize); }} />
 
                 <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importCanvas(event.target.files?.[0])} />
-                <Modal title="加入项目" open={associationOpen} okText="保存关联" cancelText="取消" okButtonProps={{ disabled: !associationProjectId, loading: projectQuery.isFetching }} onCancel={() => setAssociationOpen(false)} onOk={() => void associateSelected()}>
+                <Modal rootClassName="canvas-overlay-modal" title="加入项目" open={associationOpen} okText="保存关联" cancelText="取消" okButtonProps={{ disabled: !associationProjectId, loading: projectQuery.isFetching }} onCancel={() => setAssociationOpen(false)} onOk={() => void associateSelected()}>
                     <p className="mb-3 text-sm text-foreground/60">选中的画布会保留原有节点和本地媒体，只增加项目关联。</p>
                     <Select className="w-full" value={associationProjectId || undefined} placeholder="选择项目" options={(projectQuery.data?.projects || []).map((item) => ({ label: item.project.name, value: item.project.id }))} onChange={setAssociationProjectId} />
                 </Modal>

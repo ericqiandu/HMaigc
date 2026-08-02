@@ -1,28 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, App, Button, Form, Input, Skeleton, Switch, Tag } from "antd";
-import { FileCheck2, FileText, Image as ImageIcon, Megaphone, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, type ChangeEvent } from "react";
+import { App, Button, Form, Input, Switch, Tag } from "antd";
+import { FileCheck2, FileText, Image as ImageIcon, Megaphone, Save, Trash2, Upload } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { staticAssetURL } from "@/lib/static-assets";
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, SettingsSectionCard } from "../components/admin-ui";
 
 export default function SiteSettingsPage() {
     const { message, modal } = App.useApp();
     const [form] = Form.useForm<UpdateSiteSettingsInput>();
     const queryClient = useQueryClient();
     const logoInputRef = useRef<HTMLInputElement>(null);
+    const synchronizedValuesRef = useRef<UpdateSiteSettingsInput | null>(null);
+    const [dirty, setDirty] = useState(false);
     const settingQuery = useQuery({
         queryKey: adminSiteSettingsQueryKey,
         queryFn: getAdminSiteSettings,
     });
 
     useEffect(() => {
-        if (settingQuery.data) {
-            form.setFieldsValue(toFormValues(settingQuery.data));
+        if (settingQuery.data && !dirty) {
+            const values = toFormValues(settingQuery.data);
+            form.setFieldsValue(values);
+            synchronizedValuesRef.current = values;
+            setDirty(false);
         }
-    }, [form, settingQuery.data]);
+    }, [dirty, form, settingQuery.data]);
 
     const synchronizeSetting = (setting: SiteSettings) => {
         queryClient.setQueryData(adminSiteSettingsQueryKey, setting);
@@ -33,7 +38,10 @@ export default function SiteSettingsPage() {
         mutationFn: updateAdminSiteSettings,
         onSuccess: (setting) => {
             synchronizeSetting(setting);
-            form.setFieldsValue(toFormValues(setting));
+            const values = toFormValues(setting);
+            form.setFieldsValue(values);
+            synchronizedValuesRef.current = values;
+            setDirty(false);
             message.success("站点设置已保存并生效");
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "保存站点设置失败"),
@@ -62,6 +70,15 @@ export default function SiteSettingsPage() {
         saveMutation.mutate(values);
     };
 
+    const trackDirtyState = () => {
+        const synchronizedValues = synchronizedValuesRef.current;
+        if (!synchronizedValues) {
+            setDirty(false);
+            return;
+        }
+        setDirty(!siteSettingsInputEqual(synchronizedValues, form.getFieldsValue(true)));
+    };
+
     const selectLogo = (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = "";
@@ -79,10 +96,12 @@ export default function SiteSettingsPage() {
 
     const confirmRemoveLogo = () => {
         modal.confirm({
+            className: "admin-operation-modal site-settings-remove-logo-modal workspace-ui-scope",
             title: "恢复内置 Logo？",
             content: "当前上传的站点 Logo 将被移除，前台会恢复使用内置 Logo。",
             okText: "确认恢复",
             cancelText: "取消",
+            okButtonProps: { danger: true },
             onOk: async () => {
                 await removeLogoMutation.mutateAsync();
             },
@@ -90,28 +109,29 @@ export default function SiteSettingsPage() {
     };
 
     const setting = settingQuery.data;
+    const operationPending = saveMutation.isPending || logoMutation.isPending || removeLogoMutation.isPending;
     return (
         <AdminPageFrame title="站点与品牌" description="管理站点名称、品牌标识、首页运营横幅、底部版权与网站备案">
-            <div className="site-settings-page mx-auto max-w-5xl space-y-5">
+            <div className="site-settings-page space-y-5">
+                {settingQuery.isLoading && !setting ? (
+                    <AdminContentSkeleton rows={12} label="正在加载站点配置" />
+                ) : null}
                 {settingQuery.error ? (
-                    <Alert
-                        className="site-settings-load-error"
-                        type="error"
-                        showIcon
-                        title="站点设置加载失败"
-                        description={settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"}
-                        action={
-                            <Button className="site-settings-retry-button" icon={<RefreshCw className="site-settings-retry-icon size-4" />} onClick={() => void settingQuery.refetch()}>
-                                重试
-                            </Button>
-                        }
+                    <AdminContentError
+                        title={setting ? "站点配置刷新失败" : "站点配置读取失败"}
+                        description={settingQuery.error instanceof Error ? settingQuery.error.message : "读取站点配置失败"}
+                        onRetry={() => void settingQuery.refetch()}
                     />
                 ) : null}
-
-                {settingQuery.isLoading ? (
-                    <Skeleton className="site-settings-skeleton" active paragraph={{ rows: 12 }} />
-                ) : (
-                    <Form className="site-settings-form space-y-5" form={form} layout="vertical" requiredMark={false}>
+                {setting ? (
+                    <Form className="site-settings-form space-y-5" form={form} layout="vertical" requiredMark={false} disabled={operationPending} onValuesChange={trackDirtyState}>
+                        <nav className="site-settings-section-nav" aria-label="站点设置分区">
+                            <a className="site-settings-section-link" href="#site-brand">品牌信息</a>
+                            <a className="site-settings-section-link" href="#site-home-banner">首页横幅</a>
+                            <a className="site-settings-section-link" href="#site-footer">底部版权</a>
+                            <a className="site-settings-section-link" href="#site-registration">网站备案</a>
+                        </nav>
+                        <div id="site-brand" className="site-settings-section-anchor">
                         <SettingsSectionCard
                             icon={<ImageIcon className="site-settings-brand-icon size-4" />}
                             title="品牌信息"
@@ -143,11 +163,11 @@ export default function SiteSettingsPage() {
                                         <div className="site-settings-logo-actions flex min-w-0 flex-col items-start gap-2">
                                             <input ref={logoInputRef} className="site-settings-logo-input !hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={selectLogo} />
                                             <div className="site-settings-logo-buttons flex flex-wrap gap-2">
-                                                <Button className="site-settings-logo-upload" icon={<Upload className="site-settings-logo-upload-icon size-4" />} loading={logoMutation.isPending} onClick={() => logoInputRef.current?.click()}>
+                                                <Button className="site-settings-logo-upload" icon={<Upload className="site-settings-logo-upload-icon size-4" />} loading={logoMutation.isPending} disabled={saveMutation.isPending || removeLogoMutation.isPending} onClick={() => logoInputRef.current?.click()}>
                                                     {setting?.logoUrl ? "替换" : "上传"}
                                                 </Button>
                                                 {setting?.logoUrl ? (
-                                                    <Button className="site-settings-logo-remove" type="text" danger icon={<Trash2 className="site-settings-logo-remove-icon size-4" />} loading={removeLogoMutation.isPending} onClick={confirmRemoveLogo}>
+                                                    <Button className="site-settings-logo-remove" type="text" danger icon={<Trash2 className="site-settings-logo-remove-icon size-4" />} loading={removeLogoMutation.isPending} disabled={saveMutation.isPending || logoMutation.isPending} onClick={confirmRemoveLogo}>
                                                         恢复内置
                                                     </Button>
                                                 ) : null}
@@ -158,7 +178,9 @@ export default function SiteSettingsPage() {
                                 </div>
                             </div>
                         </SettingsSectionCard>
+                        </div>
 
+                        <div id="site-home-banner" className="site-settings-section-anchor">
                         <SettingsSectionCard
                             icon={<Megaphone className="site-settings-banner-icon size-4" />}
                             title="首页顶部横幅"
@@ -186,7 +208,9 @@ export default function SiteSettingsPage() {
                                 </Form.Item>
                             </div>
                         </SettingsSectionCard>
+                        </div>
 
+                        <div id="site-footer" className="site-settings-section-anchor">
                         <SettingsSectionCard icon={<FileText className="site-settings-footer-icon size-4" />} title="底部版权" description="显示在首页底部，支持公司名称、年份和版权声明。">
                             <div className="site-settings-footer-fields px-6 py-6">
                                 <Form.Item className="site-settings-copyright-field mb-0" name="footerCopyright" label="版权文案" rules={[{ max: 200, message: "版权文案不能超过 200 个字符" }]}>
@@ -194,7 +218,9 @@ export default function SiteSettingsPage() {
                                 </Form.Item>
                             </div>
                         </SettingsSectionCard>
+                        </div>
 
+                        <div id="site-registration" className="site-settings-section-anchor">
                         <SettingsSectionCard icon={<FileCheck2 className="site-settings-registration-icon size-4" />} title="网站备案" description="配置首页底部对外展示的 ICP 与公安备案信息，备案链接仅允许 HTTP 或 HTTPS。">
                             <div className="site-settings-registration-fields grid gap-x-6 gap-y-4 px-6 py-6 lg:grid-cols-2">
                                 <Form.Item className="site-settings-icp-number-field mb-0" name="icpRegistrationNumber" label="ICP备案号" rules={[{ max: 100, message: "ICP备案号不能超过 100 个字符" }]}>
@@ -223,17 +249,18 @@ export default function SiteSettingsPage() {
                                 </Form.Item>
                             </div>
                         </SettingsSectionCard>
+                        </div>
 
                         <AdminSettingsActionBar
                             meta={setting?.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "当前使用系统默认站点配置"}
-                            status="保存后立即同步到公开页面"
+                            status={dirty ? "有未保存的站点配置变更" : "公开页面配置已同步"}
                         >
-                            <Button className="site-settings-save-button" type="primary" icon={<Save className="site-settings-save-icon size-4" />} loading={saveMutation.isPending} onClick={() => void save()}>
+                            <Button className="site-settings-save-button" type="primary" icon={<Save className="site-settings-save-icon size-4" />} loading={saveMutation.isPending} disabled={!dirty || logoMutation.isPending || removeLogoMutation.isPending} onClick={() => void save()}>
                                 保存并生效
                             </Button>
                         </AdminSettingsActionBar>
                     </Form>
-                )}
+                ) : null}
             </div>
         </AdminPageFrame>
     );
@@ -254,6 +281,28 @@ function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
         homeBannerPrimaryActionUrl: setting.homeBannerPrimaryActionUrl,
         homeBannerSecondaryActionLabel: setting.homeBannerSecondaryActionLabel,
         homeBannerSecondaryActionUrl: setting.homeBannerSecondaryActionUrl,
+    };
+}
+
+function siteSettingsInputEqual(left: UpdateSiteSettingsInput, right: UpdateSiteSettingsInput) {
+    return JSON.stringify(normalizeSiteSettingsInput(left)) === JSON.stringify(normalizeSiteSettingsInput(right));
+}
+
+function normalizeSiteSettingsInput(input: UpdateSiteSettingsInput): UpdateSiteSettingsInput {
+    return {
+        siteName: input.siteName.trim(),
+        footerCopyright: input.footerCopyright?.trim() || "",
+        icpRegistrationNumber: input.icpRegistrationNumber?.trim() || "",
+        icpRegistrationUrl: input.icpRegistrationUrl?.trim() || "",
+        publicSecurityRegistrationNumber: input.publicSecurityRegistrationNumber?.trim() || "",
+        publicSecurityRegistrationUrl: input.publicSecurityRegistrationUrl?.trim() || "",
+        homeBannerEnabled: Boolean(input.homeBannerEnabled),
+        homeBannerLabel: input.homeBannerLabel?.trim() || "",
+        homeBannerText: input.homeBannerText?.trim() || "",
+        homeBannerPrimaryActionLabel: input.homeBannerPrimaryActionLabel?.trim() || "",
+        homeBannerPrimaryActionUrl: input.homeBannerPrimaryActionUrl?.trim() || "",
+        homeBannerSecondaryActionLabel: input.homeBannerSecondaryActionLabel?.trim() || "",
+        homeBannerSecondaryActionUrl: input.homeBannerSecondaryActionUrl?.trim() || "",
     };
 }
 

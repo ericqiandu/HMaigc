@@ -1,4 +1,7 @@
 .canvas-media-prompt-panel {
+    --canvas-media-control-height: 32px;
+    --canvas-media-header-control-height: 26px;
+    --canvas-media-control-radius: 8px;
     display: flex;
     width: 660px;
     max-width: 100%;
@@ -31,7 +34,7 @@
 
 .canvas-media-composer-header > button:not([aria-label="放大编辑提示词"]),
 .canvas-media-composer-header > span > button {
-    height: 26px !important;
+    height: var(--canvas-media-header-control-height) !important;
     padding: 0 8px !important;
     border-radius: 9999px !important;
     background: color-mix(in srgb, var(--foreground) 5%, transparent) !important;
@@ -45,7 +48,7 @@
 .canvas-media-composer-header button[aria-label="放大编辑提示词"] {
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: var(--canvas-media-control-radius);
     background: color-mix(in srgb, var(--foreground) 8%, transparent) !important;
 }
 
@@ -85,32 +88,32 @@
     width: 200px;
     min-width: 200px;
     max-width: 200px;
-    height: 32px;
+    height: var(--canvas-media-control-height);
     flex: 0 0 200px;
     align-items: center;
 }
 
 .canvas-media-model-picker,
 .canvas-media-model-picker .ant-select {
-    height: 32px !important;
+    height: var(--canvas-media-control-height) !important;
 }
 
 .canvas-media-model-picker .canvas-composer-model-picker.ant-select {
     align-items: center !important;
     padding: 0 !important;
     border-color: transparent !important;
-    border-radius: 8px !important;
+    border-radius: var(--canvas-media-control-radius) !important;
     background: transparent !important;
     box-shadow: none !important;
 }
 
 .canvas-media-model-picker .canvas-composer-model-picker.ant-select .ant-select-content {
     display: flex !important;
-    height: 32px !important;
+    height: var(--canvas-media-control-height) !important;
     align-items: center !important;
     padding-inline: 8px !important;
     border-color: transparent !important;
-    border-radius: 8px !important;
+    border-radius: var(--canvas-media-control-radius) !important;
     background: transparent !important;
 }
 
@@ -123,10 +126,10 @@
 }
 
 .canvas-media-model-picker .canvas-model-picker-label {
-    height: 32px;
+    height: var(--canvas-media-control-height);
     align-items: center;
     color: color-mix(in srgb, var(--foreground) 86%, transparent);
-    font-weight: 600 !important;
+    font-weight: 500 !important;
 }
 
 .canvas-media-model-picker .canvas-model-picker-placeholder,
@@ -143,7 +146,7 @@
 
 .canvas-media-model-picker .ant-select-suffix {
     display: inline-flex;
-    height: 32px;
+    height: var(--canvas-media-control-height);
     align-items: center;
     color: color-mix(in srgb, var(--foreground) 42%, transparent);
 }
@@ -163,7 +166,7 @@
 .canvas-media-control,
 .canvas-media-control.ant-btn {
     display: inline-flex !important;
-    height: 32px !important;
+    height: var(--canvas-media-control-height) !important;
     align-items: center !important;
     font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif !important;
     font-size: 12px !important;
@@ -174,7 +177,7 @@
 .canvas-media-control:not(.canvas-node-submit-button):not(.canvas-audio-submit-button),
 .canvas-media-control.ant-btn:not(.canvas-node-submit-button):not(.canvas-audio-submit-button) {
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: var(--canvas-media-control-radius) !important;
     background: transparent !important;
     color: color-mix(in srgb, var(--foreground) 86%, transparent) !important;
     box-shadow: none !important;
@@ -188,7 +191,7 @@
 .canvas-media-meta,
 .canvas-media-meta > span {
     display: inline-flex;
-    height: 32px;
+    height: var(--canvas-media-control-height);
     flex: 0 0 auto;
     align-items: center;
     gap: 3px;
@@ -214,7 +217,7 @@
 .canvas-media-controls-row .canvas-audio-submit-button {
     width: 32px !important;
     min-width: 32px !important;
-    height: 32px !important;
+    height: var(--canvas-media-control-height) !important;
     align-items: center !important;
     justify-content: center !important;
     padding: 0 !important;
@@ -230,14 +233,14 @@
 }
 
 .canvas-node-prompt-panel--image .canvas-image-settings-trigger--composer.ant-btn {
-    width: 200px !important;
+    width: 185px !important;
 }
 
 .canvas-image-bottom-preset .canvas-preset-picker-trigger {
     width: 32px !important;
     min-width: 32px !important;
-    height: 32px !important;
-    border-radius: 8px !important;
+    height: var(--canvas-media-control-height) !important;
+    border-radius: var(--canvas-media-control-radius) !important;
     background: transparent !important;
     color: color-mix(in srgb, var(--foreground) 86%, transparent) !important;
 }

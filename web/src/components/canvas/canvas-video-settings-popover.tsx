@@ -94,7 +94,7 @@ function VideoSettingsPortal({
         ...(placeAbove ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, topSpace) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, bottomSpace) }),
         background: theme.spatial.elevated,
         border: `1px solid ${theme.toolbar.border}`,
-        borderRadius: 16,
+        borderRadius: 12,
         boxShadow: `0 24px 72px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.08)`,
         padding: 12,
         overflowY: "auto",
@@ -104,7 +104,7 @@ function VideoSettingsPortal({
     return createPortal(
         <div
             ref={panelRef}
-            className="canvas-video-settings-popover aceternity-floating-panel backdrop-blur-2xl"
+            className="canvas-overlay-panel canvas-video-settings-popover aceternity-floating-panel backdrop-blur-2xl"
             style={style}
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}

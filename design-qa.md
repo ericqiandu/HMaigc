@@ -1,522 +1,266 @@
-# Agent 面板 LibTV 风格设计 QA
+# 视频生成模式 Design QA
 
-- Source visual truth: `qa-artifacts/agent-panel-lib-style-20260729/01-lib-agent-reference.jpg`
-- Implementation screenshot: `qa-artifacts/agent-panel-lib-style-20260729/04-hmaigc-agent-final.jpg`
-- Full-view comparison: `qa-artifacts/agent-panel-lib-style-20260729/05-final-side-by-side.jpg`
-- Focused panel comparison: `qa-artifacts/agent-panel-lib-style-20260729/06-panel-focused.jpg`
-- Viewport: 1080 × 900 CSS px
-- Source pixels: 1080 × 900
-- Implementation pixels: 1080 × 900
-- Device scale factor: 1
-- State: dark canvas, Agent panel open, existing conversation visible, empty composer
+- source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-d0246083-bd88-4cd5-ba44-076766e76b0d.png`
+- verified live source: LibTV canvas video node, inspected 2026-08-01
+- implementation capture: `E:/新版短剧制作/open-ai-canvas/.codex-audit/video-mode-match-final-20260801.png`
+- state: dark theme, video node selected, generation-mode menu open, no reference assets connected
 
-## Findings
+## Focused comparison
 
-No actionable P0, P1, or P2 differences remain for the requested scope.
+- Structure: both use a compact trigger between model selection and generation parameters, with a five-row elevated mode menu.
+- Options: 文生视频、全能参考、图生视频、首尾帧、图片参考 are present in the same order.
+- Selection: the selected mode is represented by a full-row neutral surface; the implementation no longer adds a separate checkmark column.
+- Density: menu width is 162 px, outer padding 8 px, rows 36 px, labels 12 px/500, helper title 11 px/400, icons 14 px.
+- Shape: 12 px outer radius and 8 px selected-row radius follow the reference's compact rounded hierarchy without nested decorative borders.
+- Trigger: 32 px control height, 8 px radius, 14 px icon, restrained neutral background and compact horizontal padding.
+- Placement: preferred placement is below-left like the source; Ant Design may collision-flip it above the trigger when the node is too close to the viewport bottom.
+- States: unavailable reference-dependent modes are explicitly disabled until the required real media is connected; no fake selectable state is shown.
 
-- Fonts and typography: the implementation uses the product's 13–14 px / 500–700 hierarchy. Agent Markdown now renders headings, emphasis, lists and GFM tables instead of exposing raw Markdown symbols.
-- Spacing and layout rhythm: the panel is a flush right-side drawer with a 48 px header, compact 28 px icon actions, a dense message stream and a bottom-pinned composer. The previous floating-card margin and oversized 520 px default width were removed.
-- Colors and visual tokens: panel, cards, buttons and composer use the existing canvas light/dark theme tokens. Dark mode surface brightness now matches the reference hierarchy without introducing a separate gray palette.
-- Image and icon fidelity: all controls use the existing Lucide icon library or supplied OpenAI model mark. No placeholder art, handcrafted SVG or CSS-drawn icon was introduced.
-- Copy and content: supported actions remain explicit. The backend-managed Agent text model remains hidden; the composer exposes only real image/video generation models from the system model catalog.
-- Accessibility: icon-only controls have `aria-label`, tooltips and visible pressed states. Composer focus, disabled send state and history/confirmation toggles remain operable.
+## Findings resolved
 
-## Comparison History
+1. Removed the non-reference checkmark column.
+2. Reduced the menu from 176 px to 162 px and rows from 38 px to 36 px.
+3. Reduced icon size, padding, shadow and title weight.
+4. Changed the trigger from a plain oversized control to the compact neutral surface used by the reference.
+5. Corrected the menu layout to a vertical list after browser QA exposed an intermediate flex-direction regression.
 
-### Initial pass
+## Verification
 
-- P1: Agent replies displayed raw Markdown tables and emphasis markers, unlike the readable LibTV conversation stream.
-- P2: the panel used a floating rounded card, a 520 px default width and a visually heavy two-level header.
-- P2: header actions mixed a text switch, circular buttons and a separate tab row.
-- P2: the composer exposed the concrete system model and used a heavier nested-card treatment.
+- Browser: opened the local video node and verified the final five-row menu visually.
+- Interaction: trigger opens and reports `aria-expanded`; disabled modes remain non-interactive without required assets.
+- Automated contract tests: `bun test web/test/canvas-video-generation-mode.test.ts` — 5 passed.
+- Type/build: `bun run --cwd web build` — passed.
+- Local delivery: rebuilt `hmaigc-web:local`; container starts successfully.
 
-### Fixes
-
-- Added safe React Markdown + GFM rendering and dense table/list typography.
-- Converted the panel to a flush drawer with a 420 px default width and one subtle separating edge.
-- Consolidated new conversation, history, undo, execution confirmation and collapse into one compact icon toolbar.
-- Reworked user messages, tool cards, proposal actions and composer controls into the reference's flat neutral hierarchy.
-- Removed the user-facing Agent text-model configuration while retaining backend model resolution.
-
-### Post-fix evidence
-
-The full-view and focused comparisons show aligned panel proportions, header density, icon-button scale, neutral surface hierarchy, rich message formatting and bottom composer structure. Remaining content differences come from different real conversations, not component drift.
-
-## Interaction Verification
-
-- History view opens and returns to chat.
-- Execution confirmation toggles off and back on with a visible pressed state.
-- Send activates when text is entered and returns to disabled after clearing.
-- Composer input was cleared after verification; no Agent request was submitted.
-- Production build and the repository's 11 front-end tests pass.
-
-## Agent Composer Controls QA (2026-07-29)
-
-- Source visual truth: user-provided LibTV toolbar screenshot `codex-clipboard-dc889d4c-5328-4941-bb0e-c0c08671d429.png` plus live LibTV model, Skill and generation-mode popovers.
-- Implementation evidence: `qa-artifacts/agent-composer-popovers-20260729/toolbar-comparison.png`.
-- State: dark canvas, Agent panel open, composer empty, no generation request submitted.
-
-### Verified scope
-
-- The composer toolbar order is add image, generation model, Skills and generation mode.
-- All four hit areas are 32 × 32 CSS px; adjacent controls use a consistent 3–4 px rhythm.
-- The supplied cube, Skill, manual and automatic SVG assets are used as external assets and optically normalized.
-- The model popover is exactly 370 × 384 CSS px and reads image/video options only from the live system model catalog.
-- The Skill popover is exactly 450 × 400 CSS px and loads the real general, favorite and activated Skill collections.
-- The mode popover is exactly 240 × 114 CSS px; manual and automatic selections update the existing execution-confirmation state.
-- Selecting a model or Skill changes the real Agent request configuration; no decorative or fake option was added.
-- Browser console remained empty during model selection, Skill loading and mode switching.
-
-### Final result
-
-No actionable P0, P1 or P2 difference remains in the requested composer-control scope.
-
-## Follow-up Polish
-
-- P3: if a future product requirement adds share or CLI actions, add them only after their real flows exist; do not add decorative buttons.
-
-## Homepage Agent Composer QA (2026-07-29)
-
-- Source visual truth: `qa-artifacts/home-agent-composer-20260729/agent-composer-full.png`.
-- Implementation screenshot: `qa-artifacts/home-agent-composer-20260729/home-composer-full-current.png`.
-- Focused comparison: `qa-artifacts/home-agent-composer-20260729/composer-comparison.png`.
-- Viewport: 1086 × 912 CSS px.
-- Device scale factor: 1.
-- State: dark homepage, empty composer, manual mode, no Agent request submitted.
-
-### Verified scope
-
-- The homepage now renders the same `AgentChatComposer` component used by the canvas Agent panel instead of maintaining a parallel visual implementation.
-- Both instances have the same 139 px component height, surface treatment, radius, typography, 32 × 32 px toolbar actions and disabled submit state.
-- Homepage width remains 680 px while the canvas drawer uses 399 px; this is an intentional container-width difference, not component drift.
-- The control order is identical: add image, generation model, Skills, generation mode and submit.
-- The image input accepts multiple `image/*` files and applies the homepage limit of four reference images.
-- Model, Skill and mode popovers open below the homepage composer without clipping. Their measured sizes are 394 × 408, 474 × 424 and 264 × 138 CSS px including Ant Design outer padding.
-- Manual and automatic mode switching updates the real mode icon and launch configuration.
-- Model and Skill choices use the same live system catalog and shared request-context builder as the canvas Agent panel.
-- Selected homepage reference images are uploaded and seeded as real canvas image nodes before the Agent launch begins.
-- Browser console remained empty throughout the interaction checks.
-
-### Comparison history
-
-- Initial homepage implementation duplicated the Agent toolbar and drifted in structure, spacing and interaction behavior.
-- The first reuse pass shared only the model, Skill and mode controls; the homepage still lacked the Agent add-image flow and used a separate composer shell.
-- The final pass removed the parallel shell and reused the complete `AgentChatComposer`, with one shared launch contract for mode, models and Skills.
-
-### Final result
-
-No actionable P0, P1 or P2 difference remains in the requested homepage-versus-Agent composer scope.
-
-## Agent Toolbar Icon Polish QA (2026-07-29)
-
-- Source visual truth: the user-supplied model SVG path data and the existing 20 px neighboring toolbar icons.
-- Implementation screenshot: `qa-artifacts/agent-icon-polish-20260729/home-after.png`.
-- Before/after comparison: `qa-artifacts/agent-icon-polish-20260729/toolbar-before-after.png`.
-- Viewport: 1086 × 912 CSS px.
-- State: dark homepage, empty composer, no Agent request submitted.
-
-### Verified scope
-
-- The add-image plus glyph increased from 16 × 16 to 20 × 20 CSS px while retaining its existing 32 × 32 px accessible button hit area.
-- The model selector now uses the exact two-path geometry supplied by the user, normalized to the shared muted icon color.
-- The plus and model glyphs both render at 20 × 20 CSS px and align to the same toolbar center line.
-- The model asset URL carries an explicit version marker so local and deployed clients do not continue displaying the previous cached SVG.
-- The external SVG loads successfully, tooltips and `aria-label` remain intact, and the browser console is empty.
-
-### Final result
-
-No actionable P0, P1 or P2 difference remains in the requested icon-polish scope.
-
-## Agent Toolbar Tooltip Sync QA (2026-07-29)
-
-- Source screenshot: `qa-artifacts/agent-tooltip-sync-20260729/reference.png`.
-- Homepage screenshot: `qa-artifacts/agent-tooltip-sync-20260729/home-tooltip.png`.
-- Canvas Agent screenshot: `qa-artifacts/agent-tooltip-sync-20260729/canvas-tooltip.png`.
-- Focused comparison: `qa-artifacts/agent-tooltip-sync-20260729/tooltip-comparison.png`.
-- Viewport: 1086 × 912 CSS px.
-- State: dark homepage and an opened canvas Agent panel; no Agent request was submitted.
-
-### Verified scope
-
-- Homepage and canvas Agent tooltips now use one shared `CanvasAgentTooltip` component instead of separate Ant Design defaults.
-- The visible tooltip surface measures `rgb(5, 7, 11)` with `rgb(255, 255, 255)` text, 4 px × 8 px padding, 6 px radius, 12 px type and 600 font weight.
-- Hover remains the primary pointer interaction; focus uses the same tooltip for keyboard accessibility.
-- Both composers render the same four controls in the same order: add image, model, Skills and generation mode.
-- The add-image, model and Skills glyphs are 20 × 20 CSS px; the manual-mode glyph remains optically normalized at 17 × 17 CSS px. Every control retains a 32 × 32 CSS px hit area.
-- The model, Skills and generation-mode controls use the same shared asset URLs in both surfaces, including `/icons/agent-model.svg?v=2`.
-- Homepage and canvas browser logs remained empty throughout the visual and interaction checks.
-
-### Final result
-
-No actionable P0, P1 or P2 difference remains in the requested tooltip-and-toolbar synchronization scope.
-
-## Projects Workbench Reference QA (2026-07-29)
-
-- Reference: `qa-artifacts/projects-workbench-v1-20260729/reference-updream.png`.
-- Implementation: `qa-artifacts/projects-workbench-v1-20260729/implementation-hmaigc.png`.
-- Viewport: 1086 × 912 CSS px.
-- State: dark project workbench with one real project; no project was created or modified during QA.
-
-### Verified scope
-
-- The `/projects` page uses a 878px centered content frame aligned at x=104, matching the measured Updream reference frame.
-- Header and search end at x=982 with no inherited floating-account padding; controls are 36px high and remain on one line at the reference viewport.
-- The project grid starts at y=148 and resolves to three `284.66px` columns with 12px gaps.
-- The new-project card is `284.66 × 227.72px`; the real project card is `284.67 × 228.13px`.
-- Page typography resolves from one scoped 14px text base with explicit 16px page title, 14px card title and 11–12px metadata tiers.
-- The create tile, project stage, completion, chapter/canvas/material counts and update time are derived from real project data; no reference-only folder or bulk-selection capability was fabricated.
-- Filter, create-project modal and no-result search state were exercised in the real browser. No create request was submitted.
-- The homepage was opened separately and contains no `.projects-workspace` scope; homepage and project-page browser consoles remained empty.
-- Production TypeScript check and Vite build pass. The existing large-chunk warning remains outside this page-specific visual change.
-
-### Final result
-
-No actionable P0, P1 or P2 issue remains in the requested first-page workbench scope.
+## Final result
 
 final result: passed
 
-## Audio Voice Library And Clone Dialog QA (2026-07-30)
+---
 
-- Source visual truth:
-  - `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-0aaf8cad-9933-47e1-aa92-eab9337a5d4f.png`
-  - `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-90ade7d7-3ff2-4720-8582-c0e7ad6f56fa.png`
-- Implementation screenshots:
-  - `qa-artifacts/audio-voice-library-20260730/implementation-clone-dark-1280x720.png`
-  - `qa-artifacts/audio-voice-library-20260730/implementation-catalog-light-1280x720.png`
-- Focused same-density comparison: `qa-artifacts/audio-voice-library-20260730/comparison-clone-dark.png`.
-- Viewport: 1280 × 720 CSS px at device scale factor 1.
-- Source pixels: 654 × 446; the visible source dialog is 620 × 426 px.
-- Implementation pixels: 1280 × 720; the visible clone dialog is 620 × 438 CSS px.
-- Normalization: the comparison crops both dialogs at their real rendered size without scaling; the 12 px height increase is intentional space for the explicit recording-duration and destination notice.
-- State: authenticated real canvas, selected MiniMax audio node, dark clone dialog and light catalog empty state; no microphone capture and no upstream clone request.
+# 前后台视觉系统审查（2026-08-02）
 
-### Findings
+## 审查结论
 
-No actionable P0, P1, or P2 differences remain for the requested voice-library and clone-dialog scope.
+- 首页与登录页的现有视觉方向成立，不进行破坏性换皮。
+- 后台主要成熟度问题集中在：超宽内容区、页面标题层级偏弱、三级文字对比不足、导航选中态不明显，以及缺少键盘跳转入口。
+- 外部 UI 技能给出的紫色营销站建议与仓库 `Design.md` 的单一蓝色强调色冲突，未采纳；本次只采用其中可访问性、响应式、动效和层级规则。
 
-- Fonts and typography: both dialogs use the repository SF Pro Text / PingFang SC hierarchy with 16 px semibold titles, 13 px body copy and 10–12 px legal or status text. The reading script keeps the source's centered emphasis without leaking provider terminology.
-- Spacing and layout rhythm: the catalog is an 800 × 620 single-surface modal with one header, one toolbar, one scroll region and one footer. The clone dialog preserves the source's 620 px width, compact header, 210 px recording region and bottom-aligned consent/action row.
-- Colors and visual tokens: dark and light surfaces come from the live canvas theme. Interactive controls now use the design-system Apple Blue tokens (`#2997ff` dark, `#0071e3` light) instead of an unrelated purple accent.
-- Image and icon fidelity: controls use the existing Lucide icon library; no handcrafted SVG, CSS drawing, emoji or placeholder asset was introduced.
-- Copy and content: tabs, search, language filter, preview, favorite, selection, recording limits, consent and result destination use real product behavior. The active MiniMax channel currently contains zero published voices, so the implementation evidence intentionally shows the real explicit empty state rather than fabricated rows.
-- Accessibility: modal regions and tabs have names, icon-only actions have `aria-label`, keyboard focus remains visible, disabled states are explicit, and the catalog does not expose inaccessible private voices.
+## 已落实
 
-### Comparison history
+1. 后台页面框架收敛为 `1304px`，含两侧各 `32px` 留白，有效内容宽度 `1240px`。
+2. 页面标题统一为 `18px / 24px / 600`，说明文字统一为 `13px / 18px`。
+3. 提升明暗主题三级文字对比，并补充成功、警告、危险、禁用语义色。
+4. 导航选中态使用独立控件底色，避免与页面表面色混淆。
+5. 后台增加“跳到主要内容”入口，并修正重复 `main` 地标。
 
-#### Initial pass
+## 后台内容页第二阶段（2026-08-02）
 
-- P2: the first implementation inherited the canvas purple accent, while the repository design truth permits one blue interactive accent.
-- P2: automatic stop at the five-minute recording limit did not enter the visible processing state before MediaRecorder completion.
+- 模型商业定价页已统一为概览指标、条件筛选、数据表格三段式信息架构，搜索与筛选在桌面端形成稳定网格，在平板与手机端按断点顺序收叠。
+- 定价表补齐首屏骨架、无模型空状态与筛选无结果状态，并统一主信息、模型键、成本、售价及利润率的文字层级和换行策略。
+- 共用表格空状态移除装饰性图标底框；加载骨架改为尊重调用方传入的行数，避免所有后台页面固定渲染八行。
+- 表格行悬停、单元格垂直对齐和减少动态效果规则已统一，明暗主题继续使用现有单一蓝色强调色与语义状态色。
 
-#### Fixes
+## 后台操作体验第三阶段（2026-08-02）
 
-- Mapped the modal interaction token to `#2997ff` in dark mode and `#0071e3` in light mode.
-- Moved the recorder into the explicit `processing` state before the automatic maximum-duration stop.
+- 后台新增统一的 `admin-operation-modal` 与 `admin-action-dropdown` 语义入口，收敛普通编辑弹窗、危险确认框和行操作菜单的视觉与交互。
+- 会员、公告、兑换码、OSS 迁移和模型管理的高频弹层已接入统一标题栏、正文、表单和底部操作区；模型编辑抽屉已切换到后台对象抽屉规范。
+- 表单错误改为字段内联反馈并提供语义错误焦点环；异步提交沿用 Ant Design 的 loading/confirmLoading 事实状态，不制造伪进度。
+- 移动端操作弹窗使用 12px 视口边距和双列等宽 44px 按钮，危险色只用于最终不可逆操作，不与普通确认竞争注意力。
 
-#### Post-fix evidence
+## 后台全量收口第四阶段（2026-08-02）
 
-- The focused comparison shows matching modal proportions, header hierarchy, script block, recording action, authorization copy and bottom action placement.
-- The real-browser interaction pass verified text refresh, tab selection, language-filter visibility and both theme surfaces.
-- Browser logs remained empty through dark/light mode, catalog, filter and clone-dialog interactions.
+- 模型商业定价的经营参数与定价编辑抽屉已接入统一对象抽屉规范，不再维护平行标题栏和内容边距。
+- 运维、发票、积分结算弹窗已接入统一操作弹层；移动端由语义类统一控制宽度、正文边距和双按钮布局。
+- 公告关闭、模型删除/图标移除、兑换码禁用统一使用 `admin-operation-popconfirm`，标题、说明、按钮和危险状态不再沿用组件库默认样式。
+- 运维记录、备份、用户积分/任务/审计及请求详情统一使用共享紧凑空状态，移除默认插画和不同页面各自维护的空状态文案层级。
+6. 补充统一动效、阴影与层级 token，降低后续组件继续漂移的风险。
 
-### Residual test gap
+## 后台响应式与可访问性第五阶段（2026-08-02）
 
-- P3: populated voice-row visual states were not captured because the active MiniMax channel has no published voice records. Repository tests cover private ownership, favorites, membership access and cross-user denial; a later operations QA pass should sync real provider voices before capturing preview, selected, favorite and member-only row states.
-- The in-app browser session used for this pass exposes a fixed desktop viewport. The 820 px and 560 px CSS breakpoints were inspected and production-built, but a separate narrow-viewport browser capture remains part of the documented manual release checklist.
+- 在 1030px 实际视口审查中定位到积分运营页被宽表格撑出内容区：单列 Grid 的隐式 `auto` 轨道采用表格固有宽度，页面再以 `overflow-x: hidden` 裁切，形成“没有滚动条但右侧内容消失”的假响应式。
+- 后台内容根节点、直接子级和表格表面统一建立 `min-width: 0 / max-width: 100%` 收缩契约；横向滚动只保留在 Ant Design 表格内容层，禁止页面级裁切掩盖溢出。
+- 积分运营概览与订单区域显式使用 `minmax(0, 1fr)`，避免后续新增列或长文本重新撑开父级网格。
+- 后台侧栏从 1280px 起展示；低于该宽度切换顶部栏与抽屉导航，避免 1024px 左右的平板横屏同时承载侧栏和宽数据表。
+- 390px 移动端的菜单按钮、抽屉分组入口、工具栏操作和普通表单控件统一为至少 44px 触控热区。
+- 积分订单空状态接入共享紧凑空状态，区分“暂无数据”与“筛选无结果”，不再显示组件库默认插画。
 
-### Final result
+## 后台状态体验与细节一致性第六阶段（2026-08-02）
 
-No actionable P0, P1 or P2 issue remains in the requested voice-library and clone-dialog scope.
+- 法律协议、支付配置、站点配置与邀请活动的内容加载统一使用 `AdminContentSkeleton`，标题宽度、段落节奏、明暗主题色和移动端内边距不再由页面分别定义。
+- 用户详情和请求详情抽屉新增持久错误状态：保留接口返回的真实原因并提供原地重试，不再把请求失败伪装成“没有详情”。
+- 后台 Alert 的标题、说明、操作间距与按钮高度统一，错误、提示和警告继续使用既有语义色，不以颜色作为唯一状态证据。
+- 用户详情四项汇总指标改为单层连续表面与弱分隔，移除四个独立圆角边框，减少卡片套卡片。
+- 用户列表“显示列”浮层接入后台统一浮层语义，桌面保持紧凑 34px 行高，移动端提升为 44px，并统一阴影、圆角和文字层级。
 
-final result: passed
+## 后台数据表格与批量操作第七阶段（2026-08-02）
 
-## Canvas Shortcuts Modal QA (2026-07-30)
+- 音色管理移除“完整表格骨架嵌入旋转指示器”的双层加载方式：首屏使用共享表格骨架，后台刷新保留现有数据并展示真实加载状态。
+- 音色表补齐后台数据表语义类和内容区横向滚动契约，长模型、权限或操作列不再把后台页面整体撑宽。
+- 邀请关系列表接入共享紧凑空状态、后台数据表语义和统一分页条；翻页保留现有数据并明确显示加载状态。
+- 模型定价、分镜提示词和用户详情分页统一显示当前范围与总数，避免只显示页码却无法判断数据规模。
+- 分页页码与前后翻页热区统一：桌面 32px，移动端 40px；固定页容量不再展示无意义的页容量选择器。
 
-- Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-97701fb5-35dd-444f-b6ba-3f334d805991.png`.
-- Desktop implementation: `qa-artifacts/canvas-shortcuts-modal-20260730/implementation-desktop-dark-1294x912-final.png`.
-- Responsive evidence: `implementation-tablet-dark-1024x768-release.png`, `implementation-mobile-dark-390x844-release.png` and `implementation-desktop-light-1294x912-release.png` in the same folder.
-- Same-density comparison: `qa-artifacts/canvas-shortcuts-modal-20260730/comparison-reference-vs-implementation.png`.
-- Full report: `qa-artifacts/canvas-shortcuts-modal-20260730/design-qa.md`.
-- Viewports: 1294 × 912, 1024 × 768 and 390 × 844 CSS px at device scale factor 1.
-- State: shortcut modal open on the real canvas; dark and light themes verified.
+## 后台表单与设置页第八阶段（2026-08-02）
 
-### Verified result
+- 邮件、OSS 与 Linux.do 设置移除卡片内容边距和内部字段网格边距的重复叠加，字段标签、控件和说明重新形成一致的 20px 内容节奏。
+- Linux.do 凭据、OAuth 地址和高级字段映射改为语义字段区；高级映射继续使用原生 `details`，支持键盘操作且默认不占用主要配置视线。
+- 用户注册开关行建立独立响应式语义，移动端改为顶部对齐并保持可达的开关热区，不再依赖固定高度撑出空白。
+- 站点、支付、邮件、OSS 和 Linux.do 配置新增真实脏状态；无变更时保存按钮禁用，有变更时明确提示，保存成功后恢复同步状态。
+- 表单分区、渐进披露和移动端内边距使用共享后台语义类，避免后续设置页继续通过零散 Tailwind 形成不同密度。
 
-- The desktop modal follows the reference's four-column structure, blue category labels, compact keycaps, gesture icons, restrained dividers and single rounded surface.
-- The displayed commands are grounded in the real keyboard, selection, viewport and gesture implementations; unsupported reference-only commands were not fabricated.
-- The tablet layout becomes a 2 × 2 section grid and fits fully inside the viewport.
-- The mobile layout becomes one internally scrollable column, remains fully inside the viewport and creates no horizontal overflow.
-- Button close and Escape close work. The modal preserves keyboard focus visibility without showing an initial pointer-open focus ring.
-- Light and dark tokens both remain legible.
-- TypeScript/Vite production build and all 11 current front-end tests pass.
+## 后台高密度运营页第十阶段（2026-08-02）
 
-final result: passed
+- 模型商业定价首次加载失败时显示真实错误原因与重试入口，不再同时显示零值指标或“尚未接入模型”伪空状态。
+- 已有模型后的后台刷新继续保留现有数据，刷新失败不清空已加载结果。
+- 商业参数和模型定价抽屉区分“当前配置已同步”与“有未保存变更”，未修改时禁止重复保存。
+- 保存期间抽屉不可关闭；保存失败保留表单输入和脏状态，便于管理员修正后再次提交。
 
-## LibTV-Informed Canvas Chrome QA (2026-07-30)
+## 后续验收基线
 
-- Reference: authenticated LibTV canvas in the in-app browser.
-- Scope: canvas header, workspace-mode switch, canvas action buttons and bottom floating controls.
-- Evidence: `qa-artifacts/canvas-libtv-alignment-20260730/`.
-- Viewports: 390 × 844, 1024 × 768 and the normal desktop viewport; Agent panel closed and open; dark and light themes.
+## 后台音色目录第十一阶段（2026-08-02）
 
-### Resolved findings
+- 音色管理新增渠道、名称/标识/语言/说明、类型和发布状态组合筛选，并明确展示当前结果数与目录总数。
+- 音频渠道或音色目录首次读取失败时显示真实原因与原地重试入口，不再以 Toast 后的空表掩盖失败。
+- 供应商同步使用独立操作状态，已有目录保持可见；同步失败保留原目录，不伪造同步成功。
+- 音色编辑和克隆抽屉新增未保存状态保护：无修改不可重复发布，保存期间不可关闭，主动放弃前必须二次确认。
+- 工具栏在 1023px 以下转为两列、639px 以下转为单列；页面操作在移动端改为完整宽度，避免按钮和筛选相互挤压。
 
-- P1: the previous 56px header islands were visually heavier than the canvas content and unlike the compact reference hierarchy.
-- P1: the workspace-mode switch floated independently at the center, separating it from the canvas identity and causing avoidable crowding when the Agent panel reduced the real canvas width.
-- P1: the canvas title used a second metadata row even though the project sidebar already exposes the same context.
-- P2: bottom docks used more height, radius and shadow than the reference control language required.
+## 后台模型配置第十二阶段（2026-08-02）
 
-### Applied standard
+- 系统渠道和渠道模型首次读取失败时展示准确原因与重试入口，不再以一次性 Toast 后的空表伪装成功。
+- 已有数据后的刷新失败保留原渠道或模型目录，并在列表前展示持久错误状态；重试不会清空当前运营上下文。
+- 渠道和模型编辑器新增真实未保存状态：无修改禁止重复保存，写入期间禁止关闭，放弃或切换新增前必须确认。
+- 模型表操作统一为主操作与更多操作入口，删除继续使用明确影响说明和危险语义，不再并排堆叠小按钮。
+- 渠道和模型筛选在 1023px 以下重排、639px 以下单列；模型页头操作移动端整行可达，表格横向滚动限制在内容区。
 
-- Canvas identity, workspace mode and account actions now share a 40px control height, 10px surface radius and restrained single shadow.
-- Workspace mode sits directly beside the canvas identity, while account and collaboration actions remain right aligned.
-- Secondary project metadata is removed from the header visual layer but remains available in the project sidebar and accessible links.
-- Header icon commands use 32 × 32px targets; the Agent action retains text where space permits and an accessible name at narrow widths.
-- Bottom canvas docks use 40px surfaces, 32px commands and reduced shadows while preserving every existing action.
-- Responsive visibility follows the real canvas container width, including the narrow canvas created by an open Agent panel.
+## 后台积分运营第十三阶段（2026-08-02）
 
-### Verified result
+- 积分策略首次加载、失败和已同步状态分离；失败显示原始原因与重试入口，不再落入可编辑空表单。
+- 积分策略通过真实脏状态控制保存，无变化不可重复写入，保存成功后恢复“已与服务端同步”。
+- 人工调账增加写入前事实确认，明确展示目标用户、积分变化和调整依据，负向扣减仅在最终操作使用危险色。
+- 计费订单增加共享首屏骨架、持久错误状态和重试入口；已有数据刷新失败时保留原表格。
+- 结算与退款弹窗增加订单事实摘要并锁定写入期关闭入口；移动端表单、工具栏和确认摘要切换为单列与 44px 操作热区。
+- 修复 1030px 左右视口下侧栏挤压导致的卡片裁切：移除按全视口提前生效的 `xl` 双栏类，改由 1280px 内容安全断点控制，并强制 Grid 子级允许收缩。
 
-- No header or bottom-dock overlap and no document-level horizontal overflow at the tested widths.
-- Workspace-mode menu opens below its trigger and retains correct selected state.
-- Agent panel opens and closes while all header groups remain inside the available canvas width.
-- Dark and light themes retain legible surfaces, icons and focusable controls.
-- Browser runtime logs contain no warnings or errors.
-- TypeScript/Vite production build and all 11 current frontend tests pass.
+## 后台运维与高风险操作第九阶段（2026-08-02）
 
-### Final result
-
-No actionable P0, P1 or P2 issue remains in the requested LibTV-informed canvas-header and button scope.
-
-final result: passed
-
-## Canvas Header And Controls QA (2026-07-30)
-
-- Scope: canvas page header, workspace mode switch, primary canvas Dock and zoom/asset Docks.
-- Visual evidence: `qa-artifacts/canvas-chrome-20260730/`.
-- States: dark and light canvas themes, Agent panel closed and open, project sidebar visible.
-- Viewports: 390 × 900, 768 × 900, 1024 × 900 and 1440 × 900 CSS px.
-
-### Audit findings
-
-- P0: none.
-- P1: header controls mixed 36px circular, 40px rounded-square and shadow-heavy button treatments without a shared surface.
-- P1: desktop Dock commands rendered at 29 × 29px, below the repository's 32 × 32px minimum icon-button target.
-- P1: at medium widths the zoom/asset Docks could intersect the centered creation Dock.
-- P1: when the Agent panel reduced the real canvas width, viewport-only breakpoints kept nonessential header actions visible and could crowd the title and mode switch.
-- P2: dark-theme Dock buttons used layered shadows that competed with node content.
-
-### Applied tokens and behavior
-
-- Header groups use one translucent 56px glass surface with 12px radius, one border and a restrained single shadow.
-- Header commands use 36px controls, 8px radius and consistent hover/focus behavior.
-- Canvas Docks use a 44px surface and at least 32 × 32px desktop command targets; touch layouts retain larger controls.
-- At 640–1024px the centered Dock removes duplicate history/clear commands already available from the canvas menu.
-- Header actions respond to the actual canvas container width. Search, performance and balance collapse before the remaining menu, collaboration, share and Agent controls can intersect.
-- The icon-only Agent state retains an explicit accessible name and tooltip.
-
-### Verified result
-
-- No header-group or Dock collisions at 390, 768, 1024 or 1440px.
-- No document-level horizontal overflow at any tested viewport.
-- No visible icon-only canvas control is smaller than 32 × 32px.
-- Canvas menu, workspace-mode selector, appearance panel, light/dark theme switch and Agent toggle open and close successfully.
-- Browser runtime logs contain no warnings or errors.
-- TypeScript checking and the Vite production build pass.
-
-### Final result
-
-No actionable P0, P1 or P2 issue remains in the requested canvas-header and control scope.
-
-final result: passed
-
-## Asset Library Navigation Overlap Fix QA (2026-07-30)
-
-- User-reported source: `qa-artifacts/assets-library-overlap-fix-20260730/source-user-report-1096x909.png`.
-- Reproduction before fix: `qa-artifacts/assets-library-overlap-fix-20260730/reproduction-before-1096x909.png`.
-- Implementation after fix: `qa-artifacts/assets-library-overlap-fix-20260730/implementation-after-1095x910.png`.
-- Same-size comparison: `qa-artifacts/assets-library-overlap-fix-20260730/comparison-report-vs-fix.png`.
-- Source and implementation viewport: 1095 × 910 CSS px at device scale factor 1.
-- State: dark asset library, empty real local asset dataset, floating workspace navigation visible.
-
-### Root cause and fix
-
-- P1: at widths from 1025px through 1279px, the fixed workspace navigation occupied x=40–88 while the shared workspace frame started at x=43.83. The asset category controls therefore rendered underneath the navigation.
-- The fault was in the shared workspace responsive contract, not in the asset page. The fix reserves a 104px left inset for all affected workspace frames in that breakpoint, matching the established wide-screen frame and avoiding a page-specific patch.
-
-### Verified result
-
-- At the reported size, the workspace content now starts at x=104 while the navigation ends at x=88, leaving a 16px safety gap.
-- Measured navigation/content collisions changed from 2 before the fix to 0 after the fix.
-- Adjacent breakpoint checks at 1024, 1025, 1096, 1199, 1279 and 1280px show no navigation overlap and no document-level horizontal overflow.
-- Typography, color tokens, icons, copy and asset behavior are unchanged.
-- The fix applies consistently to projects, canvas library, tasks, assets, skills, settings, teams and wallet workspaces that use the shared frame.
-
-### Final result
-
-No actionable P0, P1 or P2 issue remains for the reported medium-width navigation overlap.
-
-final result: passed
-
-## Workspace UI Rollout QA (2026-07-30)
-
-- Scope: projects, canvas library, tasks, assets, skills, settings, teams and wallet workspaces.
-- Representative before/after evidence: `qa-artifacts/workspace-ui-rollout-20260730/`.
-- Viewports: 390 × 844, 768 × 900, 1024 × 900 and 1440 × 900 CSS px.
-- State: dark mode with real local account and workspace data; no project, task or asset was submitted during QA.
-
-### Resolved findings
-
-- P1: the floating account overlay left an inherited 118px right inset on workspace headers, so page actions did not align with the content edge.
-- P1: header actions mixed neutral and blue treatments for operations at the same hierarchy level.
-- P1: mobile action groups retained 36px desktop controls and inconsistent intrinsic widths.
-- P2: pages used different base font stacks and unconstrained wide-screen content widths.
-
-### Verified standard
-
-- All scoped pages resolve to the same `SF Pro Text` / `PingFang SC` / `Microsoft YaHei` font stack.
-- Desktop page actions, search and filter controls are 36px high; mobile controls are 44px high.
-- Two or more mobile header actions share the available width; single actions retain their content width.
-- Header action groups end at the same right edge as page content at 1024px and 1440px.
-- Workspace content is capped at 1240px inside a 1448px page frame.
-- No tested route produces document-level horizontal overflow at any of the four viewports.
-- The task-create and asset-create dialogs open from their relocated header actions and close normally.
-- The homepage contains no workspace style scope and remained outside this rollout.
-- Browser console contains no warnings or errors after the visual and interaction checks.
-- TypeScript/Vite production build passes; all 11 current frontend tests pass.
-
-### Final result
-
-No actionable P0, P1 or P2 issue remains in the requested workspace-layout, typography, button-alignment or responsive scope.
-
-## Admin Workspace UI Rollout QA (2026-07-30)
-
-- Scope: shared admin shell, analytics, users, model channels, credit operations and site settings.
-- Before/after evidence: `qa-artifacts/admin-workspace-ui-20260730/`.
-- Viewports: 390 × 844, 768 × 844, 1024 × 900 and 1440 × 900 CSS px.
-- State: dark mode with the authenticated local admin account and real local data; no configuration, user or billing mutation was submitted during QA.
-
-### Resolved findings
-
-- P1: the admin shell used a separate system font, 24px page titles and a narrower 1180px frame, which visibly diverged from the workspace.
-- P1: mobile admin navigation exposed the full information architecture as a crowded horizontal strip.
-- P1: desktop and mobile controls mixed 34–38px heights, while key mobile search and action controls did not meet the shared 44px standard.
-- P2: admin-only radial backgrounds, visible card outlines and inconsistent primary-button treatment created a second visual language.
-
-### Verified standard
-
-- Admin pages resolve to the workspace `SF Pro Text` / `PingFang SC` / `Microsoft YaHei` font stack with 16px page titles and 22px title line height.
-- Desktop page actions, search and filter controls are 36px high; mobile search and primary action controls are 44px high.
-- The desktop shell keeps its 236px operational sidebar while page content uses the shared 1240px maximum width.
-- At widths below 1024px, the sidebar is replaced by a 56px mobile header and a 320px navigation drawer. Drawer navigation updates the route and closes after selection.
-- Page-header actions use the same neutral control surface as the workspace; blue remains reserved for true primary actions inside forms and transactional content.
-- Cards and table shells use one 12px surface radius without decorative outer borders or shadows.
-- `/admin`, `/admin/users`, `/admin/models`, `/admin/credit-operations` and `/admin/settings/site` produce no document-level horizontal overflow at 390, 768, 1024 or 1440px.
-- The model-channel creation drawer opens and closes normally without submitting a mutation.
-- The homepage and user workspaces remain outside the scoped admin stylesheet.
-- Browser runtime logs are empty after route, drawer and modal interaction checks.
-- TypeScript/Vite production build passes; all current frontend tests pass.
-
-### Final result
-
-No actionable P0, P1 or P2 issue remains in the requested admin-versus-workspace visual, typography, button and responsive scope.
-
-## Asset Library Classification QA (2026-07-30)
-
-- Source visual truth: `qa-artifacts/assets-library-classification-20260730/reference-1840x884.png`.
-- Implementation screenshot: `qa-artifacts/assets-library-classification-20260730/implementation-1840x884.png`.
-- Same-viewport comparison: `qa-artifacts/assets-library-classification-20260730/comparison-reference-vs-implementation.png`.
-- Responsive evidence: `implementation-1440x900.png`, `implementation-1024x768.png` and `implementation-390x844.png` in the same folder.
-- State: dark asset library, empty real local asset dataset, no asset or folder data fabricated.
-
-### Comparison findings and fixes
-
-- P1: the original page split search, type filters, business categories and import actions across three unrelated regions. The redesign now follows the reference hierarchy: source tabs, a category rail, one results toolbar and a centered results state.
-- P1: a persistent card checkbox exposed batch selection without an explicit mode. Selection controls now render only after the user enters batch mode.
-- P2: the initial 1024px implementation wrapped the tag selector onto an isolated second row. The category rail now switches to a horizontal navigation at 1099px, leaving a coherent full-width toolbar.
-- P2: the reference uses source-library labels that the current backend does not support. The implementation maps the same visual pattern to real, deterministic scopes: all assets, project-linked assets and personal assets.
-
-### Verified scope
-
-- Source tabs use actual asset metadata and show live counts; switching a tab resets incompatible category, tag, pagination and selection state.
-- The category rail uses the existing character, environment, wardrobe, prop, weapon, style and other domain categories with live counts.
-- Search, type and dynamically derived tag filters operate on the selected real source/category scope.
-- Batch mode, export, asset package import, 3D model upload and create-asset controls retain their existing production behavior.
-- The create-asset modal opens successfully; source switching and batch-mode switching update the visible active state.
-- Desktop, 1024px and 390px layouts have no document-level horizontal overflow or clipped primary controls.
-- Light/dark colors are supplied entirely by the shared workspace theme tokens; no page-specific parallel palette was introduced.
-- Browser runtime logs are empty. TypeScript checking and the Vite production build pass.
-
-### Final result
-
-No actionable P0, P1 or P2 difference remains for the requested asset-classification and toolbar scope.
-
-final result: passed
-
-## Canvas Media Model Width QA (2026-07-31)
-
-- Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-d8bd3579-ac08-404d-8346-ee16cc493b61.png`.
-- Audio implementation: `qa-artifacts/canvas-media-model-width-20260731/audio-model-width-after.png`.
-- Image implementation: `qa-artifacts/canvas-media-model-width-20260731/image-model-width-after.png`.
-- Video implementation: `qa-artifacts/canvas-media-model-width-20260731/video-model-width-after.png`.
-- Focused before/after comparison: `qa-artifacts/canvas-media-model-width-20260731/audio-model-width-before-after.png`.
-- Source pixels: 676 × 207.
-- Implementation viewport: 919 × 912 CSS px at device scale factor 1.
-- State: dark authenticated canvas with one selected media node and its prompt composer open.
-
-### Comparison findings and fixes
-
-- P1: audio, image and video model selectors were independently constrained to 114px, reducing the selected audio model `MinMax-speech-2.8-hd` to `MinM...`.
-- The three media composers now use one shared width contract: 200px on normal desktop layouts and 160px below the existing 720px compact breakpoint.
-- The shared `ModelPicker` remains the single rendering implementation, so icon scale, label typography, selected-state behavior, popup behavior and full-name title remain consistent across all three media types.
-
-### Verified result
-
-- Audio: 200px selector, 660px composer, `MinMax-speech-2.8-hd` renders without text overflow or truncation.
-- Image: 200px selector, 660px composer, `Gemini 3.1 Flash Image` renders without text overflow or truncation.
-- Video: 200px selector, 660px composer, `Seedance 2.0 Fast` renders without text overflow or truncation.
-- The remaining voice, generation-mode, parameter, cost and submit controls stay on one line in all three captured desktop states.
-- The production TypeScript check and Vite build pass.
-
-### Comparison history
-
-- Initial state: each media node duplicated the same 114px constraint in separate JSX/CSS branches.
-- Final state: one `canvas-media-model-picker-slot` class owns the normal and compact widths; the duplicated audio and image/video width declarations were removed.
-
-final result: passed
-
-## Canvas Media Composer Alignment QA (2026-07-31)
-
-- Source visual truth: `C:/Users/nz999/AppData/Local/Temp/codex-clipboard-51bdc88e-9df9-4b37-9173-bd16ad7021ed.png`.
-- Full implementation screenshots: `qa-artifacts/canvas-media-composer-20260731/image-node-unified.png`, `video-node-unified.png` and `audio-node-unified.png`.
-- Focused implementation screenshot: `qa-artifacts/canvas-media-composer-20260731/video-node-unified-focused.png`.
-- Same-input before/after comparison: `qa-artifacts/canvas-media-composer-20260731/video-before-after-comparison.png`.
-- Source dimensions: 661 × 205 px.
-- Primary implementation viewport: 919 × 912 CSS px at device scale factor 1; responsive checks also ran at 1024 × 768, 720 × 800 and 600 × 800 CSS px.
-- State: dark authenticated canvas with one selected image, video or audio node and its prompt composer open.
-
-### Comparison findings and fixes
-
-- P1: the selected model label occupied the top of a 32px Ant Select content box while the adjacent controls used centered flex alignment, creating a visibly raised model control.
-- P1: image, video and audio composers independently defined typography, panel geometry, row spacing, hover treatment and metadata sizing. The visible result mixed Ant's system font with Inter and SF Pro Text, plus 9px, 11px, 12px and 13px control text.
-- P2: image and video composer rules lived in the global stylesheet while audio kept a separate duplicate panel contract, making later changes likely to drift again.
-- One shared `canvas-media-composer.css` contract now owns media panel geometry, header chips, editor typography, the 32px bottom toolbar, model selector alignment, common controls, metadata, dividers and responsive model width.
-- The obsolete media-model width stylesheet and duplicated global image/video composer rules were removed rather than retained as compatibility overrides.
-
-### Verified result
-
-- Image, video and audio bottom rows all resolve to 32px height with identical vertical coordinates for model, secondary controls, metadata and submit action.
-- All three model labels resolve to `SF Pro Text` / `PingFang SC` / `Microsoft YaHei`, 12px, 600 weight and 16px line height inside a centered 32px flex row.
-- Secondary controls and metadata resolve to the same font stack, 12px, 500 weight and 16px line height.
-- Composer input text resolves to the shared font stack at 13px, 400 weight and 20px line height.
-- Image, video and audio composers use the same 660px × 192px desktop panel contract and one 12px radius.
-- At 1024px, 720px and 600px viewport widths there is no document-level horizontal overflow; the compact model slot switches to 160px at the existing breakpoint.
-- Keyboard focus remains explicit with a visible blue focus ring; hover states use the same neutral surface treatment.
-- TypeScript checking and the Vite production build pass.
-
-### Comparison history
-
-- Initial state: duplicated media composer branches with top-aligned Ant Select content and four different text scales in one toolbar.
-- Final state: one shared media composer contract with centered 32px controls, two intentional text scales and media-specific components limited to their actual behavior.
-
-final result: passed
+- 升级、回滚、立即备份和环境校验在不可执行时提供具体原因，不只显示灰色禁用状态。
+- 活动任务持续展示动作、当前阶段、发起人和实时日志入口；控制器执行期间冲突操作保持锁定。
+- 四类确认弹窗列出与真实控制器流程一致的影响清单，并继续要求精确确认短语后才允许提交。
+- 活动任务提示和确认区复用后台语义表面、字体和移动端触控标准，不引入第二套运维组件语言。
+
+- 视口：`390 / 768 / 1024 / 1440px`。
+- 主题：日间与夜间模式。
+- 键盘：跳转入口、导航、表单和弹窗焦点可见且顺序正确。
+- 状态：加载、空状态、失败、成功、禁用和长文本均不得依赖隐式兜底。
+
+## 后台运行策略第十四阶段（2026-08-02）
+
+- 运行策略页增加资源配额、任务并发、任务超时、业务频控和中转熔断的页内导航，长表单不再要求用户盲目滚动定位。
+- 首次读取失败改为共享错误状态与原地重试；已有配置刷新失败保留当前表单并显式展示原因，不以 Toast 后的空表单冒充可编辑状态。
+- 表单字段收敛为单层内容内边距，所有 Grid 子级允许收缩；固定保存区与最后一组字段保持独立间距，移动端分区入口提升为 44px 热区。
+
+## 后台请求日志第十五阶段（2026-08-02）
+
+- 页面名称统一为“请求日志”，说明明确覆盖上游调用、阶段、耗时、Token、费用和失败原因。
+- 增加筛选结果总量与当前页成功/失败摘要，避免把当前页数据误解为全量经营指标。
+- 首次读取失败以共享错误状态替代表格，已有日志刷新失败保留当前数据并提供原地重试；手动刷新与导出使用统一页面操作区。
+- 宽表格仅在表格内容层横向滚动，空状态按有无筛选分别说明，移动端摘要改为单列且不产生页面级横向溢出。
+
+## 后台分镜提示词第十六阶段（2026-08-02）
+
+- 页面摘要明确区分当前启用版本、未启用版本与可用变量，不再要求运营人员扫描整张表判断运行状态。
+- 首次读取失败使用明确错误状态替代表格；保留旧数据的刷新失败继续展示现有目录并提供原地重试。
+- 编辑抽屉使用真实未保存状态；变量插入纳入修改检测，无修改时保存禁用，保存期间阻止关闭和重复提交。
+- 390px 级视口下摘要切换为单列，页面操作允许统一换行；宽表格的滚动范围限制在表格内容区。
+
+## 后台邀请有礼第十七阶段（2026-08-02）
+
+- 活动概览、活动开关、套餐奖励规则与邀请关系按运营决策顺序分区，避免状态、配置与审计记录混排。
+- 首次读取失败以共享错误状态替代概览和配置；已有数据刷新失败继续保留当前事实并提供原地重试。
+- 套餐规则只允许保存真实改动，保存成功后同步草稿基线；任一规则提交期间禁止重复提交其他规则。
+- 取消资格确认展示受邀用户和邀请码，未填写审计原因时禁止提交，提交期间禁止通过关闭、遮罩或 Esc 中断。
+- 390px 视口下规则字段和页面操作改为单列 44px 热区，邀请关系宽表仅在表格内部滚动。
+
+## 后台站点与品牌第十八阶段（2026-08-02）
+
+- 品牌信息、首页横幅、底部版权与网站备案增加统一页内分区入口，长配置页可直接定位且保持单层表面结构。
+- 首次读取失败以共享错误状态替代空白表单；已有配置刷新失败保留当前事实并提供原地重试。
+- 表单脏状态改为与服务端同步值逐字段比较，修改后恢复原值会重新进入已同步状态。
+- Logo 上传、恢复内置 Logo 与普通配置保存互斥，避免并发响应覆盖公开站点配置；恢复操作使用明确危险确认。
+- 390px 级视口下分区入口与主要按钮使用 44px 热区，所有字段和 Logo 操作均不得产生页面级横向溢出。
+
+## 后台邮件服务第二十一阶段（2026-08-02）
+
+- SMTP 配置首次加载、失败和成功配置拆分为独立事实状态；失败展示原始原因和重试入口，不再落入可编辑空表单。
+- SMTP 端口继续使用前后端整数契约；启用邮件服务时，主机、发件邮箱和首次配置密码必须显式校验。
+
+## 后台登录与注册第二十二阶段（2026-08-02）
+
+- 用户注册策略与 Linux.do OAuth 独立加载、独立失败，任一失败不会清空另一配置域。
+- 首次加载使用共享骨架；失败展示真实原因和原地重试，不渲染可编辑空表单。
+- Linux.do 表单仅在真实值变化时允许保存，修剪文本与 Scopes 排序不制造虚假脏状态。
+- 启用 Linux.do 时，Client ID、密钥、OAuth 地址、Scopes 和关键账号字段在字段附近完成阻断校验。
+- 390px、768px 与 1280px 下无页面级横向滚动，移动端主要控件热区不低于 44px。
+
+## 后台系统公告第二十三阶段（2026-08-02）
+
+- 首次加载、刷新失败和空列表使用独立事实状态，接口失败不再显示虚假的零记录。
+- 保留旧数据的刷新失败明确标注为上次成功结果，并提供原地重试。
+- 发布弹层说明全用户即时生效范围，输入草稿未发布时关闭需二次确认，提交期间禁止关闭或重复发布。
+- 关闭公告确认显示具体公告标题，并明确只从用户公告中心撤下、保留历史记录。
+- 390px、768px 与 1280px 下标题操作、筛选和列表不产生页面级横向溢出。
+
+## 后台法律与协议第二十四阶段（2026-08-02）
+
+- 首次读取失败以共享错误状态替代可编辑空文档；已有内容刷新失败继续显示上次成功结果并提供原地重试。
+- 用户协议与隐私政策按规范化后的服务端同步内容比较真实脏状态，修改后恢复原值会重新进入已同步状态。
+- 浏览器刷新或后台内部导航离开未保存文档前均要求明确确认，保存期间不触发重复离开保护。
+- 编辑器保留标题、对齐、链接、图片、列表与引用能力，工具栏在窄屏换行且主要触控热区不低于 44px。
+- 390px、768px 与 1280px 下编辑器、文档切换、公开预览和保存栏不得产生页面级横向溢出。
+
+## 后台存储服务第二十五阶段（2026-08-02）
+
+- OSS 配置按存储目标与访问凭据分区，复杂字段提供持久帮助文案，不再依赖占位符解释运营语义。
+- 启用 OSS 时，Endpoint、Bucket、AccessKey ID 与首次密钥在字段附近完成阻断校验，Endpoint 仅接受有效 HTTP(S) 地址。
+- 表单脏状态按后端规范化规则比较；已保存密钥留空保留原值，修改后恢复原值重新进入已同步状态。
+- 未保存配置在浏览器刷新或后台内部导航前要求明确确认；读取刷新不会覆盖当前草稿。
+- 配置与迁移概览独立表达首次失败和保留数据刷新失败；迁移读取失败不再误显示“尚未执行”。
+- 390px、768px 与 1280px 下字段、帮助文本、迁移指标和操作按钮不得产生页面级横向溢出，移动端主要操作热区不低于 44px。
+
+## 后台兑换码第二十六阶段（2026-08-02）
+
+- 批次列表首次加载、刷新失败与空数据使用独立事实状态；已有数据刷新失败继续展示上次成功批次并提供原地重试。
+- 批次明细读取失败不再停留在空白弹窗；已有明细刷新失败保留原记录，并明确当前数据来源。
+- 创建批次成功后重新读取服务端分页与筛选结果，不以前端拼接记录代替服务端事实；可选字段在提交前完成规范化。
+- 批次禁用明确展示当前可用数量，单码禁用展示尾号和不可恢复影响；任一禁用写入期间阻止重复提交及关闭明细弹窗。
+- 生成结果保留复制与 TXT 下载入口；390px、768px 与 1280px 下创建表单、筛选、表格和弹层无页面级横向溢出。
+
+## 后台用户管理第二十七阶段（2026-08-02）
+
+- 用户列表首次读取失败使用持久错误替代表格；已有数据刷新失败保留目录并提供原地重试。
+- 搜索、角色、状态、列设置、批量选择和分页继续复用后台统一列表结构，长字段仅在表格内部滚动。
+- 编辑抽屉按规范化后的显示名称、邮箱、角色和状态判断真实脏状态；无变化禁用保存，保存期间禁止关闭。
+- 角色和状态变更前展示目标账号与实际差异；单个及批量停用确认均说明登录态清除与数据保留事实。
+- 详情抽屉保留首次加载骨架、失败重试、账号概览、配额、流水、任务和审计事实；移动端标签和汇总区不产生页面级横向溢出。
+- 自动化验证：`pnpm test -- test/user-form-domain.test.ts` 2 项通过，`pnpm build` 通过。
+- 表单改为按规范化后的真实值比较脏状态；修改后恢复原值会重新进入同步状态，已保存密码留空保持原值。
+- 保存期间锁定完整表单；状态区持续展示启用、密钥和更新时间事实，不增加后端尚未支持的测试发信入口。
+- 390px、768px、1024px 与 1440px 下检查字段、状态、保存栏和安全说明无页面级横向溢出。
+# 第十九阶段：后台存储服务
+
+- [x] OSS 配置和历史迁移独立加载、独立失败、独立重试
+- [x] 首次配置读取失败不显示可编辑空表单，迁移失败不显示伪造零指标
+- [x] OSS 表单按真实值比较脏状态，密钥留空继续表示保留原值
+- [x] 活动迁移展示任务 ID、发起人、开始时间和真实进度
+- [x] 迁移与失败项重试要求准确确认短语，提交期间禁止关闭或重复提交
+- [x] 1280px、768px、390px 浏览器实机验收
+# 第二十阶段：后台支付配置
+
+- [x] 首次支付配置读取失败不再显示可编辑空表单
+- [x] 微信与支付宝字段按真实协议拆分，不再向支付宝展示微信专用字段
+- [x] 收银台、回调和网关地址使用字段级阻断校验
+- [x] 表单按规范化后的真实值比较脏状态，密钥留空保留原值
+- [x] 保存期间锁定完整表单并阻止重复提交
+- [x] 1280px、768px、390px 浏览器实机验收

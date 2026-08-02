@@ -230,6 +230,7 @@ export function CanvasAudioVoiceCloneDialog({ open, channelId, onCancel, onCreat
 
     return (
         <Modal
+            rootClassName="canvas-overlay-modal canvas-overlay-modal--voice-clone"
             className="canvas-audio-voice-clone-modal"
             open={open}
             title={null}

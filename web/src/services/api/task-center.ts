@@ -104,6 +104,12 @@ export type CreateSessionInput = {
     prompt: string;
     canvasSnapshot?: Record<string, unknown>;
     references?: string[];
+    executionMode?: "guided" | "automatic";
+    deliverySpec?: {
+        aspectRatio: string;
+        resolution: string;
+        durationSeconds: number;
+    };
     config?: Record<string, unknown>;
 };
 

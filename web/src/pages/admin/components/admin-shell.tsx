@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import "@/styles/workspace-ui.css";
 import "@/styles/workspace-shell.css";
 import "../admin-workspace.css";
+import "../admin-domain-workspace.css";
+import "../admin-feature-workspace.css";
 import "../admin-responsive.css";
 import "../admin-art-layout.css";
 import "../admin-navigation-layout.css";
@@ -33,8 +35,9 @@ export function AdminShell() {
     };
 
     return (
-        <main className="app-user-workspace admin-workspace workspace-ui-scope flex h-full min-h-0 overflow-hidden text-foreground">
-            <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden lg:flex", collapsed ? "w-16" : "w-[236px]")}>
+        <div className="app-user-workspace admin-workspace workspace-ui-scope flex h-full min-h-0 overflow-hidden text-foreground">
+            <a className="admin-skip-link" href="#admin-main-content">跳到主要内容</a>
+            <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden xl:flex", collapsed ? "w-16" : "w-[236px]")}>
                 <div className={cn("admin-sidebar-brand flex h-16 shrink-0 items-center", collapsed ? "justify-center" : "gap-2.5 px-4")}>
                     <Link to="/" className={cn("admin-brand-link flex min-w-0 items-center", collapsed ? "justify-center" : "flex-1 gap-2.5")} title={settings.siteName}>
                         <span className="admin-brand-mark grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-foreground/[.06]">
@@ -56,7 +59,7 @@ export function AdminShell() {
                 <AdminDesktopHeader collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
                 <Outlet />
             </section>
-        </main>
+        </div>
     );
 }
 
@@ -66,7 +69,7 @@ function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boole
     const currentItem = findAdminNavigationItem(location.pathname)?.label ?? "管理";
 
     return (
-        <header className="admin-desktop-header hidden shrink-0 items-center justify-between lg:flex">
+        <header className="admin-desktop-header hidden shrink-0 items-center justify-between xl:flex">
             <div className="admin-desktop-header-leading flex min-w-0 items-center">
                 <Tooltip title={collapsed ? "展开侧栏" : "折叠侧栏"} placement="bottom">
                     <button type="button" className="admin-desktop-collapse-button app-workspace-icon-button shrink-0" onClick={onToggleCollapsed} aria-label={collapsed ? "展开侧栏" : "折叠侧栏"}>
@@ -89,7 +92,7 @@ function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boole
 
 export function AdminPageFrame({ title, description, actions, children }: { title: string; description: string; actions?: ReactNode; children: ReactNode }) {
     return (
-        <main className="admin-page thin-scrollbar h-full overflow-y-auto">
+        <main id="admin-main-content" className="admin-page thin-scrollbar h-full overflow-y-auto" tabIndex={-1}>
             <div className="admin-page-frame mx-auto w-full">
                 <header className="admin-page-header flex flex-wrap justify-between">
                     <div className="admin-page-heading min-w-0">
@@ -112,7 +115,7 @@ function MobileAdminNavigation() {
 
     return (
         <>
-            <header className="admin-mobile-header flex shrink-0 items-center justify-between lg:hidden">
+            <header className="admin-mobile-header flex shrink-0 items-center justify-between xl:hidden">
                 <Link to="/" className="admin-mobile-brand flex min-w-0 items-center" title={settings.siteName}>
                     <span className="admin-mobile-brand-mark grid shrink-0 place-items-center overflow-hidden">
                         <img className="admin-mobile-brand-image object-contain" src={siteLogoURL(settings)} alt="" />

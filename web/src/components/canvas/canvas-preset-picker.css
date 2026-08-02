@@ -1,0 +1,140 @@
+.canvas-overlay-popover--preset :where(.ant-popover-container, .ant-popover-inner) {
+    padding: 8px !important;
+}
+
+.canvas-preset-menu {
+    width: min(344px, calc(100vw - 32px));
+    color: var(--foreground);
+}
+
+.canvas-preset-search.ant-input-affix-wrapper {
+    height: 36px;
+    padding: 0 10px;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: color-mix(in srgb, var(--foreground) 7%, transparent) !important;
+    box-shadow: inset 0 0 0 1px transparent !important;
+    transition:
+        background-color 140ms ease,
+        box-shadow 140ms ease !important;
+}
+
+.canvas-preset-search.ant-input-affix-wrapper:hover {
+    background: color-mix(in srgb, var(--foreground) 9%, transparent) !important;
+}
+
+.canvas-preset-search.ant-input-affix-wrapper-focused {
+    background: color-mix(in srgb, var(--foreground) 8%, transparent) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 24%, transparent) !important;
+}
+
+.canvas-preset-search .ant-input {
+    color: var(--foreground) !important;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.canvas-preset-search .ant-input::placeholder,
+.canvas-preset-search-icon {
+    color: color-mix(in srgb, var(--foreground) 42%, transparent);
+}
+
+.canvas-preset-list {
+    max-height: 320px;
+    margin-top: 6px;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.canvas-preset-option {
+    display: flex;
+    width: 100%;
+    min-height: 58px;
+    align-items: flex-start;
+    gap: 10px;
+    border: 0;
+    border-radius: 8px;
+    padding: 8px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    transition:
+        background-color 120ms ease,
+        color 120ms ease;
+}
+
+.canvas-preset-option:hover,
+.canvas-preset-option:focus-visible {
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    outline: none;
+}
+
+.canvas-preset-option:active {
+    background: color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.canvas-preset-option-icon {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    place-items: center;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.canvas-preset-option-copy {
+    min-width: 0;
+    flex: 1;
+    padding-top: 1px;
+}
+
+.canvas-preset-option-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.canvas-preset-option-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-preset-option-badge {
+    flex: 0 0 auto;
+    border-radius: 4px;
+    padding: 1px 4px;
+    background: color-mix(in srgb, var(--foreground) 7%, transparent);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 14px;
+}
+
+.canvas-preset-option-description {
+    display: -webkit-box;
+    margin-top: 2px;
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 16px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.canvas-preset-empty {
+    padding: 32px 12px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+@media (max-width: 640px) {
+    .canvas-preset-option {
+        min-height: 60px;
+    }
+}

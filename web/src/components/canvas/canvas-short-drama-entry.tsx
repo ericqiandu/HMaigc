@@ -75,6 +75,7 @@ export function CanvasShortDramaEmptyState({ onCreatePipeline, onOpenAgent, onUp
                 </div>
                 <div className="mt-3 flex justify-center">
                     <Dropdown
+                        overlayClassName="canvas-overlay-dropdown"
                         trigger={["click"]}
                         menu={{
                             items: [

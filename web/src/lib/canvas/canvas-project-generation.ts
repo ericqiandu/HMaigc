@@ -9,9 +9,10 @@ import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { imageMetadata, parseBackendGenerationResult } from "@/lib/canvas/canvas-generation-task-sync";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
-import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
+import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { resolveVideoGenerationMode, videoModeOperation } from "@/lib/canvas/canvas-video-generation-mode";
 
 export async function runBackendCanvasGenerationTask({
     projectId,
@@ -256,25 +257,6 @@ export function generationReferenceUrls(context: { referenceImages: ReferenceIma
     ];
 }
 
-function resolveVideoEditOperation(
-    node: CanvasNodeData | undefined,
-    context?: {
-        referenceImages: ReferenceImage[];
-        referenceVideos: ReferenceVideo[];
-        referenceAudios: ReferenceAudio[];
-    },
-): CanvasVideoEditOperation {
-    const storedOperation = node?.metadata?.videoEditOperation;
-    // 连接关系是生成时的真实输入，不能让分镜节点残留的文生视频模式丢弃后来连接的参考图。
-    if (storedOperation === "text_to_video" && context?.referenceImages.length) return "image_to_video";
-    if (storedOperation === "image_to_video" && context && context.referenceImages.length === 0) return "text_to_video";
-    if (storedOperation) return storedOperation;
-    if (context?.referenceAudios.length && !context.referenceImages.length && !context.referenceVideos.length) return "audio_to_video";
-    if (context?.referenceVideos.length) return "extend";
-    if (context?.referenceImages.length) return "image_to_video";
-    return "text_to_video";
-}
-
 export function buildVideoGenerationMetadata(
     node: CanvasNodeData | undefined,
     context?: {
@@ -284,10 +266,16 @@ export function buildVideoGenerationMetadata(
     },
 ): CanvasNodeMetadata {
     const metadata = node?.metadata;
+    const videoGenerationMode = resolveVideoGenerationMode(metadata);
     const startFrame = metadata?.videoStartFrameNodeId && context?.referenceImages.some((image) => image.id === metadata.videoStartFrameNodeId) ? metadata.videoStartFrameNodeId : undefined;
     const endFrame = metadata?.videoEndFrameNodeId && context?.referenceImages.some((image) => image.id === metadata.videoEndFrameNodeId) ? metadata.videoEndFrameNodeId : undefined;
     return {
-        videoEditOperation: resolveVideoEditOperation(node, context),
+        videoGenerationMode,
+        videoEditOperation: videoModeOperation(videoGenerationMode, {
+            image: context?.referenceImages.length || 0,
+            video: context?.referenceVideos.length || 0,
+            audio: context?.referenceAudios.length || 0,
+        }),
         videoCameraMoveId: metadata?.videoCameraMoveId,
         videoCameraMovePrompt: metadata?.videoCameraMovePrompt,
         videoStartFrameNodeId: startFrame,

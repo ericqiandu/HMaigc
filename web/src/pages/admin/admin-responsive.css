@@ -10,7 +10,18 @@
     scrollbar-width: thin;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1279px) {
+        .admin-workspace .workspace-list-toolbar,
+        .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .admin-workspace .workspace-list-toolbar-fields {
+            width: 100%;
+            flex: 0 0 auto;
+        }
+
         .admin-workspace .workspace-list-toolbar-actions {
             width: 100%;
             margin-left: 0;
@@ -19,7 +30,7 @@
         }
 
         .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
-            min-height: 36px;
+            min-height: 44px;
         }
 
         .admin-workspace .app-table-surface {

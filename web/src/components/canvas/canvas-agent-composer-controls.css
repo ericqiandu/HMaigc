@@ -52,7 +52,7 @@
     height: 17px;
 }
 
-.canvas-agent-composer-popover .ant-popover-inner {
+.canvas-agent-composer-popover :where(.ant-popover-container, .ant-popover-inner) {
     overflow: hidden;
     padding: 0;
     border: 1px solid var(--canvas-overlay-border);
@@ -63,7 +63,7 @@
     -webkit-backdrop-filter: saturate(150%) blur(18px);
 }
 
-.canvas-agent-composer-popover .ant-popover-inner-content {
+.canvas-agent-composer-popover :where(.ant-popover-content, .ant-popover-inner-content) {
     color: var(--foreground);
 }
 

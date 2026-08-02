@@ -114,7 +114,7 @@ function AudioSettingsPortal({
     return createPortal(
         <div
             ref={panelRef}
-            className="canvas-audio-settings-popover aceternity-floating-panel backdrop-blur-2xl"
+            className="canvas-overlay-panel canvas-audio-settings-popover aceternity-floating-panel backdrop-blur-2xl"
             style={style}
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}

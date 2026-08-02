@@ -6,7 +6,7 @@ import { ListToolbar, PaginationBar, TableSurface } from "@/components/layout/wo
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { bulkDisableAdminUsers, deleteAdminUser, listAdminUsers, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
 import { useUserStore } from "@/stores/use-user-store";
-import { AdminBatchBar, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
+import { AdminBatchBar, AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { useTableUrlState } from "../lib/use-table-url-state";
 import { AdminUserDetailDrawer } from "../components/admin-user-detail-drawer";
 import { createUserColumns, userColumnOptions, type UserColumnKey } from "./users-columns";
@@ -23,6 +23,8 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
     const [users, setUsers] = useState<AdminUser[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [reloadToken, setReloadToken] = useState(0);
     const [detailUserId, setDetailUserId] = useState<string | null>(null);
     const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -39,6 +41,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
     });
     const requestSequence = useRef(0);
     const hasFilters = Boolean(state.filter || state.role !== "all" || state.status !== "all");
+    const selectableUsers = users.filter((user) => user.id !== actor?.id && user.status !== "disabled");
 
     useEffect(() => {
         window.localStorage.setItem(columnStorageKey, JSON.stringify([...visibleColumns]));
@@ -47,6 +50,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
     useEffect(() => {
         const sequence = ++requestSequence.current;
         setLoading(true);
+        setLoadError(null);
         void listAdminUsers({
             keyword: debouncedFilter || undefined,
             role: state.role === "all" ? undefined : state.role,
@@ -62,12 +66,13 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                 if (result.total > 0 && result.users.length === 0 && state.page > 1) update({ page: 1 }, true);
             })
             .catch((error) => {
-                if (sequence === requestSequence.current) message.error(error instanceof Error ? error.message : "读取用户失败");
+                if (sequence !== requestSequence.current) return;
+                setLoadError(error instanceof Error ? error.message : "读取用户失败");
             })
             .finally(() => {
                 if (sequence === requestSequence.current) setLoading(false);
             });
-    }, [debouncedFilter, message, state.page, state.pageSize, state.role, state.status, update]);
+    }, [debouncedFilter, reloadToken, state.page, state.pageSize, state.role, state.status, update]);
 
     const replaceUser = useCallback((nextUser: LocalUser) => {
         setUsers((items) => items.map((item) => item.id === nextUser.id ? { ...item, ...nextUser } : item));
@@ -102,6 +107,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
 
     const bulkDisable = () => {
         modal.confirm({
+            className: "admin-operation-modal workspace-ui-scope",
             title: `停用选中的 ${selectedUserIds.length} 个用户？`,
             content: "这些用户的全部登录态会被清除，身份、任务和积分流水继续保留。操作会整体成功或整体回滚。",
             okText: "确认批量停用",
@@ -126,36 +132,42 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
     return (
         <>
             <ListToolbar
+                className="admin-users-list-toolbar"
                 active={hasFilters}
                 onReset={resetFilters}
                 trailing={
-                    <Dropdown
-                        trigger={["click"]}
-                        dropdownRender={() => (
-                            <div className="w-48 rounded-md border border-border bg-popover p-2 shadow-lg">
-                                <div className="px-2 pb-2 text-xs font-medium text-foreground/55">显示列</div>
-                                <div className="space-y-0.5">
-                                    {userColumnOptions.map((option) => (
-                                        <label key={option.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/60">
-                                            <Checkbox
-                                                checked={visibleColumns.has(option.key)}
-                                                disabled={option.locked}
-                                                onChange={(event) => setVisibleColumns((current) => {
-                                                    const next = new Set(current);
-                                                    if (event.target.checked) next.add(option.key);
-                                                    else next.delete(option.key);
-                                                    return next;
-                                                })}
-                                            />
-                                            {option.label}
-                                        </label>
-                                    ))}
+                    <div className="admin-users-toolbar-trailing flex items-center gap-3">
+                        <span className="admin-users-result-count whitespace-nowrap">共 {total} 位用户</span>
+                        <Dropdown
+                            rootClassName="admin-column-picker-dropdown workspace-ui-scope"
+                            trigger={["click"]}
+                            dropdownRender={() => (
+                                <div className="admin-column-picker w-52 p-2">
+                                    <div className="admin-column-picker-title px-2 pb-2">显示列</div>
+                                    <div className="admin-column-picker-options space-y-0.5">
+                                        {userColumnOptions.map((option) => (
+                                            <label key={option.key} className="admin-column-picker-option flex cursor-pointer items-center gap-2 px-2">
+                                                <Checkbox
+                                                    className="admin-column-picker-checkbox"
+                                                    checked={visibleColumns.has(option.key)}
+                                                    disabled={option.locked}
+                                                    onChange={(event) => setVisibleColumns((current) => {
+                                                        const next = new Set(current);
+                                                        if (event.target.checked) next.add(option.key);
+                                                        else next.delete(option.key);
+                                                        return next;
+                                                    })}
+                                                />
+                                                <span className="admin-column-picker-label">{option.label}</span>
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-                        )}
-                    >
-                        <Button icon={<Settings2 className="size-4" />}>列设置</Button>
-                    </Dropdown>
+                            )}
+                        >
+                            <Button className="admin-users-column-button" icon={<Settings2 className="size-4" />}>列设置</Button>
+                        </Dropdown>
+                    </div>
                 }
             >
                 <Input
@@ -182,24 +194,35 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                 {state.status !== "all" ? <Tag closable onClose={(event) => { event.preventDefault(); update({ status: "all", page: 1 }); }}>状态：{state.status === "active" ? "已启用" : "已停用"}</Tag> : null}
             </ListToolbar>
 
+            <div className="admin-users-selection-region">
             <AdminBatchBar count={selectedUserIds.length} onClear={() => setSelectedUserIds([])}>
                 <Button danger size="small" icon={<Ban className="size-3.5" />} loading={bulkDisabling} onClick={bulkDisable}>批量停用</Button>
             </AdminBatchBar>
+            </div>
 
             <TableSurface>
-                {loading && users.length === 0 ? <AdminTableSkeleton rows={8} columns={Math.max(4, columns.length)} /> : (
+                {loading && users.length === 0 ? <AdminTableSkeleton rows={8} columns={Math.max(4, columns.length)} /> : loadError && users.length === 0 ? (
+                    <div className="admin-users-load-error px-4 py-5">
+                        <AdminContentError title="用户列表加载失败" description={loadError} onRetry={() => setReloadToken((value) => value + 1)} />
+                    </div>
+                ) : (
                     <>
+                        {loadError ? (
+                            <div className="admin-users-refresh-error px-4 pt-4">
+                                <AdminContentError title="用户列表刷新失败" description={`${loadError}。当前仍显示上一次成功读取的数据。`} onRetry={() => setReloadToken((value) => value + 1)} />
+                            </div>
+                        ) : null}
                         <Table
                             className="app-data-table"
                             size="middle"
                             rowKey="id"
                             loading={loading}
-                            rowSelection={{
+                            rowSelection={selectableUsers.length > 0 ? {
                                 selectedRowKeys: selectedUserIds,
                                 preserveSelectedRowKeys: false,
                                 onChange: (keys) => setSelectedUserIds(keys.map(String)),
                                 getCheckboxProps: (user) => ({ disabled: user.id === actor?.id || user.status === "disabled", name: user.displayName || user.username }),
-                            }}
+                            } : undefined}
                             columns={columns}
                             dataSource={users}
                             pagination={false}
@@ -234,7 +257,7 @@ function FilterMenu({ label, value, options, onChange }: { label: string; value:
                 onClick: ({ key }) => onChange(key),
             }}
         >
-            <Button>{value === "all" ? label : selected}<ChevronDown className="ml-1 size-3.5" /></Button>
+            <Button className="admin-users-filter-button">{value === "all" ? label : selected}<ChevronDown className="ml-1 size-3.5" /></Button>
         </Dropdown>
     );
 }

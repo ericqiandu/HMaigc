@@ -32,7 +32,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
     };
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden>
+        <Modal rootClassName="canvas-overlay-modal canvas-overlay-modal--split" title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden>
             <div className="space-y-5">
                 <div>
                     <h2 className="text-xl font-semibold">切分图片</h2>

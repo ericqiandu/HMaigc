@@ -28,7 +28,7 @@ export function CanvasAgentModelMenu({
     const models = useMemo(() => selectableModelsByCapability(config, capability), [capability, config]);
 
     return (
-        <section className="canvas-agent-picker canvas-agent-model-menu" aria-label="选择模型">
+        <section className="canvas-overlay-panel canvas-agent-picker canvas-agent-model-menu" aria-label="选择模型">
             <header className="canvas-agent-picker-header">
                 <h3 className="canvas-agent-picker-title">选择模型</h3>
             </header>

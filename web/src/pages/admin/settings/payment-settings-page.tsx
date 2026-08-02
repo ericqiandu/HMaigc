@@ -1,5 +1,5 @@
-import { Alert, App, Button, Form, Input, Skeleton, Space, Switch, Tag } from "antd";
-import { BadgeDollarSign, CreditCard, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
+import { Alert, App, Button, Form, Input, Space, Switch, Tag } from "antd";
+import { BadgeDollarSign, CreditCard, KeyRound, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
@@ -11,7 +11,7 @@ import {
     type UpdatePaymentSettingInput,
 } from "@/services/api/payment";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminSettingsActionBar, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
 
 type PaymentChannelFormValues = Partial<PaymentChannelSettingInput>;
 type PaymentFormValues = {
@@ -30,6 +30,7 @@ export default function PaymentSettingsPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [loadError, setLoadError] = useState("");
+    const [dirty, setDirty] = useState(false);
 
     const loadSetting = useCallback(async () => {
         setLoading(true);
@@ -38,6 +39,7 @@ export default function PaymentSettingsPage() {
             const value = await getAdminPaymentSetting();
             setSetting(value);
             form.setFieldsValue(toFormValues(value));
+            setDirty(false);
         } catch (error) {
             const reason = error instanceof Error ? error.message : "读取支付配置失败";
             setLoadError(reason);
@@ -58,6 +60,7 @@ export default function PaymentSettingsPage() {
             const result = await updateAdminPaymentSetting(toRequest(values));
             setSetting(result);
             form.setFieldsValue(toFormValues(result));
+            setDirty(false);
             message.success("支付配置已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存支付配置失败");
@@ -68,7 +71,7 @@ export default function PaymentSettingsPage() {
 
     return (
         <AdminPageFrame title="支付配置" description="统一收银台与微信、支付宝商户参数">
-            <div className="payment-settings-page mx-auto max-w-5xl space-y-5">
+            <div className="payment-settings-page admin-settings-page space-y-5">
                 <Alert
                     className="payment-settings-notice"
                     type="info"
@@ -77,25 +80,19 @@ export default function PaymentSettingsPage() {
                     description="配置保存后不会自动启用真实扣款。支付下单、异步回调验签和退款通道接通前，系统会显式返回“支付服务未接通”。"
                 />
 
-                {loadError ? (
-                    <Alert
-                        className="payment-settings-load-error"
-                        type="error"
-                        showIcon
-                        message="支付配置加载失败"
-                        description={loadError}
-                        action={
-                            <Button className="payment-settings-retry-button" icon={<RefreshCw className="size-4" />} onClick={() => void loadSetting()}>
-                                重试
-                            </Button>
-                        }
-                    />
-                ) : null}
+                {loadError ? <AdminContentError title="支付配置加载失败" description={loadError} onRetry={() => void loadSetting()} /> : null}
 
                 {loading ? (
-                    <Skeleton className="payment-settings-skeleton" active paragraph={{ rows: 10 }} />
-                ) : (
-                    <Form className="payment-settings-form" form={form} layout="vertical" requiredMark={false}>
+                    <AdminContentSkeleton rows={10} label="正在加载支付配置" />
+                ) : !loadError && setting ? (
+                    <Form
+                        className="payment-settings-form"
+                        form={form}
+                        layout="vertical"
+                        requiredMark={false}
+                        disabled={saving}
+                        onValuesChange={(_, values: PaymentFormValues) => setDirty(!paymentValuesEqual(values, setting))}
+                    >
                         <SettingsSectionCard
                             icon={<CreditCard className="payment-settings-checkout-icon size-4" />}
                             title="统一收银台"
@@ -107,7 +104,7 @@ export default function PaymentSettingsPage() {
                                     className="payment-settings-checkout-field"
                                     name="checkoutBaseUrl"
                                     label="收银台基础地址"
-                                    rules={[{ type: "url", warningOnly: true, message: "请输入完整的 HTTP(S) 地址" }]}
+                                    rules={[{ type: "url", message: "请输入完整的 HTTP(S) 地址" }]}
                                 >
                                     <Input className="payment-settings-checkout-input" autoComplete="off" placeholder="例如：https://pay.example.com" />
                                 </Form.Item>
@@ -130,13 +127,13 @@ export default function PaymentSettingsPage() {
                             setting={setting?.alipay}
                         />
 
-                        <AdminSettingsActionBar meta={setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}` : "尚未保存支付配置"} status="商户参数仅对管理员可见">
-                            <Button className="payment-settings-save-button" type="primary" loading={saving} onClick={() => void save()}>
+                        <AdminSettingsActionBar meta={setting.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}` : "尚未保存支付配置"} status={dirty ? "有未保存的支付配置变更" : "支付配置已同步 · 商户密钥仅管理员可见"}>
+                            <Button className="payment-settings-save-button" type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
                                 保存支付配置
                             </Button>
                         </AdminSettingsActionBar>
                     </Form>
-                )}
+                ) : null}
 
                 <div className="payment-settings-security-notes grid gap-3 text-xs text-foreground/55 sm:grid-cols-3">
                     <Notice icon={<KeyRound className="payment-settings-key-icon size-3.5" />} text="密钥留空时保留原配置" />
@@ -177,14 +174,17 @@ function PaymentChannelCard({
                 <Form.Item className={`payment-settings-${channel}-enabled-field`} name={[channel, "enabled"]} label="启用渠道" valuePropName="checked">
                     <Switch className={`payment-settings-${channel}-enabled-switch`} />
                 </Form.Item>
+                <div className={`payment-settings-${channel}-scope-note`}>
+                    {channel === "wechat" ? "微信支付需要商户证书、平台公钥与 API v3 密钥。" : "支付宝仅配置应用、商户和平台签名参数。"}
+                </div>
                 <ChannelInput channel={channel} field="appId" label="应用 ID（App ID）" placeholder="支付平台分配的应用 ID" />
                 <ChannelInput channel={channel} field="merchantId" label="商户号" placeholder="支付平台分配的商户号" />
-                <ChannelInput channel={channel} field="merchantSerialNo" label="商户证书序列号" placeholder="微信支付常用；支付宝可留空" />
+                {channel === "wechat" ? <ChannelInput channel={channel} field="merchantSerialNo" label="商户证书序列号" placeholder="微信支付商户证书序列号" /> : null}
                 <ChannelInput channel={channel} field="notifyUrl" label="异步通知地址" placeholder="https://api.example.com/payment/notify" url />
                 <ChannelInput channel={channel} field="gatewayUrl" label="支付网关地址" placeholder="支付平台网关地址" url />
                 <SecretInput channel={channel} field="merchantPrivateKey" label="商户私钥" configured={setting?.hasMerchantPrivateKey === true} />
                 <SecretInput channel={channel} field="platformPublicKey" label="平台公钥" configured={setting?.hasPlatformPublicKey === true} />
-                <SecretInput channel={channel} field="apiV3Key" label="API v3 密钥" configured={setting?.hasApiV3Key === true} />
+                {channel === "wechat" ? <SecretInput channel={channel} field="apiV3Key" label="API v3 密钥" configured={setting?.hasApiV3Key === true} /> : null}
             </div>
         </SettingsSectionCard>
     );
@@ -196,7 +196,7 @@ function ChannelInput({ channel, field, label, placeholder, url = false }: { cha
             className={`payment-settings-${channel}-${field}-field`}
             name={[channel, field]}
             label={label}
-            rules={url ? [{ type: "url", warningOnly: true, message: "请输入完整的 HTTP(S) 地址" }] : undefined}
+            rules={url ? [{ type: "url", message: "请输入完整的 HTTP(S) 地址" }] : undefined}
         >
             <Input className={`payment-settings-${channel}-${field}-input`} autoComplete="off" placeholder={placeholder} />
         </Form.Item>
@@ -243,6 +243,24 @@ function toRequest(values: PaymentFormValues): UpdatePaymentSettingInput {
         wechat: channelRequest(values.wechat),
         alipay: channelRequest(values.alipay),
     };
+}
+
+function paymentValuesEqual(values: PaymentFormValues, setting: AdminPaymentSetting) {
+    return clean(values.checkoutBaseUrl) === clean(setting.checkoutBaseUrl) && channelValuesEqual(values.wechat, setting.wechat) && channelValuesEqual(values.alipay, setting.alipay);
+}
+
+function channelValuesEqual(values: PaymentChannelFormValues | undefined, setting: AdminPaymentChannelSetting) {
+    return (
+        (values?.enabled === true) === setting.enabled &&
+        clean(values?.appId) === clean(setting.appId) &&
+        clean(values?.merchantId) === clean(setting.merchantId) &&
+        clean(values?.merchantSerialNo) === clean(setting.merchantSerialNo) &&
+        clean(values?.notifyUrl) === clean(setting.notifyUrl) &&
+        clean(values?.gatewayUrl) === clean(setting.gatewayUrl) &&
+        !clean(values?.merchantPrivateKey) &&
+        !clean(values?.platformPublicKey) &&
+        !clean(values?.apiV3Key)
+    );
 }
 
 function channelRequest(values?: PaymentChannelFormValues): PaymentChannelSettingInput {

@@ -15,6 +15,7 @@ import { WorkspaceState } from "@/components/layout/workspace-state";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isFrameNode, isNodeHiddenByCollapsedFrame, resolveFrameConnection } from "@/lib/canvas/canvas-frame";
+import { normalizeVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
 import { getPublicCanvasShare } from "@/services/api/canvas-share";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type Position, type ViewportTransform } from "@/types/canvas";
@@ -77,7 +78,7 @@ export default function SharedCanvasPage() {
         getPublicCanvasShare(token).then(({ project }) => {
             if (!active) return;
             setTitle(project.title || "共享画布");
-            setNodes(project.nodes || []);
+            setNodes((project.nodes || []).map(normalizeVideoCompositionNode));
             setConnections(project.connections || []);
             setBackgroundMode(project.backgroundMode || "lines");
             const initial = project.viewport || { x: 0, y: 0, k: 1 };

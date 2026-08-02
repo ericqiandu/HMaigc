@@ -59,7 +59,10 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const storyboardInputs = getConnectedStoryboardRows(nodeId, nodes, connections);
     const hasExplicitNodeMention = /@\[node:[^\]]+\]/.test(normalizeLegacyNodeMentions(prompt, inputs));
     if ((sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) || hasExplicitNodeMention) {
-        return buildComposerGenerationContext(inputs, prompt);
+        const requiredFrameNodeIds = sourceNode?.type === CanvasNodeType.Video
+            ? [sourceNode.metadata?.videoStartFrameNodeId, sourceNode.metadata?.videoEndFrameNodeId].filter((value): value is string => Boolean(value))
+            : [];
+        return buildComposerGenerationContext(inputs, prompt, requiredFrameNodeIds);
     }
 
     const isStoryboardMedia = sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video;
@@ -107,7 +110,7 @@ function removeTrailingInputBlocks(prompt: string, inputs: NodeGenerationInput[]
     return next;
 }
 
-function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
+function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string, requiredMediaNodeIds: string[]): NodeGenerationContext {
     const normalizedPrompt = normalizeLegacyNodeMentions(prompt, inputs);
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
     const selectedInputs: NodeGenerationInput[] = [];
@@ -138,6 +141,13 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 
     nextPrompt += normalizedPrompt.slice(lastIndex);
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
+    const selectedNodeIds = new Set(selectedInputs.map((input) => input.nodeId));
+    requiredMediaNodeIds.forEach((nodeId) => {
+        const input = inputByNodeId.get(nodeId);
+        if (!input || selectedNodeIds.has(nodeId) || (input.type !== "image" && input.type !== "video" && input.type !== "audio")) return;
+        selectedInputs.push(input);
+        selectedNodeIds.add(nodeId);
+    });
     const referenceImages = selectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = selectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
     const referenceAudios = selectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));

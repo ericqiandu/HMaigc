@@ -52,7 +52,7 @@ export function CanvasVideoSuperResolutionPopover({ config, onConfigChange }: Ca
             trigger="click"
             placement="top"
             arrow={false}
-            rootClassName="canvas-video-super-resolution-popover"
+            rootClassName="canvas-overlay-popover canvas-video-super-resolution-popover"
             content={(
                 <div className="canvas-video-super-resolution-panel w-[280px] space-y-3 p-1" style={{ color: theme.node.text }}>
                     <div className="canvas-video-super-resolution-heading flex items-center justify-between gap-3">

@@ -1,12 +1,12 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Segmented, Switch } from "antd";
-import { CircleDot, Clapperboard, Eraser, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Layers3, Moon, Music2, Palette, PanelTop, Plus, Redo2, Square, Sun, Trash2, Type, Undo2, UploadCloud, UserRound, Video, WandSparkles, X } from "lucide-react";
+import { CircleDot, Clapperboard, Eraser, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Layers3, Moon, Music2, Palette, PanelTop, Plus, Redo2, Scissors, Square, Sun, Trash2, Type, Undo2, UploadCloud, UserRound, Video, WandSparkles, X } from "lucide-react";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { FloatingDock, type FloatingDockEntry } from "@/components/ui/aceternity/floating-dock";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
-import { CanvasCreateCommandGrid, type CanvasCreateCommand } from "@/components/canvas/canvas-create-command-grid";
+import { CanvasCreateCommandSections, type CanvasCreateCommand } from "@/components/canvas/canvas-create-command-grid";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
@@ -23,6 +23,7 @@ export function CanvasToolbar({
     showImageInfo,
     onAddImage,
     onAddVideo,
+    onAddVideoComposition,
     onAddAudio,
     onAddText,
     onChooseStyle,
@@ -50,6 +51,7 @@ export function CanvasToolbar({
     showImageInfo: boolean;
     onAddImage: () => void;
     onAddVideo: () => void;
+    onAddVideoComposition: () => void;
     onAddAudio: () => void;
     onAddText: () => void;
     onChooseStyle: () => void;
@@ -123,6 +125,7 @@ export function CanvasToolbar({
                         onAddFrame={() => runAddAction(onAddFrame)}
                         onAddImage={() => runAddAction(onAddImage)}
                         onAddVideo={() => runAddAction(onAddVideo)}
+                        onAddVideoComposition={() => runAddAction(onAddVideoComposition)}
                         onAddAudio={() => runAddAction(onAddAudio)}
                         onAddConfig={() => runAddAction(onAddConfig)}
                         onOpenDirector={() => runAddAction(onOpenDirector)}
@@ -168,7 +171,7 @@ export function CanvasToolbar({
     );
 }
 
-function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onChooseStyle, onAddScript, onAddFrame, onAddImage, onAddVideo, onAddAudio, onAddConfig, onOpenDirector, onUpload, onOpenAssets, onOpenProjectCharacters }: {
+function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onChooseStyle, onAddScript, onAddFrame, onAddImage, onAddVideo, onAddVideoComposition, onAddAudio, onAddConfig, onOpenDirector, onUpload, onOpenAssets, onOpenProjectCharacters }: {
     x: number;
     theme: CanvasTheme;
     workspaceMode: CanvasWorkspaceMode;
@@ -179,6 +182,7 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
     onAddFrame: () => void;
     onAddImage: () => void;
     onAddVideo: () => void;
+    onAddVideoComposition: () => void;
     onAddAudio: () => void;
     onAddConfig: () => void;
     onOpenDirector: () => void;
@@ -186,6 +190,7 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
     onOpenAssets: () => void;
     onOpenProjectCharacters: () => void;
 }) {
+    const colorTheme = useThemeStore((state) => state.theme);
     const simpleMode = workspaceMode === "simple";
     const nodeCommands: CanvasCreateCommand[] = [
         { id: "text", label: "文本", icon: <Type />, onClick: onAddText },
@@ -196,6 +201,7 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
         ...(!simpleMode ? [{ id: "frame", label: "背板", icon: <PanelTop />, onClick: onAddFrame }] : []),
         { id: "image", label: "图片", icon: <ImageIcon />, onClick: onAddImage },
         { id: "video", label: "视频", icon: <Video />, onClick: onAddVideo },
+        { id: "video-composition", label: "视频合成", icon: <Scissors />, badge: "Beta", onClick: onAddVideoComposition },
         ...(!simpleMode ? [
             { id: "director", label: "导演台", icon: <Layers3 />, badge: "3D", onClick: onOpenDirector },
             { id: "audio", label: "音频", icon: <Music2 />, onClick: onAddAudio },
@@ -208,13 +214,9 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
         ...(!isProjectLinked ? [{ id: "assets", label: "素材库", icon: <FolderOpen />, onClick: onOpenAssets }] : []),
     ];
     return (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[116px] z-40 w-[260px] max-w-[calc(100vw-24px)] -translate-x-1/2 sm:bottom-[50px]" style={{ left: x || "50%" }}>
-            <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="canvas-overlay-panel canvas-create-panel aceternity-floating-panel overflow-hidden border p-2 backdrop-blur-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 24px 64px ${theme.spatial.shadow}` }} onWheel={(event) => event.stopPropagation()}>
-                <PanelHeading icon={<Plus className="size-4" />} title="创建内容" subtitle="选择节点类型" theme={theme} />
-                <MenuSection title="创作节点" />
-                <CanvasCreateCommandGrid commands={nodeCommands} />
-                <MenuSection title="导入资源" />
-                <CanvasCreateCommandGrid commands={resourceCommands} variant="resource" />
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[124px] z-40 w-[196px] max-w-[calc(100vw-24px)] -translate-x-1/2 sm:bottom-[64px]" style={{ left: x || "50%" }}>
+            <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="canvas-overlay-panel canvas-create-panel aceternity-floating-panel hide-scrollbar max-h-[calc(100vh-56px)] overflow-x-hidden overflow-y-auto border p-2 backdrop-blur-2xl" style={{ background: colorTheme === "dark" ? "#262626" : "#ffffff", borderColor: colorTheme === "dark" ? "#363636" : "#e5e7eb", color: theme.node.text, boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.10)" }} onWheel={(event) => event.stopPropagation()}>
+                <CanvasCreateCommandSections nodeCommands={nodeCommands} resourceCommands={resourceCommands} />
             </SpotlightSurface>
         </motion.div>
     );
