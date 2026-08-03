@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # 构建 Vite 前端产物。
-FROM oven/bun:1.3.13 AS web-build
+FROM oven/bun:1.3.14 AS web-build
 
 WORKDIR /app/web
 ARG VITE_STATIC_ASSET_BASE_URL

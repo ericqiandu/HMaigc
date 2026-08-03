@@ -169,7 +169,7 @@ func interfaceAllowsProxyPath(interfaceType model.ChannelInterfaceType, requestP
 		return requestPath == "/responses"
 	case model.ChannelInterfaceOpenAIImage:
 		return requestPath == "/images/generations" || requestPath == "/images/edits"
-	case model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxSpeech:
+	case model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxSpeech, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return false
 	default:
 		return true
@@ -186,7 +186,7 @@ func proxyBillingCapability(interfaceType model.ChannelInterfaceType, requestPat
 		return "audio"
 	}
 	switch interfaceType {
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return "video"
 	default:
 		// Gemini 的模型能力由后台模型目录确定，不能由通用 generateContent 路径猜测。

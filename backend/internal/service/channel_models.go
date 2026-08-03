@@ -18,6 +18,7 @@ type ChannelModelRequest struct {
 	DisplayName           string                         `json:"displayName"`
 	MarketingCopy         string                         `json:"marketingCopy"`
 	PromotionBadge        string                         `json:"promotionBadge"`
+	BrandKey              string                         `json:"brandKey"`
 	AccessPolicy          model.ModelAccessPolicy        `json:"accessPolicy"`
 	Capability            string                         `json:"capability"`
 	BillingMode           string                         `json:"billingMode"`
@@ -96,7 +97,7 @@ func (s *Service) FetchAdminChannelModels(ctx context.Context, actor *model.User
 			continue
 		}
 		// 自动发现不能绕过定价边界；新模型由管理员定价后再手动启用。
-		missing = append(missing, model.ChannelModel{ID: newID(), ChannelID: channelID, ModelKey: name, DisplayName: name, AccessPolicy: model.ModelAccessAuthenticated, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: false, PriceVersion: 1})
+		missing = append(missing, model.ChannelModel{ID: newID(), ChannelID: channelID, ModelKey: name, DisplayName: name, BrandKey: model.InferModelBrandKey(name), AccessPolicy: model.ModelAccessAuthenticated, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: false, PriceVersion: 1})
 	}
 	added, err := s.repo.CreateMissingChannelModels(missing)
 	if err != nil {
@@ -130,6 +131,10 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	if strings.IndexFunc(promotionBadge, unicode.IsControl) >= 0 {
 		return nil, BadAuthRequest("模型促销角标不能包含换行或控制字符")
+	}
+	brandKey := strings.TrimSpace(req.BrandKey)
+	if !model.IsModelBrandKey(brandKey) {
+		return nil, BadAuthRequest("请选择有效的系统模型品牌")
 	}
 	capability := normalizeCapability(req.Capability)
 	if capability == "" {
@@ -191,6 +196,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	item.MarketingCopy = marketingCopy
 	item.PromotionBadge = promotionBadge
+	item.BrandKey = brandKey
 	item.AccessPolicy = accessPolicy
 	item.Capability = capability
 	item.BillingMode = billingMode
@@ -224,7 +230,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	audit, err := newAdminAuditEvent(actor, "channel_model.save", "channel_model", item.ID, "保存模型目录、展示配置、访问策略与计费配置", map[string]any{
 		"channelId": item.ChannelID, "modelKey": item.ModelKey, "displayName": item.DisplayName,
-		"marketingCopy": item.MarketingCopy, "promotionBadge": item.PromotionBadge,
+		"marketingCopy": item.MarketingCopy, "promotionBadge": item.PromotionBadge, "brandKey": item.BrandKey,
 		"accessPolicy": item.AccessPolicy, "capability": item.Capability, "enabled": item.Enabled,
 		"priceConfigured": item.PriceConfigured, "priceVersion": item.PriceVersion, "pricingChanged": pricingChanged,
 	})
@@ -355,7 +361,7 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 			}
 			continue
 		}
-		item := model.ChannelModel{ID: newID(), ChannelID: channel.ID, ModelKey: name, DisplayName: name, AccessPolicy: model.ModelAccessAuthenticated, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: true, PriceVersion: 1}
+		item := model.ChannelModel{ID: newID(), ChannelID: channel.ID, ModelKey: name, DisplayName: name, BrandKey: model.InferModelBrandKey(name), AccessPolicy: model.ModelAccessAuthenticated, Capability: capabilityForChannel(*channel), BillingMode: "fixed_request", PriceStrategy: "flat", Enabled: true, PriceVersion: 1}
 		if err := s.repo.SaveChannelModel(&item); err != nil {
 			return err
 		}
@@ -380,7 +386,7 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	requireAll := true
 	if item.PriceStrategy == "video_resolution" {
 		allowed = map[string]bool{
-			"480P": true, "720P": true, "1080P": true, "2K": true, "4K": true,
+			"480P": true, "720P": true, "768P": true, "1080P": true, "2K": true, "4K": true,
 			"SR_720P": true, "SR_1080P": true, "SR_2K": true, "SR_4K": true,
 		}
 		requireAll = false
@@ -446,7 +452,9 @@ func normalizeChannelModelPriceTierCollections(items []model.ChannelModel) []mod
 		if normalized[index].PriceTiers == nil {
 			normalized[index].PriceTiers = make([]model.ChannelModelPriceTier, 0)
 		}
-		normalized[index].IconURL = channelModelIconURL(normalized[index])
+		if !model.IsModelBrandKey(normalized[index].BrandKey) {
+			normalized[index].BrandKey = model.InferModelBrandKey(normalized[index].ModelKey)
+		}
 	}
 	return normalized
 }
@@ -455,7 +463,7 @@ func capabilityForChannel(channel model.ModelChannel) string {
 	switch channel.InterfaceType {
 	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage:
 		return "image"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return "video"
 	case model.ChannelInterfaceMiniMaxSpeech:
 		return "audio"

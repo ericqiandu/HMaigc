@@ -15,6 +15,7 @@ export const imagePricingSpecifications: PricingSpecification[] = [
 export const videoPricingSpecifications: PricingSpecification[] = [
     { key: "480P", label: "480P", group: "base" },
     { key: "720P", label: "720P", group: "base" },
+    { key: "768P", label: "768P", group: "base" },
     { key: "1080P", label: "1080P", group: "base" },
     { key: "2K", label: "2K", group: "base" },
     { key: "4K", label: "4K", group: "base" },
@@ -24,9 +25,7 @@ export const videoPricingSpecifications: PricingSpecification[] = [
     { key: "SR_4K", label: "超分 4K", group: "super_resolution" },
 ];
 
-export function specificationsForStrategy(
-    strategy: ChannelModel["priceStrategy"],
-): PricingSpecification[] {
+export function specificationsForStrategy(strategy: ChannelModel["priceStrategy"]): PricingSpecification[] {
     if (strategy === "image_resolution") return imagePricingSpecifications;
     if (strategy === "video_resolution") return videoPricingSpecifications;
     return [];

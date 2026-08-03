@@ -2,8 +2,6 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 import "./styles/globals.css";
-import "./styles/canvas-chrome.css";
-import "./styles/canvas-overlays.css";
 import { RouterProvider } from "react-router";
 
 import { AppProviders } from "@/components/layout/app-providers";

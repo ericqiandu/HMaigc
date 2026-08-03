@@ -55,6 +55,9 @@ func main() {
 
 	repo := repository.New(db)
 	svc := service.New(repo, dataDir)
+	if err := svc.RemoveLegacyChannelModelIcons(); err != nil {
+		log.Fatal(err)
+	}
 	if err := configureOperationsClient(svc); err != nil {
 		log.Fatal(err)
 	}

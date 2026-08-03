@@ -2,34 +2,11 @@ import { type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import {
-    boolConfig,
-    isSeedanceFastModel,
-    isSeedanceVideoConfig,
-    normalizeSeedanceRatio,
-    normalizeSeedanceResolution,
-    seedanceDurationOptions,
-    seedanceRatioOptions,
-} from "@/lib/seedance-video";
+import { boolConfig, normalizeSeedanceRatio, seedanceRatioOptions } from "@/lib/seedance-video";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
-
-const videoResolutionOptions = [
-    { value: "480p", label: "480P" },
-    { value: "720p", label: "720P" },
-    { value: "1080p", label: "1080P" },
-    { value: "4k", label: "4K" },
-] as const;
-
-const videoRatioOptions = [
-    { value: "adaptive", label: "Auto" },
-    { value: "16:9", label: "16:9" },
-    { value: "4:3", label: "4:3" },
-    { value: "1:1", label: "1:1" },
-    { value: "3:4", label: "3:4" },
-    { value: "9:16", label: "9:16" },
-    { value: "21:9", label: "21:9" },
-] as const;
+import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "@/lib/video-model-capabilities";
+import { type AiConfig } from "@/stores/use-config-store";
+import type { CanvasVideoGenerationMode } from "@/types/canvas";
 
 const videoCountOptions = [1, 2, 4] as const;
 
@@ -39,15 +16,18 @@ type VideoSettingsPanelProps = {
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
+    generationMode?: CanvasVideoGenerationMode;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[316px] space-y-3" }: VideoSettingsPanelProps) {
-    const model = modelOptionName(config.model || config.videoModel);
-    const seedance = isSeedanceVideoConfig(config);
-    const resolution = seedance ? normalizeSeedanceResolution(config.vquality, model) : `${normalizeVideoResolution(config.vquality)}p`;
-    const ratio = normalizeSeedanceRatio(config.size);
-    const duration = Number(normalizeVideoDuration(config.videoSeconds));
-    const durationIndex = Math.max(0, seedanceDurationOptions.indexOf(duration as (typeof seedanceDurationOptions)[number]));
+export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[316px] space-y-3", generationMode }: VideoSettingsPanelProps) {
+    const capabilities = resolveVideoModelCapabilities(config);
+    const normalizedConfig = normalizeVideoConfigForModel(config, generationMode);
+    const ratioOptions = videoRatiosForMode(capabilities, generationMode);
+    const resolution = normalizedConfig.vquality;
+    const ratio = ratioOptions.some((option) => option.value === normalizedConfig.size) ? normalizedConfig.size : ratioOptions[0].value;
+    const durationOptions = capabilities.durations;
+    const duration = Number(normalizedConfig.videoSeconds);
+    const durationIndex = Math.max(0, durationOptions.indexOf(duration));
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const generationCount = normalizeVideoCount(config.count);
 
@@ -58,35 +38,19 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="canvas-video-ratio-grid grid grid-cols-5 gap-2">
-                        {videoRatioOptions.map((item) => (
-                            <RatioOption
-                                key={item.value}
-                                label={item.label}
-                                ratio={item.value}
-                                selected={ratio === item.value}
-                                theme={theme}
-                                onClick={() => onConfigChange("size", item.value)}
-                            />
+                        {ratioOptions.map((item) => (
+                            <RatioOption key={item.value} label={item.label} ratio={item.value} selected={ratio === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)} />
                         ))}
                     </div>
                 </SettingGroup>
 
                 <SettingGroup title="清晰度" color={theme.node.muted}>
                     <div className="canvas-video-resolution-grid grid grid-cols-4 gap-2">
-                        {videoResolutionOptions.map((item) => {
-                            const disabled = item.value === "4k" || (item.value === "1080p" && isSeedanceFastModel(model));
-                            return (
-                                <OptionButton
-                                    key={item.value}
-                                    selected={resolution === item.value}
-                                    disabled={disabled}
-                                    theme={theme}
-                                    onClick={() => onConfigChange("vquality", item.value)}
-                                >
-                                    {item.label}
-                                </OptionButton>
-                            );
-                        })}
+                        {capabilities.resolutions.map((item) => (
+                            <OptionButton key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                {item.label}
+                            </OptionButton>
+                        ))}
                     </div>
                 </SettingGroup>
 
@@ -96,25 +60,31 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             className="canvas-video-duration-slider min-w-0 flex-1 cursor-pointer"
                             type="range"
                             min={0}
-                            max={seedanceDurationOptions.length - 1}
+                            max={durationOptions.length - 1}
                             step={1}
                             value={durationIndex}
                             aria-label="视频时长"
-                            onChange={(event) => onConfigChange("videoSeconds", String(seedanceDurationOptions[Number(event.target.value)]))}
+                            onChange={(event) => onConfigChange("videoSeconds", String(durationOptions[Number(event.target.value)]))}
                         />
-                        <output className="canvas-video-duration-value grid h-7 w-12 shrink-0 place-items-center rounded-md bg-white/5 text-[12px] font-semibold">
-                            {duration}
-                        </output>
-                        <span className="canvas-video-duration-unit -ml-2 text-[11px]" style={{ color: theme.node.muted }}>s</span>
+                        <output className="canvas-video-duration-value grid h-7 w-12 shrink-0 place-items-center rounded-md bg-white/5 text-[12px] font-semibold">{duration}</output>
+                        <span className="canvas-video-duration-unit -ml-2 text-[11px]" style={{ color: theme.node.muted }}>
+                            s
+                        </span>
                     </div>
                 </SettingGroup>
 
-                <SettingGroup title="生成音频" color={theme.node.muted}>
-                    <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">
-                        <OptionButton selected={generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "true")}>开启</OptionButton>
-                        <OptionButton selected={!generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "false")}>关闭</OptionButton>
-                    </div>
-                </SettingGroup>
+                {capabilities.supportsGeneratedAudio ? (
+                    <SettingGroup title="生成音频" color={theme.node.muted}>
+                        <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">
+                            <OptionButton selected={generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "true")}>
+                                开启
+                            </OptionButton>
+                            <OptionButton selected={!generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "false")}>
+                                关闭
+                            </OptionButton>
+                        </div>
+                    </SettingGroup>
+                ) : null}
 
                 <SettingGroup title="生成数量" color={theme.node.muted}>
                     <div className="canvas-video-count-grid grid grid-cols-3 gap-2">
@@ -146,22 +116,10 @@ export function videoSecondsLabel(value: string) {
 
 function normalizeVideoCount(value: string) {
     const count = Math.max(1, Math.floor(Math.abs(Number(value)) || 1));
-    return videoCountOptions.reduce((nearest, option) => Math.abs(option - count) < Math.abs(nearest - count) ? option : nearest, videoCountOptions[0]);
+    return videoCountOptions.reduce((nearest, option) => (Math.abs(option - count) < Math.abs(nearest - count) ? option : nearest), videoCountOptions[0]);
 }
 
-function OptionButton({
-    selected,
-    disabled = false,
-    theme,
-    onClick,
-    children,
-}: {
-    selected: boolean;
-    disabled?: boolean;
-    theme: CanvasTheme;
-    onClick: () => void;
-    children: ReactNode;
-}) {
+function OptionButton({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
         <button
             type="button"
@@ -181,19 +139,7 @@ function OptionButton({
     );
 }
 
-function RatioOption({
-    label,
-    ratio,
-    selected,
-    theme,
-    onClick,
-}: {
-    label: string;
-    ratio: string;
-    selected: boolean;
-    theme: CanvasTheme;
-    onClick: () => void;
-}) {
+function RatioOption({ label, ratio, selected, theme, onClick }: { label: string; ratio: string; selected: boolean; theme: CanvasTheme; onClick: () => void }) {
     const preview = ratioPreview(ratio);
     return (
         <button
@@ -209,7 +155,11 @@ function RatioOption({
             onClick={onClick}
         >
             <span className="canvas-video-ratio-preview grid h-4 place-items-center">
-                {preview ? <span className="canvas-video-ratio-preview-shape rounded-[2px] border" style={{ width: preview.width, height: preview.height, borderColor: "currentColor" }} /> : <span className="canvas-video-ratio-auto-mark text-[9px] opacity-70">A</span>}
+                {preview ? (
+                    <span className="canvas-video-ratio-preview-shape rounded-[2px] border" style={{ width: preview.width, height: preview.height, borderColor: "currentColor" }} />
+                ) : (
+                    <span className="canvas-video-ratio-auto-mark text-[9px] opacity-70">A</span>
+                )}
             </span>
             <span className="canvas-video-ratio-label whitespace-nowrap">{label}</span>
         </button>
@@ -219,7 +169,9 @@ function RatioOption({
 function SettingGroup({ title, color, children }: { title: string; color: string; children: ReactNode }) {
     return (
         <section className="canvas-video-setting-group space-y-2">
-            <div className="canvas-video-setting-label text-[12px] font-medium leading-4" style={{ color }}>{title}</div>
+            <div className="canvas-video-setting-label text-[12px] font-medium leading-4" style={{ color }}>
+                {title}
+            </div>
             {children}
         </section>
     );

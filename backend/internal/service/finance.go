@@ -595,6 +595,11 @@ func normalizeVideoPricingResolution(usage BillingUsage) string {
 			return "SR_720P"
 		}
 		return "720P"
+	case "768", "768p":
+		if usage.SuperResolutionEnabled {
+			return ""
+		}
+		return "768P"
 	case "1080", "1080p":
 		if usage.SuperResolutionEnabled {
 			return "SR_1080P"

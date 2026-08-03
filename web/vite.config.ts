@@ -36,4 +36,7 @@ export default defineConfig({
             "@": resolve(webDir, "src"),
         },
     },
+    build: {
+        manifest: true,
+    },
 });

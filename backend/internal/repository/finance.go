@@ -130,27 +130,6 @@ func (r *Repository) SaveChannelModelPricing(item *model.ChannelModel, tiers []m
 	})
 }
 
-// SaveChannelModelPresentation 把展示配置与审计事实放在同一事务，避免后台显示保存失败但配置已生效。
-func (r *Repository) SaveChannelModelPresentation(item *model.ChannelModel, audit *model.AdminAuditEvent) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Omit("PriceTiers").Save(item).Error; err != nil {
-			return err
-		}
-		if audit != nil {
-			return tx.Create(audit).Error
-		}
-		return nil
-	})
-}
-
-func (r *Repository) ChannelModelByPublicID(id string) (*model.ChannelModel, error) {
-	var item model.ChannelModel
-	if err := r.db.First(&item, "id = ?", id).Error; err != nil {
-		return nil, err
-	}
-	return &item, nil
-}
-
 func (r *Repository) DeleteChannelModel(channelID string, id string, modelsJSON string, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.ChannelModel{}).

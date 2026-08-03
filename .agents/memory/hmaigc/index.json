@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "project": "HMaigc",
+  "status": "active",
+  "updatedAt": "2026-08-03T00:00:00+08:00",
+  "progress": {
+    "releasedVersion": "v1.0.18",
+    "developmentState": "unreleased-working-tree",
+    "releaseReady": false,
+    "note": "当前工作区包含尚未形成正式版本的功能与性能改动；不得把未提交、未发布内容描述为线上版本。"
+  },
+  "sourcesOfTruth": {
+    "engineering": "AGENTS.md",
+    "design": "Design.md",
+    "webDesignMapping": "web/DESIGN.md",
+    "currentVersion": "VERSION",
+    "releaseHistory": "CHANGELOG.md",
+    "production": "PRODUCTION.md",
+    "deployment": "deploy/README.md"
+  },
+  "artifacts": [
+    ".agents/memory/hmaigc/core.md",
+    ".agents/memory/hmaigc/procedures.md"
+  ],
+  "startupChecklist": [
+    "读取 AGENTS.md 与本索引",
+    "读取当前任务对应的事实真源",
+    "检查 git status，识别并保护既有用户改动",
+    "明确业务目标、契约、数据与运营影响后再修改",
+    "按风险执行验证并在结束前对照需求、计划和 diff 复核"
+  ]
+}

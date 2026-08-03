@@ -127,7 +127,7 @@ type PublicChannelModelPrice struct {
 	DisplayName           string                        `json:"displayName"`
 	MarketingCopy         string                        `json:"marketingCopy"`
 	PromotionBadge        string                        `json:"promotionBadge"`
-	IconURL               string                        `json:"iconUrl"`
+	BrandKey              string                        `json:"brandKey"`
 	AccessPolicy          model.ModelAccessPolicy       `json:"accessPolicy"`
 	Accessible            bool                          `json:"accessible"`
 	Capability            string                        `json:"capability"`
@@ -626,7 +626,12 @@ func channelFromRequest(req ChannelRequest, channel model.ModelChannel) (model.M
 	if req.APIKey != "" {
 		channel.APIKey = req.APIKey
 	}
-	// 系统渠道均由后端按已声明的接口类型分发，调用格式固定为 Bearer/OpenAI 兼容鉴权。
+	if interfaceType == model.ChannelInterfaceKlingVideo {
+		if _, err := parseKlingCredentials(channel.APIKey); err != nil {
+			return channel, BadAuthRequest(err.Error())
+		}
+	}
+	// 系统渠道均由后端按已声明的接口类型分发；具体鉴权由对应渠道执行器负责。
 	channel.APIFormat = "openai"
 	channel.InterfaceType = interfaceType
 	if req.UseGlobalConcurrency != nil && *req.UseGlobalConcurrency {
@@ -667,7 +672,7 @@ func mergeChannelRequest(req ChannelRequest, channel model.ModelChannel) Channel
 
 func validChannelInterfaceType(value model.ChannelInterfaceType) bool {
 	switch value {
-	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxSpeech:
+	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxSpeech, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return true
 	default:
 		return false
@@ -705,7 +710,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
 				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
-				PromotionBadge: item.PromotionBadge, IconURL: channelModelIconURL(item),
+				PromotionBadge: item.PromotionBadge, BrandKey: item.BrandKey,
 				AccessPolicy: item.AccessPolicy, Accessible: item.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
 				Capability:  item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,

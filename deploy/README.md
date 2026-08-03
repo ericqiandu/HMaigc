@@ -31,14 +31,14 @@ chmod 600 .env.production
 
 ```bash
 # 首次安装
-bash deploy/hmaigc-ops.sh install v1.0.14
+bash deploy/hmaigc-ops.sh install v1.0.18
 
 # 状态与环境验收
 bash deploy/hmaigc-ops.sh status
 bash deploy/hmaigc-ops.sh verify
 
 # 命令行升级、备份和回滚（后台页面也通过同一控制器队列执行）
-bash deploy/hmaigc-ops.sh upgrade v1.0.14
+bash deploy/hmaigc-ops.sh upgrade v1.0.18
 bash deploy/hmaigc-ops.sh backup
 bash deploy/hmaigc-ops.sh rollback
 ```

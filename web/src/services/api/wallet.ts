@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { ModelBrandKey } from "@/lib/model-brands";
 
 const api = axios.create({ baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api", withCredentials: true });
 
@@ -66,7 +67,7 @@ export type ChannelModel = {
     displayName: string;
     marketingCopy: string;
     promotionBadge: string;
-    iconUrl: string;
+    brandKey: ModelBrandKey;
     accessPolicy: "authenticated" | "member";
     capability: "text" | "image" | "video" | "audio";
     billingMode: "fixed_request" | "per_second";
@@ -85,10 +86,7 @@ export type ChannelModel = {
     updatedAt: string;
 };
 
-export type ChannelModelInput = Omit<
-    ChannelModel,
-    "id" | "channelId" | "iconUrl" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"
-> & {
+export type ChannelModelInput = Omit<ChannelModel, "id" | "channelId" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"> & {
     priceTiers: Array<{
         resolution: string;
         unitPriceMicrocredits: number;
@@ -136,10 +134,7 @@ export type EmailSetting = {
     updatedAt?: string;
 };
 
-export type EmailSettingUpdateRequest = Pick<
-    EmailSetting,
-    "enabled" | "host" | "port" | "username" | "encryption" | "fromEmail" | "fromName"
-> & {
+export type EmailSettingUpdateRequest = Pick<EmailSetting, "enabled" | "host" | "port" | "username" | "encryption" | "fromEmail" | "fromName"> & {
     password: string;
 };
 
@@ -263,18 +258,8 @@ export function updateAdminChannelModel(channelId: string, id: string, input: Ch
     return request<{ model: ChannelModel }>(api.patch(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}`, input));
 }
 
-export function uploadAdminChannelModelIcon(channelId: string, id: string, file: File) {
-    const formData = new FormData();
-    formData.append("file", file, file.name);
-    return request<{ model: ChannelModel }>(api.post(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}/icon`, formData));
-}
-
-export function removeAdminChannelModelIcon(channelId: string, id: string) {
-    return request<{ model: ChannelModel }>(api.delete(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}/icon`));
-}
-
 export function deleteAdminChannelModel(channelId: string, id: string) {
-	return request<{ ok: boolean }>(api.delete(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}`));
+    return request<{ ok: boolean }>(api.delete(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}`));
 }
 
 export type AdminFinanceListParams = { keyword?: string; status?: string; validity?: string; page?: number; limit?: number };

@@ -91,7 +91,11 @@ func Models() []any {
 }
 
 func MigrateSchema(db *gorm.DB) error {
+	legacyModelIconColumns := db.Migrator().HasColumn(&model.ChannelModel{}, "icon_file") || db.Migrator().HasColumn(&model.ChannelModel{}, "icon_mime_type")
 	if err := db.AutoMigrate(Models()...); err != nil {
+		return err
+	}
+	if err := migrateChannelModelBrands(db, legacyModelIconColumns); err != nil {
 		return err
 	}
 	// 逻辑删除后的同名模型允许重新添加，旧唯一索引不能继续覆盖已删除记录。
@@ -127,6 +131,31 @@ func MigrateSchema(db *gorm.DB) error {
 		return err
 	}
 	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nonempty ON users(lower(email)) WHERE email <> ''").Error
+}
+
+func migrateChannelModelBrands(db *gorm.DB, legacyModelIconColumns bool) error {
+	if !legacyModelIconColumns {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		var models []model.ChannelModel
+		if err := tx.Unscoped().Find(&models).Error; err != nil {
+			return err
+		}
+		for index := range models {
+			if err := tx.Unscoped().Table("channel_models").Where("id = ?", models[index].ID).UpdateColumn("brand_key", model.InferModelBrandKey(models[index].ModelKey)).Error; err != nil {
+				return err
+			}
+		}
+		for _, column := range []string{"icon_file", "icon_mime_type"} {
+			if tx.Migrator().HasColumn("channel_models", column) {
+				if err := tx.Exec("ALTER TABLE channel_models DROP COLUMN " + column).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 // backfillLegacyTeamCommercialSnapshots 只迁移新增商业权益字段为空的旧团队快照。

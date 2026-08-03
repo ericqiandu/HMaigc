@@ -14,17 +14,17 @@ func TestChannelFromRequestStoresInterfaceType(t *testing.T) {
 	defer server.Close()
 
 	channel, err := channelFromRequest(ChannelRequest{
-		Name:             "NewAPI 渠道 1",
+		Name:             "NewAPI 视频",
 		BaseURL:          server.URL + "/v1",
 		APIKey:           "secret",
-		InterfaceType:    "newapi-channel-1",
+		InterfaceType:    "newapi",
 		ConcurrencyLimit: intPtr(6),
 		Models:           []string{"seedance-2.0"},
 	}, model.ModelChannel{})
 	if err != nil {
 		t.Fatalf("channelFromRequest() error = %v", err)
 	}
-	if channel.InterfaceType != model.ChannelInterfaceNewAPIChannel1 {
+	if channel.InterfaceType != model.ChannelInterfaceNewAPIVideo {
 		t.Fatalf("InterfaceType = %q", channel.InterfaceType)
 	}
 	if channel.APIFormat != "openai" {
@@ -72,6 +72,32 @@ func TestChannelFromRequestStoresAIOpenPlatformVolcengineInterfaceType(t *testin
 	}
 	if channel.InterfaceType != model.ChannelInterfaceAIOpenVideoVolcengine {
 		t.Fatalf("InterfaceType = %q", channel.InterfaceType)
+	}
+}
+
+func TestChannelFromRequestValidatesKlingCredentials(t *testing.T) {
+	channel, err := channelFromRequest(ChannelRequest{
+		Name:          "快手可灵视频",
+		BaseURL:       "https://api.klingai.com",
+		APIKey:        `{"accessKey":"ak-test","secretKey":"sk-test"}`,
+		InterfaceType: "kling-video",
+		Models:        []string{"kling-v2-6"},
+	}, model.ModelChannel{})
+	if err != nil {
+		t.Fatalf("channelFromRequest() error = %v", err)
+	}
+	if channel.InterfaceType != model.ChannelInterfaceKlingVideo {
+		t.Fatalf("InterfaceType = %q", channel.InterfaceType)
+	}
+
+	_, err = channelFromRequest(ChannelRequest{
+		Name:          "快手可灵视频",
+		BaseURL:       "https://api.klingai.com",
+		APIKey:        "plain-secret",
+		InterfaceType: "kling-video",
+	}, model.ModelChannel{})
+	if err == nil {
+		t.Fatal("channelFromRequest() accepted malformed Kling credentials")
 	}
 }
 

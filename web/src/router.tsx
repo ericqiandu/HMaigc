@@ -1,107 +1,128 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate, Outlet } from "react-router";
 
-import { RequireAuth } from "@/components/auth/require-auth";
-import UserLayout from "@/layouts/user-layout";
-import AdminPage from "@/pages/admin";
-import { AccessSettingsPage, AnalyticsPage, AnnouncementsPage, CreditOperationsPage, EmailSettingsPage } from "@/pages/admin/admin-route-pages";
-import ChannelsPage from "@/pages/admin/channels/channels-page";
-import LogsPage from "@/pages/admin/logs/logs-page";
-import MembershipAdminPage from "@/pages/admin/membership/membership-page";
-import ModelPricingPage from "@/pages/admin/model-pricing/model-pricing-page";
-import OperationsPage from "@/pages/admin/operations/operations-page";
-import RedemptionCodesPage from "@/pages/admin/redemption-codes/redemption-codes-page";
-import ReferralProgramPage from "@/pages/admin/referrals/referral-program-page";
-import RuntimePolicySettingsPage from "@/pages/admin/settings/runtime-policy-settings-page";
-import StorageSettingsPage from "@/pages/admin/settings/storage-settings-page";
-import PaymentSettingsPage from "@/pages/admin/settings/payment-settings-page";
-import SiteSettingsPage from "@/pages/admin/settings/site-settings-page";
-import LegalSettingsPage from "@/pages/admin/settings/legal-settings-page";
-import StoryboardPromptsPage from "@/pages/admin/storyboard-prompts/storyboard-prompts-page";
-import UsersPage from "@/pages/admin/users/users-page";
-import VoicesPage from "@/pages/admin/voices/voices-page";
-import AssetsPage from "@/pages/assets";
-import { AuthScene } from "@/pages/auth/auth-scene";
-import LoginPage from "@/pages/auth/login";
-import RegisterPage from "@/pages/auth/register";
-import CanvasPage from "@/pages/canvas";
-import CanvasProjectPage from "@/pages/canvas/project";
-import SharedCanvasPage from "@/pages/canvas/shared";
-import HomePage from "@/pages/home";
-import { LegalDocumentPage } from "@/pages/legal/legal-document-page";
-import MembershipPage from "@/pages/membership";
-import NotFound from "@/pages/not-found";
-import RouteErrorPage from "@/pages/route-error";
-import SkillsPage from "@/pages/skills";
-import TasksPage from "@/pages/tasks";
-import TeamsPage from "@/pages/teams";
-import WalletPage from "@/pages/wallet";
-import ProjectsPage from "@/pages/projects";
-import ProjectDetailPage from "@/pages/projects/detail";
-import SettingsPage from "@/pages/settings";
+const RequireAuth = lazy(() => import("@/components/auth/require-auth").then((module) => ({ default: module.RequireAuth })));
+const UserLayout = lazy(() => import("@/layouts/user-layout"));
+const AuthScene = lazy(() => import("@/pages/auth/auth-scene").then((module) => ({ default: module.AuthScene })));
+const RouteErrorPage = lazy(() => import("@/pages/route-error"));
+const AdminPage = lazy(() => import("@/pages/admin"));
+const AnalyticsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AnalyticsPage })));
+const AnnouncementsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AnnouncementsPage })));
+const CreditOperationsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.CreditOperationsPage })));
+const AccessSettingsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AccessSettingsPage })));
+const EmailSettingsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.EmailSettingsPage })));
+const ChannelsPage = lazy(() => import("@/pages/admin/channels/channels-page"));
+const LogsPage = lazy(() => import("@/pages/admin/logs/logs-page"));
+const MembershipAdminPage = lazy(() => import("@/pages/admin/membership/membership-page"));
+const ModelPricingPage = lazy(() => import("@/pages/admin/model-pricing/model-pricing-page"));
+const OperationsPage = lazy(() => import("@/pages/admin/operations/operations-page"));
+const RedemptionCodesPage = lazy(() => import("@/pages/admin/redemption-codes/redemption-codes-page"));
+const ReferralProgramPage = lazy(() => import("@/pages/admin/referrals/referral-program-page"));
+const LegalSettingsPage = lazy(() => import("@/pages/admin/settings/legal-settings-page"));
+const PaymentSettingsPage = lazy(() => import("@/pages/admin/settings/payment-settings-page"));
+const RuntimePolicySettingsPage = lazy(() => import("@/pages/admin/settings/runtime-policy-settings-page"));
+const SiteSettingsPage = lazy(() => import("@/pages/admin/settings/site-settings-page"));
+const StorageSettingsPage = lazy(() => import("@/pages/admin/settings/storage-settings-page"));
+const StoryboardPromptsPage = lazy(() => import("@/pages/admin/storyboard-prompts/storyboard-prompts-page"));
+const UsersPage = lazy(() => import("@/pages/admin/users/users-page"));
+const VoicesPage = lazy(() => import("@/pages/admin/voices/voices-page"));
+const AssetsPage = lazy(() => import("@/pages/assets"));
+const LoginPage = lazy(() => import("@/pages/auth/login"));
+const RegisterPage = lazy(() => import("@/pages/auth/register"));
+const CanvasPage = lazy(() => import("@/pages/canvas"));
+const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
+const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
+const HomePage = lazy(() => import("@/pages/home"));
+const LegalDocumentPage = lazy(() => import("@/pages/legal/legal-document-page").then((module) => ({ default: module.LegalDocumentPage })));
+const MembershipPage = lazy(() => import("@/pages/membership"));
+const NotFound = lazy(() => import("@/pages/not-found"));
+const ProjectDetailPage = lazy(() => import("@/pages/projects/detail"));
+const ProjectsPage = lazy(() => import("@/pages/projects"));
+const SettingsPage = lazy(() => import("@/pages/settings"));
+const SkillsPage = lazy(() => import("@/pages/skills"));
+const TasksPage = lazy(() => import("@/pages/tasks"));
+const TeamsPage = lazy(() => import("@/pages/teams"));
+const WalletPage = lazy(() => import("@/pages/wallet"));
+
+function RouteLoadingFallback() {
+    return (
+        <div className="route-loading-state grid min-h-[180px] place-items-center px-6" role="status" aria-live="polite">
+            <span className="route-loading-label text-sm text-foreground/55">正在加载页面…</span>
+        </div>
+    );
+}
+
+function deferredRoute(element: ReactNode) {
+    return <Suspense fallback={<RouteLoadingFallback />}>{element}</Suspense>;
+}
+
+function protectedRoute(element: ReactNode) {
+    return deferredRoute(<RequireAuth>{element}</RequireAuth>);
+}
 
 export const router = createBrowserRouter([
     {
-        element: <AuthScene />,
-        errorElement: <RouteErrorPage />,
+        element: deferredRoute(<AuthScene />),
+        errorElement: deferredRoute(<RouteErrorPage />),
         children: [
-            { path: "/login", element: <LoginPage /> },
-            { path: "/register", element: <RegisterPage /> },
+            { path: "/login", element: deferredRoute(<LoginPage />) },
+            { path: "/register", element: deferredRoute(<RegisterPage />) },
         ],
     },
-    { path: "/share/canvas/:token", element: <SharedCanvasPage />, errorElement: <RouteErrorPage /> },
+    { path: "/share/canvas/:token", element: deferredRoute(<SharedCanvasPage />), errorElement: <RouteErrorPage /> },
     {
-        element: (
+        element: deferredRoute(
             <UserLayout>
                 <Outlet />
-            </UserLayout>
+            </UserLayout>,
         ),
-        errorElement: <RouteErrorPage />,
+        errorElement: deferredRoute(<RouteErrorPage />),
         children: [
-            { path: "/", element: <HomePage /> },
-            { path: "/legal/user-agreement", element: <LegalDocumentPage document="userAgreement" /> },
-            { path: "/legal/privacy-policy", element: <LegalDocumentPage document="privacyPolicy" /> },
-            { path: "/membership", element: <MembershipPage /> },
-            { path: "/tasks", element: <RequireAuth><TasksPage /></RequireAuth> },
-            { path: "/teams", element: <RequireAuth><TeamsPage /></RequireAuth> },
-            { path: "/assets", element: <RequireAuth><AssetsPage /></RequireAuth> },
-            { path: "/skills", element: <RequireAuth><SkillsPage /></RequireAuth> },
-            { path: "/wallet", element: <RequireAuth><WalletPage /></RequireAuth> },
-            { path: "/settings", element: <RequireAuth><SettingsPage /></RequireAuth> },
-            { path: "/projects", element: <RequireAuth><ProjectsPage /></RequireAuth> },
-            { path: "/projects/:projectId", element: <RequireAuth><ProjectDetailPage /></RequireAuth> },
-            { path: "/projects/:projectId/:view", element: <RequireAuth><ProjectDetailPage /></RequireAuth> },
-            { path: "/projects/:projectId/chapters/:chapterId", element: <RequireAuth><ProjectDetailPage /></RequireAuth> },
-            { path: "/canvas", element: <RequireAuth><CanvasPage /></RequireAuth> },
-            { path: "/canvas/:id", element: <RequireAuth><CanvasProjectPage /></RequireAuth> },
+            { path: "/", element: deferredRoute(<HomePage />) },
+            { path: "/legal/user-agreement", element: deferredRoute(<LegalDocumentPage document="userAgreement" />) },
+            { path: "/legal/privacy-policy", element: deferredRoute(<LegalDocumentPage document="privacyPolicy" />) },
+            { path: "/membership", element: deferredRoute(<MembershipPage />) },
+            { path: "/tasks", element: protectedRoute(<TasksPage />) },
+            { path: "/teams", element: protectedRoute(<TeamsPage />) },
+            { path: "/assets", element: protectedRoute(<AssetsPage />) },
+            { path: "/skills", element: protectedRoute(<SkillsPage />) },
+            { path: "/wallet", element: protectedRoute(<WalletPage />) },
+            { path: "/settings", element: protectedRoute(<SettingsPage />) },
+            { path: "/projects", element: protectedRoute(<ProjectsPage />) },
+            { path: "/projects/:projectId", element: protectedRoute(<ProjectDetailPage />) },
+            { path: "/projects/:projectId/:view", element: protectedRoute(<ProjectDetailPage />) },
+            { path: "/projects/:projectId/chapters/:chapterId", element: protectedRoute(<ProjectDetailPage />) },
+            { path: "/canvas", element: protectedRoute(<CanvasPage />) },
+            { path: "/canvas/:id", element: protectedRoute(<CanvasProjectPage />) },
             {
                 path: "/admin",
-                element: <RequireAuth><AdminPage /></RequireAuth>,
+                element: protectedRoute(<AdminPage />),
                 children: [
-                    { index: true, element: <AnalyticsPage /> },
-                    { path: "users", element: <UsersPage /> },
-                    { path: "models", element: <ChannelsPage /> },
-                    { path: "voices", element: <VoicesPage /> },
-                    { path: "model-pricing", element: <ModelPricingPage /> },
-                    { path: "storyboard-prompts", element: <StoryboardPromptsPage /> },
-                    { path: "announcements", element: <AnnouncementsPage /> },
-                    { path: "credit-operations", element: <CreditOperationsPage /> },
-                    { path: "redemption-codes", element: <RedemptionCodesPage /> },
-                    { path: "referrals", element: <ReferralProgramPage /> },
-                    { path: "logs", element: <LogsPage /> },
-                    { path: "membership", element: <MembershipAdminPage /> },
-                    { path: "operations", element: <OperationsPage /> },
+                    { index: true, element: deferredRoute(<AnalyticsPage />) },
+                    { path: "users", element: deferredRoute(<UsersPage />) },
+                    { path: "models", element: deferredRoute(<ChannelsPage />) },
+                    { path: "voices", element: deferredRoute(<VoicesPage />) },
+                    { path: "model-pricing", element: deferredRoute(<ModelPricingPage />) },
+                    { path: "storyboard-prompts", element: deferredRoute(<StoryboardPromptsPage />) },
+                    { path: "announcements", element: deferredRoute(<AnnouncementsPage />) },
+                    { path: "credit-operations", element: deferredRoute(<CreditOperationsPage />) },
+                    { path: "redemption-codes", element: deferredRoute(<RedemptionCodesPage />) },
+                    { path: "referrals", element: deferredRoute(<ReferralProgramPage />) },
+                    { path: "logs", element: deferredRoute(<LogsPage />) },
+                    { path: "membership", element: deferredRoute(<MembershipAdminPage />) },
+                    { path: "operations", element: deferredRoute(<OperationsPage />) },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },
                     { path: "settings/concurrency", element: <Navigate to="/admin/settings/runtime-policy" replace /> },
-                    { path: "settings/runtime-policy", element: <RuntimePolicySettingsPage /> },
-                    { path: "settings/access", element: <AccessSettingsPage /> },
-                    { path: "settings/email", element: <EmailSettingsPage /> },
-                    { path: "settings/storage", element: <StorageSettingsPage /> },
-                    { path: "settings/payment", element: <PaymentSettingsPage /> },
-                    { path: "settings/site", element: <SiteSettingsPage /> },
-                    { path: "settings/legal", element: <LegalSettingsPage /> },
+                    { path: "settings/runtime-policy", element: deferredRoute(<RuntimePolicySettingsPage />) },
+                    { path: "settings/access", element: deferredRoute(<AccessSettingsPage />) },
+                    { path: "settings/email", element: deferredRoute(<EmailSettingsPage />) },
+                    { path: "settings/storage", element: deferredRoute(<StorageSettingsPage />) },
+                    { path: "settings/payment", element: deferredRoute(<PaymentSettingsPage />) },
+                    { path: "settings/site", element: deferredRoute(<SiteSettingsPage />) },
+                    { path: "settings/legal", element: deferredRoute(<LegalSettingsPage />) },
                 ],
             },
         ],
     },
-    { path: "*", element: <NotFound /> },
+    { path: "*", element: deferredRoute(<NotFound />) },
 ]);

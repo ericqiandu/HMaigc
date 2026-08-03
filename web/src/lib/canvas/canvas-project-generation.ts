@@ -4,7 +4,6 @@ import { getImageBlob, resolveImageUrl, uploadImage } from "@/services/image-sto
 import { getMediaBlob, resolveMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { imageMetadata, parseBackendGenerationResult } from "@/lib/canvas/canvas-generation-task-sync";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
@@ -13,6 +12,7 @@ import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, typ
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { resolveVideoGenerationMode, videoModeOperation } from "@/lib/canvas/canvas-video-generation-mode";
+import { normalizeVideoConfigForModel } from "@/lib/video-model-capabilities";
 
 export async function runBackendCanvasGenerationTask({
     projectId,
@@ -333,14 +333,14 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const storedModel = node?.metadata?.model;
     const model = storedModel && configuredModelMatchesCapability(config, storedModel, mode) ? storedModel : defaultModel && configuredModelMatchesCapability(config, defaultModel, mode) ? defaultModel : fallbackModel;
-    return {
+    const generationConfig: AiConfig = {
         ...config,
         model,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         size: node?.metadata?.size || config.size || defaultConfig.size,
         transparentBackground: (node?.metadata?.transparentBackground || config.transparentBackground) === "true" ? "true" : "false",
-        videoSeconds: normalizeVideoDuration(node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds),
-        vquality: normalizeVideoResolution(node?.metadata?.vquality || config.vquality || defaultConfig.vquality),
+        videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
+        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
         videoSuperResolutionEnabled: node?.metadata?.superResolutionEnabled || config.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
@@ -361,12 +361,13 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
+    if (mode !== "video") return generationConfig;
+    return normalizeVideoConfigForModel(generationConfig, resolveVideoGenerationMode(node?.metadata));
 }
 
 export function supportsVideoReferenceAudio(config: AiConfig) {
     const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
-    if (interfaceType === "newapi-channel-2") return false;
-    return interfaceType === "newapi-channel-1" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine" || isSeedanceVideoConfig(config);
+    return interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine" || interfaceType === "minimax-video" || isSeedanceVideoConfig(config);
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

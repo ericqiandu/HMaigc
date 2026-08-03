@@ -6,7 +6,8 @@ import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
+import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -64,6 +65,7 @@ export function CanvasNodePromptPanel({
     const isVideoMode = mode === "video";
     const isAudioMode = mode === "audio";
     const config = buildNodeConfig(globalConfig, node, mode);
+    const videoCapabilities = mode === "video" ? resolveVideoModelCapabilities(config) : null;
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     const [prompt, setPrompt] = useState(savedPrompt);
@@ -88,11 +90,14 @@ export function CanvasNodePromptPanel({
         videoSuperResolutionResolution: config.videoSuperResolutionResolution,
     });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
-    const activeVideoReferenceCounts = useMemo(() => ({
-        image: mentionReferences.filter((item) => item.active && item.kind === "image").length,
-        video: mentionReferences.filter((item) => item.active && item.kind === "video").length,
-        audio: mentionReferences.filter((item) => item.active && item.kind === "audio").length,
-    }), [mentionReferences]);
+    const activeVideoReferenceCounts = useMemo(
+        () => ({
+            image: mentionReferences.filter((item) => item.active && item.kind === "image").length,
+            video: mentionReferences.filter((item) => item.active && item.kind === "video").length,
+            audio: mentionReferences.filter((item) => item.active && item.kind === "audio").length,
+        }),
+        [mentionReferences],
+    );
     const activeVideoImageNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)), [mentionReferences]);
     const availableVideoImageReferences = useMemo(
         () => availableReferences.filter((item) => item.kind === "image" && item.nodeId !== node.id && Boolean(item.previewUrl)).map((item) => ({ ...item, active: activeVideoImageNodeIds.has(item.nodeId) })),
@@ -298,7 +303,7 @@ export function CanvasNodePromptPanel({
                         fullWidth
                         config={config}
                         value={config.model}
-                        onChange={(model) => onConfigChange(node.id, { model })}
+                        onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : { model })}
                         capability={mode}
                         onMissingConfig={handleMissingSystemModel}
                         showSelectedPrice={false}
@@ -318,14 +323,21 @@ export function CanvasNodePromptPanel({
                         />
                     ) : mode === "video" ? (
                         <>
-                            <CanvasVideoGenerationModePicker metadata={node.metadata} frameOptions={videoFrameOptions} referenceCounts={activeVideoReferenceCounts} onMetadataChange={updateVideoFrameMetadata} />
+                            <CanvasVideoGenerationModePicker
+                                metadata={node.metadata}
+                                frameOptions={videoFrameOptions}
+                                referenceCounts={activeVideoReferenceCounts}
+                                supportedModes={videoCapabilities?.supportedGenerationModes}
+                                onMetadataChange={updateVideoFrameMetadata}
+                            />
                             <span className="canvas-video-toolbar-divider" aria-hidden="true" />
                             <CanvasVideoSettingsPopover
                                 config={config}
+                                generationMode={resolveVideoGenerationMode(node.metadata)}
                                 buttonClassName="canvas-video-settings-trigger--composer canvas-media-control !h-8 !w-[185px] !justify-start !rounded-lg !border-0 !bg-transparent !px-2 !shadow-none [&>span]:min-w-0"
                                 onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
                             />
-                            <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                            {videoCapabilities?.supportsSuperResolution ? <CanvasVideoSuperResolutionPopover config={config} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} /> : null}
                             <span className="canvas-video-toolbar-divider" aria-hidden="true" />
                         </>
                     ) : null}
@@ -427,7 +439,10 @@ export function CanvasNodePromptPanel({
 
 function ComposerPill({ theme, icon, label, active = false }: { theme: CanvasTheme; icon: ReactNode; label: string; active?: boolean }) {
     return (
-        <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-4" style={{ background: active ? theme.accent.primarySoft : theme.toolbar.itemHover, color: active ? theme.accent.primary : theme.node.muted }}>
+        <span
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium leading-4"
+            style={{ background: active ? theme.accent.primarySoft : theme.toolbar.itemHover, color: active ? theme.accent.primary : theme.node.muted }}
+        >
             {icon}
             {label}
         </span>
@@ -469,7 +484,15 @@ function ReferenceInsertPicker({ label, references, theme, onInsert, icon }: { l
     );
 
     return (
-        <Popover rootClassName="canvas-overlay-popover canvas-overlay-popover--reference" open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
+        <Popover
+            rootClassName="canvas-overlay-popover canvas-overlay-popover--reference"
+            open={open}
+            onOpenChange={setOpen}
+            trigger="click"
+            placement="topLeft"
+            content={content}
+            styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+        >
             <button
                 type="button"
                 className="canvas-reference-picker-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[11px] font-medium leading-4 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
@@ -539,7 +562,15 @@ function ReferenceConnectPicker({
     );
 
     return (
-        <Popover rootClassName="canvas-overlay-popover canvas-overlay-popover--reference" open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content} styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}>
+        <Popover
+            rootClassName="canvas-overlay-popover canvas-overlay-popover--reference"
+            open={open}
+            onOpenChange={setOpen}
+            trigger="click"
+            placement="topLeft"
+            content={content}
+            styles={{ content: { padding: 6, background: theme.toolbar.panel, border: `1px solid ${theme.toolbar.border}` } }}
+        >
             <button
                 type="button"
                 className="canvas-reference-connect-trigger inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[11px] font-medium leading-4 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
@@ -627,14 +658,14 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const storedModel = node.metadata?.model;
     const model = storedModel && configuredModelMatchesCapability(globalConfig, storedModel, mode) ? storedModel : defaultModel && configuredModelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel;
-    return {
+    const config: AiConfig = {
         ...globalConfig,
         model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         transparentBackground: (node.metadata?.transparentBackground || globalConfig.transparentBackground) === "true" ? "true" : "false",
-        videoSeconds: normalizeVideoDuration(node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds),
-        vquality: normalizeVideoResolution(node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality),
+        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
+        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         videoSuperResolutionEnabled: node.metadata?.superResolutionEnabled || globalConfig.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
@@ -655,6 +686,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
+    return mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
 }
 
 function promptPlaceholder(mode: CanvasNodeGenerationMode, hasTextContent: boolean) {

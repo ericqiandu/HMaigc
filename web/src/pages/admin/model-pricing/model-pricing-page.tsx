@@ -196,6 +196,7 @@ export default function ModelPricingPage() {
             displayName: editing.displayName,
             marketingCopy: editing.marketingCopy,
             promotionBadge: editing.promotionBadge,
+            brandKey: editing.brandKey,
             accessPolicy: editing.accessPolicy,
             capability: editing.capability,
             billingMode: values.billingMode,
@@ -278,10 +279,7 @@ export default function ModelPricingPage() {
 
     if (loadError && models.length === 0) {
         return (
-            <AdminPageFrame
-                title="商业定价"
-                description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。"
-            >
+            <AdminPageFrame title="商业定价" description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。">
                 <AdminContentError title="模型商业定价加载失败" description={loadError} onRetry={() => void reload()} />
             </AdminPageFrame>
         );
@@ -365,7 +363,15 @@ export default function ModelPricingPage() {
                         loading={loading}
                         columns={columns}
                         dataSource={rows}
-                        locale={{ emptyText: <AdminTableEmpty filtered={Boolean(keyword || capability !== "all" || status !== "all")} title={models.length === 0 ? "尚未接入可定价模型" : undefined} description={models.length === 0 ? "请先在 AI 模型配置中创建渠道并添加模型。" : undefined} /> }}
+                        locale={{
+                            emptyText: (
+                                <AdminTableEmpty
+                                    filtered={Boolean(keyword || capability !== "all" || status !== "all")}
+                                    title={models.length === 0 ? "尚未接入可定价模型" : undefined}
+                                    description={models.length === 0 ? "请先在 AI 模型配置中创建渠道并添加模型。" : undefined}
+                                />
+                            ),
+                        }}
                         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型` }}
                         scroll={{ x: 1130 }}
                     />
@@ -387,7 +393,9 @@ export default function ModelPricingPage() {
                     </Button>
                 }
             >
-                <div className="model-pricing-drawer-sync-state" role="status">{settingsDirty ? "有未保存变更" : "当前配置已同步"}</div>
+                <div className="model-pricing-drawer-sync-state" role="status">
+                    {settingsDirty ? "有未保存变更" : "当前配置已同步"}
+                </div>
                 <Form className="model-pricing-settings-form" form={settingsForm} layout="vertical" requiredMark={false} onValuesChange={() => setSettingsDirty(true)}>
                     <Form.Item
                         className="model-pricing-settings-field"
@@ -418,7 +426,25 @@ export default function ModelPricingPage() {
     );
 }
 
-function PricingDrawer({ model, form, strategy, saving, dirty, onDirty, onClose, onSave }: { model: CommercialModel | null; form: FormInstance<PricingFormValues>; strategy: ChannelModel["priceStrategy"]; saving: boolean; dirty: boolean; onDirty: () => void; onClose: () => void; onSave: () => void }) {
+function PricingDrawer({
+    model,
+    form,
+    strategy,
+    saving,
+    dirty,
+    onDirty,
+    onClose,
+    onSave,
+}: {
+    model: CommercialModel | null;
+    form: FormInstance<PricingFormValues>;
+    strategy: ChannelModel["priceStrategy"];
+    saving: boolean;
+    dirty: boolean;
+    onDirty: () => void;
+    onClose: () => void;
+    onSave: () => void;
+}) {
     const capability = model?.capability;
     const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     return (
@@ -437,7 +463,9 @@ function PricingDrawer({ model, form, strategy, saving, dirty, onDirty, onClose,
                 </Button>
             }
         >
-            <div className="model-pricing-drawer-sync-state" role="status">{dirty ? "有未保存变更" : "当前定价已同步"}</div>
+            <div className="model-pricing-drawer-sync-state" role="status">
+                {dirty ? "有未保存变更" : "当前定价已同步"}
+            </div>
             <Form className="model-pricing-form" form={form} layout="vertical" requiredMark={false} onValuesChange={onDirty}>
                 <div className="model-pricing-section mb-7">
                     <h3 className="model-pricing-section-title mb-1 text-sm font-semibold">计费方式</h3>

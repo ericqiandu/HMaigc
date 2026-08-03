@@ -68,12 +68,12 @@ const (
 	ChannelInterfaceOpenAIImage           ChannelInterfaceType = "openai-image"
 	ChannelInterfaceAPIMartImage          ChannelInterfaceType = "apimart-image"
 	ChannelInterfaceNewAPIVideo           ChannelInterfaceType = "newapi"
-	ChannelInterfaceNewAPIChannel1        ChannelInterfaceType = "newapi-channel-1"
-	ChannelInterfaceNewAPIChannel2        ChannelInterfaceType = "newapi-channel-2"
 	ChannelInterfaceXAIVideo              ChannelInterfaceType = "xai-video"
 	ChannelInterfaceAIOpenVideo           ChannelInterfaceType = "ai-open-platform-video"
 	ChannelInterfaceAIOpenVideoVolcengine ChannelInterfaceType = "ai-open-platform-video-volcengine"
 	ChannelInterfaceMiniMaxSpeech         ChannelInterfaceType = "minimax-speech"
+	ChannelInterfaceMiniMaxVideo          ChannelInterfaceType = "minimax-video"
+	ChannelInterfaceKlingVideo            ChannelInterfaceType = "kling-video"
 
 	ModelAccessAuthenticated ModelAccessPolicy = "authenticated"
 	ModelAccessMember        ModelAccessPolicy = "member"
@@ -248,9 +248,7 @@ type ChannelModel struct {
 	DisplayName           string                  `json:"displayName" gorm:"size:160"`
 	MarketingCopy         string                  `json:"marketingCopy" gorm:"size:240"`
 	PromotionBadge        string                  `json:"promotionBadge" gorm:"size:32"`
-	IconFile              string                  `json:"-" gorm:"size:160"`
-	IconMimeType          string                  `json:"-" gorm:"size:80"`
-	IconURL               string                  `json:"iconUrl" gorm:"-"`
+	BrandKey              string                  `json:"brandKey" gorm:"size:32;index;not null;default:generic"`
 	AccessPolicy          ModelAccessPolicy       `json:"accessPolicy" gorm:"size:24;index;not null;default:authenticated"`
 	Capability            string                  `json:"capability" gorm:"size:32;index"`
 	BillingMode           string                  `json:"billingMode" gorm:"size:32"`

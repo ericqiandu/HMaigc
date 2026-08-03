@@ -106,6 +106,38 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	}
 }
 
+func TestMigrateChannelModelBrandsRemovesLegacyIconColumns(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE channel_models (
+		id text PRIMARY KEY,
+		model_key text NOT NULL,
+		brand_key text NOT NULL DEFAULT 'generic',
+		icon_file text,
+		icon_mime_type text
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO channel_models (id, model_key, icon_file, icon_mime_type) VALUES (?, ?, ?, ?)", "model-1", "MiniMax-Hailuo-2.3", "legacy.png", "image/png").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateChannelModelBrands(db, true); err != nil {
+		t.Fatal(err)
+	}
+	var brandKey string
+	if err := db.Raw("SELECT brand_key FROM channel_models WHERE id = ?", "model-1").Scan(&brandKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	if brandKey != "minimax" {
+		t.Fatalf("brand_key = %q, want minimax", brandKey)
+	}
+	if db.Migrator().HasColumn("channel_models", "icon_file") || db.Migrator().HasColumn("channel_models", "icon_mime_type") {
+		t.Fatal("legacy model icon columns were not removed")
+	}
+}
+
 func TestMigrateSchemaBackfillsLegacyTeamCommercialSnapshots(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

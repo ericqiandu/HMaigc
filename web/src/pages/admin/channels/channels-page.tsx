@@ -34,9 +34,9 @@ const interfaceTypeOptions = [
     {
         label: "视频",
         options: [
+            { label: "快手可灵视频", value: "kling-video" },
+            { label: "MiniMax H3 视频", value: "minimax-video" },
             { label: "NewAPI 视频", value: "newapi" },
-            { label: "NewAPI 渠道 1", value: "newapi-channel-1" },
-            { label: "NewAPI 渠道 2", value: "newapi-channel-2" },
             { label: "xAI / Sub2API 视频", value: "xai-video" },
             { label: "AI 开放平台视频（火山兼容）", value: "ai-open-platform-video-volcengine" },
             { label: "AI 开放平台视频（原生）", value: "ai-open-platform-video" },
@@ -67,6 +67,7 @@ export default function ChannelsPage() {
     const requestSequence = useRef(0);
     const [form] = Form.useForm<ChannelFormValues>();
     const useGlobalConcurrency = Form.useWatch("useGlobalConcurrency", form) !== false;
+    const selectedInterfaceType = Form.useWatch("interfaceType", form);
     const hasFilters = Boolean(keyword || interfaceType !== "all" || status !== "all");
     const enabledChannelCount = channels.filter((channel) => channel.enabled !== false).length;
     const visibleModelCount = channels.reduce((sum, channel) => sum + (channel.models?.length || 0), 0);
@@ -249,7 +250,7 @@ export default function ChannelsPage() {
             width: 160,
             responsive: ["md"],
             render: (value: ChannelInterfaceType) => (
-                <Tag variant="filled" color={value === "newapi-channel-1" ? "green" : value === "newapi" ? "orange" : value === "newapi-channel-2" ? "purple" : value === "xai-video" ? "cyan" : "blue"}>
+                <Tag variant="filled" color={value === "newapi" ? "orange" : value === "xai-video" ? "cyan" : "blue"}>
                     {interfaceTypeLabel(value)}
                 </Tag>
             ),
@@ -458,8 +459,18 @@ export default function ChannelsPage() {
                     <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: "请填写 Base URL" }]}>
                         <Input placeholder="填写渠道 Base URL" />
                     </Form.Item>
-                    <Form.Item name="apiKey" label={editingChannel ? `API Key（${configuredSecretText}）` : "API Key"} rules={editingChannel ? [] : [{ required: true, message: "请填写 API Key" }]}>
-                        <Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原密钥" : "系统渠道密钥"} />
+                    <Form.Item
+                        className="admin-channel-secret-field"
+                        name="apiKey"
+                        label={selectedInterfaceType === "kling-video" ? `Access Key / Secret Key（${editingChannel ? configuredSecretText : "JSON"}）` : editingChannel ? `API Key（${configuredSecretText}）` : "API Key"}
+                        extra={selectedInterfaceType === "kling-video" ? '填写严格 JSON：{"accessKey":"...","secretKey":"..."}；仅服务端用于生成短期 JWT。' : undefined}
+                        rules={editingChannel ? [] : [{ required: true, message: selectedInterfaceType === "kling-video" ? "请填写可灵 Access Key 与 Secret Key" : "请填写 API Key" }]}
+                    >
+                        <Input.Password
+                            className="admin-channel-secret-input"
+                            autoComplete="new-password"
+                            placeholder={editingChannel ? "留空保留原密钥" : selectedInterfaceType === "kling-video" ? '{"accessKey":"...","secretKey":"..."}' : "系统渠道密钥"}
+                        />
                     </Form.Item>
                     <Form.Item name="useGlobalConcurrency" label="跟随系统并发配置" valuePropName="checked">
                         <Switch />
@@ -500,7 +511,7 @@ function normalizeStatus(value: string | null): "all" | "enabled" | "disabled" {
     return value === "enabled" || value === "disabled" ? value : "all";
 }
 function normalizeInterface(value: string | null): "all" | ChannelInterfaceType {
-    return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video", "ai-open-platform-video", "ai-open-platform-video-volcengine", "minimax-speech"].includes(value || "")
+    return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "xai-video", "ai-open-platform-video", "ai-open-platform-video-volcengine", "minimax-speech", "minimax-video", "kling-video"].includes(value || "")
         ? (value as ChannelInterfaceType)
         : "all";
 }
@@ -513,12 +524,12 @@ function interfaceTypeLabel(value?: ChannelInterfaceType) {
                 "openai-image": "OpenAI Images",
                 "apimart-image": "APIMart 异步图片",
                 newapi: "NewAPI 视频",
-                "newapi-channel-1": "NewAPI 渠道 1",
-                "newapi-channel-2": "NewAPI 渠道 2",
                 "xai-video": "xAI / Sub2API 视频",
                 "ai-open-platform-video-volcengine": "AI 开放平台视频（火山兼容）",
                 "ai-open-platform-video": "AI 开放平台视频（原生）",
                 "minimax-speech": "MiniMax Speech",
+                "minimax-video": "MiniMax H3 视频",
+                "kling-video": "快手可灵视频",
             } as Record<string, string>
         )[value || ""] || "未设置"
     );

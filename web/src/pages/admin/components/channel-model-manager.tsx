@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Drawer, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ArrowLeft, Image as ImageIcon, LockKeyhole, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, LockKeyhole, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Link } from "react-router";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
-import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, removeAdminChannelModelIcon, updateAdminChannelModel, uploadAdminChannelModelIcon, type ChannelModel } from "@/services/api/wallet";
+import { ModelBrandIcon } from "@/components/model-brand-icon";
+import { modelBrandOptions, type ModelBrandKey } from "@/lib/model-brands";
+import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { AdminContentError, AdminRowActions, AdminTableEmpty, AdminTableSkeleton } from "./admin-ui";
 
@@ -14,6 +16,7 @@ type FormValues = {
     displayName?: string;
     marketingCopy?: string;
     promotionBadge?: string;
+    brandKey: ModelBrandKey;
     accessPolicy: ChannelModel["accessPolicy"];
     capability: ChannelModel["capability"];
     enabled: boolean;
@@ -28,7 +31,6 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [fetching, setFetching] = useState(false);
     const [saving, setSaving] = useState(false);
     const [editorDirty, setEditorDirty] = useState(false);
-    const [iconSaving, setIconSaving] = useState(false);
     const [editorOpen, setEditorOpen] = useState(false);
     const [keyword, setKeyword] = useState("");
     const [capability, setCapability] = useState<ChannelModel["capability"] | "all">("all");
@@ -36,7 +38,6 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
     const [form] = Form.useForm<FormValues>();
-    const iconInputRef = useRef<HTMLInputElement>(null);
     const reloadSequence = useRef(0);
 
     const reload = async () => {
@@ -87,7 +88,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const startCreate = () => {
         setEditing(null);
         setEditorDirty(false);
-        form.setFieldsValue({ modelKey: "", displayName: "", marketingCopy: "", promotionBadge: "", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
+        form.setFieldsValue({ modelKey: "", displayName: "", marketingCopy: "", promotionBadge: "", brandKey: "generic", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
         setEditorOpen(true);
     };
 
@@ -114,6 +115,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             displayName: item.displayName,
             marketingCopy: item.marketingCopy,
             promotionBadge: item.promotionBadge,
+            brandKey: item.brandKey,
             accessPolicy: item.accessPolicy,
             capability: item.capability,
             enabled: item.enabled,
@@ -130,6 +132,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
                 marketingCopy: values.marketingCopy?.trim() || "",
                 promotionBadge: values.promotionBadge?.trim() || "",
+                brandKey: values.brandKey,
                 accessPolicy: values.accessPolicy,
                 capability: values.capability,
                 enabled: values.enabled !== false,
@@ -166,48 +169,6 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         }
     };
 
-    const selectIcon = async (event: ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        event.target.value = "";
-        if (!file || !editing) return;
-        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-            message.error("模型图标仅支持 PNG、JPG 或 WebP 格式");
-            return;
-        }
-        if (file.size > 1024 * 1024) {
-            message.error("模型图标文件大小不能超过 1MB");
-            return;
-        }
-        setIconSaving(true);
-        try {
-            const result = await uploadAdminChannelModelIcon(channel.id, editing.id, file);
-            setEditing(result.model);
-            await reload();
-            await onChanged();
-            message.success("模型图标已更新");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "上传模型图标失败");
-        } finally {
-            setIconSaving(false);
-        }
-    };
-
-    const removeIcon = async () => {
-        if (!editing) return;
-        setIconSaving(true);
-        try {
-            const result = await removeAdminChannelModelIcon(channel.id, editing.id);
-            setEditing(result.model);
-            await reload();
-            await onChanged();
-            message.success("已移除模型自定义图标");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "移除模型图标失败");
-        } finally {
-            setIconSaving(false);
-        }
-    };
-
     const remove = async (item: ChannelModel) => {
         try {
             await deleteAdminChannelModel(channel.id, item.id);
@@ -220,7 +181,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     };
 
     const closeEditor = () => {
-        if (saving || iconSaving) return;
+        if (saving) return;
         if (!editorDirty) {
             setEditorOpen(false);
             return;
@@ -231,7 +192,10 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             okText: "放弃修改",
             okButtonProps: { danger: true },
             cancelText: "继续编辑",
-            onOk: () => { setEditorDirty(false); setEditorOpen(false); },
+            onOk: () => {
+                setEditorDirty(false);
+                setEditorOpen(false);
+            },
         });
     };
 
@@ -241,7 +205,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             render: (_, item) => (
                 <div className="channel-model-identity flex min-w-0 items-center gap-2.5">
                     <span className="channel-model-icon-preview grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-foreground/[.06]">
-                        {item.iconUrl ? <img className="channel-model-icon-image size-5 object-contain" src={item.iconUrl} alt="" /> : <ImageIcon className="channel-model-icon-fallback size-4 text-foreground/40" />}
+                        <ModelBrandIcon brandKey={item.brandKey} className="channel-model-icon-image size-5" />
                     </span>
                     <div className="channel-model-copy min-w-0">
                         <div className="channel-model-name truncate font-medium">{item.displayName || item.modelKey}</div>
@@ -255,12 +219,30 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             width: 190,
             render: (_, item) => (
                 <div className="channel-model-presentation min-w-0">
-                    {item.promotionBadge ? <Tag className="channel-model-promotion-tag" color="gold">{item.promotionBadge}</Tag> : null}
-                    <div className="channel-model-marketing-copy mt-1 truncate text-xs text-foreground/45" title={item.marketingCopy || undefined}>{item.marketingCopy || "未配置推广文案"}</div>
+                    {item.promotionBadge ? (
+                        <Tag className="channel-model-promotion-tag" color="gold">
+                            {item.promotionBadge}
+                        </Tag>
+                    ) : null}
+                    <div className="channel-model-marketing-copy mt-1 truncate text-xs text-foreground/45" title={item.marketingCopy || undefined}>
+                        {item.marketingCopy || "未配置推广文案"}
+                    </div>
                 </div>
             ),
         },
-        { title: "访问", dataIndex: "accessPolicy", width: 110, render: (value) => value === "member" ? <Tag className="channel-model-member-tag" icon={<LockKeyhole className="channel-model-member-tag-icon size-3" />} color="gold">会员专属</Tag> : <Tag className="channel-model-public-tag">全部用户</Tag> },
+        {
+            title: "访问",
+            dataIndex: "accessPolicy",
+            width: 110,
+            render: (value) =>
+                value === "member" ? (
+                    <Tag className="channel-model-member-tag" icon={<LockKeyhole className="channel-model-member-tag-icon size-3" />} color="gold">
+                        会员专属
+                    </Tag>
+                ) : (
+                    <Tag className="channel-model-public-tag">全部用户</Tag>
+                ),
+        },
         { title: "能力", dataIndex: "capability", width: 90, render: capabilityLabel },
         {
             title: "计费",
@@ -269,7 +251,11 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 if (!item.priceConfigured) return <Tag color="orange">未配置价格</Tag>;
                 if (item.priceStrategy !== "flat") {
                     const unit = item.capability === "image" ? "张" : item.billingMode === "per_second" ? "秒" : "次";
-                    return <span className="text-xs text-foreground/70">{item.priceTiers.map((tier) => `${tier.resolution.replace("SR_", "超分 ")} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}</span>;
+                    return (
+                        <span className="text-xs text-foreground/70">
+                            {item.priceTiers.map((tier) => `${tier.resolution.replace("SR_", "超分 ")} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}
+                        </span>
+                    );
                 }
                 return `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}`;
             },
@@ -282,27 +268,33 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             render: (_, item) => (
                 <AdminRowActions
                     primary={{ label: "编辑", onClick: () => startEdit(item) }}
-                    actions={[{
-                        key: "delete",
-                        label: "删除模型",
-                        icon: <Trash2 className="channel-model-delete-icon size-3.5" />,
-                        danger: true,
-                        confirm: { title: "删除模型？", description: "删除后模型不再显示，历史账单仍会保留。该操作不能在页面恢复。", okText: "确认删除" },
-                        onClick: () => remove(item),
-                    }]}
+                    actions={[
+                        {
+                            key: "delete",
+                            label: "删除模型",
+                            icon: <Trash2 className="channel-model-delete-icon size-3.5" />,
+                            danger: true,
+                            confirm: { title: "删除模型？", description: "删除后模型不再显示，历史账单仍会保留。该操作不能在页面恢复。", okText: "确认删除" },
+                            onClick: () => remove(item),
+                        },
+                    ]}
                 />
             ),
         },
     ];
 
-    const filteredItems = useMemo(() => items.filter((item) => {
-        const query = keyword.trim().toLowerCase();
-        if (query && !`${item.modelKey} ${item.displayName} ${item.marketingCopy} ${item.promotionBadge}`.toLowerCase().includes(query)) return false;
-        if (capability !== "all" && item.capability !== capability) return false;
-        if (status === "enabled" && !item.enabled) return false;
-        if (status === "disabled" && item.enabled) return false;
-        return true;
-    }), [capability, items, keyword, status]);
+    const filteredItems = useMemo(
+        () =>
+            items.filter((item) => {
+                const query = keyword.trim().toLowerCase();
+                if (query && !`${item.modelKey} ${item.displayName} ${item.marketingCopy} ${item.promotionBadge}`.toLowerCase().includes(query)) return false;
+                if (capability !== "all" && item.capability !== capability) return false;
+                if (status === "enabled" && !item.enabled) return false;
+                if (status === "disabled" && item.enabled) return false;
+                return true;
+            }),
+        [capability, items, keyword, status],
+    );
     const hasFilters = Boolean(keyword || capability !== "all" || status !== "all");
 
     return (
@@ -316,7 +308,9 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </div>
                 </div>
                 <Space className="channel-model-manager-actions" wrap>
-                    <Link className="channel-model-pricing-link" to="/admin/model-pricing"><Button className="channel-model-pricing-button">商业定价</Button></Link>
+                    <Link className="channel-model-pricing-link" to="/admin/model-pricing">
+                        <Button className="channel-model-pricing-button">商业定价</Button>
+                    </Link>
                     <Button className="channel-model-fetch-button" loading={fetching} icon={<RefreshCw className="channel-model-fetch-icon size-4" />} onClick={() => void fetchModels()}>
                         拉取模型
                     </Button>
@@ -325,10 +319,60 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </Button>
                 </Space>
             </div>
-            <ListToolbar className="channel-model-manager-toolbar" active={hasFilters} onReset={() => { setKeyword(""); setCapability("all"); setStatus("all"); setPage(1); }} trailing={<span className="channel-model-result-count">显示 {filteredItems.length} / {items.length} 个模型</span>}>
-                <Input allowClear className="app-list-search" prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索模型、文案或角标" onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
-                <Select className="w-32" value={capability} onChange={(value) => { setCapability(value); setPage(1); }} options={[{ label: "全部能力", value: "all" }, { label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} />
-                <Select className="w-32" value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={[{ label: "全部状态", value: "all" }, { label: "已启用", value: "enabled" }, { label: "已停用", value: "disabled" }]} />
+            <ListToolbar
+                className="channel-model-manager-toolbar"
+                active={hasFilters}
+                onReset={() => {
+                    setKeyword("");
+                    setCapability("all");
+                    setStatus("all");
+                    setPage(1);
+                }}
+                trailing={
+                    <span className="channel-model-result-count">
+                        显示 {filteredItems.length} / {items.length} 个模型
+                    </span>
+                }
+            >
+                <Input
+                    allowClear
+                    className="app-list-search"
+                    prefix={<Search className="size-4 text-foreground/40" />}
+                    value={keyword}
+                    placeholder="搜索模型、文案或角标"
+                    onChange={(event) => {
+                        setKeyword(event.target.value);
+                        setPage(1);
+                    }}
+                />
+                <Select
+                    className="w-32"
+                    value={capability}
+                    onChange={(value) => {
+                        setCapability(value);
+                        setPage(1);
+                    }}
+                    options={[
+                        { label: "全部能力", value: "all" },
+                        { label: "文本", value: "text" },
+                        { label: "图片", value: "image" },
+                        { label: "视频", value: "video" },
+                        { label: "音频", value: "audio" },
+                    ]}
+                />
+                <Select
+                    className="w-32"
+                    value={status}
+                    onChange={(value) => {
+                        setStatus(value);
+                        setPage(1);
+                    }}
+                    options={[
+                        { label: "全部状态", value: "all" },
+                        { label: "已启用", value: "enabled" },
+                        { label: "已停用", value: "disabled" },
+                    ]}
+                />
             </ListToolbar>
             {loadError && items.length > 0 ? <AdminContentError title="模型目录刷新失败" description={loadError} onRetry={() => void reload()} /> : null}
             {loadError && items.length === 0 ? (
@@ -346,13 +390,40 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                             columns={columns}
                             dataSource={filteredItems}
                             locale={{ emptyText: <AdminTableEmpty filtered={hasFilters} title={hasFilters ? undefined : "尚未添加模型"} description={hasFilters ? undefined : "可从上游拉取模型，或手动新增模型目录。"} /> }}
-                            pagination={{ current: page, pageSize, total: filteredItems.length, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize !== pageSize ? 1 : nextPage); setPageSize(nextPageSize); } }}
+                            pagination={{
+                                current: page,
+                                pageSize,
+                                total: filteredItems.length,
+                                showSizeChanger: true,
+                                pageSizeOptions: [20, 50, 100],
+                                showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型`,
+                                onChange: (nextPage, nextPageSize) => {
+                                    setPage(nextPageSize !== pageSize ? 1 : nextPage);
+                                    setPageSize(nextPageSize);
+                                },
+                            }}
                             scroll={{ x: 950 }}
                         />
                     )}
                 </TableSurface>
             )}
-            <Drawer className="admin-object-drawer admin-channel-model-drawer" title={editing ? "编辑模型" : "新增模型"} open={editorOpen} size="min(520px, 100vw)" onClose={closeEditor} maskClosable={!saving && !iconSaving} keyboard={!saving && !iconSaving} styles={{ body: { paddingBottom: 88 } }} extra={editing ? <Button className="channel-model-create-from-editor" size="small" icon={<Plus className="channel-model-create-from-editor-icon size-3.5" />} disabled={saving || iconSaving} onClick={requestStartCreate}>新增</Button> : null}>
+            <Drawer
+                className="admin-object-drawer admin-channel-model-drawer"
+                title={editing ? "编辑模型" : "新增模型"}
+                open={editorOpen}
+                size="min(520px, 100vw)"
+                onClose={closeEditor}
+                maskClosable={!saving}
+                keyboard={!saving}
+                styles={{ body: { paddingBottom: 88 } }}
+                extra={
+                    editing ? (
+                        <Button className="channel-model-create-from-editor" size="small" icon={<Plus className="channel-model-create-from-editor-icon size-3.5" />} disabled={saving} onClick={requestStartCreate}>
+                            新增
+                        </Button>
+                    ) : null
+                }
+            >
                 <Form className="admin-channel-model-form" form={form} layout="vertical" requiredMark={false} onValuesChange={() => setEditorDirty(true)}>
                     <Form.Item name="modelKey" label="模型标识" rules={[{ required: true, message: "请输入模型标识" }]}>
                         <Input placeholder="gpt-image-2" />
@@ -366,32 +437,55 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <Form.Item className="channel-model-promotion-badge-field" name="promotionBadge" label="促销角标" extra="仅作为运营展示，不会自动修改积分价格或活动有效期；活动结束后请及时清空。">
                         <Input className="channel-model-promotion-badge-input" maxLength={12} showCount placeholder="例如：限时4折" />
                     </Form.Item>
-                    <Form.Item className="channel-model-access-field" name="accessPolicy" label="使用权限" extra="会员专属模型仅允许有效个人会员或有效团队席位成员调用；服务端会在实际生成前再次校验。" rules={[{ required: true, message: "请选择使用权限" }]}>
-                        <Select className="channel-model-access-select" options={[{ label: "全部登录用户", value: "authenticated" }, { label: "有效会员专属", value: "member" }]} />
+                    <Form.Item
+                        className="channel-model-access-field"
+                        name="accessPolicy"
+                        label="使用权限"
+                        extra="会员专属模型仅允许有效个人会员或有效团队席位成员调用；服务端会在实际生成前再次校验。"
+                        rules={[{ required: true, message: "请选择使用权限" }]}
+                    >
+                        <Select
+                            className="channel-model-access-select"
+                            options={[
+                                { label: "全部登录用户", value: "authenticated" },
+                                { label: "有效会员专属", value: "member" },
+                            ]}
+                        />
                     </Form.Item>
-                    <div className="channel-model-icon-editor mb-6 bg-foreground/[.035] px-4 py-4">
-                        <span className="channel-model-icon-editor-label mb-3 block text-sm font-medium text-foreground/85">模型图标</span>
-                        <div className="channel-model-icon-editor-row flex items-center gap-3">
-                            <span className="channel-model-icon-editor-preview grid size-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-background">
-                                {editing?.iconUrl ? <img className="channel-model-icon-editor-image size-8 object-contain" src={editing.iconUrl} alt="" /> : <ImageIcon className="channel-model-icon-editor-fallback size-5 text-foreground/35" />}
-                            </span>
-                            <div className="channel-model-icon-editor-actions min-w-0">
-                                <input ref={iconInputRef} className="channel-model-icon-file-input !hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void selectIcon(event)} />
-                                <Space className="channel-model-icon-buttons" wrap>
-                                    <Button className="channel-model-icon-upload-button" disabled={!editing} loading={iconSaving} icon={<Upload className="channel-model-icon-upload-icon size-4" />} onClick={() => iconInputRef.current?.click()}>{editing?.iconUrl ? "替换" : "上传"}</Button>
-                                    {editing?.iconUrl ? <Popconfirm rootClassName="admin-operation-popconfirm workspace-ui-scope" title="移除模型图标" description="移除后前端会按模型名称显示内置图标或通用图标。" okText="移除" cancelText="取消" onConfirm={() => void removeIcon()}><Button className="channel-model-icon-remove-button" type="text" danger loading={iconSaving}>移除</Button></Popconfirm> : null}
-                                </Space>
-                                <span className="channel-model-icon-help mt-2 block text-[11px] leading-4 text-foreground/45">{editing ? "PNG、JPG 或 WebP，最大 1MB，建议使用透明底方形图标。" : "请先添加模型，再上传图标。"}</span>
-                            </div>
-                        </div>
-                    </div>
+                    <Form.Item className="channel-model-brand-field" name="brandKey" label="模型品牌" extra="使用系统内置品牌图标，自动适配日间和夜间模式。" rules={[{ required: true, message: "请选择模型品牌" }]}>
+                        <Select
+                            className="channel-model-brand-select"
+                            optionLabelProp="label"
+                            options={modelBrandOptions.map((brand) => ({
+                                value: brand.key,
+                                label: brand.label,
+                                title: brand.label,
+                                icon: brand.key,
+                            }))}
+                            optionRender={(option) => (
+                                <span className="channel-model-brand-option flex items-center gap-2">
+                                    <ModelBrandIcon brandKey={option.data.icon} className="channel-model-brand-option-icon size-4" />
+                                    <span className="channel-model-brand-option-label">{option.data.label}</span>
+                                </span>
+                            )}
+                        />
+                    </Form.Item>
                     <Form.Item name="capability" label="能力" rules={[{ required: true }]}>
-                        <Select options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} />
+                        <Select
+                            options={[
+                                { label: "文本", value: "text" },
+                                { label: "图片", value: "image" },
+                                { label: "视频", value: "video" },
+                                { label: "音频", value: "audio" },
+                            ]}
+                        />
                     </Form.Item>
                     <Form.Item name="enabled" label="启用" valuePropName="checked">
                         <Switch />
                     </Form.Item>
-                    <Button className="channel-model-save-button" type="primary" block disabled={!editorDirty} loading={saving} onClick={() => void save()}>{editing ? "保存修改" : "添加模型"}</Button>
+                    <Button className="channel-model-save-button" type="primary" block disabled={!editorDirty} loading={saving} onClick={() => void save()}>
+                        {editing ? "保存修改" : "添加模型"}
+                    </Button>
                 </Form>
             </Drawer>
         </div>
@@ -400,7 +494,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
 function capabilityFromInterface(value?: ModelChannel["interfaceType"]): ChannelModel["capability"] {
     if (value === "openai-image" || value === "apimart-image") return "image";
-    if (value === "newapi" || value === "newapi-channel-1" || value === "newapi-channel-2" || value === "xai-video" || value === "ai-open-platform-video" || value === "ai-open-platform-video-volcengine") return "video";
+    if (value === "newapi" || value === "xai-video" || value === "ai-open-platform-video" || value === "ai-open-platform-video-volcengine" || value === "minimax-video") return "video";
     if (value === "minimax-speech") return "audio";
     return "text";
 }

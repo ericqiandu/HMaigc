@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Coins, Cpu } from "lucide-react";
+import { Coins } from "lucide-react";
 import { Select } from "antd";
 
 import { staticAssetURL } from "@/lib/static-assets";
 import { cn } from "@/lib/utils";
+import { ModelBrandIcon } from "@/components/model-brand-icon";
 import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
@@ -22,10 +23,7 @@ type ModelPickerProps = {
 export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, showSelectedPrice = true, presentation = "default" }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
-    const options = useMemo(
-        () => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...catalogModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))),
-        [capability, config, value],
-    );
+    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...catalogModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
     const optionGroups = useMemo(() => {
         const channelGroups = config.channels
             .map((channel) => ({
@@ -43,17 +41,18 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const currentPrice = modelMenuPrice(config, current);
     const canvasMediaPresentation = presentation === "canvasImage" || presentation === "canvasAudio";
     const selectOptions = useMemo(
-        () => canvasMediaPresentation
-            ? options.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) }))
-            : optionGroups.map((group) => ({
-                label: (
-                    <span className="canvas-model-picker-group flex min-w-0 items-center gap-1.5">
-                        <span className="canvas-model-picker-group-name truncate">{group.label}</span>
-                        <span className="canvas-model-picker-group-scope shrink-0 text-[10px] font-normal text-foreground/38">{group.scope}</span>
-                    </span>
-                ),
-                options: group.models.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) })),
-            })),
+        () =>
+            canvasMediaPresentation
+                ? options.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) }))
+                : optionGroups.map((group) => ({
+                      label: (
+                          <span className="canvas-model-picker-group flex min-w-0 items-center gap-1.5">
+                              <span className="canvas-model-picker-group-name truncate">{group.label}</span>
+                              <span className="canvas-model-picker-group-scope shrink-0 text-[10px] font-normal text-foreground/38">{group.scope}</span>
+                          </span>
+                      ),
+                      options: group.models.map((model) => ({ value: model, label: modelDisplayName(config, model), disabled: !isModelAccessible(config, model) })),
+                  })),
         [canvasMediaPresentation, config, optionGroups, options],
     );
 
@@ -77,7 +76,9 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                             <ModelIcon config={config} model="" />
                             <span className="canvas-model-picker-placeholder-text truncate">{placeholder}</span>
                         </span>
-                    ) : placeholder
+                    ) : (
+                        placeholder
+                    )
                 }
                 options={selectOptions}
                 showSearch
@@ -155,11 +156,7 @@ function ModelLabel({ config, model, presentation, selected }: { config: AiConfi
                         </span>
                     ) : null}
                 </span>
-                {showMarketingCopy ? (
-                    <span className="canvas-model-picker-option-meta mt-0.5 block w-full truncate text-[11px] font-normal leading-4">
-                        {modelMeta}
-                    </span>
-                ) : null}
+                {showMarketingCopy ? <span className="canvas-model-picker-option-meta mt-0.5 block w-full truncate text-[11px] font-normal leading-4">{modelMeta}</span> : null}
             </span>
             <ModelPrice price={modelMenuPrice(config, model)} presentation={presentation} />
         </span>
@@ -193,12 +190,8 @@ function ModelPrice({ price, compact = false, presentation = "default" }: { pric
 }
 
 export function ModelIcon({ model, config }: { model: string; config?: AiConfig }) {
-    const configuredIcon = config ? modelCatalogEntry(config, model)?.iconUrl?.trim() : "";
-    if (configuredIcon) {
-        return <img src={configuredIcon} alt="" className="canvas-model-picker-icon canvas-model-picker-icon--configured size-3.5 shrink-0 object-contain" />;
-    }
-    const icon = resolveModelIcon(modelOptionName(model));
-    return icon ? <img src={icon} alt="" className="canvas-model-picker-icon size-3.5 shrink-0 dark:invert" /> : <Cpu className="canvas-model-picker-icon size-3.5 shrink-0 opacity-70" />;
+    const brandKey = config ? (modelCatalogEntry(config, model)?.brandKey ?? "generic") : "generic";
+    return <ModelBrandIcon brandKey={brandKey} className="canvas-model-picker-icon size-3.5 opacity-90" />;
 }
 
 function modelCatalogEntry(config: AiConfig, model: string) {
@@ -216,15 +209,4 @@ function MemberDiamond() {
             <img className="canvas-model-picker-member-diamond-image size-3.5 object-contain" src={staticAssetURL("/icons/member-diamond.svg")} alt="" aria-hidden="true" />
         </span>
     );
-}
-
-function resolveModelIcon(model: string) {
-    const name = model.toLowerCase();
-    if (name.includes("claude") || name.includes("anthropic")) return staticAssetURL("/icons/claude.svg");
-    if (name.includes("gemini") || name.includes("google")) return staticAssetURL("/icons/gemini.svg");
-    if (name.includes("gpt") || name.includes("openai")) return staticAssetURL("/icons/openai.svg");
-    if (name.includes("grok") || name.includes("grok")) return staticAssetURL("/icons/grok.svg");
-    if (name.includes("deepseek") || name.includes("deepseek")) return staticAssetURL("/icons/deepseek.svg");
-    if (name.includes("glm") || name.includes("glm")) return staticAssetURL("/icons/glm.svg");
-    return "";
 }

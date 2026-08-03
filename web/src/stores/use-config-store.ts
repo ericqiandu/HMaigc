@@ -5,9 +5,10 @@ import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import type { ModelBrandKey } from "@/lib/model-brands";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "newapi-channel-1" | "newapi-channel-2" | "xai-video" | "ai-open-platform-video" | "ai-open-platform-video-volcengine" | "minimax-speech";
+export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "xai-video" | "ai-open-platform-video" | "ai-open-platform-video-volcengine" | "minimax-speech" | "minimax-video" | "kling-video";
 
 export type ChannelVoice = {
     id: string;
@@ -44,7 +45,7 @@ export type ModelChannel = {
         displayName?: string;
         marketingCopy: string;
         promotionBadge: string;
-        iconUrl?: string;
+        brandKey: ModelBrandKey;
         accessPolicy: "authenticated" | "member";
         accessible: boolean;
         capability: ModelCapability;
@@ -483,14 +484,17 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfaceType) {
     if (interfaceType === "apimart-image") return "https://api.apimart.ai/v1";
     if (interfaceType === "minimax-speech") return "https://api.minimaxi.com/v1";
-    if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine") return "";
+    if (interfaceType === "minimax-video") return "https://api.minimaxi.com";
+    if (interfaceType === "kling-video") return "https://api.klingai.com";
+    if (interfaceType === "newapi" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine") return "";
     return OPENAI_BASE_URL;
 }
 
 function capabilityForChannelInterface(interfaceType?: ChannelInterfaceType): ModelCapability | undefined {
     if (interfaceType === "chat-completion" || interfaceType === "openai-response") return "text";
     if (interfaceType === "openai-image" || interfaceType === "apimart-image") return "image";
-    if (interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine") return "video";
+    if (interfaceType === "newapi" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine" || interfaceType === "minimax-video" || interfaceType === "kling-video")
+        return "video";
     if (interfaceType === "minimax-speech") return "audio";
     return undefined;
 }
@@ -505,12 +509,12 @@ function normalizeChannelInterfaceType(value: unknown): ChannelInterfaceType | u
         value === "openai-image" ||
         value === "apimart-image" ||
         value === "newapi" ||
-        value === "newapi-channel-1" ||
-        value === "newapi-channel-2" ||
         value === "xai-video" ||
         value === "ai-open-platform-video" ||
         value === "ai-open-platform-video-volcengine" ||
-        value === "minimax-speech"
+        value === "minimax-speech" ||
+        value === "minimax-video" ||
+        value === "kling-video"
         ? value
         : undefined;
 }

@@ -14,6 +14,7 @@ func TestNormalizeVideoPricingResolution(t *testing.T) {
 	}{
 		{name: "numeric 480p", usage: BillingUsage{Resolution: "480"}, want: "480P"},
 		{name: "numeric 720p", usage: BillingUsage{Resolution: "720"}, want: "720P"},
+		{name: "MiniMax H3 768p", usage: BillingUsage{Resolution: "768p"}, want: "768P"},
 		{name: "1080p suffix", usage: BillingUsage{Resolution: "1080p"}, want: "1080P"},
 		{name: "base 2k", usage: BillingUsage{Resolution: "2K"}, want: "2K"},
 		{name: "base 4k", usage: BillingUsage{Resolution: "4k"}, want: "4K"},
@@ -82,6 +83,7 @@ func TestBuildChannelModelPriceTiersAcceptsVideoBaseAndSuperResolution(t *testin
 	}
 	requests := []ChannelModelPriceTierRequest{
 		{Resolution: "480P", UnitPriceMicrocredits: 1_000_000},
+		{Resolution: "768P", UnitPriceMicrocredits: 1_500_000},
 		{Resolution: "1080P", UnitPriceMicrocredits: 2_000_000},
 		{Resolution: "SR_2K", UnitPriceMicrocredits: 4_000_000},
 		{Resolution: "SR_4K", UnitPriceMicrocredits: 8_000_000},

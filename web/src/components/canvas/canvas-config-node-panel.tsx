@@ -6,7 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import { normalizeVideoConfigForModel, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -14,6 +14,7 @@ import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata, CanvasVideoEditOperation, CanvasWorkspaceMode } from "@/types/canvas";
+import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -162,10 +163,19 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                     className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "audio" ? "grid-cols-[minmax(0,1fr)_132px_40px]" : mode === "image" || mode === "video" ? "grid-cols-[minmax(0,1fr)_148px]" : "grid-cols-1"}`}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={handleMissingSystemModel} fullWidth />
+                    <ModelPicker
+                        className="canvas-compact-control h-10"
+                        config={config}
+                        value={config.model}
+                        onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : { model })}
+                        capability={mode}
+                        onMissingConfig={handleMissingSystemModel}
+                        fullWidth
+                    />
                     {mode === "video" ? (
                         <CanvasVideoSettingsPopover
                             config={config}
+                            generationMode={resolveVideoGenerationMode(node.metadata)}
                             placement="topRight"
                             buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
                             onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
@@ -251,14 +261,14 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const storedModel = node.metadata?.model;
     const model = storedModel && configuredModelMatchesCapability(globalConfig, storedModel, mode) ? storedModel : defaultModel && configuredModelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel;
-    return {
+    const config: AiConfig = {
         ...globalConfig,
         model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         transparentBackground: (node.metadata?.transparentBackground || globalConfig.transparentBackground) === "true" ? "true" : "false",
-        videoSeconds: normalizeVideoDuration(node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds),
-        vquality: normalizeVideoResolution(node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality),
+        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
+        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         videoSuperResolutionEnabled: node.metadata?.superResolutionEnabled || globalConfig.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
@@ -279,6 +289,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
+    return mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {

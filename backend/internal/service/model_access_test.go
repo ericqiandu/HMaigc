@@ -2,8 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,61 +125,6 @@ func TestPublicChannelMarksMemberModelAccessibility(t *testing.T) {
 	}
 }
 
-func TestAdminChannelModelIconUploadAndRemoval(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.AdminAuditEvent{}); err != nil {
-		t.Fatal(err)
-	}
-	item := model.ChannelModel{
-		ID: "image-model", ChannelID: "channel-1", ModelKey: "image-model",
-		AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", Enabled: true,
-	}
-	if err := db.Create(&item).Error; err != nil {
-		t.Fatal(err)
-	}
-	svc := &Service{repo: repository.New(db), dataDir: t.TempDir()}
-	admin := &model.User{ID: "admin-1", Role: model.UserRoleAdmin}
-
-	updated, err := svc.UpdateAdminChannelModelIcon(admin, item.ChannelID, item.ID, pngFileHeader(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updated.IconURL == "" {
-		t.Fatal("uploaded model icon URL should not be empty")
-	}
-	filePath, mimeType, _, err := svc.ChannelModelIconFile(admin, item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mimeType != "image/png" {
-		t.Fatalf("mime type = %q, want image/png", mimeType)
-	}
-	if _, err := os.Stat(filePath); err != nil {
-		t.Fatal(err)
-	}
-
-	removed, err := svc.RemoveAdminChannelModelIcon(admin, item.ChannelID, item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if removed.IconURL != "" {
-		t.Fatalf("removed icon URL = %q, want empty", removed.IconURL)
-	}
-	if _, _, _, err := svc.ChannelModelIconFile(admin, item.ID); !errors.Is(err, ErrChannelModelIconNotConfigured) {
-		t.Fatalf("icon after removal error = %v", err)
-	}
-	var auditCount int64
-	if err := db.Model(&model.AdminAuditEvent{}).Where("target_type = ? AND target_id = ?", "channel_model", item.ID).Count(&auditCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if auditCount != 2 {
-		t.Fatalf("audit count = %d, want 2", auditCount)
-	}
-}
-
 func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -203,6 +146,7 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 
 	saved, err := svc.SaveAdminChannelModel(admin, channel.ID, "", ChannelModelRequest{
 		ModelKey: "member-image", DisplayName: "会员图片", MarketingCopy: "面向会员的高质量图片生成", PromotionBadge: "限时4折",
+		BrandKey:     "openai",
 		AccessPolicy: model.ModelAccessMember,
 		Capability:   "image", BillingMode: "fixed_request", PriceStrategy: "flat",
 		UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: &enabled,
@@ -234,6 +178,7 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 	presentationUpdated, err := svc.SaveAdminChannelModel(admin, channel.ID, saved.ID, ChannelModelRequest{
 		ModelKey: saved.ModelKey, DisplayName: saved.DisplayName,
 		MarketingCopy: "更新后的会员模型介绍", PromotionBadge: "会员专享",
+		BrandKey:     saved.BrandKey,
 		AccessPolicy: saved.AccessPolicy, Capability: saved.Capability,
 		BillingMode: saved.BillingMode, PriceStrategy: saved.PriceStrategy,
 		UnitPriceMicrocredits: saved.UnitPriceMicrocredits, PriceConfigured: saved.PriceConfigured, Enabled: &enabled,
@@ -248,6 +193,7 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 	priceUpdated, err := svc.SaveAdminChannelModel(admin, channel.ID, saved.ID, ChannelModelRequest{
 		ModelKey: presentationUpdated.ModelKey, DisplayName: presentationUpdated.DisplayName,
 		MarketingCopy: presentationUpdated.MarketingCopy, PromotionBadge: presentationUpdated.PromotionBadge,
+		BrandKey:     presentationUpdated.BrandKey,
 		AccessPolicy: presentationUpdated.AccessPolicy, Capability: presentationUpdated.Capability,
 		BillingMode: presentationUpdated.BillingMode, PriceStrategy: presentationUpdated.PriceStrategy,
 		UnitPriceMicrocredits: 120_000, PriceConfigured: presentationUpdated.PriceConfigured, Enabled: &enabled,
@@ -275,6 +221,7 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 			_, saveErr := svc.SaveAdminChannelModel(admin, channel.ID, saved.ID, ChannelModelRequest{
 				ModelKey: priceUpdated.ModelKey, DisplayName: priceUpdated.DisplayName,
 				MarketingCopy: testCase.marketingCopy, PromotionBadge: testCase.promotionBadge,
+				BrandKey:     priceUpdated.BrandKey,
 				AccessPolicy: priceUpdated.AccessPolicy, Capability: priceUpdated.Capability,
 				BillingMode: priceUpdated.BillingMode, PriceStrategy: priceUpdated.PriceStrategy,
 				UnitPriceMicrocredits: priceUpdated.UnitPriceMicrocredits, PriceConfigured: priceUpdated.PriceConfigured, Enabled: &enabled,

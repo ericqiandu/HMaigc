@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import "@/styles/canvas-chrome.css";
+import "@/styles/canvas-overlays.css";
 import { App, Button } from "antd";
 import { Clapperboard, Eye, FileText, Image as ImageIcon, LockKeyhole, LogIn, Send, Share2, Video } from "lucide-react";
 import { Link, useParams } from "react-router";
@@ -58,10 +60,14 @@ export default function SharedCanvasPage() {
         return result;
     }, [nodes]);
     const visibleNodes = useMemo(() => nodes.filter((node) => !isNodeHiddenByCollapsedFrame(node, nodes)), [nodes]);
-    const visibleConnections = useMemo(() => connections.flatMap((connection) => {
-        const resolved = resolveFrameConnection(connection, nodes);
-        return resolved ? [{ connection, ...resolved }] : [];
-    }), [connections, nodes]);
+    const visibleConnections = useMemo(
+        () =>
+            connections.flatMap((connection) => {
+                const resolved = resolveFrameConnection(connection, nodes);
+                return resolved ? [{ connection, ...resolved }] : [];
+            }),
+        [connections, nodes],
+    );
     const connectionBounds = useMemo(() => {
         if (!nodes.length) return { left: -1, top: -1, width: 2, height: 2 };
         const padding = 320;
@@ -75,21 +81,26 @@ export default function SharedCanvasPage() {
     useEffect(() => {
         let active = true;
         setLoading(true);
-        getPublicCanvasShare(token).then(({ project }) => {
-            if (!active) return;
-            setTitle(project.title || "共享画布");
-            setNodes((project.nodes || []).map(normalizeVideoCompositionNode));
-            setConnections(project.connections || []);
-            setBackgroundMode(project.backgroundMode || "lines");
-            const initial = project.viewport || { x: 0, y: 0, k: 1 };
-            viewportRef.current = initial;
-            setViewport(initial);
-        }).catch((error) => {
-            if (active) setLoadError(error instanceof Error ? error.message : "分享链接无效或已失效");
-        }).finally(() => {
-            if (active) setLoading(false);
-        });
-        return () => { active = false; };
+        getPublicCanvasShare(token)
+            .then(({ project }) => {
+                if (!active) return;
+                setTitle(project.title || "共享画布");
+                setNodes((project.nodes || []).map(normalizeVideoCompositionNode));
+                setConnections(project.connections || []);
+                setBackgroundMode(project.backgroundMode || "lines");
+                const initial = project.viewport || { x: 0, y: 0, k: 1 };
+                viewportRef.current = initial;
+                setViewport(initial);
+            })
+            .catch((error) => {
+                if (active) setLoadError(error instanceof Error ? error.message : "分享链接无效或已失效");
+            })
+            .finally(() => {
+                if (active) setLoading(false);
+            });
+        return () => {
+            active = false;
+        };
     }, [token]);
 
     useEffect(() => {
@@ -104,10 +115,13 @@ export default function SharedCanvasPage() {
             const drag = dragRef.current;
             if (!drag) return;
             const offset = { x: (event.clientX - drag.startX) / viewportRef.current.k, y: (event.clientY - drag.startY) / viewportRef.current.k };
-            if (drag.moved) setNodes((current) => current.map((node) => {
-                const origin = drag.origins.get(node.id);
-                return origin ? { ...node, position: { x: origin.x + offset.x, y: origin.y + offset.y } } : node;
-            }));
+            if (drag.moved)
+                setNodes((current) =>
+                    current.map((node) => {
+                        const origin = drag.origins.get(node.id);
+                        return origin ? { ...node, position: { x: origin.x + offset.x, y: origin.y + offset.y } } : node;
+                    }),
+                );
             else setInfoNodeId(drag.primaryId);
             dragRef.current = null;
             setDragOffset(null);
@@ -191,35 +205,58 @@ export default function SharedCanvasPage() {
     const addNode = (type: CanvasNodeType) => {
         if (!contextMenu) return;
         const size = NODE_DEFAULT_SIZE[type];
-        setNodes((current) => [...current, {
-            id: `shared-${nanoid()}`,
-            type,
-            title: type === CanvasNodeType.Text ? "临时文本" : type === CanvasNodeType.Image ? "临时图片" : type === CanvasNodeType.Video ? "临时视频" : "临时分镜",
-            position: contextMenu.world,
-            width: size.width,
-            height: size.height,
-            metadata: type === CanvasNodeType.Text ? { content: "此节点只存在于当前浏览器页面，刷新后消失。" } : {},
-        }]);
+        setNodes((current) => [
+            ...current,
+            {
+                id: `shared-${nanoid()}`,
+                type,
+                title: type === CanvasNodeType.Text ? "临时文本" : type === CanvasNodeType.Image ? "临时图片" : type === CanvasNodeType.Video ? "临时视频" : "临时分镜",
+                position: contextMenu.world,
+                width: size.width,
+                height: size.height,
+                metadata: type === CanvasNodeType.Text ? { content: "此节点只存在于当前浏览器页面，刷新后消失。" } : {},
+            },
+        ]);
         setContextMenu(null);
         message.info("已添加临时节点，刷新页面后会消失");
     };
-    const toggleFrame = (nodeId: string) => setNodes((current) => current.map((node) => {
-        if (node.id !== nodeId || !isFrameNode(node)) return node;
-        const collapsed = !node.metadata?.frame?.collapsed;
-        const frame = node.metadata?.frame;
-        return {
-            ...node,
-            width: collapsed ? 240 : frame?.expandedWidth || node.width,
-            height: collapsed ? 144 : frame?.expandedHeight || node.height,
-            metadata: { ...node.metadata, frame: { collapsed, expandedWidth: collapsed ? node.width : frame?.expandedWidth || node.width, expandedHeight: collapsed ? node.height : frame?.expandedHeight || node.height } },
-        };
-    }));
-    const renderSharedNode = useCallback((node: CanvasNodeData): ReactNode => node.type === CanvasNodeType.Script ? <SharedScriptNode node={node} onUnauthorized={unauthorized} /> : <SharedConfigNode node={node} onUnauthorized={unauthorized} />, [unauthorized]);
+    const toggleFrame = (nodeId: string) =>
+        setNodes((current) =>
+            current.map((node) => {
+                if (node.id !== nodeId || !isFrameNode(node)) return node;
+                const collapsed = !node.metadata?.frame?.collapsed;
+                const frame = node.metadata?.frame;
+                return {
+                    ...node,
+                    width: collapsed ? 240 : frame?.expandedWidth || node.width,
+                    height: collapsed ? 144 : frame?.expandedHeight || node.height,
+                    metadata: { ...node.metadata, frame: { collapsed, expandedWidth: collapsed ? node.width : frame?.expandedWidth || node.width, expandedHeight: collapsed ? node.height : frame?.expandedHeight || node.height } },
+                };
+            }),
+        );
+    const renderSharedNode = useCallback(
+        (node: CanvasNodeData): ReactNode => (node.type === CanvasNodeType.Script ? <SharedScriptNode node={node} onUnauthorized={unauthorized} /> : <SharedConfigNode node={node} onUnauthorized={unauthorized} />),
+        [unauthorized],
+    );
     const toolbarNodeKey = toolbarNodeId || selectedNodeId;
     const toolbarNode = toolbarNodeKey ? nodeById.get(toolbarNodeKey) || null : null;
 
     if (loading) return <FullScreenLoader label="正在打开共享画布" detail="读取节点、连线和视图状态" />;
-    if (loadError) return <div className="grid h-screen place-items-center px-5" style={{ background: theme.canvas.background }}><WorkspaceState icon="error" title="分享链接不可用" description={loadError} action={<Link to="/"><Button>返回首页</Button></Link>} /></div>;
+    if (loadError)
+        return (
+            <div className="grid h-screen place-items-center px-5" style={{ background: theme.canvas.background }}>
+                <WorkspaceState
+                    icon="error"
+                    title="分享链接不可用"
+                    description={loadError}
+                    action={
+                        <Link to="/">
+                            <Button>返回首页</Button>
+                        </Link>
+                    }
+                />
+            </div>
+        );
 
     return (
         <main className="relative h-screen overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
@@ -227,41 +264,165 @@ export default function SharedCanvasPage() {
                 <div className="pointer-events-auto flex min-w-0 items-center gap-3">
                     <Share2 className="size-4" style={{ color: theme.node.muted }} />
                     <span className="max-w-[45vw] truncate text-base font-semibold">{title}</span>
-                    <span className="inline-flex items-center gap-1 text-xs" style={{ color: theme.node.muted }}><Eye className="size-3.5" />只读分享</span>
+                    <span className="inline-flex items-center gap-1 text-xs" style={{ color: theme.node.muted }}>
+                        <Eye className="size-3.5" />
+                        只读分享
+                    </span>
                 </div>
-                <Link className="pointer-events-auto" to="/login"><Button type="text" icon={<LogIn className="size-4" />}>登录</Button></Link>
+                <Link className="pointer-events-auto" to="/login">
+                    <Button type="text" icon={<LogIn className="size-4" />}>
+                        登录
+                    </Button>
+                </Link>
             </header>
 
-            <InfiniteCanvas containerRef={containerRef} viewport={viewport} backgroundMode={backgroundMode} onViewportChange={onViewportChange} onViewportPreviewChange={(next) => { viewportRef.current = next; }} onCanvasDeselect={() => { setSelectedNodeId(null); setContextMenu(null); }} onContextMenu={(event) => openContextMenu(event)} onDrop={(event) => { event.preventDefault(); unauthorized(); }}>
-                <svg className="absolute overflow-visible" viewBox={`${connectionBounds.left} ${connectionBounds.top} ${connectionBounds.width} ${connectionBounds.height}`} style={{ left: connectionBounds.left, top: connectionBounds.top, width: connectionBounds.width, height: connectionBounds.height, pointerEvents: "none", zIndex: 0 }}>
-                    {visibleConnections.map(({ connection, from, to }) => <ConnectionPath key={connection.id} connection={connection} from={from} to={to} active={false} onSelect={() => setInfoNodeId(to.id)} />)}
+            <InfiniteCanvas
+                containerRef={containerRef}
+                viewport={viewport}
+                backgroundMode={backgroundMode}
+                onViewportChange={onViewportChange}
+                onViewportPreviewChange={(next) => {
+                    viewportRef.current = next;
+                }}
+                onCanvasDeselect={() => {
+                    setSelectedNodeId(null);
+                    setContextMenu(null);
+                }}
+                onContextMenu={(event) => openContextMenu(event)}
+                onDrop={(event) => {
+                    event.preventDefault();
+                    unauthorized();
+                }}
+            >
+                <svg
+                    className="absolute overflow-visible"
+                    viewBox={`${connectionBounds.left} ${connectionBounds.top} ${connectionBounds.width} ${connectionBounds.height}`}
+                    style={{ left: connectionBounds.left, top: connectionBounds.top, width: connectionBounds.width, height: connectionBounds.height, pointerEvents: "none", zIndex: 0 }}
+                >
+                    {visibleConnections.map(({ connection, from, to }) => (
+                        <ConnectionPath key={connection.id} connection={connection} from={from} to={to} active={false} onSelect={() => setInfoNodeId(to.id)} />
+                    ))}
                 </svg>
-                {visibleNodes.map((node) => isFrameNode(node) ? <CanvasFrameNode key={node.id} data={node} dragOffset={dragRef.current?.nodeIds.includes(node.id) && dragOffset ? dragOffset : undefined} childNodes={frameChildrenById.get(node.id) || []} scale={viewport.k} isSelected={selectedNodeId === node.id} isDropTarget={false} readOnly onMouseDown={(event, nodeId) => {
-                    event.stopPropagation();
-                    if (event.button !== 0) return;
-                    setSelectedNodeId(nodeId);
-                    setContextMenu(null);
-                    const dragged = [node, ...(frameChildrenById.get(nodeId) || [])];
-                    dragRef.current = { primaryId: nodeId, nodeIds: dragged.map((item) => item.id), startX: event.clientX, startY: event.clientY, origins: new Map(dragged.map((item) => [item.id, item.position])), moved: false };
-                    document.body.style.cursor = "grabbing";
-                }} onResize={() => undefined} onToggleCollapsed={toggleFrame} onTitleChange={unauthorized} onHoverStart={keepToolbar} onHoverEnd={hideToolbar} onContextMenu={(event, nodeId) => openContextMenu(event, nodeId)} /> : <CanvasNode key={node.id} data={node} dragOffset={dragRef.current?.nodeIds.includes(node.id) && dragOffset ? dragOffset : undefined} scale={viewport.k} isSelected={selectedNodeId === node.id} isRelated={false} isFocusRelated={false} isConnectionTarget={false} isConnecting={false} showImageInfo={false} readOnly renderNodeContent={renderSharedNode} onMouseDown={(event, nodeId) => {
-                    event.stopPropagation();
-                    if (event.button !== 0) return;
-                    const target = nodes.find((item) => item.id === nodeId);
-                    if (!target) return;
-                    setSelectedNodeId(nodeId);
-                    setContextMenu(null);
-                    dragRef.current = { primaryId: nodeId, nodeIds: [nodeId], startX: event.clientX, startY: event.clientY, origins: new Map([[nodeId, target.position]]), moved: false };
-                    document.body.style.cursor = "grabbing";
-                }} onHoverStart={keepToolbar} onHoverEnd={hideToolbar} onConnectStart={unauthorized} onResize={() => undefined} onContentChange={unauthorized} onRetry={unauthorized} onCancelTask={unauthorized} onOpenTaskDetails={unauthorized} onViewImage={(target) => setInfoNodeId(target.id)} onContextMenu={(event, nodeId) => openContextMenu(event, nodeId)} />)}
+                {visibleNodes.map((node) =>
+                    isFrameNode(node) ? (
+                        <CanvasFrameNode
+                            key={node.id}
+                            data={node}
+                            dragOffset={dragRef.current?.nodeIds.includes(node.id) && dragOffset ? dragOffset : undefined}
+                            childNodes={frameChildrenById.get(node.id) || []}
+                            scale={viewport.k}
+                            isSelected={selectedNodeId === node.id}
+                            isDropTarget={false}
+                            readOnly
+                            onMouseDown={(event, nodeId) => {
+                                event.stopPropagation();
+                                if (event.button !== 0) return;
+                                setSelectedNodeId(nodeId);
+                                setContextMenu(null);
+                                const dragged = [node, ...(frameChildrenById.get(nodeId) || [])];
+                                dragRef.current = { primaryId: nodeId, nodeIds: dragged.map((item) => item.id), startX: event.clientX, startY: event.clientY, origins: new Map(dragged.map((item) => [item.id, item.position])), moved: false };
+                                document.body.style.cursor = "grabbing";
+                            }}
+                            onResize={() => undefined}
+                            onToggleCollapsed={toggleFrame}
+                            onTitleChange={unauthorized}
+                            onHoverStart={keepToolbar}
+                            onHoverEnd={hideToolbar}
+                            onContextMenu={(event, nodeId) => openContextMenu(event, nodeId)}
+                        />
+                    ) : (
+                        <CanvasNode
+                            key={node.id}
+                            data={node}
+                            dragOffset={dragRef.current?.nodeIds.includes(node.id) && dragOffset ? dragOffset : undefined}
+                            scale={viewport.k}
+                            isSelected={selectedNodeId === node.id}
+                            isRelated={false}
+                            isFocusRelated={false}
+                            isConnectionTarget={false}
+                            isConnecting={false}
+                            showImageInfo={false}
+                            readOnly
+                            renderNodeContent={renderSharedNode}
+                            onMouseDown={(event, nodeId) => {
+                                event.stopPropagation();
+                                if (event.button !== 0) return;
+                                const target = nodes.find((item) => item.id === nodeId);
+                                if (!target) return;
+                                setSelectedNodeId(nodeId);
+                                setContextMenu(null);
+                                dragRef.current = { primaryId: nodeId, nodeIds: [nodeId], startX: event.clientX, startY: event.clientY, origins: new Map([[nodeId, target.position]]), moved: false };
+                                document.body.style.cursor = "grabbing";
+                            }}
+                            onHoverStart={keepToolbar}
+                            onHoverEnd={hideToolbar}
+                            onConnectStart={unauthorized}
+                            onResize={() => undefined}
+                            onContentChange={unauthorized}
+                            onRetry={unauthorized}
+                            onCancelTask={unauthorized}
+                            onOpenTaskDetails={unauthorized}
+                            onViewImage={(target) => setInfoNodeId(target.id)}
+                            onContextMenu={(event, nodeId) => openContextMenu(event, nodeId)}
+                        />
+                    ),
+                )}
             </InfiniteCanvas>
 
-            <CanvasNodeHoverToolbar node={dragRef.current ? null : toolbarNode} viewport={viewport} containerRef={containerRef} onKeep={keepToolbar} onLeave={hideToolbar} onInfo={(node) => setInfoNodeId(node.id)} onEditText={unauthorized} onDecreaseFont={unauthorized} onIncreaseFont={unauthorized} onToggleDialog={unauthorized} onAnnotate={unauthorized} onGenerateImage={unauthorized} onUpload={unauthorized} onDownload={unauthorized} onSaveAsset={unauthorized} onMaskEdit={unauthorized} onEmotion={unauthorized} onCrop={unauthorized} onSplit={unauthorized} onUpscale={unauthorized} onSuperResolve={unauthorized} onAngle={unauthorized} onViewImage={unauthorized} onExtractVideoLastFrame={unauthorized} extractingVideoFrame={false} onReversePrompt={unauthorized} onRetry={unauthorized} onToggleFreeResize={unauthorized} onToggleLocked={unauthorized} onDelete={unauthorized} />
+            <CanvasNodeHoverToolbar
+                node={dragRef.current ? null : toolbarNode}
+                viewport={viewport}
+                containerRef={containerRef}
+                onKeep={keepToolbar}
+                onLeave={hideToolbar}
+                onInfo={(node) => setInfoNodeId(node.id)}
+                onEditText={unauthorized}
+                onDecreaseFont={unauthorized}
+                onIncreaseFont={unauthorized}
+                onToggleDialog={unauthorized}
+                onAnnotate={unauthorized}
+                onGenerateImage={unauthorized}
+                onUpload={unauthorized}
+                onDownload={unauthorized}
+                onSaveAsset={unauthorized}
+                onMaskEdit={unauthorized}
+                onEmotion={unauthorized}
+                onCrop={unauthorized}
+                onSplit={unauthorized}
+                onUpscale={unauthorized}
+                onSuperResolve={unauthorized}
+                onAngle={unauthorized}
+                onViewImage={unauthorized}
+                onExtractVideoLastFrame={unauthorized}
+                extractingVideoFrame={false}
+                onReversePrompt={unauthorized}
+                onRetry={unauthorized}
+                onToggleFreeResize={unauthorized}
+                onToggleLocked={unauthorized}
+                onDelete={unauthorized}
+            />
 
-            <div className="absolute bottom-5 left-5 z-[70]"><CanvasZoomControls scale={viewport.k} containerRef={containerRef} onScaleChange={setZoom} onReset={resetViewport} isMiniMapOpen={false} onToggleMiniMap={unauthorized} onOpenShortcuts={unauthorized} /></div>
-            <div className="pointer-events-none absolute bottom-5 right-5 z-[70] max-w-[340px] text-right text-xs leading-5" style={{ color: theme.node.muted }}>访客操作仅在当前页面临时生效</div>
+            <div className="absolute bottom-5 left-5 z-[70]">
+                <CanvasZoomControls scale={viewport.k} containerRef={containerRef} onScaleChange={setZoom} onReset={resetViewport} isMiniMapOpen={false} onToggleMiniMap={unauthorized} onOpenShortcuts={unauthorized} />
+            </div>
+            <div className="pointer-events-none absolute bottom-5 right-5 z-[70] max-w-[340px] text-right text-xs leading-5" style={{ color: theme.node.muted }}>
+                访客操作仅在当前页面临时生效
+            </div>
 
-            {contextMenu ? <SharedContextMenu menu={contextMenu} onAdd={addNode} onInfo={() => { if (contextMenu.nodeId) setInfoNodeId(contextMenu.nodeId); setContextMenu(null); }} onUnauthorized={() => { setContextMenu(null); unauthorized(); }} /> : null}
+            {contextMenu ? (
+                <SharedContextMenu
+                    menu={contextMenu}
+                    onAdd={addNode}
+                    onInfo={() => {
+                        if (contextMenu.nodeId) setInfoNodeId(contextMenu.nodeId);
+                        setContextMenu(null);
+                    }}
+                    onUnauthorized={() => {
+                        setContextMenu(null);
+                        unauthorized();
+                    }}
+                />
+            ) : null}
             <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} readOnly onUnauthorized={unauthorized} />
         </main>
     );
@@ -269,36 +430,123 @@ export default function SharedCanvasPage() {
 
 function SharedContextMenu({ menu, onAdd, onInfo, onUnauthorized }: { menu: ContextMenu; onAdd: (type: CanvasNodeType) => void; onInfo: () => void; onUnauthorized: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    return <div data-canvas-no-zoom className="absolute z-[90] min-w-48 rounded-lg border p-1.5 shadow-xl" style={{ left: menu.x, top: menu.y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-        {menu.nodeId ? <><MenuButton icon={<Eye />} label="查看节点信息" onClick={onInfo} /><MenuButton icon={<LockKeyhole />} label="编辑或生成" onClick={onUnauthorized} /></> : <>
-            <div className="px-2 py-1.5 text-[11px]" style={{ color: theme.node.muted }}>添加临时节点</div>
-            <MenuButton icon={<FileText />} label="文本节点" onClick={() => onAdd(CanvasNodeType.Text)} />
-            <MenuButton icon={<ImageIcon />} label="图片节点" onClick={() => onAdd(CanvasNodeType.Image)} />
-            <MenuButton icon={<Video />} label="视频节点" onClick={() => onAdd(CanvasNodeType.Video)} />
-            <MenuButton icon={<Clapperboard />} label="分镜脚本" onClick={() => onAdd(CanvasNodeType.Script)} />
-        </>}
-    </div>;
+    return (
+        <div
+            data-canvas-no-zoom
+            className="absolute z-[90] min-w-48 rounded-lg border p-1.5 shadow-xl"
+            style={{ left: menu.x, top: menu.y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+            onMouseDown={(event) => event.stopPropagation()}
+        >
+            {menu.nodeId ? (
+                <>
+                    <MenuButton icon={<Eye />} label="查看节点信息" onClick={onInfo} />
+                    <MenuButton icon={<LockKeyhole />} label="编辑或生成" onClick={onUnauthorized} />
+                </>
+            ) : (
+                <>
+                    <div className="px-2 py-1.5 text-[11px]" style={{ color: theme.node.muted }}>
+                        添加临时节点
+                    </div>
+                    <MenuButton icon={<FileText />} label="文本节点" onClick={() => onAdd(CanvasNodeType.Text)} />
+                    <MenuButton icon={<ImageIcon />} label="图片节点" onClick={() => onAdd(CanvasNodeType.Image)} />
+                    <MenuButton icon={<Video />} label="视频节点" onClick={() => onAdd(CanvasNodeType.Video)} />
+                    <MenuButton icon={<Clapperboard />} label="分镜脚本" onClick={() => onAdd(CanvasNodeType.Script)} />
+                </>
+            )}
+        </div>
+    );
 }
 
 function MenuButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-    return <button type="button" className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10" onClick={onClick}><span className="grid size-4 place-items-center [&>svg]:size-4">{icon}</span>{label}</button>;
+    return (
+        <button type="button" className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10" onClick={onClick}>
+            <span className="grid size-4 place-items-center [&>svg]:size-4">{icon}</span>
+            {label}
+        </button>
+    );
 }
 
 function SharedConfigNode({ node, onUnauthorized }: { node: CanvasNodeData; onUnauthorized: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    return <div className="flex h-full w-full flex-col overflow-hidden rounded-[17px]">
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4" style={{ background: theme.node.panel, borderColor: theme.node.stroke }}><ImageIcon className="size-4" /><span className="min-w-0 flex-1 truncate text-sm font-semibold">{node.title}</span></div>
-        <div className="min-h-0 flex-1 whitespace-pre-wrap break-words p-4 text-sm leading-6" style={{ color: theme.node.muted }}>{node.metadata?.composerContent || node.metadata?.prompt || "未填写提示词"}</div>
-        <div className="flex h-12 shrink-0 items-center justify-end border-t px-3" style={{ borderColor: theme.node.stroke }}><Button size="small" icon={<Send className="size-3.5" />} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onUnauthorized(); }}>生成</Button></div>
-    </div>;
+    return (
+        <div className="flex h-full w-full flex-col overflow-hidden rounded-[17px]">
+            <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4" style={{ background: theme.node.panel, borderColor: theme.node.stroke }}>
+                <ImageIcon className="size-4" />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{node.title}</span>
+            </div>
+            <div className="min-h-0 flex-1 whitespace-pre-wrap break-words p-4 text-sm leading-6" style={{ color: theme.node.muted }}>
+                {node.metadata?.composerContent || node.metadata?.prompt || "未填写提示词"}
+            </div>
+            <div className="flex h-12 shrink-0 items-center justify-end border-t px-3" style={{ borderColor: theme.node.stroke }}>
+                <Button
+                    size="small"
+                    icon={<Send className="size-3.5" />}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onUnauthorized();
+                    }}
+                >
+                    生成
+                </Button>
+            </div>
+        </div>
+    );
 }
 
 function SharedScriptNode({ node, onUnauthorized }: { node: CanvasNodeData; onUnauthorized: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const rows = node.metadata?.storyboard?.rows || [];
-    return <div className="flex h-full w-full flex-col overflow-hidden rounded-[17px]">
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4" style={{ background: theme.node.panel, borderColor: theme.node.stroke }}><Clapperboard className="size-4" /><span className="min-w-0 flex-1 truncate text-sm font-semibold">{node.title}</span><span className="text-xs" style={{ color: theme.node.muted }}>{rows.length} 镜</span><button type="button" className="grid size-7 place-items-center rounded hover:bg-black/5 dark:hover:bg-white/10" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onUnauthorized(); }} aria-label="一键创建视频节点"><Video className="size-3.5" /></button></div>
-        <div data-canvas-wheel-scroll className="min-h-0 flex-1 overflow-y-auto" onWheel={(event) => event.stopPropagation()}>{rows.length ? rows.map((row) => <div key={row.id} className="grid grid-cols-[52px_72px_minmax(180px,1fr)_minmax(150px,.8fr)] border-b text-xs leading-5" style={{ minHeight: 48, borderColor: theme.node.stroke }}><span className="grid place-items-center border-r" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>#{row.shotNumber}</span><span className="grid place-items-center border-r" style={{ borderColor: theme.node.stroke }}>{row.durationSeconds}s</span><span className="border-r px-3 py-2" style={{ borderColor: theme.node.stroke }}>{row.plotDescription || "-"}</span><span className="px-3 py-2" style={{ color: theme.node.muted }}>{row.dialogue || "-"}</span></div>) : <div className="grid h-full place-items-center text-sm" style={{ color: theme.node.muted }}>暂无分镜</div>}</div>
-        {node.metadata?.composerContent ? <div className="max-h-24 shrink-0 overflow-y-auto border-t px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>{node.metadata.composerContent}</div> : null}
-    </div>;
+    return (
+        <div className="flex h-full w-full flex-col overflow-hidden rounded-[17px]">
+            <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4" style={{ background: theme.node.panel, borderColor: theme.node.stroke }}>
+                <Clapperboard className="size-4" />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{node.title}</span>
+                <span className="text-xs" style={{ color: theme.node.muted }}>
+                    {rows.length} 镜
+                </span>
+                <button
+                    type="button"
+                    className="grid size-7 place-items-center rounded hover:bg-black/5 dark:hover:bg-white/10"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onUnauthorized();
+                    }}
+                    aria-label="一键创建视频节点"
+                >
+                    <Video className="size-3.5" />
+                </button>
+            </div>
+            <div data-canvas-wheel-scroll className="min-h-0 flex-1 overflow-y-auto" onWheel={(event) => event.stopPropagation()}>
+                {rows.length ? (
+                    rows.map((row) => (
+                        <div key={row.id} className="grid grid-cols-[52px_72px_minmax(180px,1fr)_minmax(150px,.8fr)] border-b text-xs leading-5" style={{ minHeight: 48, borderColor: theme.node.stroke }}>
+                            <span className="grid place-items-center border-r" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                #{row.shotNumber}
+                            </span>
+                            <span className="grid place-items-center border-r" style={{ borderColor: theme.node.stroke }}>
+                                {row.durationSeconds}s
+                            </span>
+                            <span className="border-r px-3 py-2" style={{ borderColor: theme.node.stroke }}>
+                                {row.plotDescription || "-"}
+                            </span>
+                            <span className="px-3 py-2" style={{ color: theme.node.muted }}>
+                                {row.dialogue || "-"}
+                            </span>
+                        </div>
+                    ))
+                ) : (
+                    <div className="grid h-full place-items-center text-sm" style={{ color: theme.node.muted }}>
+                        暂无分镜
+                    </div>
+                )}
+            </div>
+            {node.metadata?.composerContent ? (
+                <div className="max-h-24 shrink-0 overflow-y-auto border-t px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                    {node.metadata.composerContent}
+                </div>
+            ) : null}
+        </div>
+    );
 }

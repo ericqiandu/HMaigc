@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const channelModelIconUploadBodyLimit = (1 << 20) + (1 << 20)
 const channelVoiceCloneUploadBodyLimit = (20 << 20) + (2 << 20)
 
 func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
@@ -321,38 +320,6 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 	})
 	r.PATCH("/admin/channels/:id/models/:modelId", func(c *gin.Context) {
 		saveChannelModel(c, svc, c.Param("modelId"))
-	})
-	r.POST("/admin/channels/:id/models/:modelId/icon", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelModelIconUploadBodyLimit)
-		file, err := c.FormFile("file")
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		item, err := svc.UpdateAdminChannelModelIcon(user, c.Param("id"), c.Param("modelId"), file)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"model": item})
-	})
-	r.DELETE("/admin/channels/:id/models/:modelId/icon", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		item, err := svc.RemoveAdminChannelModelIcon(user, c.Param("id"), c.Param("modelId"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"model": item})
 	})
 	r.DELETE("/admin/channels/:id/models/:modelId", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

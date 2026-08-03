@@ -80,7 +80,7 @@ func TestNormalizeSingleByteRange(t *testing.T) {
 	}
 }
 
-func TestHydrateNewAPIChannel1ResourceUsesSignedOSSURL(t *testing.T) {
+func TestHydratePublicUpstreamResourceUsesSignedOSSURL(t *testing.T) {
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{
 		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
@@ -109,7 +109,7 @@ func TestHydrateNewAPIChannel1ResourceUsesSignedOSSURL(t *testing.T) {
 	}
 }
 
-func TestHydrateNewAPIChannel1ResourceRejectsLocalStorage(t *testing.T) {
+func TestHydratePublicUpstreamResourceRejectsLocalStorage(t *testing.T) {
 	svc := newResourceTestService(t)
 	resource := model.Resource{ID: "resource-local", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "local.png"}
 	if err := svc.repo.CreateResource(&resource); err != nil {

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -141,27 +140,6 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, gin.H{"channels": channels})
-	})
-	r.GET("/model-icons/:modelId", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		filePath, mimeType, modifiedAt, err := svc.ChannelModelIconFile(user, c.Param("modelId"))
-		if err != nil {
-			if errors.Is(err, service.ErrChannelModelIconNotConfigured) || errors.Is(err, os.ErrNotExist) {
-				fail(c, http.StatusNotFound, service.ErrChannelModelIconNotConfigured)
-				return
-			}
-			failService(c, err)
-			return
-		}
-		c.Header("Cache-Control", "private, max-age=86400, immutable")
-		c.Header("Content-Type", mimeType)
-		c.Header("Last-Modified", modifiedAt.UTC().Format(http.TimeFormat))
-		c.Header("X-Content-Type-Options", "nosniff")
-		http.ServeFile(c.Writer, c.Request, filePath)
 	})
 }
 
@@ -731,7 +709,7 @@ func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID st
 	switch channel.InterfaceType {
 	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage:
 		capability = "image"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		capability = "video"
 	}
 	requestKind := "create"

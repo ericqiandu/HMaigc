@@ -22,12 +22,12 @@ func TestModelChannelInterfaceTypeColumnFitsSupportedValues(t *testing.T) {
 		ChannelInterfaceOpenAIImage,
 		ChannelInterfaceAPIMartImage,
 		ChannelInterfaceNewAPIVideo,
-		ChannelInterfaceNewAPIChannel1,
-		ChannelInterfaceNewAPIChannel2,
 		ChannelInterfaceXAIVideo,
 		ChannelInterfaceAIOpenVideo,
 		ChannelInterfaceAIOpenVideoVolcengine,
 		ChannelInterfaceMiniMaxSpeech,
+		ChannelInterfaceMiniMaxVideo,
+		ChannelInterfaceKlingVideo,
 	} {
 		if len(interfaceType) > field.Size {
 			t.Fatalf("interface type %q has length %d but column size is %d", interfaceType, len(interfaceType), field.Size)
