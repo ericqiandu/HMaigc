@@ -40,6 +40,9 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	if !defaults.HomeBannerEnabled || defaults.HomeBannerText == "" {
 		t.Fatalf("unexpected home banner defaults: %#v", defaults)
 	}
+	if defaults.MarketingPopupEnabled || defaults.MarketingPopupFrequency != "once" {
+		t.Fatalf("unexpected marketing popup defaults: %#v", defaults)
+	}
 
 	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
 	updated, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{
@@ -54,6 +57,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 		HomeBannerText:                   "商业合作伙伴招募计划",
 		HomeBannerPrimaryActionLabel:     "查看详情",
 		HomeBannerPrimaryActionURL:       "https://hmaigc.ai/partner",
+		MarketingPopupFrequency:          "once",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +74,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	}
 	legalAgreement := updated.UserAgreement
 	legalPrivacy := updated.PrivacyPolicy
-	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技", HomeBannerEnabled: true, HomeBannerText: "新版运营公告"})
+	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技", HomeBannerEnabled: true, HomeBannerText: "新版运营公告", MarketingPopupFrequency: "once"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +158,12 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看", HomeBannerPrimaryActionURL: "javascript:alert(1)"}); err == nil {
 		t.Fatal("unsafe home banner action URL should be rejected")
 	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", MarketingPopupEnabled: true, MarketingPopupTitle: "新品上线", MarketingPopupFrequency: "once"}); err == nil {
+		t.Fatal("enabled marketing popup without image should be rejected")
+	}
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", MarketingPopupFrequency: "always"}); err == nil {
+		t.Fatal("invalid marketing popup frequency should be rejected")
+	}
 }
 
 func TestSiteLogoUploadAndRemoval(t *testing.T) {
@@ -187,6 +197,57 @@ func TestSiteLogoUploadAndRemoval(t *testing.T) {
 	}
 }
 
+func TestMarketingPopupImageAndConfiguration(t *testing.T) {
+	svc, _ := newSiteSettingTestService(t)
+	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
+	withImage, err := svc.UpdateMarketingPopupImage(admin, pngFileHeader(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withImage.MarketingPopupImageURL == "" {
+		t.Fatal("uploaded marketing image URL should not be empty")
+	}
+	filePath, mimeType, _, err := svc.MarketingPopupImageFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filePath == "" || mimeType != "image/png" {
+		t.Fatalf("marketing image file = %q, mime = %q", filePath, mimeType)
+	}
+	configured, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{
+		SiteName:                  "HMaigc",
+		MarketingPopupEnabled:     true,
+		MarketingPopupTitle:       "Seedance 2.5 预售上线",
+		MarketingPopupDescription: "预售加赠生成次数",
+		MarketingPopupActionLabel: "立即参与",
+		MarketingPopupActionURL:   "https://hmaigc.ai/membership",
+		MarketingPopupFrequency:   "daily",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !configured.MarketingPopupEnabled || configured.MarketingPopupFrequency != "daily" || configured.MarketingPopupImageURL == "" {
+		t.Fatalf("unexpected marketing popup setting: %#v", configured)
+	}
+	if _, err := svc.RemoveMarketingPopupImage(admin); err == nil {
+		t.Fatal("enabled marketing popup image removal should be rejected")
+	}
+	configured, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "HMaigc", MarketingPopupFrequency: "once"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := svc.RemoveMarketingPopupImage(admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.MarketingPopupImageURL != "" {
+		t.Fatalf("removed marketing image URL = %q, want empty", removed.MarketingPopupImageURL)
+	}
+	if _, _, _, err := svc.MarketingPopupImageFile(); !errors.Is(err, ErrSiteMarketingImageNotConfigured) {
+		t.Fatalf("marketing image after removal error = %v", err)
+	}
+}
+
 func TestSiteSettingDoesNotHideCorruptedStoredData(t *testing.T) {
 	svc, db := newSiteSettingTestService(t)
 	if err := db.Create(&model.SystemSetting{Key: siteSettingKey, ValueJSON: "not-json"}).Error; err != nil {
@@ -207,7 +268,7 @@ func TestSiteSettingAppliesNewFieldDefaultsToStoredConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setting.SiteName != "弘梦" || !setting.HomeBannerEnabled || setting.HomeBannerText == "" {
+	if setting.SiteName != "弘梦" || !setting.HomeBannerEnabled || setting.HomeBannerText == "" || setting.MarketingPopupFrequency != "once" {
 		t.Fatalf("stored setting did not receive current schema defaults: %#v", setting)
 	}
 }

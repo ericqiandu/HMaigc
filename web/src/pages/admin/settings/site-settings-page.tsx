@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Form, Input, Switch, Tag } from "antd";
-import { CheckCircle2, CircleAlert, FileCheck2, FileText, Image as ImageIcon, Megaphone, Save, Trash2, Upload } from "lucide-react";
+import { App, Button, Form, Input, Select, Switch, Tag } from "antd";
+import { CheckCircle2, CircleAlert, FileCheck2, FileText, Image as ImageIcon, Megaphone, RectangleHorizontal, Save, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { staticAssetURL } from "@/lib/static-assets";
-import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
+import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminMarketingPopupImage, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminMarketingPopupImage, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, AdminSettingsSection, AdminSettingsSwitchPanel } from "../components/admin-ui";
 
@@ -13,6 +13,7 @@ export default function SiteSettingsPage() {
     const [form] = Form.useForm<UpdateSiteSettingsInput>();
     const queryClient = useQueryClient();
     const logoInputRef = useRef<HTMLInputElement>(null);
+    const marketingImageInputRef = useRef<HTMLInputElement>(null);
     const synchronizedValuesRef = useRef<UpdateSiteSettingsInput | null>(null);
     const [dirty, setDirty] = useState(false);
     const settingQuery = useQuery({
@@ -65,6 +66,24 @@ export default function SiteSettingsPage() {
         onError: (error) => message.error(error instanceof Error ? error.message : "移除 Logo 失败"),
     });
 
+    const marketingImageMutation = useMutation({
+        mutationFn: uploadAdminMarketingPopupImage,
+        onSuccess: (setting) => {
+            synchronizeSetting(setting);
+            message.success("营销弹窗图片已更新");
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "上传营销图片失败"),
+    });
+
+    const removeMarketingImageMutation = useMutation({
+        mutationFn: removeAdminMarketingPopupImage,
+        onSuccess: (setting) => {
+            synchronizeSetting(setting);
+            message.success("营销弹窗图片已移除");
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "移除营销图片失败"),
+    });
+
     const save = async () => {
         const values = await form.validateFields();
         saveMutation.mutate(values);
@@ -108,8 +127,41 @@ export default function SiteSettingsPage() {
         });
     };
 
+    const selectMarketingImage = (event: ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+            message.error("营销图片仅支持 PNG、JPG 或 WebP 格式");
+            return;
+        }
+        if (file.size > 8 * 1024 * 1024) {
+            message.error("营销图片大小不能超过 8MB");
+            return;
+        }
+        marketingImageMutation.mutate(file);
+    };
+
+    const confirmRemoveMarketingImage = () => {
+        if (form.getFieldValue("marketingPopupEnabled")) {
+            message.warning("请先关闭营销弹窗并保存，再移除图片");
+            return;
+        }
+        modal.confirm({
+            className: "admin-operation-modal site-settings-remove-marketing-image-modal workspace-ui-scope",
+            title: "移除营销弹窗图片？",
+            content: "图片会从站点受管素材中删除，后续重新启用前需要再次上传。",
+            okText: "确认移除",
+            cancelText: "取消",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                await removeMarketingImageMutation.mutateAsync();
+            },
+        });
+    };
+
     const setting = settingQuery.data;
-    const operationPending = saveMutation.isPending || logoMutation.isPending || removeLogoMutation.isPending;
+    const operationPending = saveMutation.isPending || logoMutation.isPending || removeLogoMutation.isPending || marketingImageMutation.isPending || removeMarketingImageMutation.isPending;
     return (
         <AdminPageFrame
             title="站点与品牌"
@@ -272,6 +324,68 @@ export default function SiteSettingsPage() {
                             </AdminSettingsSwitchPanel>
                         </div>
 
+                        <div id="site-marketing-popup" className="site-settings-section-anchor">
+                            <AdminSettingsSwitchPanel
+                                icon={<RectangleHorizontal className="site-settings-marketing-icon size-4" />}
+                                title="登录后营销弹窗"
+                                description="面向已登录用户展示重点活动或新品信息；内容变更后会作为新一轮活动重新展示。"
+                                status={
+                                    <Form.Item className="site-settings-marketing-switch-field mb-0" name="marketingPopupEnabled" valuePropName="checked">
+                                        <Switch className="site-settings-marketing-switch" checkedChildren="展示" unCheckedChildren="隐藏" />
+                                    </Form.Item>
+                                }
+                            >
+                                <AdminSettingsSection id="site-marketing-visual-heading" icon={<ImageIcon className="site-settings-marketing-visual-icon size-4" />} title="活动视觉" description="推荐使用 16:9 横图，主体与文字保留安全边距；桌面与移动端会按比例裁切。">
+                                    <div className="site-settings-marketing-image-control">
+                                        <span className="site-settings-marketing-image-label mb-2 block text-sm text-foreground/85">展示图片</span>
+                                        {setting.marketingPopupImageUrl ? (
+                                            <div className="site-settings-marketing-image-preview overflow-hidden bg-muted/35">
+                                                <img className="site-settings-marketing-image block aspect-video w-full object-cover" src={setting.marketingPopupImageUrl} alt="营销弹窗预览" />
+                                            </div>
+                                        ) : (
+                                            <div className="site-settings-marketing-image-empty grid aspect-video place-items-center bg-muted/30 text-sm text-foreground/45">尚未上传营销图片</div>
+                                        )}
+                                        <input ref={marketingImageInputRef} className="site-settings-marketing-image-input !hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={selectMarketingImage} />
+                                        <div className="site-settings-marketing-image-actions mt-3 flex flex-wrap items-center gap-2">
+                                            <Button className="site-settings-marketing-image-upload" icon={<Upload className="site-settings-marketing-image-upload-icon size-4" />} loading={marketingImageMutation.isPending} onClick={() => marketingImageInputRef.current?.click()}>
+                                                {setting.marketingPopupImageUrl ? "替换图片" : "上传图片"}
+                                            </Button>
+                                            {setting.marketingPopupImageUrl ? (
+                                                <Button className="site-settings-marketing-image-remove" type="text" danger icon={<Trash2 className="site-settings-marketing-image-remove-icon size-4" />} loading={removeMarketingImageMutation.isPending} onClick={confirmRemoveMarketingImage}>
+                                                    移除图片
+                                                </Button>
+                                            ) : null}
+                                            <span className="site-settings-marketing-image-help text-[11px] leading-4 text-foreground/45">PNG、JPG 或 WebP，最大 8MB</span>
+                                        </div>
+                                    </div>
+                                </AdminSettingsSection>
+                                <AdminSettingsSection id="site-marketing-content-heading" icon={<Megaphone className="site-settings-marketing-content-icon size-4" />} title="活动内容" description="标题直接说明权益或新品，说明文字补充限制条件，按钮引导用户完成下一步。">
+                                    <Form.Item className="site-settings-marketing-title-field mb-0" name="marketingPopupTitle" label="标题" dependencies={["marketingPopupEnabled"]} rules={[{ max: 80, message: "标题不能超过 80 个字符" }, requiredMarketingField(form, "标题")]}>
+                                        <Input className="site-settings-marketing-title-input" maxLength={80} showCount placeholder="例如：Seedance 2.5 旗舰模型预售上线" />
+                                    </Form.Item>
+                                    <Form.Item className="site-settings-marketing-description-field mb-0" name="marketingPopupDescription" label="补充说明" rules={[{ max: 200, message: "补充说明不能超过 200 个字符" }]}>
+                                        <Input.TextArea className="site-settings-marketing-description-input" autoSize={{ minRows: 2, maxRows: 4 }} maxLength={200} showCount placeholder="例如：预售加赠最高 60 条免费生成，最长可输出 30 秒视频" />
+                                    </Form.Item>
+                                    <Form.Item className="site-settings-marketing-action-label-field mb-0" name="marketingPopupActionLabel" label="按钮名称" dependencies={["marketingPopupActionUrl"]} rules={[{ max: 20, message: "按钮名称不能超过 20 个字符" }, pairedActionFieldRule("营销弹窗按钮", () => form.getFieldValue("marketingPopupActionUrl"))]}>
+                                        <Input className="site-settings-marketing-action-label-input" maxLength={20} placeholder="例如：立即抢购" />
+                                    </Form.Item>
+                                    <Form.Item className="site-settings-marketing-action-url-field mb-0" name="marketingPopupActionUrl" label="跳转链接" dependencies={["marketingPopupActionLabel"]} rules={[{ max: 500, message: "跳转链接不能超过 500 个字符" }, pairedActionURLRule("营销弹窗按钮", () => form.getFieldValue("marketingPopupActionLabel"))]}>
+                                        <Input className="site-settings-marketing-action-url-input" maxLength={500} placeholder="https://example.com/campaign" />
+                                    </Form.Item>
+                                    <Form.Item className="site-settings-marketing-frequency-field mb-0" name="marketingPopupFrequency" label="展示频率" rules={[{ required: true, message: "请选择展示频率" }]}>
+                                        <Select
+                                            className="site-settings-marketing-frequency-select"
+                                            options={[
+                                                { value: "once", label: "每轮活动仅展示一次" },
+                                                { value: "daily", label: "每位用户每天展示一次" },
+                                                { value: "session", label: "每次浏览器会话展示一次" },
+                                            ]}
+                                        />
+                                    </Form.Item>
+                                </AdminSettingsSection>
+                            </AdminSettingsSwitchPanel>
+                        </div>
+
                         <AdminSettingsSwitchPanel icon={<FileText className="site-settings-footer-icon size-4" />} title="页脚与备案" description="统一维护首页底部版权、ICP备案与公安备案展示信息。">
                             <AdminSettingsSection id="site-footer" icon={<FileText className="site-settings-footer-copy-icon size-4" />} title="底部版权" description="显示在首页底部，支持公司名称、年份和版权声明。">
                                 <Form.Item className="site-settings-copyright-field mb-0" name="footerCopyright" label="版权文案" rules={[{ max: 200, message: "版权文案不能超过 200 个字符" }]}>
@@ -328,6 +442,12 @@ function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
         homeBannerPrimaryActionUrl: setting.homeBannerPrimaryActionUrl,
         homeBannerSecondaryActionLabel: setting.homeBannerSecondaryActionLabel,
         homeBannerSecondaryActionUrl: setting.homeBannerSecondaryActionUrl,
+        marketingPopupEnabled: setting.marketingPopupEnabled,
+        marketingPopupTitle: setting.marketingPopupTitle,
+        marketingPopupDescription: setting.marketingPopupDescription,
+        marketingPopupActionLabel: setting.marketingPopupActionLabel,
+        marketingPopupActionUrl: setting.marketingPopupActionUrl,
+        marketingPopupFrequency: setting.marketingPopupFrequency,
     };
 }
 
@@ -350,6 +470,22 @@ function normalizeSiteSettingsInput(input: UpdateSiteSettingsInput): UpdateSiteS
         homeBannerPrimaryActionUrl: input.homeBannerPrimaryActionUrl?.trim() || "",
         homeBannerSecondaryActionLabel: input.homeBannerSecondaryActionLabel?.trim() || "",
         homeBannerSecondaryActionUrl: input.homeBannerSecondaryActionUrl?.trim() || "",
+        marketingPopupEnabled: Boolean(input.marketingPopupEnabled),
+        marketingPopupTitle: input.marketingPopupTitle?.trim() || "",
+        marketingPopupDescription: input.marketingPopupDescription?.trim() || "",
+        marketingPopupActionLabel: input.marketingPopupActionLabel?.trim() || "",
+        marketingPopupActionUrl: input.marketingPopupActionUrl?.trim() || "",
+        marketingPopupFrequency: input.marketingPopupFrequency,
+    };
+}
+
+function requiredMarketingField(form: ReturnType<typeof Form.useForm<UpdateSiteSettingsInput>>[0], label: string) {
+    return {
+        async validator(_rule: unknown, value?: string) {
+            if (form.getFieldValue("marketingPopupEnabled") && !value?.trim()) {
+                throw new Error(`启用营销弹窗时必须填写${label}`);
+            }
+        },
     };
 }
 

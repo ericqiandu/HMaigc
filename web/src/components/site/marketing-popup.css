@@ -1,0 +1,177 @@
+.marketing-popup-modal .ant-modal-body {
+    padding: 0;
+}
+
+.marketing-popup-card {
+    overflow: hidden;
+    color: var(--foreground);
+}
+
+.marketing-popup-visual {
+    position: relative;
+    aspect-ratio: 16 / 8.25;
+    overflow: hidden;
+    background: var(--muted);
+}
+
+.marketing-popup-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.marketing-popup-logo {
+    position: absolute;
+    top: 24px;
+    left: 24px;
+    width: auto;
+    max-width: 116px;
+    height: 28px;
+    object-fit: contain;
+    filter: brightness(0) invert(1);
+}
+
+.marketing-popup-close {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border: 0;
+    border-radius: 999px;
+    color: var(--primary-foreground);
+    background: rgb(0 0 0 / 28%);
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.marketing-popup-close:hover {
+    background: rgb(0 0 0 / 48%);
+}
+
+.marketing-popup-close:active {
+    transform: scale(.96);
+}
+
+.marketing-popup-close:focus-visible,
+.marketing-popup-action:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+}
+
+.marketing-popup-close-icon {
+    width: 19px;
+    height: 19px;
+}
+
+.marketing-popup-content {
+    display: flex;
+    min-height: 116px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 24px 32px;
+}
+
+.marketing-popup-copy {
+    min-width: 0;
+}
+
+.marketing-popup-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 28px;
+    letter-spacing: -.01em;
+}
+
+.marketing-popup-description {
+    margin: 4px 0 0;
+    color: color-mix(in srgb, var(--foreground) 64%, transparent);
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.marketing-popup-action {
+    display: inline-flex;
+    min-width: 180px;
+    min-height: 48px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: 999px;
+    color: var(--primary-foreground);
+    background: var(--primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+    text-decoration: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.marketing-popup-action:hover {
+    color: var(--primary-foreground);
+    opacity: .88;
+}
+
+.marketing-popup-action:active {
+    transform: scale(.98);
+}
+
+.marketing-popup-action-icon {
+    width: 18px;
+    height: 18px;
+}
+
+@media (max-width: 640px) {
+    .marketing-popup-modal {
+        max-width: calc(100vw - 24px);
+        margin: 12px auto;
+    }
+
+    .marketing-popup-visual {
+        aspect-ratio: 4 / 3;
+    }
+
+    .marketing-popup-logo {
+        top: 16px;
+        left: 20px;
+        max-width: 96px;
+        height: 24px;
+    }
+
+    .marketing-popup-close {
+        top: 12px;
+        right: 12px;
+        width: 40px;
+        height: 40px;
+    }
+
+    .marketing-popup-content {
+        display: block;
+        padding: 20px;
+    }
+
+    .marketing-popup-title {
+        font-size: 18px;
+        line-height: 25px;
+    }
+
+    .marketing-popup-action {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 16px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .marketing-popup-close,
+    .marketing-popup-action {
+        transition: none;
+    }
+}

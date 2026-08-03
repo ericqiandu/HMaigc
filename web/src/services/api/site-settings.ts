@@ -28,6 +28,13 @@ export type SiteSettings = {
     homeBannerPrimaryActionUrl: string;
     homeBannerSecondaryActionLabel: string;
     homeBannerSecondaryActionUrl: string;
+    marketingPopupEnabled: boolean;
+    marketingPopupImageUrl: string;
+    marketingPopupTitle: string;
+    marketingPopupDescription: string;
+    marketingPopupActionLabel: string;
+    marketingPopupActionUrl: string;
+    marketingPopupFrequency: "once" | "daily" | "session";
     updatedBy: string;
     createdAt: string;
     updatedAt: string;
@@ -48,6 +55,12 @@ export type UpdateSiteSettingsInput = Pick<
     | "homeBannerPrimaryActionUrl"
     | "homeBannerSecondaryActionLabel"
     | "homeBannerSecondaryActionUrl"
+    | "marketingPopupEnabled"
+    | "marketingPopupTitle"
+    | "marketingPopupDescription"
+    | "marketingPopupActionLabel"
+    | "marketingPopupActionUrl"
+    | "marketingPopupFrequency"
 >;
 
 export type UpdateLegalSettingsInput = Pick<SiteSettings, "userAgreement" | "privacyPolicy">;
@@ -92,4 +105,14 @@ export function uploadAdminSiteLogo(file: File) {
 
 export function removeAdminSiteLogo() {
     return request<SiteSettings>(api.delete("/admin/settings/site/logo"));
+}
+
+export function uploadAdminMarketingPopupImage(file: File) {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    return request<SiteSettings>(api.post("/admin/settings/site/marketing-image", formData));
+}
+
+export function removeAdminMarketingPopupImage() {
+    return request<SiteSettings>(api.delete("/admin/settings/site/marketing-image"));
 }

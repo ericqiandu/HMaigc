@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/url"
 	"os"
@@ -20,18 +21,25 @@ import (
 )
 
 const (
-	siteSettingKey         = "site"
-	siteLogoMaxBytes       = 2 << 20
-	siteAgreementMaxLen    = 50_000
-	siteLegalHTMLMaxLen    = 256 << 10
-	siteRecordNoMaxLen     = 100
-	siteRecordURLMaxLen    = 500
-	siteBannerLabelMaxLen  = 20
-	siteBannerTextMaxLen   = 200
-	siteBannerActionMaxLen = 20
+	siteSettingKey                 = "site"
+	siteLogoMaxBytes               = 2 << 20
+	siteMarketingImageMaxBytes     = 8 << 20
+	siteAgreementMaxLen            = 50_000
+	siteLegalHTMLMaxLen            = 256 << 10
+	siteRecordNoMaxLen             = 100
+	siteRecordURLMaxLen            = 500
+	siteBannerLabelMaxLen          = 20
+	siteBannerTextMaxLen           = 200
+	siteBannerActionMaxLen         = 20
+	siteMarketingTitleMaxLen       = 80
+	siteMarketingDescriptionMaxLen = 200
+	marketingPopupFrequencyOnce    = "once"
+	marketingPopupFrequencyDaily   = "daily"
+	marketingPopupFrequencySession = "session"
 )
 
 var ErrSiteLogoNotConfigured = errors.New("站点 Logo 尚未配置")
+var ErrSiteMarketingImageNotConfigured = errors.New("营销弹窗图片尚未配置")
 
 type SiteSettingRequest struct {
 	SiteName                         string `json:"siteName"`
@@ -47,6 +55,12 @@ type SiteSettingRequest struct {
 	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
 	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
 	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
+	MarketingPopupTitle              string `json:"marketingPopupTitle"`
+	MarketingPopupDescription        string `json:"marketingPopupDescription"`
+	MarketingPopupActionLabel        string `json:"marketingPopupActionLabel"`
+	MarketingPopupActionURL          string `json:"marketingPopupActionUrl"`
+	MarketingPopupFrequency          string `json:"marketingPopupFrequency"`
 }
 
 type LegalContentSettingRequest struct {
@@ -71,6 +85,13 @@ type PublicSiteSetting struct {
 	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
 	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
 	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
+	MarketingPopupImageURL           string `json:"marketingPopupImageUrl"`
+	MarketingPopupTitle              string `json:"marketingPopupTitle"`
+	MarketingPopupDescription        string `json:"marketingPopupDescription"`
+	MarketingPopupActionLabel        string `json:"marketingPopupActionLabel"`
+	MarketingPopupActionURL          string `json:"marketingPopupActionUrl"`
+	MarketingPopupFrequency          string `json:"marketingPopupFrequency"`
 	UpdatedBy                        string `json:"updatedBy"`
 	CreatedAt                        string `json:"createdAt"`
 	UpdatedAt                        string `json:"updatedAt"`
@@ -94,6 +115,14 @@ type siteSettingValue struct {
 	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
 	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
 	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
+	MarketingPopupImageFile          string `json:"marketingPopupImageFile"`
+	MarketingPopupImageMimeType      string `json:"marketingPopupImageMimeType"`
+	MarketingPopupTitle              string `json:"marketingPopupTitle"`
+	MarketingPopupDescription        string `json:"marketingPopupDescription"`
+	MarketingPopupActionLabel        string `json:"marketingPopupActionLabel"`
+	MarketingPopupActionURL          string `json:"marketingPopupActionUrl"`
+	MarketingPopupFrequency          string `json:"marketingPopupFrequency"`
 }
 
 func (s *Service) PublicSiteSetting() (*PublicSiteSetting, error) {
@@ -140,6 +169,14 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		HomeBannerPrimaryActionURL:       strings.TrimSpace(req.HomeBannerPrimaryActionURL),
 		HomeBannerSecondaryActionLabel:   strings.TrimSpace(req.HomeBannerSecondaryActionLabel),
 		HomeBannerSecondaryActionURL:     strings.TrimSpace(req.HomeBannerSecondaryActionURL),
+		MarketingPopupEnabled:            req.MarketingPopupEnabled,
+		MarketingPopupImageFile:          current.MarketingPopupImageFile,
+		MarketingPopupImageMimeType:      current.MarketingPopupImageMimeType,
+		MarketingPopupTitle:              strings.TrimSpace(req.MarketingPopupTitle),
+		MarketingPopupDescription:        strings.TrimSpace(req.MarketingPopupDescription),
+		MarketingPopupActionLabel:        strings.TrimSpace(req.MarketingPopupActionLabel),
+		MarketingPopupActionURL:          strings.TrimSpace(req.MarketingPopupActionURL),
+		MarketingPopupFrequency:          strings.TrimSpace(req.MarketingPopupFrequency),
 	}
 	if err := validateSiteSetting(next); err != nil {
 		return nil, BadAuthRequest(err.Error())
@@ -153,6 +190,145 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (s *Service) UpdateMarketingPopupImage(actor *model.User, header *multipart.FileHeader) (*PublicSiteSetting, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	s.siteSettingMu.Lock()
+	defer s.siteSettingMu.Unlock()
+	if header == nil {
+		return nil, BadAuthRequest("请选择要上传的营销图片")
+	}
+	if header.Size <= 0 || header.Size > siteMarketingImageMaxBytes {
+		return nil, BadAuthRequest("营销图片大小必须在 8MB 以内")
+	}
+	content, mimeType, extension, err := readManagedImage(header, siteMarketingImageMaxBytes, "营销图片")
+	if err != nil {
+		return nil, err
+	}
+	currentSetting, current, err := s.readSiteSetting()
+	if err != nil {
+		return nil, err
+	}
+	assetDir := s.siteLogoDir()
+	if err := os.MkdirAll(assetDir, 0o750); err != nil {
+		return nil, fmt.Errorf("创建站点素材目录失败: %w", err)
+	}
+	fileName := "marketing-" + managedImageFileName(content, extension)
+	finalPath := filepath.Join(assetDir, fileName)
+	createdFile := false
+	if _, err := os.Stat(finalPath); errors.Is(err, os.ErrNotExist) {
+		if err := writeFileAtomically(assetDir, ".site-marketing-*", finalPath, content); err != nil {
+			return nil, err
+		}
+		createdFile = true
+	} else if err != nil {
+		return nil, fmt.Errorf("检查营销图片文件失败: %w", err)
+	}
+	next := current
+	next.MarketingPopupImageFile = fileName
+	next.MarketingPopupImageMimeType = mimeType
+	setting, err := s.saveSiteSetting(actor, currentSetting, next)
+	if err != nil {
+		if createdFile {
+			if cleanupErr := removeManagedSiteAsset(finalPath); cleanupErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("保存营销图片配置失败且清理新文件失败: %w", cleanupErr))
+			}
+		}
+		return nil, err
+	}
+	result := publicSiteSetting(setting, next)
+	if err := s.appendAdminAudit(actor, "site_setting.marketing_image.update", "system_setting", siteSettingKey, "更新登录后营销弹窗图片", result); err != nil {
+		return nil, err
+	}
+	if current.MarketingPopupImageFile != "" && current.MarketingPopupImageFile != fileName {
+		oldPath := filepath.Join(assetDir, filepath.Base(current.MarketingPopupImageFile))
+		if err := removeManagedSiteAsset(oldPath); err != nil {
+			return nil, s.reportSiteAssetCleanupFailure(actor, "site_setting.marketing_image.cleanup_failed", oldPath, err)
+		}
+	}
+	return &result, nil
+}
+
+func (s *Service) RemoveMarketingPopupImage(actor *model.User) (*PublicSiteSetting, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	s.siteSettingMu.Lock()
+	defer s.siteSettingMu.Unlock()
+	currentSetting, current, err := s.readSiteSetting()
+	if err != nil {
+		return nil, err
+	}
+	previousFile := current.MarketingPopupImageFile
+	next := current
+	next.MarketingPopupImageFile = ""
+	next.MarketingPopupImageMimeType = ""
+	setting, err := s.saveSiteSetting(actor, currentSetting, next)
+	if err != nil {
+		return nil, err
+	}
+	result := publicSiteSetting(setting, next)
+	if err := s.appendAdminAudit(actor, "site_setting.marketing_image.remove", "system_setting", siteSettingKey, "移除登录后营销弹窗图片", result); err != nil {
+		return nil, err
+	}
+	if previousFile != "" {
+		previousPath := filepath.Join(s.siteLogoDir(), filepath.Base(previousFile))
+		if err := removeManagedSiteAsset(previousPath); err != nil {
+			return nil, s.reportSiteAssetCleanupFailure(actor, "site_setting.marketing_image.cleanup_failed", previousPath, err)
+		}
+	}
+	return &result, nil
+}
+
+type siteAssetCleanupFailure struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
+func removeManagedSiteAsset(path string) error {
+	err := os.Remove(path)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) reportSiteAssetCleanupFailure(actor *model.User, action string, path string, cleanupErr error) error {
+	log.Printf("site asset cleanup failed action=%s path=%s error=%v", action, path, cleanupErr)
+	auditErr := s.appendAdminAudit(actor, action, "system_setting", siteSettingKey, "站点营销素材清理失败", siteAssetCleanupFailure{
+		Path:  path,
+		Error: cleanupErr.Error(),
+	})
+	if auditErr != nil {
+		return errors.Join(fmt.Errorf("营销素材已更新，但旧文件清理失败: %w", cleanupErr), fmt.Errorf("记录清理失败审计日志失败: %w", auditErr))
+	}
+	return fmt.Errorf("营销素材已更新，但旧文件清理失败: %w", cleanupErr)
+}
+
+func (s *Service) MarketingPopupImageFile() (string, string, time.Time, error) {
+	setting, value, err := s.readSiteSetting()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	if setting == nil || value.MarketingPopupImageFile == "" {
+		return "", "", time.Time{}, ErrSiteMarketingImageNotConfigured
+	}
+	fileName := filepath.Base(value.MarketingPopupImageFile)
+	if fileName != value.MarketingPopupImageFile {
+		return "", "", time.Time{}, errors.New("营销弹窗图片配置无效")
+	}
+	filePath := filepath.Join(s.siteLogoDir(), fileName)
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", "", time.Time{}, errors.New("营销弹窗图片文件无效")
+	}
+	return filePath, value.MarketingPopupImageMimeType, info.ModTime(), nil
 }
 
 func (s *Service) UpdateLegalContentSetting(actor *model.User, req LegalContentSettingRequest) (*PublicSiteSetting, error) {
@@ -324,11 +500,12 @@ func (s *Service) saveSiteSetting(actor *model.User, current *model.SystemSettin
 
 func defaultSiteSetting() siteSettingValue {
 	return siteSettingValue{
-		SiteName:          "HMaigc",
-		FooterCopyright:   fmt.Sprintf("© %d HMaigc. 保留所有权利。", time.Now().Year()),
-		HomeBannerEnabled: true,
-		HomeBannerLabel:   "招募中",
-		HomeBannerText:    "招增长伙伴：懂冷启动、内容增长或海外增长，欢迎加入 HMaigc。",
+		SiteName:                "HMaigc",
+		FooterCopyright:         fmt.Sprintf("© %d HMaigc. 保留所有权利。", time.Now().Year()),
+		HomeBannerEnabled:       true,
+		HomeBannerLabel:         "招募中",
+		HomeBannerText:          "招增长伙伴：懂冷启动、内容增长或海外增长，欢迎加入 HMaigc。",
+		MarketingPopupFrequency: marketingPopupFrequencyOnce,
 	}
 }
 
@@ -353,6 +530,26 @@ func validateSiteSetting(value siteSettingValue) error {
 		return err
 	}
 	if err := validateSiteBannerAction("首页横幅次按钮", value.HomeBannerSecondaryActionLabel, value.HomeBannerSecondaryActionURL); err != nil {
+		return err
+	}
+	if len([]rune(value.MarketingPopupTitle)) > siteMarketingTitleMaxLen {
+		return fmt.Errorf("营销弹窗标题不能超过 %d 个字符", siteMarketingTitleMaxLen)
+	}
+	if len([]rune(value.MarketingPopupDescription)) > siteMarketingDescriptionMaxLen {
+		return fmt.Errorf("营销弹窗说明不能超过 %d 个字符", siteMarketingDescriptionMaxLen)
+	}
+	if value.MarketingPopupFrequency != marketingPopupFrequencyOnce && value.MarketingPopupFrequency != marketingPopupFrequencyDaily && value.MarketingPopupFrequency != marketingPopupFrequencySession {
+		return errors.New("营销弹窗展示频率无效")
+	}
+	if value.MarketingPopupEnabled {
+		if value.MarketingPopupImageFile == "" {
+			return errors.New("启用营销弹窗前必须上传展示图片")
+		}
+		if value.MarketingPopupTitle == "" {
+			return errors.New("启用营销弹窗前必须填写标题")
+		}
+	}
+	if err := validateSiteBannerAction("营销弹窗按钮", value.MarketingPopupActionLabel, value.MarketingPopupActionURL); err != nil {
 		return err
 	}
 	if len([]rune(value.ICPRegistrationNumber)) > siteRecordNoMaxLen {
@@ -384,6 +581,12 @@ func validateSiteSetting(value siteSettingValue) error {
 	}
 	if value.LogoFile == "" && value.LogoMimeType != "" {
 		return errors.New("站点 Logo 文件与类型不一致")
+	}
+	if value.MarketingPopupImageFile != "" && filepath.Base(value.MarketingPopupImageFile) != value.MarketingPopupImageFile {
+		return errors.New("营销弹窗图片文件配置无效")
+	}
+	if value.MarketingPopupImageFile == "" && value.MarketingPopupImageMimeType != "" {
+		return errors.New("营销弹窗图片文件与类型不一致")
 	}
 	return nil
 }
@@ -559,6 +762,12 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 		HomeBannerPrimaryActionURL:       value.HomeBannerPrimaryActionURL,
 		HomeBannerSecondaryActionLabel:   value.HomeBannerSecondaryActionLabel,
 		HomeBannerSecondaryActionURL:     value.HomeBannerSecondaryActionURL,
+		MarketingPopupEnabled:            value.MarketingPopupEnabled,
+		MarketingPopupTitle:              value.MarketingPopupTitle,
+		MarketingPopupDescription:        value.MarketingPopupDescription,
+		MarketingPopupActionLabel:        value.MarketingPopupActionLabel,
+		MarketingPopupActionURL:          value.MarketingPopupActionURL,
+		MarketingPopupFrequency:          value.MarketingPopupFrequency,
 	}
 	if setting != nil {
 		result.UpdatedBy = setting.UpdatedBy
@@ -571,6 +780,13 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 			version = fmt.Sprintf("%d", setting.UpdatedAt.UnixNano())
 		}
 		result.LogoURL = "/api/public/site/logo?v=" + version
+	}
+	if value.MarketingPopupImageFile != "" {
+		version := "configured"
+		if setting != nil && !setting.UpdatedAt.IsZero() {
+			version = fmt.Sprintf("%d", setting.UpdatedAt.UnixNano())
+		}
+		result.MarketingPopupImageURL = "/api/public/site/marketing-image?v=" + version
 	}
 	return result
 }
