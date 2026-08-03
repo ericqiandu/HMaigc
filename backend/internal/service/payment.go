@@ -249,7 +249,7 @@ func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*Crea
 }
 
 func (s *Service) PaymentCheckout(token string) (*PaymentCheckoutView, error) {
-	session, order, setting, err := s.paymentCheckoutContext(token)
+	session, order, setting, err := s.paymentCheckoutViewContext(token)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +261,7 @@ func (s *Service) PaymentCheckout(token string) (*PaymentCheckoutView, error) {
 }
 
 func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransactionRequest) (*model.PaymentTransaction, error) {
-	session, order, setting, err := s.paymentCheckoutContext(token)
+	session, order, setting, err := s.payableCheckoutContext(token)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	return transaction, nil
 }
 
-func (s *Service) paymentCheckoutContext(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
+func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
 	trimmed := strings.TrimSpace(token)
 	if trimmed == "" {
 		return nil, nil, paymentSettingValue{}, BadAuthRequest("收银台令牌不能为空")
@@ -313,24 +313,53 @@ func (s *Service) paymentCheckoutContext(token string) (*model.PaymentCheckoutSe
 	if err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
-	now := time.Now()
-	if session.Status != model.PaymentCheckoutActive || !session.ExpiresAt.After(now) {
-		if session.Status == model.PaymentCheckoutActive {
-			if err := s.repo.ExpirePaymentCheckoutSession(session.ID, now); err != nil {
-				return nil, nil, paymentSettingValue{}, err
-			}
-		}
-		return nil, nil, paymentSettingValue{}, BadAuthRequest("收银台已失效，请重新发起支付")
-	}
 	order, err := s.repo.MembershipOrder(session.OrderID)
 	if err != nil {
+		return nil, nil, paymentSettingValue{}, err
+	}
+	_, setting, err := s.readPaymentSetting()
+	return session, order, setting, err
+}
+
+func (s *Service) paymentCheckoutViewContext(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
+	session, order, setting, err := s.paymentCheckoutByToken(token)
+	if err != nil {
+		return nil, nil, paymentSettingValue{}, err
+	}
+	if session.Status == model.PaymentCheckoutConsumed && order.Status == model.MembershipOrderPaid {
+		return session, order, setting, nil
+	}
+	if err := s.requireActiveCheckout(session); err != nil {
+		return nil, nil, paymentSettingValue{}, err
+	}
+	return session, order, setting, nil
+}
+
+func (s *Service) payableCheckoutContext(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
+	session, order, setting, err := s.paymentCheckoutByToken(token)
+	if err != nil {
+		return nil, nil, paymentSettingValue{}, err
+	}
+	if err := s.requireActiveCheckout(session); err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
 	if order.Status != model.MembershipOrderPending {
 		return nil, nil, paymentSettingValue{}, BadAuthRequest("订单当前不可支付")
 	}
-	_, setting, err := s.readPaymentSetting()
-	return session, order, setting, err
+	return session, order, setting, nil
+}
+
+func (s *Service) requireActiveCheckout(session *model.PaymentCheckoutSession) error {
+	now := time.Now()
+	if session.Status == model.PaymentCheckoutActive && session.ExpiresAt.After(now) {
+		return nil
+	}
+	if session.Status == model.PaymentCheckoutActive {
+		if err := s.repo.ExpirePaymentCheckoutSession(session.ID, now); err != nil {
+			return err
+		}
+	}
+	return BadAuthRequest("收银台已失效，请重新发起支付")
 }
 
 func (s *Service) readPaymentSetting() (*model.SystemSetting, paymentSettingValue, error) {

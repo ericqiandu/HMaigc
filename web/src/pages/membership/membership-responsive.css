@@ -31,6 +31,10 @@
         width: calc(100% - 92px);
     }
 
+    .membership-campaign {
+        width: calc(100% - 92px);
+    }
+
     .membership-overview {
         align-items: flex-start;
         flex-direction: column;
@@ -90,9 +94,20 @@
     }
 
     .membership-hero {
-        min-height: 104px;
-        padding: 20px 44px 16px;
+        min-height: 88px;
+        padding: 16px 44px;
     }
+
+    .membership-campaign {
+        width: calc(100% - 32px);
+        min-height: 104px;
+        margin-top: 18px;
+        padding: 20px;
+    }
+
+    .membership-campaign-title { max-width: 220px; font-size: 20px; }
+    .membership-campaign-description { max-width: 240px; }
+    .membership-campaign-mark { display: none; }
 
     .membership-cycle-switch.ant-segmented {
         width: 100%;

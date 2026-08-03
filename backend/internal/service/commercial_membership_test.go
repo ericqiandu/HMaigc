@@ -503,6 +503,48 @@ func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
 	}
 }
 
+func TestPaymentCheckoutRemainsReadableAfterSuccessfulPayment(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := checkoutToken(t, result.CheckoutURL)
+	now := time.Now()
+	if err := db.Model(&model.MembershipOrder{}).Where("id = ?", order.ID).Updates(map[string]interface{}{
+		"status": model.MembershipOrderPaid, "paid_at": now, "updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).Updates(map[string]interface{}{
+		"status": model.PaymentCheckoutConsumed, "updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.PaymentCheckout(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != model.MembershipOrderPaid {
+		t.Fatalf("checkout status = %s, want paid", view.Status)
+	}
+	if _, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat}); err == nil {
+		t.Fatal("consumed checkout unexpectedly created another transaction")
+	}
+}
+
 func TestPaymentGatewayRejectsNonOfficialOrInsecureEndpoints(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	admin, _, _ := createCommercialTestUsers(t, db)

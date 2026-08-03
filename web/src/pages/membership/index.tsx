@@ -7,9 +7,10 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useSiteSettings } from "@/components/site/site-settings-provider";
 import { membershipQueryKey } from "@/hooks/use-membership-action";
 import { cancelMembershipOrder, createMembershipOrder, createTeam, getMyMembership, listMembershipPlans, type MembershipAudience, type MembershipBillingCycle, type MembershipOverview, type MembershipPlan } from "@/services/api/membership";
+import { createPaymentCheckout } from "@/services/api/payment";
 import { useUserStore } from "@/stores/use-user-store";
 
-import { billingCycleShortLabel, clampSeats, topupDiscountLabel } from "./membership-formatters";
+import { billingCycleShortLabel, clampSeats, publicPlanName, topupDiscountLabel } from "./membership-formatters";
 import { MembershipOrderHistory } from "./membership-order-history";
 import { MembershipInvoiceCenter } from "./membership-invoice-center";
 import { MembershipPlanCard } from "./membership-plan-card";
@@ -44,6 +45,7 @@ export default function MembershipPage() {
     const [teamId, setTeamId] = useState<string>();
     const [teamName, setTeamName] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    const [payingId, setPayingId] = useState("");
     const [cancellingId, setCancellingId] = useState("");
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
@@ -108,7 +110,6 @@ export default function MembershipPage() {
             plans
                 .filter((plan) => {
                     if (plan.audience !== audience) return false;
-                    if (audience === "personal" && plan.billingCycle === "free") return true;
                     return plan.billingCycle === cycle;
                 })
                 .sort((left, right) => left.sortOrder - right.sortOrder),
@@ -158,6 +159,7 @@ export default function MembershipPage() {
     const submitOrder = async () => {
         if (!selection) return;
         setSubmitting(true);
+        let createdOrderId = "";
         try {
             let resolvedTeamId = teamId;
             if (selection.plan.audience === "team" && !resolvedTeamId) {
@@ -170,13 +172,33 @@ export default function MembershipPage() {
                 seats: selection.plan.audience === "team" ? selection.seats : 1,
                 teamId: resolvedTeamId,
             });
-            message.success(`订单 ${order.orderNumber} 已创建`);
+            createdOrderId = order.id;
             setSelection(null);
-            await load();
+            const checkout = await createPaymentCheckout(order.id);
+            message.success(`订单 ${order.orderNumber} 已创建，正在进入收银台`);
+            window.location.assign(checkout.checkoutUrl);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "创建订单失败");
+            const reason = error instanceof Error ? error.message : "创建订单失败";
+            if (createdOrderId) {
+                message.error(`订单已创建，但收银台打开失败：${reason}。请在会员订单中继续支付`);
+                await load();
+            } else {
+                message.error(reason);
+            }
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    const openCheckout = async (orderId: string) => {
+        setPayingId(orderId);
+        try {
+            const checkout = await createPaymentCheckout(orderId);
+            window.location.assign(checkout.checkoutUrl);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "收银台打开失败");
+        } finally {
+            setPayingId("");
         }
     };
 
@@ -216,13 +238,23 @@ export default function MembershipPage() {
                 </header>
 
                 <div className="membership-window-scroll">
+                    <section aria-label="会员礼遇" className="membership-campaign">
+                        <div className="membership-campaign-copy">
+                            <span className="membership-campaign-kicker">HMAIGC MEMBERSHIP</span>
+                            <strong className="membership-campaign-title">为持续创作释放更多算力</strong>
+                            <span className="membership-campaign-description">套餐价格、积分与并发权益均以后台实时配置为准</span>
+                        </div>
+                        <div aria-hidden="true" className="membership-campaign-mark"><Crown /></div>
+                    </section>
                     <section className="membership-hero">
                         {availableCycles.length > 0 ? (
                             <Segmented
                                 className="membership-cycle-switch"
                                 onChange={(value) => setCycle(value as MembershipBillingCycle)}
                                 options={availableCycles.map((availableCycle) => ({
-                                    label: availableCycle === "year" ? "按年购买" : availableCycle === "month" ? "按月购买" : billingCycleShortLabel[availableCycle],
+                                    label: audience === "personal"
+                                        ? availableCycle === "year" ? "连续包年" : availableCycle === "month" ? "连续包月" : billingCycleShortLabel[availableCycle]
+                                        : availableCycle === "year" ? "按年购买" : availableCycle === "month" ? "按月购买" : billingCycleShortLabel[availableCycle],
                                     value: availableCycle,
                                 }))}
                                 value={cycle}
@@ -284,7 +316,7 @@ export default function MembershipPage() {
                                     </span>
                                     <div className="membership-overview-title">
                                         <span className="membership-overview-label">当前方案</span>
-                                        <strong className="membership-overview-plan">{overview.entitlement.planName}</strong>
+                                        <strong className="membership-overview-plan">{publicPlanName({ name: overview.entitlement.planName, tier: overview.entitlement.tier })}</strong>
                                     </div>
                                 </div>
                                 <div className="membership-overview-metrics">
@@ -308,7 +340,7 @@ export default function MembershipPage() {
                                     </span>
                                 </div>
                             </div>
-                            <MembershipOrderHistory cancellingId={cancellingId} className="membership-orders-section" onCancel={(orderId) => void cancelOrder(orderId)} orders={overview.orders} plansById={plansById} />
+                            <MembershipOrderHistory cancellingId={cancellingId} className="membership-orders-section" onCancel={(orderId) => void cancelOrder(orderId)} onPay={(orderId) => void openCheckout(orderId)} orders={overview.orders} payingId={payingId} plansById={plansById} />
                             <MembershipInvoiceCenter email={user?.email || ""} orders={overview.orders} plansById={plansById} />
                         </section>
                     ) : null}

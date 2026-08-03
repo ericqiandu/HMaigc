@@ -21,6 +21,20 @@ export const billingCycleShortLabel: Record<MembershipBillingCycle, string> = {
     year: "年付",
 };
 
+const defaultPlanNames: Record<string, string> = {
+    origin: "基础版",
+    pro: "标准版",
+    max: "高级版",
+    ultra: "至尊版",
+};
+
+const legacyDefaultNames = new Set(["Origin", "Pro", "Max", "Ultra", "团队 Pro", "团队 Max", "团队 Ultra"]);
+
+export function publicPlanName(plan: Pick<MembershipPlan, "name" | "tier">): string {
+    if (!legacyDefaultNames.has(plan.name)) return plan.name;
+    return defaultPlanNames[plan.tier] ?? plan.name;
+}
+
 export function formatMoney(valueCents: number): string {
     return moneyFormatter.format(valueCents / 100);
 }

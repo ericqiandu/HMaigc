@@ -36,6 +36,7 @@ const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
 const HomePage = lazy(() => import("@/pages/home"));
 const LegalDocumentPage = lazy(() => import("@/pages/legal/legal-document-page").then((module) => ({ default: module.LegalDocumentPage })));
 const MembershipPage = lazy(() => import("@/pages/membership"));
+const PaymentCheckoutPage = lazy(() => import("@/pages/payment/payment-checkout-page"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const ProjectDetailPage = lazy(() => import("@/pages/projects/detail"));
 const ProjectsPage = lazy(() => import("@/pages/projects"));
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
         ],
     },
     { path: "/share/canvas/:token", element: deferredRoute(<SharedCanvasPage />), errorElement: <RouteErrorPage /> },
+    { path: "/pay/:token", element: deferredRoute(<PaymentCheckoutPage />), errorElement: deferredRoute(<RouteErrorPage />) },
     {
         element: deferredRoute(
             <UserLayout>

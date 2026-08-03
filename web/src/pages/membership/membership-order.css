@@ -272,6 +272,17 @@
     text-align: right;
 }
 
+.membership-order-pending-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.membership-pay-order {
+    box-shadow: none;
+}
+
 .membership-order-resolved {
     display: block;
     overflow: hidden;

@@ -3,7 +3,7 @@ import { ChevronDown, ReceiptText } from "lucide-react";
 
 import type { MembershipOrder, MembershipPlan } from "@/services/api/membership";
 
-import { billingCycleShortLabel, formatMoney } from "./membership-formatters";
+import { billingCycleShortLabel, formatMoney, publicPlanName } from "./membership-formatters";
 
 const orderStatus = {
     pending: { label: "待支付", color: "gold" },
@@ -16,7 +16,9 @@ type MembershipOrderHistoryProps = {
     cancellingId: string;
     className?: string;
     onCancel: (orderId: string) => void;
+    onPay: (orderId: string) => void;
     orders: MembershipOrder[];
+    payingId: string;
     plansById: Map<string, MembershipPlan>;
 };
 
@@ -24,7 +26,9 @@ export function MembershipOrderHistory({
     cancellingId,
     className = "",
     onCancel,
+    onPay,
     orders,
+    payingId,
     plansById,
 }: MembershipOrderHistoryProps) {
     return (
@@ -53,7 +57,7 @@ export function MembershipOrderHistory({
                             return (
                                 <article className="membership-order-row" key={order.id}>
                                     <div className="membership-order-primary">
-                                        <strong className="membership-order-plan">{plan?.name ?? "套餐记录不可用"}</strong>
+                                        <strong className="membership-order-plan">{plan ? publicPlanName(plan) : "套餐记录不可用"}</strong>
                                         <span className="membership-order-number">{order.orderNumber}</span>
                                     </div>
                                     <div className="membership-order-meta">
@@ -65,15 +69,18 @@ export function MembershipOrderHistory({
                                     <Tag className="membership-order-status" color={status.color}>{status.label}</Tag>
                                     <div className="membership-order-action">
                                         {order.status === "pending" ? (
-                                            <Popconfirm
-                                                cancelText="保留订单"
-                                                description="关闭后不能继续支付，需要重新创建订单。"
-                                                okText="确认关闭"
-                                                onConfirm={() => onCancel(order.id)}
-                                                title="关闭这笔待支付订单？"
-                                            >
-                                                <Button className="membership-cancel-order" danger loading={cancellingId === order.id} type="text">关闭</Button>
-                                            </Popconfirm>
+                                            <span className="membership-order-pending-actions">
+                                                <Button className="membership-pay-order" loading={payingId === order.id} onClick={() => onPay(order.id)} size="small" type="primary">去支付</Button>
+                                                <Popconfirm
+                                                    cancelText="保留订单"
+                                                    description="关闭后不能继续支付，需要重新创建订单。"
+                                                    okText="确认关闭"
+                                                    onConfirm={() => onCancel(order.id)}
+                                                    title="关闭这笔待支付订单？"
+                                                >
+                                                    <Button className="membership-cancel-order" danger loading={cancellingId === order.id} size="small" type="text">关闭</Button>
+                                                </Popconfirm>
+                                            </span>
                                         ) : (
                                             <span className="membership-order-resolved">{order.resolutionNote || "—"}</span>
                                         )}

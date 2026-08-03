@@ -157,11 +157,42 @@
     scrollbar-width: thin;
 }
 
+.membership-campaign {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(calc(100% - 116px), 1360px);
+    min-height: 118px;
+    margin: 28px auto 0;
+    padding: 24px 34px;
+    overflow: hidden;
+    border-radius: 8px;
+    background:
+        radial-gradient(circle at 82% 20%, rgb(111 157 255 / 42%), transparent 31%),
+        linear-gradient(112deg, #1d2638 0%, #171b25 48%, #25213b 100%);
+}
+
+.membership-campaign::after {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0 68%, rgb(255 255 255 / 4%) 68% 69%, transparent 69% 100%);
+    content: "";
+    pointer-events: none;
+}
+
+.membership-campaign-copy { position: relative; z-index: 1; display: grid; gap: 5px; }
+.membership-campaign-kicker { color: #9bbcff; font-size: 10px; font-weight: 700; letter-spacing: 0.18em; }
+.membership-campaign-title { font-size: 25px; font-weight: 650; letter-spacing: -0.025em; }
+.membership-campaign-description { color: rgb(255 255 255 / 56%); font-size: 12px; }
+.membership-campaign-mark { position: relative; z-index: 1; display: grid; width: 68px; height: 68px; place-items: center; color: rgb(255 255 255 / 82%); }
+.membership-campaign-mark svg { width: 44px; height: 44px; stroke-width: 1.2; }
+
 .membership-hero {
     display: grid;
     place-items: center;
-    min-height: 118px;
-    padding: 24px 56px 18px;
+    min-height: 94px;
+    padding: 18px 56px;
 }
 
 .membership-cycle-switch.ant-segmented {

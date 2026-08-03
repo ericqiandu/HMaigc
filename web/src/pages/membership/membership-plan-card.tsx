@@ -3,7 +3,7 @@ import { BadgePercent, Check, ImageIcon, Minus, Plus, Video, Zap } from "lucide-
 
 import type { MembershipPlan } from "@/services/api/membership";
 
-import { clampSeats, discountLabel, formatCredits, formatMoney, monthlyCredits, monthlyPriceCents, planTotalCredits, planTotalPriceCents, topupDiscountLabel } from "./membership-formatters";
+import { clampSeats, discountLabel, formatCredits, formatMoney, monthlyCredits, monthlyPriceCents, planTotalCredits, planTotalPriceCents, publicPlanName, topupDiscountLabel } from "./membership-formatters";
 
 type MembershipPlanCardProps = {
     className?: string;
@@ -23,13 +23,14 @@ export function MembershipPlanCard({ className = "", currentPlanId, featured, on
     const totalPrice = planTotalPriceCents(plan, normalizedSeats);
     const totalCredits = planTotalCredits(plan, normalizedSeats);
     const paidPlan = plan.billingCycle !== "free";
+    const displayName = publicPlanName(plan);
 
     return (
         <article className={`membership-plan-card ${teamPlan ? "is-team" : ""} ${featured ? "is-featured" : ""} ${current ? "is-current" : ""} ${className}`}>
             {featured ? <span className="membership-plan-banner">热门推荐</span> : null}
             <div className="membership-plan-heading">
                 <div className="membership-plan-name-row">
-                    <h2 className="membership-plan-name">{plan.name}</h2>
+                    <h2 className="membership-plan-name">{displayName}</h2>
                     {discount ? <span className="membership-plan-discount">{discount}</span> : null}
                 </div>
                 {current ? <span className="membership-plan-current-badge">当前方案</span> : null}
@@ -60,11 +61,11 @@ export function MembershipPlanCard({ className = "", currentPlanId, featured, on
                         </small>
                     </div>
                     <div className="membership-seat-stepper">
-                        <button aria-label={`减少 ${plan.name} 席位`} className="membership-seat-button" disabled={normalizedSeats <= plan.minSeats} onClick={() => onSeatsChange(plan.id, normalizedSeats - 1)} type="button">
+                        <button aria-label={`减少 ${displayName} 席位`} className="membership-seat-button" disabled={normalizedSeats <= plan.minSeats} onClick={() => onSeatsChange(plan.id, normalizedSeats - 1)} type="button">
                             <Minus className="membership-seat-button-icon" />
                         </button>
                         <strong className="membership-seat-value">{normalizedSeats}</strong>
-                        <button aria-label={`增加 ${plan.name} 席位`} className="membership-seat-button" disabled={normalizedSeats >= plan.maxSeats} onClick={() => onSeatsChange(plan.id, normalizedSeats + 1)} type="button">
+                        <button aria-label={`增加 ${displayName} 席位`} className="membership-seat-button" disabled={normalizedSeats >= plan.maxSeats} onClick={() => onSeatsChange(plan.id, normalizedSeats + 1)} type="button">
                             <Plus className="membership-seat-button-icon" />
                         </button>
                     </div>

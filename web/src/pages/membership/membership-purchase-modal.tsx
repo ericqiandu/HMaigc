@@ -3,7 +3,7 @@ import { Clock3, ShieldCheck } from "lucide-react";
 
 import type { MembershipPlan, Team } from "@/services/api/membership";
 
-import { formatCredits, formatMoney, planTotalCredits, planTotalPriceCents } from "./membership-formatters";
+import { formatCredits, formatMoney, planTotalCredits, planTotalPriceCents, publicPlanName } from "./membership-formatters";
 
 type MembershipPurchaseModalProps = {
     className?: string;
@@ -43,11 +43,11 @@ export function MembershipPurchaseModal({
         <Modal
             className={`membership-order-modal ${className}`}
             confirmLoading={submitting}
-            okText="创建待付款订单"
+            okText="去支付"
             onCancel={onCancel}
             onOk={onSubmit}
             open={open}
-            title={`确认购买 ${plan?.name ?? ""}`}
+            title={`确认购买 ${plan ? publicPlanName(plan) : ""}`}
         >
             {plan ? (
                 <div className="membership-order-modal-content">

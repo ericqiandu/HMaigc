@@ -65,6 +65,7 @@ export type UpdatePaymentSettingInput = {
 };
 
 export type PaymentProvider = "wechat" | "alipay";
+export type MembershipOrderStatus = "pending" | "paid" | "cancelled" | "expired" | "refunded";
 export type PaymentTransactionStatus = "created" | "pending" | "paid" | "closed" | "failed" | "refunded";
 export type PaymentWebhookStatus = "received" | "processed" | "rejected";
 
@@ -101,6 +102,21 @@ export type PaymentWebhookEvent = {
     updatedAt: string;
 };
 
+export type CreatePaymentCheckoutResult = {
+    checkoutUrl: string;
+    expiresAt: string;
+};
+
+export type PaymentCheckout = {
+    orderId: string;
+    orderNumber: string;
+    amountCents: number;
+    currency: string;
+    status: MembershipOrderStatus;
+    expiresAt: string;
+    providers: PaymentProvider[];
+};
+
 export type AdminPaymentPage<T> = {
     items: T[];
     total: number;
@@ -122,4 +138,16 @@ export function listAdminPaymentTransactions() {
 
 export function listAdminPaymentWebhookEvents() {
     return request<AdminPaymentPage<PaymentWebhookEvent>>(api.get("/admin/payments/webhooks"));
+}
+
+export function createPaymentCheckout(orderId: string) {
+    return request<CreatePaymentCheckoutResult>(api.post(`/membership/orders/${orderId}/checkout`));
+}
+
+export function getPaymentCheckout(token: string) {
+    return request<PaymentCheckout>(api.get(`/payments/checkout/${encodeURIComponent(token)}`));
+}
+
+export function createPaymentTransaction(token: string, provider: PaymentProvider) {
+    return request<PaymentTransaction>(api.post(`/payments/checkout/${encodeURIComponent(token)}/transactions`, { provider }));
 }
