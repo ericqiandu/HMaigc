@@ -34,7 +34,7 @@ export function CanvasAudioComposerControls({ config, credits, promptLength, isR
                     onChange={(model) => onConfigChange({ model })}
                     capability="audio"
                     onMissingConfig={handleMissingSystemModel}
-                    showSelectedPrice={false}
+                    showSelectedEstimate={false}
                     presentation="canvasAudio"
                 />
                 <span className="canvas-image-toolbar-divider canvas-audio-control-divider" aria-hidden="true" />

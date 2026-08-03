@@ -1,7 +1,7 @@
 import { isMiniMaxH3VideoConfig, miniMaxH3DurationOptions, miniMaxH3ResolutionOptions, normalizeMiniMaxH3Duration, normalizeMiniMaxH3Resolution } from "@/lib/minimax-h3-video";
 import { isKlingVideoConfig, klingDurationOptions, klingRatioOptions, klingResolutionOptions, normalizeKlingDuration, normalizeKlingResolution } from "@/lib/kling-video";
-import { isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
-import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import { isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceResolutionOptionsForModel } from "@/lib/seedance-video";
+import { normalizeVideoDuration, normalizeVideoResolution, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
 
@@ -12,6 +12,8 @@ export type VideoModelCapabilities = Readonly<{
     resolutions: readonly VideoParameterOption[];
     ratios: readonly VideoParameterOption[];
     durations: readonly number[];
+    customDurationRange?: Readonly<{ min: number; max: number }>;
+    outputCounts: readonly number[];
     supportedGenerationModes: readonly CanvasVideoGenerationMode[];
     supportsGeneratedAudio: boolean;
     supportsSuperResolution: boolean;
@@ -39,6 +41,8 @@ const miniMaxH3Capabilities: VideoModelCapabilities = {
     resolutions: miniMaxH3ResolutionOptions,
     ratios: standardRatioOptions,
     durations: miniMaxH3DurationOptions,
+    customDurationRange: { min: 4, max: 15 },
+    outputCounts: [1, 2, 4],
     supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
     supportsGeneratedAudio: false,
     supportsSuperResolution: false,
@@ -53,6 +57,7 @@ const klingCapabilities: VideoModelCapabilities = {
     resolutions: klingResolutionOptions,
     ratios: klingRatioOptions,
     durations: klingDurationOptions,
+    outputCounts: [1, 2, 4],
     supportedGenerationModes: ["text", "image", "first_last_frame"],
     supportsGeneratedAudio: false,
     supportsSuperResolution: false,
@@ -67,12 +72,13 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
     if (isMiniMaxH3VideoConfig(config)) return miniMaxH3Capabilities;
     const model = modelOptionName(config.model || config.videoModel);
     if (isSeedanceVideoConfig(config)) {
-        const resolutions = isSeedanceFastModel(model) ? seedanceResolutionOptions.filter((option) => option.value !== "1080p") : seedanceResolutionOptions;
         return {
             id: "seedance",
-            resolutions,
+            resolutions: seedanceResolutionOptionsForModel(model),
             ratios: standardRatioOptions,
             durations: seedanceDurationOptions,
+            customDurationRange: { min: 4, max: 15 },
+            outputCounts: [1, 2, 4],
             supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
             supportsGeneratedAudio: true,
             supportsSuperResolution: true,
@@ -83,7 +89,8 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
         id: "standard",
         resolutions: standardResolutionOptions,
         ratios: standardRatioOptions,
-        durations: seedanceDurationOptions,
+        durations: VIDEO_DURATION_OPTIONS,
+        outputCounts: [1, 2, 4],
         supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
         supportsGeneratedAudio: true,
         supportsSuperResolution: true,
@@ -102,15 +109,24 @@ export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: 
               : capabilities.id === "seedance"
                 ? normalizeSeedanceResolution(config.vquality, model)
                 : `${normalizeVideoResolution(config.vquality)}p`;
-    const normalizedDuration = capabilities.id === "kling" ? normalizeKlingDuration(config.videoSeconds) : capabilities.id === "minimax-h3" ? normalizeMiniMaxH3Duration(config.videoSeconds) : Number(normalizeVideoDuration(config.videoSeconds));
+    const normalizedDuration = capabilities.id === "kling"
+        ? normalizeKlingDuration(config.videoSeconds)
+        : capabilities.id === "minimax-h3"
+            ? normalizeMiniMaxH3Duration(config.videoSeconds)
+            : capabilities.id === "seedance"
+                ? normalizeSeedanceDuration(config.videoSeconds)
+                : Number(normalizeVideoDuration(config.videoSeconds));
     const normalizedRatio = normalizeSeedanceRatio(config.size);
     const ratioOptions = videoRatiosForMode(capabilities, generationMode);
     const supportedRatio = ratioOptions.some((option) => option.value === normalizedRatio) ? normalizedRatio : ratioOptions[0].value;
+    const requestedCount = Math.max(1, Math.floor(Math.abs(Number(config.count)) || 1));
+    const normalizedCount = capabilities.outputCounts.reduce((nearest, option) => (Math.abs(option - requestedCount) < Math.abs(nearest - requestedCount) ? option : nearest), capabilities.outputCounts[0]);
     return {
         ...config,
         vquality: normalizedResolution,
         videoSeconds: String(normalizedDuration),
         size: supportedRatio,
+        count: String(normalizedCount),
         videoGenerateAudio: capabilities.supportsGeneratedAudio ? config.videoGenerateAudio : "false",
         videoSuperResolutionEnabled: capabilities.supportsSuperResolution ? config.videoSuperResolutionEnabled : "false",
         videoSuperResolutionFps: capabilities.supportsSuperResolution ? config.videoSuperResolutionFps : "",
@@ -138,5 +154,6 @@ export function videoModelMetadataPatch(config: AiConfig, model: string, generat
         generateAudio: normalized.videoGenerateAudio,
         superResolutionEnabled: normalized.videoSuperResolutionEnabled,
         superResolutionFps: normalized.videoSuperResolutionFps,
+        count: Number(normalized.count),
     };
 }

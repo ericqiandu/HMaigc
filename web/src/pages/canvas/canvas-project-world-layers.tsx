@@ -142,7 +142,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         isConnectionTarget={props.connectionTargetNodeId === node.id}
                         isConnecting={Boolean(props.connectingParams)}
                         batchCount={props.batchChildCountById.get(node.id) || 0}
-                        batchExpanded={Boolean(node.metadata?.imageBatchExpanded)}
+                        batchExpanded={Boolean(node.metadata?.batchExpanded)}
                         batchClosing={Boolean(node.metadata?.batchRootId && props.collapsingBatchIds.has(node.metadata.batchRootId))}
                         batchOpening={props.openingBatchIds.has(node.id)}
                         batchRecovering={props.collapsingBatchIds.has(node.id)}

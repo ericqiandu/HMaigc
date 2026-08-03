@@ -1,14 +1,12 @@
-import { type ReactNode } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useState } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { boolConfig, normalizeSeedanceRatio, seedanceRatioOptions } from "@/lib/seedance-video";
-import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import { normalizeVideoResolution } from "@/lib/video-generation-options";
 import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "@/lib/video-model-capabilities";
 import { type AiConfig } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
-
-const videoCountOptions = [1, 2, 4] as const;
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
@@ -27,9 +25,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const ratio = ratioOptions.some((option) => option.value === normalizedConfig.size) ? normalizedConfig.size : ratioOptions[0].value;
     const durationOptions = capabilities.durations;
     const duration = Number(normalizedConfig.videoSeconds);
-    const durationIndex = Math.max(0, durationOptions.indexOf(duration));
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
-    const generationCount = normalizeVideoCount(config.count);
+    const generationCount = normalizeVideoCount(config.count, capabilities.outputCounts);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -37,7 +34,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {showTitle ? <div className="canvas-video-settings-title text-sm font-semibold">视频设置</div> : null}
 
                 <SettingGroup title="比例" color={theme.node.muted}>
-                    <div className="canvas-video-ratio-grid grid grid-cols-5 gap-2">
+                    <div className="canvas-video-ratio-grid grid gap-2">
                         {ratioOptions.map((item) => (
                             <RatioOption key={item.value} label={item.label} ratio={item.value} selected={ratio === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)} />
                         ))}
@@ -45,7 +42,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
 
                 <SettingGroup title="清晰度" color={theme.node.muted}>
-                    <div className="canvas-video-resolution-grid grid grid-cols-4 gap-2">
+                    <div className="canvas-video-resolution-grid grid gap-2">
                         {capabilities.resolutions.map((item) => (
                             <OptionButton key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
@@ -55,26 +52,17 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
 
                 <SettingGroup title="视频时长" color={theme.node.muted}>
-                    <div className="canvas-video-duration-row flex h-8 items-center gap-3">
-                        <input
-                            className="canvas-video-duration-slider min-w-0 flex-1 cursor-pointer"
-                            type="range"
-                            min={0}
-                            max={durationOptions.length - 1}
-                            step={1}
-                            value={durationIndex}
-                            aria-label="视频时长"
-                            onChange={(event) => onConfigChange("videoSeconds", String(durationOptions[Number(event.target.value)]))}
-                        />
-                        <output className="canvas-video-duration-value grid h-7 w-12 shrink-0 place-items-center rounded-md bg-white/5 text-[12px] font-semibold">{duration}</output>
-                        <span className="canvas-video-duration-unit -ml-2 text-[11px]" style={{ color: theme.node.muted }}>
-                            s
-                        </span>
-                    </div>
+                    <VideoDurationInput
+                        duration={duration}
+                        durationOptions={durationOptions}
+                        customDurationRange={capabilities.customDurationRange}
+                        theme={theme}
+                        onCommit={(value) => onConfigChange("videoSeconds", String(value))}
+                    />
                 </SettingGroup>
 
-                {capabilities.supportsGeneratedAudio ? (
-                    <SettingGroup title="生成音频" color={theme.node.muted}>
+                <SettingGroup title="生成音频" color={theme.node.muted}>
+                    {capabilities.supportsGeneratedAudio ? (
                         <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">
                             <OptionButton selected={generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "true")}>
                                 开启
@@ -83,12 +71,20 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 关闭
                             </OptionButton>
                         </div>
+                    ) : (
+                        <UnsupportedSetting reason={capabilities.unsupportedReasons.generatedAudio || "当前模型不支持同步生成音频"} />
+                    )}
+                </SettingGroup>
+
+                {!capabilities.supportsSuperResolution ? (
+                    <SettingGroup title="视频超分" color={theme.node.muted}>
+                        <UnsupportedSetting reason={capabilities.unsupportedReasons.superResolution || "当前模型不支持独立超分"} />
                     </SettingGroup>
                 ) : null}
 
                 <SettingGroup title="生成数量" color={theme.node.muted}>
-                    <div className="canvas-video-count-grid grid grid-cols-3 gap-2">
-                        {videoCountOptions.map((value) => (
+                    <div className="canvas-video-count-grid grid gap-2">
+                        {capabilities.outputCounts.map((value) => (
                             <OptionButton key={value} selected={generationCount === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
                                 {value}个
                             </OptionButton>
@@ -100,7 +96,122 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
+type VideoDurationInputProps = {
+    duration: number;
+    durationOptions: readonly number[];
+    customDurationRange?: Readonly<{ min: number; max: number }>;
+    theme: CanvasTheme;
+    onCommit: (value: number) => void;
+};
+
+function VideoDurationInput({ duration, durationOptions, customDurationRange, theme, onCommit }: VideoDurationInputProps) {
+    const inputId = useId();
+    const errorId = `${inputId}-error`;
+    const [draft, setDraft] = useState(String(duration));
+    const [error, setError] = useState("");
+    const discreteDurationIndex = Math.max(0, durationOptions.indexOf(duration));
+    const sliderMin = customDurationRange?.min ?? 0;
+    const sliderMax = customDurationRange?.max ?? Math.max(0, durationOptions.length - 1);
+    const sliderValue = customDurationRange ? duration : discreteDurationIndex;
+
+    useEffect(() => {
+        setDraft(String(duration));
+        setError("");
+    }, [duration]);
+
+    const commitDraft = () => {
+        const validation = validateVideoDuration(draft, durationOptions, customDurationRange);
+        if (!validation.valid) {
+            setError(validation.message);
+            return;
+        }
+        setDraft(String(validation.value));
+        setError("");
+        if (validation.value !== duration) onCommit(validation.value);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        event.currentTarget.blur();
+    };
+
+    return (
+        <div className="canvas-video-duration-control space-y-1.5">
+            <div className="canvas-video-duration-row flex h-8 items-center gap-3">
+                <input
+                    className="canvas-video-duration-slider min-w-0 flex-1 cursor-pointer accent-current"
+                    type="range"
+                    min={sliderMin}
+                    max={sliderMax}
+                    step={1}
+                    value={sliderValue}
+                    aria-label="调整视频时长"
+                    style={{ color: theme.node.text }}
+                    onChange={(event) => {
+                        const sliderSelection = Number(event.target.value);
+                        const nextDuration = customDurationRange ? sliderSelection : durationOptions[sliderSelection];
+                        if (!Number.isSafeInteger(nextDuration)) return;
+                        setDraft(String(nextDuration));
+                        setError("");
+                        if (nextDuration !== duration) onCommit(nextDuration);
+                    }}
+                />
+                <div className="canvas-video-duration-value relative flex h-7 w-[62px] shrink-0 items-center">
+                <input
+                    id={inputId}
+                    className="canvas-video-duration-input h-7 w-full rounded-md border-0 px-2 pr-5 text-center text-[12px] font-semibold tabular-nums outline-none transition focus-visible:ring-1 focus-visible:ring-current/25"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={draft}
+                    aria-label="视频时长"
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? errorId : undefined}
+                    style={{ background: theme.node.fill, boxShadow: error ? "inset 0 0 0 1px #ef4444" : "none", color: theme.node.text }}
+                    onChange={(event) => {
+                        const nextDraft = event.target.value.trim();
+                        if (nextDraft === "" || /^\d+$/.test(nextDraft)) {
+                            setDraft(nextDraft);
+                            setError("");
+                        }
+                    }}
+                    onBlur={commitDraft}
+                    onKeyDown={handleKeyDown}
+                />
+                    <span className="canvas-video-duration-unit pointer-events-none absolute right-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>s</span>
+                </div>
+            </div>
+            {error ? (
+                <div id={errorId} className="canvas-video-duration-error text-[11px] leading-4 text-red-500" role="alert">{error}</div>
+            ) : null}
+        </div>
+    );
+}
+
+type VideoDurationValidation = Readonly<
+    | { valid: true; value: number }
+    | { valid: false; message: string }
+>;
+
+export function validateVideoDuration(value: string, durationOptions: readonly number[], customDurationRange?: Readonly<{ min: number; max: number }>): VideoDurationValidation {
+    if (!/^\d+$/.test(value.trim())) return { valid: false, message: "请输入整数秒数" };
+    const duration = Number(value);
+    if (!Number.isSafeInteger(duration)) return { valid: false, message: "请输入有效的整数秒数" };
+    if (customDurationRange) {
+        if (duration < customDurationRange.min || duration > customDurationRange.max) {
+            return { valid: false, message: `当前模型仅支持 ${customDurationRange.min}–${customDurationRange.max} 秒` };
+        }
+        return { valid: true, value: duration };
+    }
+    if (!durationOptions.includes(duration)) return { valid: false, message: `当前模型仅支持 ${durationOptions.join(" / ")} 秒` };
+    return { valid: true, value: duration };
+}
+
 export function videoResolutionLabel(value: string) {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "768" || normalized === "768p") return "768P";
+    if (normalized === "2k" || normalized === "4k" || normalized === "8k") return normalized.toUpperCase();
     return `${normalizeVideoResolution(value)}P`;
 }
 
@@ -111,12 +222,23 @@ export function videoSizeLabel(value: string) {
 }
 
 export function videoSecondsLabel(value: string) {
-    return `${normalizeVideoDuration(value)}s`;
+    const duration = Number(value);
+    if (!Number.isSafeInteger(duration) || duration <= 0) throw new Error(`无效的视频时长：${value}`);
+    return `${duration}s`;
 }
 
-function normalizeVideoCount(value: string) {
+function normalizeVideoCount(value: string, options: readonly number[]) {
     const count = Math.max(1, Math.floor(Math.abs(Number(value)) || 1));
-    return videoCountOptions.reduce((nearest, option) => (Math.abs(option - count) < Math.abs(nearest - count) ? option : nearest), videoCountOptions[0]);
+    return options.reduce((nearest, option) => (Math.abs(option - count) < Math.abs(nearest - count) ? option : nearest), options[0]);
+}
+
+function UnsupportedSetting({ reason }: { reason: string }) {
+    return (
+        <div className="canvas-video-unsupported-setting" role="note">
+            <span className="canvas-video-unsupported-label">不支持</span>
+            <span className="canvas-video-unsupported-reason">{reason}</span>
+        </div>
+    );
 }
 
 function OptionButton({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

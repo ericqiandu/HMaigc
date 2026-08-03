@@ -123,18 +123,19 @@ type PublicChannelVoice struct {
 }
 
 type PublicChannelModelPrice struct {
-	Model                 string                        `json:"model"`
-	DisplayName           string                        `json:"displayName"`
-	MarketingCopy         string                        `json:"marketingCopy"`
-	PromotionBadge        string                        `json:"promotionBadge"`
-	BrandKey              string                        `json:"brandKey"`
-	AccessPolicy          model.ModelAccessPolicy       `json:"accessPolicy"`
-	Accessible            bool                          `json:"accessible"`
-	Capability            string                        `json:"capability"`
-	BillingMode           string                        `json:"billingMode"`
-	PriceStrategy         string                        `json:"priceStrategy"`
-	UnitPriceMicrocredits int64                         `json:"unitPriceMicrocredits"`
-	PriceTiers            []PublicChannelModelPriceTier `json:"priceTiers"`
+	Model                    string                        `json:"model"`
+	DisplayName              string                        `json:"displayName"`
+	MarketingCopy            string                        `json:"marketingCopy"`
+	PromotionBadge           string                        `json:"promotionBadge"`
+	EstimatedDurationSeconds int                           `json:"estimatedDurationSeconds"`
+	BrandKey                 string                        `json:"brandKey"`
+	AccessPolicy             model.ModelAccessPolicy       `json:"accessPolicy"`
+	Accessible               bool                          `json:"accessible"`
+	Capability               string                        `json:"capability"`
+	BillingMode              string                        `json:"billingMode"`
+	PriceStrategy            string                        `json:"priceStrategy"`
+	UnitPriceMicrocredits    int64                         `json:"unitPriceMicrocredits"`
+	PriceTiers               []PublicChannelModelPriceTier `json:"priceTiers"`
 }
 
 type PublicChannelModelPriceTier struct {
@@ -710,7 +711,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
 				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
-				PromotionBadge: item.PromotionBadge, BrandKey: item.BrandKey,
+				PromotionBadge: item.PromotionBadge, EstimatedDurationSeconds: item.EstimatedDurationSeconds, BrandKey: item.BrandKey,
 				AccessPolicy: item.AccessPolicy, Accessible: item.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
 				Capability:  item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,

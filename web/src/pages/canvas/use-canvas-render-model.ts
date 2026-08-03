@@ -82,7 +82,7 @@ export function useCanvasRenderModel({
             const rootId = node.metadata?.batchRootId;
             if (!rootId) return;
             const root = nodeById.get(rootId);
-            if (root && !root.metadata?.imageBatchExpanded) hidden.add(node.id);
+            if (root && !root.metadata?.batchExpanded) hidden.add(node.id);
         });
         return hidden;
     }, [nodeById, nodes]);

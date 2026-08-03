@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import { Settings2, Volume2 } from "lucide-react";
 import { Button } from "antd";
 
-import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
+import { VideoSettingsPanel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { normalizeVideoConfigForModel, resolveVideoModelCapabilities } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
@@ -23,6 +24,10 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+    const capabilities = resolveVideoModelCapabilities(config);
+    const normalizedConfig = normalizeVideoConfigForModel(config, generationMode);
+    const resolutionLabel = capabilities.resolutions.find((option) => option.value === normalizedConfig.vquality)?.label || normalizedConfig.vquality.toUpperCase();
+    const outputCount = Number(normalizedConfig.count);
 
     useEffect(() => {
         if (!open) return;
@@ -60,9 +65,9 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
                 >
                     <span className="inline-flex min-w-0 items-center gap-1 truncate">
                         <span className="truncate">
-                            {videoSizeLabel(config.size)} · {videoResolutionLabel(config.vquality)} · {videoSecondsLabel(config.videoSeconds)} · {Math.max(1, Math.floor(Math.abs(Number(config.count)) || 1))}个
+                            {videoSizeLabel(normalizedConfig.size)} · {resolutionLabel} · {videoSecondsLabel(normalizedConfig.videoSeconds)} · {outputCount}个
                         </span>
-                        {config.videoGenerateAudio !== "false" ? <Volume2 className="size-3.5 shrink-0" /> : null}
+                        {capabilities.supportsGeneratedAudio && normalizedConfig.videoGenerateAudio !== "false" ? <Volume2 className="size-3.5 shrink-0" /> : null}
                     </span>
                 </Button>
             </span>
@@ -108,9 +113,11 @@ function VideoSettingsPortal({
         background: theme.spatial.elevated,
         border: `1px solid ${theme.toolbar.border}`,
         borderRadius: 12,
-        boxShadow: `0 24px 72px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.08)`,
+        boxShadow: `0 12px 36px ${theme.spatial.shadow}`,
         padding: 12,
         overflowY: "auto",
+        overflowX: "hidden",
+        overscrollBehavior: "contain",
         color: theme.node.text,
     } as const;
 

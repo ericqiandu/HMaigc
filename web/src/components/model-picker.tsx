@@ -1,10 +1,10 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Coins } from "lucide-react";
 import { Select } from "antd";
 
 import { staticAssetURL } from "@/lib/static-assets";
 import { cn } from "@/lib/utils";
 import { ModelBrandIcon } from "@/components/model-brand-icon";
+import { formatModelEstimatedDuration } from "@/lib/model-estimated-duration";
 import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
@@ -16,11 +16,11 @@ type ModelPickerProps = {
     fullWidth?: boolean;
     placeholder?: string;
     onMissingConfig?: () => void;
-    showSelectedPrice?: boolean;
+    showSelectedEstimate?: boolean;
     presentation?: "default" | "canvasImage" | "canvasAudio";
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, showSelectedPrice = true, presentation = "default" }: ModelPickerProps) {
+export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, showSelectedEstimate = true, presentation = "default" }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...catalogModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
@@ -38,7 +38,6 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         return ungroupedModels.length ? [...channelGroups, { key: "ungrouped", label: "其他模型", scope: "未指定渠道", models: ungroupedModels }] : channelGroups;
     }, [config, options]);
     const current = value || "";
-    const currentPrice = modelMenuPrice(config, current);
     const canvasMediaPresentation = presentation === "canvasImage" || presentation === "canvasAudio";
     const selectOptions = useMemo(
         () =>
@@ -112,7 +111,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                             <span className="canvas-model-picker-label-text min-w-0 truncate">{current ? modelDisplayName(config, current) : placeholder}</span>
                             {isMemberModel(config, current) ? <MemberDiamond /> : null}
                         </span>
-                        {showSelectedPrice ? <ModelPrice price={currentPrice} compact /> : null}
+                        {showSelectedEstimate ? <ModelEstimatedDuration seconds={modelCatalogEntry(config, current)?.estimatedDurationSeconds} compact /> : null}
                     </span>
                 )}
                 aria-label={placeholder}
@@ -158,33 +157,24 @@ function ModelLabel({ config, model, presentation, selected }: { config: AiConfi
                 </span>
                 {showMarketingCopy ? <span className="canvas-model-picker-option-meta mt-0.5 block w-full truncate text-[11px] font-normal leading-4">{modelMeta}</span> : null}
             </span>
-            <ModelPrice price={modelMenuPrice(config, model)} presentation={presentation} />
+            <ModelEstimatedDuration seconds={presentationConfig?.estimatedDurationSeconds} presentation={presentation} />
         </span>
     );
 }
 
-function modelMenuPrice(config: AiConfig, model: string): { value: number; unit: "次" | "秒" } | null | undefined {
-    if (!model) return undefined;
-    const channel = resolveModelChannel(config, model);
-    const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
-    if (!cost) return channel.scope === "system" ? null : undefined;
-    return { value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
-}
-
-function ModelPrice({ price, compact = false, presentation = "default" }: { price: { value: number; unit: "次" | "秒" } | null | undefined; compact?: boolean; presentation?: ModelPickerProps["presentation"] }) {
-    if (price === undefined) return null;
+function ModelEstimatedDuration({ seconds, compact = false, presentation = "default" }: { seconds: number | undefined; compact?: boolean; presentation?: ModelPickerProps["presentation"] }) {
+    const label = formatModelEstimatedDuration(seconds);
+    if (!label) return null;
     const canvasMedia = presentation === "canvasImage" || presentation === "canvasAudio";
-    if (price === null) return compact ? null : <span className={cn("canvas-model-picker-price shrink-0 text-[10px] text-foreground/40", canvasMedia && "rounded-full bg-foreground/[.06] px-2 py-1")}>未配置</span>;
     return (
         <span
             className={cn(
-                "canvas-model-picker-price inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium tabular-nums text-foreground/55",
-                canvasMedia ? "rounded-full bg-foreground/[.06] px-2 py-1" : "rounded border border-foreground/10 bg-foreground/[.045] px-1.5 py-0.5",
+                "canvas-model-picker-duration inline-flex shrink-0 items-center text-[10px] font-medium tabular-nums text-foreground/55",
+                canvasMedia ? "rounded-full bg-foreground/[.06] px-2 py-1" : compact ? "px-0.5" : "rounded-full bg-foreground/[.06] px-2 py-1",
             )}
-            title={`每${price.unit}消耗 ${price.value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`}
+            title={`预计生成耗时约 ${label}`}
         >
-            {canvasMedia ? null : <Coins className="size-3" />}
-            {price.value.toLocaleString("zh-CN", { maximumFractionDigits: compact ? 3 : 6 })}/{price.unit}
+            {label}
         </span>
     );
 }

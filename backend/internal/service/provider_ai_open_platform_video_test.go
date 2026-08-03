@@ -71,6 +71,47 @@ func TestAIOpenPlatformVideoBodyRejectsInvalidSuperResolutionTransition(t *testi
 	}
 }
 
+func TestAIOpenPlatformVideoResolutionMatchesSeedanceModelCapabilities(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		resolution string
+		want       string
+		wantError  bool
+	}{
+		{name: "fast 480p", mode: "fast", resolution: "480p", want: "480p"},
+		{name: "fast 720p", mode: "fast", resolution: "720p", want: "720p"},
+		{name: "fast rejects 1080p", mode: "fast", resolution: "1080p", wantError: true},
+		{name: "fast rejects 4k", mode: "fast", resolution: "4k", wantError: true},
+		{name: "mini 480p", mode: "mini", resolution: "480p", want: "480p"},
+		{name: "mini 720p", mode: "mini", resolution: "720p", want: "720p"},
+		{name: "mini rejects 1080p", mode: "mini", resolution: "1080p", wantError: true},
+		{name: "mini rejects 4k", mode: "mini", resolution: "4k", wantError: true},
+		{name: "pro 480p", mode: "pro", resolution: "480p", want: "480p"},
+		{name: "pro 720p", mode: "pro", resolution: "720p", want: "720p"},
+		{name: "pro 1080p", mode: "pro", resolution: "1080p", want: "1080p"},
+		{name: "pro 4k", mode: "pro", resolution: "4K", want: "4k"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := aiOpenPlatformVideoResolution(test.resolution, test.mode)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("aiOpenPlatformVideoResolution(%q, %q) = %q, want error", test.resolution, test.mode, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("aiOpenPlatformVideoResolution(%q, %q) error = %v", test.resolution, test.mode, err)
+			}
+			if got != test.want {
+				t.Fatalf("aiOpenPlatformVideoResolution(%q, %q) = %q, want %q", test.resolution, test.mode, got, test.want)
+			}
+		})
+	}
+}
+
 func TestAIOpenPlatformVideoBodyRejectsAudioOnlyWithoutPrompt(t *testing.T) {
 	_, err := aiOpenPlatformVideoBody(canvasGenerationInput{
 		Config: providerConfig{

@@ -14,19 +14,20 @@ import (
 )
 
 type ChannelModelRequest struct {
-	ModelKey              string                         `json:"modelKey"`
-	DisplayName           string                         `json:"displayName"`
-	MarketingCopy         string                         `json:"marketingCopy"`
-	PromotionBadge        string                         `json:"promotionBadge"`
-	BrandKey              string                         `json:"brandKey"`
-	AccessPolicy          model.ModelAccessPolicy        `json:"accessPolicy"`
-	Capability            string                         `json:"capability"`
-	BillingMode           string                         `json:"billingMode"`
-	PriceStrategy         string                         `json:"priceStrategy"`
-	UnitPriceMicrocredits int64                          `json:"unitPriceMicrocredits"`
-	PriceTiers            []ChannelModelPriceTierRequest `json:"priceTiers"`
-	PriceConfigured       bool                           `json:"priceConfigured"`
-	Enabled               *bool                          `json:"enabled"`
+	ModelKey                 string                         `json:"modelKey"`
+	DisplayName              string                         `json:"displayName"`
+	MarketingCopy            string                         `json:"marketingCopy"`
+	PromotionBadge           string                         `json:"promotionBadge"`
+	EstimatedDurationSeconds int                            `json:"estimatedDurationSeconds"`
+	BrandKey                 string                         `json:"brandKey"`
+	AccessPolicy             model.ModelAccessPolicy        `json:"accessPolicy"`
+	Capability               string                         `json:"capability"`
+	BillingMode              string                         `json:"billingMode"`
+	PriceStrategy            string                         `json:"priceStrategy"`
+	UnitPriceMicrocredits    int64                          `json:"unitPriceMicrocredits"`
+	PriceTiers               []ChannelModelPriceTierRequest `json:"priceTiers"`
+	PriceConfigured          bool                           `json:"priceConfigured"`
+	Enabled                  *bool                          `json:"enabled"`
 }
 
 type ChannelModelPriceTierRequest struct {
@@ -132,6 +133,9 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if strings.IndexFunc(promotionBadge, unicode.IsControl) >= 0 {
 		return nil, BadAuthRequest("模型促销角标不能包含换行或控制字符")
 	}
+	if req.EstimatedDurationSeconds < 0 || req.EstimatedDurationSeconds > 86_400 {
+		return nil, BadAuthRequest("预计生成耗时必须在 0 到 86400 秒之间")
+	}
 	brandKey := strings.TrimSpace(req.BrandKey)
 	if !model.IsModelBrandKey(brandKey) {
 		return nil, BadAuthRequest("请选择有效的系统模型品牌")
@@ -196,6 +200,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	item.MarketingCopy = marketingCopy
 	item.PromotionBadge = promotionBadge
+	item.EstimatedDurationSeconds = req.EstimatedDurationSeconds
 	item.BrandKey = brandKey
 	item.AccessPolicy = accessPolicy
 	item.Capability = capability
@@ -230,7 +235,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	audit, err := newAdminAuditEvent(actor, "channel_model.save", "channel_model", item.ID, "保存模型目录、展示配置、访问策略与计费配置", map[string]any{
 		"channelId": item.ChannelID, "modelKey": item.ModelKey, "displayName": item.DisplayName,
-		"marketingCopy": item.MarketingCopy, "promotionBadge": item.PromotionBadge, "brandKey": item.BrandKey,
+		"marketingCopy": item.MarketingCopy, "promotionBadge": item.PromotionBadge, "estimatedDurationSeconds": item.EstimatedDurationSeconds, "brandKey": item.BrandKey,
 		"accessPolicy": item.AccessPolicy, "capability": item.Capability, "enabled": item.Enabled,
 		"priceConfigured": item.PriceConfigured, "priceVersion": item.PriceVersion, "pricingChanged": pricingChanged,
 	})

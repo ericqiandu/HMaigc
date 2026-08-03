@@ -242,25 +242,26 @@ type ModelChannel struct {
 }
 
 type ChannelModel struct {
-	ID                    string                  `json:"id" gorm:"primaryKey;size:36"`
-	ChannelID             string                  `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
-	ModelKey              string                  `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
-	DisplayName           string                  `json:"displayName" gorm:"size:160"`
-	MarketingCopy         string                  `json:"marketingCopy" gorm:"size:240"`
-	PromotionBadge        string                  `json:"promotionBadge" gorm:"size:32"`
-	BrandKey              string                  `json:"brandKey" gorm:"size:32;index;not null;default:generic"`
-	AccessPolicy          ModelAccessPolicy       `json:"accessPolicy" gorm:"size:24;index;not null;default:authenticated"`
-	Capability            string                  `json:"capability" gorm:"size:32;index"`
-	BillingMode           string                  `json:"billingMode" gorm:"size:32"`
-	PriceStrategy         string                  `json:"priceStrategy" gorm:"size:32"`
-	UnitPriceMicrocredits int64                   `json:"unitPriceMicrocredits"`
-	PriceConfigured       bool                    `json:"priceConfigured" gorm:"index"`
-	Enabled               bool                    `json:"enabled" gorm:"index"`
-	PriceVersion          int64                   `json:"priceVersion"`
-	CreatedAt             time.Time               `json:"createdAt"`
-	UpdatedAt             time.Time               `json:"updatedAt"`
-	DeletedAt             gorm.DeletedAt          `json:"-" gorm:"index"`
-	PriceTiers            []ChannelModelPriceTier `json:"priceTiers" gorm:"foreignKey:ChannelModelID;constraint:OnDelete:CASCADE"`
+	ID                       string                  `json:"id" gorm:"primaryKey;size:36"`
+	ChannelID                string                  `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
+	ModelKey                 string                  `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
+	DisplayName              string                  `json:"displayName" gorm:"size:160"`
+	MarketingCopy            string                  `json:"marketingCopy" gorm:"size:240"`
+	PromotionBadge           string                  `json:"promotionBadge" gorm:"size:32"`
+	EstimatedDurationSeconds int                     `json:"estimatedDurationSeconds"`
+	BrandKey                 string                  `json:"brandKey" gorm:"size:32;index;not null;default:generic"`
+	AccessPolicy             ModelAccessPolicy       `json:"accessPolicy" gorm:"size:24;index;not null;default:authenticated"`
+	Capability               string                  `json:"capability" gorm:"size:32;index"`
+	BillingMode              string                  `json:"billingMode" gorm:"size:32"`
+	PriceStrategy            string                  `json:"priceStrategy" gorm:"size:32"`
+	UnitPriceMicrocredits    int64                   `json:"unitPriceMicrocredits"`
+	PriceConfigured          bool                    `json:"priceConfigured" gorm:"index"`
+	Enabled                  bool                    `json:"enabled" gorm:"index"`
+	PriceVersion             int64                   `json:"priceVersion"`
+	CreatedAt                time.Time               `json:"createdAt"`
+	UpdatedAt                time.Time               `json:"updatedAt"`
+	DeletedAt                gorm.DeletedAt          `json:"-" gorm:"index"`
+	PriceTiers               []ChannelModelPriceTier `json:"priceTiers" gorm:"foreignKey:ChannelModelID;constraint:OnDelete:CASCADE"`
 }
 
 // ChannelVoice 是系统音频渠道可供用户选择的音色目录。

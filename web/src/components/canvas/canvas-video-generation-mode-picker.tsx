@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Box, ChevronDown, FileText, Images, Image as ImageIcon, PanelsTopLeft } from "lucide-react";
-import { Popover } from "antd";
+import { Popover, Tooltip } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { resolveVideoGenerationMode, videoModeMetadataPatch, type VideoReferenceCounts } from "@/lib/canvas/canvas-video-generation-mode";
@@ -56,10 +56,14 @@ export function CanvasVideoGenerationModePicker({ metadata, frameOptions, refere
                     const selected = item.value === mode;
                     const reason = disabledReason(item.value);
                     return (
-                        <button key={item.value} type="button" className="canvas-video-mode-option" disabled={Boolean(reason)} title={reason} data-selected={selected} onClick={() => selectMode(item.value)}>
-                            <Icon className="canvas-video-mode-option-icon" />
-                            <span className="canvas-video-mode-option-label">{item.label}</span>
-                        </button>
+                        <Tooltip key={item.value} title={reason} placement="right" mouseEnterDelay={0.2}>
+                            <span className="canvas-video-mode-option-wrap">
+                                <button type="button" className="canvas-video-mode-option" disabled={Boolean(reason)} aria-label={reason ? `${item.label}：${reason}` : item.label} data-selected={selected} onClick={() => selectMode(item.value)}>
+                                    <Icon className="canvas-video-mode-option-icon" />
+                                    <span className="canvas-video-mode-option-label">{item.label}</span>
+                                </button>
+                            </span>
+                        </Tooltip>
                     );
                 })}
             </div>

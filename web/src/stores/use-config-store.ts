@@ -45,6 +45,7 @@ export type ModelChannel = {
         displayName?: string;
         marketingCopy: string;
         promotionBadge: string;
+        estimatedDurationSeconds: number;
         brandKey: ModelBrandKey;
         accessPolicy: "authenticated" | "member";
         accessible: boolean;

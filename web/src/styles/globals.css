@@ -1829,6 +1829,11 @@
         transition: background-color 140ms ease, color 140ms ease;
     }
 
+    .canvas-video-mode-option-wrap {
+        display: block;
+        width: 100%;
+    }
+
     .canvas-video-mode-option:hover:not(:disabled),
     .canvas-video-mode-option[data-selected="true"] {
         background: color-mix(in srgb, var(--foreground) 14%, transparent);
@@ -1883,7 +1888,34 @@
     }
 
     .canvas-video-settings-popover .canvas-video-duration-value {
+        color: color-mix(in srgb, var(--foreground) 82%, transparent);
+        line-height: 1;
+    }
+
+    .canvas-video-unsupported-setting {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+        gap: 8px;
+        min-height: 32px;
+        padding: 7px 8px;
+        border-radius: 8px;
         background: color-mix(in srgb, var(--foreground) 5%, transparent);
+        color: color-mix(in srgb, var(--foreground) 52%, transparent);
+        font-size: 11px;
+        font-weight: 400;
+        line-height: 16px;
+    }
+
+    .canvas-video-unsupported-label {
+        color: color-mix(in srgb, var(--foreground) 72%, transparent);
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    .canvas-video-unsupported-reason {
+        min-width: 0;
+        overflow-wrap: anywhere;
     }
 
     .canvas-video-settings-popover .canvas-video-option-button,
@@ -1896,6 +1928,15 @@
         border-color: color-mix(in srgb, var(--foreground) 92%, transparent);
         background: color-mix(in srgb, var(--foreground) 10%, transparent);
         color: color-mix(in srgb, var(--foreground) 95%, transparent);
+    }
+
+    .canvas-video-resolution-grid,
+    .canvas-video-count-grid {
+        grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+    }
+
+    .canvas-video-ratio-grid {
+        grid-template-columns: repeat(auto-fit, minmax(52px, 1fr));
     }
 
     .canvas-node-prompt-panel--video .canvas-video-super-resolution-trigger.ant-btn:hover:not(:disabled) {

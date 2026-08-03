@@ -351,7 +351,7 @@ export function useCanvasUpload({
                     count: undefined,
                     references: undefined,
                     primaryImageId: undefined,
-                    imageBatchExpanded: undefined,
+                    batchExpanded: undefined,
                 },
             } satisfies CanvasNodeData;
             setNodes((current) => current.map((item) => item.id === nodeId ? node : item));

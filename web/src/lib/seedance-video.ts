@@ -1,5 +1,4 @@
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
-import { normalizeVideoDuration, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -16,7 +15,12 @@ export const seedanceResolutionOptions = [
     { value: "480p", label: "480P" },
     { value: "720p", label: "720P" },
     { value: "1080p", label: "1080P" },
+    { value: "4k", label: "4K" },
 ] as const;
+
+export type SeedanceModelMode = "fast" | "pro" | "mini" | "unknown";
+
+const seedanceBaseResolutionOptions = seedanceResolutionOptions.filter((option) => option.value === "480p" || option.value === "720p");
 
 export const seedanceRatioOptions = [
     { value: "16:9", label: "横屏" },
@@ -28,7 +32,7 @@ export const seedanceRatioOptions = [
     { value: "adaptive", label: "自适应" },
 ] as const;
 
-export const seedanceDurationOptions = VIDEO_DURATION_OPTIONS;
+export const seedanceDurationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
 
 const seedancePixels = {
     "480p": {
@@ -55,6 +59,14 @@ const seedancePixels = {
         "9:16": "1080x1920",
         "21:9": "2206x946",
     },
+    "4k": {
+        "16:9": "3840x2160",
+        "4:3": "3328x2496",
+        "1:1": "2880x2880",
+        "3:4": "2496x3328",
+        "9:16": "2160x3840",
+        "21:9": "4412x1892",
+    },
 } as const;
 
 export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl">) {
@@ -68,8 +80,23 @@ export function isSeedanceVideoModel(model: string) {
 }
 
 export function isSeedanceFastModel(model: string) {
-    const value = model.toLowerCase();
-    return isSeedanceVideoModel(value) && value.includes("fast");
+    return seedanceModelMode(model) === "fast";
+}
+
+export function seedanceModelMode(model: string): SeedanceModelMode {
+    const value = model.trim().toLowerCase();
+    if (!isSeedanceVideoModel(value)) return "unknown";
+    const tokens = value.replaceAll("_", "-").replaceAll(" ", "-").split("-").filter(Boolean);
+    if (tokens.includes("fast")) return "fast";
+    if (tokens.includes("mini")) return "mini";
+    if (tokens.includes("pro")) return "pro";
+    if (value === "doubao-seedance-2-0-260128" || value === "seedance-2.0" || value === "seedance2.0") return "pro";
+    return "unknown";
+}
+
+export function seedanceResolutionOptionsForModel(model: string) {
+    const mode = seedanceModelMode(model);
+    return mode === "fast" || mode === "mini" ? seedanceBaseResolutionOptions : seedanceResolutionOptions;
 }
 
 export function isArkPlanBaseUrl(baseUrl: string) {
@@ -78,19 +105,22 @@ export function isArkPlanBaseUrl(baseUrl: string) {
 
 export function normalizeSeedanceResolution(value: string, model = "") {
     const normalized = normalizeResolutionToken(value);
-    if (isSeedanceFastModel(model) && normalized === "1080p") return "720p";
-    return seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
+    const supportedOptions = seedanceResolutionOptionsForModel(model);
+    return supportedOptions.some((item) => item.value === normalized) ? normalized : "720p";
 }
 
 export function normalizeResolutionToken(value: string) {
-    if (value === "low") return "480p";
-    if (value === "auto" || value === "high" || value === "medium") return "720p";
-    const resolution = String(value || "").replace(/p$/i, "") || "720";
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    if (normalizedValue === "low") return "480p";
+    if (normalizedValue === "auto" || normalizedValue === "high" || normalizedValue === "medium") return "720p";
+    if (normalizedValue === "4k") return "4k";
+    const resolution = normalizedValue.replace(/p$/i, "") || "720";
     return `${resolution}p`;
 }
 
 export function normalizeSeedanceDuration(value: string) {
-    return Number(normalizeVideoDuration(value));
+    const duration = Math.round(Number(value));
+    return Math.max(4, Math.min(15, Number.isFinite(duration) ? duration : 6));
 }
 
 export function normalizeSeedanceRatio(value: string) {

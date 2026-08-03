@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Drawer, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from "antd";
+import { App, Button, Drawer, Form, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ArrowLeft, LockKeyhole, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Link } from "react-router";
@@ -16,6 +16,7 @@ type FormValues = {
     displayName?: string;
     marketingCopy?: string;
     promotionBadge?: string;
+    estimatedDurationMinutes?: number;
     brandKey: ModelBrandKey;
     accessPolicy: ChannelModel["accessPolicy"];
     capability: ChannelModel["capability"];
@@ -88,7 +89,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const startCreate = () => {
         setEditing(null);
         setEditorDirty(false);
-        form.setFieldsValue({ modelKey: "", displayName: "", marketingCopy: "", promotionBadge: "", brandKey: "generic", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
+        form.setFieldsValue({ modelKey: "", displayName: "", marketingCopy: "", promotionBadge: "", estimatedDurationMinutes: undefined, brandKey: "generic", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
         setEditorOpen(true);
     };
 
@@ -115,6 +116,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             displayName: item.displayName,
             marketingCopy: item.marketingCopy,
             promotionBadge: item.promotionBadge,
+            estimatedDurationMinutes: item.estimatedDurationSeconds > 0 ? Math.ceil(item.estimatedDurationSeconds / 60) : undefined,
             brandKey: item.brandKey,
             accessPolicy: item.accessPolicy,
             capability: item.capability,
@@ -132,6 +134,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
                 marketingCopy: values.marketingCopy?.trim() || "",
                 promotionBadge: values.promotionBadge?.trim() || "",
+                estimatedDurationSeconds: values.estimatedDurationMinutes ? values.estimatedDurationMinutes * 60 : 0,
                 brandKey: values.brandKey,
                 accessPolicy: values.accessPolicy,
                 capability: values.capability,
@@ -227,6 +230,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <div className="channel-model-marketing-copy mt-1 truncate text-xs text-foreground/45" title={item.marketingCopy || undefined}>
                         {item.marketingCopy || "未配置推广文案"}
                     </div>
+                    {item.estimatedDurationSeconds > 0 ? <div className="channel-model-estimated-duration mt-1 text-xs text-foreground/55">预计 {Math.ceil(item.estimatedDurationSeconds / 60)} 分钟</div> : null}
                 </div>
             ),
         },
@@ -253,7 +257,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     const unit = item.capability === "image" ? "张" : item.billingMode === "per_second" ? "秒" : "次";
                     return (
                         <span className="text-xs text-foreground/70">
-                            {item.priceTiers.map((tier) => `${tier.resolution.replace("SR_", "超分 ")} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}
+                            {item.priceTiers.map((tier) => `${tier.resolution} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}
                         </span>
                     );
                 }
@@ -436,6 +440,9 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </Form.Item>
                     <Form.Item className="channel-model-promotion-badge-field" name="promotionBadge" label="促销角标" extra="仅作为运营展示，不会自动修改积分价格或活动有效期；活动结束后请及时清空。">
                         <Input className="channel-model-promotion-badge-input" maxLength={12} showCount placeholder="例如：限时4折" />
+                    </Form.Item>
+                    <Form.Item className="channel-model-estimated-duration-field" name="estimatedDurationMinutes" label="预计生成耗时" extra="展示在用户模型选择列表右侧；这是运营预估，不参与计费。留空则不展示。">
+                        <InputNumber className="channel-model-estimated-duration-input w-full" min={1} max={1440} precision={0} addonAfter="分钟" placeholder="例如：2" />
                     </Form.Item>
                     <Form.Item
                         className="channel-model-access-field"

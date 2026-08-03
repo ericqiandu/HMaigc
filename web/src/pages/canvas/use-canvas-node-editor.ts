@@ -98,7 +98,7 @@ export function useCanvasNodeEditor({
     }, [setNodes]);
 
     const toggleBatchExpanded = useCallback((nodeId: string) => {
-        const isExpanded = Boolean(nodesRef.current.find((node) => node.id === nodeId)?.metadata?.imageBatchExpanded);
+        const isExpanded = Boolean(nodesRef.current.find((node) => node.id === nodeId)?.metadata?.batchExpanded);
         const updateMotionState = isExpanded ? setCollapsingBatchIds : setOpeningBatchIds;
         updateMotionState((current) => new Set(current).add(nodeId));
         window.setTimeout(() => {
@@ -108,7 +108,7 @@ export function useCanvasNodeEditor({
                 return next;
             });
         }, isExpanded ? 320 : 260);
-        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, imageBatchExpanded: !node.metadata?.imageBatchExpanded } } : node)));
+        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, batchExpanded: !node.metadata?.batchExpanded } } : node)));
     }, [nodesRef, setNodes]);
 
     const setBatchPrimary = useCallback((child: CanvasNodeData) => {

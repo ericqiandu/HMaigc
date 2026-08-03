@@ -229,7 +229,7 @@ export function createNodeAlignmentContext(nodes: CanvasNodeData[], initialPosit
     const targets = nodes.flatMap((node) => {
         if (movingIds.has(node.id)) return [];
         const batchRoot = node.metadata?.batchRootId ? nodeById.get(node.metadata.batchRootId) : null;
-        if (batchRoot && !batchRoot.metadata?.imageBatchExpanded) return [];
+        if (batchRoot && !batchRoot.metadata?.batchExpanded) return [];
         const parent = node.parentId ? nodeById.get(node.parentId) : null;
         if (parent && isFrameNode(parent) && parent.metadata?.frame?.collapsed) return [];
         return [{
@@ -279,7 +279,7 @@ export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[]
     if (!rootId) return false;
     const root = nodes.find((item) => item.id === rootId);
     if (root && collapsingBatchIds?.has(rootId)) return false;
-    return Boolean(root && !root.metadata?.imageBatchExpanded);
+    return Boolean(root && !root.metadata?.batchExpanded);
 }
 
 export function sameStringSet(left: Set<string>, right: Set<string>) {

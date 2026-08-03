@@ -1405,7 +1405,7 @@ function InfiniteCanvasPage() {
                                 const parent = target?.parentId ? nodeById.get(target.parentId) : null;
                                 if (parent?.metadata?.frame?.collapsed) toggleFrameCollapsed(parent.id);
                                 const batchRoot = target?.metadata?.batchRootId ? nodeById.get(target.metadata.batchRootId) : null;
-                                if (batchRoot && !batchRoot.metadata?.imageBatchExpanded) toggleBatchExpanded(batchRoot.id);
+                                if (batchRoot && !batchRoot.metadata?.batchExpanded) toggleBatchExpanded(batchRoot.id);
                                 const selection = new Set([nodeId]);
                                 selectedNodeIdsRef.current = selection;
                                 setSelectedNodeIds(selection);

@@ -72,7 +72,7 @@ export async function executeImageGeneration({
             batchUsesReferenceImages: referenceImages.length > 0,
             primaryImageId: undefined,
             ...generationMetadata,
-            imageBatchExpanded: count > 1 ? true : undefined,
+            batchExpanded: count > 1 ? true : undefined,
             generationErrorCode: undefined,
             failedPromptFingerprint: undefined,
         },

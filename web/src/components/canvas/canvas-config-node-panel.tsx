@@ -45,19 +45,18 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const mode = node.metadata?.generationMode || "image";
     const simpleMode = workspaceMode === "simple";
     const config = buildNodeConfig(globalConfig, node, mode);
+    const effectiveVideoConfig = mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
     const operationOptions = node.metadata?.videoEditOperation === "concat" ? [...videoOperationOptions, { label: "合并成片", value: "concat" as const }] : videoOperationOptions;
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
     const credits = requestCreditCost({
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
         modelCosts: priceChannel.modelCosts,
         model: modelOptionName(config.model),
-        count: mode === "image" ? count : 1,
-        seconds: mode === "video" ? config.videoSeconds : 1,
+        count: mode === "image" || mode === "video" ? count : 1,
+        seconds: mode === "video" ? effectiveVideoConfig?.videoSeconds : 1,
         quality: config.quality,
-        resolution: mode === "video" ? config.vquality : config.size,
-        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true",
-        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
+        resolution: mode === "video" ? effectiveVideoConfig?.vquality : config.size,
     });
     const hasPrice = credits !== null;
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };

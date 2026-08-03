@@ -76,18 +76,17 @@ export function CanvasNodePromptPanel({
     const [promptContentHeight, setPromptContentHeight] = useState(0);
     const promptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
     const expandedPromptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
-    const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const effectiveVideoConfig = isVideoMode ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
+    const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
     const credits = requestCreditCost({
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
         modelCosts: priceChannel.modelCosts,
         model: modelOptionName(config.model),
         count: mode === "image" || mode === "video" ? generationCount : 1,
-        seconds: mode === "video" ? config.videoSeconds : 1,
+        seconds: mode === "video" ? effectiveVideoConfig?.videoSeconds : 1,
         quality: config.quality,
-        resolution: mode === "video" ? config.vquality : config.size,
-        videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true",
-        videoSuperResolutionResolution: config.videoSuperResolutionResolution,
+        resolution: mode === "video" ? effectiveVideoConfig?.vquality : config.size,
     });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoReferenceCounts = useMemo(
@@ -306,7 +305,7 @@ export function CanvasNodePromptPanel({
                         onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : { model })}
                         capability={mode}
                         onMissingConfig={handleMissingSystemModel}
-                        showSelectedPrice={false}
+                        showSelectedEstimate={false}
                         presentation={isImageMode || isVideoMode ? "canvasImage" : "default"}
                     />
                 </div>
