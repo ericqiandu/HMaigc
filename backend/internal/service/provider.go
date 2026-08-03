@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -76,6 +77,7 @@ type providerMedia struct {
 	URL        string `json:"url"`
 	StorageKey string `json:"storageKey"`
 	MimeType   string `json:"mimeType"`
+	DurationMs int64  `json:"durationMs"`
 }
 
 type imageResponse struct {
@@ -98,31 +100,46 @@ type providerHTTPError struct {
 type providerAnalyticsKey struct{}
 
 type providerAnalyticsContext struct {
-	Service           *Service
-	Source            string
-	UserID            string
-	TaskID            string
-	BillingOrderID    string
-	Capability        string
-	Operation         string
-	ChannelID         string
-	Model             string
-	VideoSeconds      int
-	RequestKind       string
-	ProviderRequestID string
-	ConcurrencyLimit  int
+	Service                    *Service
+	Source                     string
+	UserID                     string
+	TaskID                     string
+	BillingOrderID             string
+	Capability                 string
+	Operation                  string
+	ChannelID                  string
+	Model                      string
+	VideoSeconds               int
+	InputCharacterCount        int
+	PricingSpecification       string
+	InputImageCount            int
+	InputVideoCount            int
+	InputVideoDurationMs       int64
+	InputVideoDurationComplete bool
+	RequestKind                string
+	ProviderRequestID          string
+	ConcurrencyLimit           int
 }
 
 func withProviderAnalytics(ctx context.Context, service *Service, task model.Task) context.Context {
 	metadata := providerAnalyticsContext{Service: service, UserID: task.UserID, TaskID: task.ID, BillingOrderID: task.BillingOrderID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID}
-	var input struct {
-		Mode   string         `json:"mode"`
-		Config providerConfig `json:"config"`
-	}
+	var input canvasGenerationInput
 	if json.Unmarshal([]byte(task.InputJSON), &input) == nil {
 		metadata.ChannelID = firstNonEmpty(input.Config.ChannelID, systemChannelIDFromBaseURL(input.Config.BaseURL))
 		metadata.Model = firstNonEmpty(input.Config.Model, metadata.Model)
 		metadata.VideoSeconds, _ = strconv.Atoi(input.Config.VideoSeconds)
+		metadata.InputCharacterCount = utf8.RuneCountInString(input.Prompt)
+		metadata.PricingSpecification = normalizeVideoPricingResolution(BillingUsage{Resolution: input.Config.VQuality})
+		metadata.InputImageCount = len(input.ReferenceImages)
+		metadata.InputVideoCount = len(input.ReferenceVideos)
+		metadata.InputVideoDurationComplete = true
+		for _, video := range input.ReferenceVideos {
+			if video.DurationMs <= 0 {
+				metadata.InputVideoDurationComplete = false
+				continue
+			}
+			metadata.InputVideoDurationMs += video.DurationMs
+		}
 		if normalized := normalizeCapability(input.Mode); normalized != "" {
 			metadata.Capability = normalized
 		}
@@ -1154,6 +1171,8 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		RequestKind: requestKind, Billable: req.Method == http.MethodPost,
 		APIFormat: "openai", Method: req.Method, Path: req.URL.Path, Model: metadata.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
+		PricingSpecification: metadata.PricingSpecification, InputCharacterCount: metadata.InputCharacterCount, InputImageCount: metadata.InputImageCount,
+		InputVideoCount: metadata.InputVideoCount, InputVideoDurationMs: metadata.InputVideoDurationMs, InputVideoDurationComplete: metadata.InputVideoDurationComplete,
 		Error: errorText, ConcurrencyLimit: metadata.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
 	}
 	channelSlotFailure := false

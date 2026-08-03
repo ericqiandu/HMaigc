@@ -15,6 +15,7 @@ const ChannelsPage = lazy(() => import("@/pages/admin/channels/channels-page"));
 const LogsPage = lazy(() => import("@/pages/admin/logs/logs-page"));
 const MembershipAdminPage = lazy(() => import("@/pages/admin/membership/membership-page"));
 const ModelPricingPage = lazy(() => import("@/pages/admin/model-pricing/model-pricing-page"));
+const SuperResolutionPricingPage = lazy(() => import("@/pages/admin/super-resolution-pricing/super-resolution-pricing-page"));
 const OperationsPage = lazy(() => import("@/pages/admin/operations/operations-page"));
 const RedemptionCodesPage = lazy(() => import("@/pages/admin/redemption-codes/redemption-codes-page"));
 const ReferralProgramPage = lazy(() => import("@/pages/admin/referrals/referral-program-page"));
@@ -103,6 +104,7 @@ export const router = createBrowserRouter([
                     { path: "models", element: deferredRoute(<ChannelsPage />) },
                     { path: "voices", element: deferredRoute(<VoicesPage />) },
                     { path: "model-pricing", element: deferredRoute(<ModelPricingPage />) },
+                    { path: "super-resolution-pricing", element: deferredRoute(<SuperResolutionPricingPage />) },
                     { path: "storyboard-prompts", element: deferredRoute(<StoryboardPromptsPage />) },
                     { path: "announcements", element: deferredRoute(<AnnouncementsPage />) },
                     { path: "credit-operations", element: deferredRoute(<CreditOperationsPage />) },

@@ -153,6 +153,61 @@ func TestReserveProxyBillingDeductsCreditsAndRejectsInsufficientBalance(t *testi
 	}
 }
 
+func TestNewBillingOrderAddsSuperResolutionPriceAndFreezesSnapshot(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&model.ChannelModel{},
+		&model.ChannelModelPriceTier{},
+		&model.SuperResolutionPricingRule{},
+		&model.SystemSetting{},
+		&model.MembershipPlan{},
+		&model.MembershipSubscription{},
+		&model.TeamMember{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	videoModel := model.ChannelModel{
+		ID: "video-model", ChannelID: "channel-1", ModelKey: "video-model", Capability: "video",
+		BillingMode: "per_second", PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true, PriceVersion: 3,
+		PriceTiers: []model.ChannelModelPriceTier{{ID: "video-tier-720p", Resolution: "720P", UnitPriceMicrocredits: 500_000}},
+	}
+	rule := model.SuperResolutionPricingRule{
+		ID: "sr-professional-4k-60", Edition: "professional", Resolution: "4K",
+		FPSMinExclusive: 30, FPSMaxInclusive: 60, Currency: "CNY",
+		SupplierCostMinMicros: 2_000_000, SupplierCostMaxMicros: 2_000_000,
+		UnitPriceMicrocredits: 800_000, PriceConfigured: true, Enabled: true, PriceVersion: 4,
+	}
+	if err := db.Create(&videoModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&rule).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+
+	order, err := svc.newBillingOrder("user-1", "task-1", "request-1", "channel-1", "video-model", "video", "canvas_video", BillingUsage{
+		Quantity: 6, Resolution: "720P", SuperResolutionEnabled: true,
+		SuperResolutionResolution: "4K", SuperResolutionVersion: "professional", SuperResolutionFPS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.AmountMicrocredits != 7_800_000 {
+		t.Fatalf("total amount = %d, want 7800000", order.AmountMicrocredits)
+	}
+	if order.EnhancementAmountMicrocredits != 4_800_000 || order.EnhancementPricingRuleID != rule.ID {
+		t.Fatalf("enhancement snapshot = %#v", order)
+	}
+	if order.EnhancementSupplierCostMinMicros != rule.SupplierCostMinMicros ||
+		order.EnhancementSupplierCostMaxMicros != rule.SupplierCostMaxMicros ||
+		!strings.Contains(order.EnhancementPricingSnapshotJSON, rule.ID) {
+		t.Fatalf("enhancement cost snapshot = %#v", order)
+	}
+}
+
 func TestValidateSystemProviderInputRejectsCustomCredentials(t *testing.T) {
 	input, err := normalizeTaskInput(map[string]any{
 		"config": providerConfig{BaseURL: "https://example.com", APIKey: "private-key", Model: "text-model"},

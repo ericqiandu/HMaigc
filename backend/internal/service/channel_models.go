@@ -392,7 +392,6 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	if item.PriceStrategy == "video_resolution" {
 		allowed = map[string]bool{
 			"480P": true, "720P": true, "768P": true, "1080P": true, "2K": true, "4K": true,
-			"SR_720P": true, "SR_1080P": true, "SR_2K": true, "SR_4K": true,
 		}
 		requireAll = false
 	}

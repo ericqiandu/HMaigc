@@ -274,6 +274,10 @@ func proxyBillingUsage(contentType string, body []byte, capability string) servi
 					usage.SuperResolutionEnabled = true
 					usage.SuperResolutionResolution = strings.TrimSpace(string(value))
 				}
+			case "super_resolution_version":
+				if capability == "video" { usage.SuperResolutionVersion = strings.TrimSpace(string(value)) }
+			case "super_resolution_fps":
+				if capability == "video" { usage.SuperResolutionFPS = int(requestPositiveInteger(string(value))) }
 			case "quality":
 				if capability == "image" && usage.Resolution == "" {
 					usage.Resolution = strings.TrimSpace(string(value))
@@ -301,6 +305,8 @@ func proxyBillingUsage(contentType string, body []byte, capability string) servi
 			if ok {
 				usage.SuperResolutionEnabled = true
 				usage.SuperResolutionResolution = strings.TrimSpace(fmt.Sprint(config["resolution"]))
+				usage.SuperResolutionVersion = strings.TrimSpace(fmt.Sprint(config["tool_version"]))
+				usage.SuperResolutionFPS = int(requestPositiveInteger(config["fps"]))
 			}
 		}
 	}

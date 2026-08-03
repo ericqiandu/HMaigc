@@ -19,7 +19,7 @@ import { listAdminChannelModels, updateAdminChannelModel, type ChannelModel } fr
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
-import { imagePricingSpecifications, specificationsForStrategy, type PricingSpecification } from "./pricing-specifications";
+import { imagePricingSpecifications, specificationsForModel, specificationsForStrategy, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
 type PricingFormValues = {
@@ -40,6 +40,7 @@ type PricingFormValues = {
     tierCredits?: Record<string, number>;
 };
 type SettingsFormValues = { currency: string; creditRevenue: number; targetMarginPercent: number };
+type PricingTierInput = { specification: PricingSpecification; supplierCost: number; userCredits?: number };
 
 const emptySetting: ModelPricingOperationsSetting = { configured: false, currency: "", creditRevenueMicros: 0, targetMarginBasisPoints: 0 };
 const pricingScopeKey = (channelId: string | undefined, model: string, capability: ModelPricing["capability"]) => `${(channelId || "").trim()}:${model.trim()}:${capability.trim().toLowerCase()}`;
@@ -73,7 +74,7 @@ export default function ModelPricingPage() {
                 return result.models.map((model) => ({
                     ...model,
                     channelName: channel.name,
-                    pricing: pricingByModel.get(pricingScopeKey(channel.id, model.modelKey, model.capability)),
+                    pricing: pricingByModel.get(pricingScopeKey(channel.id, model.modelKey, model.capability)) || pricingByModel.get(pricingScopeKey("", model.modelKey, model.capability)),
                 }));
             });
             setModels(nextModels);
@@ -147,28 +148,30 @@ export default function ModelPricingPage() {
         if (!editing) return;
         const values = await pricingForm.validateFields();
         const currency = values.currency.trim().toUpperCase();
-        const specifications = specificationsForStrategy(values.priceStrategy);
-        const incompleteSpecification = specifications.find((specification) => {
+        const specifications = specificationsForModel({ modelKey: editing.modelKey, priceStrategy: values.priceStrategy });
+        const incompleteSpecification = specifications.filter((specification) => specification.group === "base").find((specification) => {
             const supplierCost = values.tierCosts?.[specification.key];
             const userCredits = values.tierCredits?.[specification.key];
-            return (supplierCost !== undefined || userCredits !== undefined) && (supplierCost === undefined || userCredits === undefined || supplierCost <= 0 || userCredits <= 0);
+            return userCredits !== undefined && (supplierCost === undefined || supplierCost <= 0 || userCredits <= 0);
         });
         if (incompleteSpecification) {
             message.error(`${incompleteSpecification.label} 的供应商成本和用户积分必须同时配置且大于 0`);
             return;
         }
-        const tierInputs = specifications.flatMap((specification) => {
+        const tierInputs = specifications.reduce<PricingTierInput[]>((result, specification) => {
             const supplierCost = values.tierCosts?.[specification.key];
             const userCredits = values.tierCredits?.[specification.key];
-            if (supplierCost === undefined && userCredits === undefined) return [];
-            if (supplierCost === undefined || userCredits === undefined) return [];
-            return [{ specification, supplierCost, userCredits }];
-        });
+            if (supplierCost === undefined && userCredits === undefined) return result;
+            if (supplierCost !== undefined) result.push({ specification, supplierCost, userCredits });
+            return result;
+        }, []);
         if (values.priceStrategy === "image_resolution" && tierInputs.length !== imagePricingSpecifications.length) {
             message.error("图片模型必须完整配置 1K、2K、4K 定价");
             return;
         }
-        if (values.priceStrategy === "video_resolution" && tierInputs.length === 0) {
+        const baseTierInputs = tierInputs.filter(({ specification }) => specification.group === "base");
+        const baseSaleTierInputs = baseTierInputs.filter(({ userCredits }) => userCredits !== undefined);
+        if (values.priceStrategy === "video_resolution" && baseTierInputs.length === 0) {
             message.error("视频模型至少需要配置一个基础分辨率或超分规格");
             return;
         }
@@ -196,27 +199,27 @@ export default function ModelPricingPage() {
             displayName: editing.displayName,
             marketingCopy: editing.marketingCopy,
             promotionBadge: editing.promotionBadge,
+            estimatedDurationSeconds: editing.estimatedDurationSeconds,
             brandKey: editing.brandKey,
             accessPolicy: editing.accessPolicy,
             capability: editing.capability,
             billingMode: values.billingMode,
             priceStrategy: values.priceStrategy,
             unitPriceMicrocredits: values.priceStrategy === "flat" ? toMicro(values.unitCredits) : 0,
-            priceTiers: tierInputs.map(({ specification, userCredits }) => ({
+            priceTiers: baseSaleTierInputs.map(({ specification, userCredits }) => ({
                 resolution: specification.key,
-                unitPriceMicrocredits: toMicro(userCredits),
+                unitPriceMicrocredits: toMicro(userCredits as number),
             })),
-            priceConfigured: true,
+            priceConfigured: values.priceStrategy === "flat" ? Boolean(values.unitCredits && values.unitCredits > 0) : baseSaleTierInputs.length > 0,
             enabled: editing.enabled,
         };
         setSaving(true);
         try {
-            const currentPricing =
-                editing.pricing || (await listAdminModelPricings()).pricings.find((pricing) => pricingScopeKey(pricing.channelId, pricing.model, pricing.capability) === pricingScopeKey(pricingInput.channelId, pricingInput.model, pricingInput.capability));
+            const currentPricing = (await listAdminModelPricings()).pricings.find((pricing) => pricingScopeKey(pricing.channelId, pricing.model, pricing.capability) === pricingScopeKey(pricingInput.channelId, pricingInput.model, pricingInput.capability));
             if (currentPricing) await updateAdminModelPricing(currentPricing.id, pricingInput);
             else await createAdminModelPricing(pricingInput);
             try {
-                await updateAdminChannelModel(editing.channelId, editing.id, modelInput);
+                if (modelInput.priceConfigured || editing.priceConfigured) await updateAdminChannelModel(editing.channelId, editing.id, modelInput);
             } catch (error) {
                 message.error(error instanceof Error ? `供应商成本已保存，但积分售价保存失败：${error.message}` : "供应商成本已保存，但积分售价保存失败");
                 await reload();
@@ -502,7 +505,7 @@ function PricingDrawer({
                         />
                     </Form.Item>
                 </div>
-                {strategy === "image_resolution" || strategy === "video_resolution" ? <ResolutionPricingFields strategy={strategy} billingMode={billingMode} /> : <FlatPricingFields capability={capability} />}
+                {strategy === "image_resolution" || strategy === "video_resolution" ? <ResolutionPricingFields strategy={strategy} billingMode={billingMode} modelKey={model?.modelKey || ""} /> : <><FlatPricingFields capability={capability} /><SupplierOnlyPricingFields modelKey={model?.modelKey || ""} strategy={strategy} /></>}
             </Form>
         </Drawer>
     );
@@ -542,37 +545,52 @@ function FlatPricingFields({ capability }: { capability?: ChannelModel["capabili
     );
 }
 
-function ResolutionPricingFields({ strategy, billingMode }: { strategy: ChannelModel["priceStrategy"]; billingMode: ChannelModel["billingMode"] }) {
-    const specifications = specificationsForStrategy(strategy);
+function ResolutionPricingFields({ strategy, billingMode, modelKey }: { strategy: ChannelModel["priceStrategy"]; billingMode: ChannelModel["billingMode"]; modelKey: string }) {
+    const specifications = specificationsForModel({ modelKey, priceStrategy: strategy });
     const baseSpecifications = specifications.filter((item) => item.group === "base");
-    const superResolutionSpecifications = specifications.filter((item) => item.group === "super_resolution");
+    const supplierOnlySpecifications = specifications.filter((item) => item.group === "supplier-only");
     const unit = strategy === "image_resolution" ? "张" : billingMode === "per_second" ? "秒" : "次";
     return (
         <div className="model-pricing-resolution-fields">
             <h3 className="model-pricing-section-title mb-1 text-sm font-semibold">分辨率定价</h3>
             <p className="model-pricing-section-description mb-4 text-xs leading-5 text-foreground/48">只配置渠道真实支持的规格；未配置的规格调用时会明确失败，避免错扣积分。</p>
-            <PricingSpecificationGroup title="基础分辨率" specifications={baseSpecifications} unit={unit} required={strategy === "image_resolution"} />
-            {superResolutionSpecifications.length > 0 ? <PricingSpecificationGroup title="专有超分（完整服务价）" specifications={superResolutionSpecifications} unit={unit} required={false} /> : null}
+            <PricingSpecificationGroup title="基础生成分辨率" specifications={baseSpecifications} unit={unit} required={strategy === "image_resolution"} />
+            {supplierOnlySpecifications.length ? <PricingSpecificationGroup title="MiniMax H3 输入素材与视频再生成本" specifications={supplierOnlySpecifications} unit="秒" required={false} supplierOnly /> : null}
         </div>
     );
 }
 
-function PricingSpecificationGroup({ title, specifications, unit, required }: { title: string; specifications: PricingSpecification[]; unit: string; required: boolean }) {
+function SupplierOnlyPricingFields({ modelKey, strategy }: { modelKey: string; strategy: ChannelModel["priceStrategy"] }) {
+    const specifications = specificationsForModel({ modelKey, priceStrategy: strategy }).filter((item) => item.group === "supplier-only");
+    if (specifications.length === 0) return null;
+    return (
+        <div className="model-pricing-supplier-fields mt-5">
+            <h3 className="model-pricing-section-title mb-1 text-sm font-semibold">MiniMax 官方供应商成本</h3>
+            <p className="model-pricing-section-description mb-4 text-xs leading-5 text-foreground/48">供应商成本独立于用户积分售价，用于利润和调用成本核算。</p>
+            <PricingSpecificationGroup title="语音模型成本" specifications={specifications} unit="万字符" required={false} supplierOnly />
+        </div>
+    );
+}
+
+function PricingSpecificationGroup({ title, specifications, unit, required, supplierOnly = false }: { title: string; specifications: PricingSpecification[]; unit: string; required: boolean; supplierOnly?: boolean }) {
     return (
         <section className="model-pricing-specification-group mb-5">
             <h4 className="model-pricing-specification-title mb-1 text-xs font-medium text-foreground/55">{title}</h4>
             {specifications.map((specification) => (
                 <div key={specification.key} className="model-pricing-resolution-row grid grid-cols-[92px_1fr_1fr] items-start gap-3 border-b border-border/50 py-4">
                     <span className="model-pricing-resolution-label pt-8 text-sm font-semibold">{specification.label}</span>
-                    <MoneyField name={["tierCosts", specification.key]} label={`供应商成本 / ${unit}`} required={required} />
-                    <Form.Item
+                    <div className="model-pricing-specification-cost-field">
+                        <MoneyField name={["tierCosts", specification.key]} label={`供应商成本 / ${specification.unit || unit}`} required={required} />
+                        {specification.note ? <p className="model-pricing-specification-note -mt-4 text-[11px] leading-4 text-foreground/42">{specification.note}</p> : null}
+                    </div>
+                    {supplierOnly ? <div className="model-pricing-supplier-only-label pt-8 text-xs text-foreground/42">供应商成本项，不直接设置用户售价</div> : <Form.Item
                         className="model-pricing-field"
                         name={["tierCredits", specification.key]}
                         label={`用户积分 / ${unit}`}
                         rules={required ? [{ required: true, type: "number", min: 0.000001, message: "必须大于 0" }] : [{ type: "number", min: 0.000001, message: "必须大于 0" }]}
                     >
                         <InputNumber className="model-pricing-number-input w-full" min={0.000001} precision={6} placeholder="未配置" />
-                    </Form.Item>
+                    </Form.Item>}
                 </div>
             ))}
         </section>
@@ -688,7 +706,7 @@ function formatMargin(model: CommercialModel, setting: ModelPricingOperationsSet
 function formatCost(model: CommercialModel) {
     const pricing = model.pricing;
     if (!pricing) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
-    if (model.priceStrategy !== "flat") return <span className="model-pricing-cost text-xs">{pricing.tiers.map((tier) => `${tierLabel(tier.specification)} ${money(tierCost(pricing, tier.specification), pricing.currency)}`).join(" · ")}</span>;
+    if (model.priceStrategy !== "flat" || pricing.tiers.length > 0) return <span className="model-pricing-cost text-xs">{pricing.tiers.map((tier) => `${tierLabel(tier.specification)} ${money(tierCost(pricing, tier.specification), pricing.currency)}`).join(" · ")}</span>;
     const value = comparableCost(model);
     return value === null ? (
         <span className="model-pricing-unavailable text-xs text-foreground/40">缺少可比成本</span>
@@ -713,5 +731,15 @@ function money(value: number | undefined, currency: string) {
     return value === undefined ? "未配置" : `${currency} ${value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })}`;
 }
 function tierLabel(value: string) {
-    return value.startsWith("SR_") ? `超分 ${value.slice(3)}` : value;
+    const labels: Record<string, string> = {
+        INPUT_IMAGE_OVERAGE: "输入图片（超 5 张）",
+        INPUT_VIDEO_768P: "输入视频·768P",
+        INPUT_VIDEO_2K: "输入视频·2K",
+        REGENERATE_768P_TO_2K: "再生 768P→2K",
+        REGENERATE_INPUT_IMAGE_OVERAGE: "再生输入图片（超 5 张）",
+        REGENERATE_INPUT_VIDEO_768P: "再生输入视频·768P",
+        TEN_THOUSAND_CHARACTERS: "语音合成·万字符",
+        VOICE_DESIGN_OR_CLONE: "音色设计/克隆·个",
+    };
+    return labels[value] || value;
 }

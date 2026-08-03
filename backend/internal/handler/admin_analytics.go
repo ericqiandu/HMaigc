@@ -126,6 +126,37 @@ func RegisterAdminAnalyticsRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"setting": setting})
 	})
+	r.GET("/admin/super-resolution-pricing", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		rules, err := svc.AdminSuperResolutionPricingRules(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"rules": rules})
+	})
+	r.PUT("/admin/super-resolution-pricing", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request service.ReplaceSuperResolutionPricingRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		rules, err := svc.ReplaceAdminSuperResolutionPricingRules(user, request)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"rules": rules})
+	})
 }
 
 func saveModelPricing(c *gin.Context, svc *service.Service, id string) {

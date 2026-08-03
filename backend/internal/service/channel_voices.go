@@ -279,7 +279,7 @@ func (s *Service) cloneMiniMaxChannelVoice(ctx context.Context, actor *model.Use
 	var response map[string]interface{}
 	cloneContext := context.WithValue(ctx, providerAnalyticsKey{}, providerAnalyticsContext{
 		Service: s, Source: "voice-clone", UserID: actor.ID, ChannelID: channel.ID,
-		Capability: "audio", Operation: "voice_clone", RequestKind: "generation",
+		Capability: "audio", Operation: "voice_clone", RequestKind: "generation", Model: miniMaxVoiceCloningPricingModel,
 	})
 	cloneErr := postJSON(cloneContext, providerConfig{BaseURL: channel.BaseURL, APIKey: channel.APIKey}, "/voice_clone", map[string]interface{}{
 		"file_id": fileID, "voice_id": req.VoiceKey, "need_noise_reduction": false, "need_volume_normalization": false,

@@ -384,6 +384,8 @@ type BillingUsage struct {
 	Resolution                string
 	SuperResolutionEnabled    bool
 	SuperResolutionResolution string
+	SuperResolutionVersion    string
+	SuperResolutionFPS        int
 }
 
 func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, usage BillingUsage) (*model.BillingOrder, error) {
@@ -507,12 +509,47 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	if err != nil {
 		return nil, err
 	}
+	enhancementRuleID := ""
+	enhancementUnitPrice := int64(0)
+	enhancementAmount := int64(0)
+	enhancementSupplierMin := int64(0)
+	enhancementSupplierMax := int64(0)
+	enhancementSnapshot := ""
+	if usage.SuperResolutionEnabled {
+		if capability != "video" || usage.Quantity <= 0 {
+			return nil, BadAuthRequest("超分附加计费仅适用于具有有效时长的视频生成")
+		}
+		rule, matchErr := s.matchSuperResolutionPricingRule(usage)
+		if matchErr != nil {
+			return nil, matchErr
+		}
+		enhancementAmount, err = creditAmount(rule.UnitPriceMicrocredits, usage.Quantity, multiplierBPS)
+		if err != nil {
+			return nil, err
+		}
+		if amount > int64(^uint64(0)>>1)-enhancementAmount {
+			return nil, errors.New("计费金额超出允许范围")
+		}
+		amount += enhancementAmount
+		enhancementRuleID = rule.ID
+		enhancementUnitPrice = rule.UnitPriceMicrocredits
+		enhancementSupplierMin = rule.SupplierCostMinMicros
+		enhancementSupplierMax = rule.SupplierCostMaxMicros
+		encoded, marshalErr := json.Marshal(rule)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		enhancementSnapshot = string(encoded)
+	}
 	return &model.BillingOrder{
 		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
 		PriceTierID: priceTierID, PricingResolution: pricingResolution,
 		UnitPriceMicrocredits: unitPrice, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
+		EnhancementPricingRuleID: enhancementRuleID, EnhancementUnitPriceMicrocredits: enhancementUnitPrice,
+		EnhancementAmountMicrocredits: enhancementAmount, EnhancementSupplierCostMinMicros: enhancementSupplierMin,
+		EnhancementSupplierCostMaxMicros: enhancementSupplierMax, EnhancementPricingSnapshotJSON: enhancementSnapshot,
 		Status: model.BillingStatusReserved,
 	}, nil
 }
@@ -554,6 +591,8 @@ func billingUsage(capability string, config map[string]any) BillingUsage {
 		usage.Resolution = strings.TrimSpace(fmt.Sprint(config["vquality"]))
 		usage.SuperResolutionEnabled = strings.EqualFold(strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionEnabled"])), "true")
 		usage.SuperResolutionResolution = strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionResolution"]))
+		usage.SuperResolutionVersion = strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionVersion"]))
+		usage.SuperResolutionFPS = int(positiveInteger(config["videoSuperResolutionFps"]))
 	}
 	return usage
 }
@@ -581,39 +620,18 @@ func normalizeImagePricingResolution(value string) string {
 
 func normalizeVideoPricingResolution(usage BillingUsage) string {
 	value := usage.Resolution
-	if usage.SuperResolutionEnabled {
-		value = usage.SuperResolutionResolution
-	}
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "480", "480p":
-		if usage.SuperResolutionEnabled {
-			return ""
-		}
 		return "480P"
 	case "720", "720p":
-		if usage.SuperResolutionEnabled {
-			return "SR_720P"
-		}
 		return "720P"
 	case "768", "768p":
-		if usage.SuperResolutionEnabled {
-			return ""
-		}
 		return "768P"
 	case "1080", "1080p":
-		if usage.SuperResolutionEnabled {
-			return "SR_1080P"
-		}
 		return "1080P"
 	case "2k":
-		if usage.SuperResolutionEnabled {
-			return "SR_2K"
-		}
 		return "2K"
 	case "4k":
-		if usage.SuperResolutionEnabled {
-			return "SR_4K"
-		}
 		return "4K"
 	default:
 		return ""

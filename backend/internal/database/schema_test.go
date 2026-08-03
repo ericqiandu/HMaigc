@@ -25,6 +25,9 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	if !db.Migrator().HasColumn(&model.ChannelModel{}, "promotion_badge") {
 		t.Fatal("channel_models.promotion_badge was not migrated")
 	}
+	if !db.Migrator().HasColumn(&model.ChannelModel{}, "estimated_duration_seconds") {
+		t.Fatal("channel_models.estimated_duration_seconds was not migrated")
+	}
 	if !db.Migrator().HasTable(&model.ChannelVoice{}) ||
 		!db.Migrator().HasColumn(&model.ChannelVoice{}, "consent_confirmed_at") ||
 		!db.Migrator().HasColumn(&model.ChannelVoice{}, "idempotency_key") ||
@@ -51,6 +54,39 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	if !db.Migrator().HasColumn(&model.OAuthState{}, "referral_code") ||
 		!db.Migrator().HasColumn(&model.OAuthState{}, "registration_ip") {
 		t.Fatal("OAuth referral context columns were not migrated")
+	}
+	var miniMaxPricing model.ModelPricing
+	if err := db.Preload("Tiers").First(&miniMaxPricing, "channel_id = ? AND model = ? AND capability = ?", "", "MiniMax-H3", "video").Error; err != nil {
+		t.Fatalf("load MiniMax H3 default supplier pricing: %v", err)
+	}
+	if len(miniMaxPricing.Tiers) != 8 {
+		t.Fatalf("MiniMax H3 supplier tier count = %d, want 8", len(miniMaxPricing.Tiers))
+	}
+	tierCosts := make(map[string]int64, len(miniMaxPricing.Tiers))
+	for _, tier := range miniMaxPricing.Tiers {
+		tierCosts[tier.Specification] = tier.SupplierCostMicros
+	}
+	for specification, expected := range map[string]int64{
+		"REGENERATE_768P_TO_2K":          300_000,
+		"REGENERATE_INPUT_IMAGE_OVERAGE": 150_000,
+		"REGENERATE_INPUT_VIDEO_768P":    300_000,
+	} {
+		if tierCosts[specification] != expected {
+			t.Fatalf("MiniMax H3 tier %s cost = %d, want %d", specification, tierCosts[specification], expected)
+		}
+	}
+	for modelName, expected := range map[string]int64{
+		"speech-2.8-hd":         3_500_000,
+		"speech-2.8-turbo":      2_000_000,
+		"MiniMax-Voice-Cloning": 9_900_000,
+	} {
+		var audioPricing model.ModelPricing
+		if err := db.Preload("Tiers").First(&audioPricing, "channel_id = ? AND model = ? AND capability = ?", "", modelName, "audio").Error; err != nil {
+			t.Fatalf("load MiniMax audio pricing %s: %v", modelName, err)
+		}
+		if len(audioPricing.Tiers) != 1 || audioPricing.Tiers[0].SupplierCostMicros != expected {
+			t.Fatalf("MiniMax audio pricing %s = %#v, want %d", modelName, audioPricing.Tiers, expected)
+		}
 	}
 
 	channel := model.ModelChannel{

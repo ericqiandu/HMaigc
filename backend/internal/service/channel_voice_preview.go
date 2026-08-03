@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -91,6 +92,7 @@ func (s *Service) MiniMaxChannelVoicePreview(ctx context.Context, user *model.Us
 		analytics := providerAnalyticsContext{
 			Service: s, Source: "voice-preview", UserID: user.ID, ChannelID: resolved.ChannelID,
 			Capability: "audio", Operation: "voice_preview", Model: resolved.Model, RequestKind: "preview",
+			InputCharacterCount: utf8.RuneCountInString(miniMaxVoicePreviewText(voiceLanguage)),
 		}
 		previewContext := context.WithValue(ctx, providerAnalyticsKey{}, analytics)
 		output, generateErr := generateMiniMaxAudio(previewContext, canvasGenerationInput{

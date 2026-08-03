@@ -18,51 +18,7 @@ func TestNormalizeVideoPricingResolution(t *testing.T) {
 		{name: "1080p suffix", usage: BillingUsage{Resolution: "1080p"}, want: "1080P"},
 		{name: "base 2k", usage: BillingUsage{Resolution: "2K"}, want: "2K"},
 		{name: "base 4k", usage: BillingUsage{Resolution: "4k"}, want: "4K"},
-		{
-			name: "super resolution 720p",
-			usage: BillingUsage{
-				Resolution:                "480",
-				SuperResolutionEnabled:    true,
-				SuperResolutionResolution: "720p",
-			},
-			want: "SR_720P",
-		},
-		{
-			name: "super resolution 1080p numeric",
-			usage: BillingUsage{
-				Resolution:                "720",
-				SuperResolutionEnabled:    true,
-				SuperResolutionResolution: "1080",
-			},
-			want: "SR_1080P",
-		},
-		{
-			name: "super resolution 2k",
-			usage: BillingUsage{
-				Resolution:                "1080",
-				SuperResolutionEnabled:    true,
-				SuperResolutionResolution: "2k",
-			},
-			want: "SR_2K",
-		},
-		{
-			name: "super resolution 4k",
-			usage: BillingUsage{
-				Resolution:                "2k",
-				SuperResolutionEnabled:    true,
-				SuperResolutionResolution: "4K",
-			},
-			want: "SR_4K",
-		},
-		{
-			name: "invalid super resolution 480p",
-			usage: BillingUsage{
-				Resolution:                "480",
-				SuperResolutionEnabled:    true,
-				SuperResolutionResolution: "480p",
-			},
-			want: "",
-		},
+		{name: "super resolution does not replace base tier", usage: BillingUsage{Resolution: "720", SuperResolutionEnabled: true, SuperResolutionResolution: "4K"}, want: "720P"},
 	}
 
 	for _, test := range tests {
@@ -74,7 +30,7 @@ func TestNormalizeVideoPricingResolution(t *testing.T) {
 	}
 }
 
-func TestBuildChannelModelPriceTiersAcceptsVideoBaseAndSuperResolution(t *testing.T) {
+func TestBuildChannelModelPriceTiersAcceptsOnlyVideoGenerationResolutions(t *testing.T) {
 	item := &model.ChannelModel{
 		ID:              "model-1",
 		PriceStrategy:   "video_resolution",
@@ -85,8 +41,6 @@ func TestBuildChannelModelPriceTiersAcceptsVideoBaseAndSuperResolution(t *testin
 		{Resolution: "480P", UnitPriceMicrocredits: 1_000_000},
 		{Resolution: "768P", UnitPriceMicrocredits: 1_500_000},
 		{Resolution: "1080P", UnitPriceMicrocredits: 2_000_000},
-		{Resolution: "SR_2K", UnitPriceMicrocredits: 4_000_000},
-		{Resolution: "SR_4K", UnitPriceMicrocredits: 8_000_000},
 	}
 
 	tiers, err := buildChannelModelPriceTiers(item, requests)
@@ -103,6 +57,14 @@ func TestBuildChannelModelPriceTiersAcceptsVideoBaseAndSuperResolution(t *testin
 		if tier.UnitPriceMicrocredits != requests[index].UnitPriceMicrocredits {
 			t.Fatalf("tier %d price = %d, want %d", index, tier.UnitPriceMicrocredits, requests[index].UnitPriceMicrocredits)
 		}
+	}
+}
+
+func TestBuildChannelModelPriceTiersRejectsLegacySuperResolutionTier(t *testing.T) {
+	item := &model.ChannelModel{ID: "model-1", PriceStrategy: "video_resolution", PriceConfigured: true}
+	_, err := buildChannelModelPriceTiers(item, []ChannelModelPriceTierRequest{{Resolution: "SR_2K", UnitPriceMicrocredits: 4_000_000}})
+	if err == nil {
+		t.Fatal("expected legacy super-resolution model tier to fail")
 	}
 }
 

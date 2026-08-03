@@ -44,37 +44,36 @@ function imagePricingResolution(value: string | undefined): "1K" | "2K" | "4K" |
     }
 }
 
-function videoPricingResolution(resolution: string | undefined, superResolutionEnabled: boolean, superResolutionResolution: string | undefined) {
-    const value = (superResolutionEnabled ? superResolutionResolution : resolution)?.trim().toLowerCase();
-    const normalized = value === "480" || value === "480p"
-        ? "480P"
-        : value === "720" || value === "720p"
-            ? "720P"
-            : value === "1080" || value === "1080p"
-                ? "1080P"
-                : value === "2k"
+function videoPricingResolution(resolution: string | undefined) {
+    const value = resolution?.trim().toLowerCase();
+    const normalized =
+        value === "480" || value === "480p"
+            ? "480P"
+            : value === "768" || value === "768p"
+              ? "768P"
+              : value === "720" || value === "720p"
+                ? "720P"
+                : value === "1080" || value === "1080p"
+                  ? "1080P"
+                  : value === "2k"
                     ? "2K"
                     : value === "4k"
-                        ? "4K"
+                      ? "4K"
+                      : value === "8k"
+                        ? "8K"
                         : null;
-    if (!normalized || (superResolutionEnabled && normalized === "480P")) return null;
-    return superResolutionEnabled ? `SR_${normalized}` : normalized;
+    return normalized;
 }
 
-export function requestCreditCost(options: { channelMode: string; modelCosts?: ModelCreditCost[]; model: string; count?: string | number; seconds?: string | number; quality?: string; resolution?: string; videoSuperResolutionEnabled?: boolean; videoSuperResolutionResolution?: string }) {
+export function requestCreditCost(options: { channelMode: string; modelCosts?: ModelCreditCost[]; model: string; count?: string | number; seconds?: string | number; quality?: string; resolution?: string }) {
     if (options.channelMode !== "remote") return null;
     const cost = modelCreditCost(options.modelCosts, options.model);
     if (!cost) return null;
     if (cost.priceStrategy !== "flat" && !Array.isArray(cost.priceTiers)) return null;
-    const pricingResolution = cost.priceStrategy === "image_resolution"
-        ? imagePricingResolution(options.resolution || options.quality)
-        : videoPricingResolution(options.resolution, options.videoSuperResolutionEnabled === true, options.videoSuperResolutionResolution);
-    const unitPriceMicrocredits = cost.priceStrategy === "flat"
-        ? cost.unitPriceMicrocredits
-        : cost.priceTiers.find((tier) => tier.resolution === pricingResolution)?.unitPriceMicrocredits;
+    const pricingResolution = cost.priceStrategy === "image_resolution" ? imagePricingResolution(options.resolution || options.quality) : videoPricingResolution(options.resolution);
+    const unitPriceMicrocredits = cost.priceStrategy === "flat" ? cost.unitPriceMicrocredits : cost.priceTiers.find((tier) => tier.resolution === pricingResolution)?.unitPriceMicrocredits;
     if (!Number.isFinite(unitPriceMicrocredits) || Number(unitPriceMicrocredits) <= 0) return null;
-    const quantity = cost.billingMode === "per_second"
-        ? Math.max(1, Math.floor(Math.abs(Number(options.seconds)) || 1))
-        : Math.max(1, Math.floor(Math.abs(Number(options.count)) || 1));
+    const count = Math.max(1, Math.floor(Math.abs(Number(options.count)) || 1));
+    const quantity = cost.billingMode === "per_second" ? Math.max(1, Math.floor(Math.abs(Number(options.seconds)) || 1)) * count : count;
     return (Number(unitPriceMicrocredits) / 1_000_000) * quantity;
 }

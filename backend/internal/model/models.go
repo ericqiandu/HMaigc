@@ -326,39 +326,46 @@ type ChannelModelPriceTier struct {
 }
 
 type ApiCallLog struct {
-	ID                  string        `json:"id" gorm:"primaryKey;size:36"`
-	UserID              string        `json:"userId" gorm:"index;size:36;index:idx_api_logs_user_created,priority:1"`
-	ChannelID           string        `json:"channelId" gorm:"index;size:36;index:idx_api_logs_channel_created,priority:1"`
-	ChannelName         string        `json:"channelName" gorm:"-"`
-	TaskID              string        `json:"taskId,omitempty" gorm:"index;size:36"`
-	BillingOrderID      string        `json:"billingOrderId,omitempty" gorm:"index;size:36"`
-	Source              string        `json:"source" gorm:"index;size:64"`
-	Capability          string        `json:"capability" gorm:"index;size:32"`
-	Operation           string        `json:"operation" gorm:"size:64"`
-	RequestKind         string        `json:"requestKind" gorm:"index;size:24"`
-	Billable            bool          `json:"billable" gorm:"index"`
-	APIFormat           string        `json:"apiFormat" gorm:"size:24"`
-	Method              string        `json:"method" gorm:"size:16"`
-	Path                string        `json:"path"`
-	Model               string        `json:"model" gorm:"size:120;index:idx_api_logs_model_created,priority:1"`
-	Status              ApiCallStatus `json:"status" gorm:"index;size:24;index:idx_api_logs_status_created,priority:1"`
-	StatusCode          int           `json:"statusCode"`
-	DurationMs          int64         `json:"durationMs"`
-	InputTokens         int64         `json:"inputTokens"`
-	OutputTokens        int64         `json:"outputTokens"`
-	CachedTokens        int64         `json:"cachedTokens"`
-	UsageAvailable      bool          `json:"usageAvailable"`
-	MediaCount          int           `json:"mediaCount"`
-	VideoSeconds        int           `json:"videoSeconds"`
-	ProviderRequestID   string        `json:"providerRequestId" gorm:"size:160"`
-	EstimatedCostMicros int64         `json:"estimatedCostMicros"`
-	CostAvailable       bool          `json:"costAvailable"`
-	Currency            string        `json:"currency" gorm:"size:12"`
-	ErrorCode           string        `json:"errorCode,omitempty" gorm:"index;size:80"`
-	Error               string        `json:"error"`
-	ConcurrencyLimit    int           `json:"concurrencyLimit"`
-	UpstreamURL         string        `json:"upstreamUrl"`
-	CreatedAt           time.Time     `json:"createdAt" gorm:"index;index:idx_api_logs_user_created,priority:2;index:idx_api_logs_channel_created,priority:2;index:idx_api_logs_model_created,priority:2;index:idx_api_logs_status_created,priority:2"`
+	ID                         string        `json:"id" gorm:"primaryKey;size:36"`
+	UserID                     string        `json:"userId" gorm:"index;size:36;index:idx_api_logs_user_created,priority:1"`
+	ChannelID                  string        `json:"channelId" gorm:"index;size:36;index:idx_api_logs_channel_created,priority:1"`
+	ChannelName                string        `json:"channelName" gorm:"-"`
+	TaskID                     string        `json:"taskId,omitempty" gorm:"index;size:36"`
+	BillingOrderID             string        `json:"billingOrderId,omitempty" gorm:"index;size:36"`
+	Source                     string        `json:"source" gorm:"index;size:64"`
+	Capability                 string        `json:"capability" gorm:"index;size:32"`
+	Operation                  string        `json:"operation" gorm:"size:64"`
+	RequestKind                string        `json:"requestKind" gorm:"index;size:24"`
+	Billable                   bool          `json:"billable" gorm:"index"`
+	APIFormat                  string        `json:"apiFormat" gorm:"size:24"`
+	Method                     string        `json:"method" gorm:"size:16"`
+	Path                       string        `json:"path"`
+	Model                      string        `json:"model" gorm:"size:120;index:idx_api_logs_model_created,priority:1"`
+	Status                     ApiCallStatus `json:"status" gorm:"index;size:24;index:idx_api_logs_status_created,priority:1"`
+	StatusCode                 int           `json:"statusCode"`
+	DurationMs                 int64         `json:"durationMs"`
+	InputTokens                int64         `json:"inputTokens"`
+	OutputTokens               int64         `json:"outputTokens"`
+	CachedTokens               int64         `json:"cachedTokens"`
+	UsageAvailable             bool          `json:"usageAvailable"`
+	MediaCount                 int           `json:"mediaCount"`
+	VideoSeconds               int           `json:"videoSeconds"`
+	InputCharacterCount        int           `json:"inputCharacterCount"`
+	PricingSpecification       string        `json:"pricingSpecification" gorm:"size:64"`
+	InputImageCount            int           `json:"inputImageCount"`
+	InputVideoCount            int           `json:"inputVideoCount"`
+	InputVideoDurationMs       int64         `json:"inputVideoDurationMs"`
+	InputVideoDurationComplete bool          `json:"inputVideoDurationComplete"`
+	ProviderRequestID          string        `json:"providerRequestId" gorm:"size:160"`
+	EstimatedCostMicros        int64         `json:"estimatedCostMicros"`
+	CostAvailable              bool          `json:"costAvailable"`
+	Currency                   string        `json:"currency" gorm:"size:12"`
+	CostCalculationError       string        `json:"costCalculationError,omitempty" gorm:"size:500"`
+	ErrorCode                  string        `json:"errorCode,omitempty" gorm:"index;size:80"`
+	Error                      string        `json:"error"`
+	ConcurrencyLimit           int           `json:"concurrencyLimit"`
+	UpstreamURL                string        `json:"upstreamUrl"`
+	CreatedAt                  time.Time     `json:"createdAt" gorm:"index;index:idx_api_logs_user_created,priority:2;index:idx_api_logs_channel_created,priority:2;index:idx_api_logs_model_created,priority:2;index:idx_api_logs_status_created,priority:2"`
 }
 
 type CreditAccount struct {
@@ -391,34 +398,59 @@ type CreditLedgerEntry struct {
 }
 
 type BillingOrder struct {
-	ID                    string        `json:"id" gorm:"primaryKey;size:36"`
-	UserID                string        `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`
-	TeamID                string        `json:"teamId,omitempty" gorm:"index;size:36"`
-	IdempotencyKey        string        `json:"idempotencyKey" gorm:"size:160;uniqueIndex:idx_billing_user_idempotency,priority:2"`
-	TaskID                string        `json:"taskId,omitempty" gorm:"index;size:36"`
-	ChannelID             string        `json:"channelId" gorm:"index;size:36"`
-	ChannelModelID        string        `json:"channelModelId" gorm:"index;size:36"`
-	Model                 string        `json:"model" gorm:"index;size:120"`
-	Capability            string        `json:"capability" gorm:"index;size:32"`
-	Scene                 string        `json:"scene" gorm:"index;size:80"`
-	BillingMode           string        `json:"billingMode" gorm:"size:32"`
-	PriceVersion          int64         `json:"priceVersion"`
-	PriceTierID           string        `json:"priceTierId,omitempty" gorm:"index;size:36"`
-	PricingResolution     string        `json:"pricingResolution,omitempty" gorm:"size:16"`
-	UnitPriceMicrocredits int64         `json:"unitPriceMicrocredits"`
-	MultiplierBasisPoints int64         `json:"multiplierBasisPoints"`
-	Quantity              int64         `json:"quantity"`
-	AmountMicrocredits    int64         `json:"amountMicrocredits"`
-	Status                BillingStatus `json:"status" gorm:"index;size:24"`
-	ProviderRequestID     string        `json:"providerRequestId,omitempty" gorm:"index;size:160"`
-	Error                 string        `json:"error,omitempty" gorm:"size:1000"`
-	ResolvedBy            string        `json:"resolvedBy,omitempty" gorm:"index;size:36"`
-	ResolutionNote        string        `json:"resolutionNote,omitempty" gorm:"size:500"`
-	StartedAt             *time.Time    `json:"startedAt"`
-	SettledAt             *time.Time    `json:"settledAt"`
-	RefundedAt            *time.Time    `json:"refundedAt"`
-	CreatedAt             time.Time     `json:"createdAt" gorm:"index"`
-	UpdatedAt             time.Time     `json:"updatedAt"`
+	ID                               string        `json:"id" gorm:"primaryKey;size:36"`
+	UserID                           string        `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`
+	TeamID                           string        `json:"teamId,omitempty" gorm:"index;size:36"`
+	IdempotencyKey                   string        `json:"idempotencyKey" gorm:"size:160;uniqueIndex:idx_billing_user_idempotency,priority:2"`
+	TaskID                           string        `json:"taskId,omitempty" gorm:"index;size:36"`
+	ChannelID                        string        `json:"channelId" gorm:"index;size:36"`
+	ChannelModelID                   string        `json:"channelModelId" gorm:"index;size:36"`
+	Model                            string        `json:"model" gorm:"index;size:120"`
+	Capability                       string        `json:"capability" gorm:"index;size:32"`
+	Scene                            string        `json:"scene" gorm:"index;size:80"`
+	BillingMode                      string        `json:"billingMode" gorm:"size:32"`
+	PriceVersion                     int64         `json:"priceVersion"`
+	PriceTierID                      string        `json:"priceTierId,omitempty" gorm:"index;size:36"`
+	PricingResolution                string        `json:"pricingResolution,omitempty" gorm:"size:16"`
+	UnitPriceMicrocredits            int64         `json:"unitPriceMicrocredits"`
+	MultiplierBasisPoints            int64         `json:"multiplierBasisPoints"`
+	Quantity                         int64         `json:"quantity"`
+	AmountMicrocredits               int64         `json:"amountMicrocredits"`
+	EnhancementPricingRuleID         string        `json:"enhancementPricingRuleId,omitempty" gorm:"index;size:36"`
+	EnhancementUnitPriceMicrocredits int64         `json:"enhancementUnitPriceMicrocredits"`
+	EnhancementAmountMicrocredits    int64         `json:"enhancementAmountMicrocredits"`
+	EnhancementSupplierCostMinMicros int64         `json:"enhancementSupplierCostMinMicros"`
+	EnhancementSupplierCostMaxMicros int64         `json:"enhancementSupplierCostMaxMicros"`
+	EnhancementPricingSnapshotJSON   string        `json:"enhancementPricingSnapshotJson,omitempty" gorm:"type:text"`
+	Status                           BillingStatus `json:"status" gorm:"index;size:24"`
+	ProviderRequestID                string        `json:"providerRequestId,omitempty" gorm:"index;size:160"`
+	Error                            string        `json:"error,omitempty" gorm:"size:1000"`
+	ResolvedBy                       string        `json:"resolvedBy,omitempty" gorm:"index;size:36"`
+	ResolutionNote                   string        `json:"resolutionNote,omitempty" gorm:"size:500"`
+	StartedAt                        *time.Time    `json:"startedAt"`
+	SettledAt                        *time.Time    `json:"settledAt"`
+	RefundedAt                       *time.Time    `json:"refundedAt"`
+	CreatedAt                        time.Time     `json:"createdAt" gorm:"index"`
+	UpdatedAt                        time.Time     `json:"updatedAt"`
+}
+
+// SuperResolutionPricingRule 是独立于生成模型的超分后处理定价。
+// 帧率区间采用 (FPSMinExclusive, FPSMaxInclusive]，确保边界唯一命中。
+type SuperResolutionPricingRule struct {
+	ID                    string    `json:"id" gorm:"primaryKey;size:36"`
+	Edition               string    `json:"edition" gorm:"size:24;uniqueIndex:idx_super_resolution_pricing_scope,priority:1"`
+	Resolution            string    `json:"resolution" gorm:"size:16;uniqueIndex:idx_super_resolution_pricing_scope,priority:2"`
+	FPSMinExclusive       int       `json:"fpsMinExclusive" gorm:"uniqueIndex:idx_super_resolution_pricing_scope,priority:3"`
+	FPSMaxInclusive       int       `json:"fpsMaxInclusive" gorm:"uniqueIndex:idx_super_resolution_pricing_scope,priority:4"`
+	Currency              string    `json:"currency" gorm:"size:12"`
+	SupplierCostMinMicros int64     `json:"supplierCostMinMicros"`
+	SupplierCostMaxMicros int64     `json:"supplierCostMaxMicros"`
+	UnitPriceMicrocredits int64     `json:"unitPriceMicrocredits"`
+	PriceConfigured       bool      `json:"priceConfigured" gorm:"index"`
+	Enabled               bool      `json:"enabled" gorm:"index"`
+	PriceVersion          int64     `json:"priceVersion"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type RedeemBatch struct {

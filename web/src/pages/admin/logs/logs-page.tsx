@@ -97,7 +97,7 @@ export default function LogsPage() {
         { title: "错误码", dataIndex: "errorCode", width: 160, ellipsis: true, render: (value) => <span className="admin-log-error-code">{value || "--"}</span> },
         { title: "耗时", dataIndex: "durationMs", width: 100, align: "right", render: (value) => <span className="admin-log-numeric-value">{value}ms</span> },
         { title: "Token", width: 145, align: "right", render: (_, log) => <span className="admin-log-numeric-value">{log.usageAvailable ? `${log.inputTokens} / ${log.outputTokens}` : "--"}</span> },
-        { title: "费用", width: 140, align: "right", render: (_, log) => <span className="admin-log-numeric-value">{log.costAvailable ? `${log.currency || "USD"} ${(log.estimatedCostMicros / 1_000_000).toFixed(6)}` : "--"}</span> },
+        { title: "费用", width: 140, align: "right", render: (_, log) => <span className="admin-log-numeric-value" title={log.costCalculationError || undefined}>{log.costAvailable ? `${log.currency || "USD"} ${(log.estimatedCostMicros / 1_000_000).toFixed(6)}` : log.costCalculationError ? "核算失败" : "--"}</span> },
         {
             title: "操作",
             width: 90,

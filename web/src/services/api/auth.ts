@@ -62,10 +62,17 @@ export type ApiCallLog = {
     usageAvailable: boolean;
     mediaCount: number;
     videoSeconds: number;
+    inputCharacterCount: number;
+    pricingSpecification: string;
+    inputImageCount: number;
+    inputVideoCount: number;
+    inputVideoDurationMs: number;
+    inputVideoDurationComplete: boolean;
     providerRequestId?: string;
     estimatedCostMicros: number;
     costAvailable: boolean;
     currency?: string;
+    costCalculationError?: string;
     errorCode?: string;
     error?: string;
     concurrencyLimit: number;
@@ -208,6 +215,23 @@ export type ModelPricingOperationsSetting = {
     currency: string;
     creditRevenueMicros: number;
     targetMarginBasisPoints: number;
+};
+
+export type SuperResolutionPricingRule = {
+    id: string;
+    edition: "standard" | "professional";
+    resolution: "720P" | "1080P" | "2K" | "4K" | "8K";
+    fpsMinExclusive: number;
+    fpsMaxInclusive: number;
+    currency: string;
+    supplierCostMinMicros: number;
+    supplierCostMaxMicros: number;
+    unitPriceMicrocredits: number;
+    priceConfigured: boolean;
+    enabled: boolean;
+    priceVersion: number;
+    createdAt: string;
+    updatedAt: string;
 };
 
 export type StoryboardPromptTemplate = {
@@ -513,4 +537,12 @@ export function updateAdminModelPricingOperationsSetting(input: Omit<ModelPricin
 
 export function deleteAdminModelPricing(id: string) {
     return request<{ ok: boolean }>(api.delete(`/admin/model-pricings/${encodeURIComponent(id)}`));
+}
+
+export function listAdminSuperResolutionPricing() {
+    return request<{ rules: SuperResolutionPricingRule[] }>(api.get("/admin/super-resolution-pricing"));
+}
+
+export function replaceAdminSuperResolutionPricing(rules: SuperResolutionPricingRule[]) {
+    return request<{ rules: SuperResolutionPricingRule[] }>(api.put("/admin/super-resolution-pricing", { rules }));
 }
