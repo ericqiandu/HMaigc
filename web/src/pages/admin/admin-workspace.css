@@ -1,7 +1,6 @@
 @layer utilities {
     .admin-workspace.workspace-ui-scope,
-    .admin-mobile-navigation-drawer.workspace-ui-scope {
-        background: var(--workspace-ui-page);
+    .admin-mobile-navigation-drawer {
         color: var(--workspace-ui-text);
         font-family: var(--workspace-ui-font-text);
         font-size: 14px;

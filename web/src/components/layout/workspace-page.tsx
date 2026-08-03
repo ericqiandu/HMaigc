@@ -90,7 +90,7 @@ export function ListToolbar({ children, trailing, active, onReset, className }: 
     );
 }
 
-export function TableSurface({ children, className }: { children: ReactNode; className?: string }) {
+export function TableSurface({ children, className, showScrollHint = true }: { children: ReactNode; className?: string; showScrollHint?: boolean }) {
     const surfaceRef = useRef<HTMLDivElement>(null);
     const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
     const [scrollAcknowledged, setScrollAcknowledged] = useState(false);
@@ -124,7 +124,7 @@ export function TableSurface({ children, className }: { children: ReactNode; cla
                 if (target instanceof HTMLElement && target.scrollLeft > 8) setScrollAcknowledged(true);
             }}
         >
-            {hasHorizontalOverflow && !scrollAcknowledged ? (
+            {showScrollHint && hasHorizontalOverflow && !scrollAcknowledged ? (
                 <div className="app-table-scroll-hint" aria-hidden="true">左右滑动查看完整内容</div>
             ) : null}
             {children}

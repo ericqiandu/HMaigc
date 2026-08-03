@@ -6,7 +6,7 @@ import {
     PanelLeftClose,
     PanelLeftOpen,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
 import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
@@ -113,6 +113,22 @@ function MobileAdminNavigation() {
     const { settings } = useSiteSettings();
     const currentItem = findAdminNavigationItem(location.pathname);
 
+    useEffect(() => {
+        setOpen(false);
+    }, [location.pathname]);
+
+    useEffect(() => {
+        const desktopBreakpoint = window.matchMedia("(min-width: 1280px)");
+        const closeAtDesktopBreakpoint = (event: MediaQueryListEvent) => {
+            if (event.matches) {
+                setOpen(false);
+            }
+        };
+
+        desktopBreakpoint.addEventListener("change", closeAtDesktopBreakpoint);
+        return () => desktopBreakpoint.removeEventListener("change", closeAtDesktopBreakpoint);
+    }, []);
+
     return (
         <>
             <header className="admin-mobile-header flex shrink-0 items-center justify-between xl:hidden">
@@ -130,7 +146,7 @@ function MobileAdminNavigation() {
                 </button>
             </header>
             <Drawer
-                rootClassName="admin-mobile-navigation-drawer workspace-ui-scope"
+                rootClassName="admin-mobile-navigation-drawer"
                 title={
                     <div className="admin-mobile-drawer-title">
                         <span className="admin-mobile-drawer-title-primary">管理后台</span>
@@ -141,6 +157,7 @@ function MobileAdminNavigation() {
                 width={320}
                 open={open}
                 onClose={() => setOpen(false)}
+                destroyOnHidden
             >
                 <div className="admin-mobile-drawer-body flex h-full min-h-0 flex-col">
                     <AdminNavigation collapsed={false} onNavigate={() => setOpen(false)} />

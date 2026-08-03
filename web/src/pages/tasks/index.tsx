@@ -400,7 +400,7 @@ export default function TasksPage() {
                     />
                 </ListToolbar>
 
-                <TableSurface className="task-table-surface">
+                <TableSurface className="task-table-surface" showScrollHint={false}>
                     <Table
                         rowKey="id"
                         size="middle"

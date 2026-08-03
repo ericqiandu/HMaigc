@@ -1,5 +1,5 @@
 .admin-workspace.workspace-ui-scope,
-.admin-mobile-navigation-drawer.workspace-ui-scope {
+.admin-mobile-navigation-drawer {
     --admin-panel-shadow: 0 1px 2px rgb(29 29 31 / 3%);
     --workspace-ui-page: #f5f5f7;
     --workspace-ui-surface-subtle: #f7f7f9;
@@ -8,7 +8,7 @@
 }
 
 .dark .admin-workspace.workspace-ui-scope,
-.dark .admin-mobile-navigation-drawer.workspace-ui-scope {
+.dark .admin-mobile-navigation-drawer {
     --admin-panel-shadow: none;
     --workspace-ui-page: #0a0a0b;
     --workspace-ui-surface: #171718;
