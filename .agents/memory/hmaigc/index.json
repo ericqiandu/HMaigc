@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "project": "HMaigc",
   "status": "active",
-  "updatedAt": "2026-08-03T00:00:00+08:00",
+  "updatedAt": "2026-08-04T00:00:00+08:00",
   "progress": {
-    "releasedVersion": "v1.0.18",
+    "releasedVersion": "v1.0.19",
     "developmentState": "unreleased-working-tree",
     "releaseReady": false,
-    "note": "当前工作区包含尚未形成正式版本的功能与性能改动；不得把未提交、未发布内容描述为线上版本。"
+    "note": "当前工作区包含未发布改动；线上版本、发布记录与本地 VERSION 必须分别以生产健康检查、CHANGELOG 和 VERSION 为准，不得互相推断。"
   },
   "sourcesOfTruth": {
     "engineering": "AGENTS.md",
@@ -22,6 +22,12 @@
     ".agents/memory/hmaigc/core.md",
     ".agents/memory/hmaigc/procedures.md"
   ],
+  "activeStandards": {
+    "designTokens": "web/src/styles/design-tokens.css",
+    "visualRule": "新页面和组件只消费 Design.md 指定的语义 Token；不得新增页面私有颜色、圆角、阴影、动效或层级原始值。",
+    "frontendScope": "正式前端仅为 web/；所有本地运行需复用 .local/project-workbench-debug 数据目录。",
+    "productionDomains": "hm.kunagent.com 为正式业务、OAuth 与支付主域名；hmaigc.ai 与 www.hmaigc.ai 仅保留为 301 品牌入口。静态与媒体 OSS Bucket 必须分离并按实际 URL 验证 CORS。"
+  },
   "startupChecklist": [
     "读取 AGENTS.md 与本索引",
     "读取当前任务对应的事实真源",

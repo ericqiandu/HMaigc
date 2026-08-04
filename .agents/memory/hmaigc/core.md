@@ -11,6 +11,7 @@ HMaigc 是面向真实用户、真实模型成本和长期商业运营的 AI 内
 - 写操作和关键链路显式失败，并留下可检索的结构化证据；禁止吞异常或前端伪成功。
 - 多用户、权限、积分、计费、模型调用和资产写入必须考虑并发、幂等、审计和失败补偿。
 - 前端与后台遵循同一设计真源；新增页面、弹窗、节点和组件不得另起一套视觉标准。
+- 视觉 Token 的唯一原始值来源是 `web/src/styles/design-tokens.css`；`Design.md` 定义语义和使用边界，`web/DESIGN.md` 定义 Web 落地映射。
 - 已生成资产必须保留并可追溯；后处理不得因质检或失败删除真实产出。
 - 不把密钥、数据库、本地状态、构建产物或临时审计文件提交到仓库。
 
@@ -24,6 +25,15 @@ HMaigc 是面向真实用户、真实模型成本和长期商业运营的 AI 内
 
 ## 版本基线
 
-- 当前已记录版本：`v1.0.18`，发布日期为 2026-08-02。
+- 当前已发布版本：`v1.0.19`，发布事实以 `VERSION`、`CHANGELOG.md` 和生产健康检查交叉确认。
 - 当前工作区存在未发布改动，必须以 `git status`、`git diff` 和实际验证结果判断，不得预设为某个新版本。
 - 任何版本号、更新日志、镜像标签与后台升级中心显示必须来自同一发布事实，禁止分别手工宣称不同版本。
+
+## 生产域名、OSS 与商业接入边界
+
+- `hm.kunagent.com` 是正式业务主域名：线上应用、登录 OAuth 回调、会员收银台、支付异步通知均以它为唯一公开地址。
+- `hmaigc.ai` 与 `www.hmaigc.ai` 保留为品牌入口，但生产 Nginx 应以 301 将完整路径和查询参数跳转到 `https://hm.kunagent.com$request_uri`；不得让两个主域名同时承载完整应用和支付流程，避免 Cookie、OAuth state 和订单回跳分裂。
+- OSS 必须按职责分 Bucket：`hmaigc-prod-static` 只存放版本化 Web 静态资源；`hmaigc-prod-assets` 只存放用户上传和生成媒体。不得混用配置或访问密钥权限。
+- 静态 Bucket 的 CORS 来源必须精确匹配 Origin，不能带尾随 `/`。正式来源为 `https://hmaigc.ai`、`https://www.hmaigc.ai`、`https://hm.kunagent.com`；需要 GET 和 HEAD，允许 Header 为 `*`，并返回 Vary: Origin。发布新域名后，必须用带 Origin 的 curl 验证 `Access-Control-Allow-Origin` 后再通知用户访问，避免 JS 被浏览器拦截导致黑屏。
+- 平台素材 Bucket 默认私有，通过应用鉴权读取；其 CORS 只用于已明确需要浏览器直连预览或上传的场景。RAM 密钥必须专用于目标 Bucket、按最小权限授权，禁止使用主账号 AccessKey。
+- 支付和微信登录是独立能力：支付回调可使用 `/api/payments/webhooks/wechat` 与 `/api/payments/webhooks/alipay`；微信 OAuth 登录必须以独立的开放平台凭据和 HTTPS 回调实现，不能复用微信支付商户凭据。
