@@ -90,7 +90,8 @@ export default function RegisterPage() {
 
     const registrationClosed = settings?.registrationEnabled === false;
     const mailUnavailable = Boolean(settings && !registrationClosed && !settings.firstUser && settings.emailCodeRequired && !settings.emailEnabled);
-    const disabled = settings === null || registrationClosed || mailUnavailable || Boolean(settingsError);
+    const legalDocumentsUnavailable = Boolean(settings && !settings.firstUser && !settings.legalDocumentsConfigured);
+    const disabled = settings === null || registrationClosed || mailUnavailable || legalDocumentsUnavailable || Boolean(settingsError);
     const requireCode = Boolean(settings && !settings.firstUser && settings.emailCodeRequired);
 
     return (
@@ -99,6 +100,7 @@ export default function RegisterPage() {
                 {settingsError ? <AuthNotice tone="error">{settingsError}</AuthNotice> : null}
                 {settings?.firstUser ? <AuthNotice tone="info">首个账号将自动成为管理员，无需邮箱验证码。</AuthNotice> : null}
                 {registrationClosed ? <AuthNotice tone="warning">当前已关闭普通注册，请联系管理员创建账号。</AuthNotice> : null}
+                {legalDocumentsUnavailable ? <AuthNotice tone="warning">管理员尚未发布用户协议与隐私政策，暂不能开放注册。</AuthNotice> : null}
                 {mailUnavailable ? <AuthNotice tone="warning">注册邮件尚未配置，邮箱注册暂不可用。</AuthNotice> : null}
                 {inviteCode ? <AuthNotice tone="info">已绑定邀请码 {inviteCode}，注册成功后不可更换。</AuthNotice> : null}
             </div>

@@ -156,7 +156,7 @@ export default function SkillsPage() {
                 <PageHeader
                     title="技能库"
                     description="浏览 HMaigc 技能，管理激活与收藏。"
-                    meta={<span className="skills-page-count text-xs text-foreground/45">{displayedTotal} 个技能</span>}
+                    meta={<span className="skills-page-count text-xs text-foreground/45" aria-live="polite">{loading ? "正在加载技能" : `${displayedTotal} 个技能`}</span>}
                     actions={
                         <Button className="skills-page-refresh-button" icon={<RefreshCw className="skills-page-refresh-icon size-4" />} loading={loading} onClick={refresh}>
                             刷新

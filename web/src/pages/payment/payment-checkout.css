@@ -2,7 +2,7 @@
     min-height: 100vh;
     background: #070708;
     color: #f7f7f8;
-    font-family: "SF Pro Text", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
 }
 
 .payment-checkout-header {

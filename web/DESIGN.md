@@ -5,6 +5,7 @@
 ## 当前推广方式
 
 - 新视觉标准通过 `WorkspacePage` 自动挂载 `.workspace-ui-scope`，并显式覆盖独立的 `.settings-workspace-page`。
+- `src/styles/design-tokens.css` 是 Web 视觉 Token 的唯一原始值来源；`globals.css`、`workspace-ui.css` 与业务样式只能消费语义 Token，不新增页面私有的颜色、圆角、阴影、动效或层级值。
 - 工作台统一由 `AppWorkspaceShell` 挂载 `WorkspaceTopBar`：左侧展示后台站点配置中的 Logo 与站点名称，右侧展示真实公告、积分、会员入口和账户菜单；页面不得各自复制顶栏。
 - 当前标准应用于项目、画布列表、任务、素材、技能、设置、团队、积分工作区与管理后台。
 - 管理后台保留独立的侧栏信息架构和运营密度，但必须通过 `.admin-workspace.workspace-ui-scope` 继承同一套语义颜色、字体、内容宽度、控件高度与响应式标准；后台专属映射集中维护在 `src/pages/admin/admin-workspace.css`。
@@ -15,19 +16,18 @@
 
 | 角色       | 字号 |    字重 | 行高 |
 | ---------- | ---: | ------: | ---: |
-| 页面标题   | 18px |     600 | 24px |
+| 页面标题   | 16px |     600 | 22px |
 | 卡片标题   | 14px |     600 | 20px |
 | 正文与控件 | 14px | 400–500 | 20px |
 | 辅助信息   | 12px |     400 | 17px |
 | 紧凑元数据 | 11px |     400 | 16px |
 
-- 20px 以下使用 `SF Pro Text`，中文回退到 `PingFang SC`、`Microsoft YaHei`。
-- 页面标题使用 `SF Pro Display`，中文回退保持一致。
+- 全站统一使用 `-apple-system, BlinkMacSystemFont, PingFang SC, Inter, HarmonyOS Sans SC, Noto Sans SC, Microsoft YaHei, sans-serif` 系统优先字体栈；不下载网页字体，不为标题引入第二套字体。
 - 同一层级不得通过任意 Tailwind 字号重复创造新规格。
 
 ## 间距与尺寸
 
-- 基础间距单位为 4px，常用值仅限 4、8、12、16、20、24px。
+- 基础间距单位为 4px，常用值仅限 4、8、12、16、24、32、40、48、64、80px；业务样式不得再引入 20px 等额外间距值。
 - 桌面端工作台控制高度统一为 36px。
 - 移动端主要操作、搜索和筛选控件统一为至少 44px 高。
 - 图标按钮的可点击区域不得小于 32×32px；移动端主要操作不得小于 44px。

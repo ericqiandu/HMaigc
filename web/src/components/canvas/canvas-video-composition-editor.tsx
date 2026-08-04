@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Button, Modal, Slider, Tooltip } from "antd";
-import { ChevronLeft, ChevronRight, Download, Maximize2, Pause, Play, Scissors, SkipBack, SkipForward, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Pause, Play, Scissors, SkipBack, SkipForward, Trash2, X } from "lucide-react";
 
 import { reconcileCompositionClips, resolveCompositionClips, splitCompositionClip } from "@/lib/canvas/canvas-video-composition-editor";
 import type { CanvasNodeData, CanvasVideoCompositionClip } from "@/types/canvas";
@@ -13,12 +13,18 @@ type CanvasVideoCompositionEditorProps = {
     exporting: boolean;
     onClose: () => void;
     onSave: (clips: CanvasVideoCompositionClip[]) => void;
-    onExport: (clips: CanvasVideoCompositionClip[]) => void;
+    onExport: (clips: CanvasVideoCompositionClip[]) => Promise<CanvasNodeData | null>;
 };
 
 const formatTime = (milliseconds: number) => {
     const seconds = Math.max(0, Math.floor(milliseconds / 1000));
     return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+};
+
+const formatFileSize = (bytes: number | undefined): string => {
+    if (!bytes || bytes <= 0) return "--";
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 };
 
 export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporting, onClose, onSave, onExport }: CanvasVideoCompositionEditorProps) {
@@ -28,6 +34,13 @@ export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporti
     const [playing, setPlaying] = useState(false);
     const [playheadMs, setPlayheadMs] = useState(0);
     const [zoom, setZoom] = useState(0.025);
+    const [resultNode, setResultNode] = useState<CanvasNodeData | null>(null);
+    const sourceVideosKey = sourceVideos
+        .map((source) => `${source.id}:${source.metadata?.content ?? ""}:${source.metadata?.durationMs ?? ""}`)
+        .join("|");
+    const compositionClipsKey = (node.metadata?.compositionClips ?? [])
+        .map((clip) => `${clip.id}:${clip.sourceNodeId}:${clip.trimStartMs}:${clip.trimEndMs ?? ""}`)
+        .join("|");
 
     useEffect(() => {
         if (!open) return;
@@ -35,7 +48,7 @@ export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporti
         setClips(reconciled);
         setSelectedClipId(reconciled[0]?.id || null);
         setPlayheadMs(0);
-    }, [node.id, node.metadata?.compositionClips, open, sourceVideos]);
+    }, [compositionClipsKey, node.id, open, sourceVideosKey]);
 
     const resolved = useMemo(() => resolveCompositionClips(clips, sourceVideos), [clips, sourceVideos]);
     const selectedIndex = Math.max(0, resolved.findIndex((clip) => clip.id === selectedClipId));
@@ -62,6 +75,18 @@ export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporti
             return next;
         });
     };
+    const removeSelected = () => {
+        if (!selected || clips.length <= 1) return;
+        const selectedIndex = clips.findIndex((clip) => clip.id === selected.id);
+        const nextClips = clips.filter((clip) => clip.id !== selected.id);
+        const nextSelection = nextClips[Math.min(selectedIndex, nextClips.length - 1)];
+
+        setClips(nextClips);
+        onSave(nextClips);
+        setSelectedClipId(nextSelection?.id || null);
+        setPlayheadMs(0);
+        setPlaying(false);
+    };
     const togglePlayback = async () => {
         const video = videoRef.current;
         if (!video || !selected) return;
@@ -75,14 +100,21 @@ export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporti
         }
         else video.pause();
     };
+    const exportComposition = async () => {
+        const mergedNode = await onExport(clips);
+        if (mergedNode) setResultNode(mergedNode);
+    };
+    const resultUrl = resultNode?.metadata?.content;
+    const resultDurationMs = resultNode?.metadata?.durationMs;
+    const resultSize = resultNode?.metadata?.bytes;
 
     return (
-        <Modal open={open} footer={null} closable={false} width="calc(100vw - 32px)" className="canvas-video-editor-modal" onCancel={onClose} destroyOnHidden>
+        <Modal open={open} centered footer={null} closable={false} width="min(1440px, calc(100vw - 32px))" className="canvas-video-editor-modal" onCancel={onClose} destroyOnHidden>
             <main className="canvas-video-editor flex h-full min-h-0 flex-col bg-[#171717] text-[#f5f5f5]">
                 <header className="canvas-video-editor-header flex h-14 shrink-0 items-center gap-3 px-4">
                     <h1 className="canvas-video-editor-title m-0 flex-1 text-[16px] font-semibold leading-6">视频合成</h1>
                     <span className="canvas-video-editor-summary text-[12px] text-white/45">{resolved.length} 个片段 · {formatTime(totalDurationMs)}</span>
-                    <Button className="canvas-video-editor-export !h-9 !rounded-lg" type="primary" icon={<Download className="size-4" />} loading={exporting} disabled={resolved.length < 1} onClick={() => { onSave(clips); onExport(clips); }}>导出</Button>
+                    <Button className="canvas-video-editor-export !h-9 !rounded-lg" type="primary" icon={<Download className="size-4" />} loading={exporting} disabled={resolved.length < 1} onClick={() => { onSave(clips); void exportComposition(); }}>导出</Button>
                     <Button className="canvas-video-editor-close !grid !size-9 !place-items-center !rounded-lg !border-0 !bg-transparent !p-0 !text-white/65" aria-label="退出视频合成" icon={<X className="size-5" />} onClick={() => { onSave(clips); onClose(); }} />
                 </header>
 
@@ -129,13 +161,13 @@ export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporti
                         <span className="canvas-video-editor-tool-separator mx-2 h-5 w-px bg-white/10" />
                         <Tooltip title="片段左移"><Button className="canvas-video-editor-tool !grid !size-8 !place-items-center !border-0 !bg-transparent !p-0 !text-white/70" aria-label="片段左移" icon={<ChevronLeft className="size-4" />} disabled={!selected || selectedIndex === 0} onClick={() => moveSelected(-1)} /></Tooltip>
                         <Tooltip title="片段右移"><Button className="canvas-video-editor-tool !grid !size-8 !place-items-center !border-0 !bg-transparent !p-0 !text-white/70" aria-label="片段右移" icon={<ChevronRight className="size-4" />} disabled={!selected || selectedIndex === resolved.length - 1} onClick={() => moveSelected(1)} /></Tooltip>
-                        <div className="canvas-video-editor-transport ml-auto flex items-center gap-2">
+                        <Tooltip title="删除当前片段"><Button className="canvas-video-editor-tool !grid !size-8 !place-items-center !border-0 !bg-transparent !p-0 !text-white/70" aria-label="删除当前片段" icon={<Trash2 className="size-4" />} disabled={!selected || clips.length <= 1} onClick={removeSelected} /></Tooltip>
+                        <div className="canvas-video-editor-transport ml-auto flex shrink-0 items-center gap-2">
                             <span className="canvas-video-editor-current text-[12px] tabular-nums">{formatTime(playheadMs)}</span>
                             <Button className="canvas-video-editor-play !grid !size-9 !place-items-center !rounded-full !border-0 !bg-white !p-0 !text-black" aria-label={playing ? "暂停" : "播放"} icon={playing ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />} disabled={!selected} onClick={() => void togglePlayback()} />
                             <span className="canvas-video-editor-duration text-[12px] tabular-nums text-white/45">{formatTime(selected?.durationMs || 0)}</span>
                         </div>
-                        <Maximize2 className="canvas-video-editor-fullscreen ml-auto size-4 text-white/45" aria-hidden="true" />
-                        <Slider className="canvas-video-editor-zoom ml-2 !w-28" min={0.012} max={0.06} step={0.002} value={zoom} onChange={setZoom} aria-label="时间轴缩放" />
+                        <Slider className="canvas-video-editor-zoom ml-2 !w-28 shrink-0" min={0.012} max={0.06} step={0.002} value={zoom} onChange={setZoom} aria-label="时间轴缩放" />
                     </div>
                     <div className="canvas-video-editor-ruler h-7 shrink-0 border-b border-white/8 px-16 text-[10px] leading-7 text-white/35">00:00</div>
                     <div className="canvas-video-editor-track-row flex min-h-0 flex-1">
@@ -152,6 +184,32 @@ export function CanvasVideoCompositionEditor({ open, node, sourceVideos, exporti
                     </div>
                 </section>
             </main>
+            <Modal
+                open={Boolean(resultNode)}
+                closable={false}
+                footer={null}
+                maskClosable={false}
+                width={480}
+                className="canvas-video-export-success-modal"
+                destroyOnHidden
+            >
+                <section className="canvas-video-export-success" aria-labelledby="canvas-video-export-success-title">
+                    <header className="canvas-video-export-success-header">
+                        <div>
+                            <p className="canvas-video-export-success-eyebrow">视频合成已完成</p>
+                            <h2 id="canvas-video-export-success-title" className="canvas-video-export-success-title">最终视频已准备好</h2>
+                        </div>
+                        <Button className="canvas-video-export-success-close" aria-label="关闭合成成功提示" type="text" icon={<X className="size-5" />} onClick={() => setResultNode(null)} />
+                    </header>
+                    {resultUrl ? <video className="canvas-video-export-success-preview" src={resultUrl} controls preload="metadata" /> : null}
+                    <p className="canvas-video-export-success-meta">{formatTime(resultDurationMs ?? 0)} · {formatFileSize(resultSize)}</p>
+                    <p className="canvas-video-export-success-description">合成文件已保存到当前画布，可在这里直接下载或返回画布继续编辑。</p>
+                    <footer className="canvas-video-export-success-actions">
+                        <Button onClick={() => { setResultNode(null); onClose(); }}>返回画布</Button>
+                        {resultUrl ? <a className="canvas-video-export-success-download" href={resultUrl} download="hmaigc-video-composition.mp4"><Download className="size-4" />下载视频</a> : null}
+                    </footer>
+                </section>
+            </Modal>
         </Modal>
     );
 }

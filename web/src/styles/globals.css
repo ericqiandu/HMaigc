@@ -1,20 +1,44 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "./design-tokens.css";
 
 @custom-variant dark (&:is(.dark *));
+
+/*
+ * Application icon language:
+ * - Lucide is the sole source for generic actions and navigation.
+ * - Brand glyphs are vetted Iconfont SVG assets rendered as monochrome masks.
+ *   A mask inherits currentColor, so one asset remains readable in both themes.
+ */
+.model-brand-icon {
+    display: inline-block;
+    flex: 0 0 auto;
+    aspect-ratio: 1;
+    color: currentColor;
+}
+
+.model-brand-icon--asset {
+    background-color: currentColor;
+    -webkit-mask: var(--model-brand-icon-source) center / contain no-repeat;
+    mask: var(--model-brand-icon-source) center / contain no-repeat;
+}
+
+.model-brand-icon--fallback {
+    letter-spacing: -0.04em;
+}
 
 @theme inline {
     --color-background: var(--background);
     --color-foreground: var(--foreground);
     --color-border: var(--border);
     --color-ring: var(--ring);
-    --radius-sm: calc(var(--radius) - 4px);
-    --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) + 4px);
-    --font-heading: var(--font-sans);
-    --font-sans: var(--font-sans);
+    --radius-sm: var(--radius-xs);
+    --radius-md: var(--radius-sm);
+    --radius-lg: var(--radius-md);
+    --radius-xl: var(--radius-lg);
+    --font-heading: var(--font-family-display);
+    --font-sans: var(--font-family-sans);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -42,21 +66,21 @@
     --color-popover: var(--popover);
     --color-card-foreground: var(--card-foreground);
     --color-card: var(--card);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    --radius-2xl: var(--radius-xl);
+    --radius-3xl: var(--radius-xl);
+    --radius-4xl: var(--radius-xl);
 }
 
 /* Shared floating navigation, matched to the Updream workspace navigation. */
 .workspace-floating-navigation {
     position: fixed;
     top: calc(50% + 24px);
-    left: 40px;
-    z-index: 2060;
+    left: var(--space-6);
+    z-index: var(--layer-header);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     transform: translateY(-50%);
     pointer-events: auto;
 }
@@ -64,32 +88,32 @@
 .workspace-floating-navigation-link {
     box-sizing: border-box;
     display: flex;
-    width: 48px;
-    height: 72px;
+    width: var(--space-8);
+    height: var(--space-9);
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 14px 4px;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-1);
     border: 1px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: transparent;
-    color: rgba(23, 32, 51, 0.58);
+    color: var(--text-tertiary);
     transition:
-        background 160ms,
-        border-color 160ms,
-        color 160ms,
-        box-shadow 160ms;
+        background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .workspace-floating-navigation-link:not(.is-active):hover {
-    color: rgba(23, 32, 51, 0.96);
+    color: var(--text-primary);
 }
 
 .workspace-floating-navigation-link.is-active {
-    background: linear-gradient(166.23deg, transparent 4.25%, rgba(0, 0, 0, 0.05) 98.21%);
-    color: rgba(23, 32, 51, 0.96);
-    backdrop-filter: blur(25px);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    backdrop-filter: blur(var(--blur-lg));
 }
 
 .workspace-floating-navigation-link:focus-visible {
@@ -113,50 +137,37 @@
 }
 
 .workspace-floating-navigation-label {
-    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    letter-spacing: 0;
+    font-family: var(--font-family-sans);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 18px;
+    letter-spacing: -0.01em;
     white-space: nowrap;
-}
-
-.dark .workspace-floating-navigation-link {
-    color: #a1a1a1;
-}
-
-.dark .workspace-floating-navigation-link:not(.is-active):hover {
-    color: #fafafa;
-}
-
-.dark .workspace-floating-navigation-link.is-active {
-    background: linear-gradient(166.23deg, transparent 4.25%, rgba(255, 255, 255, 0.1) 98.21%);
-    color: #fafafa;
 }
 
 .app-product-floating-account {
     position: fixed;
-    top: 12px;
-    right: 16px;
-    z-index: 50;
+    top: var(--space-3);
+    right: var(--space-4);
+    z-index: var(--layer-header);
 }
 
 .app-product-floating-account .workspace-account-actions {
     flex-direction: row;
-    gap: 6px;
+    gap: var(--space-2);
 }
 
 .app-product-floating-account .workspace-account-actions > button,
 .app-product-floating-account .workspace-account-actions > div > button {
-    width: 40px;
-    height: 40px;
-    min-height: 40px;
-    border-radius: 12px;
+    width: var(--space-7);
+    height: var(--space-7);
+    min-height: var(--space-7);
+    border-radius: var(--radius-sm);
 }
 
 .app-product-floating-account .workspace-account-actions > button:hover,
 .app-product-floating-account .workspace-account-actions > div > button:hover {
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
+    background: var(--bg-hover);
 }
 
 @media (min-width: 640px) {
@@ -220,97 +231,117 @@
 }
 
 :root {
-    --radius: 0.5rem;
-    --motion-instant: 120ms;
-    --motion-state: 180ms;
-    --motion-panel: 240ms;
-    --ease-aceternity: cubic-bezier(0.2, 0.85, 0.18, 1);
-    --ease-product-enter: cubic-bezier(0.16, 1, 0.3, 1);
-    --workspace-canvas: #ffffff;
-    --workspace-surface: rgba(255, 255, 255, 0.82);
-    --workspace-surface-strong: #ffffff;
-    --workspace-border: rgba(15, 23, 42, 0.1);
-    --workspace-border-strong: rgba(15, 23, 42, 0.18);
+    --workspace-topbar-height: 64px;
+    --radius: var(--radius-xs);
+    --motion-instant: var(--duration-fast);
+    --motion-state: var(--duration-normal);
+    --motion-panel: var(--duration-slow);
+    --ease-aceternity: var(--ease-standard);
+    --ease-product-enter: var(--ease-standard);
+    --workspace-canvas: var(--bg-primary);
+    --workspace-surface: var(--bg-surface);
+    --workspace-surface-strong: var(--bg-tertiary);
+    --workspace-border: var(--border-light);
+    --workspace-border-strong: var(--border-active);
     --workspace-grid-line: rgba(51, 65, 85, 0.045);
-    --workspace-nav: rgba(255, 255, 255, 0.88);
-    --workspace-sidebar: #f5f6f8;
-    --workspace-accent: #2563eb;
-    --workspace-accent-soft: #eaf1ff;
-    --border: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
+    --workspace-nav: var(--bg-surface);
+    --workspace-sidebar: var(--bg-secondary);
+    --workspace-accent: var(--brand-primary);
+    --workspace-accent-soft: color-mix(in srgb, var(--brand-primary) 12%, transparent);
+    --border: var(--border-default);
+    --ring: var(--brand-primary);
+    --background: var(--bg-primary);
+    --foreground: var(--text-primary);
+    --card: var(--bg-tertiary);
+    --card-foreground: var(--text-primary);
+    --popover: var(--bg-tertiary);
+    --popover-foreground: var(--text-primary);
+    --primary: var(--brand-primary);
+    --primary-foreground: var(--text-on-brand);
+    --secondary: var(--bg-secondary);
+    --secondary-foreground: var(--text-primary);
+    --muted: var(--bg-secondary);
+    --muted-foreground: var(--text-tertiary);
+    --accent: var(--bg-hover);
+    --accent-foreground: var(--text-primary);
     --destructive: oklch(0.577 0.245 27.325);
-    --input: oklch(0.922 0 0);
+    --input: var(--bg-surface);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar: var(--bg-secondary);
+    --sidebar-foreground: var(--text-primary);
+    --sidebar-primary: var(--brand-primary);
+    --sidebar-primary-foreground: var(--text-on-brand);
+    --sidebar-accent: var(--bg-hover);
+    --sidebar-accent-foreground: var(--text-primary);
+    --sidebar-border: var(--border-light);
+    --sidebar-ring: var(--brand-primary);
+}
+
+.route-loading-state {
+    position: fixed;
+    z-index: var(--layer-popover);
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--space-6);
+    background: color-mix(in srgb, var(--bg-primary) 30%, transparent);
+    color: var(--text-secondary);
+    pointer-events: none;
+}
+
+.route-loading-label {
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+    box-shadow: var(--shadow-sm);
+    padding: var(--space-2) var(--space-3);
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --ring: oklch(0.556 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    --workspace-canvas: var(--bg-primary);
+    --workspace-surface: var(--bg-surface);
+    --workspace-surface-strong: var(--bg-tertiary);
+    --workspace-border: var(--border-light);
+    --workspace-border-strong: var(--border-active);
+    --workspace-nav: var(--bg-surface);
+    --workspace-sidebar: var(--bg-secondary);
+    --workspace-accent: var(--brand-primary);
+    --workspace-accent-soft: color-mix(in srgb, var(--brand-primary) 16%, transparent);
+    --border: var(--border-default);
+    --ring: var(--brand-primary);
+    --background: var(--bg-primary);
+    --foreground: var(--text-primary);
+    --card: var(--bg-tertiary);
+    --card-foreground: var(--text-primary);
+    --popover: var(--bg-tertiary);
+    --popover-foreground: var(--text-primary);
+    --primary: var(--brand-primary);
+    --primary-foreground: var(--text-on-brand);
+    --secondary: var(--bg-secondary);
+    --secondary-foreground: var(--text-primary);
+    --muted: var(--bg-secondary);
+    --muted-foreground: var(--text-tertiary);
+    --accent: var(--bg-hover);
+    --accent-foreground: var(--text-primary);
     --destructive: oklch(0.704 0.191 22.216);
-    --input: oklch(1 0 0 / 15%);
-    --workspace-canvas: #0b0c0d;
-    --workspace-surface: rgba(20, 21, 22, 0.72);
-    --workspace-surface-strong: rgba(25, 26, 27, 0.9);
-    --workspace-border: rgba(255, 255, 255, 0.085);
-    --workspace-border-strong: rgba(255, 255, 255, 0.16);
-    --workspace-grid-line: rgba(255, 255, 255, 0.038);
-    --workspace-nav: rgba(11, 12, 13, 0.82);
-    --workspace-sidebar: #101112;
-    --workspace-accent: #7da2ff;
-    --workspace-accent-soft: rgba(80, 125, 230, 0.16);
+    --input: var(--bg-surface);
+    --workspace-grid-line: rgb(255 255 255 / 4%);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.922 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar: var(--bg-secondary);
+    --sidebar-foreground: var(--text-primary);
+    --sidebar-primary: var(--brand-primary);
+    --sidebar-primary-foreground: var(--text-on-brand);
+    --sidebar-accent: var(--bg-hover);
+    --sidebar-accent-foreground: var(--text-primary);
+    --sidebar-border: var(--border-light);
+    --sidebar-ring: var(--brand-primary);
 }
 
 @layer base {
@@ -332,6 +363,36 @@
     }
     body {
         @apply bg-background text-foreground;
+        font-family: var(--font-family-sans);
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+        font: inherit;
+    }
+
+    /* Ant Design otherwise injects a second system stack into controls and
+       overlays. Keep product text visually continuous without touching code
+       or monospace content. */
+    .ant-app :is(
+        .ant-btn,
+        .ant-input,
+        .ant-input-affix-wrapper,
+        .ant-input-number,
+        .ant-select,
+        .ant-select-dropdown,
+        .ant-dropdown,
+        .ant-popover,
+        .ant-modal,
+        .ant-drawer,
+        .ant-table,
+        .ant-tooltip
+    ) {
+        font-family: var(--font-family-sans);
     }
     #root {
         position: fixed;
@@ -355,11 +416,11 @@
     }
 
     .admin-workspace {
-        background: radial-gradient(circle at 54% -18%, color-mix(in srgb, var(--workspace-accent) 7%, transparent), transparent 34%), var(--workspace-canvas);
+        background: var(--workspace-canvas);
     }
 
     .admin-sidebar {
-        background: color-mix(in srgb, var(--workspace-sidebar) 94%, var(--workspace-canvas));
+        background: var(--workspace-sidebar);
     }
 
     .admin-page-content {
@@ -388,7 +449,7 @@
     .admin-workspace .ant-input,
     .admin-workspace .ant-input-number,
     .admin-workspace .ant-select-selector {
-        min-height: 38px !important;
+        min-height: 36px !important;
     }
 
     .admin-workspace .credit-policy-form,
@@ -409,19 +470,19 @@
     }
 
     .admin-sidebar-footer {
-        background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--workspace-canvas) 32%, transparent));
+        background: var(--workspace-sidebar);
     }
 
     .admin-workspace :where(.ant-btn) {
-        height: 34px;
+        height: 36px;
         padding-inline: 13px;
-        border-radius: 7px;
+        border-radius: 8px;
         box-shadow: none;
         font-weight: 520;
     }
 
     .admin-workspace :where(.ant-btn-sm) {
-        height: 28px;
+        height: 32px;
         padding-inline: 9px;
         border-radius: 6px;
         font-size: 12px;
@@ -452,7 +513,7 @@
     }
 
     .admin-workspace .admin-form-actions {
-        min-height: 34px;
+        min-height: 36px;
         align-items: center;
     }
 
@@ -465,7 +526,7 @@
     }
 
     .admin-workspace .admin-row-more-action {
-        width: 28px;
+        width: 32px;
         padding-inline: 0;
     }
 
@@ -1027,10 +1088,10 @@
 
     :where(.ant-modal-content, .ant-drawer-content) {
         border: 1px solid var(--border);
+        background: var(--card);
         box-shadow:
-            0 28px 84px rgba(15, 23, 42, 0.18),
-            inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-        backdrop-filter: blur(24px);
+            0 8px 32px rgba(0, 0, 0, 0.15),
+            0 2px 8px rgba(0, 0, 0, 0.1) !important;
     }
 
     :where(.ant-modal) .ant-modal-content {
@@ -1039,39 +1100,45 @@
     }
 
     :where(.ant-modal) .ant-modal-header {
+        display: flex;
+        min-height: 56px;
+        align-items: center;
         margin: 0;
         border-bottom: 1px solid var(--border);
-        padding: 13px 16px 12px;
+        padding: 0 52px 0 20px;
     }
 
     :where(.ant-modal) .ant-modal-body {
-        padding: 14px 16px;
+        padding: 20px;
     }
 
     :where(.ant-modal) .ant-modal-footer {
         margin: 0;
         border-top: 1px solid var(--border);
-        padding: 10px 16px;
+        padding: 12px 20px;
     }
 
     :where(.ant-modal) .ant-modal-close {
-        top: 9px;
-        right: 10px;
+        top: 12px;
+        right: 12px;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
     }
 
     .ant-drawer .ant-drawer-header {
-        min-height: 48px;
-        padding: 10px 14px;
+        min-height: 56px;
+        padding: 12px 20px;
     }
 
     .ant-drawer .ant-drawer-body {
-        padding: 14px;
+        padding: 20px;
     }
 
     .dark :where(.ant-modal-content, .ant-drawer-content) {
         box-shadow:
-            0 32px 96px rgba(0, 0, 0, 0.5),
-            inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+            0 8px 32px rgba(0, 0, 0, 0.36),
+            0 2px 8px rgba(0, 0, 0, 0.24) !important;
     }
 
     :where(.ant-modal-mask, .ant-drawer-mask) {
@@ -1080,22 +1147,36 @@
 
     :where(.ant-select-dropdown, .ant-dropdown-menu, .ant-popover-container, .ant-popover-inner) {
         border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--popover);
         box-shadow:
-            0 20px 56px rgba(15, 23, 42, 0.15),
-            inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-        backdrop-filter: blur(22px);
+            0 8px 32px rgba(0, 0, 0, 0.15),
+            0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    }
+
+    :where(.ant-modal-title, .ant-drawer-title) {
+        font-family: var(--font-family-display);
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 22px;
+        letter-spacing: -0.015em;
+    }
+
+    :where(.ant-popover-inner-content, .ant-dropdown-menu-item, .ant-select-item) {
+        font-size: 13px;
+        line-height: 20px;
     }
 
     .dark :where(.ant-select-dropdown, .ant-dropdown-menu, .ant-popover-container, .ant-popover-inner) {
         box-shadow:
-            0 24px 64px rgba(0, 0, 0, 0.44),
-            inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+            0 8px 32px rgba(0, 0, 0, 0.36),
+            0 2px 8px rgba(0, 0, 0, 0.24) !important;
     }
 
     :where(.ant-tooltip) {
         max-width: min(280px, calc(100vw - 24px));
         color: #ffffff !important;
-        font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+        font-family: var(--font-family-sans);
         font-size: 12px;
         font-weight: 600;
         line-height: 18px;

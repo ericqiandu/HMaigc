@@ -48,7 +48,7 @@ const WalletPage = lazy(() => import("@/pages/wallet"));
 
 function RouteLoadingFallback() {
     return (
-        <div className="route-loading-state grid min-h-[180px] place-items-center px-6" role="status" aria-live="polite">
+        <div className="route-loading-state" role="status" aria-live="polite">
             <span className="route-loading-label text-sm text-foreground/55">正在加载页面…</span>
         </div>
     );

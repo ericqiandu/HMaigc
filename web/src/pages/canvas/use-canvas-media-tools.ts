@@ -198,8 +198,8 @@ export function useCanvasMediaTools({
         }
     }, [message, setConnections, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId, startUploadStatus]);
 
-    const mergeVideosByIds = useCallback(async (videoNodeIds: string[], targetNodeId?: string, compositionClips?: CanvasVideoCompositionClip[]) => {
-        if (mergeVideoRunningRef.current) return;
+    const mergeVideosByIds = useCallback(async (videoNodeIds: string[], targetNodeId?: string, compositionClips?: CanvasVideoCompositionClip[]): Promise<CanvasNodeData | null> => {
+        if (mergeVideoRunningRef.current) return null;
         const requestedIds = new Set(videoNodeIds);
         const availableVideos = nodesRef.current.filter((node) => requestedIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content));
         const videos = compositionClips
@@ -214,7 +214,7 @@ export function useCanvasMediaTools({
             });
         if (videos.length < (targetNodeId ? 1 : 2)) {
             message.warning(targetNodeId ? "请至少连接一个已有视频" : "请至少选择两个已有视频");
-            return;
+            return null;
         }
         mergeVideoRunningRef.current = true;
         setMergeVideoTargetNodeId(targetNodeId || null);
@@ -272,9 +272,9 @@ export function useCanvasMediaTools({
             selectedNodeIdsRef.current = selection;
             setSelectedNodeIds(selection);
             setSelectedConnectionId(null);
-            setDialogNodeId(null);
             setMergeVideoProgress({ phase: "encoding", progress: 100 });
             message.success(`已合成 ${videos.length} 段视频`);
+            return mergedNode;
         } catch (error) {
             const details = error instanceof Error
                 ? error.message
@@ -290,6 +290,7 @@ export function useCanvasMediaTools({
                 setNodes(nextNodes);
             }
             message.error(details);
+            return null;
         } finally {
             mergeVideoRunningRef.current = false;
             setMergeVideoTargetNodeId(null);

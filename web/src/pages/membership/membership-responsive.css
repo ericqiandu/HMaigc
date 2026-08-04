@@ -1,6 +1,6 @@
 @media (max-width: 1180px) {
     .membership-plan-carousel {
-        grid-auto-columns: 310px;
+        grid-auto-columns: minmax(286px, 310px);
     }
 
     .membership-overview-metric {
@@ -10,13 +10,13 @@
 }
 
 @media (max-width: 900px) {
-    .membership-window {
-        inset: 6px;
+    .membership-brand-page,
+    .membership-brand-divider {
+        display: none;
     }
 
     .membership-plans-section {
-        padding-right: 46px;
-        padding-left: 46px;
+        width: calc(100% - 48px);
     }
 
     .membership-carousel-button-left {
@@ -28,11 +28,11 @@
     }
 
     .membership-account-panel {
-        width: calc(100% - 92px);
+        width: calc(100% - 48px);
     }
 
     .membership-campaign {
-        width: calc(100% - 92px);
+        width: calc(100% - 48px);
     }
 
     .membership-overview {
@@ -68,13 +68,18 @@
 }
 
 @media (max-width: 640px) {
-    .membership-window {
-        inset: 0;
-        border-radius: 0;
-    }
-
     .membership-window-header {
         height: 72px;
+    }
+
+    .membership-brand {
+        left: 16px;
+        height: 72px;
+    }
+
+    .membership-brand-page,
+    .membership-brand-divider {
+        display: none;
     }
 
     .membership-window-close {
@@ -83,7 +88,7 @@
     }
 
     .membership-audience-tabs {
-        gap: 34px;
+        gap: 28px;
         padding-right: 36px;
         padding-left: 36px;
     }
@@ -105,6 +110,14 @@
         padding: 20px;
     }
 
+    .membership-plans-heading,
+    .membership-account-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 12px;
+    }
+
     .membership-campaign-title { max-width: 220px; font-size: 20px; }
     .membership-campaign-description { max-width: 240px; }
     .membership-campaign-mark { display: none; }
@@ -119,17 +132,16 @@
     }
 
     .membership-plans-section {
-        padding-right: 44px;
+        width: calc(100% - 32px);
         padding-bottom: 28px;
-        padding-left: 44px;
     }
 
     .membership-plan-carousel {
-        grid-auto-columns: minmax(278px, calc(100vw - 96px));
+        grid-auto-columns: minmax(278px, calc(100vw - 56px));
     }
 
     .membership-plan-card {
-        min-height: 740px;
+        min-height: 620px;
         padding-right: 20px;
         padding-left: 20px;
     }
@@ -143,7 +155,7 @@
     }
 
     .membership-carousel-button {
-        top: 274px;
+        top: 304px;
         width: 34px;
         height: 34px;
     }
@@ -159,6 +171,16 @@
     .membership-account-panel {
         width: calc(100% - 32px);
         margin-bottom: 24px;
+    }
+
+    .membership-account-heading,
+    .membership-overview,
+    .membership-orders-summary,
+    .membership-invoices-summary,
+    .membership-orders-content,
+    .membership-invoices-content {
+        padding-right: 16px;
+        padding-left: 16px;
     }
 
     .membership-overview-metrics {

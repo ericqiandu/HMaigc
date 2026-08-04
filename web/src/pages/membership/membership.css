@@ -1,55 +1,55 @@
 .membership-page {
-    --membership-accent: #2f7cff;
-    --membership-accent-hover: #4b8cff;
-    --membership-border: rgb(255 255 255 / 8%);
-    --membership-border-strong: rgb(255 255 255 / 16%);
+    --membership-accent: #4d7ff5;
+    --membership-accent-hover: #6795ff;
+    --membership-border: rgb(180 202 255 / 14%);
+    --membership-border-strong: rgb(180 202 255 / 26%);
     --membership-muted: rgb(255 255 255 / 48%);
     --membership-secondary: rgb(255 255 255 / 68%);
-    --membership-subtle: #12151c;
+    --membership-subtle: #171e2b;
     position: fixed;
     z-index: 1000;
-    inset: 0;
+    inset: var(--workspace-topbar-height) 0 0;
     min-width: 320px;
     overflow: hidden;
-    background: color-mix(in srgb, var(--background) 88%, #000);
+    background: #0d1119;
     color: #f5f5f7;
-    font-family: "SF Pro Text", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
 }
 
 .membership-backdrop {
     position: absolute;
     inset: 0;
-    background: rgb(0 0 0 / 74%);
-    backdrop-filter: blur(18px);
+    background: rgb(3 7 14 / 72%);
+    backdrop-filter: blur(10px);
 }
 
 .membership-window {
     position: absolute;
     display: flex;
     flex-direction: column;
-    inset: 10px;
-    max-width: 1580px;
+    inset: 0;
+    max-width: none;
     margin: auto;
     overflow: hidden;
-    border-radius: 8px;
-    background: #050506;
-    box-shadow: 0 22px 80px rgb(0 0 0 / 52%);
+    border-radius: 0;
+    background: #0d1119;
+    box-shadow: none;
     color: #f5f5f7;
 }
 
 .membership-window-close {
     position: absolute;
     z-index: 5;
-    top: 0;
-    right: 16px;
+    top: 18px;
+    right: max(24px, calc((100vw - 1360px) / 2));
     display: grid;
     place-items: center;
-    width: 38px;
-    height: 38px;
+    width: 36px;
+    height: 36px;
     padding: 0;
     border: 0;
-    border-radius: 50%;
-    background: transparent;
+    border-radius: 8px;
+    background: rgb(190 208 255 / 9%);
     color: rgb(255 255 255 / 78%);
     cursor: pointer;
     transition:
@@ -58,7 +58,7 @@
 }
 
 .membership-window-close:hover {
-    background: rgb(255 255 255 / 10%);
+    background: rgb(190 208 255 / 17%);
     color: #fff;
 }
 
@@ -97,17 +97,53 @@
     position: relative;
     z-index: 2;
     flex: none;
-    height: 78px;
+    height: 68px;
     border-bottom: 1px solid var(--membership-border);
-    background: rgb(5 5 6 / 92%);
-    backdrop-filter: blur(18px);
+    background: rgb(15 21 32 / 94%);
+    backdrop-filter: saturate(150%) blur(18px);
+}
+
+.membership-brand {
+    position: absolute;
+    top: 0;
+    left: max(24px, calc((100vw - 1360px) / 2));
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 68px;
+    color: #fff;
+}
+
+.membership-brand-logo {
+    width: 25px;
+    height: 25px;
+    object-fit: contain;
+}
+
+.membership-brand-name {
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+}
+
+.membership-brand-divider {
+    width: 1px;
+    height: 16px;
+    margin: 0 2px;
+    background: rgb(255 255 255 / 16%);
+}
+
+.membership-brand-page {
+    color: rgb(255 255 255 / 50%);
+    font-size: 13px;
+    font-weight: 500;
 }
 
 .membership-audience-tabs {
     display: flex;
     align-items: stretch;
     justify-content: center;
-    gap: 58px;
+    gap: 40px;
     height: 100%;
 }
 
@@ -117,11 +153,11 @@
     align-items: flex-end;
     justify-content: center;
     min-width: 92px;
-    padding: 0 0 17px;
+    padding: 0 0 14px;
     border: 0;
     background: transparent;
-    color: rgb(255 255 255 / 58%);
-    font-size: 17px;
+    color: rgb(222 230 249 / 62%);
+    font-size: 14px;
     font-weight: 600;
     letter-spacing: -0.01em;
     cursor: pointer;
@@ -145,7 +181,7 @@
 }
 
 .membership-audience-tab.is-active::after {
-    background: #fff;
+    background: #8eb1ff;
 }
 
 .membership-window-scroll {
@@ -153,8 +189,11 @@
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
-    scrollbar-color: rgb(255 255 255 / 20%) transparent;
-    scrollbar-width: thin;
+    scrollbar-width: none;
+}
+
+.membership-window-scroll::-webkit-scrollbar {
+    display: none;
 }
 
 .membership-campaign {
@@ -162,77 +201,113 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    width: min(calc(100% - 116px), 1360px);
-    min-height: 118px;
-    margin: 28px auto 0;
-    padding: 24px 34px;
+    width: min(calc(100% - 48px), 1360px);
+    min-height: 144px;
+    margin: 32px auto 0;
+    padding: 28px 32px;
     overflow: hidden;
-    border-radius: 8px;
-    background:
-        radial-gradient(circle at 82% 20%, rgb(111 157 255 / 42%), transparent 31%),
-        linear-gradient(112deg, #1d2638 0%, #171b25 48%, #25213b 100%);
+    border: 1px solid rgb(152 185 255 / 20%);
+    border-radius: 12px;
+    background: #17233a;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%);
 }
 
 .membership-campaign::after {
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, transparent 0 68%, rgb(255 255 255 / 4%) 68% 69%, transparent 69% 100%);
+    background: linear-gradient(90deg, transparent 0 66%, rgb(135 172 255 / 20%) 66% 66.1%, transparent 66.1% 100%);
     content: "";
     pointer-events: none;
 }
 
-.membership-campaign-copy { position: relative; z-index: 1; display: grid; gap: 5px; }
-.membership-campaign-kicker { color: #9bbcff; font-size: 10px; font-weight: 700; letter-spacing: 0.18em; }
-.membership-campaign-title { font-size: 25px; font-weight: 650; letter-spacing: -0.025em; }
-.membership-campaign-description { color: rgb(255 255 255 / 56%); font-size: 12px; }
-.membership-campaign-mark { position: relative; z-index: 1; display: grid; width: 68px; height: 68px; place-items: center; color: rgb(255 255 255 / 82%); }
+.membership-campaign-copy { position: relative; z-index: 1; display: grid; gap: 8px; }
+.membership-campaign-kicker { color: #a9c5ff; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; }
+.membership-campaign-title { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -0.035em; line-height: 1.15; }
+.membership-campaign-description { color: rgb(236 242 255 / 68%); font-size: 13px; line-height: 20px; }
+.membership-campaign-mark { position: relative; z-index: 1; display: grid; width: 68px; height: 68px; place-items: center; color: #a9c5ff; }
 .membership-campaign-mark svg { width: 44px; height: 44px; stroke-width: 1.2; }
 
 .membership-hero {
     display: grid;
     place-items: center;
-    min-height: 94px;
-    padding: 18px 56px;
+    min-height: 76px;
+    padding: 16px 24px;
 }
 
 .membership-cycle-switch.ant-segmented {
-    min-width: 486px;
+    min-width: 390px;
     padding: 4px;
     border: 1px solid rgb(255 255 255 / 8%);
     border-radius: 999px;
-    background: #1c1c1e;
+    background: #171e2b;
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
 }
 
 .membership-cycle-switch .ant-segmented-group {
-    min-height: 43px;
+    min-height: 40px;
 }
 
 .membership-cycle-switch .ant-segmented-item {
     display: grid;
     place-items: center;
-    min-width: 228px;
+    min-width: 184px;
     border-radius: 999px;
-    color: rgb(255 255 255 / 62%);
+    color: rgb(222 230 249 / 68%);
     font-size: 14px;
     font-weight: 600;
 }
 
 .membership-cycle-switch .ant-segmented-item-selected {
-    background: #3a3a3c;
+    background: #30456f;
     box-shadow: none;
     color: #fff;
 }
 
 .membership-cycle-switch .ant-segmented-thumb {
     border-radius: 999px;
-    background: #3a3a3c;
+    background: #30456f;
 }
 
 .membership-plans-section {
     position: relative;
     width: 100%;
-    padding: 0 58px 34px;
+    width: min(calc(100% - 48px), 1360px);
+    margin: 0 auto;
+    padding: 0 0 40px;
+}
+
+.membership-plans-heading,
+.membership-account-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.membership-plans-heading h2,
+.membership-account-heading h2 {
+    margin: 0;
+    color: #f5f7fb;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 22px;
+}
+
+.membership-plans-heading p,
+.membership-account-heading p {
+    margin: 4px 0 0;
+    color: rgb(221 231 255 / 52%);
+    font-size: 12px;
+    line-height: 17px;
+}
+
+.membership-plans-count {
+    flex: none;
+    color: rgb(195 215 255 / 70%);
+    font-size: 12px;
+    line-height: 20px;
 }
 
 .membership-carousel-button,
@@ -252,12 +327,12 @@
 .membership-carousel-button {
     position: absolute;
     z-index: 3;
-    top: 286px;
+    top: 324px;
     width: 38px;
     height: 38px;
     border: 1px solid var(--membership-border-strong);
     border-radius: 7px;
-    background: rgb(18 18 20 / 92%);
+    background: rgb(23 30 43 / 96%);
     box-shadow: 0 6px 20px rgb(0 0 0 / 32%);
     color: rgb(255 255 255 / 82%);
 }
@@ -284,11 +359,11 @@
 
 .membership-plan-carousel {
     display: grid;
-    grid-auto-columns: 310px;
+    grid-auto-columns: minmax(270px, 1fr);
     grid-auto-flow: column;
-    gap: 12px;
+    gap: 14px;
     width: 100%;
-    padding: 0 4px 12px;
+    padding: 0 4px 16px;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scroll-behavior: smooth;
@@ -338,10 +413,12 @@
 }
 
 .membership-account-panel {
-    width: min(calc(100% - 116px), 1360px);
-    margin: 4px auto 40px;
-    padding-top: 22px;
-    border-top: 1px solid var(--membership-border);
+    width: min(calc(100% - 48px), 1360px);
+    margin: 8px auto 48px;
+    overflow: hidden;
+    border: 1px solid rgb(180 202 255 / 14%);
+    border-radius: 12px;
+    background: #151d2a;
 }
 
 .membership-overview {
@@ -349,9 +426,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    min-height: 72px;
-    padding: 12px 16px;
-    background: #101012;
+    min-height: 88px;
+    padding: 16px 20px 20px;
+    background: transparent;
 }
 
 .membership-overview-heading {
@@ -365,7 +442,7 @@
     place-items: center;
     width: 32px;
     height: 32px;
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--membership-accent);
     color: #fff;
 }
@@ -398,7 +475,7 @@
     grid-template-columns: auto auto;
     align-items: center;
     gap: 2px 6px;
-    min-width: 118px;
+    min-width: 124px;
     padding: 0 20px;
 }
 
@@ -421,4 +498,9 @@
     grid-column: 2;
     font-size: 13px;
     font-weight: 650;
+}
+
+.membership-account-heading {
+    margin-bottom: 0;
+    padding: 20px 20px 0;
 }

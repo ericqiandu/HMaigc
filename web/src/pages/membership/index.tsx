@@ -4,7 +4,7 @@ import { ArrowRight, ChevronLeft, Crown, ImageIcon, Video, X } from "lucide-reac
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { useSiteSettings } from "@/components/site/site-settings-provider";
+import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { membershipQueryKey } from "@/hooks/use-membership-action";
 import { cancelMembershipOrder, createMembershipOrder, createTeam, getMyMembership, listMembershipPlans, type MembershipAudience, type MembershipBillingCycle, type MembershipOverview, type MembershipPlan } from "@/services/api/membership";
 import { createPaymentCheckout } from "@/services/api/payment";
@@ -218,12 +218,17 @@ export default function MembershipPage() {
     return (
         <main className="membership-page">
             <div aria-hidden="true" className="membership-backdrop" />
-            <section aria-labelledby="membership-window-title" aria-modal="true" className="membership-window" role="dialog">
-                <button aria-label="关闭会员中心" className="membership-window-close" onClick={() => navigate(-1)} type="button">
-                    <X className="membership-window-close-icon" />
-                </button>
-
+            <section aria-labelledby="membership-page-heading" className="membership-window">
                 <header className="membership-window-header">
+                    <button aria-label="返回上一页" className="membership-window-close" onClick={() => navigate(-1)} type="button">
+                        <X className="membership-window-close-icon" />
+                    </button>
+                    <div className="membership-brand">
+                        <img alt="" className="membership-brand-logo" src={siteLogoURL(settings)} />
+                        <span className="membership-brand-name">{settings.siteName}</span>
+                        <span className="membership-brand-divider" aria-hidden="true" />
+                        <span className="membership-brand-page">会员中心</span>
+                    </div>
                     <div className="membership-audience-tabs" role="tablist" aria-label="会员类型">
                         <button aria-selected={audience === "personal"} className={`membership-audience-tab ${audience === "personal" ? "is-active" : ""}`} onClick={() => selectAudience("personal")} role="tab" type="button">
                             创作会员
@@ -232,17 +237,14 @@ export default function MembershipPage() {
                             团队版会员
                         </button>
                     </div>
-                    <h1 className="membership-page-title sr-only" id="membership-window-title">
-                        {settings.siteName} {audience === "team" ? "团队版会员方案" : "创作会员方案"}
-                    </h1>
                 </header>
 
                 <div className="membership-window-scroll">
                     <section aria-label="会员礼遇" className="membership-campaign">
                         <div className="membership-campaign-copy">
                             <span className="membership-campaign-kicker">HMAIGC MEMBERSHIP</span>
-                            <strong className="membership-campaign-title">为持续创作释放更多算力</strong>
-                            <span className="membership-campaign-description">套餐价格、积分与并发权益均以后台实时配置为准</span>
+                            <h1 className="membership-campaign-title" id="membership-page-heading">创作补给站，释放更多想象力</h1>
+                            <span className="membership-campaign-description">以后台实时套餐为准，开通后即时获得积分、并发与专属权益</span>
                         </div>
                         <div aria-hidden="true" className="membership-campaign-mark"><Crown /></div>
                     </section>
@@ -263,6 +265,13 @@ export default function MembershipPage() {
                     </section>
 
                     <section className="membership-plans-section">
+                        <div className="membership-plans-heading">
+                            <div>
+                                <h2>{audience === "team" ? "为团队配置协作权限" : "选择适合你的创作方案"}</h2>
+                                <p>套餐权益与价格以后台实时配置为准</p>
+                            </div>
+                            <span className="membership-plans-count">{visiblePlans.length} 个可选方案</span>
+                        </div>
                         <button aria-label="查看上一组套餐" className="membership-carousel-button membership-carousel-button-left" disabled={!canScrollLeft} onClick={() => scrollPlans(-1)} type="button">
                             <ChevronLeft className="membership-carousel-icon" />
                         </button>
@@ -309,6 +318,12 @@ export default function MembershipPage() {
 
                     {overview ? (
                         <section aria-label="当前会员权益" className="membership-account-panel">
+                            <div className="membership-account-heading">
+                                <div>
+                                    <h2>当前会员权益</h2>
+                                    <p>账户可用额度与并发能力实时同步</p>
+                                </div>
+                            </div>
                             <div className="membership-overview">
                                 <div className="membership-overview-heading">
                                     <span className="membership-overview-icon">

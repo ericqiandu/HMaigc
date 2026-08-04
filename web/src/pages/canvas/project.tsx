@@ -1887,7 +1887,7 @@ function InfiniteCanvasPage() {
                             onClose={() => setCompositionEditorNodeId(null)}
                             onSave={(compositionClips) => handleConfigNodeChange(compositionEditorNode.id, { compositionClips })}
                             onExport={(compositionClips) =>
-                                void mergeVideosByIds(
+                                mergeVideosByIds(
                                     compositionEditorSources.map((source) => source.id),
                                     compositionEditorNode.id,
                                     compositionClips,

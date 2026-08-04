@@ -1,8 +1,32 @@
-.canvas-video-editor-modal .ant-modal-content { height: calc(100vh - 32px); padding: 0; overflow: hidden; background: var(--canvas-editor-surface, #171717); }
-.canvas-video-editor-modal .ant-modal-body { height: 100%; }
+.canvas-video-editor-modal .ant-modal-container { height: calc(100dvh - 32px); padding: 0; overflow: hidden; background: var(--canvas-editor-surface, #171717); }
+.canvas-video-editor-modal .ant-modal-body { height: 100%; padding: 0; }
+.canvas-video-editor { min-width: 0; }
+.canvas-video-editor-header { border-bottom: 1px solid rgb(255 255 255 / 8%); }
 .canvas-video-editor-clip { min-width: 120px; flex-basis: calc(var(--clip-duration-ms) * var(--timeline-zoom) * 1px); }
 .canvas-video-editor-clip[aria-selected="true"] { outline: 2px solid #60a5fa; outline-offset: -2px; }
+.canvas-video-export-success-modal .ant-modal-content { padding: 0; overflow: hidden; background: var(--canvas-editor-surface, #171717); }
+.canvas-video-export-success { display: flex; flex-direction: column; gap: 16px; padding: 20px; color: #f5f5f5; }
+.canvas-video-export-success-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.canvas-video-export-success-eyebrow { margin: 0 0 4px; color: rgb(255 255 255 / 55%); font-size: 12px; line-height: 18px; }
+.canvas-video-export-success-title { margin: 0; color: #fff; font-size: 18px; font-weight: 600; line-height: 26px; }
+.canvas-video-export-success-close { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; color: rgb(255 255 255 / 65%); }
+.canvas-video-export-success-preview { width: 100%; max-height: 260px; background: #000; object-fit: contain; }
+.canvas-video-export-success-meta { margin: -4px 0 0; color: rgb(255 255 255 / 55%); font-size: 13px; line-height: 20px; }
+.canvas-video-export-success-description { margin: 0; color: rgb(255 255 255 / 72%); font-size: 13px; line-height: 20px; }
+.canvas-video-export-success-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.canvas-video-export-success-download { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 8px; background: #fff; color: #161616; font-size: 13px; font-weight: 600; line-height: 24px; text-decoration: none; }
+.canvas-video-export-success-download:hover { background: #e8e8e8; color: #000; }
 @media (max-width: 768px) {
   .canvas-video-editor-modal { max-width: none; margin: 0; padding: 0; }
-  .canvas-video-editor-modal .ant-modal-content { height: 100dvh; border-radius: 0; }
+  .canvas-video-editor-modal .ant-modal-container { height: 100dvh; border-radius: 0; }
+  .canvas-video-editor-header { min-height: 56px; }
+  .canvas-video-editor-summary { display: none; }
+  .canvas-video-editor-timeline { height: 292px; }
+  .canvas-video-editor-tools { height: auto; min-height: 48px; flex-wrap: wrap; padding-top: 6px; padding-bottom: 6px; }
+  .canvas-video-editor-transport { margin-left: auto; }
+  .canvas-video-editor-zoom { width: 88px !important; }
+  .canvas-video-editor-ruler { padding-right: 16px; padding-left: 16px; }
+  .canvas-video-editor-track-label { width: 48px; }
+  .canvas-video-export-success { gap: 14px; padding: 16px; }
+  .canvas-video-export-success-preview { max-height: 220px; }
 }

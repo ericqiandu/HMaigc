@@ -61,17 +61,17 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 :where(.workspace-ui-scope, .settings-workspace-page) .page-header-title {
     color: var(--workspace-ui-text);
     font-family: var(--workspace-ui-font-display);
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
-    line-height: 22px;
+    line-height: 26px;
     letter-spacing: -0.02em;
 }
 
 :where(.workspace-ui-scope, .settings-workspace-page) .page-header-title-row > :where(span) {
     color: var(--workspace-ui-text-tertiary);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 400;
-    line-height: 17px;
+    line-height: 18px;
 }
 
 :where(.workspace-ui-scope, .settings-workspace-page) .page-header-actions {

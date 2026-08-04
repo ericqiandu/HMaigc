@@ -312,8 +312,14 @@
     }
 
     .workspace-ui-scope.assets-workspace-page .assets-category-option {
-        min-height: 40px;
+        min-height: 44px;
         padding-inline: 10px;
+    }
+
+    .workspace-ui-scope.assets-workspace-page .assets-category-navigation {
+        flex-wrap: wrap;
+        overflow: visible;
+        padding-bottom: 0;
     }
 
     .workspace-ui-scope.assets-workspace-page .assets-library-toolbar,

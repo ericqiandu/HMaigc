@@ -1,5 +1,5 @@
-import { Input, InputNumber, Modal, Select } from "antd";
-import { Clock3, ShieldCheck } from "lucide-react";
+import { Button, Input, InputNumber, Modal, Select } from "antd";
+import { ArrowRight, Clock3, ShieldCheck } from "lucide-react";
 
 import type { MembershipPlan, Team } from "@/services/api/membership";
 
@@ -43,11 +43,22 @@ export function MembershipPurchaseModal({
         <Modal
             className={`membership-order-modal ${className}`}
             confirmLoading={submitting}
-            okText="去支付"
+            footer={[
+                <Button className="membership-order-modal-cancel" key="cancel" onClick={onCancel}>
+                    取消
+                </Button>,
+                <Button className="membership-order-modal-confirm" icon={<ArrowRight />} key="confirm" loading={submitting} onClick={onSubmit} type="primary">
+                    创建订单并支付
+                </Button>,
+            ]}
             onCancel={onCancel}
-            onOk={onSubmit}
             open={open}
-            title={`确认购买 ${plan ? publicPlanName(plan) : ""}`}
+            title={(
+                <div className="membership-order-modal-title">
+                    <span>确认购买</span>
+                    {plan ? <small>{publicPlanName(plan)}</small> : null}
+                </div>
+            )}
         >
             {plan ? (
                 <div className="membership-order-modal-content">

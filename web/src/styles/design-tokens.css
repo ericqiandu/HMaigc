@@ -1,0 +1,113 @@
+/*
+ * HMaigc product design tokens.
+ *
+ * These are the only raw visual primitives. Product and feature styles should
+ * consume semantic aliases rather than introducing new colors, radii, shadows
+ * or motion values locally.
+ */
+:root {
+    --font-family-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", Inter, "HarmonyOS Sans SC", "Noto Sans SC", "Microsoft YaHei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    --font-family-display: var(--font-family-sans);
+
+    --text-xs: 12px;
+    --text-sm: 14px;
+    --text-md: 16px;
+    --text-lg: 18px;
+    --text-xl: 24px;
+    --text-2xl: 32px;
+    --text-3xl: 40px;
+    --font-regular: 400;
+    --font-medium: 500;
+    --font-semibold: 600;
+    --font-bold: 700;
+
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 40px;
+    --space-8: 48px;
+    --space-9: 64px;
+    --space-10: 80px;
+
+    --radius-xs: 8px;
+    --radius-sm: 12px;
+    --radius-md: 16px;
+    --radius-lg: 20px;
+    --radius-xl: 24px;
+    --radius-full: 999px;
+
+    --shadow-sm: 0 2px 6px rgb(0 0 0 / 12%);
+    --shadow-md: 0 6px 18px rgb(0 0 0 / 18%);
+    --shadow-lg: 0 12px 36px rgb(0 0 0 / 26%);
+    --shadow-xl: 0 18px 56px rgb(0 0 0 / 34%);
+
+    --blur-sm: 8px;
+    --blur-md: 16px;
+    --blur-lg: 24px;
+    --blur-xl: 32px;
+    --duration-fast: 150ms;
+    --duration-normal: 220ms;
+    --duration-slow: 300ms;
+    --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+    --layer-header: 100;
+    --layer-dropdown: 300;
+    --layer-popover: 500;
+    --layer-modal: 1000;
+    --layer-toast: 1100;
+
+    --bg-primary: #f5f7fb;
+    --bg-secondary: #eef2f7;
+    --bg-tertiary: #ffffff;
+    --bg-surface: #ffffff;
+    --bg-hover: rgb(15 23 42 / 5%);
+    --border-light: rgb(15 23 42 / 8%);
+    --border-default: rgb(15 23 42 / 12%);
+    --border-active: rgb(15 23 42 / 18%);
+    --text-primary: rgb(15 23 42 / 96%);
+    --text-secondary: rgb(15 23 42 / 72%);
+    --text-tertiary: rgb(15 23 42 / 48%);
+    --text-placeholder: rgb(15 23 42 / 38%);
+    --brand-primary: #2979c9;
+    --brand-hover: #428edb;
+    --brand-active: #1e68b2;
+    --text-on-brand: #ffffff;
+    --gold-primary: #a86b2d;
+    --gold-light: #c98a4b;
+    --status-success: #248a3d;
+    --status-warning: #b65c00;
+    --status-danger: #d70015;
+    --overlay-light: rgb(0 0 0 / 12%);
+    --overlay-default: rgb(0 0 0 / 28%);
+    --overlay-heavy: rgb(0 0 0 / 48%);
+}
+
+.dark {
+    --bg-primary: #0b0f14;
+    --bg-secondary: #111827;
+    --bg-tertiary: #161b22;
+    --bg-surface: #1b212b;
+    --bg-hover: rgb(255 255 255 / 5%);
+    --border-light: rgb(255 255 255 / 8%);
+    --border-default: rgb(255 255 255 / 12%);
+    --border-active: rgb(255 255 255 / 18%);
+    --text-primary: rgb(255 255 255 / 96%);
+    --text-secondary: rgb(255 255 255 / 72%);
+    --text-tertiary: rgb(255 255 255 / 48%);
+    --text-placeholder: rgb(255 255 255 / 38%);
+    --brand-primary: #7ccbff;
+    --brand-hover: #91d5ff;
+    --brand-active: #64bfff;
+    --text-on-brand: #06111a;
+    --gold-primary: #f5d2a1;
+    --gold-light: #f8dfc0;
+    --status-success: #30d158;
+    --status-warning: #ff9f0a;
+    --status-danger: #ff453a;
+    --overlay-light: rgb(0 0 0 / 25%);
+    --overlay-default: rgb(0 0 0 / 45%);
+    --overlay-heavy: rgb(0 0 0 / 65%);
+}

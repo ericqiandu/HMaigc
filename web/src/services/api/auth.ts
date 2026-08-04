@@ -365,7 +365,7 @@ function parseAdminReferenceData(value: unknown): AdminReferenceData {
 }
 
 export function getAuthSettings() {
-    return request<{ firstUser: boolean; registrationEnabled: boolean; linuxdoEnabled: boolean; emailEnabled: boolean; emailCodeRequired: boolean }>(api.get("/auth/settings"));
+    return request<{ firstUser: boolean; registrationEnabled: boolean; legalDocumentsConfigured: boolean; linuxdoEnabled: boolean; emailEnabled: boolean; emailCodeRequired: boolean }>(api.get("/auth/settings"));
 }
 
 export function linuxDOLoginURL(next: string, inviteCode?: string) {

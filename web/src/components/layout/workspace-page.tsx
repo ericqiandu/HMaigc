@@ -24,7 +24,7 @@ export function WorkspacePage({
 }) {
     return (
         <main className={cn("app-user-content workspace-ui-scope thin-scrollbar h-full overflow-y-auto text-foreground", `workspace-page--${layout}`, grid && "app-workspace-grid", className)}>
-            <div className={fluid ? "h-full w-full" : "workspace-page-frame w-full px-4 pb-8 pt-20 sm:px-6 md:px-[104px] md:pt-[90px]"}>{children}</div>
+            <div className={fluid ? "h-full w-full" : "workspace-page-frame w-full px-4 pb-8 pt-20 sm:px-6 md:px-[104px] md:pt-20"}>{children}</div>
         </main>
     );
 }

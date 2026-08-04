@@ -98,7 +98,7 @@
 
 .canvas-audio-insert-menu {
     color: var(--foreground);
-    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
 }
 
 .canvas-audio-insert-menu--pause {
@@ -364,7 +364,7 @@
     border-radius: 12px !important;
     background: color-mix(in srgb, var(--background) 94%, var(--foreground) 6%) !important;
     box-shadow: 0 18px 54px color-mix(in srgb, #000 34%, transparent) !important;
-    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
 }
 
 .canvas-audio-settings-panel {
@@ -389,7 +389,7 @@
 
 .canvas-audio-settings-panel .audio-settings-title {
     margin: 0;
-    font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-display);
     font-size: 15px;
     font-weight: 600;
     line-height: 22px;

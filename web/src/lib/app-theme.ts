@@ -51,6 +51,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
+            fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"',
             colorPrimary: color.primary,
             colorInfo: color.primary,
             colorLink: color.primary,
@@ -60,13 +61,15 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorBgElevated: elevatedBackground,
             colorBorderSecondary: dark ? "rgba(255, 255, 255, 0.1)" : "rgba(17, 17, 17, 0.09)",
             boxShadowSecondary: dark ? "0 24px 72px rgba(0, 0, 0, 0.48)" : "0 22px 64px rgba(15, 23, 42, 0.14)",
-            borderRadius: 6,
-            borderRadiusLG: 8,
-            borderRadiusSM: 5,
+            // One product radius scale: controls 8px, surfaces/overlays 12px.
+            // Component code should not reintroduce a parallel Ant default scale.
+            borderRadius: 8,
+            borderRadiusLG: 12,
+            borderRadiusSM: 6,
             controlHeight: 36,
             controlHeightLG: 42,
-            controlHeightSM: 30,
-            fontSize: 13,
+            controlHeightSM: 32,
+            fontSize: 14,
             fontSizeSM: 12,
             motionDurationFast: "0.12s",
             motionDurationMid: "0.18s",

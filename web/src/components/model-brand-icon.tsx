@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import { Cpu } from "lucide-react";
 
 import { staticAssetURL } from "@/lib/static-assets";
@@ -9,16 +11,23 @@ type ModelBrandIconProps = {
     className?: string;
 };
 
+type ModelBrandIconStyle = CSSProperties & {
+    "--model-brand-icon-source"?: string;
+};
+
 export function ModelBrandIcon({ brandKey, className }: ModelBrandIconProps) {
     const brand = modelBrandDefinition(brandKey);
     if (brand.asset) {
-        return <img className={cn("model-brand-icon block shrink-0 object-contain brightness-0 dark:invert", className)} src={staticAssetURL(brand.asset)} alt="" aria-hidden="true" />;
+        const style: ModelBrandIconStyle = {
+            "--model-brand-icon-source": `url("${staticAssetURL(brand.asset)}")`,
+        };
+        return <span className={cn("model-brand-icon model-brand-icon--asset block shrink-0", className)} style={style} aria-hidden="true" />;
     }
     if (brandKey === "generic") {
-        return <Cpu className={cn("model-brand-icon shrink-0 text-black dark:text-white", className)} aria-hidden="true" />;
+        return <Cpu className={cn("model-brand-icon shrink-0 text-current", className)} aria-hidden="true" />;
     }
     return (
-        <span className={cn("model-brand-icon inline-flex shrink-0 items-center justify-center font-semibold leading-none text-black dark:text-white", className)} aria-hidden="true">
+        <span className={cn("model-brand-icon model-brand-icon--fallback inline-flex shrink-0 items-center justify-center font-semibold leading-none text-current", className)} aria-hidden="true">
             {brand.mark}
         </span>
     );

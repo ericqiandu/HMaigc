@@ -1,4 +1,4 @@
-import { Copy, Download, MoreHorizontal, PencilLine, Plus, Trash2, Upload } from "lucide-react";
+import { AudioLines, Copy, Download, Image as ImageIcon, MoreHorizontal, PencilLine, Plus, Trash2, Upload, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Drawer, Dropdown, Form, Image, Input, Modal, Select, Space, Tag, Typography } from "antd";
 
@@ -420,7 +420,7 @@ export default function AssetsPage() {
                                     </Button>
                                     {imageDraft ? (
                                         <Typography.Text type="secondary" className="ml-3 text-xs" title={resourceStorageTitle(imageDraft.storageKey)}>
-                                            {imageDraft.width}x{imageDraft.height} · {formatBytes(imageDraft.bytes)} · {resourceStorageLabel(imageDraft.storageKey)}
+                                            {formatAssetDimensions(imageDraft.width, imageDraft.height)} · {formatBytes(imageDraft.bytes)} · {resourceStorageLabel(imageDraft.storageKey)}
                                         </Typography.Text>
                                     ) : (
                                         <Typography.Text type="secondary" className="ml-3 text-xs">
@@ -533,11 +533,7 @@ function AssetCard({
         <article className={`app-collection-card group h-full overflow-hidden ${selected ? "border-foreground/45" : ""}`}>
             <div className="relative">
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
-                    {cover ? (
-                        <img src={cover} alt={asset.title} loading="lazy" decoding="async" className="aspect-[16/10] w-full object-cover" />
-                    ) : (
-                        <div className="flex aspect-[16/10] items-center justify-center bg-stone-100 p-4 text-center text-xs leading-5 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
-                    )}
+                    <AssetCardPreview asset={asset} cover={cover} />
                 </button>
                 {selectionEnabled ? (
                     <input
@@ -644,7 +640,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
                             </Typography.Text>
                         ) : (
                             <Typography.Text className="mt-2 block">
-                                {asset.data.width}x{asset.data.height} · {formatBytes(asset.data.bytes)} · {asset.data.mimeType}
+                                {formatAssetDimensions(asset.data.width, asset.data.height)} · {formatBytes(asset.data.bytes)} · {asset.data.mimeType}
                             </Typography.Text>
                         )}
                         {asset.kind === "image" || asset.kind === "video" || asset.kind === "audio" || asset.kind === "model" ? (
@@ -681,7 +677,32 @@ function assetSummary(asset: LibraryAsset) {
     if (asset.kind === "text") return asset.data.content;
     if (asset.kind === "audio") return `${formatAssetDuration(asset.data.durationMs)} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
     if (asset.kind === "model") return `${asset.data.fileName} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
-    return `${asset.data.width}x${asset.data.height} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
+    return `${formatAssetDimensions(asset.data.width, asset.data.height)} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
+}
+
+function AssetCardPreview({ asset, cover }: { asset: LibraryAsset; cover: string }) {
+    const [coverStatus, setCoverStatus] = useState<"ready" | "failed">("ready");
+    useEffect(() => {
+        setCoverStatus("ready");
+    }, [cover]);
+    const showCover = Boolean(cover) && coverStatus === "ready";
+    if (showCover) {
+        return <img src={cover} alt={asset.title} loading="lazy" decoding="async" onError={() => setCoverStatus("failed")} className="aspect-[16/10] w-full object-cover" />;
+    }
+
+    if (asset.kind === "text") {
+        return <div className="flex aspect-[16/10] items-center justify-center bg-stone-100 p-4 text-center text-xs leading-5 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.data.content}</div>;
+    }
+
+    const previewMeta = asset.kind === "video" ? { Icon: Video, title: "视频尚无封面", detail: formatAssetDimensions(asset.data.width, asset.data.height) } : asset.kind === "audio" ? { Icon: AudioLines, title: "音频预览", detail: formatAssetDuration(asset.data.durationMs) } : asset.kind === "image" ? { Icon: ImageIcon, title: "图片预览不可用", detail: "请检查图片来源" } : { Icon: ImageIcon, title: "3D 模型无封面", detail: asset.data.fileName };
+    const { Icon } = previewMeta;
+    return (
+        <div className="assets-card-media-fallback flex aspect-[16/10] flex-col items-center justify-center gap-1.5 bg-stone-100 p-4 text-center dark:bg-stone-900">
+            <Icon className="size-5 text-foreground/38" aria-hidden="true" />
+            <span className="text-xs font-medium text-foreground/62">{previewMeta.title}</span>
+            <span className="text-[11px] text-foreground/42">{previewMeta.detail}</span>
+        </div>
+    );
 }
 
 function StorageTag({ asset }: { asset: LibraryAsset }) {
@@ -723,6 +744,11 @@ function assetKindLabel(kind: AssetKind) {
 function formatAssetDuration(durationMs?: number) {
     if (!durationMs) return "时长未知";
     return `${Math.round(durationMs / 100) / 10} 秒`;
+}
+
+function formatAssetDimensions(width: number, height: number) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return "尺寸未知";
+    return `${Math.round(width)} × ${Math.round(height)} px`;
 }
 
 function formatAssetTime(value: string) {

@@ -7,7 +7,7 @@
     align-items: center;
     gap: 6px;
     color: color-mix(in srgb, var(--foreground) 72%, transparent);
-    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
     font-size: 13px;
     font-weight: 500;
     line-height: 20px;

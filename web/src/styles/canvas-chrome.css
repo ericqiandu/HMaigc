@@ -1,3 +1,13 @@
+.app-product-content [data-canvas-world-layer],
+.app-product-content .node-element,
+.app-product-content .canvas-node-shell {
+    /* Canvas nodes are rendered beneath Ant's application root. Set the
+       product typeface at the world layer so ordinary nodes do not inherit
+       Ant Design's separate Segoe/Roboto stack. Explicit monospace fields
+       (logs, code and counters) still override this baseline locally. */
+    font-family: var(--font-family-sans);
+}
+
 .canvas-top-bar {
     --canvas-chrome-surface: color-mix(in srgb, var(--background) 90%, transparent);
     --canvas-chrome-surface-hover: color-mix(in srgb, var(--foreground) 9%, var(--background));
@@ -9,7 +19,7 @@
     height: 40px !important;
     justify-content: flex-start !important;
     gap: 8px !important;
-    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    font-family: var(--font-family-sans);
 }
 
 .canvas-top-bar-identity,

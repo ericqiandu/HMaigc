@@ -16,7 +16,7 @@
 .canvas-overlay-dropdown,
 .canvas-overlay-popover,
 .canvas-overlay-modal {
-    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    font-family: var(--font-family-sans);
     font-size: 12px;
     line-height: 1.45;
 }

@@ -1,39 +1,39 @@
-:where(.workspace-ui-scope, .settings-workspace-page) {
-    --workspace-ui-font-display: "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-    --workspace-ui-font-text: "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-    --workspace-ui-page: #f5f5f7;
-    --workspace-ui-surface: #ffffff;
-    --workspace-ui-surface-subtle: #eeeeef;
-    --workspace-ui-surface-hover: #e8e8eb;
-    --workspace-ui-text: #1d1d1f;
-    --workspace-ui-text-secondary: rgb(29 29 31 / 62%);
-    --workspace-ui-text-tertiary: rgb(29 29 31 / 48%);
-    --workspace-ui-text-disabled: rgb(29 29 31 / 36%);
-    --workspace-ui-divider: rgb(29 29 31 / 10%);
-    --workspace-ui-control: rgb(29 29 31 / 6%);
-    --workspace-ui-control-hover: rgb(29 29 31 / 10%);
-    --workspace-ui-accent: #0071e3;
-    --workspace-ui-focus: rgb(0 113 227 / 32%);
-    --workspace-ui-success: #248a3d;
-    --workspace-ui-warning: #b65c00;
-    --workspace-ui-danger: #d70015;
+:where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) {
+    --workspace-ui-font-display: var(--font-family-display);
+    --workspace-ui-font-text: var(--font-family-sans);
+    --workspace-ui-page: var(--bg-primary);
+    --workspace-ui-surface: var(--bg-tertiary);
+    --workspace-ui-surface-subtle: var(--bg-secondary);
+    --workspace-ui-surface-hover: var(--bg-hover);
+    --workspace-ui-text: var(--text-primary);
+    --workspace-ui-text-secondary: var(--text-secondary);
+    --workspace-ui-text-tertiary: var(--text-tertiary);
+    --workspace-ui-text-disabled: var(--text-placeholder);
+    --workspace-ui-divider: var(--border-light);
+    --workspace-ui-control: var(--bg-surface);
+    --workspace-ui-control-hover: var(--bg-hover);
+    --workspace-ui-accent: var(--brand-primary);
+    --workspace-ui-focus: color-mix(in srgb, var(--brand-primary) 32%, transparent);
+    --workspace-ui-success: var(--status-success);
+    --workspace-ui-warning: var(--status-warning);
+    --workspace-ui-danger: var(--status-danger);
     --workspace-ui-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-    --workspace-ui-radius-control: 8px;
-    --workspace-ui-radius-surface: 12px;
-    --workspace-ui-shadow-soft: 0 8px 24px rgb(0 0 0 / 8%);
-    --workspace-ui-shadow-overlay: 0 18px 48px rgb(0 0 0 / 14%), 0 3px 12px rgb(0 0 0 / 8%);
-    --workspace-ui-motion-fast: 160ms;
-    --workspace-ui-motion-standard: 220ms;
-    --workspace-ui-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-    --workspace-ui-layer-sticky: 20;
-    --workspace-ui-layer-overlay: 40;
-    --workspace-ui-layer-modal: 100;
-    --workspace-ui-space-1: 4px;
-    --workspace-ui-space-2: 8px;
-    --workspace-ui-space-3: 12px;
-    --workspace-ui-space-4: 16px;
-    --workspace-ui-space-5: 20px;
-    --workspace-ui-space-6: 24px;
+    --workspace-ui-radius-control: var(--radius-xs);
+    --workspace-ui-radius-surface: var(--radius-sm);
+    --workspace-ui-shadow-soft: var(--shadow-md);
+    --workspace-ui-shadow-overlay: var(--shadow-xl);
+    --workspace-ui-motion-fast: var(--duration-fast);
+    --workspace-ui-motion-standard: var(--duration-normal);
+    --workspace-ui-ease-out: var(--ease-standard);
+    --workspace-ui-layer-sticky: var(--layer-header);
+    --workspace-ui-layer-overlay: var(--layer-popover);
+    --workspace-ui-layer-modal: var(--layer-modal);
+    --workspace-ui-space-1: var(--space-1);
+    --workspace-ui-space-2: var(--space-2);
+    --workspace-ui-space-3: var(--space-3);
+    --workspace-ui-space-4: var(--space-4);
+    --workspace-ui-space-5: var(--space-5);
+    --workspace-ui-space-6: var(--space-6);
     min-width: 0;
     background: var(--workspace-ui-page);
     color: var(--workspace-ui-text);
@@ -43,52 +43,31 @@
     letter-spacing: -0.014em;
 }
 
-.dark :where(.workspace-ui-scope, .settings-workspace-page) {
-    --workspace-ui-page: #000000;
-    --workspace-ui-surface: #171717;
-    --workspace-ui-surface-subtle: #232323;
-    --workspace-ui-surface-hover: #292929;
-    --workspace-ui-text: #fafafa;
-    --workspace-ui-text-secondary: rgb(250 250 250 / 62%);
-    --workspace-ui-text-tertiary: rgb(250 250 250 / 54%);
-    --workspace-ui-text-disabled: rgb(250 250 250 / 38%);
-    --workspace-ui-divider: rgb(250 250 250 / 10%);
-    --workspace-ui-control: rgb(250 250 250 / 8%);
-    --workspace-ui-control-hover: rgb(250 250 250 / 12%);
-    --workspace-ui-accent: #2997ff;
-    --workspace-ui-focus: rgb(41 151 255 / 34%);
-    --workspace-ui-success: #30d158;
-    --workspace-ui-warning: #ff9f0a;
-    --workspace-ui-danger: #ff453a;
-    --workspace-ui-shadow-soft: 0 8px 24px rgb(0 0 0 / 28%);
-    --workspace-ui-shadow-overlay: 0 22px 56px rgb(0 0 0 / 46%), 0 4px 14px rgb(0 0 0 / 30%);
-}
-
-:where(.workspace-ui-scope, .settings-workspace-page) :where(button, input, textarea, select) {
+:where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) :where(button, input, textarea, select) {
     font-family: var(--workspace-ui-font-text);
     letter-spacing: inherit;
 }
 
-:where(.workspace-ui-scope, .settings-workspace-page) :where(h1, h2, h3) {
+:where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) :where(h1, h2, h3) {
     margin: 0;
     color: var(--workspace-ui-text);
     font-family: var(--workspace-ui-font-display);
     letter-spacing: -0.02em;
 }
 
-:where(.workspace-ui-scope, .settings-workspace-page) :where(p) {
+:where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) :where(p) {
     margin: 0;
 }
 
-:where(.workspace-ui-scope, .settings-workspace-page) :where(a, button, input, textarea, select):focus-visible {
+:where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) :where(a, button, input, textarea, select):focus-visible {
     outline: 2px solid var(--workspace-ui-focus);
     outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    :where(.workspace-ui-scope, .settings-workspace-page) *,
-    :where(.workspace-ui-scope, .settings-workspace-page) *::before,
-    :where(.workspace-ui-scope, .settings-workspace-page) *::after {
+    :where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) *,
+    :where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) *::before,
+    :where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) *::after {
         scroll-behavior: auto !important;
         transition-duration: 0.01ms !important;
         animation-duration: 0.01ms !important;

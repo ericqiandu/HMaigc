@@ -97,7 +97,7 @@
     overflow: hidden;
     color: inherit;
     filter: none;
-    font-family: "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-display);
     font-size: 20px;
     font-weight: 650;
     line-height: 24px;

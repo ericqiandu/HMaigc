@@ -2,7 +2,7 @@
     overflow: hidden;
     padding: 0;
     border: 0;
-    border-radius: 20px;
+    border-radius: 12px;
     background: var(--background);
     box-shadow: 0 24px 64px rgb(0 0 0 / 24%);
 }
@@ -50,7 +50,7 @@
     height: 36px;
     place-items: center;
     border: 0;
-    border-radius: 999px;
+    border-radius: 8px;
     color: var(--primary-foreground);
     background: rgb(0 0 0 / 28%);
     cursor: pointer;
@@ -114,7 +114,7 @@
     justify-content: center;
     gap: 8px;
     padding: 12px 24px;
-    border-radius: 999px;
+    border-radius: 8px;
     color: var(--primary-foreground);
     background: var(--primary);
     font-size: 14px;
@@ -149,7 +149,7 @@
     }
 
     .marketing-popup-modal .ant-modal-container {
-        border-radius: 16px;
+        border-radius: 12px;
     }
 
     .marketing-popup-logo {

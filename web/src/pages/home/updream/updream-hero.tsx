@@ -131,7 +131,7 @@ export function UpdreamHero() {
     return (
         <section className="updream-hero flex flex-col items-center px-4">
             <h1 className="updream-hero-title bg-clip-text text-center text-transparent">
-                让算力更有想象力！
+                灵感从这里开始！
             </h1>
 
             <div className="updream-home-agent-composer w-full max-w-[700px]">

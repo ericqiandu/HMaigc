@@ -38,7 +38,7 @@
 .canvas-context-submenu--add .canvas-overlay-command--list {
     min-height: 32px;
     border-radius: 8px !important;
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
 }
 
 .canvas-context-submenu--add .canvas-overlay-command--list:hover,
@@ -62,7 +62,7 @@
     padding: 0 8px;
     border: 0;
     border-radius: 8px;
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-family-sans);
     font-size: 13px;
     font-weight: 400;
     line-height: 20px;

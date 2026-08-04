@@ -542,15 +542,21 @@ function isVideoResult(value: string, taskType: string) {
 function TaskPreviewThumbnail({ task, onOpen }: { task: GenerationTask; onOpen: () => void }) {
     const isVideo = task.previewKind === "video";
     const fallbackVideo = task.type.includes("video");
+    const [previewState, setPreviewState] = useState<"loading" | "ready" | "failed">("loading");
+    useEffect(() => {
+        setPreviewState("loading");
+    }, [task.previewUrl]);
     if (!task.previewUrl) {
         const Icon = fallbackVideo ? Video : task.type.includes("image") ? ImageIcon : FileText;
         return <span className="grid h-12 w-[68px] shrink-0 place-items-center rounded-md border border-border/70 bg-muted/35 text-foreground/28"><Icon className="size-4" /></span>;
     }
+    const PreviewIcon = isVideo ? Video : ImageIcon;
     return (
-        <button type="button" onClick={onOpen} className="group relative h-12 w-[68px] shrink-0 overflow-hidden rounded-md border border-border/80 bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={isVideo ? "放大预览生成视频" : "放大预览生成图片"}>
+        <button type="button" onClick={onOpen} className="group relative h-12 w-[68px] shrink-0 overflow-hidden rounded-md border border-border/80 bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={isVideo ? "打开生成视频" : "打开生成图片"}>
             {isVideo
-                ? <video src={task.previewUrl} width={68} height={48} muted playsInline preload="metadata" className="h-full w-full object-cover" />
-                : <img src={task.previewUrl} alt="" width={68} height={48} loading="lazy" className="h-full w-full object-cover" />}
+                ? <video src={task.previewUrl} width={68} height={48} muted playsInline preload="metadata" onLoadedData={() => setPreviewState("ready")} onError={() => setPreviewState("failed")} className={`h-full w-full object-cover transition-opacity ${previewState === "ready" ? "opacity-100" : "opacity-0"}`} />
+                : <img src={task.previewUrl} alt="" width={68} height={48} loading="lazy" onLoad={() => setPreviewState("ready")} onError={() => setPreviewState("failed")} className={`h-full w-full object-cover transition-opacity ${previewState === "ready" ? "opacity-100" : "opacity-0"}`} />}
+            {previewState !== "ready" ? <span className="absolute inset-0 grid place-items-center text-foreground/38" title={previewState === "failed" ? "预览加载失败，点击打开原始文件" : "正在加载预览"}><PreviewIcon className="size-4" aria-hidden="true" /></span> : null}
             <span className="absolute inset-0 grid place-items-center bg-black/0 text-white opacity-0 transition-[background-color,opacity] duration-150 group-hover:bg-black/30 group-hover:opacity-100 group-focus-visible:bg-black/30 group-focus-visible:opacity-100">
                 {isVideo ? <Play className="size-4 fill-current" /> : <Eye className="size-4" />}
             </span>
