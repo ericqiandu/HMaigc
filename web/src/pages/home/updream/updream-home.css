@@ -431,31 +431,6 @@
         height: 180px !important;
     }
 
-    .updream-home-page .workspace-floating-navigation {
-        top: calc(50% + 72px);
-        left: 48px;
-        gap: 4px;
-    }
-
-    .updream-home-page .workspace-floating-navigation-link {
-        height: 64px;
-        gap: 4px;
-        padding: 8px 4px;
-        border-radius: 12px;
-    }
-
-    .updream-home-page .workspace-floating-navigation-icon-frame,
-    .updream-home-page .workspace-floating-navigation-icon {
-        width: 20px;
-        height: 20px;
-    }
-
-    .updream-home-page .workspace-floating-navigation-label {
-        font-size: 13px;
-        font-weight: 500;
-        line-height: 20px;
-        letter-spacing: -0.12px;
-    }
 }
 
 @media (max-width: 640px) {
