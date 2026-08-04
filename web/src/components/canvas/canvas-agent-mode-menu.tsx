@@ -1,12 +1,11 @@
-import { Check } from "lucide-react";
+import { Check, Cpu, Hand } from "lucide-react";
 
-import { staticAssetURL } from "@/lib/static-assets";
 import { cn } from "@/lib/utils";
 import type { CanvasAgentExecutionMode } from "@/types/canvas";
 
-const modes: Array<{ value: CanvasAgentExecutionMode; label: string; description: string; icon: string }> = [
-    { value: "guided", label: "手动模式", description: "Agent 在每次生成前询问", icon: staticAssetURL("/icons/agent-mode-manual.svg") },
-    { value: "automatic", label: "自动模式", description: "Agent 完全自动生成", icon: staticAssetURL("/icons/agent-mode-automatic.svg") },
+const modes: Array<{ value: CanvasAgentExecutionMode; label: string; description: string }> = [
+    { value: "guided", label: "手动模式", description: "Agent 在每次生成前询问" },
+    { value: "automatic", label: "自动模式", description: "Agent 完全自动生成" },
 ];
 
 export function CanvasAgentModeMenu({
@@ -28,7 +27,9 @@ export function CanvasAgentModeMenu({
                         aria-pressed={selected}
                         onClick={() => onChange(mode.value)}
                     >
-                        <img className="canvas-agent-mode-icon" src={mode.icon} alt="" aria-hidden="true" />
+                        {mode.value === "guided"
+                            ? <Hand className="canvas-agent-mode-icon" strokeWidth={1.8} aria-hidden="true" />
+                            : <Cpu className="canvas-agent-mode-icon" strokeWidth={1.8} aria-hidden="true" />}
                         <span className="canvas-agent-mode-copy">
                             <span className="canvas-agent-mode-name">{mode.label}</span>
                             <span className="canvas-agent-mode-description">{mode.description}</span>

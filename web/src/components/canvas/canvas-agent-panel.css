@@ -305,11 +305,22 @@
 }
 
 .canvas-agent-composer-textarea {
+    width: auto;
+    min-width: 144px;
+    flex: 1 1 224px;
     min-height: 76px;
     max-height: 144px;
     padding: 2px 4px;
     font-size: 14px;
     line-height: 21px;
+}
+
+.canvas-agent-composer-input-flow {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
 }
 
 .canvas-agent-composer-footer {
@@ -335,8 +346,9 @@
 }
 
 .canvas-agent-composer-submit.ant-btn:disabled {
-    background: color-mix(in srgb, var(--foreground) 10%, transparent) !important;
-    color: color-mix(in srgb, var(--foreground) 38%, transparent) !important;
+    background: color-mix(in srgb, var(--foreground) 48%, transparent) !important;
+    color: color-mix(in srgb, var(--background) 76%, transparent) !important;
+    opacity: 1;
 }
 
 @media (max-width: 720px) {

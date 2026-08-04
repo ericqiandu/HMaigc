@@ -220,8 +220,9 @@
 }
 
 .updream-home-page .canvas-agent-composer-submit.ant-btn:disabled {
-    background: rgba(15, 23, 42, 0.12) !important;
-    color: rgba(15, 23, 42, 0.42) !important;
+    background: rgba(15, 23, 42, 0.24) !important;
+    color: rgba(15, 23, 42, 0.68) !important;
+    opacity: 1;
 }
 
 .updream-home-page .canvas-agent-composer-submit.ant-btn:not(:disabled) {
@@ -334,8 +335,9 @@
 }
 
 .dark .updream-home-page .canvas-agent-composer-submit.ant-btn:disabled {
-    background: rgba(255, 255, 255, 0.14) !important;
-    color: rgba(255, 255, 255, 0.42) !important;
+    background: rgba(255, 255, 255, 0.56) !important;
+    color: rgba(11, 15, 20, 0.78) !important;
+    opacity: 1;
 }
 
 .dark .updream-home-page .canvas-agent-composer-submit.ant-btn:not(:disabled) {

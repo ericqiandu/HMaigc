@@ -15,6 +15,10 @@ import type {
 } from "@/types/canvas";
 import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-composer-controls";
 import {
+    CanvasAgentSelectionSummary,
+    removeLastCanvasAgentSelection,
+} from "@/components/canvas/canvas-agent-selection-summary";
+import {
     AgentChatComposer,
     type CanvasAgentChatAttachment,
 } from "@/components/canvas/canvas-agent-chat-ui";
@@ -147,6 +151,23 @@ export function UpdreamHero() {
                     onSubmit={() => void startCreating()}
                     onAddFiles={addReferenceImages}
                     onRemoveAttachment={removeReferenceImage}
+                    onDeleteBackwardAtStart={() => {
+                        const next = removeLastCanvasAgentSelection({ models, selectedSkills });
+                        if (!next) return false;
+                        setModels(next.models);
+                        setSelectedSkills(next.selectedSkills);
+                        return true;
+                    }}
+                    selectionSummary={
+                        <CanvasAgentSelectionSummary
+                            config={config}
+                            models={models}
+                            selectedSkills={selectedSkills}
+                            disabled={submitting}
+                            onModelsChange={setModels}
+                            onSkillsChange={setSelectedSkills}
+                        />
+                    }
                     left={
                         <CanvasAgentComposerControls
                             config={config}

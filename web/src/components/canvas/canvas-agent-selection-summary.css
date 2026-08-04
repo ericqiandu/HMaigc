@@ -1,0 +1,75 @@
+.canvas-agent-selection-summary {
+    display: flex;
+    max-height: 64px;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 4px 4px;
+    overflow-y: auto;
+}
+
+.canvas-agent-selection-chip {
+    display: inline-flex;
+    min-width: 0;
+    height: 28px;
+    max-width: min(220px, 100%);
+    align-items: center;
+    gap: 6px;
+    padding: 0 5px 0 8px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    color: color-mix(in srgb, var(--foreground) 82%, transparent);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+}
+
+.canvas-agent-selection-chip-leading,
+.canvas-agent-selection-chip-remove {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+}
+
+.canvas-agent-selection-chip-icon {
+    width: 14px;
+    height: 14px;
+}
+
+.canvas-agent-selection-chip-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-agent-selection-chip-remove {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: color-mix(in srgb, var(--foreground) 48%, transparent);
+    cursor: pointer;
+}
+
+.canvas-agent-selection-chip-remove:hover,
+.canvas-agent-selection-chip-remove:focus-visible {
+    background: color-mix(in srgb, var(--foreground) 9%, transparent);
+    color: var(--foreground);
+}
+
+.canvas-agent-selection-chip-remove:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--tc-color-accent-blue, #60a5fa) 72%, transparent);
+    outline-offset: 0;
+}
+
+.canvas-agent-selection-chip-remove:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.canvas-agent-selection-chip-remove-icon {
+    width: 12px;
+    height: 12px;
+}

@@ -184,6 +184,8 @@ export function AgentChatComposer({
     onSubmit,
     onAddFiles,
     onRemoveAttachment,
+    onDeleteBackwardAtStart,
+    selectionSummary,
     left,
     submitReady,
 }: {
@@ -197,6 +199,8 @@ export function AgentChatComposer({
     onSubmit: () => void;
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
+    onDeleteBackwardAtStart?: () => boolean;
+    selectionSummary?: ReactNode;
     left?: ReactNode;
     submitReady?: boolean;
 }) {
@@ -219,25 +223,32 @@ export function AgentChatComposer({
                         ))}
                     </div>
                 ) : null}
-                <textarea
-                    value={prompt}
-                    onChange={(event) => onPromptChange(event.target.value)}
-                    onPaste={(event) => {
-                        if (!onAddFiles) return;
-                        const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-                        if (!images.length) return;
-                        event.preventDefault();
-                        void onAddFiles(images);
-                    }}
-                    onKeyDown={(event) => {
-                        if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey) return;
-                        event.preventDefault();
-                        void onSubmit();
-                    }}
-                    className="canvas-agent-composer-textarea thin-scrollbar w-full resize-none border-0 bg-transparent outline-none placeholder:opacity-45"
-                    style={{ color: theme.node.text }}
-                    placeholder={placeholder}
-                />
+                <div className="canvas-agent-composer-input-flow">
+                    {selectionSummary}
+                    <textarea
+                        value={prompt}
+                        onChange={(event) => onPromptChange(event.target.value)}
+                        onPaste={(event) => {
+                            if (!onAddFiles) return;
+                            const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+                            if (!images.length) return;
+                            event.preventDefault();
+                            void onAddFiles(images);
+                        }}
+                        onKeyDown={(event) => {
+                            if (event.key === "Backspace" && !prompt.length && onDeleteBackwardAtStart?.()) {
+                                event.preventDefault();
+                                return;
+                            }
+                            if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey) return;
+                            event.preventDefault();
+                            void onSubmit();
+                        }}
+                        className="canvas-agent-composer-textarea thin-scrollbar resize-none border-0 bg-transparent outline-none placeholder:opacity-45"
+                        style={{ color: theme.node.text }}
+                        placeholder={placeholder}
+                    />
+                </div>
                 <div className="canvas-agent-composer-footer">
                     <div className="canvas-agent-composer-left flex min-w-0 items-center gap-1">
                         {onAddFiles ? (
@@ -247,13 +258,13 @@ export function AgentChatComposer({
                                     event.target.value = "";
                                 }} />
                                 <CanvasAgentTooltip title="添加图片">
-                                    <Button type="text" className="canvas-agent-composer-tool" disabled={sending} style={{ color: theme.node.muted }} icon={<Plus className="canvas-agent-composer-add-icon size-5" />} onClick={() => fileInputRef.current?.click()} aria-label="添加图片" />
+                                    <Button type="text" className="canvas-agent-composer-tool" disabled={sending} style={{ color: theme.node.muted }} icon={<Plus className="canvas-agent-composer-glyph" strokeWidth={1.8} />} onClick={() => fileInputRef.current?.click()} aria-label="添加图片" />
                                 </CanvasAgentTooltip>
                             </>
                         ) : null}
                         {left}
                     </div>
-                    <Button type="primary" className="canvas-agent-composer-submit" disabled={!canSubmit} icon={sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} onClick={() => void onSubmit()} aria-label="发送" />
+                    <Button type="primary" className="canvas-agent-composer-submit" disabled={!canSubmit} icon={sending ? <LoaderCircle className="canvas-agent-composer-glyph animate-spin" strokeWidth={1.8} /> : <ArrowUp className="canvas-agent-composer-glyph" strokeWidth={1.8} />} onClick={() => void onSubmit()} aria-label="发送" />
                 </div>
             </div>
         </div>

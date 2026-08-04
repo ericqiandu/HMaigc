@@ -1,7 +1,7 @@
 import { useState, type ComponentProps, type ReactNode } from "react";
 import { Button, Popover } from "antd";
+import { Box, Cpu, Hand, Sparkles } from "lucide-react";
 
-import { staticAssetURL } from "@/lib/static-assets";
 import type { AiConfig } from "@/stores/use-config-store";
 import type {
     CanvasAgentExecutionMode,
@@ -15,7 +15,6 @@ import { CanvasAgentTooltip } from "./canvas-agent-tooltip";
 import "./canvas-agent-composer-controls.css";
 
 type AgentComposerPopover = "models" | "skills" | "mode";
-type AgentComposerIconVariant = "model" | "skills" | "mode";
 
 type CanvasAgentComposerControlsProps = {
     config: AiConfig;
@@ -46,8 +45,7 @@ export function CanvasAgentComposerControls({
         <div className="canvas-agent-composer-controls">
             <ComposerPopover
                 label="选择模型"
-                icon={`${staticAssetURL("/icons/agent-model.svg")}?v=2`}
-                iconVariant="model"
+                icon={<Box className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />}
                 placement={placement}
                 open={activePopover === "models"}
                 disabled={disabled}
@@ -56,8 +54,7 @@ export function CanvasAgentComposerControls({
             />
             <ComposerPopover
                 label="Skills"
-                icon={staticAssetURL("/icons/agent-skills.svg")}
-                iconVariant="skills"
+                icon={<Sparkles className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />}
                 placement={placement}
                 open={activePopover === "skills"}
                 disabled={disabled}
@@ -66,8 +63,9 @@ export function CanvasAgentComposerControls({
             />
             <ComposerPopover
                 label="生成模式"
-                icon={staticAssetURL(executionMode === "guided" ? "/icons/agent-mode-manual.svg" : "/icons/agent-mode-automatic.svg")}
-                iconVariant="mode"
+                icon={executionMode === "guided"
+                    ? <Hand className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />
+                    : <Cpu className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />}
                 placement={placement}
                 open={activePopover === "mode"}
                 disabled={disabled}
@@ -89,7 +87,6 @@ export function CanvasAgentComposerControls({
 function ComposerPopover({
     label,
     icon,
-    iconVariant,
     placement,
     open,
     disabled,
@@ -97,8 +94,7 @@ function ComposerPopover({
     onOpenChange,
 }: {
     label: string;
-    icon: string;
-    iconVariant: AgentComposerIconVariant;
+    icon: ReactNode;
     placement: ComponentProps<typeof Popover>["placement"];
     open: boolean;
     disabled?: boolean;
@@ -120,14 +116,7 @@ function ComposerPopover({
                     type="text"
                     className={`canvas-agent-composer-tool canvas-agent-composer-picker-trigger ${open ? "canvas-agent-composer-picker-trigger--active" : ""}`}
                     disabled={disabled}
-                    icon={
-                        <img
-                            className={`canvas-agent-composer-picker-icon canvas-agent-composer-picker-icon--${iconVariant}`}
-                            src={icon}
-                            alt=""
-                            aria-hidden="true"
-                        />
-                    }
+                    icon={icon}
                     aria-label={label}
                     aria-expanded={open}
                 />

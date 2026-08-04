@@ -34,6 +34,7 @@ import {
 import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentOperationImpact, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
+import { CanvasAgentSelectionSummary, removeLastCanvasAgentSelection } from "./canvas-agent-selection-summary";
 import { waitForCanvasGeneration } from "@/lib/canvas/canvas-agent-generation-wait";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
@@ -1094,6 +1095,23 @@ export function CanvasAssistantPanel({
                         onPromptChange={setPrompt}
                         onSubmit={cinematicEntryActive ? () => submitCinematicProject(prompt) : submit}
                         onAddFiles={addImagesToCanvas}
+                        onDeleteBackwardAtStart={() => {
+                            const next = removeLastCanvasAgentSelection({ models: agentModels, selectedSkills });
+                            if (!next) return false;
+                            setAgentModels(next.models);
+                            setSelectedSkills(next.selectedSkills);
+                            return true;
+                        }}
+                        selectionSummary={
+                            <CanvasAgentSelectionSummary
+                                config={effectiveConfig}
+                                models={agentModels}
+                                selectedSkills={selectedSkills}
+                                disabled={agentBusy}
+                                onModelsChange={setAgentModels}
+                                onSkillsChange={setSelectedSkills}
+                            />
+                        }
                         left={
                             <div className="canvas-agent-composer-extra-controls">
                                 {cinematicEntryActive ? (

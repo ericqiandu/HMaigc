@@ -36,20 +36,15 @@
     color: var(--foreground) !important;
 }
 
-.canvas-agent-composer-picker-icon {
-    display: block;
-    object-fit: contain;
+.canvas-agent-composer-picker-glyph {
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
-.canvas-agent-composer-picker-icon--model,
-.canvas-agent-composer-picker-icon--skills {
-    width: 20px;
-    height: 20px;
-}
-
-.canvas-agent-composer-picker-icon--mode {
-    width: 17px;
-    height: 17px;
+.canvas-agent-composer-glyph {
+  width: 18px;
+  height: 18px;
 }
 
 .canvas-agent-composer-popover :where(.ant-popover-container, .ant-popover-inner) {
@@ -462,10 +457,10 @@
 }
 
 .canvas-agent-mode-icon {
+    display: block;
     width: 18px;
     height: 18px;
     flex: 0 0 auto;
-    object-fit: contain;
 }
 
 .canvas-agent-mode-name {
