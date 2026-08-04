@@ -30,6 +30,13 @@ func newSiteSettingTestService(t *testing.T) (*Service, *gorm.DB) {
 
 func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	svc, db := newSiteSettingTestService(t)
+	legalDocumentsConfigured, err := svc.LegalDocumentsConfigured()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legalDocumentsConfigured {
+		t.Fatal("default legal documents should not be treated as published")
+	}
 	defaults, err := svc.PublicSiteSetting()
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +78,13 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	}
 	if updated.UserAgreement == "" || updated.PrivacyPolicy == "" {
 		t.Fatalf("unexpected legal setting: %#v", updated)
+	}
+	legalDocumentsConfigured, err = svc.LegalDocumentsConfigured()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !legalDocumentsConfigured {
+		t.Fatal("saved legal documents should be treated as published")
 	}
 	legalAgreement := updated.UserAgreement
 	legalPrivacy := updated.PrivacyPolicy

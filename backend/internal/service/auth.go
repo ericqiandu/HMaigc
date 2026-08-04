@@ -48,11 +48,12 @@ type LoginRequest struct {
 }
 
 type PublicAuthSettings struct {
-	FirstUser           bool `json:"firstUser"`
-	RegistrationEnabled bool `json:"registrationEnabled"`
-	LinuxDOEnabled      bool `json:"linuxdoEnabled"`
-	EmailEnabled        bool `json:"emailEnabled"`
-	EmailCodeRequired   bool `json:"emailCodeRequired"`
+	FirstUser                bool `json:"firstUser"`
+	RegistrationEnabled      bool `json:"registrationEnabled"`
+	LegalDocumentsConfigured bool `json:"legalDocumentsConfigured"`
+	LinuxDOEnabled           bool `json:"linuxdoEnabled"`
+	EmailEnabled             bool `json:"emailEnabled"`
+	EmailCodeRequired        bool `json:"emailCodeRequired"`
 }
 
 type AuthSessionResult struct {
@@ -99,7 +100,7 @@ func (s *Service) PublicAuthSettings() (*PublicAuthSettings, error) {
 		return nil, err
 	}
 	if count == 0 {
-		return &PublicAuthSettings{FirstUser: true, RegistrationEnabled: true, LinuxDOEnabled: false}, nil
+		return &PublicAuthSettings{FirstUser: true, RegistrationEnabled: true, LegalDocumentsConfigured: false, LinuxDOEnabled: false}, nil
 	}
 	registrationEnabled, err := s.RegistrationEnabled()
 	if err != nil {
@@ -109,7 +110,11 @@ func (s *Service) PublicAuthSettings() (*PublicAuthSettings, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PublicAuthSettings{FirstUser: false, RegistrationEnabled: registrationEnabled, LinuxDOEnabled: s.LinuxDOEnabled(), EmailEnabled: emailEnabled, EmailCodeRequired: true}, nil
+	legalDocumentsConfigured, err := s.LegalDocumentsConfigured()
+	if err != nil {
+		return nil, err
+	}
+	return &PublicAuthSettings{FirstUser: false, RegistrationEnabled: registrationEnabled, LegalDocumentsConfigured: legalDocumentsConfigured, LinuxDOEnabled: s.LinuxDOEnabled(), EmailEnabled: emailEnabled, EmailCodeRequired: true}, nil
 }
 
 func (s *Service) Register(req RegisterRequest) (*AuthSessionResult, error) {
@@ -141,6 +146,13 @@ func (s *Service) Register(req RegisterRequest) (*AuthSessionResult, error) {
 		}
 		if !registrationEnabled {
 			return nil, Forbidden("管理员未开放新用户注册")
+		}
+		legalDocumentsConfigured, err := s.LegalDocumentsConfigured()
+		if err != nil {
+			return nil, err
+		}
+		if !legalDocumentsConfigured {
+			return nil, Forbidden("管理员尚未发布用户协议与隐私政策，暂不能开放注册")
 		}
 		if email == "" {
 			return nil, BadAuthRequest("请输入邮箱")

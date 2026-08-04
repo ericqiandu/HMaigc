@@ -249,6 +249,13 @@ func (s *Service) CompleteLinuxDOLogin(stateValue string, code string) (*LinuxDO
 		if !registrationEnabled {
 			return nil, Forbidden("管理员未开放新用户注册")
 		}
+		legalDocumentsConfigured, settingErr := s.LegalDocumentsConfigured()
+		if settingErr != nil {
+			return nil, settingErr
+		}
+		if !legalDocumentsConfigured {
+			return nil, Forbidden("管理员尚未发布用户协议与隐私政策，暂不能开放注册")
+		}
 		user, identity, err = s.createLinuxDOUser(subject, providerUsername, displayName, profileString(profile, setting.EmailField), avatarURL)
 		if err != nil {
 			return nil, err

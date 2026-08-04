@@ -134,6 +134,17 @@ func (s *Service) PublicSiteSetting() (*PublicSiteSetting, error) {
 	return &result, nil
 }
 
+// LegalDocumentsConfigured reports whether both public legal documents have
+// been explicitly published by an administrator. Empty documents are not a
+// valid basis for accepting consent during registration.
+func (s *Service) LegalDocumentsConfigured() (bool, error) {
+	_, value, err := s.readSiteSetting()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(value.UserAgreement) != "" && strings.TrimSpace(value.PrivacyPolicy) != "", nil
+}
+
 func (s *Service) AdminSiteSetting(actor *model.User) (*PublicSiteSetting, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
