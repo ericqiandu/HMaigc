@@ -171,8 +171,8 @@ func seedMiniMaxH3SupplierPricing(db *gorm.DB) error {
 		{ID: "minimax-h3-cost-input-video-768p", ModelPricingID: pricing.ID, Specification: "INPUT_VIDEO_768P", SupplierCostMicros: 500_000},
 		{ID: "minimax-h3-cost-input-video-2k", ModelPricingID: pricing.ID, Specification: "INPUT_VIDEO_2K", SupplierCostMicros: 800_000},
 		{ID: "minimax-h3-cost-regenerate-2k", ModelPricingID: pricing.ID, Specification: "REGENERATE_768P_TO_2K", SupplierCostMicros: 300_000},
-		{ID: "minimax-h3-cost-regenerate-input-image", ModelPricingID: pricing.ID, Specification: "REGENERATE_INPUT_IMAGE_OVERAGE", SupplierCostMicros: 150_000},
-		{ID: "minimax-h3-cost-regenerate-input-video", ModelPricingID: pricing.ID, Specification: "REGENERATE_INPUT_VIDEO_768P", SupplierCostMicros: 300_000},
+		{ID: "minimax-h3-regen-input-image", ModelPricingID: pricing.ID, Specification: "REGENERATE_INPUT_IMAGE_OVERAGE", SupplierCostMicros: 150_000},
+		{ID: "minimax-h3-regen-input-video", ModelPricingID: pricing.ID, Specification: "REGENERATE_INPUT_VIDEO_768P", SupplierCostMicros: 300_000},
 	}
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&tiers).Error
 }

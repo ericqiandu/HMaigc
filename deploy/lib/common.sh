@@ -275,9 +275,29 @@ start_release() {
     export HMAIGC_VERSION="$version"
     start_infrastructure
     log "启动并验活后端：$version"
-    compose up -d backend --wait
-    verify_backend_release "$version" || return 1
+    if ! compose up -d backend --wait; then
+        log "后端启动验活失败，记录容器状态与最近日志"
+        compose ps backend || true
+        compose logs --no-color --tail=200 backend || true
+        return 1
+    fi
+    if ! verify_backend_release "$version"; then
+        log "后端版本验收失败，记录容器状态与最近日志"
+        compose ps backend || true
+        compose logs --no-color --tail=200 backend || true
+        return 1
+    fi
     log "启动并验活 Web：$version"
-    compose up -d web --wait
-    verify_web_release "$version"
+    if ! compose up -d web --wait; then
+        log "Web 启动验活失败，记录容器状态与最近日志"
+        compose ps web || true
+        compose logs --no-color --tail=200 web || true
+        return 1
+    fi
+    if ! verify_web_release "$version"; then
+        log "Web 版本验收失败，记录容器状态与最近日志"
+        compose ps web || true
+        compose logs --no-color --tail=200 web || true
+        return 1
+    fi
 }

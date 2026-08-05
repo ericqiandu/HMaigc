@@ -64,6 +64,9 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	}
 	tierCosts := make(map[string]int64, len(miniMaxPricing.Tiers))
 	for _, tier := range miniMaxPricing.Tiers {
+		if len(tier.ID) > 36 {
+			t.Fatalf("MiniMax H3 pricing tier ID %q exceeds PostgreSQL varchar(36)", tier.ID)
+		}
 		tierCosts[tier.Specification] = tier.SupplierCostMicros
 	}
 	for specification, expected := range map[string]int64{
@@ -86,6 +89,9 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 		}
 		if len(audioPricing.Tiers) != 1 || audioPricing.Tiers[0].SupplierCostMicros != expected {
 			t.Fatalf("MiniMax audio pricing %s = %#v, want %d", modelName, audioPricing.Tiers, expected)
+		}
+		if len(audioPricing.ID) > 36 || len(audioPricing.Tiers[0].ID) > 36 {
+			t.Fatalf("MiniMax audio pricing identifiers exceed PostgreSQL varchar(36): pricing=%q tier=%q", audioPricing.ID, audioPricing.Tiers[0].ID)
 		}
 	}
 
