@@ -51,6 +51,9 @@ case "$arguments" in
     *" compose "*" ps "*)
         printf 'fake services healthy\n'
         ;;
+    *" compose "*" logs "*)
+        printf 'fake service logs\n'
+        ;;
     *" run "*"tar -czf "*"backend-data.tgz"*)
         for argument in "$@"; do
             case "$argument" in
