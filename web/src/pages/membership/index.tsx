@@ -1,24 +1,26 @@
-import { Alert, Button, Empty, message, Segmented, Spin } from "antd";
+import { Alert, Button, Empty, message, Spin } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ChevronLeft, Crown, ImageIcon, Video, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Crown, ImageIcon, Video } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { siteLogoURL, useSiteSettings } from "@/components/site/site-settings-provider";
 import { membershipQueryKey } from "@/hooks/use-membership-action";
-import { cancelMembershipOrder, createMembershipOrder, createTeam, getMyMembership, listMembershipPlans, type MembershipAudience, type MembershipBillingCycle, type MembershipOverview, type MembershipPlan } from "@/services/api/membership";
+import { cancelMembershipOrder, createMembershipOrder, createTeam, getMembershipStorefront, getMyMembership, type MembershipAudience, type MembershipBillingCycle, type MembershipOverview, type MembershipPlan, type MembershipStorefront } from "@/services/api/membership";
 import { createPaymentCheckout } from "@/services/api/payment";
 import { useUserStore } from "@/stores/use-user-store";
 
-import { billingCycleShortLabel, clampSeats, publicPlanName, topupDiscountLabel } from "./membership-formatters";
+import { clampSeats, publicPlanName, topupDiscountLabel } from "./membership-formatters";
 import { MembershipOrderHistory } from "./membership-order-history";
 import { MembershipInvoiceCenter } from "./membership-invoice-center";
-import { MembershipPlanCard } from "./membership-plan-card";
 import { MembershipPurchaseModal } from "./membership-purchase-modal";
+import { MembershipStorefrontFAQs } from "./membership-storefront-faq";
+import { MembershipStorefrontGeneration } from "./membership-storefront-generation";
+import { MembershipStorefrontPricing } from "./membership-storefront-pricing";
+import { MembershipStorefrontPromo } from "./membership-storefront-promo";
 import "./membership.css";
-import "./membership-plan-card.css";
 import "./membership-order.css";
 import "./membership-responsive.css";
+import "./membership-storefront.css";
 
 type PurchaseSelection = {
     plan: MembershipPlan;
@@ -34,9 +36,7 @@ export default function MembershipPage() {
     const requestedAudience = searchParams.get("audience") === "team" ? "team" : "personal";
     const requestedTeamId = searchParams.get("teamId") || undefined;
     const user = useUserStore((state) => state.user);
-    const { settings } = useSiteSettings();
-    const carouselRef = useRef<HTMLDivElement>(null);
-    const [plans, setPlans] = useState<MembershipPlan[]>([]);
+    const [storefront, setStorefront] = useState<MembershipStorefront | null>(null);
     const [overview, setOverview] = useState<MembershipOverview | null>(null);
     const [audience, setAudience] = useState<MembershipAudience>(requestedAudience);
     const [cycle, setCycle] = useState<MembershipBillingCycle>("year");
@@ -49,22 +49,20 @@ export default function MembershipPage() {
     const [cancellingId, setCancellingId] = useState("");
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
-    const [canScrollLeft, setCanScrollLeft] = useState(false);
-    const [canScrollRight, setCanScrollRight] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
         setLoadError("");
         try {
-            const [nextPlans, nextOverview] = await Promise.all([listMembershipPlans(), user ? getMyMembership() : Promise.resolve(null)]);
-            setPlans(nextPlans);
+            const [nextStorefront, nextOverview] = await Promise.all([getMembershipStorefront(), user ? getMyMembership() : Promise.resolve(null)]);
+            setStorefront(nextStorefront);
             setOverview(nextOverview);
             if (user && nextOverview) {
                 queryClient.setQueryData(membershipQueryKey(user.id), nextOverview);
             }
             setTeamSeats((current) => {
                 const next = { ...current };
-                nextPlans
+                nextStorefront.plans
                     .filter((plan) => plan.audience === "team")
                     .forEach((plan) => {
                         next[plan.id] = clampSeats(plan, current[plan.id] ?? plan.minSeats);
@@ -97,6 +95,8 @@ export default function MembershipPage() {
         return () => window.removeEventListener("keydown", closeOnEscape);
     }, [navigate, selection]);
 
+    const plans = storefront?.plans ?? [];
+
     const availableCycles = useMemo(() => paidCycleOrder.filter((candidate) => plans.some((plan) => plan.audience === audience && plan.billingCycle === candidate)), [audience, plans]);
 
     useEffect(() => {
@@ -118,31 +118,8 @@ export default function MembershipPage() {
 
     const plansById = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
 
-    const updateCarouselState = useCallback(() => {
-        const carousel = carouselRef.current;
-        if (!carousel) return;
-        setCanScrollLeft(carousel.scrollLeft > 4);
-        setCanScrollRight(carousel.scrollLeft + carousel.clientWidth < carousel.scrollWidth - 4);
-    }, []);
-
-    useEffect(() => {
-        const carousel = carouselRef.current;
-        if (!carousel) return;
-        updateCarouselState();
-        const observer = new ResizeObserver(updateCarouselState);
-        observer.observe(carousel);
-        return () => observer.disconnect();
-    }, [updateCarouselState, visiblePlans.length]);
-
-    const scrollPlans = (direction: -1 | 1) => {
-        const carousel = carouselRef.current;
-        if (!carousel) return;
-        carousel.scrollBy({ behavior: "smooth", left: direction * Math.max(280, carousel.clientWidth * 0.78) });
-    };
-
     const selectAudience = (nextAudience: MembershipAudience) => {
         setAudience(nextAudience);
-        carouselRef.current?.scrollTo({ left: 0 });
     };
 
     const beginPurchase = (plan: MembershipPlan, seats: number) => {
@@ -216,154 +193,76 @@ export default function MembershipPage() {
     };
 
     return (
-        <main className="membership-page">
-            <div aria-hidden="true" className="membership-backdrop" />
-            <section aria-labelledby="membership-page-heading" className="membership-window">
-                <header className="membership-window-header">
-                    <button aria-label="返回上一页" className="membership-window-close" onClick={() => navigate(-1)} type="button">
-                        <X className="membership-window-close-icon" />
-                    </button>
-                    <div className="membership-brand">
-                        <img alt="" className="membership-brand-logo" src={siteLogoURL(settings)} />
-                        <span className="membership-brand-name">{settings.siteName}</span>
-                        <span className="membership-brand-divider" aria-hidden="true" />
-                        <span className="membership-brand-page">会员中心</span>
-                    </div>
-                    <div className="membership-audience-tabs" role="tablist" aria-label="会员类型">
-                        <button aria-selected={audience === "personal"} className={`membership-audience-tab ${audience === "personal" ? "is-active" : ""}`} onClick={() => selectAudience("personal")} role="tab" type="button">
-                            创作会员
-                        </button>
-                        <button aria-selected={audience === "team"} className={`membership-audience-tab ${audience === "team" ? "is-active" : ""}`} onClick={() => selectAudience("team")} role="tab" type="button">
-                            团队版会员
-                        </button>
-                    </div>
-                </header>
+        <main className="membership-storefront-page min-h-screen bg-[#070b11] font-sans antialiased">
+            {storefront ? <MembershipStorefrontPromo promotion={storefront.presentation.promotion} serverNow={storefront.serverNow} /> : null}
 
-                <div className="membership-window-scroll">
-                    <section aria-label="会员礼遇" className="membership-campaign">
-                        <div className="membership-campaign-copy">
-                            <span className="membership-campaign-kicker">HMAIGC MEMBERSHIP</span>
-                            <h1 className="membership-campaign-title" id="membership-page-heading">创作补给站，释放更多想象力</h1>
-                            <span className="membership-campaign-description">以后台实时套餐为准，开通后即时获得积分、并发与专属权益</span>
-                        </div>
-                        <div aria-hidden="true" className="membership-campaign-mark"><Crown /></div>
-                    </section>
-                    <section className="membership-hero">
-                        {availableCycles.length > 0 ? (
-                            <Segmented
-                                className="membership-cycle-switch"
-                                onChange={(value) => setCycle(value as MembershipBillingCycle)}
-                                options={availableCycles.map((availableCycle) => ({
-                                    label: audience === "personal"
-                                        ? availableCycle === "year" ? "连续包年" : availableCycle === "month" ? "连续包月" : billingCycleShortLabel[availableCycle]
-                                        : availableCycle === "year" ? "按年购买" : availableCycle === "month" ? "按月购买" : billingCycleShortLabel[availableCycle],
-                                    value: availableCycle,
-                                }))}
-                                value={cycle}
-                            />
-                        ) : null}
-                    </section>
+            {loadError ? (
+                <section aria-label="会员商城加载失败" className="membership-storefront-error mx-auto max-w-[1300px] px-6 py-20">
+                    <Alert action={<Button className="membership-storefront-retry" onClick={() => void load()}>重新加载</Button>} className="membership-storefront-error-alert" description={loadError} message="会员商城加载失败" showIcon type="error" />
+                </section>
+            ) : loading || !storefront ? (
+                <section aria-label="会员商城加载中" className="membership-storefront-loading flex min-h-[50vh] items-center justify-center">
+                    <Spin className="membership-storefront-loading-spinner" size="large" />
+                </section>
+            ) : (
+                <div className="membership-storefront-content pb-4">
+                    <MembershipStorefrontPricing
+                        allPlans={plans}
+                        audience={audience}
+                        availableCycles={availableCycles}
+                        currentPlanId={overview?.entitlement.planId}
+                        cycle={cycle}
+                        onAudienceChange={selectAudience}
+                        onCycleChange={setCycle}
+                        onOpenWallet={() => user ? navigate("/wallet") : navigate("/login?next=%2Fwallet")}
+                        onPurchase={beginPurchase}
+                        onSeatsChange={(plan, seats) => setTeamSeats((current) => ({ ...current, [plan.id]: clampSeats(plan, seats) }))}
+                        plans={visiblePlans}
+                        presentation={storefront.presentation}
+                        teamSeats={teamSeats}
+                    />
 
-                    <section className="membership-plans-section">
-                        <div className="membership-plans-heading">
-                            <div>
-                                <h2>{audience === "team" ? "为团队配置协作权限" : "选择适合你的创作方案"}</h2>
-                                <p>套餐权益与价格以后台实时配置为准</p>
-                            </div>
-                            <span className="membership-plans-count">{visiblePlans.length} 个可选方案</span>
-                        </div>
-                        <button aria-label="查看上一组套餐" className="membership-carousel-button membership-carousel-button-left" disabled={!canScrollLeft} onClick={() => scrollPlans(-1)} type="button">
-                            <ChevronLeft className="membership-carousel-icon" />
-                        </button>
-                        <button aria-label="查看下一组套餐" className="membership-carousel-button membership-carousel-button-right" disabled={!canScrollRight} onClick={() => scrollPlans(1)} type="button">
-                            <ArrowRight className="membership-carousel-icon" />
-                        </button>
+                    {visiblePlans.length === 0 ? (
+                        <section aria-label="暂无会员套餐" className="membership-storefront-empty mx-auto max-w-[1300px] px-6 py-14">
+                            <Empty className="membership-storefront-empty-state" description="后台暂无当前类型与周期的上架套餐" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                        </section>
+                    ) : null}
 
-                        {loadError ? (
-                            <Alert
-                                action={
-                                    <Button className="membership-retry-button" onClick={() => void load()} size="small">
-                                        重新加载
-                                    </Button>
-                                }
-                                className="membership-load-error"
-                                description={loadError}
-                                message="会员套餐加载失败"
-                                showIcon
-                                type="error"
-                            />
-                        ) : loading ? (
-                            <div className="membership-loading">
-                                <Spin className="membership-loading-spinner" />
-                            </div>
-                        ) : visiblePlans.length === 0 ? (
-                            <Empty className="membership-empty" description="后台暂无当前类型与周期的上架套餐" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                        ) : (
-                            <div className={`membership-plan-carousel ${audience === "team" ? "is-team" : ""}`} onScroll={updateCarouselState} ref={carouselRef}>
-                                {visiblePlans.map((plan) => (
-                                    <MembershipPlanCard
-                                        className="membership-plan-carousel-item"
-                                        currentPlanId={overview?.entitlement.planId}
-                                        featured={plan.tier === "max"}
-                                        key={plan.id}
-                                        onPurchase={beginPurchase}
-                                        onSeatsChange={(planId, seats) => setTeamSeats((current) => ({ ...current, [planId]: clampSeats(plan, seats) }))}
-                                        plan={plan}
-                                        seats={teamSeats[plan.id] ?? plan.minSeats}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                    </section>
+                    <MembershipStorefrontGeneration presentation={storefront.presentation} />
+                    <MembershipStorefrontFAQs heading={storefront.presentation.copy.faqHeading} items={storefront.presentation.faqs} />
 
                     {overview ? (
-                        <section aria-label="当前会员权益" className="membership-account-panel">
-                            <div className="membership-account-heading">
-                                <div>
-                                    <h2>当前会员权益</h2>
-                                    <p>账户可用额度与并发能力实时同步</p>
+                        <section aria-label="当前会员权益" className="membership-account-panel membership-storefront-account mx-auto mb-20 max-w-[1300px]">
+                            <div className="membership-account-heading membership-storefront-account-heading">
+                                <div className="membership-storefront-account-heading-copy">
+                                    <h2 className="membership-storefront-account-title">当前会员权益</h2>
+                                    <p className="membership-storefront-account-description">账户可用额度与并发能力实时同步</p>
                                 </div>
                             </div>
-                            <div className="membership-overview">
-                                <div className="membership-overview-heading">
-                                    <span className="membership-overview-icon">
-                                        <Crown className="membership-overview-icon-svg" />
-                                    </span>
-                                    <div className="membership-overview-title">
-                                        <span className="membership-overview-label">当前方案</span>
-                                        <strong className="membership-overview-plan">{publicPlanName({ name: overview.entitlement.planName, tier: overview.entitlement.tier })}</strong>
+                            <div className="membership-overview membership-storefront-overview">
+                                <div className="membership-overview-heading membership-storefront-overview-heading">
+                                    <span className="membership-overview-icon membership-storefront-overview-icon"><Crown className="membership-overview-icon-svg membership-storefront-overview-icon-svg" /></span>
+                                    <div className="membership-overview-title membership-storefront-overview-title">
+                                        <span className="membership-overview-label membership-storefront-overview-label">当前方案</span>
+                                        <strong className="membership-overview-plan membership-storefront-overview-plan">{publicPlanName({ name: overview.entitlement.planName, tier: overview.entitlement.tier })}</strong>
                                     </div>
                                 </div>
-                                <div className="membership-overview-metrics">
-                                    <span className="membership-overview-metric">
-                                        <small className="membership-overview-metric-label">有效期</small>
-                                        <strong className="membership-overview-metric-value">{overview.entitlement.expiresAt ? new Date(overview.entitlement.expiresAt).toLocaleDateString("zh-CN") : "长期有效"}</strong>
-                                    </span>
-                                    <span className="membership-overview-metric">
-                                        <ImageIcon className="membership-overview-metric-icon" />
-                                        <small className="membership-overview-metric-label">图片并发</small>
-                                        <strong className="membership-overview-metric-value">{overview.entitlement.imageConcurrency}</strong>
-                                    </span>
-                                    <span className="membership-overview-metric">
-                                        <Video className="membership-overview-metric-icon" />
-                                        <small className="membership-overview-metric-label">视频并发</small>
-                                        <strong className="membership-overview-metric-value">{overview.entitlement.videoConcurrency}</strong>
-                                    </span>
-                                    <span className="membership-overview-metric">
-                                        <small className="membership-overview-metric-label">积分充值</small>
-                                        <strong className="membership-overview-metric-value">{topupDiscountLabel(overview.entitlement.topupDiscountBasisPoints)}</strong>
-                                    </span>
+                                <div className="membership-overview-metrics membership-storefront-overview-metrics">
+                                    <span className="membership-overview-metric membership-storefront-overview-metric"><small className="membership-overview-metric-label membership-storefront-overview-metric-label">有效期</small><strong className="membership-overview-metric-value membership-storefront-overview-metric-value">{overview.entitlement.expiresAt ? new Date(overview.entitlement.expiresAt).toLocaleDateString("zh-CN") : "长期有效"}</strong></span>
+                                    <span className="membership-overview-metric membership-storefront-overview-metric"><ImageIcon className="membership-overview-metric-icon membership-storefront-overview-metric-icon" /><small className="membership-overview-metric-label membership-storefront-overview-metric-label">图片并发</small><strong className="membership-overview-metric-value membership-storefront-overview-metric-value">{overview.entitlement.imageConcurrency}</strong></span>
+                                    <span className="membership-overview-metric membership-storefront-overview-metric"><Video className="membership-overview-metric-icon membership-storefront-overview-metric-icon" /><small className="membership-overview-metric-label membership-storefront-overview-metric-label">视频并发</small><strong className="membership-overview-metric-value membership-storefront-overview-metric-value">{overview.entitlement.videoConcurrency}</strong></span>
+                                    <span className="membership-overview-metric membership-storefront-overview-metric"><small className="membership-overview-metric-label membership-storefront-overview-metric-label">积分充值</small><strong className="membership-overview-metric-value membership-storefront-overview-metric-value">{topupDiscountLabel(overview.entitlement.topupDiscountBasisPoints)}</strong></span>
                                 </div>
                             </div>
-                            <MembershipOrderHistory cancellingId={cancellingId} className="membership-orders-section" onCancel={(orderId) => void cancelOrder(orderId)} onPay={(orderId) => void openCheckout(orderId)} orders={overview.orders} payingId={payingId} plansById={plansById} />
+                            <MembershipOrderHistory cancellingId={cancellingId} className="membership-orders-section membership-storefront-orders" onCancel={(orderId) => void cancelOrder(orderId)} onPay={(orderId) => void openCheckout(orderId)} orders={overview.orders} payingId={payingId} plansById={plansById} />
                             <MembershipInvoiceCenter email={user?.email || ""} orders={overview.orders} plansById={plansById} />
                         </section>
                     ) : null}
                 </div>
-            </section>
+            )}
 
             <MembershipPurchaseModal
-                className="membership-purchase-dialog"
+                className="membership-purchase-dialog membership-storefront-purchase-dialog"
                 onCancel={() => setSelection(null)}
                 onSeatsChange={(seats) => setSelection((current) => (current ? { ...current, seats: clampSeats(current.plan, seats) } : null))}
                 onSubmit={() => void submitOrder()}

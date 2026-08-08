@@ -10,6 +10,14 @@ import (
 )
 
 func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.GET("/membership/storefront", func(c *gin.Context) {
+		storefront, err := svc.MembershipStorefront()
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, storefront)
+	})
 	r.GET("/membership/plans", func(c *gin.Context) {
 		plans, err := svc.MembershipPlans(nil)
 		if err != nil {
@@ -105,6 +113,37 @@ func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, plans)
+	})
+	r.GET("/admin/membership/storefront", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		storefront, err := svc.AdminMembershipStorefront(actor)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, storefront)
+	})
+	r.PUT("/admin/membership/storefront", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req service.MembershipStorefrontSetting
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		storefront, err := svc.UpdateMembershipStorefront(actor, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, storefront)
 	})
 	r.PATCH("/admin/membership/plans/:id", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)

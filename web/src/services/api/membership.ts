@@ -91,6 +91,75 @@ export type Team = { id: string; ownerUserId: string; name: string; status: "act
 
 export type MembershipOverview = { entitlement: MembershipEntitlement; orders: MembershipOrder[]; teams: Team[] };
 
+export type MembershipStorefrontPromotion = {
+    enabled: boolean;
+    title: string;
+    subtitle: string;
+    subtitleHighlight: string;
+    endsAt: string;
+};
+
+export type MembershipStorefrontActivity = { icon: string; text: string };
+
+export type MembershipStorefrontCopy = {
+    creatorTab: string;
+    teamTab: string;
+    yearCycle: string;
+    monthCycle: string;
+    creditStore: string;
+    activityHeading: string;
+    exclusiveHeading: string;
+    generationHeading: string;
+    faqHeading: string;
+};
+
+export type MembershipStorefrontPlanHighlight = {
+    tier: string;
+    images: string;
+    videos: string;
+};
+
+export type MembershipStorefrontGenerationColumn = { key: string; label: string };
+
+export type MembershipStorefrontGenerationRow = {
+    model: string;
+    icon: string;
+    unit: string;
+    values: string[];
+};
+
+export type MembershipStorefrontGenerationSection = {
+    title: string;
+    rows: MembershipStorefrontGenerationRow[];
+};
+
+export type MembershipStorefrontFAQ = { question: string; answer: string };
+
+export type MembershipStorefrontSetting = {
+    promotion: MembershipStorefrontPromotion;
+    copy: MembershipStorefrontCopy;
+    activities: MembershipStorefrontActivity[];
+    commonFeatures: string[];
+    exclusiveFeatures: string[];
+    planHighlights: MembershipStorefrontPlanHighlight[];
+    generationColumns: MembershipStorefrontGenerationColumn[];
+    generationSections: MembershipStorefrontGenerationSection[];
+    generationFootnote: string;
+    membershipNotes: string[];
+    faqs: MembershipStorefrontFAQ[];
+};
+
+export type MembershipStorefront = {
+    presentation: MembershipStorefrontSetting;
+    plans: MembershipPlan[];
+    serverNow: string;
+    updatedAt?: string;
+};
+
+export function getMembershipStorefront() {
+    return request<MembershipStorefront>(api.get("/membership/storefront"));
+}
+
 export function listMembershipPlans() {
     return request<MembershipPlan[]>(api.get("/membership/plans"));
 }
@@ -113,6 +182,14 @@ export function createTeam(name: string) {
 
 export function listAdminMembershipPlans() {
     return request<MembershipPlan[]>(api.get("/admin/membership/plans"));
+}
+
+export function getAdminMembershipStorefront() {
+    return request<MembershipStorefront>(api.get("/admin/membership/storefront"));
+}
+
+export function updateAdminMembershipStorefront(input: MembershipStorefrontSetting) {
+    return request<MembershipStorefront>(api.put("/admin/membership/storefront", input));
 }
 
 export type UpdateMembershipPlanInput = {

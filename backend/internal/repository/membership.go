@@ -63,6 +63,18 @@ func (r *Repository) SaveMembershipPlan(plan *model.MembershipPlan, audit *model
 	})
 }
 
+func (r *Repository) SaveMembershipStorefrontSetting(setting *model.SystemSetting, audit *model.AdminAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(setting).Error; err != nil {
+			return err
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
+	})
+}
+
 func (r *Repository) MembershipOrders(userID string, limit int, offset int) ([]model.MembershipOrder, int64, error) {
 	var items []model.MembershipOrder
 	var total int64
