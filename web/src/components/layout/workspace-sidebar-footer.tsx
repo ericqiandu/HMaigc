@@ -1,15 +1,14 @@
-import { App, Popover, Switch } from "antd";
+import { Popover, Switch } from "antd";
 import { BookOpenCheck, ChevronRight, Coins, Gem, LogIn, LogOut, Moon, Settings2, ShieldCheck, Sun, UserRound, UsersRound, Zap } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 
+import { useConfirmLogout } from "@/components/auth/use-confirm-logout";
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { useMembershipAction } from "@/hooks/use-membership-action";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
-import { applyUserSession } from "@/lib/user-session";
 import { cn } from "@/lib/utils";
-import { logout } from "@/services/api/auth";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
@@ -25,24 +24,11 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
     const setTheme = useThemeStore((state) => state.setTheme);
     const user = useUserStore((state) => state.user);
     const hydrated = useUserStore((state) => state.hydrated);
-    const navigate = useNavigate();
-    const { message } = App.useApp();
+    const confirmLogout = useConfirmLogout();
     const [menuOpen, setMenuOpen] = useState(false);
     const { availableMicrocredits } = useWalletBalance(user?.id, true);
     const membershipAction = useMembershipAction(user?.id);
     const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
-
-    const handleLogout = async () => {
-        try {
-            await logout();
-            await applyUserSession({ user: null, systemChannels: [] });
-            setMenuOpen(false);
-            message.success("已退出登录");
-            navigate("/login", { replace: true });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "退出失败");
-        }
-    };
 
     if (!hydrated) return <div className={cn("animate-pulse rounded-md bg-foreground/[.035]", compact ? "h-8 w-24" : "h-24")} />;
 
@@ -102,7 +88,14 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                                     <span className="workspace-account-popover-theme-label ml-2 flex-1 text-xs text-foreground/65">深色模式</span>
                                     <Switch className="workspace-account-popover-theme-switch" size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
                                 </div>
-                                <button type="button" className="workspace-account-popover-logout flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-red-500/[.08] hover:text-red-600" onClick={() => void handleLogout()}>
+                                <button
+                                    type="button"
+                                    className="workspace-account-popover-logout flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-red-500/[.08] hover:text-red-600"
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        confirmLogout();
+                                    }}
+                                >
                                     <LogOut className="workspace-account-popover-logout-icon size-3.5" />
                                     <span className="workspace-account-popover-logout-label">退出登录</span>
                                 </button>

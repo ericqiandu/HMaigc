@@ -1,21 +1,19 @@
-import { App, Popover, Switch } from "antd";
+import { Popover, Switch } from "antd";
 import { ChevronDown, Coins, LogOut, Settings2, ShieldCheck, Stamp, UserPlus, UserRound, Zap } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 
+import { useConfirmLogout } from "@/components/auth/use-confirm-logout";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { useMembershipAction } from "@/hooks/use-membership-action";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
 import type { MembershipAction } from "@/lib/membership-action";
-import { applyUserSession } from "@/lib/user-session";
-import { logout } from "@/services/api/auth";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import { openReferralCenter, ReferralRewardCenter } from "./referral-reward-center";
 
 export function UpdreamAccountActions() {
-    const { message } = App.useApp();
-    const navigate = useNavigate();
+    const confirmLogout = useConfirmLogout();
     const hydrated = useUserStore((state) => state.hydrated);
     const user = useUserStore((state) => state.user);
     const theme = useThemeStore((state) => state.theme);
@@ -24,18 +22,6 @@ export function UpdreamAccountActions() {
     const { availableMicrocredits } = useWalletBalance(user?.id, Boolean(user));
     const membershipAction = useMembershipAction(user?.id);
     const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
-
-    const handleLogout = async () => {
-        try {
-            await logout();
-            await applyUserSession({ user: null, systemChannels: [] });
-            setMenuOpen(false);
-            message.success("已退出登录");
-            navigate("/login", { replace: true });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "退出失败");
-        }
-    };
 
     const handleInvite = () => {
         setMenuOpen(false);
@@ -81,7 +67,21 @@ export function UpdreamAccountActions() {
                     placement="bottomRight"
                     open={menuOpen}
                     onOpenChange={setMenuOpen}
-                    content={<AccountMenu user={user} balance={balance} membershipAction={membershipAction} theme={theme} setTheme={setTheme} close={() => setMenuOpen(false)} invite={() => void handleInvite()} logout={() => void handleLogout()} />}
+                    content={
+                        <AccountMenu
+                            user={user}
+                            balance={balance}
+                            membershipAction={membershipAction}
+                            theme={theme}
+                            setTheme={setTheme}
+                            close={() => setMenuOpen(false)}
+                            invite={() => void handleInvite()}
+                            logout={() => {
+                                setMenuOpen(false);
+                                confirmLogout();
+                            }}
+                        />
+                    }
                 >
                     <button type="button" className="updream-account-trigger flex h-8 items-center gap-1 pl-1 pr-1.5 text-left transition-opacity hover:opacity-75" aria-label={`打开 ${user.displayName || user.username} 的账户菜单`}>
                         <UpdreamUserAvatar user={user} className="size-7" />

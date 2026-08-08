@@ -1,0 +1,96 @@
+.account-logout-confirm .ant-modal {
+    max-width: calc(100vw - (var(--space-4) * 2));
+}
+
+.account-logout-confirm .ant-modal-content,
+.account-logout-confirm .ant-modal-container {
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-lg);
+}
+
+.account-logout-confirm .ant-modal-confirm-body-wrapper {
+    padding: 0;
+}
+
+.account-logout-confirm .ant-modal-confirm-body {
+    padding: var(--space-5) var(--space-5) var(--space-2);
+}
+
+.account-logout-confirm .ant-modal-confirm-title {
+    color: var(--text-secondary);
+    font-family: var(--font-family-sans);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    line-height: 1.5;
+}
+
+.account-logout-confirm .ant-modal-confirm-content {
+    margin: 0;
+}
+
+.account-logout-confirm .ant-modal-confirm-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+    padding: 0 var(--space-4) var(--space-4);
+}
+
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn {
+    min-width: 72px;
+    min-height: 36px;
+    margin: 0;
+    border-radius: var(--radius-xs);
+    box-shadow: none;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+}
+
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn-default {
+    border-color: var(--border-default);
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn-default:hover,
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn-default:focus-visible {
+    border-color: var(--border-active);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn-primary {
+    border-color: transparent;
+    background: var(--brand-primary);
+    color: var(--text-on-brand);
+}
+
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn-primary:hover,
+.account-logout-confirm .ant-modal-confirm-btns .ant-btn-primary:focus-visible {
+    border-color: transparent;
+    background: var(--brand-hover);
+    color: var(--text-on-brand);
+}
+
+@media (max-width: 639px) {
+    .account-logout-confirm .ant-modal {
+        max-width: calc(100vw - (var(--space-3) * 2));
+    }
+
+    .account-logout-confirm .ant-modal-confirm-btns .ant-btn {
+        min-height: 44px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-logout-confirm,
+    .account-logout-confirm * {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
