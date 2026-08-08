@@ -18,18 +18,21 @@ describe("account logout confirmation", () => {
     test("only executes logout from the explicit confirm action", () => {
         expect(logoutHookSource).toContain("modal.confirm({");
         expect(logoutHookSource).toContain('title: "您确定要退出登录吗？"');
-        expect(logoutHookSource).toContain('okText: "确认退出"');
-        expect(logoutHookSource).toContain('cancelText: "取消"');
-        expect(logoutHookSource).toContain('autoFocusButton: "cancel"');
+        expect(logoutHookSource).toContain('okText: createElement("span", null, "确", "认")');
+        expect(logoutHookSource).toContain('cancelText: createElement("span", null, "取", "消")');
+        expect(logoutHookSource).toContain("autoFocusButton: null");
         expect(logoutHookSource.match(/await logout\(\)/g)).toHaveLength(1);
         expect(logoutHookSource.indexOf("await logout()")).toBeGreaterThan(logoutHookSource.indexOf("onOk: async"));
     });
 
     test("uses semantic theme tokens and preserves mobile touch targets", () => {
-        expect(logoutStyles).toContain("background: var(--bg-surface)");
+        expect(logoutStyles).toContain("background: var(--bg-tertiary)");
         expect(logoutStyles).toContain("color: var(--text-secondary)");
-        expect(logoutStyles).toContain("background: var(--brand-primary)");
+        expect(logoutStyles).toContain("padding: 0");
+        expect(logoutStyles).toContain("min-width: 52px");
+        expect(logoutStyles).toContain("background: color-mix(in srgb, var(--text-primary) 92%, transparent)");
         expect(logoutStyles).toContain("@media (max-width: 639px)");
+        expect(logoutStyles).toContain("flex: 1");
         expect(logoutStyles).toContain("min-height: 44px");
         expect(logoutStyles).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     });

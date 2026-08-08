@@ -1,5 +1,5 @@
 import { App } from "antd";
-import { useCallback } from "react";
+import { createElement, useCallback } from "react";
 import { useNavigate } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
@@ -15,12 +15,12 @@ export function useConfirmLogout() {
         modal.confirm({
             rootClassName: "account-logout-confirm",
             centered: true,
-            width: 400,
+            width: 344,
             icon: null,
             title: "您确定要退出登录吗？",
-            okText: "确认退出",
-            cancelText: "取消",
-            autoFocusButton: "cancel",
+            okText: createElement("span", null, "确", "认"),
+            cancelText: createElement("span", null, "取", "消"),
+            autoFocusButton: null,
             keyboard: true,
             maskClosable: true,
             onOk: async () => {
