@@ -59,6 +59,7 @@
         "postcss": "^8.5.19",
         "postcss-selector-parser": "^7.1.1",
         "prettier": "^3.9.5",
+        "puppeteer-core": "25.4.0",
         "typescript": "^7.0.2",
         "vite": "^8.1.5",
       },

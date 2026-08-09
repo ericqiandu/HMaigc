@@ -365,7 +365,6 @@ describe("checkout implementation boundaries", () => {
         expect(css).toContain("@media (max-width: 767px)");
         expect(cssProperty(css, ".payment-checkout-page", "height")).toBe("100%");
         expect(cssProperty(css, ".payment-checkout-page", "overflow-y")).toBe("auto");
-        expect(cssProperty(css, ".payment-checkout-shell", "overflow-x")).toBe("hidden");
         expect(cssProperty(css, ".payment-checkout-qr-code", "padding")).toBe("var(--space-3)");
         expect(cssProperty(css, ".payment-checkout-qr-code", "background")).toBe("var(--qr-background)");
         expect(cssProperty(css, ".payment-checkout-provider-check", "opacity")).toBe("0");

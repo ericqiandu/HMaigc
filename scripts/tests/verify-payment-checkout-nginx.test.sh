@@ -218,6 +218,7 @@ run_case edge success "$repo_root/deploy/nginx/hmaigc.conf.example" 80
 run_case edge failure "$repo_root/deploy/nginx/hmaigc.conf.example" 80
 
 failed=0
+checkout_csp="default-src 'self'; base-uri 'self'; connect-src 'self' https: wss: blob: data:; font-src 'self' data: https://static.hmaigc.ai; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; script-src 'self' 'sha256-I6LPtG0ZaWWZjaqo01/h/CYOOBc9+Ljxd5XeZLu6aEI=' 'sha256-zf//CZlNtBsdfnnVuMsQm4ACjMfCcJk7E/v9zZbYc+A=' 'wasm-unsafe-eval' https://static.hmaigc.ai; style-src 'self' 'unsafe-inline' https://static.hmaigc.ai; worker-src 'self' blob:"
 assert_single_header() {
   local headers="$1"
   local header_name="$2"
@@ -248,6 +249,10 @@ for headers in "$tmp_dir"/*.headers; do
   assert_single_header "$headers" "Cache-Control" "private, no-store"
   assert_single_header "$headers" "Pragma" "no-cache"
   assert_single_header "$headers" "Referrer-Policy" "no-referrer"
+done
+
+for headers in "$tmp_dir"/inner-*.headers; do
+  assert_single_header "$headers" "Content-Security-Policy" "$checkout_csp"
 done
 
 if ! grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)' "$tmp_dir/inner-failure-pay.headers"; then
