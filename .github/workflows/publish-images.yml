@@ -34,8 +34,11 @@ jobs:
         working-directory: backend
         run: go test ./...
 
-      - name: Test payment integrity with PostgreSQL and Redis
-        run: bash scripts/tests/run-payment-integration.sh --run 'Test.*(PaymentIntegrity|MembershipOrderIdempotency|PaymentCheckoutSession)'
+      - name: Test payment integration runner contract
+        run: bash scripts/tests/run-payment-integration.test.sh
+
+      - name: Test payments with PostgreSQL and Redis
+        run: bash scripts/tests/run-payment-integration.sh --all
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -60,9 +63,14 @@ jobs:
           HMAIGC_VERSION: v0.0.0-ci
           HMAIGC_OPS_VERSION: v0.0.0-ci
           POSTGRES_PASSWORD: ci-only-password
+          CANVAS_DATABASE_DRIVER: sqlite
+          DATABASE_URL: ""
+          REDIS_URL: ""
+          CANVAS_DATA_PATH: ./.local/ci-data
           CANVAS_ENVIRONMENT: production
           CANVAS_CORS_ORIGINS: https://ci.example.invalid
         run: |
+          docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.production.yml config -q
           docker compose -f deploy/docker-compose.ops.yml config -q
 

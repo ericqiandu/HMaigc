@@ -4,14 +4,25 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose_file="$repo_root/deploy/tests/docker-compose.payment-integration.yml"
 run_pattern='Test.*(PaymentIntegrity|MembershipOrderIdempotency|PaymentCheckoutSession)'
+run_all=false
+run_pattern_overridden=false
 
 while (($# > 0)); do
     case "$1" in
         --run)
             (($# >= 2)) || { echo "--run requires a Go test pattern" >&2; exit 2; }
+			[[ "$run_all" == false ]] || { echo "--all and --run are mutually exclusive" >&2; exit 2; }
+			[[ "$run_pattern_overridden" == false ]] || { echo "--run may only be specified once" >&2; exit 2; }
             run_pattern="$2"
+			run_pattern_overridden=true
             shift 2
             ;;
+		--all)
+			[[ "$run_pattern_overridden" == false ]] || { echo "--all and --run are mutually exclusive" >&2; exit 2; }
+			[[ "$run_all" == false ]] || { echo "--all may only be specified once" >&2; exit 2; }
+			run_all=true
+			shift
+			;;
         *)
             echo "unknown argument: $1" >&2
             exit 2
@@ -47,4 +58,14 @@ export REDIS_URL="redis://127.0.0.1:${redis_port}/0"
 export CANVAS_REQUIRE_INTEGRATION_TESTS=1
 
 cd "$repo_root/backend"
-go test ./internal/database ./internal/repository ./internal/service --run "$run_pattern" -count=1
+go_test_arguments=(
+	test
+	./internal/database
+	./internal/repository
+	./internal/service
+)
+if [[ "$run_all" == false ]]; then
+	go_test_arguments+=(--run "$run_pattern")
+fi
+go_test_arguments+=(-count=1)
+go "${go_test_arguments[@]}"
