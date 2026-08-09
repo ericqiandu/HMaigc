@@ -79,6 +79,10 @@
         min-height: 44px;
     }
 
+    .site-account-upgrade {
+        min-width: 44px;
+    }
+
     .site-account-upgrade,
     .site-account-auth {
         padding-right: 13px;

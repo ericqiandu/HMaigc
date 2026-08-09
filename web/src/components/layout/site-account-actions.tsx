@@ -35,7 +35,7 @@ export function SiteAccountActions(): JSX.Element {
     if (!user) {
         return (
             <div className="site-account-guest flex items-center gap-2">
-                <Link to="/membership" className="site-account-upgrade flex items-center gap-1.5 rounded-full px-4 text-[13px] font-medium transition-colors">
+                <Link to="/membership" className="site-account-upgrade flex items-center gap-1.5 rounded-full px-4 text-[13px] font-medium transition-colors" aria-label="升级会员">
                     <MembershipIcon className="site-account-upgrade-icon size-4" />
                     <span className="site-account-upgrade-label">升级会员</span>
                 </Link>

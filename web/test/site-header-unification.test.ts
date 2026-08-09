@@ -38,6 +38,16 @@ describe("site header unification", () => {
         expect(source).not.toContain("Gem");
     });
 
+    test("hidden guest membership copy keeps an accessible link name", async () => {
+        const source = await sharedAccount.text();
+        expect(source).toMatch(/<Link to="\/membership" className="site-account-upgrade[^"]*" aria-label="升级会员">/);
+    });
+
+    test("guest membership action keeps a square mobile touch target", async () => {
+        const styles = await sharedAccountStyles.text();
+        expect(styles).toMatch(/@media \(max-width: 520px\)[\s\S]*\.site-account-upgrade\s*\{[^}]*min-width: 44px/);
+    });
+
     test("shared account actions keep desktop density and mobile touch targets", async () => {
         const styles = await sharedAccountStyles.text();
         expect(styles).toContain("height: var(--space-7)");
