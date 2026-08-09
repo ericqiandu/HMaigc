@@ -40,6 +40,9 @@ describe("site header unification", () => {
         expect(styles).toContain("height: var(--space-7)");
         expect(styles).toContain("@media (max-width: 520px)");
         expect(styles).toContain("min-height: 44px");
+        expect(styles).toContain("z-index: var(--layer-header)");
+        expect(styles).toContain("border: 1px solid var(--border-light)");
+        expect(styles).not.toContain("box-shadow:");
         expect(styles).not.toContain("#172033");
         expect(styles).not.toContain("#ffffff");
     });
