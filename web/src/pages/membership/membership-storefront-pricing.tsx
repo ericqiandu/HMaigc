@@ -9,7 +9,6 @@ type MembershipStorefrontPricingProps = {
     allPlans: MembershipPlan[];
     audience: MembershipAudience;
     availableCycles: MembershipBillingCycle[];
-    currentPlanId?: string;
     cycle: MembershipBillingCycle;
     onAudienceChange: (audience: MembershipAudience) => void;
     onCycleChange: (cycle: MembershipBillingCycle) => void;
@@ -50,10 +49,9 @@ function requirePlanHighlight(presentation: MembershipStorefrontSetting, tier: s
     return highlight;
 }
 
-function planActionLabel(plan: MembershipPlan, currentPlanId?: string): string {
-    if (plan.id === currentPlanId) return "续费当前方案";
+function planActionLabel(plan: MembershipPlan): string {
     if (plan.priceCents <= 0) return "使用免费方案";
-    return plan.tier === "ultra" ? "立即升级至尊版" : "选择此方案";
+    return "立即开通";
 }
 
 function cycleOfferLabel(allPlans: MembershipPlan[], audience: MembershipAudience, cycle: MembershipBillingCycle): string {
@@ -63,11 +61,11 @@ function cycleOfferLabel(allPlans: MembershipPlan[], audience: MembershipAudienc
     return discountedPlans[0] ? (discountLabel(discountedPlans[0]) ?? "优惠订阅") : cycle === "year" ? "年度优惠" : "灵活订阅";
 }
 
-type StorefrontPlanCardProps = Pick<MembershipStorefrontPricingProps, "allPlans" | "currentPlanId" | "onPurchase" | "onSeatsChange" | "presentation" | "teamSeats"> & {
+type StorefrontPlanCardProps = Pick<MembershipStorefrontPricingProps, "allPlans" | "onPurchase" | "onSeatsChange" | "presentation" | "teamSeats"> & {
     plan: MembershipPlan;
 };
 
-function StorefrontPlanCard({ allPlans, currentPlanId, onPurchase, onSeatsChange, plan, presentation, teamSeats }: StorefrontPlanCardProps) {
+function StorefrontPlanCard({ allPlans, onPurchase, onSeatsChange, plan, presentation, teamSeats }: StorefrontPlanCardProps) {
     const seats = clampSeats(plan, teamSeats[plan.id] ?? plan.minSeats);
     const featured = plan.tier === "ultra";
     const highlight = requirePlanHighlight(presentation, plan.tier);
@@ -125,7 +123,7 @@ function StorefrontPlanCard({ allPlans, currentPlanId, onPurchase, onSeatsChange
                 onClick={() => onPurchase(plan, seats)}
                 type="button"
             >
-                {planActionLabel(plan, currentPlanId)}
+                {planActionLabel(plan)}
             </button>
 
             {presentation.activities.length ? (
@@ -176,7 +174,7 @@ function StorefrontPlanCard({ allPlans, currentPlanId, onPurchase, onSeatsChange
 }
 
 export function MembershipStorefrontPricing(props: MembershipStorefrontPricingProps) {
-    const { allPlans, audience, availableCycles, currentPlanId, cycle, onAudienceChange, onCycleChange, onOpenWallet, onPurchase, onSeatsChange, plans, presentation, teamSeats } = props;
+    const { allPlans, audience, availableCycles, cycle, onAudienceChange, onCycleChange, onOpenWallet, onPurchase, onSeatsChange, plans, presentation, teamSeats } = props;
     return (
         <section aria-label="会员套餐" className="membership-storefront-pricing mx-auto max-w-[1300px] px-6">
             <div className="membership-storefront-audience-tabs mt-10 flex justify-center gap-14 border-b border-[#1d2530]" role="tablist">
@@ -232,7 +230,7 @@ export function MembershipStorefrontPricing(props: MembershipStorefrontPricingPr
 
             <div className="membership-storefront-plan-grid mt-8 grid gap-4">
                 {plans.map((plan) => (
-                    <StorefrontPlanCard allPlans={allPlans} currentPlanId={currentPlanId} key={plan.id} onPurchase={onPurchase} onSeatsChange={onSeatsChange} plan={plan} presentation={presentation} teamSeats={teamSeats} />
+                    <StorefrontPlanCard allPlans={allPlans} key={plan.id} onPurchase={onPurchase} onSeatsChange={onSeatsChange} plan={plan} presentation={presentation} teamSeats={teamSeats} />
                 ))}
             </div>
 

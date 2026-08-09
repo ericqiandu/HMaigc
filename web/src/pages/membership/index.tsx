@@ -232,7 +232,6 @@ export default function MembershipPage() {
                         allPlans={plans}
                         audience={audience}
                         availableCycles={availableCycles}
-                        currentPlanId={overview?.entitlement.planId}
                         cycle={cycle}
                         onAudienceChange={selectAudience}
                         onCycleChange={setCycle}

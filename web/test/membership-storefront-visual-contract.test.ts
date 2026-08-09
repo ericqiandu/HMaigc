@@ -29,4 +29,10 @@ describe("会员商城交付稿视觉契约", () => {
         expect(storefront).toContain("overflow-x: hidden");
         expect(storefront).toContain("overflow-y: auto");
     });
+
+    test("付费套餐统一使用立即开通主操作", () => {
+        const pricing = readFileSync(resolve(root, "src/pages/membership/membership-storefront-pricing.tsx"), "utf8");
+        expect(pricing).toContain('return "立即开通"');
+        expect(pricing).not.toContain('return plan.tier === "ultra" ? "立即升级至尊版" : "选择此方案"');
+    });
 });
