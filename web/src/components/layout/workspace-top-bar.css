@@ -16,67 +16,12 @@
     padding: var(--space-3) var(--space-5);
 }
 
-.workspace-top-bar-brand,
 .workspace-top-bar-account {
     pointer-events: auto;
 }
 
-.workspace-top-bar-brand {
-    display: inline-flex;
-    min-width: 0;
-    height: var(--space-8);
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
-    border-radius: var(--radius-xs);
-    color: var(--text-primary);
-    text-decoration: none;
-    transition:
-        background-color var(--duration-fast) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard);
-}
-
-.workspace-top-bar-brand:hover {
-    background: var(--bg-hover);
-}
-
-.workspace-top-bar-brand:focus-visible {
-    outline: 2px solid var(--brand-primary);
-    outline-offset: 2px;
-}
-
-.workspace-top-bar-brand-mark {
-    display: grid;
-    width: var(--space-7);
-    height: var(--space-7);
-    flex: 0 0 auto;
-    place-items: center;
-    border-radius: var(--radius-xs);
-    background: var(--bg-hover);
-}
-
-.workspace-top-bar-brand-image {
-    display: block;
-    width: 26px;
-    height: 26px;
-    object-fit: contain;
-}
-
-.workspace-top-bar-brand[data-logo-source="custom"] .workspace-top-bar-brand-image {
-    width: 30px;
-    height: 30px;
-}
-
-.workspace-top-bar-brand-name {
-    overflow: hidden;
-    max-width: 180px;
-    font-family: var(--font-family-display);
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 22px;
-    letter-spacing: -0.02em;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.workspace-top-bar .site-brand-link {
+    pointer-events: auto;
 }
 
 .workspace-top-bar-account .workspace-account-actions {
@@ -186,15 +131,6 @@
     display: none;
 }
 
-.dark .workspace-top-bar-brand:hover,
-.dark .workspace-top-bar-brand-mark {
-    background: var(--bg-hover);
-}
-
-.dark .workspace-top-bar-brand[data-logo-source="default"] .workspace-top-bar-brand-image {
-    filter: invert(1);
-}
-
 .dark .workspace-top-bar-account .workspace-account-actions > button {
     background: var(--bg-hover);
 }
@@ -235,33 +171,6 @@
         padding: 12px 16px;
     }
 
-    .workspace-top-bar-brand {
-        height: 44px;
-        gap: 7px;
-        padding-right: 6px;
-    }
-
-    .workspace-top-bar-brand-mark {
-        width: 34px;
-        height: 34px;
-    }
-
-    .workspace-top-bar-brand-image {
-        width: 23px;
-        height: 23px;
-    }
-
-    .workspace-top-bar-brand[data-logo-source="custom"] .workspace-top-bar-brand-image {
-        width: 27px;
-        height: 27px;
-    }
-
-    .workspace-top-bar-brand-name {
-        max-width: 108px;
-        font-size: 18px;
-        line-height: 22px;
-    }
-
     .workspace-top-bar-account .workspace-account-actions {
         gap: 6px;
     }
@@ -282,10 +191,6 @@
 }
 
 @media (max-width: 420px) {
-    .workspace-top-bar-brand-name {
-        display: none;
-    }
-
     .workspace-top-bar-account-pill {
         background: transparent;
         box-shadow: none;
@@ -308,7 +213,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .workspace-top-bar-brand,
     .workspace-top-bar-balance,
     .workspace-top-bar-membership,
     .workspace-top-bar-account-trigger {
