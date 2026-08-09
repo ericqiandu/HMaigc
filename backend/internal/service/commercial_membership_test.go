@@ -444,14 +444,19 @@ func TestPaymentCheckoutProtectsOwnershipTokenAndExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.OrderID != order.ID || len(view.Providers) != 1 || view.Providers[0] != model.PaymentProviderWechat {
+	if view.OrderNumber != order.OrderNumber || view.MembershipSummary == nil || len(view.Providers) != 1 || view.Providers[0] != model.PaymentProviderWechat {
 		t.Fatalf("unexpected checkout view: %#v", view)
 	}
 	if err := db.Model(&session).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.PaymentCheckout(token)
-	requireAuthStatus(t, err, http.StatusBadRequest)
+	expiredView, err := svc.PaymentCheckout(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expiredView.CheckoutStatus != model.PaymentCheckoutExpired {
+		t.Fatalf("expired checkout view status = %s, want expired", expiredView.CheckoutStatus)
+	}
 	if err := db.First(&session, "id = ?", session.ID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -537,8 +542,8 @@ func TestPaymentCheckoutRemainsReadableAfterSuccessfulPayment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Status != model.MembershipOrderPaid {
-		t.Fatalf("checkout status = %s, want paid", view.Status)
+	if view.OrderStatus != string(model.MembershipOrderPaid) || view.CheckoutStatus != model.PaymentCheckoutConsumed {
+		t.Fatalf("checkout statuses = order:%s checkout:%s, want paid/consumed", view.OrderStatus, view.CheckoutStatus)
 	}
 	if _, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat}); err == nil {
 		t.Fatal("consumed checkout unexpectedly created another transaction")

@@ -74,6 +74,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 	})
 
 	r.GET("/payments/checkout/:token", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
 		result, err := svc.PaymentCheckout(c.Param("token"))
 		if err != nil {
 			failService(c, err)

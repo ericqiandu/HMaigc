@@ -28,7 +28,7 @@ const (
 	PaymentWebhookRejected  PaymentWebhookStatus = "rejected"
 )
 
-// PaymentCheckoutSession 保存统一收银台入口的哈希令牌，原始令牌只返回给创建者。
+// PaymentCheckoutSession 以哈希校验 bearer token，并以绑定订单事实的密文支持所有者恢复同一链接。
 type PaymentCheckoutSession struct {
 	ID          string                `json:"id" gorm:"primaryKey;size:36"`
 	OrderType   PaymentOrderType      `json:"orderType" gorm:"index;size:24;default:membership"`

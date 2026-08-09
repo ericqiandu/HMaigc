@@ -65,7 +65,8 @@ export type UpdatePaymentSettingInput = {
 };
 
 export type PaymentProvider = "wechat" | "alipay";
-export type MembershipOrderStatus = "pending" | "paid" | "cancelled" | "expired" | "refunded";
+export type PaymentOrderStatus = "pending" | "paid" | "cancelled" | "refunded";
+export type PaymentCheckoutStatus = "active" | "expired" | "consumed";
 export type PaymentTransactionStatus = "created" | "pending" | "paid" | "closed" | "failed" | "refunded";
 export type PaymentWebhookStatus = "received" | "processed" | "rejected";
 
@@ -108,16 +109,55 @@ export type CreatePaymentCheckoutResult = {
     expiresAt: string;
 };
 
-export type PaymentCheckout = {
-    orderId: string;
-    orderType: "membership" | "credit_topup";
+export type MembershipCheckoutSummary = {
+    audience: "personal" | "team";
+    code: string;
+    name: string;
+    tier: string;
+    billingCycle: "month" | "year";
+    seats: number;
+    actualPriceCents: number;
+    originalPriceCents: number;
+    creditsPerPeriod: number;
+    totalCreditsPerPeriod: number;
+};
+
+export type CreditTopupCheckoutSummary = {
+    actualPriceCents: number;
+    totalMicrocredits: number;
+};
+
+export type PaymentCheckoutActiveTransaction = {
+    provider: PaymentProvider;
+    status: "pending";
+    codeUrl: string;
+    expiresAt: string;
+};
+
+type PaymentCheckoutBase = {
     orderNumber: string;
-    amountCents: number;
+    orderStatus: PaymentOrderStatus;
+    checkoutStatus: PaymentCheckoutStatus;
     currency: string;
-    status: MembershipOrderStatus;
+    serverNow: string;
     expiresAt: string;
     providers: PaymentProvider[];
+    activeTransaction?: PaymentCheckoutActiveTransaction;
 };
+
+export type MembershipPaymentCheckout = PaymentCheckoutBase & {
+    orderType: "membership";
+    membershipSummary: MembershipCheckoutSummary;
+    creditTopupSummary?: never;
+};
+
+export type CreditTopupPaymentCheckout = PaymentCheckoutBase & {
+    orderType: "credit_topup";
+    membershipSummary?: never;
+    creditTopupSummary: CreditTopupCheckoutSummary;
+};
+
+export type PaymentCheckout = MembershipPaymentCheckout | CreditTopupPaymentCheckout;
 
 export type AdminPaymentPage<T> = {
     items: T[];
@@ -151,5 +191,5 @@ export function getPaymentCheckout(token: string) {
 }
 
 export function createPaymentTransaction(token: string, provider: PaymentProvider) {
-    return request<PaymentTransaction>(api.post(`/payments/checkout/${encodeURIComponent(token)}/transactions`, { provider }));
+    return request<PaymentCheckoutActiveTransaction>(api.post(`/payments/checkout/${encodeURIComponent(token)}/transactions`, { provider }));
 }

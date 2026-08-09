@@ -39,11 +39,20 @@ type PaymentWebhookFilter struct {
 	Offset   int
 }
 
-func (r *Repository) SavePaymentCheckoutSession(session *model.PaymentCheckoutSession) error {
-	return r.db.Clauses(clause.OnConflict{
+func (r *Repository) PaymentCheckoutSessionByOrderID(orderID string) (*model.PaymentCheckoutSession, error) {
+	var session model.PaymentCheckoutSession
+	return &session, r.db.First(&session, "order_id = ?", orderID).Error
+}
+
+// CreateOrGetPaymentCheckoutSession 只允许首个候选成为订单的收银台事实，冲突调用读取胜者且绝不覆盖。
+func (r *Repository) CreateOrGetPaymentCheckoutSession(candidate *model.PaymentCheckoutSession) (*model.PaymentCheckoutSession, error) {
+	if err := r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "order_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"order_type", "token_hash", "status", "expires_at", "updated_at"}),
-	}).Create(session).Error
+		DoNothing: true,
+	}).Create(candidate).Error; err != nil {
+		return nil, err
+	}
+	return r.PaymentCheckoutSessionByOrderID(candidate.OrderID)
 }
 
 func (r *Repository) PaymentCheckoutSessionByTokenHash(tokenHash string) (*model.PaymentCheckoutSession, error) {
@@ -75,6 +84,15 @@ func (r *Repository) LatestPaymentTransaction(orderID string, provider model.Pay
 	err := r.db.Where("order_id = ? AND provider = ?", orderID, provider).
 		Order("created_at desc").
 		First(&transaction).Error
+	return &transaction, err
+}
+
+func (r *Repository) ActivePaymentTransaction(orderType model.PaymentOrderType, orderID string, now time.Time) (*model.PaymentTransaction, error) {
+	var transaction model.PaymentTransaction
+	err := r.db.Where(
+		"order_type = ? AND order_id = ? AND status = ? AND code_url <> ? AND expires_at > ?",
+		orderType, orderID, model.PaymentTransactionPending, "", now,
+	).Order("created_at desc").First(&transaction).Error
 	return &transaction, err
 }
 

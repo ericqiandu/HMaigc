@@ -309,11 +309,15 @@ func (s *Service) CreateMembershipOrder(user *model.User, req CreateMembershipOr
 	if err != nil {
 		return nil, err
 	}
+	totalPriceCents, err := checkedInt64Product(plan.PriceCents, int64(seats), "会员订单总价")
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
 	order := &model.MembershipOrder{
 		ID: newID(), OrderNumber: "M" + time.Now().Format("20060102150405") + strings.ToUpper(newID()[:6]),
 		UserID: user.ID, IdempotencyKey: idempotencyKey, RequestHash: requestHash,
 		TeamID: teamID, PlanID: plan.ID, Seats: seats, UnitPriceCents: plan.PriceCents,
-		TotalPriceCents: plan.PriceCents * int64(seats), Currency: plan.Currency,
+		TotalPriceCents: totalPriceCents, Currency: plan.Currency,
 		Status: model.MembershipOrderPending, PlanSnapshotJSON: string(snapshot),
 	}
 	winner, err := s.repo.CreateMembershipOrder(order)
@@ -497,10 +501,11 @@ func (s *Service) AdminConfirmMembershipOrder(actor *model.User, id string, req 
 }
 
 func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, actorID string, now time.Time) (repository.MembershipActivation, error) {
-	plan, err := membershipPlanFromOrderSnapshot(order)
+	facts, err := validatedMembershipOrderSnapshot(order)
 	if err != nil {
 		return repository.MembershipActivation{}, err
 	}
+	plan := &facts.Plan
 	start := now
 	latestEnd, err := s.repo.LatestMembershipSubscriptionEnd(order.UserID, order.TeamID, now)
 	if err != nil {
@@ -519,7 +524,7 @@ func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, ac
 		StartsAt: start, EndsAt: &end, CreatedAt: now, UpdatedAt: now,
 	}
 	activation := repository.MembershipActivation{Subscription: subscription}
-	grant := plan.CreditsPerPeriod * int64(order.Seats)
+	grant := facts.TotalCreditsPerPeriod
 	if grant > 0 && !start.After(now) {
 		reference := "membership-order:" + order.ID
 		activation.MembershipLedger = &model.CreditLedgerEntry{
@@ -617,7 +622,10 @@ func (s *Service) reconcileMembershipLifecycle(now time.Time) error {
 		if parseErr != nil {
 			return parseErr
 		}
-		grant := plan.CreditsPerPeriod * int64(subscription.Seats)
+		grant, multiplyErr := checkedInt64Product(plan.CreditsPerPeriod, int64(subscription.Seats), "会员订阅周期积分")
+		if multiplyErr != nil {
+			return fmt.Errorf("会员订阅 %s: %w", subscription.ID, multiplyErr)
+		}
 		if grant <= 0 {
 			continue
 		}
@@ -650,18 +658,9 @@ func membershipPlanFromSubscriptionSnapshot(order *model.MembershipOrder) (*mode
 }
 
 func membershipPlanFromOrderSnapshot(order *model.MembershipOrder) (*model.MembershipPlan, error) {
-	if order == nil {
-		return nil, errors.New("会员订单不能为空")
-	}
-	if strings.TrimSpace(order.PlanSnapshotJSON) == "" {
-		return nil, fmt.Errorf("会员订单 %s 缺少套餐快照，禁止开通权益", order.ID)
-	}
-	var snapshot model.MembershipPlan
-	if err := json.Unmarshal([]byte(order.PlanSnapshotJSON), &snapshot); err != nil {
-		return nil, fmt.Errorf("会员订单 %s 的套餐快照损坏: %w", order.ID, err)
-	}
-	if snapshot.ID == "" || snapshot.ID != order.PlanID {
-		return nil, fmt.Errorf("会员订单 %s 的套餐快照与订单套餐不一致", order.ID)
+	snapshot, err := parseMembershipOrderPlanSnapshot(order)
+	if err != nil {
+		return nil, err
 	}
 	if snapshot.PriceCents != order.UnitPriceCents || snapshot.Currency != order.Currency {
 		return nil, fmt.Errorf("会员订单 %s 的套餐快照金额或币种与订单不一致", order.ID)
@@ -672,7 +671,7 @@ func membershipPlanFromOrderSnapshot(order *model.MembershipOrder) (*model.Membe
 	if snapshot.CreditsPerPeriod < 0 || snapshot.ImageConcurrency < 1 || snapshot.VideoConcurrency < 1 {
 		return nil, fmt.Errorf("会员订单 %s 的套餐快照权益无效", order.ID)
 	}
-	return &snapshot, nil
+	return snapshot, nil
 }
 
 func normalizePage(page int, limit int) (int, int) {
