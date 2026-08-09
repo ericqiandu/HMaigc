@@ -309,7 +309,7 @@ func TestPaymentCheckoutExpiryCASReturnsConcurrentConsumedWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.MembershipOrder{}, &model.PaymentCheckoutSession{}, &model.PaymentTransaction{}); err != nil {
+	if err := db.AutoMigrate(&model.MembershipOrder{}, &model.PaymentCheckoutSession{}, &model.PaymentTransaction{}, &model.PaymentWebhookEvent{}); err != nil {
 		t.Fatal(err)
 	}
 	plan := model.MembershipPlan{
@@ -353,6 +353,17 @@ func TestPaymentCheckoutExpiryCASReturnsConcurrentConsumedWinner(t *testing.T) {
 		if tx.Statement.Table != "payment_checkout_sessions" || !intercepted.CompareAndSwap(false, true) {
 			return
 		}
+		executor := tx.Session(&gorm.Session{NewDB: true, SkipHooks: true})
+		if err := executor.Exec(`UPDATE membership_orders SET status = ?, paid_at = ?, updated_at = ? WHERE id = ? AND status = ?`,
+			model.MembershipOrderPaid, now.Add(time.Second), now.Add(time.Second), order.ID, model.MembershipOrderPending).Error; err != nil {
+			tx.AddError(err)
+			return
+		}
+		if err := executor.Exec(`UPDATE payment_checkout_sessions SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
+			model.PaymentCheckoutConsumed, now.Add(time.Second), session.ID, model.PaymentCheckoutActive).Error; err != nil {
+			tx.AddError(err)
+			return
+		}
 		close(enteredExpiryCAS)
 		<-releaseExpiryCAS
 	}); err != nil {
@@ -371,16 +382,6 @@ func TestPaymentCheckoutExpiryCASReturnsConcurrentConsumedWinner(t *testing.T) {
 	case <-enteredExpiryCAS:
 	case <-time.After(5 * time.Second):
 		t.Fatal("expiry CAS did not reach the test barrier")
-	}
-	if err := db.Model(&model.MembershipOrder{}).
-		Where("id = ? AND status = ?", order.ID, model.MembershipOrderPending).
-		Updates(map[string]interface{}{"status": model.MembershipOrderPaid, "paid_at": now.Add(time.Second), "updated_at": now.Add(time.Second)}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.PaymentCheckoutSession{}).
-		Where("id = ? AND status = ?", session.ID, model.PaymentCheckoutActive).
-		Updates(map[string]interface{}{"status": model.PaymentCheckoutConsumed, "updated_at": now.Add(time.Second)}).Error; err != nil {
-		t.Fatal(err)
 	}
 	release()
 

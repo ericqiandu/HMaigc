@@ -178,24 +178,6 @@ func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"items": orders, "total": total, "page": page, "limit": limit})
 	})
-	r.POST("/admin/membership/orders/:id/confirm", func(c *gin.Context) {
-		actor, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.ConfirmMembershipOrderRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		order, err := svc.AdminConfirmMembershipOrder(actor, c.Param("id"), req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, order)
-	})
 	r.POST("/admin/membership/orders/:id/close", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
 		if err != nil {

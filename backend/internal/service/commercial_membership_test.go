@@ -161,26 +161,20 @@ func TestRenewalCreditsAreGrantedExactlyOnceAtPaymentFulfillment(t *testing.T) {
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin, owner, _ := createCommercialTestUsers(t, db)
+	_, owner, _ := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
 	firstOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "renewal-first-order")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, firstOrder.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "renewal-first",
-		Note:            "首期到账",
-	}); err != nil {
+	if _, err := payMembershipOrderForTest(t, svc, db, firstOrder, "renewal-first"); err != nil {
 		t.Fatal(err)
 	}
 	secondOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "renewal-second-order")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, secondOrder.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "renewal-second",
-		Note:            "续费到账",
-	}); err != nil {
+	if _, err := payMembershipOrderForTest(t, svc, db, secondOrder, "renewal-second"); err != nil {
 		t.Fatal(err)
 	}
 	var secondSubscription model.MembershipSubscription
@@ -228,48 +222,12 @@ func TestRenewalCreditsAreGrantedExactlyOnceAtPaymentFulfillment(t *testing.T) {
 	}
 }
 
-func TestMembershipConfirmationRequiresAuditFieldsAndRemainsAtomic(t *testing.T) {
-	svc, db := newMembershipTestService(t)
-	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
-		t.Fatal(err)
-	}
-	admin, owner, _ := createCommercialTestUsers(t, db)
-	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "confirmation-audit-order")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, request := range map[string]ConfirmMembershipOrderRequest{
-		"missing trade number": {Note: "人工核验"},
-		"missing note":         {ProviderTradeNo: "trade-001"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, confirmErr := svc.AdminConfirmMembershipOrder(admin, order.ID, request)
-			requireAuthStatus(t, confirmErr, http.StatusBadRequest)
-		})
-	}
-	var stored model.MembershipOrder
-	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if stored.Status != model.MembershipOrderPending {
-		t.Fatalf("invalid confirmation changed order to %s", stored.Status)
-	}
-	var grants int64
-	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ?", owner.ID).Count(&grants).Error; err != nil {
-		t.Fatal(err)
-	}
-	if grants != 0 {
-		t.Fatalf("invalid confirmation created %d credit grants", grants)
-	}
-}
-
 func TestTeamPurchaseGrantsTeamCreditsAndMemberEntitlement(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin, owner, member := createCommercialTestUsers(t, db)
+	_, owner, member := createCommercialTestUsers(t, db)
 	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "商业制作团队"})
 	if err != nil {
 		t.Fatal(err)
@@ -279,10 +237,7 @@ func TestTeamPurchaseGrantsTeamCreditsAndMemberEntitlement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "team-trade-001",
-		Note:            "团队套餐到账",
-	}); err != nil {
+	if _, err := payMembershipOrderForTest(t, svc, db, order, "team-trade-001"); err != nil {
 		t.Fatal(err)
 	}
 	invitation, err := svc.CreateTeamInvitation(owner, team.ID, CreateTeamInvitationRequest{Email: member.Email, Role: model.TeamMemberRoleMember})
@@ -596,7 +551,7 @@ func TestPaymentPayableSameProviderReplayAndRefreshReuseOneQRWhileCrossProviderL
 		t.Fatal(err)
 	}
 	withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		return paymentTestResponse(request, http.StatusOK, `{"code_url":"weixin://wxpay/same-qr"}`, nil), nil
+		return signedWechatTestResponse(t, request, http.StatusOK, `{"code_url":"weixin://wxpay/same-qr"}`, merchantPrivate), nil
 	}))
 	token := checkoutToken(t, checkout.CheckoutURL)
 	first, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat})

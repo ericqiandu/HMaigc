@@ -302,10 +302,6 @@ export function listAdminMembershipOrders(page = 1, limit = 30) {
     return request<{ items: MembershipOrder[]; total: number; page: number; limit: number }>(api.get("/admin/membership/orders", { params: { page, limit } }));
 }
 
-export function confirmAdminMembershipOrder(id: string, input: { providerTradeNo: string; note: string }) {
-    return request<MembershipOrder>(api.post(`/admin/membership/orders/${encodeURIComponent(id)}/confirm`, input));
-}
-
 export function closeAdminMembershipOrder(id: string, input: { note: string }) {
     return request<MembershipOrder>(api.post(`/admin/membership/orders/${encodeURIComponent(id)}/close`, input));
 }

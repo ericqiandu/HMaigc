@@ -1927,7 +1927,7 @@
             padding-inline: 16px;
         }
 
-        :where(.operations-confirm-modal, .referral-admin-disqualify-modal, .admin-membership-plan-modal, .admin-membership-confirm-modal, .admin-membership-close-modal) .ant-modal-footer > .ant-btn {
+        :where(.operations-confirm-modal, .referral-admin-disqualify-modal, .admin-membership-plan-modal, .admin-membership-close-modal) .ant-modal-footer > .ant-btn {
             min-width: 0;
             min-height: 44px;
             margin-inline-start: 0;

@@ -35,3 +35,22 @@ func TestPaymentReconciliationRouteRequiresAuthenticatedAdmin(t *testing.T) {
 		t.Fatalf("anonymous reconciliation status = %d, want 401", response.Code)
 	}
 }
+
+func TestMembershipManualPaymentConfirmationRouteDoesNotExist(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.User{}, &model.Session{}); err != nil {
+		t.Fatal(err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterMembershipRoutes(router.Group("/api"), service.New(repository.New(db), t.TempDir()))
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/membership/orders/payment-1/confirm", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("manual payment confirmation status = %d, want 404 hard cut", response.Code)
+	}
+}

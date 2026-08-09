@@ -261,6 +261,244 @@ func TestPostgresPaymentPayableClaimRacingLifecycleExpiryNeverCancelsTheWinner(t
 	}
 }
 
+func TestPostgresPaymentPayableLifecycleRechecksAfterWaitingOnUncommittedClaim(t *testing.T) {
+	db := openPostgresPaymentIntegritySchema(t)
+	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	order, session := createPostgresPayableMembershipFixture(t, db, "life-snap", now)
+	if err := db.Model(&model.MembershipOrder{}).Where("id = ?", order.ID).Update("created_at", now.Add(-25*time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	releaseInsert := installPostgresInsertBarrier(t, db, "payment_transactions", "lifecycle_claim")
+	repo := New(db)
+	candidate := &model.PaymentTransaction{
+		ID: "lifecycle-post-snapshot-transaction", OrderType: model.PaymentOrderMembership,
+		OrderID: order.ID, UserID: order.UserID, Provider: model.PaymentProviderWechat,
+		MerchantOrderNo: "MLIFECYCLEPOSTSNAPSHOT", AmountCents: order.TotalPriceCents,
+		Currency: order.Currency, Status: model.PaymentTransactionCreated, ExpiresAt: &session.ExpiresAt,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	claimResult := make(chan error, 1)
+	go func() {
+		_, _, err := repo.ClaimPayablePaymentTransaction(candidate)
+		claimResult <- err
+	}()
+	waitForPostgresBlockedQuery(t, db, `INSERT INTO "payment_transactions"`)
+
+	lifecycleResult := make(chan error, 1)
+	go func() {
+		lifecycleResult <- repo.ReconcileMembershipLifecycle(now, now.Add(-24*time.Hour))
+	}()
+	// The lifecycle statement has already taken its MVCC snapshot and is now waiting on the order lock.
+	waitForPostgresBlockedQuery(t, db, `FROM "membership_orders"`)
+	releaseInsert()
+
+	if err := <-claimResult; err != nil {
+		t.Fatalf("payable claim: %v", err)
+	}
+	if err := <-lifecycleResult; err != nil {
+		t.Fatalf("membership lifecycle: %v", err)
+	}
+	var stored model.MembershipOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.MembershipOrderPending {
+		t.Fatalf("lifecycle cancelled order after waiting on committed claim: %s", stored.Status)
+	}
+	assertPostgresPaymentTransactionCount(t, db, "order_id = ?", order.ID, 1)
+}
+
+func TestPostgresPaymentVerifiedFactSerializesBeforeNewPayableClaim(t *testing.T) {
+	db := openPostgresPaymentIntegritySchema(t)
+	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	order, session := createPostgresPayableMembershipFixture(t, db, "fact-claim", now)
+	oldTransaction := &model.PaymentTransaction{
+		ID: "fact-claim-old-transaction", OrderType: model.PaymentOrderMembership,
+		OrderID: order.ID, UserID: order.UserID, Provider: model.PaymentProviderWechat,
+		MerchantOrderNo: "MFACTCLAIMOLD", AmountCents: order.TotalPriceCents, Currency: order.Currency,
+		Status: model.PaymentTransactionFailed, FailureCode: "provider_rejected", ExpiresAt: &session.ExpiresAt,
+		CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+	}
+	if err := db.Create(oldTransaction).Error; err != nil {
+		t.Fatal(err)
+	}
+	event := &model.PaymentWebhookEvent{
+		ID: "fact-claim-event", Provider: oldTransaction.Provider, ProviderEventID: "fact-claim-provider-event",
+		TransactionID: oldTransaction.ID, MerchantOrderNo: oldTransaction.MerchantOrderNo, ProviderTradeNo: "fact-claim-trade",
+		AmountCents: oldTransaction.AmountCents, Currency: oldTransaction.Currency, PaidAt: &now,
+		PayloadDigest: strings.Repeat("e", 64), Status: model.PaymentWebhookReviewRequired,
+		FailureCode: "late_payment", ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	releaseInsert := installPostgresInsertBarrier(t, db, "payment_webhook_events", "fact_record")
+	repo := New(db)
+	factResult := make(chan error, 1)
+	go func() {
+		_, _, err := repo.RecordPaymentWebhookEvent(event)
+		factResult <- err
+	}()
+	waitForPostgresBlockedQuery(t, db, `INSERT INTO "payment_webhook_events"`)
+
+	newTransaction := &model.PaymentTransaction{
+		ID: "fact-claim-new-transaction", OrderType: model.PaymentOrderMembership,
+		OrderID: order.ID, UserID: order.UserID, Provider: model.PaymentProviderAlipay,
+		MerchantOrderNo: "MFACTCLAIMNEW", AmountCents: order.TotalPriceCents, Currency: order.Currency,
+		Status: model.PaymentTransactionCreated, ExpiresAt: &session.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+	}
+	claimResult := make(chan error, 1)
+	go func() {
+		_, _, err := repo.ClaimPayablePaymentTransaction(newTransaction)
+		claimResult <- err
+	}()
+	claimErr, claimCompleted := waitForPostgresBlockedQueryOrResult(t, db, `FROM "membership_orders"`, claimResult)
+	releaseInsert()
+	if err := <-factResult; err != nil {
+		t.Fatalf("record verified fact: %v", err)
+	}
+	if !claimCompleted {
+		claimErr = <-claimResult
+	}
+	if !errors.Is(claimErr, ErrPaymentVerifiedFactExists) {
+		t.Fatalf("claim racing verified fact error = %v, want ErrPaymentVerifiedFactExists", claimErr)
+	}
+	assertPostgresPaymentTransactionCount(t, db, "order_id = ?", order.ID, 1)
+}
+
+func TestPostgresPaymentWebhookVerifiedReviewFactBlocksCancellationExpiryAndLocalClose(t *testing.T) {
+	t.Run("membership cancellation", func(t *testing.T) {
+		db := openPostgresPaymentIntegritySchema(t)
+		if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		repo, order, session, _, _ := createPostgresPaymentReviewFactFixture(t, db, "m-cancel", model.PaymentTransactionFailed, now)
+		err := repo.CloseMembershipOrder(order.ID, order.UserID, order.UserID, "cancel with verified fact", now, nil)
+		if !errors.Is(err, ErrPaymentReconciliationRequired) {
+			t.Fatalf("membership cancellation error = %v, want reconciliation required", err)
+		}
+		assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutActive)
+	})
+
+	t.Run("membership lifecycle expiry", func(t *testing.T) {
+		db := openPostgresPaymentIntegritySchema(t)
+		if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		repo, order, session, _, _ := createPostgresPaymentReviewFactFixture(t, db, "m-expiry", model.PaymentTransactionFailed, now)
+		if err := db.Model(&model.MembershipOrder{}).Where("id = ?", order.ID).Update("created_at", now.Add(-25*time.Hour)).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ReconcileMembershipLifecycle(now, now.Add(-24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutActive)
+	})
+
+	t.Run("direct checkout expiry", func(t *testing.T) {
+		db := openPostgresPaymentIntegritySchema(t)
+		if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		repo, order, session, _, _ := createPostgresPaymentReviewFactFixture(t, db, "direct-expiry", model.PaymentTransactionFailed, now)
+		if err := db.Model(&model.PaymentCheckoutSession{}).Where("id = ?", session.ID).Update("expires_at", now.Add(-time.Minute)).Error; err != nil {
+			t.Fatal(err)
+		}
+		expired, err := repo.ExpirePaymentCheckoutSession(session.ID, now)
+		if expired || !errors.Is(err, ErrPaymentVerifiedFactExists) {
+			t.Fatalf("direct checkout expiry = expired:%v err:%v, want verified fact conflict", expired, err)
+		}
+		assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutActive)
+	})
+
+	t.Run("credit cancellation", func(t *testing.T) {
+		db := openPostgresPaymentIntegritySchema(t)
+		if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		user := &model.User{ID: "credit-review-user", Username: "credit-review-user", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(user).Error; err != nil {
+			t.Fatal(err)
+		}
+		order := &model.CreditTopupOrder{
+			ID: "credit-review-order", OrderNumber: "C-CREDIT-REVIEW", UserID: user.ID, ProductID: "credit-review-product",
+			BaseMicrocredits: 100, TotalMicrocredits: 100, TotalPriceCents: 100, Currency: "CNY",
+			Status: model.CreditTopupOrderPending, ProductSnapshotJSON: `{}`, IdempotencyKey: "credit-review-key",
+			RequestHash: strings.Repeat("c", 64), CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(order).Error; err != nil {
+			t.Fatal(err)
+		}
+		session := &model.PaymentCheckoutSession{
+			ID: "credit-review-session", OrderType: model.PaymentOrderCreditTopup, OrderID: order.ID, UserID: user.ID,
+			TokenHash: strings.Repeat("d", 64), TokenCipher: "enc:v1:test", Status: model.PaymentCheckoutActive,
+			ExpiresAt: now.Add(15 * time.Minute), CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(session).Error; err != nil {
+			t.Fatal(err)
+		}
+		transaction := &model.PaymentTransaction{
+			ID: "credit-review-transaction", OrderType: model.PaymentOrderCreditTopup, OrderID: order.ID, UserID: user.ID,
+			Provider: model.PaymentProviderWechat, MerchantOrderNo: "CCREDITREVIEW", AmountCents: order.TotalPriceCents,
+			Currency: order.Currency, Status: model.PaymentTransactionFailed, FailureCode: "provider_rejected",
+			ExpiresAt: &session.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(transaction).Error; err != nil {
+			t.Fatal(err)
+		}
+		event := paymentReviewEvent(transaction, "credit-review-event", "credit-review-trade", now)
+		repo := New(db)
+		if _, created, err := repo.RecordPaymentWebhookEvent(event); err != nil || !created {
+			t.Fatalf("record credit review fact = created:%v err:%v", created, err)
+		}
+		if err := repo.CancelCreditTopupOrder(user.ID, order.ID, now); !errors.Is(err, ErrPaymentReconciliationRequired) {
+			t.Fatalf("credit cancellation error = %v, want reconciliation required", err)
+		}
+		var storedOrder model.CreditTopupOrder
+		if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if storedOrder.Status != model.CreditTopupOrderPending {
+			t.Fatalf("credit order status = %s, want pending", storedOrder.Status)
+		}
+		var storedSession model.PaymentCheckoutSession
+		if err := db.First(&storedSession, "id = ?", session.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if storedSession.Status != model.PaymentCheckoutActive {
+			t.Fatalf("credit checkout status = %s, want active", storedSession.Status)
+		}
+	})
+
+	t.Run("provider-confirmed local close", func(t *testing.T) {
+		db := openPostgresPaymentIntegritySchema(t)
+		if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		repo, order, session, transaction, _ := createPostgresPaymentReviewFactFixture(t, db, "local-close", model.PaymentTransactionPending, now)
+		err := repo.ClosePaymentTransactionAfterProviderConfirmation(transaction.ID, now, nil)
+		if !errors.Is(err, ErrPaymentVerifiedFactExists) {
+			t.Fatalf("local close error = %v, want verified fact conflict", err)
+		}
+		assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutActive)
+		var stored model.PaymentTransaction
+		if err := db.First(&stored, "id = ?", transaction.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Status != model.PaymentTransactionPending {
+			t.Fatalf("transaction status = %s, want pending", stored.Status)
+		}
+	})
+}
+
 func TestPostgresPaymentPayableClaimRejectsAlreadyPaidTransaction(t *testing.T) {
 	db := openPostgresPaymentIntegritySchema(t)
 	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
@@ -339,18 +577,24 @@ func TestPostgresPaymentFulfillmentSerializesMembershipSubjectAndGrantsBothOrder
 				t.Fatal(err)
 			}
 			teamID := ""
+			orderUserIDs := []string{user.ID, user.ID}
 			if subject == "team" {
 				teamID = "team-subject"
 				if err := db.Create(&model.Team{ID: teamID, OwnerUserID: user.ID, Name: "Team", Status: model.TeamStatusActive, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 					t.Fatal(err)
 				}
+				secondBuyer := &model.User{ID: "team-second-buyer", Username: "team-second-buyer", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: now, UpdatedAt: now}
+				if err := db.Create(secondBuyer).Error; err != nil {
+					t.Fatal(err)
+				}
+				orderUserIDs[1] = secondBuyer.ID
 			}
 			repo := New(db)
 			fulfillments := make([]PaymentFulfillment, 0, 2)
 			for index := 0; index < 2; index++ {
 				orderID := fmt.Sprintf("%s-fulfillment-order-%d", subject, index)
 				order := &model.MembershipOrder{
-					ID: orderID, OrderNumber: fmt.Sprintf("M-%s-%d", strings.ToUpper(subject), index), UserID: user.ID,
+					ID: orderID, OrderNumber: fmt.Sprintf("M-%s-%d", strings.ToUpper(subject), index), UserID: orderUserIDs[index],
 					IdempotencyKey: fmt.Sprintf("%s-fulfillment-key-%d", subject, index), RequestHash: strings.Repeat(fmt.Sprint(index+1), 64),
 					TeamID: teamID, PlanID: subject + "-plan", Seats: 1, UnitPriceCents: 1990, TotalPriceCents: 1990,
 					Currency: "CNY", Status: model.MembershipOrderPending, PlanSnapshotJSON: `{"id":"membership-plan"}`,
@@ -362,14 +606,14 @@ func TestPostgresPaymentFulfillmentSerializesMembershipSubjectAndGrantsBothOrder
 				expiresAt := now.Add(15 * time.Minute)
 				if err := db.Create(&model.PaymentCheckoutSession{
 					ID: fmt.Sprintf("%s-fulfillment-checkout-%d", subject, index), OrderType: model.PaymentOrderMembership,
-					OrderID: orderID, UserID: user.ID, TokenHash: fmt.Sprintf("%064d", index+10), TokenCipher: "enc:v1:test",
+					OrderID: orderID, UserID: orderUserIDs[index], TokenHash: fmt.Sprintf("%064d", index+10), TokenCipher: "enc:v1:test",
 					Status: model.PaymentCheckoutActive, ExpiresAt: expiresAt, CreatedAt: now, UpdatedAt: now,
 				}).Error; err != nil {
 					t.Fatal(err)
 				}
 				transaction := &model.PaymentTransaction{
 					ID: fmt.Sprintf("%s-fulfillment-transaction-%d", subject, index), OrderType: model.PaymentOrderMembership,
-					OrderID: orderID, UserID: user.ID, Provider: model.PaymentProviderWechat,
+					OrderID: orderID, UserID: orderUserIDs[index], Provider: model.PaymentProviderWechat,
 					MerchantOrderNo: fmt.Sprintf("M%sFULFILL%d", strings.ToUpper(subject), index), AmountCents: 1990, Currency: "CNY",
 					Status: model.PaymentTransactionPending, ExpiresAt: &expiresAt, CreatedAt: now, UpdatedAt: now,
 				}
@@ -394,12 +638,12 @@ func TestPostgresPaymentFulfillmentSerializesMembershipSubjectAndGrantsBothOrder
 					Activation: MembershipActivation{
 						BillingCycle: model.MembershipBillingCycleMonth,
 						Subscription: &model.MembershipSubscription{
-							ID: fmt.Sprintf("%s-subscription-%d", subject, index), UserID: user.ID, TeamID: teamID,
+							ID: fmt.Sprintf("%s-subscription-%d", subject, index), UserID: orderUserIDs[index], TeamID: teamID,
 							PlanID: order.PlanID, OrderID: order.ID, Status: model.MembershipSubscriptionActive, Seats: 1,
 							PlanSnapshotJSON: order.PlanSnapshotJSON, CreatedAt: now, UpdatedAt: now,
 						},
 						MembershipLedger: &model.CreditLedgerEntry{
-							ID: fmt.Sprintf("%s-ledger-%d", subject, index), UserID: user.ID, Type: model.CreditLedgerMembership,
+							ID: fmt.Sprintf("%s-ledger-%d", subject, index), UserID: orderUserIDs[index], Type: model.CreditLedgerMembership,
 							AmountMicrocredits: 300, AvailableDeltaMicrocredits: 300, ActorUserID: model.SystemActorID,
 							Scene: "membership", Note: "membership grant", ReferenceKey: &reference, CreatedAt: now,
 						},
@@ -428,9 +672,9 @@ func TestPostgresPaymentFulfillmentSerializesMembershipSubjectAndGrantsBothOrder
 				}
 			}
 			var subscriptions []model.MembershipSubscription
-			query := db.Where("user_id = ?", user.ID)
+			query := db.Model(&model.MembershipSubscription{})
 			if teamID == "" {
-				query = query.Where("team_id = ''")
+				query = query.Where("user_id = ? AND team_id = ''", user.ID)
 			} else {
 				query = query.Where("team_id = ?", teamID)
 			}
@@ -534,11 +778,28 @@ func TestPostgresPaymentWebhookProviderTradeCannotCrossOrders(t *testing.T) {
 	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
 		t.Fatal(err)
 	}
-	repo := New(db)
 	now := time.Now().UTC()
+	firstOrder, firstSession := createPostgresPayableMembershipFixture(t, db, "trade-one", now)
+	secondOrder, secondSession := createPostgresPayableMembershipFixture(t, db, "trade-two", now)
+	firstTransaction := &model.PaymentTransaction{
+		ID: "provider-trade-transaction-first", OrderType: model.PaymentOrderMembership, OrderID: firstOrder.ID,
+		UserID: firstOrder.UserID, Provider: model.PaymentProviderWechat, MerchantOrderNo: "MPROVIDERTRADE01",
+		AmountCents: firstOrder.TotalPriceCents, Currency: firstOrder.Currency, Status: model.PaymentTransactionFailed,
+		FailureCode: "provider_rejected", ExpiresAt: &firstSession.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+	}
+	secondTransaction := &model.PaymentTransaction{
+		ID: "provider-trade-transaction-second", OrderType: model.PaymentOrderMembership, OrderID: secondOrder.ID,
+		UserID: secondOrder.UserID, Provider: model.PaymentProviderWechat, MerchantOrderNo: "MPROVIDERTRADE02",
+		AmountCents: secondOrder.TotalPriceCents, Currency: secondOrder.Currency, Status: model.PaymentTransactionFailed,
+		FailureCode: "provider_rejected", ExpiresAt: &secondSession.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create([]*model.PaymentTransaction{firstTransaction, secondTransaction}).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
 	first := &model.PaymentWebhookEvent{
 		ID: "provider-trade-first", Provider: model.PaymentProviderWechat, ProviderEventID: "provider-trade-event-first",
-		TransactionID: "provider-trade-transaction-first", MerchantOrderNo: "MPROVIDERTRADE01", ProviderTradeNo: "shared-provider-trade",
+		TransactionID: firstTransaction.ID, MerchantOrderNo: firstTransaction.MerchantOrderNo, ProviderTradeNo: "shared-provider-trade",
 		AmountCents: 100, Currency: "CNY", PaidAt: &now, PayloadDigest: strings.Repeat("1", 64), Status: model.PaymentWebhookReceived,
 		ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
 	}
@@ -548,14 +809,18 @@ func TestPostgresPaymentWebhookProviderTradeCannotCrossOrders(t *testing.T) {
 	second := *first
 	second.ID = "provider-trade-second"
 	second.ProviderEventID = "provider-trade-event-second"
-	second.TransactionID = "provider-trade-transaction-second"
-	second.MerchantOrderNo = "MPROVIDERTRADE02"
+	second.TransactionID = secondTransaction.ID
+	second.MerchantOrderNo = secondTransaction.MerchantOrderNo
 	second.PayloadDigest = strings.Repeat("2", 64)
-	if _, _, err := repo.RecordPaymentWebhookEvent(&second); !errors.Is(err, ErrPaymentProviderTradeConflict) {
-		t.Fatalf("cross-order provider trade error = %v", err)
+	stored, created, err := repo.RecordPaymentWebhookEvent(&second)
+	if err != nil || !created {
+		t.Fatalf("durable cross-order provider trade fact = created:%v err:%v", created, err)
+	}
+	if stored.Status != model.PaymentWebhookReviewRequired || stored.FailureCode != "provider_trade_conflict" {
+		t.Fatalf("cross-order provider trade fact = %#v", stored)
 	}
 	var count int64
-	if err := db.Model(&model.PaymentWebhookEvent{}).Where("provider_trade_no = ?", first.ProviderTradeNo).Count(&count).Error; err != nil || count != 1 {
+	if err := db.Model(&model.PaymentWebhookEvent{}).Where("provider_trade_no = ?", first.ProviderTradeNo).Count(&count).Error; err != nil || count != 2 {
 		t.Fatalf("provider trade event count = %d, err=%v", count, err)
 	}
 }
@@ -716,6 +981,57 @@ func createPostgresPayableMembershipFixture(t *testing.T, db *gorm.DB, suffix st
 		t.Fatal(err)
 	}
 	return order, session
+}
+
+func createPostgresPaymentReviewFactFixture(t *testing.T, db *gorm.DB, suffix string, status model.PaymentTransactionStatus, now time.Time) (*Repository, *model.MembershipOrder, *model.PaymentCheckoutSession, *model.PaymentTransaction, *model.PaymentWebhookEvent) {
+	t.Helper()
+	order, session := createPostgresPayableMembershipFixture(t, db, suffix, now)
+	transaction := &model.PaymentTransaction{
+		ID: "review-transaction-" + suffix, OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: order.UserID,
+		Provider: model.PaymentProviderWechat, MerchantOrderNo: "MREVIEW" + strings.ToUpper(strings.ReplaceAll(suffix, "-", "")),
+		AmountCents: order.TotalPriceCents, Currency: order.Currency, Status: status, ExpiresAt: &session.ExpiresAt,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if status == model.PaymentTransactionFailed {
+		transaction.FailureCode = "provider_rejected"
+	}
+	if err := db.Create(transaction).Error; err != nil {
+		t.Fatal(err)
+	}
+	event := paymentReviewEvent(transaction, "review-event-"+suffix, "review-trade-"+suffix, now)
+	repo := New(db)
+	if _, created, err := repo.RecordPaymentWebhookEvent(event); err != nil || !created {
+		t.Fatalf("record review fact = created:%v err:%v", created, err)
+	}
+	return repo, order, session, transaction, event
+}
+
+func paymentReviewEvent(transaction *model.PaymentTransaction, eventID string, providerTradeNo string, now time.Time) *model.PaymentWebhookEvent {
+	return &model.PaymentWebhookEvent{
+		ID: eventID, Provider: transaction.Provider, ProviderEventID: eventID + "-provider",
+		TransactionID: transaction.ID, MerchantOrderNo: transaction.MerchantOrderNo, ProviderTradeNo: providerTradeNo,
+		AmountCents: transaction.AmountCents, Currency: transaction.Currency, PaidAt: &now,
+		PayloadDigest: strings.Repeat("9", 64), Status: model.PaymentWebhookReviewRequired,
+		FailureCode: "verified_payment_review", ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func assertPostgresOrderAndCheckoutState(t *testing.T, db *gorm.DB, orderID string, orderStatus model.MembershipOrderStatus, sessionID string, checkoutStatus model.PaymentCheckoutStatus) {
+	t.Helper()
+	var order model.MembershipOrder
+	if err := db.First(&order, "id = ?", orderID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != orderStatus {
+		t.Fatalf("membership order status = %s, want %s", order.Status, orderStatus)
+	}
+	var session model.PaymentCheckoutSession
+	if err := db.First(&session, "id = ?", sessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != checkoutStatus {
+		t.Fatalf("checkout status = %s, want %s", session.Status, checkoutStatus)
+	}
 }
 
 func createPostgresPaymentFulfillmentFixture(t *testing.T, db *gorm.DB, suffix string, now time.Time) (*Repository, PaymentFulfillment) {

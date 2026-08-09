@@ -122,6 +122,11 @@ type paymentReconciliationAudit struct {
 	FailureCode     string                `json:"failureCode,omitempty"`
 }
 
+type paymentReconciliationAccessAudit struct {
+	Outcome     string `json:"outcome"`
+	FailureCode string `json:"failureCode"`
+}
+
 type paymentChannelSettingValue struct {
 	Enabled            bool   `json:"enabled"`
 	AppID              string `json:"appId"`
@@ -236,10 +241,28 @@ func (s *Service) AdminPaymentWebhookEvents(actor *model.User, query AdminListQu
 
 func (s *Service) AdminReconcilePaymentTransaction(actor *model.User, id string) (*AdminPaymentReconciliationResult, error) {
 	if err := s.RequireAdmin(actor); err != nil {
+		if actor != nil && strings.TrimSpace(actor.ID) != "" {
+			targetID := paymentReconciliationAuditTargetID(id)
+			if auditErr := s.appendAdminAudit(actor, "payment_transaction.reconcile_rejected", "payment_transaction", targetID, "拒绝无管理员权限的支付对账请求", paymentReconciliationAccessAudit{
+				Outcome: "rejected", FailureCode: "admin_required",
+			}); auditErr != nil {
+				return nil, fmt.Errorf("支付对账拒绝审计写入失败: %w", auditErr)
+			}
+		}
 		return nil, err
 	}
-	transaction, err := s.repo.PaymentTransaction(strings.TrimSpace(id))
+	transactionID := strings.TrimSpace(id)
+	transaction, err := s.repo.PaymentTransaction(transactionID)
 	if err != nil {
+		failureCode := "transaction_lookup_failed"
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			failureCode = "transaction_not_found"
+		}
+		if auditErr := s.appendAdminAudit(actor, "payment_transaction.reconcile_failed", "payment_transaction", paymentReconciliationAuditTargetID(transactionID), "支付对账目标交易查询失败", paymentReconciliationAccessAudit{
+			Outcome: "failed", FailureCode: failureCode,
+		}); auditErr != nil {
+			return nil, fmt.Errorf("支付对账目标查询失败且审计写入失败: %v: %w", auditErr, err)
+		}
 		return nil, err
 	}
 	attempt := paymentReconciliationAudit{
@@ -297,6 +320,14 @@ func (s *Service) AdminReconcilePaymentTransaction(actor *model.User, id string)
 	return &AdminPaymentReconciliationResult{Transaction: *updated, ProviderState: fact.State}, nil
 }
 
+func paymentReconciliationAuditTargetID(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return "unknown"
+	}
+	return truncateRunes(trimmed, 160)
+}
+
 func (s *Service) reconcileConfirmedPayment(actor *model.User, transaction *model.PaymentTransaction, fact providerPaymentFact) (*AdminPaymentReconciliationResult, error) {
 	now := time.Now()
 	normalized := strings.Join([]string{
@@ -317,6 +348,9 @@ func (s *Service) reconcileConfirmedPayment(actor *model.User, transaction *mode
 		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentPaid, "verified_fact_conflict", err)
 	}
 	event = stored
+	if event.Status == model.PaymentWebhookReviewRequired && event.FailureCode == "provider_trade_conflict" {
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentPaid, "provider_trade_conflict", errors.New("渠道交易号已绑定其他支付交易，必须人工复核"))
+	}
 	if fact.ProviderTradeNo == "" || fact.AmountCents != transaction.AmountCents || fact.Currency != transaction.Currency || fact.PaidAt.IsZero() {
 		if markErr := s.repo.MarkPaymentWebhookOutcome(event.ID, model.PaymentWebhookReviewRequired, "query_fact_mismatch", "渠道查单到账事实与本地交易不一致", now); markErr != nil {
 			return nil, markErr

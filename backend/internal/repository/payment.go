@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -17,7 +18,6 @@ var (
 	ErrPaymentChannelLocked          = errors.New("another payment channel already owns the payable transaction")
 	ErrPaymentOrderNotPayable        = errors.New("payment order is not payable")
 	ErrPaymentVerifiedFactExists     = errors.New("a verified payment fact already exists for the order")
-	ErrPaymentProviderTradeConflict  = errors.New("provider trade number conflicts with an existing payment fact")
 	ErrPaymentReconciliationRequired = errors.New("payment transaction requires provider reconciliation")
 )
 
@@ -102,17 +102,11 @@ func (r *Repository) ClaimPayablePaymentTransaction(candidate *model.PaymentTran
 		if checkout.Status != model.PaymentCheckoutActive || !checkout.ExpiresAt.After(candidate.CreatedAt) {
 			return ErrPaymentOrderNotPayable
 		}
-		var verifiedCount int64
-		if err := tx.Model(&model.PaymentWebhookEvent{}).
-			Joins("JOIN payment_transactions ON payment_transactions.id = payment_webhook_events.transaction_id").
-			Where("payment_transactions.order_type = ? AND payment_transactions.order_id = ? AND payment_webhook_events.status IN ?",
-				candidate.OrderType, candidate.OrderID, []model.PaymentWebhookStatus{
-					model.PaymentWebhookReceived, model.PaymentWebhookReviewRequired, model.PaymentWebhookProcessed,
-				}).
-			Count(&verifiedCount).Error; err != nil {
+		verified, err := verifiedPaymentFactExistsTx(tx, candidate.OrderType, candidate.OrderID)
+		if err != nil {
 			return err
 		}
-		if verifiedCount > 0 {
+		if verified {
 			return ErrPaymentVerifiedFactExists
 		}
 		var paidCount int64
@@ -151,27 +145,33 @@ func (r *Repository) ClaimPayablePaymentTransaction(candidate *model.PaymentTran
 }
 
 func lockPayableOrderTx(tx *gorm.DB, orderType model.PaymentOrderType, orderID string, userID string) error {
+	payable, err := lockPaymentOrderTx(tx, orderType, orderID, userID)
+	if err != nil {
+		return err
+	}
+	if !payable {
+		return ErrPaymentOrderNotPayable
+	}
+	return nil
+}
+
+func lockPaymentOrderTx(tx *gorm.DB, orderType model.PaymentOrderType, orderID string, userID string) (bool, error) {
 	switch orderType {
 	case model.PaymentOrderMembership:
 		var order model.MembershipOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ? AND user_id = ?", orderID, userID).Error; err != nil {
-			return err
+			return false, err
 		}
-		if order.Status != model.MembershipOrderPending {
-			return ErrPaymentOrderNotPayable
-		}
+		return order.Status == model.MembershipOrderPending, nil
 	case model.PaymentOrderCreditTopup:
 		var order model.CreditTopupOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ? AND user_id = ?", orderID, userID).Error; err != nil {
-			return err
+			return false, err
 		}
-		if order.Status != model.CreditTopupOrderPending {
-			return ErrPaymentOrderNotPayable
-		}
+		return order.Status == model.CreditTopupOrderPending, nil
 	default:
-		return errors.New("payment transaction has unsupported order type")
+		return false, errors.New("payment transaction has unsupported order type")
 	}
-	return nil
 }
 
 // RecordPaymentWebhookEvent commits the verified provider facts independently from entitlement fulfillment.
@@ -184,6 +184,30 @@ func (r *Repository) RecordPaymentWebhookEvent(candidate *model.PaymentWebhookEv
 	var stored model.PaymentWebhookEvent
 	created := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var transaction model.PaymentTransaction
+		if candidate.TransactionID != "" {
+			var snapshot model.PaymentTransaction
+			if err := tx.First(&snapshot, "id = ?", candidate.TransactionID).Error; err != nil {
+				return err
+			}
+			if _, err := lockPaymentOrderTx(tx, snapshot.OrderType, snapshot.OrderID, snapshot.UserID); err != nil {
+				return err
+			}
+			var checkout model.PaymentCheckoutSession
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&checkout,
+				"order_type = ? AND order_id = ?", snapshot.OrderType, snapshot.OrderID).Error; err != nil {
+				return err
+			}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&transaction, "id = ?", candidate.TransactionID).Error; err != nil {
+				return err
+			}
+			if transaction.Provider != candidate.Provider || transaction.MerchantOrderNo != candidate.MerchantOrderNo {
+				return ErrPaymentWebhookConflict
+			}
+		}
+		if err := lockPaymentProviderTradeTx(tx, candidate.Provider, candidate.ProviderTradeNo); err != nil {
+			return err
+		}
 		lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&stored, "provider = ? AND provider_event_id = ?", candidate.Provider, candidate.ProviderEventID)
 		if lookup.Error == nil {
@@ -201,7 +225,9 @@ func (r *Repository) RecordPaymentWebhookEvent(candidate *model.PaymentWebhookEv
 				Where("provider = ? AND provider_trade_no = ?", candidate.Provider, candidate.ProviderTradeNo).
 				Order("created_at asc").First(&existingTrade)
 			if tradeLookup.Error == nil && (candidate.TransactionID == "" || existingTrade.TransactionID != candidate.TransactionID) {
-				return ErrPaymentProviderTradeConflict
+				candidate.Status = model.PaymentWebhookReviewRequired
+				candidate.FailureCode = "provider_trade_conflict"
+				candidate.FailureReason = "渠道交易号已绑定其他支付交易，必须人工复核"
 			}
 			if tradeLookup.Error != nil && !errors.Is(tradeLookup.Error, gorm.ErrRecordNotFound) {
 				return tradeLookup.Error
@@ -220,6 +246,19 @@ func (r *Repository) RecordPaymentWebhookEvent(candidate *model.PaymentWebhookEv
 	return &stored, created, nil
 }
 
+func lockPaymentProviderTradeTx(tx *gorm.DB, provider model.PaymentProvider, providerTradeNo string) error {
+	lockKey := string(provider) + "\n" + providerTradeNo
+	switch tx.Dialector.Name() {
+	case "postgres":
+		return tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, lockKey).Error
+	case "sqlite":
+		// SQLite has no row or advisory locks. Acquire its database writer lock before reading the trade facts.
+		return tx.Exec(`UPDATE payment_webhook_events SET updated_at = updated_at WHERE 1 = 0`).Error
+	default:
+		return fmt.Errorf("payment provider trade locking is unsupported for %s", tx.Dialector.Name())
+	}
+}
+
 func samePaymentWebhookFacts(stored *model.PaymentWebhookEvent, candidate *model.PaymentWebhookEvent) bool {
 	if stored == nil || candidate == nil || stored.PaidAt == nil || candidate.PaidAt == nil {
 		return false
@@ -227,6 +266,20 @@ func samePaymentWebhookFacts(stored *model.PaymentWebhookEvent, candidate *model
 	return stored.PayloadDigest == candidate.PayloadDigest && stored.TransactionID == candidate.TransactionID &&
 		stored.MerchantOrderNo == candidate.MerchantOrderNo && stored.ProviderTradeNo == candidate.ProviderTradeNo &&
 		stored.AmountCents == candidate.AmountCents && stored.Currency == candidate.Currency && stored.PaidAt.Equal(*candidate.PaidAt)
+}
+
+func verifiedPaymentFactExistsTx(tx *gorm.DB, orderType model.PaymentOrderType, orderID string) (bool, error) {
+	var count int64
+	if err := tx.Model(&model.PaymentWebhookEvent{}).
+		Joins("JOIN payment_transactions ON payment_transactions.id = payment_webhook_events.transaction_id").
+		Where("payment_transactions.order_type = ? AND payment_transactions.order_id = ? AND payment_webhook_events.status IN ?",
+			orderType, orderID, []model.PaymentWebhookStatus{
+				model.PaymentWebhookReceived, model.PaymentWebhookReviewRequired, model.PaymentWebhookProcessed,
+			}).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *Repository) MarkPaymentWebhookOutcome(id string, status model.PaymentWebhookStatus, failureCode string, failureReason string, now time.Time) error {
@@ -414,6 +467,13 @@ func (r *Repository) ClosePaymentTransactionAfterProviderConfirmation(id string,
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&transaction, "id = ?", id).Error; err != nil {
 			return err
 		}
+		verified, err := verifiedPaymentFactExistsTx(tx, transaction.OrderType, transaction.OrderID)
+		if err != nil {
+			return err
+		}
+		if verified {
+			return ErrPaymentVerifiedFactExists
+		}
 		if transaction.Status != model.PaymentTransactionCreated && transaction.Status != model.PaymentTransactionPending && transaction.Status != model.PaymentTransactionReviewRequired {
 			return ErrPaymentTransactionNotPayable
 		}
@@ -458,10 +518,53 @@ func (r *Repository) ClosePaymentTransactionAfterProviderConfirmation(id string,
 }
 
 func (r *Repository) ExpirePaymentCheckoutSession(id string, now time.Time) (bool, error) {
-	result := r.db.Model(&model.PaymentCheckoutSession{}).
-		Where("id = ? AND status = ?", id, model.PaymentCheckoutActive).
-		Updates(model.PaymentCheckoutSession{Status: model.PaymentCheckoutExpired, UpdatedAt: now})
-	return result.RowsAffected == 1, result.Error
+	expired := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var snapshot model.PaymentCheckoutSession
+		if err := tx.First(&snapshot, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if snapshot.Status != model.PaymentCheckoutActive || snapshot.ExpiresAt.After(now) {
+			return nil
+		}
+		if _, err := lockPaymentOrderTx(tx, snapshot.OrderType, snapshot.OrderID, snapshot.UserID); err != nil {
+			return err
+		}
+		var checkout model.PaymentCheckoutSession
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&checkout,
+			"id = ? AND order_type = ? AND order_id = ? AND user_id = ?", snapshot.ID, snapshot.OrderType, snapshot.OrderID, snapshot.UserID).Error; err != nil {
+			return err
+		}
+		if checkout.Status != model.PaymentCheckoutActive || checkout.ExpiresAt.After(now) {
+			return nil
+		}
+		var payableCount int64
+		if err := tx.Model(&model.PaymentTransaction{}).
+			Where("order_type = ? AND order_id = ? AND status IN ?", checkout.OrderType, checkout.OrderID, []model.PaymentTransactionStatus{
+				model.PaymentTransactionCreated, model.PaymentTransactionPending, model.PaymentTransactionReviewRequired,
+			}).Count(&payableCount).Error; err != nil {
+			return err
+		}
+		if payableCount > 0 {
+			return ErrPaymentReconciliationRequired
+		}
+		verified, err := verifiedPaymentFactExistsTx(tx, checkout.OrderType, checkout.OrderID)
+		if err != nil {
+			return err
+		}
+		if verified {
+			return ErrPaymentVerifiedFactExists
+		}
+		result := tx.Model(&model.PaymentCheckoutSession{}).
+			Where("id = ? AND status = ? AND expires_at <= ?", checkout.ID, model.PaymentCheckoutActive, now).
+			Updates(model.PaymentCheckoutSession{Status: model.PaymentCheckoutExpired, UpdatedAt: now})
+		if result.Error != nil {
+			return result.Error
+		}
+		expired = result.RowsAffected == 1
+		return nil
+	})
+	return expired, err
 }
 
 func (r *Repository) AdminPaymentTransactions(filter PaymentTransactionFilter) ([]model.PaymentTransaction, int64, error) {

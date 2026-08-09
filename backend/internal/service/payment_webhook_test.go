@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 func TestCanonicalAlipayWebhookFormExcludesSignatureFields(t *testing.T) {
@@ -229,6 +232,164 @@ func TestPaymentWebhookRecordIsIdempotentAndProcessedCannotDowngrade(t *testing.
 	}
 }
 
+func TestPaymentWebhookProviderTradeConflictPersistsReviewAndAcknowledges(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	now := time.Now().UTC().Truncate(time.Second)
+	transactions := make([]*model.PaymentTransaction, 0, 2)
+	for index := 0; index < 2; index++ {
+		user := &model.User{
+			ID: fmt.Sprintf("provider-conflict-user-%d", index), Username: fmt.Sprintf("provider-conflict-user-%d", index),
+			Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(user).Error; err != nil {
+			t.Fatal(err)
+		}
+		order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, fmt.Sprintf("provider-conflict-order-key-%d", index))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expiresAt := now.Add(15 * time.Minute)
+		if err := db.Create(&model.PaymentCheckoutSession{
+			ID: fmt.Sprintf("provider-conflict-checkout-%d", index), OrderType: model.PaymentOrderMembership,
+			OrderID: order.ID, UserID: user.ID, TokenHash: fmt.Sprintf("%064d", index+81), TokenCipher: "enc:v1:test",
+			Status: model.PaymentCheckoutActive, ExpiresAt: expiresAt, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		transaction := &model.PaymentTransaction{
+			ID: fmt.Sprintf("provider-conflict-transaction-%d", index), OrderType: model.PaymentOrderMembership,
+			OrderID: order.ID, UserID: user.ID, Provider: model.PaymentProviderWechat,
+			MerchantOrderNo: fmt.Sprintf("MPROVIDERCONFLICT%d", index), AmountCents: order.TotalPriceCents,
+			Currency: order.Currency, Status: model.PaymentTransactionFailed, FailureCode: "provider_rejected",
+			ExpiresAt: &expiresAt, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(transaction).Error; err != nil {
+			t.Fatal(err)
+		}
+		transactions = append(transactions, transaction)
+	}
+	first := &model.PaymentWebhookEvent{
+		ID: "provider-conflict-first-event", Provider: model.PaymentProviderWechat, ProviderEventID: "provider-conflict-first-provider-event",
+		TransactionID: transactions[0].ID, MerchantOrderNo: transactions[0].MerchantOrderNo, ProviderTradeNo: "provider-conflict-shared-trade",
+		AmountCents: transactions[0].AmountCents, Currency: transactions[0].Currency, PaidAt: &now,
+		PayloadDigest: strings.Repeat("7", 64), Status: model.PaymentWebhookReviewRequired, FailureCode: "non_payable_transaction",
+		ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, created, err := svc.repo.RecordPaymentWebhookEvent(first); err != nil || !created {
+		t.Fatalf("record first provider trade fact = created:%v err:%v", created, err)
+	}
+
+	err := svc.fulfillVerifiedPayment(
+		model.PaymentProviderWechat, "provider-conflict-second-provider-event", transactions[1].MerchantOrderNo,
+		first.ProviderTradeNo, transactions[1].AmountCents, transactions[1].Currency, now,
+		[]byte(`{"id":"provider-conflict-second-provider-event"}`),
+	)
+	if !ShouldAcknowledgePaymentWebhook(err) {
+		t.Fatalf("durable provider trade conflict ACK = false, err=%v", err)
+	}
+	var second model.PaymentWebhookEvent
+	if lookupErr := db.First(&second, "provider = ? AND provider_event_id = ?", model.PaymentProviderWechat, "provider-conflict-second-provider-event").Error; lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if second.Status != model.PaymentWebhookReviewRequired || second.FailureCode != "provider_trade_conflict" {
+		t.Fatalf("second provider trade fact = %#v", second)
+	}
+	var secondTransaction model.PaymentTransaction
+	if lookupErr := db.First(&secondTransaction, "id = ?", transactions[1].ID).Error; lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if secondTransaction.Status != model.PaymentTransactionFailed {
+		t.Fatalf("conflicting transaction status = %s, want failed", secondTransaction.Status)
+	}
+}
+
+func TestPaymentReconciliationProviderTradeConflictNeverFulfillsSecondOrder(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	admin := &model.User{ID: "reconcile-conflict-admin", Username: "reconcile-conflict-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	firstUser := &model.User{ID: "reconcile-conflict-user-1", Username: "reconcile-conflict-user-1", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	secondUser := &model.User{ID: "reconcile-conflict-user-2", Username: "reconcile-conflict-user-2", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create([]*model.User{admin, firstUser, secondUser}).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	users := []*model.User{firstUser, secondUser}
+	transactions := make([]*model.PaymentTransaction, 0, len(users))
+	for index, user := range users {
+		order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, fmt.Sprintf("reconcile-conflict-order-%d", index))
+		if err != nil {
+			t.Fatal(err)
+		}
+		createWebhookTestCheckout(t, db, order.ID, user.ID, fmt.Sprintf("reconcile-conflict-checkout-%d", index), now)
+		status := model.PaymentTransactionFailed
+		failureCode := "provider_rejected"
+		if index == 1 {
+			status = model.PaymentTransactionPending
+			failureCode = ""
+		}
+		expiresAt := now.Add(15 * time.Minute)
+		transaction := &model.PaymentTransaction{
+			ID: fmt.Sprintf("reconcile-conflict-tx-%d", index), OrderType: model.PaymentOrderMembership,
+			OrderID: order.ID, UserID: user.ID, Provider: model.PaymentProviderAlipay,
+			MerchantOrderNo: fmt.Sprintf("MRECONCILECONFLICT%d", index), AmountCents: order.TotalPriceCents,
+			Currency: order.Currency, Status: status, FailureCode: failureCode, ExpiresAt: &expiresAt,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(transaction).Error; err != nil {
+			t.Fatal(err)
+		}
+		transactions = append(transactions, transaction)
+	}
+	const providerTradeNo = "reconcile-shared-provider-trade"
+	firstEvent := &model.PaymentWebhookEvent{
+		ID: "reconcile-conflict-first-event", Provider: model.PaymentProviderAlipay,
+		ProviderEventID: "reconcile-conflict-first-provider-event", TransactionID: transactions[0].ID,
+		MerchantOrderNo: transactions[0].MerchantOrderNo, ProviderTradeNo: providerTradeNo,
+		AmountCents: transactions[0].AmountCents, Currency: transactions[0].Currency, PaidAt: &now,
+		PayloadDigest: strings.Repeat("6", 64), Status: model.PaymentWebhookReceived,
+		ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, created, err := svc.repo.RecordPaymentWebhookEvent(firstEvent); err != nil || !created {
+		t.Fatalf("record first reconciliation provider trade fact = created:%v err:%v", created, err)
+	}
+
+	result, err := svc.reconcileConfirmedPayment(admin, transactions[1], providerPaymentFact{
+		State: providerPaymentPaid, ProviderTradeNo: providerTradeNo,
+		AmountCents: transactions[1].AmountCents, Currency: transactions[1].Currency, PaidAt: now,
+	})
+	if err == nil || result != nil {
+		t.Fatalf("provider-trade conflict reconciliation = result:%#v err:%v, want audited failure", result, err)
+	}
+	var secondEvent model.PaymentWebhookEvent
+	if lookupErr := db.First(&secondEvent, "transaction_id = ?", transactions[1].ID).Error; lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if secondEvent.Status != model.PaymentWebhookReviewRequired || secondEvent.FailureCode != "provider_trade_conflict" {
+		t.Fatalf("reconciliation conflict fact = %#v", secondEvent)
+	}
+	var secondTransaction model.PaymentTransaction
+	if lookupErr := db.First(&secondTransaction, "id = ?", transactions[1].ID).Error; lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if secondTransaction.Status != model.PaymentTransactionReviewRequired || secondTransaction.FailureCode != "provider_trade_conflict" {
+		t.Fatalf("reconciliation conflict transaction = %#v", secondTransaction)
+	}
+	var subscriptionCount int64
+	if lookupErr := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", transactions[1].OrderID).Count(&subscriptionCount).Error; lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if subscriptionCount != 0 {
+		t.Fatalf("provider-trade conflict granted %d subscriptions", subscriptionCount)
+	}
+}
+
 func TestPaymentWebhookPersistsPermanentValidationFailureAndAcknowledges(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
@@ -244,6 +405,7 @@ func TestPaymentWebhookPersistsPermanentValidationFailureAndAcknowledges(t *test
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	createWebhookTestCheckout(t, db, order.ID, user.ID, "webhook-validation-checkout", now)
 	transaction := &model.PaymentTransaction{
 		ID: "webhook-validation-transaction", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID,
 		Provider: model.PaymentProviderWechat, MerchantOrderNo: "M-WEBHOOK-VALIDATION", AmountCents: order.TotalPriceCents,
@@ -315,6 +477,7 @@ func TestPaymentWebhookLateClosedAndSecondPaymentsEnterDurableReview(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
+			createWebhookTestCheckout(t, db, order.ID, user.ID, fmt.Sprintf("webhook-review-checkout-%d", index), now)
 			transaction := &model.PaymentTransaction{
 				ID: fmt.Sprintf("webhook-review-transaction-%d", index), OrderType: model.PaymentOrderMembership,
 				OrderID: order.ID, UserID: user.ID, Provider: model.PaymentProviderWechat,
@@ -343,6 +506,18 @@ func TestPaymentWebhookLateClosedAndSecondPaymentsEnterDurableReview(t *testing.
 				t.Fatalf("durable review event = %#v", event)
 			}
 		})
+	}
+}
+
+func createWebhookTestCheckout(t *testing.T, db *gorm.DB, orderID string, userID string, seed string, now time.Time) {
+	t.Helper()
+	tokenHash := sha256.Sum256([]byte(seed))
+	if err := db.Create(&model.PaymentCheckoutSession{
+		ID: seed, OrderType: model.PaymentOrderMembership, OrderID: orderID, UserID: userID,
+		TokenHash: hex.EncodeToString(tokenHash[:]), TokenCipher: "enc:v1:test", Status: model.PaymentCheckoutActive,
+		ExpiresAt: now.Add(15 * time.Minute), CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -711,6 +886,59 @@ func TestPaymentReconciliationStrongAuditsPaidClosedAndFailedOutcomes(t *testing
 				}
 			}
 		})
+	}
+}
+
+func TestPaymentReconciliationRejectedAndUnknownTransactionAttemptsAreAuditedWithoutResourceFacts(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	admin := &model.User{ID: "reconcile-access-admin", Username: "reconcile-access-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	nonAdmin := &model.User{ID: "reconcile-access-user", Username: "reconcile-access-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create([]*model.User{admin, nonAdmin}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	const requestedID = "opaque-transaction-id"
+	if _, err := svc.AdminReconcilePaymentTransaction(nonAdmin, requestedID); err == nil {
+		t.Fatal("non-admin reconciliation unexpectedly succeeded")
+	} else {
+		requireAuthStatus(t, err, http.StatusForbidden)
+	}
+	assertReconciliationAccessAudit(t, db, nonAdmin.ID, "payment_transaction.reconcile_rejected", requestedID, `{"outcome":"rejected","failureCode":"admin_required"}`)
+
+	if _, err := svc.AdminReconcilePaymentTransaction(admin, requestedID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("unknown transaction reconciliation error = %v, want gorm.ErrRecordNotFound", err)
+	}
+	assertReconciliationAccessAudit(t, db, admin.ID, "payment_transaction.reconcile_failed", requestedID, `{"outcome":"failed","failureCode":"transaction_not_found"}`)
+
+	var beforeAnonymous int64
+	if err := db.Model(&model.AdminAuditEvent{}).Count(&beforeAnonymous).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AdminReconcilePaymentTransaction(nil, requestedID); err == nil {
+		t.Fatal("anonymous reconciliation unexpectedly succeeded")
+	} else {
+		requireAuthStatus(t, err, http.StatusUnauthorized)
+	}
+	var afterAnonymous int64
+	if err := db.Model(&model.AdminAuditEvent{}).Count(&afterAnonymous).Error; err != nil {
+		t.Fatal(err)
+	}
+	if afterAnonymous != beforeAnonymous {
+		t.Fatalf("anonymous attempt created domain audit: before=%d after=%d", beforeAnonymous, afterAnonymous)
+	}
+}
+
+func assertReconciliationAccessAudit(t *testing.T, db *gorm.DB, actorID string, action string, targetID string, wantMetadata string) {
+	t.Helper()
+	var audit model.AdminAuditEvent
+	if err := db.Where("actor_user_id = ? AND action = ? AND target_type = ? AND target_id = ?", actorID, action, "payment_transaction", targetID).First(&audit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if audit.MetadataJSON != wantMetadata {
+		t.Fatalf("access audit metadata = %s, want %s", audit.MetadataJSON, wantMetadata)
+	}
+	if strings.Contains(audit.MetadataJSON, "provider") || strings.Contains(audit.MetadataJSON, "merchantOrderNo") {
+		t.Fatalf("access audit leaked resource facts: %s", audit.MetadataJSON)
 	}
 }
 

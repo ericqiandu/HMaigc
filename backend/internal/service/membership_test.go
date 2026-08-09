@@ -459,16 +459,12 @@ func TestMembershipEntitlementMarksOriginUserAsNonMember(t *testing.T) {
 	}
 }
 
-func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.T) {
+func TestMembershipOrderPaymentGrantsSubscriptionAndCreditsOnce(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin := &model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
 	user := &model.User{ID: "user-1", Username: "alice", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	if err := db.Create(admin).Error; err != nil {
-		t.Fatal(err)
-	}
 	if err := db.Create(user).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -477,10 +473,11 @@ func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	confirmed, err := svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "test-trade-001",
-		Note:            "自动化测试确认",
-	})
+	fixture, err := payMembershipOrderForTest(t, svc, db, order, "test-trade-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := svc.repo.MembershipOrder(order.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,13 +508,8 @@ func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.
 	if ledgerCountBeforeDuplicate != 1 {
 		t.Fatalf("credit ledger count before duplicate confirmation = %d, want 1", ledgerCountBeforeDuplicate)
 	}
-	_, err = svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "test-trade-002",
-		Note:            "重复确认必须失败",
-	})
-	var authErr *AuthError
-	if !errors.As(err, &authErr) || authErr.Status != http.StatusConflict {
-		t.Fatalf("duplicate confirmation error = %#v, want HTTP 409 AuthError", err)
+	if err := replayMembershipPaymentForTest(svc, fixture); err != nil {
+		t.Fatalf("same verified payment replay: %v", err)
 	}
 	var subscriptionCount int64
 	if err := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", order.ID).Count(&subscriptionCount).Error; err != nil {
@@ -540,71 +532,12 @@ func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.
 	if ledgerCountAfterDuplicate != ledgerCountBeforeDuplicate {
 		t.Fatalf("credit ledger count after duplicate confirmation = %d, want %d", ledgerCountAfterDuplicate, ledgerCountBeforeDuplicate)
 	}
-	var auditCount int64
-	if err := db.Model(&model.AdminAuditEvent{}).Where("action = ? AND target_id = ?", "membership_order.confirm", order.ID).Count(&auditCount).Error; err != nil {
+	var processedEventCount int64
+	if err := db.Model(&model.PaymentWebhookEvent{}).Where("transaction_id = ? AND status = ?", fixture.Transaction.ID, model.PaymentWebhookProcessed).Count(&processedEventCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if auditCount != 1 {
-		t.Fatalf("membership confirmation audit count = %d, want 1", auditCount)
-	}
-}
-
-func TestMembershipOrderConfirmationRollsBackWhenAuditInsertFails(t *testing.T) {
-	svc, db := newMembershipTestService(t)
-	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
-		t.Fatal(err)
-	}
-	admin := &model.User{ID: "admin-audit-failure", Username: "admin-audit-failure", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
-	user := &model.User{ID: "user-audit-failure", Username: "user-audit-failure", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	if err := db.Create(admin).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(user).Error; err != nil {
-		t.Fatal(err)
-	}
-	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "audit-atomicity-order")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`
-		CREATE TRIGGER reject_membership_confirmation_audit
-		BEFORE INSERT ON admin_audit_events
-		WHEN NEW.action = 'membership_order.confirm'
-		BEGIN
-			SELECT RAISE(ABORT, 'membership confirmation audit unavailable');
-		END
-	`).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "audit-failure-trade",
-		Note:            "审计写入失败时必须整体回滚",
-	})
-	if err == nil || !strings.Contains(err.Error(), "membership confirmation audit unavailable") {
-		t.Fatalf("confirmation error = %v, want audit insertion failure", err)
-	}
-
-	var stored model.MembershipOrder
-	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if stored.Status != model.MembershipOrderPending || stored.PaidAt != nil {
-		t.Fatalf("order changed despite audit failure: %#v", stored)
-	}
-	for name, table := range map[string]string{
-		"subscriptions":   "membership_subscriptions",
-		"credit ledgers":  "credit_ledger_entries",
-		"credit accounts": "credit_accounts",
-	} {
-		var count int64
-		if err := db.Table(table).Count(&count).Error; err != nil {
-			t.Fatal(err)
-		}
-		if count != 0 {
-			t.Fatalf("%s count = %d after rollback, want 0", name, count)
-		}
+	if processedEventCount != 1 {
+		t.Fatalf("processed payment event count = %d, want 1", processedEventCount)
 	}
 }
 
@@ -704,11 +637,7 @@ func TestMembershipEntitlementUsesPurchasedPlanSnapshot(t *testing.T) {
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin := &model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
 	user := &model.User{ID: "user-1", Username: "alice", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	if err := db.Create(admin).Error; err != nil {
-		t.Fatal(err)
-	}
 	if err := db.Create(user).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -717,10 +646,7 @@ func TestMembershipEntitlementUsesPurchasedPlanSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "snapshot-trade-001",
-		Note:            "确认购买快照",
-	}); err != nil {
+	if _, err := payMembershipOrderForTest(t, svc, db, order, "snapshot-trade-001"); err != nil {
 		t.Fatal(err)
 	}
 	plan.Name = "已修改的新套餐名称"
@@ -743,16 +669,12 @@ func TestMembershipEntitlementUsesPurchasedPlanSnapshot(t *testing.T) {
 	}
 }
 
-func TestMembershipConfirmationUsesOrderSnapshotAfterPlanChanges(t *testing.T) {
+func TestMembershipPaymentUsesOrderSnapshotAfterPlanChanges(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin := &model.User{ID: "admin-snapshot", Username: "admin-snapshot", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
 	user := &model.User{ID: "user-snapshot", Username: "snapshot-buyer", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	if err := db.Create(admin).Error; err != nil {
-		t.Fatal(err)
-	}
 	if err := db.Create(user).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -768,10 +690,7 @@ func TestMembershipConfirmationUsesOrderSnapshotAfterPlanChanges(t *testing.T) {
 	if err := db.Save(&plan).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "snapshot-before-confirm-001",
-		Note:            "验证订单快照开通",
-	}); err != nil {
+	if _, err := payMembershipOrderForTest(t, svc, db, order, "snapshot-before-confirm-001"); err != nil {
 		t.Fatal(err)
 	}
 	entitlement, err := svc.MembershipEntitlement(user)

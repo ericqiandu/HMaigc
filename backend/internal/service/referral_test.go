@@ -1,8 +1,6 @@
 package service
 
 import (
-	"errors"
-	"net/http"
 	"testing"
 	"time"
 
@@ -16,10 +14,9 @@ func TestReferralFirstPurchaseGrantsBothLedgersExactlyOnce(t *testing.T) {
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin := &model.User{ID: "referral-admin", Username: "referral-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
 	inviter := &model.User{ID: "referral-inviter", Username: "inviter", Role: model.UserRoleUser, Status: model.UserStatusActive}
 	invitee := &model.User{ID: "referral-invitee", Username: "invitee", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	if err := db.Create([]*model.User{admin, inviter, invitee}).Error; err != nil {
+	if err := db.Create([]*model.User{inviter, invitee}).Error; err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -45,9 +42,8 @@ func TestReferralFirstPurchaseGrantsBothLedgersExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, firstOrder.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "referral-first-trade", Note: "首购邀请奖励测试",
-	}); err != nil {
+	firstPayment, err := payMembershipOrderForTest(t, svc, db, firstOrder, "referral-first-trade")
+	if err != nil {
 		t.Fatal(err)
 	}
 	assertCreditBalance(t, db, inviter.ID, rule.InviterRewardMicrocredits)
@@ -68,21 +64,15 @@ func TestReferralFirstPurchaseGrantsBothLedgersExactlyOnce(t *testing.T) {
 		t.Fatalf("relationship not marked rewarded: %#v", refreshedRelationship)
 	}
 
-	_, duplicateErr := svc.AdminConfirmMembershipOrder(admin, firstOrder.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "referral-duplicate-trade", Note: "重复确认",
-	})
-	var authErr *AuthError
-	if !errors.As(duplicateErr, &authErr) || authErr.Status != http.StatusConflict {
-		t.Fatalf("duplicate confirmation error = %v, want conflict", duplicateErr)
+	if err := replayMembershipPaymentForTest(svc, firstPayment); err != nil {
+		t.Fatalf("same verified first-purchase payment replay: %v", err)
 	}
 
 	secondOrder, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID}, "referral-renewal-order")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AdminConfirmMembershipOrder(admin, secondOrder.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "referral-renewal-trade", Note: "续费不重复发放邀请奖励",
-	}); err != nil {
+	if _, err := payMembershipOrderForTest(t, svc, db, secondOrder, "referral-renewal-trade"); err != nil {
 		t.Fatal(err)
 	}
 	assertCreditBalance(t, db, inviter.ID, rule.InviterRewardMicrocredits)
@@ -103,10 +93,9 @@ func TestReferralFirstPurchaseFailsExplicitlyWhenRuleMissing(t *testing.T) {
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
-	admin := &model.User{ID: "referral-missing-admin", Username: "missing-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
 	inviter := &model.User{ID: "referral-missing-inviter", Username: "missing-inviter", Role: model.UserRoleUser, Status: model.UserStatusActive}
 	invitee := &model.User{ID: "referral-missing-invitee", Username: "missing-invitee", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	if err := db.Create([]*model.User{admin, inviter, invitee}).Error; err != nil {
+	if err := db.Create([]*model.User{inviter, invitee}).Error; err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -122,9 +111,7 @@ func TestReferralFirstPurchaseFailsExplicitlyWhenRuleMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
-		ProviderTradeNo: "missing-rule-trade", Note: "缺失规则必须失败",
-	})
+	_, err = payMembershipOrderForTest(t, svc, db, order, "missing-rule-trade")
 	if err == nil || err.Error() != "该个人会员套餐缺少邀请奖励规则，订单暂不能履约" {
 		t.Fatalf("confirmation error = %v", err)
 	}

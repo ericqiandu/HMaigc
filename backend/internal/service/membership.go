@@ -67,11 +67,6 @@ type UpdateMembershipPlanRequest struct {
 	SortOrder                 int      `json:"sortOrder"`
 }
 
-type ConfirmMembershipOrderRequest struct {
-	ProviderTradeNo string `json:"providerTradeNo"`
-	Note            string `json:"note"`
-}
-
 type CloseMembershipOrderRequest struct {
 	Note string `json:"note"`
 }
@@ -472,38 +467,6 @@ func (s *Service) AdminCloseMembershipOrder(actor *model.User, id string, req Cl
 		return nil, err
 	}
 	return s.repo.MembershipOrder(orderID)
-}
-
-func (s *Service) AdminConfirmMembershipOrder(actor *model.User, id string, req ConfirmMembershipOrderRequest) (*model.MembershipOrder, error) {
-	if err := s.RequireAdmin(actor); err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	if err := s.reconcileMembershipLifecycle(now); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(req.ProviderTradeNo) == "" || strings.TrimSpace(req.Note) == "" {
-		return nil, BadAuthRequest("支付渠道交易号和人工核验备注不能为空")
-	}
-	order, err := s.repo.MembershipOrder(id)
-	if err != nil {
-		return nil, err
-	}
-	activation, err := s.membershipFulfillmentForOrder(order, actor.ID, now)
-	if err != nil {
-		return nil, err
-	}
-	audit, err := newAdminAuditEvent(actor, "membership_order.confirm", "membership_order", order.ID, "确认会员订单并开通订阅", req)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.repo.ActivateMembershipOrder(order.ID, actor.ID, "manual", strings.TrimSpace(req.ProviderTradeNo), strings.TrimSpace(req.Note), activation, audit); err != nil {
-		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
-			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能重复开通"}
-		}
-		return nil, err
-	}
-	return s.repo.MembershipOrder(order.ID)
 }
 
 func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, actorID string, now time.Time) (repository.MembershipActivation, error) {

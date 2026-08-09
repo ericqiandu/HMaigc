@@ -1,4 +1,4 @@
-import { App, Button, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tabs, Tag } from "antd";
+import { App, Button, Form, Input, InputNumber, Modal, Select, Switch, Table, Tabs, Tag } from "antd";
 import { Plus, RefreshCw, SquarePen, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBlocker } from "react-router";
@@ -6,7 +6,7 @@ import { useBlocker } from "react-router";
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
 import { TableSurface } from "@/components/layout/workspace-page";
-import { confirmAdminMembershipOrder, closeAdminMembershipOrder, listAdminMembershipOrders, listAdminMembershipPlans, type MembershipOrder, type MembershipPlan, type UpdateMembershipPlanInput, updateAdminMembershipPlan } from "@/services/api/membership";
+import { closeAdminMembershipOrder, listAdminMembershipOrders, listAdminMembershipPlans, type MembershipOrder, type MembershipPlan, type UpdateMembershipPlanInput, updateAdminMembershipPlan } from "@/services/api/membership";
 import { listAdminPaymentTransactions, listAdminPaymentWebhookEvents, type PaymentTransaction, type PaymentWebhookEvent } from "@/services/api/payment";
 import { InvoiceAdminPanel } from "./invoice-admin-panel";
 import { MembershipStorefrontAdminPanel } from "./membership-storefront-admin-panel";
@@ -42,14 +42,12 @@ export default function MembershipAdminPage() {
     const [transactionsState, setTransactionsState] = useState(() => resourceState<PaymentTransaction[]>([]));
     const [webhooksState, setWebhooksState] = useState(() => resourceState<PaymentWebhookEvent[]>([]));
     const [editing, setEditing] = useState<MembershipPlan | null>(null);
-    const [confirming, setConfirming] = useState<MembershipOrder | null>(null);
     const [closing, setClosing] = useState<MembershipOrder | null>(null);
     const [savingPlan, setSavingPlan] = useState(false);
     const [processingOrder, setProcessingOrder] = useState(false);
     const [planDirty, setPlanDirty] = useState(false);
     const [activeSection, setActiveSection] = useState<MembershipSection>("plans");
     const [form] = Form.useForm<PlanFormValues>();
-    const [confirmForm] = Form.useForm<{ providerTradeNo: string; note: string }>();
     const [closeForm] = Form.useForm<{ note: string }>();
     const loadSequences = useRef<Record<Exclude<MembershipSection, "invoices" | "storefront">, number>>({ plans: 0, orders: 0, transactions: 0, webhooks: 0 });
 
@@ -212,22 +210,6 @@ export default function MembershipAdminPage() {
             setSavingPlan(false);
         }
     };
-    const confirmOrder = async () => {
-        if (!confirming) return;
-        setProcessingOrder(true);
-        try {
-            const values = await confirmForm.validateFields();
-            await confirmAdminMembershipOrder(confirming.id, values);
-            message.success("订单已确认，订阅与积分已生效");
-            setConfirming(null);
-            confirmForm.resetFields();
-            await loadOrders();
-        } catch (error) {
-            if (error instanceof Error) message.error(error.message || "订单确认失败");
-        } finally {
-            setProcessingOrder(false);
-        }
-    };
     const closeOrder = async () => {
         if (!closing) return;
         setProcessingOrder(true);
@@ -269,7 +251,7 @@ export default function MembershipAdminPage() {
                         <span className="admin-membership-context-label">待核款订单</span>
                         <strong className="admin-membership-context-value">{ordersState.loaded && !ordersState.error ? `${pendingOrderCount} 笔待处理` : "进入订单后读取"}</strong>
                     </div>
-                    <p className="admin-membership-context-note">人工确认收款会立即开通订阅并发放积分，所有操作必须以真实支付流水为依据。</p>
+                    <p className="admin-membership-context-note">支付到账只通过验签回调或渠道查单履约；异常交易请在支付交易中发起对账。</p>
                 </section>
                 <Select className="admin-membership-mobile-section" aria-label="选择会员管理功能" value={activeSection} options={membershipSectionOptions} onChange={(value: MembershipSection) => setActiveSection(value)} />
                 <Tabs
@@ -404,14 +386,9 @@ export default function MembershipAdminPage() {
                                                     title: "操作",
                                                     render: (_, row) =>
                                                         row.status === "pending" ? (
-                                                            <Space className="admin-membership-order-actions" size={4}>
-                                                                <Button className="admin-membership-confirm-button" type="primary" size="small" onClick={() => setConfirming(row)}>
-                                                                    确认收款
-                                                                </Button>
-                                                                <Button className="admin-membership-close-button" type="text" danger size="small" onClick={() => setClosing(row)}>
-                                                                    关闭
-                                                                </Button>
-                                                            </Space>
+                                                            <Button className="admin-membership-close-button" type="text" danger size="small" onClick={() => setClosing(row)}>
+                                                                关闭
+                                                            </Button>
                                                         ) : (
                                                             "—"
                                                         ),
@@ -633,32 +610,6 @@ export default function MembershipAdminPage() {
                     )}
                     <Form.Item className="admin-membership-form-item" name="enabled" label="上架" valuePropName="checked">
                         <Switch />
-                    </Form.Item>
-                </Form>
-            </Modal>
-            <Modal
-                className="admin-operation-modal admin-membership-confirm-modal workspace-ui-scope"
-                title="确认会员订单收款"
-                open={Boolean(confirming)}
-                closable={!processingOrder}
-                maskClosable={!processingOrder}
-                keyboard={!processingOrder}
-                confirmLoading={processingOrder}
-                onCancel={() => setConfirming(null)}
-                onOk={() => void confirmOrder()}
-                okText="确认并开通"
-            >
-                <div className="admin-membership-order-impact">
-                    <span>订单 {confirming?.orderNumber ?? "--"}</span>
-                    <strong>{confirming ? money(confirming.totalPriceCents) : "--"}</strong>
-                    <p>提交后将立即开通订阅并发放对应积分，该操作应与真实渠道流水逐笔核对。</p>
-                </div>
-                <Form className="admin-membership-confirm-form" form={confirmForm} layout="vertical" disabled={processingOrder}>
-                    <Form.Item name="providerTradeNo" label="支付流水号" rules={[{ required: true, message: "请输入真实支付流水号" }]}>
-                        <Input />
-                    </Form.Item>
-                    <Form.Item name="note" label="核验备注" rules={[{ required: true }]}>
-                        <Input.TextArea rows={3} />
                     </Form.Item>
                 </Form>
             </Modal>

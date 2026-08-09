@@ -183,6 +183,11 @@ func (s *Service) fulfillVerifiedPayment(provider model.PaymentProvider, eventID
 	if event.Status == model.PaymentWebhookProcessed {
 		return nil
 	}
+	if event.Status == model.PaymentWebhookReviewRequired && event.FailureCode == "provider_trade_conflict" {
+		return &paymentWebhookDispositionError{
+			err: errors.New("渠道交易号已绑定其他支付交易，验签事实已持久化并等待人工复核"), acknowledge: true,
+		}
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return s.rejectVerifiedPaymentEvent(event, "unknown_merchant_order", "验签支付通知的商户订单号不存在", now)
 	}

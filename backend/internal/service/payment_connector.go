@@ -326,6 +326,10 @@ func alipayTradeOperation(method string, transaction *model.PaymentTransaction, 
 		return nil, fmt.Errorf("支付宝网关返回 HTTP %d", status)
 	}
 	responseField := strings.ReplaceAll(method, ".", "_") + "_response"
+	return verifiedAlipayResponse(body, responseField, channel.PlatformPublicKey)
+}
+
+func verifiedAlipayResponse(body []byte, responseField string, publicKeyPEM string) (json.RawMessage, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("支付宝响应格式无效: %w", err)
@@ -338,7 +342,7 @@ func alipayTradeOperation(method string, transaction *model.PaymentTransaction, 
 	if rawSignature, exists := envelope["sign"]; !exists || json.Unmarshal(rawSignature, &signatureValue) != nil || signatureValue == "" {
 		return nil, errors.New("支付宝响应缺少签名")
 	}
-	if err := verifyRSA2(channel.PlatformPublicKey, string(inner), signatureValue); err != nil {
+	if err := verifyRSA2(publicKeyPEM, string(inner), signatureValue); err != nil {
 		return nil, fmt.Errorf("支付宝响应验签失败: %w", err)
 	}
 	return inner, nil
@@ -370,37 +374,23 @@ func createWechatNativePayment(transaction *model.PaymentTransaction, order paym
 		return "", err
 	}
 	endpoint := strings.TrimRight(channel.GatewayURL, "/") + "/v3/pay/transactions/native"
-	parsed, err := url.Parse(endpoint)
+	req, err := signedWechatRequest(http.MethodPost, endpoint, body, channel)
 	if err != nil {
 		return "", err
 	}
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce, err := randomNonce()
-	if err != nil {
-		return "", err
-	}
-	message := "POST\n" + parsed.RequestURI() + "\n" + timestamp + "\n" + nonce + "\n" + string(body) + "\n"
-	signature, err := signRSA2(channel.MerchantPrivateKey, message)
-	if err != nil {
-		return "", fmt.Errorf("微信商户私钥无效: %w", err)
-	}
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf(
-		`WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"`,
-		channel.MerchantID, nonce, timestamp, channel.MerchantSerialNo, signature,
-	))
-	responseBody, status, err := doPaymentRequest(req)
+	responseBody, status, _, err := doSignedWechatRequest(req, channel.PlatformPublicKey)
 	if err != nil {
 		return "", ambiguousProviderError(err)
 	}
 	if status != http.StatusOK {
-		rejection := fmt.Errorf("微信支付返回 HTTP %d", status)
-		if status >= http.StatusBadRequest && status < http.StatusInternalServerError && status != http.StatusRequestTimeout && status != http.StatusConflict && status != http.StatusTooManyRequests {
+		var response struct {
+			Code string `json:"code"`
+		}
+		if err := json.Unmarshal(responseBody, &response); err != nil || strings.TrimSpace(response.Code) == "" {
+			return "", ambiguousProviderError(fmt.Errorf("微信支付下单返回无法识别的 HTTP %d 结果", status))
+		}
+		rejection := fmt.Errorf("微信支付拒绝下单: %s", response.Code)
+		if deterministicWechatCreateRejection(response.Code) {
 			return "", deterministicProviderError(rejection)
 		}
 		return "", ambiguousProviderError(rejection)
@@ -415,6 +405,15 @@ func createWechatNativePayment(transaction *model.PaymentTransaction, order paym
 		return "", ambiguousProviderError(errors.New("微信支付响应缺少 code_url"))
 	}
 	return response.CodeURL, nil
+}
+
+func deterministicWechatCreateRejection(code string) bool {
+	switch strings.TrimSpace(code) {
+	case "PARAM_ERROR":
+		return true
+	default:
+		return false
+	}
 }
 
 func createAlipayPrecreatePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
@@ -456,31 +455,39 @@ func createAlipayPrecreatePayment(transaction *model.PaymentTransaction, order p
 		return "", ambiguousProviderError(err)
 	}
 	if status != http.StatusOK {
-		rejection := fmt.Errorf("支付宝返回 HTTP %d", status)
-		if status >= http.StatusBadRequest && status < http.StatusInternalServerError && status != http.StatusRequestTimeout && status != http.StatusConflict && status != http.StatusTooManyRequests {
+		return "", ambiguousProviderError(fmt.Errorf("支付宝返回无法验签的 HTTP %d 结果", status))
+	}
+	inner, err := verifiedAlipayResponse(responseBody, "alipay_trade_precreate_response", channel.PlatformPublicKey)
+	if err != nil {
+		return "", ambiguousProviderError(err)
+	}
+	var response struct {
+		Code            string `json:"code"`
+		SubCode         string `json:"sub_code"`
+		MerchantOrderNo string `json:"out_trade_no"`
+		QRCode          string `json:"qr_code"`
+	}
+	if err := json.Unmarshal(inner, &response); err != nil {
+		return "", ambiguousProviderError(fmt.Errorf("支付宝下单业务响应格式无效: %w", err))
+	}
+	if response.Code != "10000" {
+		rejection := fmt.Errorf("支付宝拒绝下单: %s/%s", response.Code, response.SubCode)
+		if deterministicAlipayCreateRejection(response.Code, response.SubCode) {
 			return "", deterministicProviderError(rejection)
 		}
 		return "", ambiguousProviderError(rejection)
 	}
-	var envelope struct {
-		Response struct {
-			Code    string `json:"code"`
-			Message string `json:"msg"`
-			SubCode string `json:"sub_code"`
-			SubMsg  string `json:"sub_msg"`
-			QRCode  string `json:"qr_code"`
-		} `json:"alipay_trade_precreate_response"`
+	if response.MerchantOrderNo != transaction.MerchantOrderNo {
+		return "", ambiguousProviderError(errors.New("支付宝下单响应商户订单号不匹配"))
 	}
-	if err := json.Unmarshal(responseBody, &envelope); err != nil {
-		return "", ambiguousProviderError(fmt.Errorf("支付宝响应格式无效: %w", err))
-	}
-	if envelope.Response.Code != "10000" {
-		return "", deterministicProviderError(fmt.Errorf("支付宝拒绝下单: %s %s", envelope.Response.SubCode, firstPaymentMessage(envelope.Response.SubMsg, envelope.Response.Message)))
-	}
-	if strings.TrimSpace(envelope.Response.QRCode) == "" {
+	if strings.TrimSpace(response.QRCode) == "" {
 		return "", ambiguousProviderError(errors.New("支付宝响应缺少 qr_code"))
 	}
-	return envelope.Response.QRCode, nil
+	return response.QRCode, nil
+}
+
+func deterministicAlipayCreateRejection(code string, subCode string) bool {
+	return strings.TrimSpace(code) == "40004" && strings.TrimSpace(subCode) == "ACQ.INVALID_PARAMETER"
 }
 
 func formatAmountCents(amount int64) string {
