@@ -1,5 +1,5 @@
+import { SiteAccountActions } from "@/components/layout/site-account-actions";
 import { SiteBrandLink } from "@/components/layout/site-brand-link";
-import { WorkspaceSidebarFooter } from "@/components/layout/workspace-sidebar-footer";
 import "@/components/layout/workspace-top-bar.css";
 
 export function WorkspaceTopBar() {
@@ -9,7 +9,7 @@ export function WorkspaceTopBar() {
                 <SiteBrandLink />
 
                 <div className="workspace-top-bar-account">
-                    <WorkspaceSidebarFooter collapsedClassName="workspace-top-bar-account-collapsed" expandedClassName="workspace-top-bar-account-expanded" accountClassName="workspace-top-bar-account-trigger" compact />
+                    <SiteAccountActions />
                 </div>
             </div>
         </header>

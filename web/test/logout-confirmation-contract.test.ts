@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 const logoutHookSource = readFileSync(new URL("../src/components/auth/use-confirm-logout.ts", import.meta.url), "utf8");
 const logoutStyles = readFileSync(new URL("../src/components/auth/logout-confirm.css", import.meta.url), "utf8");
-const logoutEntrypoints = [readFileSync(new URL("../src/components/layout/workspace-sidebar-footer.tsx", import.meta.url), "utf8"), readFileSync(new URL("../src/components/layout/site-account-actions.tsx", import.meta.url), "utf8")];
+const logoutEntrypoints = [readFileSync(new URL("../src/components/layout/site-account-actions.tsx", import.meta.url), "utf8")];
 
 describe("account logout confirmation", () => {
     test("uses one shared confirmation contract for every logout entrypoint", () => {
