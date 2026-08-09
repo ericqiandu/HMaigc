@@ -32,6 +32,9 @@ describe("积分商城生产契约", () => {
         expect(page).toContain('{ key: "model", label: "专属模型卡", icon: "🎲" }');
         expect(page).toContain('className="points-surprise-grid"');
         expect(page).toContain('className="points-general-grid"');
+        expect(page).toContain("限时商品以实际上架时间为准");
+        expect(page).toContain("通用积分卡暂无上架商品");
+        expect(page).not.toContain("00</strong>");
         expect(styles).toContain("background: #070b11");
         expect(styles).toContain("position: sticky");
     });

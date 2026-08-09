@@ -41,6 +41,50 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
 }
 
+.membership-storefront-cycle-row {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.membership-storefront-cycle-switch {
+    grid-column: 2;
+}
+
+.membership-storefront-wallet-action {
+    grid-column: 3;
+    justify-self: end;
+}
+
+.membership-storefront-plan-recommendation {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: flex;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px 12px 0 0;
+    color: #082027;
+    font-size: 11px;
+    font-weight: 600;
+    background: #4fd6e0;
+}
+
+.membership-storefront-plan-card.is-featured {
+    padding-top: 48px;
+}
+
+.membership-storefront-plan-card.is-featured .membership-storefront-plan-discount {
+    top: 48px;
+}
+
+.membership-storefront-plan-activities {
+    margin-right: -24px;
+    margin-left: -24px;
+    padding: 16px 24px;
+    background: rgb(79 214 224 / 6%);
+}
+
 .membership-storefront-faq-question {
     color: #dde4ec;
 }
@@ -76,6 +120,30 @@
 
     .membership-storefront-plan-card {
         padding: 20px;
+    }
+
+    .membership-storefront-plan-card.is-featured {
+        padding-top: 44px;
+    }
+
+    .membership-storefront-plan-card.is-featured .membership-storefront-plan-discount {
+        top: 44px;
+    }
+
+    .membership-storefront-cycle-row {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .membership-storefront-wallet-action {
+        align-self: center;
+    }
+
+    .membership-storefront-plan-activities {
+        margin-right: -20px;
+        margin-left: -20px;
+        padding-right: 20px;
+        padding-left: 20px;
     }
 
     .membership-storefront-account {

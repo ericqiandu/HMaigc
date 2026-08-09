@@ -16,6 +16,9 @@ describe("会员商城交付稿视觉契约", () => {
         expect(pricing).toContain("membership-storefront-audience-tabs mt-10 flex justify-center gap-14");
         expect(pricing).toContain("membership-storefront-cycle-switch mx-auto flex rounded-full");
         expect(pricing).toContain("border-[#232c38] bg-[#0f151e]");
+        expect(pricing).toContain('const featured = plan.tier === "ultra"');
+        expect(pricing).toContain("cycleOfferLabel(allPlans, audience, availableCycle)");
+        expect(pricing).toContain('className="membership-storefront-plan-recommendation"');
         expect(page).toContain('navigate("/credit-store")');
     });
 });

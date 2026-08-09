@@ -3,14 +3,7 @@ import { useState } from "react";
 import type { MembershipAudience, MembershipBillingCycle, MembershipPlan, MembershipStorefrontSetting } from "@/services/api/membership";
 
 import { billingCycleShortLabel, clampSeats, discountLabel, formatCredits, monthlyCredits, publicPlanName } from "./membership-formatters";
-import {
-    planCreditValueLabel,
-    planCycleSavingsLabel,
-    planOriginalMonthlyPriceLabel,
-    planPeriodDescription,
-    planPriceLabel,
-    planStorageLabel,
-} from "./membership-storefront-domain";
+import { planCreditValueLabel, planCycleSavingsLabel, planOriginalMonthlyPriceLabel, planPeriodDescription, planPriceLabel, planStorageLabel } from "./membership-storefront-domain";
 
 type MembershipStorefrontPricingProps = {
     allPlans: MembershipPlan[];
@@ -40,7 +33,11 @@ function CheckItem({ text }: { text: string }) {
 }
 
 function InfoDot() {
-    return <span aria-hidden="true" className="membership-storefront-info-dot ml-1 inline-flex h-[13px] w-[13px] items-center justify-center rounded-full border border-[#5c6675] text-[9px] text-[#8b95a5]">i</span>;
+    return (
+        <span aria-hidden="true" className="membership-storefront-info-dot ml-1 inline-flex h-[13px] w-[13px] items-center justify-center rounded-full border border-[#5c6675] text-[9px] text-[#8b95a5]">
+            i
+        </span>
+    );
 }
 
 function uniqueFeatures(values: string[]): string[] {
@@ -59,28 +56,33 @@ function planActionLabel(plan: MembershipPlan, currentPlanId?: string): string {
     return plan.tier === "ultra" ? "立即升级至尊版" : "选择此方案";
 }
 
+function cycleOfferLabel(allPlans: MembershipPlan[], audience: MembershipAudience, cycle: MembershipBillingCycle): string {
+    const discountedPlans = allPlans
+        .filter((plan) => plan.audience === audience && plan.billingCycle === cycle && plan.originalPriceCents > plan.priceCents)
+        .sort((left, right) => left.priceCents / left.originalPriceCents - right.priceCents / right.originalPriceCents);
+    return discountedPlans[0] ? (discountLabel(discountedPlans[0]) ?? "优惠订阅") : cycle === "year" ? "年度优惠" : "灵活订阅";
+}
+
 type StorefrontPlanCardProps = Pick<MembershipStorefrontPricingProps, "allPlans" | "currentPlanId" | "onPurchase" | "onSeatsChange" | "presentation" | "teamSeats"> & {
     plan: MembershipPlan;
 };
 
 function StorefrontPlanCard({ allPlans, currentPlanId, onPurchase, onSeatsChange, plan, presentation, teamSeats }: StorefrontPlanCardProps) {
     const seats = clampSeats(plan, teamSeats[plan.id] ?? plan.minSeats);
-    const featured = plan.tier === "max" || plan.tier === "ultra";
+    const featured = plan.tier === "ultra";
     const highlight = requirePlanHighlight(presentation, plan.tier);
     const originalPrice = planOriginalMonthlyPriceLabel(plan, seats);
     const discount = discountLabel(plan);
-    const planFeatures = uniqueFeatures([
-        `${plan.imageConcurrency} 个图片并发 · ${plan.videoConcurrency} 个视频并发`,
-        planStorageLabel(plan),
-        ...plan.benefits,
-        ...presentation.commonFeatures,
-    ]);
+    const planFeatures = uniqueFeatures([`${plan.imageConcurrency} 个图片并发 · ${plan.videoConcurrency} 个视频并发`, planStorageLabel(plan), ...plan.benefits, ...presentation.commonFeatures]);
     const visibleExclusive = presentation.exclusiveFeatures.slice(0, 2);
     const extraExclusive = presentation.exclusiveFeatures.slice(2);
     const [expanded, setExpanded] = useState(false);
 
     return (
-        <article className={`membership-storefront-plan-card relative flex flex-col rounded-xl border p-6 transition-colors ${featured ? "is-featured border-[#1f6f78]/70 bg-gradient-to-b from-[#10303a] via-[#0e2029] to-[#0c141d]" : "border-[#232c38] bg-[#0f151e] hover:border-[#323d4c]"}`}>
+        <article
+            className={`membership-storefront-plan-card relative flex flex-col rounded-xl border p-6 transition-colors ${featured ? "is-featured border-[#1f6f78]/70 bg-gradient-to-b from-[#10303a] via-[#0e2029] to-[#0c141d]" : "border-[#232c38] bg-[#0f151e] hover:border-[#323d4c]"}`}
+        >
+            {featured ? <div className="membership-storefront-plan-recommendation">热门推荐</div> : null}
             {discount ? <span className="membership-storefront-plan-discount absolute right-5 top-6 rounded bg-[#0f4b52] px-2 py-0.5 text-[11px] text-[#4fd6e0]">{discount}</span> : null}
             <h2 className="membership-storefront-plan-name pr-16 text-[16px] font-medium text-white">{publicPlanName(plan)}</h2>
             <div className="membership-storefront-plan-price mt-3 flex flex-wrap items-baseline gap-2">
@@ -119,7 +121,7 @@ function StorefrontPlanCard({ allPlans, currentPlanId, onPurchase, onSeatsChange
             ) : null}
 
             <button
-                className={`membership-storefront-plan-action mt-6 w-full rounded-full py-3 text-[14px] font-medium transition-all ${plan.tier === "ultra" ? "bg-gradient-to-r from-[#7fe3f0] to-[#3fc4f5] text-[#0a1218] hover:opacity-90" : "bg-white text-[#10161e] hover:bg-[#e6ebf0]"}`}
+                className={`membership-storefront-plan-action mt-6 w-full rounded-lg py-3 text-[14px] font-medium transition-all ${plan.tier === "ultra" ? "bg-gradient-to-r from-[#7fe3f0] to-[#3fc4f5] text-[#0a1218] hover:opacity-90" : "bg-white text-[#10161e] hover:bg-[#e6ebf0]"}`}
                 onClick={() => onPurchase(plan, seats)}
                 type="button"
             >
@@ -143,7 +145,9 @@ function StorefrontPlanCard({ allPlans, currentPlanId, onPurchase, onSeatsChange
 
             <div aria-hidden="true" className="membership-storefront-plan-divider my-5 border-t border-[#202935]" />
             <ul className="membership-storefront-plan-features space-y-2.5">
-                {planFeatures.map((feature) => <CheckItem key={feature} text={feature} />)}
+                {planFeatures.map((feature) => (
+                    <CheckItem key={feature} text={feature} />
+                ))}
             </ul>
 
             <section aria-label={`${publicPlanName(plan)}独家功能`} className="membership-storefront-exclusive mt-5">
@@ -176,47 +180,70 @@ export function MembershipStorefrontPricing(props: MembershipStorefrontPricingPr
     return (
         <section aria-label="会员套餐" className="membership-storefront-pricing mx-auto max-w-[1300px] px-6">
             <div className="membership-storefront-audience-tabs mt-10 flex justify-center gap-14 border-b border-[#1d2530]" role="tablist">
-                {([{ key: "personal", label: presentation.copy.creatorTab }, { key: "team", label: presentation.copy.teamTab }] as const).map((tab) => (
-                    <button aria-selected={audience === tab.key} className={`membership-storefront-audience-tab relative min-h-11 pb-3.5 text-[16px] transition-colors ${audience === tab.key ? "is-active font-semibold text-white" : "text-[#7d8794] hover:text-[#aeb8c5]"}`} key={tab.key} onClick={() => onAudienceChange(tab.key)} role="tab" type="button">
+                {(
+                    [
+                        { key: "personal", label: presentation.copy.creatorTab },
+                        { key: "team", label: presentation.copy.teamTab },
+                    ] as const
+                ).map((tab) => (
+                    <button
+                        aria-selected={audience === tab.key}
+                        className={`membership-storefront-audience-tab relative min-h-11 pb-3.5 text-[16px] transition-colors ${audience === tab.key ? "is-active font-semibold text-white" : "text-[#7d8794] hover:text-[#aeb8c5]"}`}
+                        key={tab.key}
+                        onClick={() => onAudienceChange(tab.key)}
+                        role="tab"
+                        type="button"
+                    >
                         {tab.label}
                         {audience === tab.key ? <span aria-hidden="true" className="membership-storefront-audience-indicator absolute inset-x-2 bottom-[-1px] h-[2px] bg-white" /> : null}
                     </button>
                 ))}
             </div>
 
-            <div className="membership-storefront-cycle-row mt-8 flex items-center justify-between max-lg:flex-col max-lg:gap-4">
+            <div className="membership-storefront-cycle-row mt-8 grid items-center gap-4">
                 <div className="membership-storefront-cycle-switch mx-auto flex rounded-full border border-[#2a3442] bg-[#121924] p-1">
                     {availableCycles.map((availableCycle) => (
-                        <button className={`membership-storefront-cycle-option flex min-h-11 items-center gap-2 rounded-full px-7 py-2.5 text-[14px] transition-all max-sm:px-4 ${cycle === availableCycle ? "is-active bg-[#2c3646] font-medium text-white shadow" : "text-[#8b95a5] hover:text-white"}`} key={availableCycle} onClick={() => onCycleChange(availableCycle)} type="button">
-                            {availableCycle === "year" ? audience === "team" ? billingCycleShortLabel.year : presentation.copy.yearCycle : availableCycle === "month" ? audience === "team" ? billingCycleShortLabel.month : presentation.copy.monthCycle : billingCycleShortLabel[availableCycle]}
-                            <span className={`membership-storefront-cycle-tag text-[11px] ${availableCycle === "year" ? "text-[#ff8a3c]" : "text-[#9aa5b3]"}`}>{availableCycle === "year" ? "年度优惠" : "灵活订阅"}</span>
+                        <button
+                            className={`membership-storefront-cycle-option flex min-h-11 items-center gap-2 rounded-full px-7 py-2.5 text-[14px] transition-all max-sm:px-4 ${cycle === availableCycle ? "is-active bg-[#2c3646] font-medium text-white shadow" : "text-[#8b95a5] hover:text-white"}`}
+                            key={availableCycle}
+                            onClick={() => onCycleChange(availableCycle)}
+                            type="button"
+                        >
+                            {availableCycle === "year"
+                                ? audience === "team"
+                                    ? billingCycleShortLabel.year
+                                    : presentation.copy.yearCycle
+                                : availableCycle === "month"
+                                  ? audience === "team"
+                                      ? billingCycleShortLabel.month
+                                      : presentation.copy.monthCycle
+                                  : billingCycleShortLabel[availableCycle]}
+                            <span className={`membership-storefront-cycle-tag text-[11px] ${availableCycle === "year" ? "text-[#ff8a3c]" : "text-[#9aa5b3]"}`}>{cycleOfferLabel(allPlans, audience, availableCycle)}</span>
                         </button>
                     ))}
                 </div>
                 <button className="membership-storefront-wallet-action flex min-h-11 items-center gap-1.5 rounded-full border border-[#2f6f78] px-5 py-2 text-[13px] text-[#45c8d4] transition-colors hover:bg-[#12333a]" onClick={onOpenWallet} type="button">
-                    {presentation.copy.creditStore} <span aria-hidden="true" className="membership-storefront-wallet-arrow">›</span>
+                    {presentation.copy.creditStore}{" "}
+                    <span aria-hidden="true" className="membership-storefront-wallet-arrow">
+                        ›
+                    </span>
                 </button>
             </div>
 
             <div className="membership-storefront-plan-grid mt-8 grid gap-4">
                 {plans.map((plan) => (
-                    <StorefrontPlanCard
-                        allPlans={allPlans}
-                        currentPlanId={currentPlanId}
-                        key={plan.id}
-                        onPurchase={onPurchase}
-                        onSeatsChange={onSeatsChange}
-                        plan={plan}
-                        presentation={presentation}
-                        teamSeats={teamSeats}
-                    />
+                    <StorefrontPlanCard allPlans={allPlans} currentPlanId={currentPlanId} key={plan.id} onPurchase={onPurchase} onSeatsChange={onSeatsChange} plan={plan} presentation={presentation} teamSeats={teamSeats} />
                 ))}
             </div>
 
             <div className="membership-storefront-notes mt-10 text-[12px] leading-6 text-[#6b7684]">
                 {presentation.membershipNotes.map((note, index) => (
                     <p className={`membership-storefront-note ${index > 0 ? "ml-4 font-medium text-[#8b95a5]" : ""}`} key={note}>
-                        {index === 0 ? <span aria-hidden="true" className="membership-storefront-note-mark mr-1.5 text-[#4fd6e0]">✦</span> : null}
+                        {index === 0 ? (
+                            <span aria-hidden="true" className="membership-storefront-note-mark mr-1.5 text-[#4fd6e0]">
+                                ✦
+                            </span>
+                        ) : null}
                         {note}
                     </p>
                 ))}
