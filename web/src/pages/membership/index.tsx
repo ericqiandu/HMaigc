@@ -1,6 +1,6 @@
 import { Alert, Button, Empty, message, Spin } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
-import { Crown, ImageIcon, Video, X } from "lucide-react";
+import { Crown, ImageIcon, Video } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -204,11 +204,7 @@ export default function MembershipPage() {
     };
 
     return (
-        <main className="membership-storefront-page">
-            <h1 className="membership-storefront-page-title">会员订阅</h1>
-            <button aria-label="关闭会员页面" className="membership-storefront-close" onClick={() => navigate("/")} type="button">
-                <X aria-hidden="true" className="membership-storefront-close-icon" />
-            </button>
+        <main className="membership-storefront-page min-h-screen bg-[#070b11] font-sans antialiased">
             {storefront ? <MembershipStorefrontPromo promotion={storefront.presentation.promotion} serverNow={storefront.serverNow} /> : null}
 
             {loadError ? (
