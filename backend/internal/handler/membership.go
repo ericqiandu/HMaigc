@@ -50,7 +50,7 @@ func RegisterMembershipRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		order, err := svc.CreateMembershipOrder(user, req)
+		order, err := svc.CreateMembershipOrder(user, req, c.GetHeader("Idempotency-Key"))
 		if err != nil {
 			failService(c, err)
 			return

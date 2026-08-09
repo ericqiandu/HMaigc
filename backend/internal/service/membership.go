@@ -1,6 +1,8 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +74,12 @@ type ConfirmMembershipOrderRequest struct {
 
 type CloseMembershipOrderRequest struct {
 	Note string `json:"note"`
+}
+
+type membershipOrderRequestFingerprint struct {
+	PlanID string `json:"planId"`
+	TeamID string `json:"teamId"`
+	Seats  int    `json:"seats"`
 }
 
 func (s *Service) MembershipPlans(admin *model.User) ([]MembershipPlanView, error) {
@@ -249,33 +257,96 @@ func entitlementFromPlan(plan model.MembershipPlan, isActiveMember bool, teamID 
 	}
 }
 
-func (s *Service) CreateMembershipOrder(user *model.User, req CreateMembershipOrderRequest) (*model.MembershipOrder, error) {
-	plan, err := s.repo.MembershipPlan(strings.TrimSpace(req.PlanID))
+func (s *Service) CreateMembershipOrder(user *model.User, req CreateMembershipOrderRequest, idempotencyKey string) (*model.MembershipOrder, error) {
+	if user == nil || strings.TrimSpace(user.ID) == "" {
+		return nil, Unauthorized("请先登录")
+	}
+	if len(idempotencyKey) < 1 || len(idempotencyKey) > 120 {
+		return nil, BadAuthRequest("Idempotency-Key 必须为 1 到 120 字节")
+	}
+	fingerprint := membershipOrderRequestFingerprint{
+		PlanID: strings.TrimSpace(req.PlanID),
+		TeamID: strings.TrimSpace(req.TeamID),
+		Seats:  req.Seats,
+	}
+	if fingerprint.Seats == 0 {
+		fingerprint.Seats = 1
+	}
+	requestHash, err := membershipOrderRequestHash(fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.repo.MembershipOrderByIdempotencyKey(user.ID, idempotencyKey)
+	if err == nil {
+		return matchingMembershipOrderReplay(existing, requestHash)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	plan, err := s.repo.MembershipPlan(fingerprint.PlanID)
 	if err != nil || !plan.Enabled || plan.BillingCycle == model.MembershipBillingCycleFree {
 		return nil, BadAuthRequest("套餐不存在、已下架或不可购买")
+	}
+	if err := validatePaidMembershipPlanPrice(plan); err != nil {
+		return nil, BadAuthRequest(err.Error())
 	}
 	seats := 1
 	teamID := ""
 	if plan.Audience == model.MembershipAudienceTeam {
-		seats = req.Seats
+		seats = fingerprint.Seats
 		if seats < plan.MinSeats || seats > plan.MaxSeats {
 			return nil, BadAuthRequest(fmt.Sprintf("团队席位数必须在 %d 到 %d 之间", plan.MinSeats, plan.MaxSeats))
 		}
-		team, teamErr := s.repo.TeamForOwner(user.ID, strings.TrimSpace(req.TeamID))
+		team, teamErr := s.repo.TeamForOwner(user.ID, fingerprint.TeamID)
 		if teamErr != nil || team.Status != model.TeamStatusActive {
 			return nil, BadAuthRequest("团队不存在或当前用户不是团队所有者")
 		}
 		teamID = team.ID
+	} else if fingerprint.TeamID != "" || fingerprint.Seats != 1 {
+		return nil, BadAuthRequest("个人套餐不能指定团队或多人席位")
 	}
 	snapshot, err := json.Marshal(plan)
 	if err != nil {
 		return nil, err
 	}
-	order := &model.MembershipOrder{ID: newID(), OrderNumber: "M" + time.Now().Format("20060102150405") + strings.ToUpper(newID()[:6]), UserID: user.ID, TeamID: teamID, PlanID: plan.ID, Seats: seats, UnitPriceCents: plan.PriceCents, TotalPriceCents: plan.PriceCents * int64(seats), Currency: plan.Currency, Status: model.MembershipOrderPending, PlanSnapshotJSON: string(snapshot)}
-	if err := s.repo.Create(order); err != nil {
+	order := &model.MembershipOrder{
+		ID: newID(), OrderNumber: "M" + time.Now().Format("20060102150405") + strings.ToUpper(newID()[:6]),
+		UserID: user.ID, IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+		TeamID: teamID, PlanID: plan.ID, Seats: seats, UnitPriceCents: plan.PriceCents,
+		TotalPriceCents: plan.PriceCents * int64(seats), Currency: plan.Currency,
+		Status: model.MembershipOrderPending, PlanSnapshotJSON: string(snapshot),
+	}
+	winner, err := s.repo.CreateMembershipOrder(order)
+	if err != nil {
 		return nil, err
 	}
+	return matchingMembershipOrderReplay(winner, requestHash)
+}
+
+func membershipOrderRequestHash(fingerprint membershipOrderRequestFingerprint) (string, error) {
+	encoded, err := json.Marshal(fingerprint)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func matchingMembershipOrderReplay(order *model.MembershipOrder, requestHash string) (*model.MembershipOrder, error) {
+	if order == nil || order.RequestHash != requestHash {
+		return nil, &AuthError{Status: http.StatusConflict, Message: "Idempotency-Key 已绑定到不同的会员购买请求"}
+	}
 	return order, nil
+}
+
+func validatePaidMembershipPlanPrice(plan *model.MembershipPlan) error {
+	if plan == nil {
+		return errors.New("会员套餐不能为空")
+	}
+	if (plan.BillingCycle == model.MembershipBillingCycleMonth || plan.BillingCycle == model.MembershipBillingCycleYear) && plan.PriceCents <= 0 {
+		return fmt.Errorf("付费套餐 %s 的价格必须大于 0", plan.Code)
+	}
+	return nil
 }
 
 func (s *Service) MyMembership(user *model.User) (*MembershipEntitlement, []model.MembershipOrder, []model.Team, error) {
@@ -319,6 +390,11 @@ func (s *Service) AdminUpdateMembershipPlan(actor *model.User, id string, req Up
 	}
 	if strings.TrimSpace(req.Name) == "" || req.PriceCents < 0 || req.CreditsPerPeriod < 0 || req.ImageConcurrency < 1 || req.VideoConcurrency < 1 || req.TopupDiscountBasisPoints < 0 || req.TopupDiscountBasisPoints > 10000 {
 		return nil, BadAuthRequest("套餐名称、价格、积分、并发或折扣配置无效")
+	}
+	priceCandidate := *plan
+	priceCandidate.PriceCents = req.PriceCents
+	if err := validatePaidMembershipPlanPrice(&priceCandidate); err != nil {
+		return nil, BadAuthRequest(err.Error())
 	}
 	if plan.Audience == model.MembershipAudienceTeam && (req.MinSeats < 2 || req.MaxSeats < req.MinSeats) {
 		return nil, BadAuthRequest("团队套餐席位范围无效")
@@ -509,13 +585,13 @@ func (s *Service) referralFulfillmentForOrder(order *model.MembershipOrder, plan
 		InviterLedger: &model.CreditLedgerEntry{
 			ID: newID(), UserID: relationship.InviterUserID, Type: model.CreditLedgerReferralInviter,
 			AmountMicrocredits: rule.InviterRewardMicrocredits, AvailableDeltaMicrocredits: rule.InviterRewardMicrocredits,
-			ActorUserID: "system", Scene: "referral", Note: "邀请好友首购会员奖励",
+			ActorUserID: model.SystemActorID, Scene: "referral", Note: "邀请好友首购会员奖励",
 			ReferenceKey: &inviterReference, CreatedAt: now,
 		},
 		InviteeLedger: &model.CreditLedgerEntry{
 			ID: newID(), UserID: order.UserID, Type: model.CreditLedgerReferralInvitee,
 			AmountMicrocredits: rule.InviteeRewardMicrocredits, AvailableDeltaMicrocredits: rule.InviteeRewardMicrocredits,
-			ActorUserID: "system", Scene: "referral", Note: "受邀首购会员奖励",
+			ActorUserID: model.SystemActorID, Scene: "referral", Note: "受邀首购会员奖励",
 			ReferenceKey: &inviteeReference, CreatedAt: now,
 		},
 	}, nil
@@ -548,7 +624,7 @@ func (s *Service) reconcileMembershipLifecycle(now time.Time) error {
 		reference := "membership-order:" + subscription.OrderID
 		ledger := &model.CreditLedgerEntry{
 			ID: newID(), UserID: subscription.UserID, Type: model.CreditLedgerMembership,
-			AmountMicrocredits: grant, AvailableDeltaMicrocredits: grant, ActorUserID: "system",
+			AmountMicrocredits: grant, AvailableDeltaMicrocredits: grant, ActorUserID: model.SystemActorID,
 			Scene: "membership", Note: "会员套餐积分到账", ReferenceKey: &reference,
 			CreatedAt: now,
 		}

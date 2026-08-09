@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,213 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestPaymentIntegritySchemaUpgradesLegacyNullsAndCreatesExactIndexes(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDDL := []string{
+		`CREATE TABLE membership_orders (id text PRIMARY KEY, order_number text, user_id text, idempotency_key text NULL, request_hash text NULL, team_id text, plan_id text, seats integer, unit_price_cents integer, total_price_cents integer, currency text, status text, payment_provider text, provider_trade_no text, plan_snapshot_json text, resolved_by text, resolution_note text, paid_at datetime, created_at datetime, updated_at datetime)`,
+		`CREATE TABLE payment_checkout_sessions (id text PRIMARY KEY, order_type text, order_id text, user_id text, token_hash text, token_cipher text NULL, status text, expires_at datetime, created_at datetime, updated_at datetime)`,
+		`CREATE TABLE payment_transactions (id text PRIMARY KEY, order_type text, order_id text, user_id text, provider text, merchant_order_no text, provider_trade_no text NULL, amount_cents integer, currency text, status text, code_url text, failure_code text NULL, failure_reason text NULL, expires_at datetime, paid_at datetime, closed_at datetime, created_at datetime, updated_at datetime)`,
+		`CREATE TABLE payment_webhook_events (id text PRIMARY KEY, provider text, provider_event_id text, transaction_id text, merchant_order_no text NULL, provider_trade_no text NULL, currency text NULL, failure_code text NULL, payload_digest text, status text, failure_reason text NULL, received_at datetime, processed_at datetime, created_at datetime, updated_at datetime)`,
+	}
+	for _, statement := range legacyDDL {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := db.Exec(`INSERT INTO membership_orders (id, order_number, user_id, plan_id, seats, unit_price_cents, total_price_cents, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "legacy-order", "M-LEGACY", "legacy-user", "legacy-plan", 1, 100, 100, "CNY", model.MembershipOrderPaid, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO payment_checkout_sessions (id, order_type, order_id, user_id, token_hash, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "legacy-session", model.PaymentOrderMembership, "legacy-order", "legacy-user", "hash", model.PaymentCheckoutConsumed, now, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO payment_transactions (id, order_type, order_id, user_id, provider, merchant_order_no, provider_trade_no, amount_cents, currency, status, failure_reason, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`, "legacy-transaction", model.PaymentOrderMembership, "legacy-order", "legacy-user", model.PaymentProviderWechat, "merchant-legacy", "trade-legacy", 100, "CNY", model.PaymentTransactionPaid, now, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO payment_webhook_events (id, provider, provider_event_id, transaction_id, payload_digest, status, failure_reason, received_at, processed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`, "legacy-event", model.PaymentProviderWechat, "event-legacy", "legacy-transaction", "digest", model.PaymentWebhookProcessed, now, now, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("runtime schema migration: %v", err)
+	}
+	if err := EnsurePaymentIntegritySchema(db); err != nil {
+		t.Fatalf("idempotent payment integrity verification: %v", err)
+	}
+
+	for table, columns := range map[string][]string{
+		"membership_orders":         {"idempotency_key", "request_hash"},
+		"payment_checkout_sessions": {"token_cipher"},
+		"payment_transactions":      {"failure_code"},
+		"payment_webhook_events":    {"merchant_order_no", "provider_trade_no", "currency", "failure_code"},
+	} {
+		for _, column := range columns {
+			assertSQLiteNotNullEmptyDefault(t, db, table, column)
+		}
+	}
+	var event model.PaymentWebhookEvent
+	if err := db.First(&event, "id = ?", "legacy-event").Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.MerchantOrderNo != "merchant-legacy" || event.ProviderTradeNo != "trade-legacy" || event.AmountCents != 100 || event.Currency != "CNY" || event.PaidAt == nil || !event.PaidAt.Equal(now) {
+		t.Fatalf("processed webhook facts were not backfilled from the transaction: %#v", event)
+	}
+
+	expectedIndexes := map[string]string{
+		"idx_membership_order_user_idempotency":   `CREATE UNIQUE INDEX idx_membership_order_user_idempotency ON membership_orders(user_id, idempotency_key) WHERE idempotency_key <> ''`,
+		"idx_payment_transactions_payable_order":  `CREATE UNIQUE INDEX idx_payment_transactions_payable_order ON payment_transactions(order_type, order_id) WHERE status IN ('created', 'pending', 'review_required')`,
+		"idx_payment_transactions_provider_trade": `CREATE UNIQUE INDEX idx_payment_transactions_provider_trade ON payment_transactions(provider, provider_trade_no) WHERE provider_trade_no <> ''`,
+	}
+	for name, expected := range expectedIndexes {
+		var actual string
+		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
+			t.Fatal(err)
+		}
+		if compactSQL(actual) != compactSQL(expected) {
+			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
+		}
+	}
+}
+
+func TestPaymentIntegritySchemaRejectsWrongExistingPredicate(t *testing.T) {
+	db := openPaymentIntegritySQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_payment_transactions_payable_order ON payment_transactions(order_type, order_id) WHERE status IN ('created', 'pending')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsurePaymentIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "idx_payment_transactions_payable_order") {
+		t.Fatalf("wrong existing predicate error = %v", err)
+	}
+}
+
+func TestPaymentIntegritySchemaDoesNotTrustWrongExistingIndexName(t *testing.T) {
+	db := openPaymentIntegritySQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_wrong_payable_order ON payment_transactions(order_type, order_id) WHERE status IN ('created', 'pending', 'review_required')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePaymentIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var definition string
+	if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", "idx_payment_transactions_payable_order").Scan(&definition).Error; err != nil {
+		t.Fatal(err)
+	}
+	if compactSQL(definition) != compactSQL(`CREATE UNIQUE INDEX idx_payment_transactions_payable_order ON payment_transactions(order_type, order_id) WHERE status IN ('created', 'pending', 'review_required')`) {
+		t.Fatalf("expected named payable index was not created exactly: %q", definition)
+	}
+}
+
+func TestPaymentIntegritySchemaRejectsDuplicatePayableFactsWithoutDeletingRows(t *testing.T) {
+	db := openPaymentIntegritySQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	transactions := []model.PaymentTransaction{
+		{ID: "payable-a", OrderType: model.PaymentOrderMembership, OrderID: "order-duplicate", UserID: "user-a", Provider: model.PaymentProviderWechat, MerchantOrderNo: "merchant-a", AmountCents: 100, Currency: "CNY", Status: model.PaymentTransactionCreated, CreatedAt: now, UpdatedAt: now},
+		{ID: "payable-b", OrderType: model.PaymentOrderMembership, OrderID: "order-duplicate", UserID: "user-a", Provider: model.PaymentProviderAlipay, MerchantOrderNo: "merchant-b", AmountCents: 100, Currency: "CNY", Status: model.PaymentTransactionReviewRequired, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&transactions).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsurePaymentIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "membership/order-duplicate") || !strings.Contains(err.Error(), "merchant-a") || !strings.Contains(err.Error(), "merchant-b") {
+		t.Fatalf("duplicate payable facts error = %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.PaymentTransaction{}).Where("order_id = ?", "order-duplicate").Count(&count).Error; err != nil || count != 2 {
+		t.Fatalf("duplicate payable rows changed: count=%d err=%v", count, err)
+	}
+}
+
+func TestPaymentIntegritySchemaRejectsDuplicateProviderTradeFactsWithoutDeletingRows(t *testing.T) {
+	db := openPaymentIntegritySQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	transactions := []model.PaymentTransaction{
+		{ID: "trade-a", OrderType: model.PaymentOrderMembership, OrderID: "order-a", UserID: "user-a", Provider: model.PaymentProviderWechat, MerchantOrderNo: "merchant-a", ProviderTradeNo: "provider-duplicate", AmountCents: 100, Currency: "CNY", Status: model.PaymentTransactionPaid, CreatedAt: now, UpdatedAt: now},
+		{ID: "trade-b", OrderType: model.PaymentOrderCreditTopup, OrderID: "order-b", UserID: "user-b", Provider: model.PaymentProviderWechat, MerchantOrderNo: "merchant-b", ProviderTradeNo: "provider-duplicate", AmountCents: 200, Currency: "CNY", Status: model.PaymentTransactionPaid, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&transactions).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsurePaymentIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "membership/order-a") || !strings.Contains(err.Error(), "credit_topup/order-b") || !strings.Contains(err.Error(), "merchant-a") || !strings.Contains(err.Error(), "merchant-b") {
+		t.Fatalf("duplicate provider trade facts error = %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.PaymentTransaction{}).Where("provider_trade_no = ?", "provider-duplicate").Count(&count).Error; err != nil || count != 2 {
+		t.Fatalf("duplicate provider trade rows changed: count=%d err=%v", count, err)
+	}
+}
+
+func TestPaymentIntegritySchemaRejectsProcessedWebhookWithoutTransactionFacts(t *testing.T) {
+	db := openPaymentIntegritySQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	event := model.PaymentWebhookEvent{ID: "orphan-event", Provider: model.PaymentProviderWechat, ProviderEventID: "orphan-provider-event", TransactionID: "missing-transaction", PayloadDigest: "digest", Status: model.PaymentWebhookProcessed, ReceivedAt: now, ProcessedAt: &now, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsurePaymentIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), event.ID) || !strings.Contains(err.Error(), event.TransactionID) {
+		t.Fatalf("processed webhook missing facts error = %v", err)
+	}
+}
+
+func openPaymentIntegritySQLite(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func assertSQLiteNotNullEmptyDefault(t *testing.T, db *gorm.DB, table string, column string) {
+	t.Helper()
+	type columnInfo struct {
+		Name       string  `gorm:"column:name"`
+		NotNull    int     `gorm:"column:notnull"`
+		DefaultSQL *string `gorm:"column:dflt_value"`
+	}
+	var columns []columnInfo
+	if err := db.Raw("PRAGMA table_info(" + table + ")").Scan(&columns).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range columns {
+		if info.Name != column {
+			continue
+		}
+		if info.NotNull != 1 || info.DefaultSQL == nil || (strings.TrimSpace(*info.DefaultSQL) != "''" && strings.TrimSpace(*info.DefaultSQL) != `""`) {
+			defaultSQL := "<nil>"
+			if info.DefaultSQL != nil {
+				defaultSQL = *info.DefaultSQL
+			}
+			t.Fatalf("%s.%s constraint = notnull:%d default:%q, want NOT NULL DEFAULT ''", table, column, info.NotNull, defaultSQL)
+		}
+		return
+	}
+	t.Fatalf("missing column %s.%s", table, column)
+}
+
+func compactSQL(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(value, "\"", "")), " "))
+}
 
 func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

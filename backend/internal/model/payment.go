@@ -15,12 +15,13 @@ const (
 	PaymentCheckoutExpired  PaymentCheckoutStatus = "expired"
 	PaymentCheckoutConsumed PaymentCheckoutStatus = "consumed"
 
-	PaymentTransactionCreated  PaymentTransactionStatus = "created"
-	PaymentTransactionPending  PaymentTransactionStatus = "pending"
-	PaymentTransactionPaid     PaymentTransactionStatus = "paid"
-	PaymentTransactionClosed   PaymentTransactionStatus = "closed"
-	PaymentTransactionFailed   PaymentTransactionStatus = "failed"
-	PaymentTransactionRefunded PaymentTransactionStatus = "refunded"
+	PaymentTransactionCreated        PaymentTransactionStatus = "created"
+	PaymentTransactionPending        PaymentTransactionStatus = "pending"
+	PaymentTransactionReviewRequired PaymentTransactionStatus = "review_required"
+	PaymentTransactionPaid           PaymentTransactionStatus = "paid"
+	PaymentTransactionClosed         PaymentTransactionStatus = "closed"
+	PaymentTransactionFailed         PaymentTransactionStatus = "failed"
+	PaymentTransactionRefunded       PaymentTransactionStatus = "refunded"
 
 	PaymentWebhookReceived  PaymentWebhookStatus = "received"
 	PaymentWebhookProcessed PaymentWebhookStatus = "processed"
@@ -29,15 +30,16 @@ const (
 
 // PaymentCheckoutSession 保存统一收银台入口的哈希令牌，原始令牌只返回给创建者。
 type PaymentCheckoutSession struct {
-	ID        string                `json:"id" gorm:"primaryKey;size:36"`
-	OrderType PaymentOrderType      `json:"orderType" gorm:"index;size:24;default:membership"`
-	OrderID   string                `json:"orderId" gorm:"uniqueIndex;size:36"`
-	UserID    string                `json:"userId" gorm:"index;size:36"`
-	TokenHash string                `json:"-" gorm:"uniqueIndex;size:64"`
-	Status    PaymentCheckoutStatus `json:"status" gorm:"index;size:24"`
-	ExpiresAt time.Time             `json:"expiresAt" gorm:"index"`
-	CreatedAt time.Time             `json:"createdAt"`
-	UpdatedAt time.Time             `json:"updatedAt"`
+	ID          string                `json:"id" gorm:"primaryKey;size:36"`
+	OrderType   PaymentOrderType      `json:"orderType" gorm:"index;size:24;default:membership"`
+	OrderID     string                `json:"orderId" gorm:"uniqueIndex;size:36"`
+	UserID      string                `json:"userId" gorm:"index;size:36"`
+	TokenHash   string                `json:"-" gorm:"uniqueIndex;size:64"`
+	TokenCipher string                `json:"-" gorm:"type:text;not null;default:''"`
+	Status      PaymentCheckoutStatus `json:"status" gorm:"index;size:24"`
+	ExpiresAt   time.Time             `json:"expiresAt" gorm:"index"`
+	CreatedAt   time.Time             `json:"createdAt"`
+	UpdatedAt   time.Time             `json:"updatedAt"`
 }
 
 type PaymentTransaction struct {
@@ -52,6 +54,7 @@ type PaymentTransaction struct {
 	Currency        string                   `json:"currency" gorm:"size:12"`
 	Status          PaymentTransactionStatus `json:"status" gorm:"index;size:24"`
 	CodeURL         string                   `json:"codeUrl,omitempty" gorm:"type:text"`
+	FailureCode     string                   `json:"failureCode,omitempty" gorm:"size:80;not null;default:''"`
 	FailureReason   string                   `json:"failureReason,omitempty" gorm:"size:500"`
 	ExpiresAt       *time.Time               `json:"expiresAt,omitempty" gorm:"index"`
 	PaidAt          *time.Time               `json:"paidAt,omitempty"`
@@ -66,8 +69,14 @@ type PaymentWebhookEvent struct {
 	Provider        PaymentProvider      `json:"provider" gorm:"uniqueIndex:idx_payment_webhook_provider_event,priority:1;size:24"`
 	ProviderEventID string               `json:"providerEventId" gorm:"uniqueIndex:idx_payment_webhook_provider_event,priority:2;size:160"`
 	TransactionID   string               `json:"transactionId,omitempty" gorm:"index;size:36"`
+	MerchantOrderNo string               `json:"merchantOrderNo,omitempty" gorm:"size:64;not null;default:''"`
+	ProviderTradeNo string               `json:"providerTradeNo,omitempty" gorm:"size:120;not null;default:''"`
+	AmountCents     int64                `json:"amountCents"`
+	Currency        string               `json:"currency,omitempty" gorm:"size:12;not null;default:''"`
+	PaidAt          *time.Time           `json:"paidAt,omitempty"`
 	PayloadDigest   string               `json:"payloadDigest" gorm:"size:64"`
 	Status          PaymentWebhookStatus `json:"status" gorm:"index;size:24"`
+	FailureCode     string               `json:"failureCode,omitempty" gorm:"size:80;not null;default:''"`
 	FailureReason   string               `json:"failureReason,omitempty" gorm:"size:500"`
 	ReceivedAt      time.Time            `json:"receivedAt"`
 	ProcessedAt     *time.Time           `json:"processedAt,omitempty"`

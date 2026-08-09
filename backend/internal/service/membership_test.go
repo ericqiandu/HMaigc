@@ -3,11 +3,13 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -59,7 +61,171 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
 	return &Service{repo: repository.New(db), dataDir: t.TempDir()}, db
+}
+
+func TestMembershipOrderIdempotencyRequiresBoundedKey(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "idempotency-key-user", Username: "idempotency-key-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	for name, key := range map[string]string{"missing": "", "oversize": strings.Repeat("k", 121)} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, key)
+			var authErr *AuthError
+			if !errors.As(err, &authErr) || authErr.Status != http.StatusBadRequest {
+				t.Fatalf("CreateMembershipOrder key error = %#v, want HTTP 400", err)
+			}
+		})
+	}
+}
+
+func TestMembershipOrderIdempotencyReplaysWinnerAndRejectsChangedPurchase(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	firstUser := &model.User{ID: "idempotency-user-a", Username: "idempotency-user-a", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	secondUser := &model.User{ID: "idempotency-user-b", Username: "idempotency-user-b", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(&[]model.User{*firstUser, *secondUser}).Error; err != nil {
+		t.Fatal(err)
+	}
+	pro := membershipPlanByCode(t, db, "pro-month")
+	max := membershipPlanByCode(t, db, "max-month")
+
+	first, err := svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: pro.ID}, "same-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: pro.ID}, "same-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != first.ID || replayed.RequestHash != first.RequestHash || len(first.RequestHash) != 64 {
+		t.Fatalf("same request did not replay the winning order: first=%#v replay=%#v", first, replayed)
+	}
+	var sameRequestCount int64
+	if err := db.Model(&model.MembershipOrder{}).Where("user_id = ? AND idempotency_key = ?", firstUser.ID, "same-request").Count(&sameRequestCount).Error; err != nil || sameRequestCount != 1 {
+		t.Fatalf("same request row count = %d, err=%v", sameRequestCount, err)
+	}
+	encoded, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "same-request") || strings.Contains(string(encoded), first.RequestHash) || strings.Contains(string(encoded), "idempotencyKey") || strings.Contains(string(encoded), "requestHash") {
+		t.Fatalf("write-only idempotency facts leaked through JSON: %s", encoded)
+	}
+
+	_, err = svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: max.ID}, "same-request")
+	assertMembershipOrderConflict(t, err)
+
+	otherUserOrder, err := svc.CreateMembershipOrder(secondUser, CreateMembershipOrderRequest{PlanID: pro.ID}, "same-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherUserOrder.ID == first.ID {
+		t.Fatal("cross-user idempotency key reuse returned another user's order")
+	}
+
+	teamPlan := membershipPlanByCode(t, db, "team-pro-year")
+	teamA := model.Team{ID: "idempotency-team-a", OwnerUserID: firstUser.ID, Name: "A", Status: model.TeamStatusActive}
+	teamB := model.Team{ID: "idempotency-team-b", OwnerUserID: firstUser.ID, Name: "B", Status: model.TeamStatusActive}
+	if err := db.Create(&[]model.Team{teamA, teamB}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: teamPlan.ID, TeamID: teamA.ID, Seats: 2}, "team-change"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: teamPlan.ID, TeamID: teamB.ID, Seats: 2}, "team-change")
+	assertMembershipOrderConflict(t, err)
+	if _, err := svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: teamPlan.ID, TeamID: teamA.ID, Seats: 2}, "seat-change"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreateMembershipOrder(firstUser, CreateMembershipOrderRequest{PlanID: teamPlan.ID, TeamID: teamA.ID, Seats: 3}, "seat-change")
+	assertMembershipOrderConflict(t, err)
+}
+
+func TestMembershipOrderIdempotencyReplaysAfterPlanUpdateAndArchive(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "idempotency-archive-user", Username: "idempotency-archive-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-year")
+	request := CreateMembershipOrderRequest{PlanID: plan.ID}
+	created, err := svc.CreateMembershipOrder(user, request, "archive-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.MembershipPlan{}).Where("id = ?", plan.ID).
+		Select("price_cents", "enabled").Updates(model.MembershipPlan{PriceCents: plan.PriceCents + 100, Enabled: false}).Error; err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := svc.CreateMembershipOrder(user, request, "archive-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != created.ID || replayed.UnitPriceCents != plan.PriceCents || replayed.PlanSnapshotJSON != created.PlanSnapshotJSON {
+		t.Fatalf("archived plan replay changed immutable order facts: created=%#v replayed=%#v", created, replayed)
+	}
+}
+
+func TestMembershipOrderIdempotencyRejectsNonPositivePaidPlanPrices(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin := &model.User{ID: "price-admin", Username: "price-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	user := &model.User{ID: "price-user", Username: "price-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(&[]model.User{*admin, *user}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, planCode := range []string{"pro-month", "pro-year"} {
+		plan := membershipPlanByCode(t, db, planCode)
+		request := UpdateMembershipPlanRequest{
+			Name: plan.Name, OriginalPriceCents: plan.OriginalPriceCents, CreditsPerPeriod: plan.CreditsPerPeriod,
+			ImageConcurrency: plan.ImageConcurrency, VideoConcurrency: plan.VideoConcurrency,
+			TopupDiscountBasisPoints: plan.TopupDiscountBasisPoints, Benefits: []string{"测试权益"}, Enabled: true, SortOrder: plan.SortOrder,
+		}
+		for _, price := range []int64{0, -1} {
+			request.PriceCents = price
+			if _, err := svc.AdminUpdateMembershipPlan(admin, plan.ID, request); err == nil {
+				t.Fatalf("admin update accepted %s plan price %d", plan.BillingCycle, price)
+			}
+			if err := db.Model(&model.MembershipPlan{}).Where("id = ?", plan.ID).Update("price_cents", price).Error; err != nil {
+				t.Fatal(err)
+			}
+			key := fmt.Sprintf("invalid-%s-price-%d", plan.BillingCycle, price)
+			if _, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, key); err == nil {
+				t.Fatalf("order creation accepted %s plan price %d", plan.BillingCycle, price)
+			}
+			if err := svc.EnsureDefaultMembershipPlans(); err == nil {
+				t.Fatalf("startup catalog validation accepted %s plan price %d", plan.BillingCycle, price)
+			}
+			if err := db.Model(&model.MembershipPlan{}).Where("id = ?", plan.ID).Update("price_cents", plan.PriceCents).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func assertMembershipOrderConflict(t *testing.T, err error) {
+	t.Helper()
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != http.StatusConflict {
+		t.Fatalf("idempotency conflict error = %#v, want HTTP 409", err)
+	}
 }
 
 func membershipPlanByCode(t *testing.T, db *gorm.DB, code string) model.MembershipPlan {
@@ -218,7 +384,7 @@ func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "confirmation-grant-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +474,7 @@ func TestMembershipOrderConfirmationRollsBackWhenAuditInsertFails(t *testing.T) 
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "audit-atomicity-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +533,7 @@ func TestMembershipOrderCloseRollsBackWhenAuditInsertFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "snapshot-immutability-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +576,7 @@ func TestMembershipEntitlementUsesPurchasedPlanSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "snapshot-corruption-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +620,7 @@ func TestMembershipConfirmationUsesOrderSnapshotAfterPlanChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "invoice-membership-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,14 +747,14 @@ func TestTeamMembershipRequiresOwnedTeamAndValidSeatRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "team-pro-year")
-	if _, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID, Seats: 1}); err == nil {
+	if _, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID, Seats: 1}, "team-missing-id-order"); err == nil {
 		t.Fatal("team order with too few seats unexpectedly succeeded")
 	}
 	team, err := svc.CreateTeam(user, CreateTeamRequest{Name: "短剧制作团队"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID, TeamID: team.ID, Seats: 3})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID, TeamID: team.ID, Seats: 3}, "team-seat-bounds-order")
 	if err != nil {
 		t.Fatal(err)
 	}

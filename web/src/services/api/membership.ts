@@ -91,6 +91,66 @@ export type Team = { id: string; ownerUserId: string; name: string; status: "act
 
 export type MembershipOverview = { entitlement: MembershipEntitlement; orders: MembershipOrder[]; teams: Team[] };
 
+export type MembershipOrderRequestInput = { planId: string; teamId?: string; seats?: number };
+
+export type MembershipOrderRequestIdentity = {
+    fingerprint: string;
+    key: string;
+};
+
+type MembershipOrderSubmissionDependencies = {
+    createTeam: (name: string) => Promise<Team>;
+    createOrder: (input: MembershipOrderRequestInput, idempotencyKey: string) => Promise<MembershipOrder>;
+    persistResolvedTeamID: (teamID: string) => void;
+    persistIdentity: (identity: MembershipOrderRequestIdentity) => void;
+};
+
+function normalizeMembershipOrderRequest(input: MembershipOrderRequestInput): Required<MembershipOrderRequestInput> {
+    const planId = input.planId.trim();
+    const teamId = (input.teamId ?? "").trim();
+    const seats = input.seats ?? 1;
+    if (!planId) throw new Error("会员套餐 ID 不能为空");
+    if (!Number.isSafeInteger(seats) || seats < 1) throw new Error("会员席位数必须是正整数");
+    return { planId, teamId, seats };
+}
+
+export function bindMembershipOrderRequestIdentity(
+    input: MembershipOrderRequestInput,
+    current: MembershipOrderRequestIdentity | null,
+    nextKey: string,
+): MembershipOrderRequestIdentity {
+    const fingerprint = JSON.stringify(normalizeMembershipOrderRequest(input));
+    if (current?.fingerprint === fingerprint) return current;
+    if (new TextEncoder().encode(nextKey).byteLength < 1 || new TextEncoder().encode(nextKey).byteLength > 120) {
+        throw new Error("会员订单幂等 key 必须为 1 到 120 字节");
+    }
+    return { fingerprint, key: nextKey };
+}
+
+export async function submitMembershipOrderRequest(
+    input: MembershipOrderRequestInput,
+    teamName: string,
+    requiresTeam: boolean,
+    currentIdentity: MembershipOrderRequestIdentity | null,
+    nextKey: string,
+    dependencies: MembershipOrderSubmissionDependencies,
+): Promise<MembershipOrder> {
+    let resolvedInput = normalizeMembershipOrderRequest(input);
+    if (!requiresTeam) resolvedInput = { ...resolvedInput, teamId: "" };
+    if (requiresTeam && !resolvedInput.teamId) {
+        const normalizedTeamName = teamName.trim();
+        if (!normalizedTeamName) throw new Error("请输入团队名称");
+        const team = await dependencies.createTeam(normalizedTeamName);
+        const resolvedTeamID = team.id.trim();
+        if (!resolvedTeamID) throw new Error("新团队创建成功但返回的团队 ID 为空");
+        dependencies.persistResolvedTeamID(resolvedTeamID);
+        resolvedInput = { ...resolvedInput, teamId: resolvedTeamID };
+    }
+    const identity = bindMembershipOrderRequestIdentity(resolvedInput, currentIdentity, nextKey);
+    dependencies.persistIdentity(identity);
+    return dependencies.createOrder(resolvedInput, identity.key);
+}
+
 export type MembershipStorefrontPromotion = {
     enabled: boolean;
     title: string;
@@ -168,8 +228,8 @@ export function getMyMembership() {
     return request<MembershipOverview>(api.get("/membership"));
 }
 
-export function createMembershipOrder(input: { planId: string; teamId?: string; seats?: number }) {
-    return request<MembershipOrder>(api.post("/membership/orders", input));
+export function createMembershipOrder(input: MembershipOrderRequestInput, idempotencyKey: string) {
+    return request<MembershipOrder>(api.post("/membership/orders", input, { headers: { "Idempotency-Key": idempotencyKey } }));
 }
 
 export function cancelMembershipOrder(id: string) {

@@ -1,7 +1,7 @@
 import { Alert, Button, Empty, message, Spin } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import { Crown, ImageIcon, Video } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { membershipQueryKey } from "@/hooks/use-membership-action";
@@ -14,8 +14,10 @@ import {
     type MembershipAudience,
     type MembershipBillingCycle,
     type MembershipOverview,
+    type MembershipOrderRequestIdentity,
     type MembershipPlan,
     type MembershipStorefront,
+    submitMembershipOrderRequest,
 } from "@/services/api/membership";
 import { createPaymentCheckout } from "@/services/api/payment";
 import { useUserStore } from "@/stores/use-user-store";
@@ -60,6 +62,13 @@ export default function MembershipPage() {
     const [cancellingId, setCancellingId] = useState("");
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
+    const orderRequestIdentityRef = useRef<MembershipOrderRequestIdentity | null>(null);
+    const resolvedTeamIDRef = useRef<string | undefined>(undefined);
+
+    const persistResolvedTeamID = useCallback((nextTeamID?: string) => {
+        resolvedTeamIDRef.current = nextTeamID;
+        setTeamId(nextTeamID);
+    }, []);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -95,8 +104,8 @@ export default function MembershipPage() {
 
     useEffect(() => {
         if (!requestedTeamId || !overview?.teams.some((team) => team.id === requestedTeamId)) return;
-        setTeamId(requestedTeamId);
-    }, [overview, requestedTeamId]);
+        persistResolvedTeamID(requestedTeamId);
+    }, [overview, persistResolvedTeamID, requestedTeamId]);
 
     useEffect(() => {
         const closeOnEscape = (event: KeyboardEvent) => {
@@ -140,7 +149,7 @@ export default function MembershipPage() {
         }
         const normalizedSeats = clampSeats(plan, seats);
         setSelection({ plan, seats: normalizedSeats });
-        setTeamId(requestedTeamId && overview?.teams.some((team) => team.id === requestedTeamId) ? requestedTeamId : overview?.teams[0]?.id);
+        persistResolvedTeamID(plan.audience === "team" ? (requestedTeamId && overview?.teams.some((team) => team.id === requestedTeamId) ? requestedTeamId : overview?.teams[0]?.id) : undefined);
         setTeamName("");
     };
 
@@ -149,18 +158,27 @@ export default function MembershipPage() {
         setSubmitting(true);
         let createdOrderId = "";
         try {
-            let resolvedTeamId = teamId;
-            if (selection.plan.audience === "team" && !resolvedTeamId) {
-                if (!teamName.trim()) throw new Error("请输入团队名称");
-                const team = await createTeam(teamName.trim());
-                resolvedTeamId = team.id;
-            }
-            const order = await createMembershipOrder({
-                planId: selection.plan.id,
-                seats: selection.plan.audience === "team" ? selection.seats : 1,
-                teamId: resolvedTeamId,
-            });
+            const order = await submitMembershipOrderRequest(
+                {
+                    planId: selection.plan.id,
+                    seats: selection.plan.audience === "team" ? selection.seats : 1,
+                    teamId: resolvedTeamIDRef.current,
+                },
+                teamName,
+                selection.plan.audience === "team",
+                orderRequestIdentityRef.current,
+                crypto.randomUUID(),
+                {
+                    createTeam,
+                    createOrder: createMembershipOrder,
+                    persistResolvedTeamID,
+                    persistIdentity: (identity) => {
+                        orderRequestIdentityRef.current = identity;
+                    },
+                },
+            );
             createdOrderId = order.id;
+            orderRequestIdentityRef.current = null;
             setSelection(null);
             const checkout = await createPaymentCheckout(order.id);
             message.success(`订单 ${order.orderNumber} 已创建，正在进入收银台`);
@@ -313,7 +331,7 @@ export default function MembershipPage() {
                 onCancel={() => setSelection(null)}
                 onSeatsChange={(seats) => setSelection((current) => (current ? { ...current, seats: clampSeats(current.plan, seats) } : null))}
                 onSubmit={() => void submitOrder()}
-                onTeamIdChange={setTeamId}
+                onTeamIdChange={persistResolvedTeamID}
                 onTeamNameChange={setTeamName}
                 open={Boolean(selection)}
                 plan={selection?.plan ?? null}

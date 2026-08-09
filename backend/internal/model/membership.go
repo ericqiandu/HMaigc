@@ -182,6 +182,8 @@ type MembershipOrder struct {
 	ID               string                `json:"id" gorm:"primaryKey;size:36"`
 	OrderNumber      string                `json:"orderNumber" gorm:"uniqueIndex;size:40"`
 	UserID           string                `json:"userId" gorm:"index;size:36"`
+	IdempotencyKey   string                `json:"-" gorm:"size:120;not null;default:''"`
+	RequestHash      string                `json:"-" gorm:"size:64;not null;default:''"`
 	TeamID           string                `json:"teamId,omitempty" gorm:"index;size:36"`
 	PlanID           string                `json:"planId" gorm:"index;size:36"`
 	Seats            int                   `json:"seats"`

@@ -41,7 +41,7 @@ func TestReferralFirstPurchaseGrantsBothLedgersExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	firstOrder, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID})
+	firstOrder, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID}, "referral-first-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestReferralFirstPurchaseGrantsBothLedgersExactlyOnce(t *testing.T) {
 		t.Fatalf("duplicate confirmation error = %v, want conflict", duplicateErr)
 	}
 
-	secondOrder, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID})
+	secondOrder, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID}, "referral-renewal-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestReferralFirstPurchaseFailsExplicitlyWhenRuleMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "max-month")
-	order, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(invitee, CreateMembershipOrderRequest{PlanID: plan.ID}, "referral-missing-rule-order")
 	if err != nil {
 		t.Fatal(err)
 	}

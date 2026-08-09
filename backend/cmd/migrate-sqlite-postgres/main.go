@@ -55,32 +55,37 @@ func main() {
 			return err
 		}
 		copyRows := tableCount == 0
-		if copyRows {
-			if err := database.MigrateSchema(tx); err != nil {
-				return fmt.Errorf("创建目标表结构：%w", err)
-			}
-		} else if tableCount != int64(len(migrations())) {
+		if !copyRows && tableCount != int64(len(migrations())) {
 			return fmt.Errorf("PostgreSQL public schema 已有 %d 张表，拒绝覆盖或补写", tableCount)
 		}
-
-		total := 0
-		for _, migration := range migrations() {
-			count, err := migration.run(source, tx, copyRows)
-			if err != nil {
-				return fmt.Errorf("迁移表 %s：%w", migration.name, err)
-			}
-			total += count
-			log.Printf("已迁移并核对 %s：%d 行", migration.name, count)
-		}
-		if copyRows {
-			log.Printf("全量迁移核对完成：%d 张表，%d 行", len(migrations()), total)
-		} else {
-			log.Printf("目标库已有完整迁移结果，未重复写入：%d 张表，%d 行", len(migrations()), total)
-		}
-		return nil
+		return migrateApplicationTables(source, tx, copyRows)
 	}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func migrateApplicationTables(source *gorm.DB, target *gorm.DB, copyRows bool) error {
+	if err := database.MigrateBaseSchema(target); err != nil {
+		return fmt.Errorf("创建目标基础表结构：%w", err)
+	}
+	total := 0
+	for _, migration := range migrations() {
+		count, err := migration.run(source, target, copyRows)
+		if err != nil {
+			return fmt.Errorf("迁移表 %s：%w", migration.name, err)
+		}
+		total += count
+		log.Printf("已迁移并核对 %s：%d 行", migration.name, count)
+	}
+	if err := database.EnsurePaymentIntegritySchema(target); err != nil {
+		return fmt.Errorf("施加支付完整性约束：%w", err)
+	}
+	if copyRows {
+		log.Printf("全量迁移核对完成：%d 张表，%d 行", len(migrations()), total)
+	} else {
+		log.Printf("目标库已有完整迁移结果，未重复写入：%d 张表，%d 行", len(migrations()), total)
+	}
+	return nil
 }
 
 func verifySQLite(db *gorm.DB) error {
@@ -128,6 +133,56 @@ func migrateTable[T any](name string) tableMigration {
 			return len(sourceRows), nil
 		},
 	}
+}
+
+func migratePaymentWebhookEvents() tableMigration {
+	return tableMigration{
+		name: "payment_webhook_events",
+		run: func(source *gorm.DB, target *gorm.DB, copyRows bool) (int, error) {
+			var sourceRows []model.PaymentWebhookEvent
+			if err := source.Order("id").Find(&sourceRows).Error; err != nil {
+				return 0, err
+			}
+			for index := range sourceRows {
+				if err := normalizeProcessedWebhookFacts(source, &sourceRows[index]); err != nil {
+					return 0, err
+				}
+			}
+			if copyRows && len(sourceRows) > 0 {
+				if err := target.CreateInBatches(&sourceRows, 100).Error; err != nil {
+					return 0, err
+				}
+			}
+
+			var targetRows []model.PaymentWebhookEvent
+			if err := target.Order("id").Find(&targetRows).Error; err != nil {
+				return 0, err
+			}
+			if !equivalent(reflect.ValueOf(sourceRows), reflect.ValueOf(targetRows)) {
+				return 0, errors.New("源数据与目标数据逐字段核对不一致")
+			}
+			return len(sourceRows), nil
+		},
+	}
+}
+
+func normalizeProcessedWebhookFacts(source *gorm.DB, event *model.PaymentWebhookEvent) error {
+	if event.Status != model.PaymentWebhookProcessed {
+		return nil
+	}
+	if strings.TrimSpace(event.TransactionID) == "" {
+		return fmt.Errorf("已处理支付回调 %s 缺少 transaction_id，无法迁移商户事实", event.ID)
+	}
+	var transaction model.PaymentTransaction
+	if err := source.First(&transaction, "id = ?", event.TransactionID).Error; err != nil {
+		return fmt.Errorf("已处理支付回调 %s 找不到交易 %s，无法迁移商户事实: %w", event.ID, event.TransactionID, err)
+	}
+	normalized, _, err := database.NormalizeProcessedPaymentWebhookFacts(*event, transaction)
+	if err != nil {
+		return err
+	}
+	*event = normalized
+	return nil
 }
 
 func primaryKeyColumn[T any](db *gorm.DB) (string, error) {
@@ -250,7 +305,7 @@ func migrations() []tableMigration {
 		migrateTable[model.InvoiceRequest]("invoice_requests"),
 		migrateTable[model.PaymentCheckoutSession]("payment_checkout_sessions"),
 		migrateTable[model.PaymentTransaction]("payment_transactions"),
-		migrateTable[model.PaymentWebhookEvent]("payment_webhook_events"),
+		migratePaymentWebhookEvents(),
 		migrateTable[model.RedeemBatch]("redeem_batches"),
 		migrateTable[model.RedeemCode]("redeem_codes"),
 		migrateTable[model.AdminAuditEvent]("admin_audit_events"),

@@ -72,7 +72,7 @@ func TestPendingMembershipOrderDoesNotGrantEntitlementOrCredits(t *testing.T) {
 	}
 	_, owner, _ := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "pending-membership-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestMembershipOrderCanOnlyBeCancelledByItsOwner(t *testing.T) {
 	}
 	_, owner, other := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "cancel-owner-membership-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestStalePendingMembershipOrderIsClosedDuringLifecycleReconciliation(t *tes
 	}
 	_, owner, _ := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "stale-membership-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestRenewalCreditsAreGrantedWhenTheQueuedSubscriptionStarts(t *testing.T) {
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
-	firstOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	firstOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "renewal-first-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRenewalCreditsAreGrantedWhenTheQueuedSubscriptionStarts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	secondOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	secondOrder, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "renewal-second-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestMembershipConfirmationRequiresAuditFieldsAndRemainsAtomic(t *testing.T)
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "confirmation-audit-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestTeamPurchaseGrantsTeamCreditsAndMemberEntitlement(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "team-pro-year")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID, TeamID: team.ID, Seats: 3})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID, TeamID: team.ID, Seats: 3}, "team-membership-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestPaymentCheckoutProtectsOwnershipTokenAndExpiration(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "checkout-ownership-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "provider-failure-order")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestPaymentCheckoutRemainsReadableAfterSuccessfulPayment(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "successful-payment-order")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,11 +22,26 @@ var membershipCatalogCodes = map[string]struct{}{
 }
 
 func (s *Service) EnsureDefaultMembershipPlans() error {
-	return s.repo.ApplyMembershipPlanCatalogRevision(
+	if err := s.repo.ApplyMembershipPlanCatalogRevision(
 		membershipCatalogRevisionSettingKey,
 		membershipCatalogRevisionValue,
 		defaultMembershipCatalog(),
-	)
+	); err != nil {
+		return err
+	}
+	plans, err := s.repo.MembershipPlans(false)
+	if err != nil {
+		return err
+	}
+	for index := range plans {
+		if _, current := membershipCatalogCodes[plans[index].Code]; !current {
+			continue
+		}
+		if err := validatePaidMembershipPlanPrice(&plans[index]); err != nil {
+			return fmt.Errorf("会员套餐启动校验失败: %w", err)
+		}
+	}
+	return nil
 }
 
 func defaultMembershipCatalog() []model.MembershipPlan {

@@ -154,6 +154,22 @@ func (r *Repository) MembershipOrderForUser(userID string, id string) (*model.Me
 	return &order, r.db.First(&order, "id = ? AND user_id = ?", id, userID).Error
 }
 
+func (r *Repository) MembershipOrderByIdempotencyKey(userID string, key string) (*model.MembershipOrder, error) {
+	var order model.MembershipOrder
+	return &order, r.db.First(&order, "user_id = ? AND idempotency_key = ?", userID, key).Error
+}
+
+// CreateMembershipOrder 以数据库部分唯一索引裁决并发请求，并始终返回已提交的胜出订单。
+func (r *Repository) CreateMembershipOrder(order *model.MembershipOrder) (*model.MembershipOrder, error) {
+	if order == nil || order.UserID == "" || order.IdempotencyKey == "" || order.RequestHash == "" {
+		return nil, errors.New("membership order idempotency facts are incomplete")
+	}
+	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(order).Error; err != nil {
+		return nil, err
+	}
+	return r.MembershipOrderByIdempotencyKey(order.UserID, order.IdempotencyKey)
+}
+
 func (r *Repository) MembershipOrder(id string) (*model.MembershipOrder, error) {
 	var order model.MembershipOrder
 	return &order, r.db.First(&order, "id = ?", id).Error

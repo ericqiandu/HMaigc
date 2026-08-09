@@ -83,7 +83,7 @@ func TestFulfillVerifiedPaymentIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
-	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "payment-webhook-order")
 	if err != nil {
 		t.Fatal(err)
 	}
