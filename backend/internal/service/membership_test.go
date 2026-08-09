@@ -220,6 +220,95 @@ func TestMembershipOrderIdempotencyRejectsNonPositivePaidPlanPrices(t *testing.T
 	}
 }
 
+func TestMembershipCatalogStartupRejectsInvalidExistingPlanBeforeStaleRevisionWrite(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	invalidPlan := model.MembershipPlan{
+		ID: "stale-revision-plan", Code: "pro-year", Name: "非法旧年付套餐", Tier: "pro",
+		Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear,
+		PriceCents: 0, Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: true,
+	}
+	staleRevision := model.SystemSetting{Key: membershipCatalogRevisionSettingKey, ValueJSON: `"stale-catalog-revision"`}
+	if err := db.Create(&invalidPlan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&staleRevision).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := svc.EnsureDefaultMembershipPlans()
+	if err == nil || !strings.Contains(err.Error(), invalidPlan.Code) {
+		t.Fatalf("startup stale-revision price validation error = %v", err)
+	}
+	stored := membershipPlanByCode(t, db, invalidPlan.Code)
+	if stored.PriceCents != 0 || stored.Name != invalidPlan.Name {
+		t.Fatalf("catalog write overwrote invalid existing plan before validation: %#v", stored)
+	}
+	var revision model.SystemSetting
+	if err := db.First(&revision, "key = ?", membershipCatalogRevisionSettingKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	if revision.ValueJSON != staleRevision.ValueJSON {
+		t.Fatalf("catalog revision advanced before validation: %q", revision.ValueJSON)
+	}
+}
+
+func TestMembershipCatalogStartupRejectsNonCatalogPaidPlans(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		billingCycle model.MembershipBillingCycle
+		priceCents   int64
+	}{
+		{name: "month-zero", billingCycle: model.MembershipBillingCycleMonth, priceCents: 0},
+		{name: "year-negative", billingCycle: model.MembershipBillingCycleYear, priceCents: -1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			svc, db := newMembershipTestService(t)
+			if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+				t.Fatal(err)
+			}
+			plan := model.MembershipPlan{
+				ID: "non-catalog-" + testCase.name, Code: "non-catalog-" + testCase.name, Name: "非目录付费套餐", Tier: "legacy",
+				Audience: model.MembershipAudiencePersonal, BillingCycle: testCase.billingCycle,
+				PriceCents: testCase.priceCents, Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: false,
+			}
+			if err := db.Create(&plan).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			err := svc.EnsureDefaultMembershipPlans()
+			if err == nil || !strings.Contains(err.Error(), plan.Code) {
+				t.Fatalf("startup non-catalog price validation error = %v", err)
+			}
+		})
+	}
+}
+
+func TestMembershipCatalogStartupValidatesFinalNonCatalogPlansAfterRevisionWrite(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	plan := model.MembershipPlan{
+		ID: "final-non-catalog-year", Code: "final-non-catalog-year", Name: "待归档年付套餐", Tier: "legacy",
+		Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear,
+		PriceCents: 1, Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: true,
+	}
+	if err := db.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`
+		CREATE TRIGGER invalidate_archived_non_catalog_price
+		AFTER UPDATE OF enabled ON membership_plans
+		WHEN NEW.code = 'final-non-catalog-year'
+		BEGIN
+			UPDATE membership_plans SET price_cents = 0 WHERE id = NEW.id;
+		END`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := svc.EnsureDefaultMembershipPlans()
+	if err == nil || !strings.Contains(err.Error(), plan.Code) {
+		t.Fatalf("startup final catalog price validation error = %v", err)
+	}
+}
+
 func assertMembershipOrderConflict(t *testing.T, err error) {
 	t.Helper()
 	var authErr *AuthError
@@ -309,7 +398,7 @@ func TestMembershipCatalogRevisionReplacesLegacyConfigurationOnce(t *testing.T) 
 	legacyPlan := model.MembershipPlan{
 		ID: "legacy-plan", Code: "legacy-vip", Name: "旧后台套餐", Tier: "legacy",
 		Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleMonth,
-		Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: true,
+		PriceCents: 1, Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: true,
 	}
 	customizedStandard := model.MembershipPlan{
 		ID: "stable-pro-year", Code: "pro-year", Name: "旧标准套餐", Tier: "pro",
