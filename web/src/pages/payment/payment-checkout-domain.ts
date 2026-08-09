@@ -23,8 +23,23 @@ export type RestoredCheckoutPayment = {
     transaction: PaymentCheckoutActiveTransaction;
 };
 
-const terminalOrderStatuses = new Set<PaymentOrderStatus>(["paid", "cancelled", "refunded"]);
-const terminalCheckoutStatuses = new Set<PaymentCheckoutStatus>(["expired", "consumed"]);
+export type CheckoutRequestState = {
+    checkout: PaymentCheckout;
+    revision: number;
+};
+
+const orderStatusRank: Record<PaymentOrderStatus, number> = {
+    pending: 0,
+    cancelled: 1,
+    paid: 2,
+    refunded: 3,
+};
+
+const checkoutStatusRank: Record<PaymentCheckoutStatus, number> = {
+    active: 0,
+    expired: 1,
+    consumed: 2,
+};
 
 function parseCheckoutTime(value: string, field: string): number {
     const timestamp = Date.parse(value);
@@ -46,9 +61,37 @@ export function mergePaymentCheckout(current: PaymentCheckout, incoming: Payment
     if (current.orderType !== incoming.orderType || current.orderNumber !== incoming.orderNumber) {
         throw new Error("轮询返回了不同的收银台订单");
     }
-    const orderStatus = terminalOrderStatuses.has(current.orderStatus) && !terminalOrderStatuses.has(incoming.orderStatus) ? current.orderStatus : incoming.orderStatus;
-    const checkoutStatus = terminalCheckoutStatuses.has(current.checkoutStatus) && !terminalCheckoutStatuses.has(incoming.checkoutStatus) ? current.checkoutStatus : incoming.checkoutStatus;
+    const orderStatus = orderStatusRank[current.orderStatus] > orderStatusRank[incoming.orderStatus] ? current.orderStatus : incoming.orderStatus;
+    const checkoutStatus = checkoutStatusRank[current.checkoutStatus] > checkoutStatusRank[incoming.checkoutStatus] ? current.checkoutStatus : incoming.checkoutStatus;
+    if (orderStatus !== "pending" || checkoutStatus !== "active") {
+        return { ...incoming, orderStatus, checkoutStatus, activeTransaction: undefined };
+    }
     return { ...incoming, orderStatus, checkoutStatus };
+}
+
+function requireCheckoutRevision(revision: number): void {
+    if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("收银台响应序号无效");
+}
+
+export function mergeCheckoutResponse(current: CheckoutRequestState, incoming: PaymentCheckout, revision: number): CheckoutRequestState {
+    requireCheckoutRevision(revision);
+    if (revision < current.revision) return current;
+    return { checkout: mergePaymentCheckout(current.checkout, incoming), revision };
+}
+
+export function applyCheckoutTransaction(current: CheckoutRequestState, transaction: PaymentCheckoutActiveTransaction, revision: number): CheckoutRequestState {
+    requireCheckoutRevision(revision);
+    if (revision <= current.revision) throw new Error("支付交易响应序号必须晚于当前收银台事实");
+    if (current.checkout.orderStatus !== "pending" || current.checkout.checkoutStatus !== "active") {
+        throw new Error("终态收银台不能接收活动支付交易");
+    }
+    if (transaction.status !== "pending" || transaction.codeUrl.trim() === "") {
+        throw new Error("支付交易事实不完整");
+    }
+    return {
+        checkout: { ...current.checkout, activeTransaction: transaction },
+        revision,
+    };
 }
 
 export function restoreActiveCheckoutPayment(checkout: PaymentCheckout): RestoredCheckoutPayment | null {

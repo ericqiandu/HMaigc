@@ -5,7 +5,16 @@ import { useNavigate, useParams } from "react-router";
 
 import { createPaymentTransaction, getPaymentCheckout, type PaymentCheckout, type PaymentCheckoutActiveTransaction, type PaymentProvider } from "@/services/api/payment";
 
-import { checkoutDiscountOriginalPrice, checkoutRemainingSeconds, checkoutServerOffsetMs, checkoutSummary, mergePaymentCheckout, restoreActiveCheckoutPayment } from "./payment-checkout-domain";
+import {
+    applyCheckoutTransaction,
+    checkoutDiscountOriginalPrice,
+    checkoutRemainingSeconds,
+    checkoutServerOffsetMs,
+    checkoutSummary,
+    mergeCheckoutResponse,
+    restoreActiveCheckoutPayment,
+    type CheckoutRequestState,
+} from "./payment-checkout-domain";
 
 import "./payment-checkout.css";
 
@@ -34,7 +43,8 @@ export default function PaymentCheckoutPage() {
     const navigate = useNavigate();
     const { token = "" } = useParams();
     const [checkout, setCheckout] = useState<PaymentCheckout | null>(null);
-    const checkoutRef = useRef<PaymentCheckout | null>(null);
+    const checkoutStateRef = useRef<CheckoutRequestState | null>(null);
+    const checkoutRequestSequenceRef = useRef(0);
     const [provider, setProvider] = useState<PaymentProvider | null>(null);
     const [transaction, setTransaction] = useState<PaymentCheckoutActiveTransaction | null>(null);
     const [loading, setLoading] = useState(true);
@@ -49,13 +59,17 @@ export default function PaymentCheckoutPage() {
             setLoading(false);
             return;
         }
+        const revision = ++checkoutRequestSequenceRef.current;
         try {
             const next = await getPaymentCheckout(token);
             const receivedAtMs = Date.now();
-            const accepted = checkoutRef.current ? mergePaymentCheckout(checkoutRef.current, next) : next;
+            const current = checkoutStateRef.current;
+            const acceptedState = current ? mergeCheckoutResponse(current, next, revision) : { checkout: next, revision };
+            if (acceptedState === current) return;
+            const accepted = acceptedState.checkout;
             const offset = checkoutServerOffsetMs(accepted.serverNow, receivedAtMs);
             const restored = restoreActiveCheckoutPayment(accepted);
-            checkoutRef.current = accepted;
+            checkoutStateRef.current = acceptedState;
             setCheckout(accepted);
             setServerOffsetMs(offset);
             setSecondsLeft(checkoutRemainingSeconds(accepted.expiresAt, offset, receivedAtMs));
@@ -95,6 +109,11 @@ export default function PaymentCheckoutPage() {
         try {
             const next = await createPaymentTransaction(token, provider);
             if (!next.codeUrl) throw new Error("支付渠道未返回付款二维码，请检查后台渠道配置");
+            const current = checkoutStateRef.current;
+            if (!current) throw new Error("收银台事实尚未加载");
+            const acceptedState = applyCheckoutTransaction(current, next, ++checkoutRequestSequenceRef.current);
+            checkoutStateRef.current = acceptedState;
+            setCheckout(acceptedState.checkout);
             setTransaction({ provider: next.provider, status: next.status, codeUrl: next.codeUrl, expiresAt: next.expiresAt });
         } catch (reason) {
             message.error(reason instanceof Error ? reason.message : "发起支付失败");

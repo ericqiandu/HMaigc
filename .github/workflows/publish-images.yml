@@ -35,7 +35,7 @@ jobs:
         run: go test ./...
 
       - name: Test payment integrity with PostgreSQL and Redis
-        run: bash scripts/tests/run-payment-integration.sh --run 'Test.*(PaymentIntegrity|MembershipOrderIdempotency)'
+        run: bash scripts/tests/run-payment-integration.sh --run 'Test.*(PaymentIntegrity|MembershipOrderIdempotency|PaymentCheckoutSession)'
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

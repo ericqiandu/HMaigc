@@ -171,10 +171,11 @@ func (r *Repository) FulfillPaymentTransaction(input PaymentFulfillment) (bool, 
 	return alreadyProcessed, err
 }
 
-func (r *Repository) ExpirePaymentCheckoutSession(id string, now time.Time) error {
-	return r.db.Model(&model.PaymentCheckoutSession{}).
+func (r *Repository) ExpirePaymentCheckoutSession(id string, now time.Time) (bool, error) {
+	result := r.db.Model(&model.PaymentCheckoutSession{}).
 		Where("id = ? AND status = ?", id, model.PaymentCheckoutActive).
-		Updates(model.PaymentCheckoutSession{Status: model.PaymentCheckoutExpired, UpdatedAt: now}).Error
+		Updates(model.PaymentCheckoutSession{Status: model.PaymentCheckoutExpired, UpdatedAt: now})
+	return result.RowsAffected == 1, result.Error
 }
 
 func (r *Repository) AdminPaymentTransactions(filter PaymentTransactionFilter) ([]model.PaymentTransaction, int64, error) {

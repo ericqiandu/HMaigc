@@ -77,7 +77,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Header("Cache-Control", "no-store")
 		result, err := svc.PaymentCheckout(c.Param("token"))
 		if err != nil {
-			failService(c, err)
+			failPaymentCheckout(c, err)
 			return
 		}
 		ok(c, result)
@@ -86,12 +86,12 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/payments/checkout/:token/transactions", func(c *gin.Context) {
 		var req service.CreatePaymentTransactionRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
+			fail(c, http.StatusBadRequest, errors.New("支付请求格式无效"))
 			return
 		}
 		result, err := svc.CreatePaymentTransaction(c.Param("token"), req)
 		if err != nil {
-			failService(c, err)
+			failPaymentCheckout(c, err)
 			return
 		}
 		ok(c, result)
@@ -165,6 +165,30 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, result)
 	})
+}
+
+func failPaymentCheckout(c *gin.Context, err error) {
+	status := http.StatusInternalServerError
+	message := "收银台服务暂时不可用，请稍后重试"
+	var authErr *service.AuthError
+	if errors.As(err, &authErr) {
+		status = authErr.Status
+		switch status {
+		case http.StatusBadRequest:
+			message = "收银台请求无效"
+		case http.StatusNotFound:
+			message = "收银台不存在或已失效"
+		case http.StatusConflict:
+			message = "收银台状态已更新，请刷新后重试"
+		case http.StatusBadGateway, http.StatusServiceUnavailable:
+			message = "支付服务暂时不可用，请稍后重试"
+		default:
+			if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+				message = "收银台请求无法处理"
+			}
+		}
+	}
+	fail(c, status, errors.New(message))
 }
 
 func readPaymentWebhookBody(c *gin.Context) ([]byte, error) {

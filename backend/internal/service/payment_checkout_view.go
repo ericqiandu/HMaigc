@@ -198,14 +198,16 @@ func (s *Service) buildPaymentCheckoutView(session *model.PaymentCheckoutSession
 	default:
 		return nil, errors.New("收银台订单类型无效")
 	}
-	transaction, err := s.repo.ActivePaymentTransaction(session.OrderType, order.ID, now)
-	if err == nil {
-		view.ActiveTransaction, err = paymentCheckoutTransactionView(transaction)
-		if err != nil {
+	if order.Status == "pending" && session.Status == model.PaymentCheckoutActive {
+		transaction, err := s.repo.ActivePaymentTransaction(session.OrderType, order.ID, now)
+		if err == nil {
+			view.ActiveTransaction, err = paymentCheckoutTransactionView(transaction)
+			if err != nil {
+				return nil, err
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
 	}
 	return view, nil
 }

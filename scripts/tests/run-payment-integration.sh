@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose_file="$repo_root/deploy/tests/docker-compose.payment-integration.yml"
-run_pattern='Test.*(PaymentIntegrity|MembershipOrderIdempotency)'
+run_pattern='Test.*(PaymentIntegrity|MembershipOrderIdempotency|PaymentCheckoutSession)'
 
 while (($# > 0)); do
     case "$1" in

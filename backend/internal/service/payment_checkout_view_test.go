@@ -2,17 +2,25 @@ package service
 
 import (
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -244,6 +252,165 @@ func TestPaymentCheckoutViewUsesDiscriminatedPublicFactsWithoutInternalFields(t 
 	}
 }
 
+func TestPaymentCheckoutViewOmitsActiveTransactionOutsidePayableState(t *testing.T) {
+	tests := []struct {
+		name           string
+		orderStatus    model.MembershipOrderStatus
+		checkoutStatus model.PaymentCheckoutStatus
+	}{
+		{name: "manually paid order", orderStatus: model.MembershipOrderPaid, checkoutStatus: model.PaymentCheckoutActive},
+		{name: "expired checkout", orderStatus: model.MembershipOrderPending, checkoutStatus: model.PaymentCheckoutExpired},
+		{name: "consumed checkout", orderStatus: model.MembershipOrderPaid, checkoutStatus: model.PaymentCheckoutConsumed},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			svc, db, owner, order := newPaymentCheckoutFixture(t, "terminal-active-transaction-"+strings.ReplaceAll(test.name, " ", "-"))
+			created, err := svc.CreatePaymentCheckout(owner, order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			transaction := model.PaymentTransaction{
+				ID:        "terminal-transaction-" + strings.ReplaceAll(test.name, " ", "-"),
+				OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: owner.ID,
+				Provider: model.PaymentProviderWechat, MerchantOrderNo: "terminal-merchant-" + strings.ReplaceAll(test.name, " ", "-"),
+				AmountCents: order.TotalPriceCents, Currency: order.Currency, Status: model.PaymentTransactionPending,
+				CodeURL: "weixin://wxpay/terminal", ExpiresAt: &created.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+			}
+			if err := db.Create(&transaction).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.MembershipOrder{}).Where("id = ?", order.ID).Update("status", test.orderStatus).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).Update("status", test.checkoutStatus).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			view, err := svc.PaymentCheckout(checkoutToken(t, created.CheckoutURL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.ActiveTransaction != nil {
+				t.Fatalf("%s checkout exposed stale active transaction: %#v", test.name, view.ActiveTransaction)
+			}
+		})
+	}
+}
+
+func TestPaymentCheckoutExpiryCASReturnsConcurrentConsumedWinner(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/checkout-expiry-race.db"), &gorm.Config{SkipDefaultTransaction: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.MembershipOrder{}, &model.PaymentCheckoutSession{}, &model.PaymentTransaction{}); err != nil {
+		t.Fatal(err)
+	}
+	plan := model.MembershipPlan{
+		ID: "expiry-race-plan", Code: "pro", Name: "专业版", Tier: "pro",
+		Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleMonth,
+		PriceCents: 1200, OriginalPriceCents: 1800, Currency: "CNY", CreditsPerPeriod: 300,
+		ImageConcurrency: 1, VideoConcurrency: 1,
+	}
+	snapshot, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	order := model.MembershipOrder{
+		ID: "expiry-race-order", OrderNumber: "M-EXPIRY-RACE", UserID: "expiry-race-user", PlanID: plan.ID,
+		Seats: 1, UnitPriceCents: 1200, TotalPriceCents: 1200, Currency: "CNY", Status: model.MembershipOrderPending,
+		PlanSnapshotJSON: string(snapshot), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	token := "expiry-race-bearer-token"
+	digest := sha256.Sum256([]byte(token))
+	session := model.PaymentCheckoutSession{
+		ID: "expiry-race-session", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: order.UserID,
+		TokenHash: hex.EncodeToString(digest[:]), Status: model.PaymentCheckoutActive,
+		ExpiresAt: now.Add(-time.Minute), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	enteredExpiryCAS := make(chan struct{})
+	releaseExpiryCAS := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseExpiryCAS) }) }
+	defer release()
+	var intercepted atomic.Bool
+	const callbackName = "test:payment_checkout_expiry_cas_barrier"
+	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "payment_checkout_sessions" || !intercepted.CompareAndSwap(false, true) {
+			return
+		}
+		close(enteredExpiryCAS)
+		<-releaseExpiryCAS
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(repository.New(db), t.TempDir())
+	result := make(chan *PaymentCheckoutView, 1)
+	errorsByRead := make(chan error, 1)
+	go func() {
+		view, readErr := svc.PaymentCheckout(token)
+		result <- view
+		errorsByRead <- readErr
+	}()
+	select {
+	case <-enteredExpiryCAS:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expiry CAS did not reach the test barrier")
+	}
+	if err := db.Model(&model.MembershipOrder{}).
+		Where("id = ? AND status = ?", order.ID, model.MembershipOrderPending).
+		Updates(map[string]interface{}{"status": model.MembershipOrderPaid, "paid_at": now.Add(time.Second), "updated_at": now.Add(time.Second)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.PaymentCheckoutSession{}).
+		Where("id = ? AND status = ?", session.ID, model.PaymentCheckoutActive).
+		Updates(map[string]interface{}{"status": model.PaymentCheckoutConsumed, "updated_at": now.Add(time.Second)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	release()
+
+	var view *PaymentCheckoutView
+	select {
+	case view = <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("checkout read did not finish after releasing expiry CAS")
+	}
+	if readErr := <-errorsByRead; readErr != nil {
+		t.Fatal(readErr)
+	}
+	if view == nil {
+		t.Fatal("checkout read returned nil without an error")
+	}
+	if view.CheckoutStatus != model.PaymentCheckoutConsumed {
+		t.Fatalf("checkout read returned %s after consumed won the CAS, want consumed", view.CheckoutStatus)
+	}
+	if view.OrderStatus != string(model.MembershipOrderPaid) {
+		t.Fatalf("checkout read returned order status %s after payment won the CAS, want paid", view.OrderStatus)
+	}
+	var stored model.PaymentCheckoutSession
+	if err := db.First(&stored, "id = ?", session.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.PaymentCheckoutConsumed {
+		t.Fatalf("stored checkout status = %s, want consumed", stored.Status)
+	}
+}
+
 func TestPaymentCheckoutViewRejectsSessionOwnerMismatch(t *testing.T) {
 	svc, db, owner, order := newPaymentCheckoutFixture(t, "checkout-session-owner-mismatch")
 	created, err := svc.CreatePaymentCheckout(owner, order.ID)
@@ -279,6 +446,65 @@ func TestPaymentCheckoutViewSanitizesBearerTransactionResponses(t *testing.T) {
 	}
 	if string(encoded) != `{"provider":"wechat","status":"pending","codeUrl":"weixin://wxpay/example","expiresAt":"`+expiresAt.Format(time.RFC3339Nano)+`"}` {
 		t.Fatalf("public bearer transaction JSON = %s", encoded)
+	}
+}
+
+func TestPaymentCheckoutProviderFailureDoesNotExposeRawResponse(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			const providerSentinel = "provider-body-sentinel-must-not-leak"
+			gateway := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(status)
+				_, _ = response.Write([]byte(providerSentinel))
+			}))
+			defer gateway.Close()
+
+			svc, db, owner, order := newPaymentCheckoutFixture(t, "provider-public-error-"+http.StatusText(status))
+			var admin model.User
+			if err := db.First(&admin, "id = ?", "commercial-admin").Error; err != nil {
+				t.Fatal(err)
+			}
+			privateKey, _ := newWebhookTestRSAKey(t)
+			request := readyWechatPaymentSetting()
+			request.Wechat.MerchantPrivateKey = string(pem.EncodeToMemory(&pem.Block{
+				Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+			}))
+			if _, err := svc.UpdatePaymentSetting(&admin, request); err != nil {
+				t.Fatal(err)
+			}
+			var storedSetting model.SystemSetting
+			if err := db.First(&storedSetting, "key = ?", paymentSettingKey).Error; err != nil {
+				t.Fatal(err)
+			}
+			var setting paymentSettingValue
+			if err := json.Unmarshal([]byte(storedSetting.ValueJSON), &setting); err != nil {
+				t.Fatal(err)
+			}
+			setting.Wechat.GatewayURL = gateway.URL
+			encoded, err := json.Marshal(setting)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&storedSetting).Update("value_json", string(encoded)).Error; err != nil {
+				t.Fatal(err)
+			}
+			checkout, err := svc.CreatePaymentCheckout(owner, order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = svc.CreatePaymentTransaction(checkoutToken(t, checkout.CheckoutURL), CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat})
+			var authErr *AuthError
+			if !errors.As(err, &authErr) || authErr.Status != http.StatusBadGateway {
+				t.Fatalf("provider failure = %#v, want HTTP 502 AuthError", err)
+			}
+			if strings.Contains(authErr.Message, providerSentinel) {
+				t.Fatalf("public provider error leaked raw response: %q", authErr.Message)
+			}
+			if authErr.Message != "支付渠道暂时无法创建订单，请稍后重试" {
+				t.Fatalf("public provider error = %q, want stable message", authErr.Message)
+			}
+		})
 	}
 }
 
@@ -358,6 +584,105 @@ func TestPaymentCheckoutSessionSequentialCreationReturnsSameEncryptedToken(t *te
 	}
 	if count != 1 {
 		t.Fatalf("checkout session count = %d, want 1", count)
+	}
+}
+
+func TestPaymentCheckoutSessionRecoveryKeepsClaimedURLAcrossPaymentSettingChanges(t *testing.T) {
+	svc, db, owner, order := newPaymentCheckoutFixture(t, "checkout-frozen-public-url")
+	first, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var storedSetting model.SystemSetting
+	if err := db.First(&storedSetting, "key = ?", paymentSettingKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	var setting paymentSettingValue
+	if err := json.Unmarshal([]byte(storedSetting.ValueJSON), &setting); err != nil {
+		t.Fatal(err)
+	}
+	setting.CheckoutBaseURL = "https://changed-checkout.example.com"
+	encoded, err := json.Marshal(setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&storedSetting).Update("value_json", string(encoded)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	afterBaseChange, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *afterBaseChange != *first {
+		t.Fatalf("checkout recovery used mutable base URL: first=%#v recovered=%#v", first, afterBaseChange)
+	}
+
+	setting.Wechat.Enabled = false
+	setting.Alipay.Enabled = false
+	encoded, err = json.Marshal(setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&storedSetting).Update("value_json", string(encoded)).Error; err != nil {
+		t.Fatal(err)
+	}
+	afterProvidersDisabled, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatalf("existing checkout recovery depended on mutable providers: %v", err)
+	}
+	if *afterProvidersDisabled != *first {
+		t.Fatalf("checkout recovery changed after providers were disabled: first=%#v recovered=%#v", first, afterProvidersDisabled)
+	}
+}
+
+func TestPaymentCheckoutBearerReadDoesNotDependOnMerchantSecretsOrTerminalConfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        model.PaymentCheckoutStatus
+		hashOnly      bool
+		removeKey     bool
+		corruptConfig bool
+	}{
+		{name: "active hash-only session without encryption key", status: model.PaymentCheckoutActive, hashOnly: true, removeKey: true},
+		{name: "expired session with corrupted payment config", status: model.PaymentCheckoutExpired, corruptConfig: true},
+		{name: "consumed session with corrupted payment config", status: model.PaymentCheckoutConsumed, corruptConfig: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			svc, db, owner, order := newPaymentCheckoutFixture(t, "bearer-independent-"+strings.ReplaceAll(test.name, " ", "-"))
+			created, err := svc.CreatePaymentCheckout(owner, order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updates := map[string]interface{}{"status": test.status}
+			if test.hashOnly {
+				updates["token_cipher"] = ""
+			}
+			if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).Updates(updates).Error; err != nil {
+				t.Fatal(err)
+			}
+			if test.removeKey {
+				if err := os.Remove(svc.dataDir + string(os.PathSeparator) + ".settings-key"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.corruptConfig {
+				if err := db.Model(&model.SystemSetting{}).Where("key = ?", paymentSettingKey).Update("value_json", "{").Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			view, err := svc.PaymentCheckout(checkoutToken(t, created.CheckoutURL))
+			if err != nil {
+				t.Fatalf("valid bearer read depended on mutable merchant configuration: %v", err)
+			}
+			if view.CheckoutStatus != test.status {
+				t.Fatalf("checkout status = %s, want %s", view.CheckoutStatus, test.status)
+			}
+		})
 	}
 }
 

@@ -84,6 +84,11 @@ type CreatePaymentCheckoutResult struct {
 	ExpiresAt   time.Time `json:"expiresAt"`
 }
 
+type paymentCheckoutCipherPayload struct {
+	Token       string `json:"token"`
+	CheckoutURL string `json:"checkoutUrl"`
+}
+
 type CreatePaymentTransactionRequest struct {
 	Provider model.PaymentProvider `json:"provider"`
 }
@@ -229,11 +234,14 @@ func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*Crea
 	if order.Status != model.MembershipOrderPending {
 		return nil, BadAuthRequest("只有待支付订单可以创建收银台")
 	}
-	existingSession, existingToken, hasExistingSession, err := s.recoverExistingPaymentCheckout(
+	existing, hasExistingSession, err := s.recoverExistingPaymentCheckout(
 		model.PaymentOrderMembership, order.ID, user.ID,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if hasExistingSession {
+		return existing, nil
 	}
 	_, setting, err := s.readPaymentSetting()
 	if err != nil {
@@ -244,9 +252,6 @@ func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*Crea
 	}
 	if len(readyPaymentProviders(setting)) == 0 {
 		return nil, BadAuthRequest("微信支付和支付宝均未完成商户配置")
-	}
-	if hasExistingSession {
-		return paymentCheckoutResult(existingSession, existingToken, setting.CheckoutBaseURL), nil
 	}
 	return s.createOrRecoverPaymentCheckout(
 		model.PaymentOrderMembership, order.ID, user.ID, setting.CheckoutBaseURL, now,
@@ -264,11 +269,14 @@ func (s *Service) CreateCreditTopupCheckout(user *model.User, orderID string) (*
 	if order.Status != model.CreditTopupOrderPending {
 		return nil, BadAuthRequest("只有待支付积分订单可以创建收银台")
 	}
-	existingSession, existingToken, hasExistingSession, err := s.recoverExistingPaymentCheckout(
+	existing, hasExistingSession, err := s.recoverExistingPaymentCheckout(
 		model.PaymentOrderCreditTopup, order.ID, user.ID,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if hasExistingSession {
+		return existing, nil
 	}
 	_, setting, err := s.readPaymentSetting()
 	if err != nil {
@@ -276,9 +284,6 @@ func (s *Service) CreateCreditTopupCheckout(user *model.User, orderID string) (*
 	}
 	if setting.CheckoutBaseURL == "" || len(readyPaymentProviders(setting)) == 0 {
 		return nil, BadAuthRequest("支付收银台或商户渠道尚未完成配置")
-	}
-	if hasExistingSession {
-		return paymentCheckoutResult(existingSession, existingToken, setting.CheckoutBaseURL), nil
 	}
 	now := time.Now()
 	return s.createOrRecoverPaymentCheckout(
@@ -304,7 +309,10 @@ func (s *Service) createOrRecoverPaymentCheckout(orderType model.PaymentOrderTyp
 		ID: newID(), OrderType: orderType, OrderID: orderID, UserID: userID, TokenHash: tokenHash,
 		Status: model.PaymentCheckoutActive, ExpiresAt: now.Add(paymentCheckoutLifetime), CreatedAt: now, UpdatedAt: now,
 	}
-	candidate.TokenCipher, err = s.encryptPaymentCheckoutToken(candidate, token)
+	payload := paymentCheckoutCipherPayload{
+		Token: token, CheckoutURL: strings.TrimRight(checkoutBaseURL, "/") + "/pay/" + token,
+	}
+	candidate.TokenCipher, err = s.encryptPaymentCheckoutToken(candidate, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -312,45 +320,45 @@ func (s *Service) createOrRecoverPaymentCheckout(orderType model.PaymentOrderTyp
 	if err != nil {
 		return nil, err
 	}
-	winnerToken, err := s.recoverPaymentCheckoutToken(winner, orderType, orderID, userID)
+	winnerPayload, err := s.recoverPaymentCheckoutPayload(winner, orderType, orderID, userID)
 	if err != nil {
 		return nil, err
 	}
-	return paymentCheckoutResult(winner, winnerToken, checkoutBaseURL), nil
+	return paymentCheckoutResult(winner, winnerPayload), nil
 }
 
-func (s *Service) recoverExistingPaymentCheckout(orderType model.PaymentOrderType, orderID string, userID string) (*model.PaymentCheckoutSession, string, bool, error) {
+func (s *Service) recoverExistingPaymentCheckout(orderType model.PaymentOrderType, orderID string, userID string) (*CreatePaymentCheckoutResult, bool, error) {
 	session, err := s.repo.PaymentCheckoutSessionByOrderID(orderID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, "", false, err
+		return nil, false, err
 	}
-	token, err := s.recoverPaymentCheckoutToken(session, orderType, orderID, userID)
+	payload, err := s.recoverPaymentCheckoutPayload(session, orderType, orderID, userID)
 	if err != nil {
-		return nil, "", false, err
+		return nil, false, err
 	}
-	return session, token, true, nil
+	return paymentCheckoutResult(session, payload), true, nil
 }
 
-func (s *Service) recoverPaymentCheckoutToken(session *model.PaymentCheckoutSession, orderType model.PaymentOrderType, orderID string, userID string) (string, error) {
+func (s *Service) recoverPaymentCheckoutPayload(session *model.PaymentCheckoutSession, orderType model.PaymentOrderType, orderID string, userID string) (*paymentCheckoutCipherPayload, error) {
 	if session == nil || session.OrderType != orderType || session.OrderID != orderID || session.UserID != userID {
-		return "", errors.New("已有收银台会话与订单事实不一致")
+		return nil, errors.New("已有收银台会话与订单事实不一致")
 	}
 	if strings.TrimSpace(session.TokenCipher) == "" {
-		return "", errors.New("已有收银台会话仅保存令牌哈希，无法恢复所有者支付链接")
+		return nil, errors.New("已有收银台会话仅保存令牌哈希，无法恢复所有者支付链接")
 	}
-	token, err := s.decryptPaymentCheckoutToken(session)
+	payload, err := s.decryptPaymentCheckoutToken(session)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return token, nil
+	return payload, nil
 }
 
-func paymentCheckoutResult(session *model.PaymentCheckoutSession, token string, checkoutBaseURL string) *CreatePaymentCheckoutResult {
+func paymentCheckoutResult(session *model.PaymentCheckoutSession, payload *paymentCheckoutCipherPayload) *CreatePaymentCheckoutResult {
 	return &CreatePaymentCheckoutResult{
-		CheckoutURL: strings.TrimRight(checkoutBaseURL, "/") + "/pay/" + token,
+		CheckoutURL: payload.CheckoutURL,
 		ExpiresAt:   session.ExpiresAt,
 	}
 }
@@ -387,7 +395,7 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 		if saveErr := s.repo.UpdatePaymentTransactionCreation(transaction.ID, model.PaymentTransactionFailed, "", err.Error(), time.Now()); saveErr != nil {
 			return nil, fmt.Errorf("渠道下单失败且交易审计写入失败: %v: %w", saveErr, err)
 		}
-		return nil, &AuthError{Status: 502, Message: "支付渠道下单失败：" + err.Error()}
+		return nil, &AuthError{Status: 502, Message: "支付渠道暂时无法创建订单，请稍后重试"}
 	}
 	transaction.Status = model.PaymentTransactionPending
 	transaction.CodeURL = codeURL
@@ -398,22 +406,22 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	return paymentCheckoutTransactionView(transaction)
 }
 
-func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSession, *paymentOrderDetails, paymentSettingValue, error) {
+func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSession, *paymentOrderDetails, error) {
 	trimmed := strings.TrimSpace(token)
 	if trimmed == "" {
-		return nil, nil, paymentSettingValue{}, BadAuthRequest("收银台令牌不能为空")
+		return nil, nil, BadAuthRequest("收银台令牌不能为空")
 	}
 	digest := sha256.Sum256([]byte(trimmed))
 	session, err := s.repo.PaymentCheckoutSessionByTokenHash(hex.EncodeToString(digest[:]))
 	if err != nil {
-		return nil, nil, paymentSettingValue{}, err
+		return nil, nil, err
 	}
 	var order *paymentOrderDetails
 	switch session.OrderType {
 	case model.PaymentOrderMembership:
 		membershipOrder, lookupErr := s.repo.MembershipOrder(session.OrderID)
 		if lookupErr != nil {
-			return nil, nil, paymentSettingValue{}, lookupErr
+			return nil, nil, lookupErr
 		}
 		order = &paymentOrderDetails{
 			ID: membershipOrder.ID, UserID: membershipOrder.UserID, OrderNumber: membershipOrder.OrderNumber,
@@ -423,7 +431,7 @@ func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSe
 	case model.PaymentOrderCreditTopup:
 		topupOrder, lookupErr := s.repo.CreditTopupOrder(session.OrderID)
 		if lookupErr != nil {
-			return nil, nil, paymentSettingValue{}, lookupErr
+			return nil, nil, lookupErr
 		}
 		order = &paymentOrderDetails{
 			ID: topupOrder.ID, UserID: topupOrder.UserID, OrderNumber: topupOrder.OrderNumber,
@@ -431,31 +439,45 @@ func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSe
 			Description: "积分充值订单 " + topupOrder.OrderNumber, CreditTopupOrder: topupOrder,
 		}
 	default:
-		return nil, nil, paymentSettingValue{}, errors.New("收银台订单类型无效")
+		return nil, nil, errors.New("收银台订单类型无效")
 	}
 	if session.UserID != order.UserID {
-		return nil, nil, paymentSettingValue{}, errors.New("收银台会话与订单所有者不一致")
+		return nil, nil, errors.New("收银台会话与订单所有者不一致")
 	}
-	_, setting, err := s.readPaymentSetting()
-	return session, order, setting, err
+	return session, order, nil
 }
 
 func (s *Service) paymentCheckoutViewContext(token string, now time.Time) (*model.PaymentCheckoutSession, *paymentOrderDetails, paymentSettingValue, error) {
-	session, order, setting, err := s.paymentCheckoutByToken(token)
+	session, order, err := s.paymentCheckoutByToken(token)
 	if err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
 	if session.Status == model.PaymentCheckoutActive && !session.ExpiresAt.After(now) {
-		if err := s.repo.ExpirePaymentCheckoutSession(session.ID, now); err != nil {
+		expired, expireErr := s.repo.ExpirePaymentCheckoutSession(session.ID, now)
+		if expireErr != nil {
+			return nil, nil, paymentSettingValue{}, expireErr
+		}
+		if expired {
+			session.Status = model.PaymentCheckoutExpired
+		} else {
+			session, order, err = s.paymentCheckoutByToken(token)
+			if err != nil {
+				return nil, nil, paymentSettingValue{}, err
+			}
+		}
+	}
+	var setting paymentSettingValue
+	if session.Status == model.PaymentCheckoutActive && order.Status == "pending" {
+		_, setting, err = s.readPaymentProjectionSetting()
+		if err != nil {
 			return nil, nil, paymentSettingValue{}, err
 		}
-		session.Status = model.PaymentCheckoutExpired
 	}
 	return session, order, setting, nil
 }
 
 func (s *Service) payableCheckoutContext(token string) (*model.PaymentCheckoutSession, *paymentOrderDetails, paymentSettingValue, error) {
-	session, order, setting, err := s.paymentCheckoutByToken(token)
+	session, order, err := s.paymentCheckoutByToken(token)
 	if err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
@@ -464,6 +486,10 @@ func (s *Service) payableCheckoutContext(token string) (*model.PaymentCheckoutSe
 	}
 	if order.Status != "pending" {
 		return nil, nil, paymentSettingValue{}, BadAuthRequest("订单当前不可支付")
+	}
+	_, setting, err := s.readPaymentSetting()
+	if err != nil {
+		return nil, nil, paymentSettingValue{}, err
 	}
 	return session, order, setting, nil
 }
@@ -474,7 +500,7 @@ func (s *Service) requireActiveCheckout(session *model.PaymentCheckoutSession) e
 		return nil
 	}
 	if session.Status == model.PaymentCheckoutActive {
-		if err := s.repo.ExpirePaymentCheckoutSession(session.ID, now); err != nil {
+		if _, err := s.repo.ExpirePaymentCheckoutSession(session.ID, now); err != nil {
 			return err
 		}
 	}
@@ -482,16 +508,9 @@ func (s *Service) requireActiveCheckout(session *model.PaymentCheckoutSession) e
 }
 
 func (s *Service) readPaymentSetting() (*model.SystemSetting, paymentSettingValue, error) {
-	setting, err := s.repo.SystemSetting(paymentSettingKey)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, paymentSettingValue{}, nil
-	}
+	setting, value, err := s.readPaymentProjectionSetting()
 	if err != nil {
 		return nil, paymentSettingValue{}, err
-	}
-	var value paymentSettingValue
-	if err := json.Unmarshal([]byte(setting.ValueJSON), &value); err != nil {
-		return nil, paymentSettingValue{}, errors.New("支付配置格式无效")
 	}
 	for _, secret := range []*string{
 		&value.Wechat.MerchantPrivateKey, &value.Wechat.PlatformPublicKey, &value.Wechat.APIv3Key,
@@ -502,6 +521,21 @@ func (s *Service) readPaymentSetting() (*model.SystemSetting, paymentSettingValu
 			return nil, paymentSettingValue{}, decryptErr
 		}
 		*secret = plain
+	}
+	return setting, value, nil
+}
+
+func (s *Service) readPaymentProjectionSetting() (*model.SystemSetting, paymentSettingValue, error) {
+	setting, err := s.repo.SystemSetting(paymentSettingKey)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, paymentSettingValue{}, nil
+	}
+	if err != nil {
+		return nil, paymentSettingValue{}, err
+	}
+	var value paymentSettingValue
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &value); err != nil {
+		return nil, paymentSettingValue{}, errors.New("支付配置格式无效")
 	}
 	return setting, value, nil
 }
@@ -700,7 +734,11 @@ func paymentCheckoutCipherAAD(session *model.PaymentCheckoutSession) []byte {
 	}, "\x00"))
 }
 
-func (s *Service) encryptPaymentCheckoutToken(session *model.PaymentCheckoutSession, token string) (string, error) {
+func (s *Service) encryptPaymentCheckoutToken(session *model.PaymentCheckoutSession, payload paymentCheckoutCipherPayload) (string, error) {
+	plaintext, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
 	key, err := s.settingsEncryptionKey()
 	if err != nil {
 		return "", fmt.Errorf("读取收银台令牌加密密钥失败：%w", err)
@@ -717,54 +755,61 @@ func (s *Service) encryptPaymentCheckoutToken(session *model.PaymentCheckoutSess
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
-	ciphertext := gcm.Seal(nil, nonce, []byte(token), paymentCheckoutCipherAAD(session))
-	payload := append(nonce, ciphertext...)
-	return paymentCheckoutCipherPrefix + base64.RawStdEncoding.EncodeToString(payload), nil
+	ciphertext := gcm.Seal(nil, nonce, plaintext, paymentCheckoutCipherAAD(session))
+	envelope := append(nonce, ciphertext...)
+	return paymentCheckoutCipherPrefix + base64.RawStdEncoding.EncodeToString(envelope), nil
 }
 
-func (s *Service) decryptPaymentCheckoutToken(session *model.PaymentCheckoutSession) (string, error) {
+func (s *Service) decryptPaymentCheckoutToken(session *model.PaymentCheckoutSession) (*paymentCheckoutCipherPayload, error) {
 	if session == nil || !strings.HasPrefix(session.TokenCipher, paymentCheckoutCipherPrefix) {
-		return "", errors.New("收银台令牌密文版本无效")
+		return nil, errors.New("收银台令牌密文版本无效")
 	}
 	payload, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(session.TokenCipher, paymentCheckoutCipherPrefix))
 	if err != nil {
-		return "", errors.New("收银台令牌密文格式无效")
+		return nil, errors.New("收银台令牌密文格式无效")
 	}
 	keyPath := filepath.Join(s.dataDir, ".settings-key")
 	key, err := os.ReadFile(keyPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("收银台令牌加密密钥缺失")
+		return nil, errors.New("收银台令牌加密密钥缺失")
 	}
 	if err != nil {
-		return "", fmt.Errorf("读取收银台令牌加密密钥失败：%w", err)
+		return nil, fmt.Errorf("读取收银台令牌加密密钥失败：%w", err)
 	}
 	if len(key) != 32 {
-		return "", errors.New("收银台令牌加密密钥长度无效")
+		return nil, errors.New("收银台令牌加密密钥长度无效")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(payload) < gcm.NonceSize()+gcm.Overhead() {
-		return "", errors.New("收银台令牌密文长度无效")
+		return nil, errors.New("收银台令牌密文长度无效")
 	}
 	plaintext, err := gcm.Open(nil, payload[:gcm.NonceSize()], payload[gcm.NonceSize():], paymentCheckoutCipherAAD(session))
 	if err != nil {
-		return "", errors.New("收银台令牌解密失败，密文或绑定订单事实已损坏")
+		return nil, errors.New("收银台令牌解密失败，密文或绑定订单事实已损坏")
+	}
+	var decoded paymentCheckoutCipherPayload
+	if err := json.Unmarshal(plaintext, &decoded); err != nil {
+		return nil, errors.New("收银台令牌密文载荷无效")
+	}
+	if strings.TrimSpace(decoded.Token) == "" || strings.TrimSpace(decoded.CheckoutURL) == "" || !strings.HasSuffix(decoded.CheckoutURL, "/pay/"+decoded.Token) {
+		return nil, errors.New("收银台令牌密文载荷事实不完整")
 	}
 	expectedHash, err := hex.DecodeString(session.TokenHash)
 	if err != nil || len(expectedHash) != sha256.Size {
-		return "", errors.New("收银台令牌哈希格式无效")
+		return nil, errors.New("收银台令牌哈希格式无效")
 	}
-	digest := sha256.Sum256(plaintext)
+	digest := sha256.Sum256([]byte(decoded.Token))
 	if subtle.ConstantTimeCompare(expectedHash, digest[:]) != 1 {
-		return "", errors.New("收银台令牌密文与哈希不一致")
+		return nil, errors.New("收银台令牌密文与哈希不一致")
 	}
-	return string(plaintext), nil
+	return &decoded, nil
 }
 
 func paymentMerchantOrderNo(orderNumber string, now time.Time) string {

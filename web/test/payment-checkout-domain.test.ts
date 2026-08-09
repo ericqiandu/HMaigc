@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { checkoutDiscountOriginalPrice, checkoutRemainingSeconds, checkoutServerOffsetMs, checkoutSummary, mergePaymentCheckout, restoreActiveCheckoutPayment } from "../src/pages/payment/payment-checkout-domain";
+import {
+    applyCheckoutTransaction,
+    checkoutDiscountOriginalPrice,
+    checkoutRemainingSeconds,
+    checkoutServerOffsetMs,
+    checkoutSummary,
+    mergeCheckoutResponse,
+    mergePaymentCheckout,
+    restoreActiveCheckoutPayment,
+    type CheckoutRequestState,
+} from "../src/pages/payment/payment-checkout-domain";
 import type { MembershipPaymentCheckout, CreditTopupPaymentCheckout } from "../src/services/api/payment";
 
 const membershipCheckout = {
@@ -75,6 +85,59 @@ describe("payment checkout domain", () => {
 
         expect(mergePaymentCheckout(terminal, stale)).toEqual(terminal);
         expect(mergePaymentCheckout(membershipCheckout, { ...membershipCheckout, checkoutStatus: "expired" }).checkoutStatus).toBe("expired");
+    });
+
+    test("terminal checkout and order facts follow an explicit monotonic order", () => {
+        const expired: MembershipPaymentCheckout = {
+            ...membershipCheckout,
+            orderStatus: "cancelled",
+            checkoutStatus: "expired",
+        };
+        const consumed: MembershipPaymentCheckout = {
+            ...membershipCheckout,
+            orderStatus: "paid",
+            checkoutStatus: "consumed",
+        };
+        const refunded: MembershipPaymentCheckout = {
+            ...consumed,
+            orderStatus: "refunded",
+        };
+
+        expect(mergePaymentCheckout(consumed, expired)).toEqual(consumed);
+        expect(mergePaymentCheckout(expired, consumed)).toEqual(consumed);
+        expect(mergePaymentCheckout(refunded, consumed)).toEqual(refunded);
+
+        const stalePayableWithQR: MembershipPaymentCheckout = {
+            ...membershipCheckout,
+            activeTransaction: {
+                provider: "wechat",
+                status: "pending",
+                codeUrl: "https://qr.example.com/stale-payment",
+                expiresAt: membershipCheckout.expiresAt,
+            },
+        };
+        const terminalAfterStaleQR = mergePaymentCheckout(consumed, stalePayableWithQR);
+        expect(terminalAfterStaleQR.activeTransaction).toBeUndefined();
+        expect(restoreActiveCheckoutPayment(terminalAfterStaleQR)).toBeNull();
+    });
+
+    test("a POST transaction atomically outranks an older GET without hiding a newer GET", () => {
+        const initial = { checkout: membershipCheckout, revision: 1 } satisfies CheckoutRequestState;
+        const transaction = {
+            provider: "wechat",
+            status: "pending",
+            codeUrl: "https://qr.example.com/new-payment",
+            expiresAt: membershipCheckout.expiresAt,
+        } as const;
+        const afterPost = applyCheckoutTransaction(initial, transaction, 3);
+
+        const afterOlderGet = mergeCheckoutResponse(afterPost, membershipCheckout, 2);
+        expect(afterOlderGet).toBe(afterPost);
+        expect(afterOlderGet.checkout.activeTransaction).toEqual(transaction);
+
+        const afterNewerGet = mergeCheckoutResponse(afterPost, membershipCheckout, 4);
+        expect(afterNewerGet.revision).toBe(4);
+        expect(afterNewerGet.checkout.activeTransaction).toBeUndefined();
     });
 
     test("an active transaction restores the selected provider and QR code", () => {
