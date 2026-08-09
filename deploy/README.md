@@ -21,11 +21,17 @@ cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-填写真实镜像仓库、业务版本、控制器版本、数据库密码、HTTPS Origin 和本机监听端口。`HMAIGC_BACKEND_GID` 必须保持与发布镜像中的固定值 `101` 一致。控制器启动时会把只读挂载的生产配置复制到独立运维卷并收紧为 `600`，避免 Docker Desktop 与不同宿主机的 bind mount 权限语义影响发布校验。业务卷和 `HMAIGC_OPS_STATE_VOLUME` 启用后不得随意改变，否则控制器会失去发布状态、审计日志或生产恢复点。
+填写真实镜像仓库、业务版本、控制器版本、数据库密码、`CANVAS_ENVIRONMENT=production`、HTTPS Origin 和本机监听端口。`HMAIGC_BACKEND_GID` 必须保持与发布镜像中的固定值 `101` 一致。控制器启动时会把只读挂载的生产配置复制到独立运维卷并收紧为 `600`，避免 Docker Desktop 与不同宿主机的 bind mount 权限语义影响发布校验。业务卷和 `HMAIGC_OPS_STATE_VOLUME` 启用后不得随意改变，否则控制器会失去发布状态、审计日志或生产恢复点。后端会在启动 worker/listener 前校验持久化支付公开 URL；checkout base 必须是无 path 的 HTTPS Origin，渠道 notify URL 可保留 webhook path。生产环境中的 HTTP 收银台、HTTP 支付回调、非法 Origin 或损坏 JSON 都会显式阻止启动。
 
 私有 GitHub 仓库若要在后台检查最新 Release，填写只读的 `HMAIGC_RELEASES_API_TOKEN`。不配置时版本检查会明确显示“未配置”，不会假装已经是最新版本。
 
-外层 Nginx 可参考 `deploy/nginx/hmaigc.conf.example`，替换域名后再由服务器现有证书方案启用 HTTPS。PostgreSQL、Redis 和后端均不得映射到公网。
+外层 Nginx 必须参考 `deploy/nginx/hmaigc.conf.example`，替换域名和证书路径，并保持 80 端口到 HTTPS 443 的硬重定向。PostgreSQL、Redis 和后端均不得映射到公网。
+
+收银台页面 `/pay/` 与能力 API `/api/payments/checkout/` 携带 bearer token。示例仅在这两个精确前缀关闭 access/error log；同时清除上游 Referer，强制 `Cache-Control: private, no-store`、`Pragma: no-cache` 与 `Referrer-Policy: no-referrer`。inner Nginx 既有的 `/api/public/canvas-shares/` bearer 前缀继续保持 error-log 隔离。这些位置的代理错误由后端脱敏结构化日志与 `/api/health` 提供诊断。
+
+stock Nginx upstream error 格式无法移除 incoming Referer，所以示例仅在实际 reverse-proxy location 关闭该原生行，并用条件 access log 为普通 4xx/5xx 写入不含 Referer、query 或上游正文的 safe proxy-error（时间、客户端、方法、URI、状态和 upstream status）；普通 2xx access 仍可观测。server/main/global 的配置、启动和静态错误日志继续保留，禁止把静默范围扩到整个 server。
+
+从旧版本切换到本安全边界前，先暂停新的下单/checkout 创建，在旧版后台把 checkout base 改为无 path 的 HTTPS Origin、把 notify URL 改为 HTTPS并核验 CORS；随后至少等待 `15 分钟` checkout TTL，使旧 HTTP/pathful 加密链接自然失效。不得清库、轮换 bearer 或关闭门禁。若升级被支付运行时门禁拒绝，保持自动回滚，回旧版修正配置后再升级。
 
 ## 唯一正式操作入口
 
@@ -107,4 +113,4 @@ bash deploy/hmaigc-ops.sh rollback
 
 ## 发布前提
 
-一键发布只解决可重复部署和回滚，不替代发布质量门禁。版本标签必须先通过 GitHub Actions 中的 Go 全量测试、Web 测试、生产构建、控制器镜像构建和两个 Compose 文件校验。涉及不可逆数据库变更时，即使脚本具备备份恢复能力，也必须先在隔离环境完成恢复演练。
+一键发布只解决可重复部署和回滚，不替代发布质量门禁。版本标签必须先通过 GitHub Actions 中的 Go 全量测试、Web 测试、生产构建、`bash scripts/tests/verify-payment-checkout-nginx.test.sh`、控制器镜像构建和两个 Compose 文件校验。涉及不可逆数据库变更时，即使脚本具备备份恢复能力，也必须先在隔离环境完成恢复演练。

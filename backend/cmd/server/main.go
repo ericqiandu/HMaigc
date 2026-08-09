@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -55,32 +58,52 @@ func main() {
 
 	repo := repository.New(db)
 	svc := service.New(repo, dataDir)
-	if err := svc.RemoveLegacyChannelModelIcons(); err != nil {
+	if err := runPaymentRuntimeGate(svc, func() error {
+		return initializeAndServe(sqlDB, svc)
+	}); err != nil {
 		log.Fatal(err)
+	}
+}
+
+type paymentRuntimeValidator interface {
+	ValidatePaymentRuntime() error
+}
+
+// runPaymentRuntimeGate 保证持久化支付配置在 worker、readiness 和 listener 之前完成强校验。
+func runPaymentRuntimeGate(validator paymentRuntimeValidator, afterValidation func() error) error {
+	if err := validator.ValidatePaymentRuntime(); err != nil {
+		return err
+	}
+	return afterValidation()
+}
+
+func initializeAndServe(sqlDB *sql.DB, svc *service.Service) error {
+	if err := svc.RemoveLegacyChannelModelIcons(); err != nil {
+		return err
 	}
 	if err := configureOperationsClient(svc); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := svc.ValidateRuntime(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := svc.EnsureSystemChannelModels(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := svc.EnsureDefaultChannelVoices(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := svc.EnsureDefaultStoryboardPromptTemplate(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := svc.EnsureDefaultCreditTopupProducts(); err != nil {
-		log.Fatalf("initialize credit store: %v", err)
+		return fmt.Errorf("initialize credit store: %w", err)
 	}
 	if err := svc.EnsureBuiltinProjectWorkflowTemplate(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if summary, err := svc.MigrateLegacyStorage(); err != nil {
 		log.Printf("storage migration skipped after error: %v", err)
@@ -91,10 +114,7 @@ func main() {
 	svc.StartStorageMigrationWorker()
 
 	r := gin.New()
-	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		return fmt.Sprintf("%s - [%s] \"%s %s\" %d %s %s\n", param.ClientIP, param.TimeStamp.Format(time.RFC3339), param.Method, redactCanvasSharePath(param.Path), param.StatusCode, param.Latency, param.ErrorMessage)
-	}), gin.Recovery())
-	r.Use(cors())
+	r.Use(handler.PaymentCapabilityHeaders(), requestLogger(gin.DefaultWriter), requestRecovery(gin.DefaultErrorWriter), cors())
 	handler.ConfigureRuntime(svc)
 	api := r.Group("/api")
 	api.GET("/health", healthHandler(sqlDB, svc))
@@ -124,14 +144,12 @@ func main() {
 	handler.RegisterProjectRoutes(api, svc)
 	handler.RegisterCanvasShareRoutes(api, svc)
 	if err := handler.RegisterCanvasCollaborationRoutes(api, svc); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
 	log.Printf("HMaigc backend listening on %s", addr)
-	if err := runHTTPServer(newHTTPServer(addr, r)); err != nil {
-		log.Fatal(err)
-	}
+	return runHTTPServer(newHTTPServer(addr, r))
 }
 
 func configureOperationsClient(svc *service.Service) error {
@@ -205,6 +223,11 @@ func healthHandler(db *sql.DB, svc *service.Service) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "database unavailable"})
 			return
 		}
+		if err := svc.ValidatePaymentRuntime(); err != nil {
+			log.Printf("health dependency=payment_runtime status=unavailable error=%v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "payment runtime unavailable"})
+			return
+		}
 		if err := svc.CheckRuntime(ctx); err != nil {
 			log.Printf("health dependency=runtime status=unavailable error=%v", err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "runtime coordinator unavailable"})
@@ -222,16 +245,66 @@ func healthHandler(db *sql.DB, svc *service.Service) gin.HandlerFunc {
 	}
 }
 
-func redactCanvasSharePath(path string) string {
-	const prefix = "/api/public/canvas-shares/"
-	if !strings.HasPrefix(path, prefix) {
-		return path
+func requestLogger(writer io.Writer) gin.HandlerFunc {
+	return gin.LoggerWithConfig(gin.LoggerConfig{
+		Output:          writer,
+		SkipQueryString: true,
+		Formatter: func(param gin.LogFormatterParams) string {
+			return fmt.Sprintf(
+				"%s - [%s] \"%s %s\" %d %s\n",
+				param.ClientIP,
+				param.TimeStamp.Format(time.RFC3339),
+				param.Method,
+				redactSensitiveRequestPath(param.Path),
+				param.StatusCode,
+				param.Latency,
+			)
+		},
+	})
+}
+
+// requestRecovery 不使用 Gin 默认的 DumpRequest，因为异常时原始 URI 和 Referer 可能含 bearer 能力。
+func requestRecovery(writer io.Writer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				_, _ = fmt.Fprintf(
+					writer,
+					"panic recovered method=%s path=%s panic_type=%T\n%s",
+					c.Request.Method,
+					redactSensitiveRequestPath(c.Request.URL.Path),
+					recovered,
+					debug.Stack(),
+				)
+				c.AbortWithStatus(http.StatusInternalServerError)
+			}
+		}()
+		c.Next()
 	}
-	remainder := strings.TrimPrefix(path, prefix)
-	if index := strings.IndexByte(remainder, '/'); index >= 0 {
-		return prefix + ":token" + remainder[index:]
+}
+
+func redactSensitiveRequestPath(path string) string {
+	path, _, _ = strings.Cut(path, "?")
+	if strings.HasPrefix(path, "/pay/") {
+		return "/pay/:token"
 	}
-	return prefix + ":token"
+	const checkoutPrefix = "/api/payments/checkout/"
+	if strings.HasPrefix(path, checkoutPrefix) {
+		remainder := strings.TrimPrefix(path, checkoutPrefix)
+		if separator := strings.IndexByte(remainder, '/'); separator >= 0 && remainder[separator:] == "/transactions" {
+			return checkoutPrefix + ":token/transactions"
+		}
+		return checkoutPrefix + ":token"
+	}
+	const canvasSharePrefix = "/api/public/canvas-shares/"
+	if strings.HasPrefix(path, canvasSharePrefix) {
+		remainder := strings.TrimPrefix(path, canvasSharePrefix)
+		if separator := strings.IndexByte(remainder, '/'); separator >= 0 {
+			return canvasSharePrefix + ":token" + remainder[separator:]
+		}
+		return canvasSharePrefix + ":token"
+	}
+	return path
 }
 
 func env(key string, fallback string) string {
@@ -265,26 +338,38 @@ func cors() gin.HandlerFunc {
 	}
 }
 
-func allowedOrigin(c *gin.Context, origin string) bool {
-	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+func allowedOrigin(_ *gin.Context, origin string) bool {
+	environment := strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT"))
+	if environment != "development" && environment != "production" {
 		return false
 	}
-	requestHost := c.Request.Host
-	if forwardedHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); forwardedHost != "" {
-		requestHost = strings.TrimSpace(strings.Split(forwardedHost, ",")[0])
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil ||
+		parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.ForceQuery ||
+		parsed.Fragment != "" || strings.Contains(origin, "#") {
+		return false
 	}
-	if strings.EqualFold(parsed.Host, strings.TrimSpace(requestHost)) {
-		return true
+	switch parsed.Scheme {
+	case "https":
+	case "http":
+		if environment != "development" || !isLoopbackCORSHost(parsed.Hostname()) {
+			return false
+		}
+	default:
+		return false
 	}
 	for _, allowed := range strings.Split(os.Getenv("CANVAS_CORS_ORIGINS"), ",") {
-		if strings.TrimSpace(allowed) == "*" {
-			return true
-		}
-		if strings.EqualFold(strings.TrimRight(strings.TrimSpace(allowed), "/"), strings.TrimRight(origin, "/")) {
+		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
 			return true
 		}
 	}
-	host := strings.ToLower(parsed.Hostname())
-	return (host == "localhost" || host == "127.0.0.1" || host == "::1") && (parsed.Scheme == "http" || parsed.Scheme == "https")
+	return false
+}
+
+func isLoopbackCORSHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }

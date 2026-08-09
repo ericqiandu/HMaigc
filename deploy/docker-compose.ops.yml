@@ -19,6 +19,7 @@ services:
       HMAIGC_ENV_FILE: /var/lib/hmaigc-ops/deployment.env
       HMAIGC_RELEASES_API_URL: ${HMAIGC_RELEASES_API_URL:-}
       HMAIGC_RELEASES_API_TOKEN: ${HMAIGC_RELEASES_API_TOKEN:-}
+      CANVAS_ENVIRONMENT: ${CANVAS_ENVIRONMENT:?必须明确配置 production}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${HMAIGC_HOST_ENV_FILE:-../.env.production}:/run/hmaigc-config/.env.production:ro

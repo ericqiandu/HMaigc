@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +29,13 @@ import (
 const paymentSettingKey = "payment"
 const paymentCheckoutLifetime = 15 * time.Minute
 const paymentCheckoutCipherPrefix = "enc:v1:"
+
+type paymentRuntimeEnvironment string
+
+const (
+	paymentEnvironmentDevelopment paymentRuntimeEnvironment = "development"
+	paymentEnvironmentProduction  paymentRuntimeEnvironment = "production"
+)
 
 type PaymentChannelSettingRequest struct {
 	Enabled            bool   `json:"enabled"`
@@ -170,7 +178,11 @@ func (s *Service) UpdatePaymentSetting(actor *model.User, req PaymentSettingRequ
 		Wechat:          mergePaymentChannel(req.Wechat, current.Wechat),
 		Alipay:          mergePaymentChannel(req.Alipay, current.Alipay),
 	}
-	if err := validatePaymentSetting(next); err != nil {
+	environment, err := currentPaymentRuntimeEnvironment()
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
+	if err := validatePaymentSetting(next, environment); err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
 	stored := next
@@ -747,6 +759,25 @@ func (s *Service) readPaymentProjectionSetting() (*model.SystemSetting, paymentS
 	return setting, value, nil
 }
 
+// ValidatePaymentRuntime 是启动和 readiness 共用的支付安全门；只读持久化配置，不解密密钥也不会创建设置密钥。
+func (s *Service) ValidatePaymentRuntime() error {
+	environment, err := currentPaymentRuntimeEnvironment()
+	if err != nil {
+		return err
+	}
+	if err := validatePaymentPublicOrigins(environment, os.Getenv("CANVAS_CORS_ORIGINS")); err != nil {
+		return err
+	}
+	_, setting, err := s.readPaymentProjectionSetting()
+	if err != nil {
+		return fmt.Errorf("读取持久化支付配置失败: %w", err)
+	}
+	if err := validatePaymentSetting(setting, environment); err != nil {
+		return fmt.Errorf("持久化支付配置不符合当前运行环境: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) encryptPaymentSecrets(value *paymentSettingValue) error {
 	for _, secret := range []*string{
 		&value.Wechat.MerchantPrivateKey, &value.Wechat.PlatformPublicKey, &value.Wechat.APIv3Key,
@@ -780,9 +811,9 @@ func mergePaymentChannel(req PaymentChannelSettingRequest, current paymentChanne
 	return next
 }
 
-func validatePaymentSetting(value paymentSettingValue) error {
+func validatePaymentSetting(value paymentSettingValue, environment paymentRuntimeEnvironment) error {
 	if value.CheckoutBaseURL != "" {
-		if err := validateHTTPURL(value.CheckoutBaseURL, "收银台地址"); err != nil {
+		if err := validatePaymentPublicURL(value.CheckoutBaseURL, "收银台地址", environment, true); err != nil {
 			return err
 		}
 	}
@@ -796,7 +827,7 @@ func validatePaymentSetting(value paymentSettingValue) error {
 	} {
 		name, channel := item.name, item.channel
 		if channel.NotifyURL != "" {
-			if err := validateHTTPURL(channel.NotifyURL, name+"回调地址"); err != nil {
+			if err := validatePaymentPublicURL(channel.NotifyURL, name+"回调地址", environment, false); err != nil {
 				return err
 			}
 		}
@@ -809,12 +840,70 @@ func validatePaymentSetting(value paymentSettingValue) error {
 	return nil
 }
 
-func validateHTTPURL(raw string, field string) error {
-	parsed, err := url.ParseRequestURI(raw)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return fmt.Errorf("%s必须是完整的 HTTP 或 HTTPS 地址", field)
+func currentPaymentRuntimeEnvironment() (paymentRuntimeEnvironment, error) {
+	environment := paymentRuntimeEnvironment(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")))
+	switch environment {
+	case paymentEnvironmentDevelopment, paymentEnvironmentProduction:
+		return environment, nil
+	case "":
+		return "", errors.New("CANVAS_ENVIRONMENT 必须明确配置为 development 或 production")
+	default:
+		return "", errors.New("CANVAS_ENVIRONMENT 只允许 development 或 production")
+	}
+}
+
+func validatePaymentPublicOrigins(environment paymentRuntimeEnvironment, rawOrigins string) error {
+	trimmedOrigins := strings.TrimSpace(rawOrigins)
+	if trimmedOrigins == "" {
+		if environment == paymentEnvironmentProduction {
+			return errors.New("生产环境必须配置 CANVAS_CORS_ORIGINS")
+		}
+		return nil
+	}
+	for index, rawOrigin := range strings.Split(rawOrigins, ",") {
+		origin := strings.TrimSpace(rawOrigin)
+		if origin == "" {
+			return fmt.Errorf("CANVAS_CORS_ORIGINS 第 %d 项不能为空", index+1)
+		}
+		if err := validatePaymentPublicURL(origin, fmt.Sprintf("CANVAS_CORS_ORIGINS 第 %d 项", index+1), environment, true); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func validatePaymentPublicURL(raw string, field string, environment paymentRuntimeEnvironment, originOnly bool) error {
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := url.Parse(trimmed)
+	if raw != trimmed || err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(trimmed, "#") {
+		return fmt.Errorf("%s必须是不含用户信息、查询或片段的完整公开地址", field)
+	}
+	if originOnly && (parsed.Path != "" || parsed.RawPath != "") {
+		return fmt.Errorf("%s必须是不含路径的 Origin", field)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if environment != paymentEnvironmentDevelopment {
+			return fmt.Errorf("%s在生产环境必须使用 HTTPS", field)
+		}
+		if !isLoopbackPaymentHost(parsed.Hostname()) {
+			return fmt.Errorf("%s 在开发环境使用 HTTP 时必须指向环回主机", field)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s必须使用 HTTP 或 HTTPS", field)
+	}
+}
+
+func isLoopbackPaymentHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func validatePaymentGatewayURL(provider model.PaymentProvider, raw string) error {
@@ -1006,8 +1095,19 @@ func (s *Service) decryptPaymentCheckoutToken(session *model.PaymentCheckoutSess
 	if err := json.Unmarshal(plaintext, &decoded); err != nil {
 		return nil, errors.New("收银台令牌密文载荷无效")
 	}
-	if strings.TrimSpace(decoded.Token) == "" || strings.TrimSpace(decoded.CheckoutURL) == "" || !strings.HasSuffix(decoded.CheckoutURL, "/pay/"+decoded.Token) {
+	if decoded.Token == "" || decoded.Token != strings.TrimSpace(decoded.Token) || decoded.CheckoutURL == "" {
 		return nil, errors.New("收银台令牌密文载荷事实不完整")
+	}
+	environment, err := currentPaymentRuntimeEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePaymentPublicURL(decoded.CheckoutURL, "已保存的收银台地址", environment, false); err != nil {
+		return nil, errors.New("已保存的收银台地址不符合当前运行环境")
+	}
+	checkoutURL, err := url.Parse(decoded.CheckoutURL)
+	if err != nil || checkoutURL.RawPath != "" || checkoutURL.Path != "/pay/"+decoded.Token {
+		return nil, errors.New("已保存的收银台地址路径与令牌事实不一致")
 	}
 	expectedHash, err := hex.DecodeString(session.TokenHash)
 	if err != nil || len(expectedHash) != sha256.Size {

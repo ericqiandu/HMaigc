@@ -60,6 +60,7 @@ jobs:
           HMAIGC_VERSION: v0.0.0-ci
           HMAIGC_OPS_VERSION: v0.0.0-ci
           POSTGRES_PASSWORD: ci-only-password
+          CANVAS_ENVIRONMENT: production
           CANVAS_CORS_ORIGINS: https://ci.example.invalid
         run: |
           docker compose -f docker-compose.production.yml config -q

@@ -1,14 +1,19 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"strings"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Config struct {
@@ -37,16 +42,56 @@ func Open(config Config) (*gorm.DB, error) {
 			// mounts; production deployments use PostgreSQL for concurrency.
 			dsn = config.DataDir + "/open_ai_canvas.db?_busy_timeout=5000&_journal_mode=DELETE&_foreign_keys=on&_synchronous=FULL"
 		}
-		return gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+		return gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: newParameterizedDatabaseLogger(os.Stdout)})
 	case "postgres", "postgresql":
 		dsn := strings.TrimSpace(config.DSN)
 		if dsn == "" {
 			return nil, errors.New("PostgreSQL 模式必须配置 DATABASE_URL")
 		}
-		return gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		return gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: newParameterizedDatabaseLogger(os.Stdout)})
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动：%s", driver)
 	}
+}
+
+type parameterizedDatabaseLogger struct {
+	logger.Interface
+}
+
+func init() {
+	// GORM's Scan path uses its package-level recorder before invoking the configured logger.
+	// Filter that recorder too, otherwise Scan traces interpolate parameters despite the logger config.
+	logger.RecorderParamsFilter = discardDatabaseLogParams
+}
+
+func discardDatabaseLogParams(_ context.Context, sql string, _ ...interface{}) (string, []interface{}) {
+	return sql, nil
+}
+
+func newParameterizedDatabaseLogger(writer io.Writer) logger.Interface {
+	base := logger.New(log.New(writer, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             200 * time.Millisecond,
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+		ParameterizedQueries:      true,
+		Colorful:                  false,
+	})
+	return parameterizedDatabaseLogger{Interface: base}
+}
+
+func (databaseLogger parameterizedDatabaseLogger) LogMode(level logger.LogLevel) logger.Interface {
+	return parameterizedDatabaseLogger{Interface: databaseLogger.Interface.LogMode(level)}
+}
+
+func (databaseLogger parameterizedDatabaseLogger) ParamsFilter(ctx context.Context, sql string, params ...interface{}) (string, []interface{}) {
+	return discardDatabaseLogParams(ctx, sql, params...)
+}
+
+func (databaseLogger parameterizedDatabaseLogger) Trace(ctx context.Context, begin time.Time, query func() (string, int64), err error) {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		err = errors.New("database operation failed")
+	}
+	databaseLogger.Interface.Trace(ctx, begin, query, err)
 }
 
 func ConfigurePool(db *gorm.DB) error {

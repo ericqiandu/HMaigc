@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"infinite-canvas/backend/internal/service"
 
@@ -53,7 +54,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.String(http.StatusOK, "success")
 	})
 
-	r.POST("/membership/orders/:id/checkout", func(c *gin.Context) {
+	r.POST("/membership/orders/:id/checkout", setPaymentCapabilityHeaders, func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -67,7 +68,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, result)
 	})
 
-	r.POST("/credit-store/orders/:id/checkout", func(c *gin.Context) {
+	r.POST("/credit-store/orders/:id/checkout", setPaymentCapabilityHeaders, func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -81,8 +82,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, result)
 	})
 
-	r.GET("/payments/checkout/:token", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
+	r.GET("/payments/checkout/:token", setPaymentCapabilityHeaders, func(c *gin.Context) {
 		result, err := svc.PaymentCheckout(c.Param("token"))
 		if err != nil {
 			failPaymentCheckout(c, err)
@@ -91,7 +91,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, result)
 	})
 
-	r.POST("/payments/checkout/:token/transactions", func(c *gin.Context) {
+	r.POST("/payments/checkout/:token/transactions", setPaymentCapabilityHeaders, func(c *gin.Context) {
 		var req service.CreatePaymentTransactionRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, errors.New("支付请求格式无效"))
@@ -187,6 +187,31 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, result)
 	})
+}
+
+// PaymentCapabilityHeaders 必须在 CORS 之前注册，使 OPTIONS 短路也不会缓存 bearer 能力路径的响应。
+func PaymentCapabilityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if isPaymentCapabilityPath(c.Request.URL.Path) {
+			setPaymentCapabilityHeaders(c)
+		}
+		c.Next()
+	}
+}
+
+func setPaymentCapabilityHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Pragma", "no-cache")
+	c.Header("Referrer-Policy", "no-referrer")
+}
+
+func isPaymentCapabilityPath(path string) bool {
+	if strings.HasPrefix(path, "/api/payments/checkout/") {
+		return true
+	}
+	return strings.HasSuffix(path, "/checkout") &&
+		(strings.HasPrefix(path, "/api/membership/orders/") ||
+			strings.HasPrefix(path, "/api/credit-store/orders/"))
 }
 
 func failPaymentCheckout(c *gin.Context, err error) {

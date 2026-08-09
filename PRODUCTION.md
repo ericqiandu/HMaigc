@@ -9,7 +9,8 @@ docker compose --env-file .env.production -f docker-compose.production.yml confi
 docker compose --env-file .env.production -f deploy/docker-compose.ops.yml config -q
 cd backend && go test ./...
 cd ../web && bun install --frozen-lockfile && bun test && bun run build
-cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
+cd .. && bash scripts/tests/verify-payment-checkout-nginx.test.sh
+bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ```
 
 必须确认：
@@ -18,7 +19,9 @@ cd .. && bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 - `HMAIGC_VERSION` 是与根目录 `VERSION` 一致的不可变 `vX.Y.Z` 标签，禁止使用 `latest`。
 - `HMAIGC_OPS_VERSION` 是独立控制器的不可变标签，`HMAIGC_OPS_STATE_VOLUME` 已纳入加密备份。
 - 后端容器没有 Docker socket；只有独立控制器容器可以访问 Docker Engine。
+- `CANVAS_ENVIRONMENT=production` 已显式配置；缺失值、未知值或其他环境值都会阻止后端启动。
 - `CANVAS_CORS_ORIGINS` 只包含实际 HTTPS 站点 Origin。
+- 支付收银台地址是无 path、userinfo、query、fragment 的 HTTPS Origin；支付渠道回调地址允许 webhook path，但不得含 userinfo、query 或 fragment。
 - `CANVAS_HTTP_HOST=127.0.0.1`，只有反向代理对公网开放。
 - PostgreSQL、Redis 和后端端口没有映射到公网。
 - 支付、模型渠道和邮件密钥只在后台或服务器环境中配置。
@@ -31,7 +34,13 @@ bash deploy/hmaigc-ops.sh install v1.0.14
 bash deploy/hmaigc-ops.sh verify
 ```
 
-`/api/health` 会实时检查 PostgreSQL 与 Redis，并返回镜像编译时注入的版本和提交；部署工具必须确认实际运行版本与目标标签一致。`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录。任一检查失败时禁止继续发布流量。
+`/api/health` 会实时检查 PostgreSQL、Redis 和持久化支付公开 URL 配置，并返回镜像编译时注入的版本和提交。支付运行时校验在 worker 和 HTTP listener 之前执行；生产环境出现 HTTP 收银台/回调地址、非法公开 Origin 或损坏的持久化支付 JSON 时会直接阻止启动，运行中配置异常则使 readiness 返回 `503`。部署工具必须确认实际运行版本与目标标签一致。`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录。任一检查失败时禁止继续发布流量。
+
+外层 Nginx 必须按 `deploy/nginx/hmaigc.conf.example` 配置证书并将 80 端口永久重定向到 HTTPS 443。`/pay/` 和 `/api/payments/checkout/` 是 bearer capability 精确前缀：两层 Nginx 均关闭这两个位置的 access/error log，并强制 `private, no-store`、`no-cache` 和 `no-referrer`；inner Nginx 既有的 `/api/public/canvas-shares/` bearer 前缀继续保持 error-log 隔离。该局部可观测性由后端不含敏感值的结构化错误日志和 `/api/health` 替代。
+
+stock Nginx upstream error 行会原样附带 incoming Referer，无法自定义格式。因此仅在实际 reverse-proxy location 关闭 stock upstream error 行，改由条件 access log 为普通 4xx/5xx 写入 safe proxy-error 事实（时间、客户端、方法、不含 query 的 URI、状态与 upstream status）；普通 2xx access log 同样不含 Referer。server/main/global 的配置、启动与静态文件错误日志继续保留，不得把该替换扩到整个 server。
+
+从旧版本升级前必须先暂停新的下单/checkout 创建，在旧版后台把 checkout base 修正为无 path 的 HTTPS Origin，把全部渠道 notify URL 修正为 HTTPS，并核验生产 CORS Origin。暂停后至少等待最长 `15 分钟` checkout TTL，使旧 HTTP/pathful 加密链接自然失效；不得清库或隐式轮换 bearer。若新版本因支付运行时门禁拒绝启动，应保持发布工具的自动回滚，回到旧版修正持久化配置后重新升级；禁止临时改回 development、HTTP 或关闭门禁。
 
 ## 3. 同一恢复点备份
 
