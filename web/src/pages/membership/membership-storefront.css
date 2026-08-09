@@ -6,7 +6,10 @@
     --membership-muted: rgb(255 255 255 / 48%);
     --membership-secondary: rgb(255 255 255 / 68%);
     --membership-subtle: #171e2b;
+    height: 100%;
     min-width: 320px;
+    overflow-x: hidden;
+    overflow-y: auto;
     color: #f5f5f7;
 }
 

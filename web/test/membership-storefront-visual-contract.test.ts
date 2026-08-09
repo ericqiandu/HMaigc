@@ -21,4 +21,12 @@ describe("会员商城交付稿视觉契约", () => {
         expect(pricing).toContain('className="membership-storefront-plan-recommendation"');
         expect(page).toContain('navigate("/credit-store")');
     });
+
+    test("在固定应用根节点内拥有独立纵向滚动容器", () => {
+        const globals = readFileSync(resolve(root, "src/styles/globals.css"), "utf8");
+        const storefront = readFileSync(resolve(root, "src/pages/membership/membership-storefront.css"), "utf8");
+        expect(globals).toContain("overflow: hidden");
+        expect(storefront).toContain("overflow-x: hidden");
+        expect(storefront).toContain("overflow-y: auto");
+    });
 });
