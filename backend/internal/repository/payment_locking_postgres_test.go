@@ -201,6 +201,69 @@ func TestPostgresPaymentWebhookProviderTradeConflictSerializesBeforeDurableFact(
 	}
 }
 
+func TestPostgresPaymentReconciliationLifecycleConcurrentAdjacentCutoffsNeverHoldMultipleOrders(t *testing.T) {
+	db := openPostgresPaymentIntegritySchema(t)
+	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	payableOrder, payableSession := createPostgresPayableMembershipFixture(t, db, "lifecycle-a", now)
+	repo, reviewOrder, reviewSession, _, _ := createPostgresPaymentReviewFactFixture(t, db, "lifecycle-b", model.PaymentTransactionFailed, now)
+	staleOrder, staleSession := createPostgresPayableMembershipFixture(t, db, "lifecycle-z", now)
+
+	firstCutoff := now.Add(-90 * time.Second)
+	secondCutoff := now.Add(-30 * time.Second)
+	for _, orderTime := range []struct {
+		id        string
+		createdAt time.Time
+	}{
+		{id: payableOrder.ID, createdAt: now.Add(-time.Minute)},
+		{id: reviewOrder.ID, createdAt: now.Add(-time.Minute)},
+		{id: staleOrder.ID, createdAt: now.Add(-2 * time.Minute)},
+	} {
+		if err := db.Model(&model.MembershipOrder{}).Where("id = ?", orderTime.id).Update("created_at", orderTime.createdAt).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, session := range []*model.PaymentCheckoutSession{payableSession, reviewSession, staleSession} {
+		if err := db.Model(&model.PaymentCheckoutSession{}).Where("id = ?", session.ID).Update("expires_at", now.Add(-time.Minute)).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	payableExpiresAt := now.Add(15 * time.Minute)
+	if err := db.Create(&model.PaymentTransaction{
+		ID: "lifecycle-payable-transaction", OrderType: model.PaymentOrderMembership, OrderID: payableOrder.ID,
+		UserID: payableOrder.UserID, Provider: model.PaymentProviderWechat, MerchantOrderNo: "MLIFECYCLEPAYABLE",
+		AmountCents: payableOrder.TotalPriceCents, Currency: payableOrder.Currency, Status: model.PaymentTransactionPending,
+		CodeURL: "weixin://wxpay/lifecycle-payable", ExpiresAt: &payableExpiresAt, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	releaseUpdate := installPostgresConditionalUpdateBarrier(t, db, "membership_orders", "lifecycle_multi_order", staleOrder.ID)
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- repo.ReconcileMembershipLifecycle(now, firstCutoff)
+	}()
+	waitForPostgresBlockedQuery(t, db, `UPDATE "membership_orders"`)
+
+	secondResult := make(chan error, 1)
+	go func() {
+		secondResult <- repo.ReconcileMembershipLifecycle(now, secondCutoff)
+	}()
+	waitForPostgresBlockedQuery(t, db, `FROM "membership_orders"`)
+	releaseUpdate()
+
+	firstErr := <-firstResult
+	secondErr := <-secondResult
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("concurrent lifecycle calls with adjacent cutoffs = first:%v second:%v", firstErr, secondErr)
+	}
+	assertPostgresOrderAndCheckoutState(t, db, payableOrder.ID, model.MembershipOrderPending, payableSession.ID, model.PaymentCheckoutActive)
+	assertPostgresOrderAndCheckoutState(t, db, reviewOrder.ID, model.MembershipOrderPending, reviewSession.ID, model.PaymentCheckoutActive)
+	assertPostgresOrderAndCheckoutState(t, db, staleOrder.ID, model.MembershipOrderCancelled, staleSession.ID, model.PaymentCheckoutExpired)
+}
+
 func installPostgresInsertBarrier(t *testing.T, db *gorm.DB, table string, suffix string) func() {
 	t.Helper()
 	barrierTable := "payment_test_barrier_" + suffix
@@ -281,6 +344,48 @@ func installPostgresConditionalInsertBarrier(t *testing.T, db *gorm.DB, table st
 		released = true
 		if err := holder.Commit().Error; err != nil {
 			t.Fatalf("release PostgreSQL conditional insert barrier: %v", err)
+		}
+	}
+}
+
+func installPostgresConditionalUpdateBarrier(t *testing.T, db *gorm.DB, table string, suffix string, rowID string) func() {
+	t.Helper()
+	barrierTable := "payment_test_barrier_" + suffix
+	functionName := "payment_test_block_" + suffix
+	triggerName := "payment_test_trigger_" + suffix
+	if err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (id integer PRIMARY KEY)`, barrierTable)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(fmt.Sprintf(`INSERT INTO %s (id) VALUES (1)`, barrierTable)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %s THEN PERFORM 1 FROM %s WHERE id = 1 FOR UPDATE; END IF; RETURN NEW; END; $$`, functionName, quotePostgresLiteral(rowID), barrierTable)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(fmt.Sprintf(`CREATE TRIGGER %s BEFORE UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION %s()`, triggerName, table, functionName)).Error; err != nil {
+		t.Fatal(err)
+	}
+	holder := db.Begin()
+	if holder.Error != nil {
+		t.Fatal(holder.Error)
+	}
+	if err := holder.Exec(fmt.Sprintf(`SELECT id FROM %s WHERE id = 1 FOR UPDATE`, barrierTable)).Error; err != nil {
+		_ = holder.Rollback().Error
+		t.Fatal(err)
+	}
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			_ = holder.Rollback().Error
+		}
+	})
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		if err := holder.Commit().Error; err != nil {
+			t.Fatalf("release PostgreSQL conditional update barrier: %v", err)
 		}
 	}
 }

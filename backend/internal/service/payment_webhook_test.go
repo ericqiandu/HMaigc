@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -240,6 +241,8 @@ func TestPaymentWebhookProviderTradeConflictPersistsReviewAndAcknowledges(t *tes
 	plan := membershipPlanByCode(t, db, "pro-month")
 	now := time.Now().UTC().Truncate(time.Second)
 	transactions := make([]*model.PaymentTransaction, 0, 2)
+	orders := make([]*model.MembershipOrder, 0, 2)
+	checkoutTokens := make([]string, 0, 2)
 	for index := 0; index < 2; index++ {
 		user := &model.User{
 			ID: fmt.Sprintf("provider-conflict-user-%d", index), Username: fmt.Sprintf("provider-conflict-user-%d", index),
@@ -253,24 +256,36 @@ func TestPaymentWebhookProviderTradeConflictPersistsReviewAndAcknowledges(t *tes
 			t.Fatal(err)
 		}
 		expiresAt := now.Add(15 * time.Minute)
+		checkoutToken := fmt.Sprintf("provider-conflict-token-%d", index)
+		checkoutDigest := sha256.Sum256([]byte(checkoutToken))
 		if err := db.Create(&model.PaymentCheckoutSession{
 			ID: fmt.Sprintf("provider-conflict-checkout-%d", index), OrderType: model.PaymentOrderMembership,
-			OrderID: order.ID, UserID: user.ID, TokenHash: fmt.Sprintf("%064d", index+81), TokenCipher: "enc:v1:test",
+			OrderID: order.ID, UserID: user.ID, TokenHash: hex.EncodeToString(checkoutDigest[:]), TokenCipher: "enc:v1:test",
 			Status: model.PaymentCheckoutActive, ExpiresAt: expiresAt, CreatedAt: now, UpdatedAt: now,
 		}).Error; err != nil {
 			t.Fatal(err)
+		}
+		status := model.PaymentTransactionFailed
+		failureCode := "provider_rejected"
+		codeURL := ""
+		if index == 1 {
+			status = model.PaymentTransactionPending
+			failureCode = ""
+			codeURL = "weixin://wxpay/provider-conflict-visible-qr"
 		}
 		transaction := &model.PaymentTransaction{
 			ID: fmt.Sprintf("provider-conflict-transaction-%d", index), OrderType: model.PaymentOrderMembership,
 			OrderID: order.ID, UserID: user.ID, Provider: model.PaymentProviderWechat,
 			MerchantOrderNo: fmt.Sprintf("MPROVIDERCONFLICT%d", index), AmountCents: order.TotalPriceCents,
-			Currency: order.Currency, Status: model.PaymentTransactionFailed, FailureCode: "provider_rejected",
+			Currency: order.Currency, Status: status, CodeURL: codeURL, FailureCode: failureCode,
 			ExpiresAt: &expiresAt, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := db.Create(transaction).Error; err != nil {
 			t.Fatal(err)
 		}
 		transactions = append(transactions, transaction)
+		orders = append(orders, order)
+		checkoutTokens = append(checkoutTokens, checkoutToken)
 	}
 	first := &model.PaymentWebhookEvent{
 		ID: "provider-conflict-first-event", Provider: model.PaymentProviderWechat, ProviderEventID: "provider-conflict-first-provider-event",
@@ -302,8 +317,32 @@ func TestPaymentWebhookProviderTradeConflictPersistsReviewAndAcknowledges(t *tes
 	if lookupErr := db.First(&secondTransaction, "id = ?", transactions[1].ID).Error; lookupErr != nil {
 		t.Fatal(lookupErr)
 	}
-	if secondTransaction.Status != model.PaymentTransactionFailed {
-		t.Fatalf("conflicting transaction status = %s, want failed", secondTransaction.Status)
+	if secondTransaction.Status != model.PaymentTransactionReviewRequired || secondTransaction.FailureCode != "provider_trade_conflict" {
+		t.Fatalf("conflicting transaction = %#v, want durable review", secondTransaction)
+	}
+	var subscriptionCount int64
+	if lookupErr := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", orders[1].ID).Count(&subscriptionCount).Error; lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if subscriptionCount != 0 {
+		t.Fatalf("provider-trade conflict granted %d subscriptions", subscriptionCount)
+	}
+	view, viewErr := svc.PaymentCheckout(checkoutTokens[1])
+	if viewErr != nil {
+		t.Fatal(viewErr)
+	}
+	if view.OrderStatus != string(model.MembershipOrderPending) || view.CheckoutStatus != model.PaymentCheckoutActive {
+		t.Fatalf("provider-trade review checkout statuses = order:%s checkout:%s", view.OrderStatus, view.CheckoutStatus)
+	}
+	if view.ActiveTransaction != nil {
+		t.Fatalf("provider-trade review checkout exposed stale QR: %#v", view.ActiveTransaction)
+	}
+	encoded, encodeErr := json.Marshal(view)
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	if strings.Contains(string(encoded), "provider-conflict-visible-qr") {
+		t.Fatalf("provider-trade review checkout returned the stale QR: %s", encoded)
 	}
 }
 

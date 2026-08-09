@@ -219,83 +219,101 @@ func (r *Repository) CloseMembershipOrder(orderID string, userID string, actorID
 }
 
 func (r *Repository) ReconcileMembershipLifecycle(now time.Time, pendingCreatedBefore time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		var staleOrderIDs []string
-		if err := tx.Model(&model.MembershipOrder{}).
-			Where("status = ? AND created_at <= ?", model.MembershipOrderPending, pendingCreatedBefore).
-			Order("id asc").Pluck("id", &staleOrderIDs).Error; err != nil {
+	var staleOrderIDs []string
+	if err := r.db.Model(&model.MembershipOrder{}).
+		Where("status = ? AND created_at <= ?", model.MembershipOrderPending, pendingCreatedBefore).
+		Order("id asc").Pluck("id", &staleOrderIDs).Error; err != nil {
+		return err
+	}
+	for _, orderID := range staleOrderIDs {
+		if err := r.reconcileStaleMembershipOrder(orderID, now, pendingCreatedBefore); err != nil {
 			return err
 		}
-		for _, orderID := range staleOrderIDs {
-			var order model.MembershipOrder
-			lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				First(&order, "id = ? AND status = ? AND created_at <= ?", orderID, model.MembershipOrderPending, pendingCreatedBefore)
-			if errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
-				continue
-			}
-			if lookup.Error != nil {
-				return lookup.Error
-			}
-			// The lock statement may wait for a concurrent claim. Recheck payment facts in a new READ COMMITTED snapshot.
-			if err := rejectPayablePaymentTx(tx, model.PaymentOrderMembership, order.ID); err != nil {
-				if errors.Is(err, ErrPaymentReconciliationRequired) {
-					continue
-				}
-				return err
-			}
-			result := tx.Model(&model.MembershipOrder{}).Where("id = ? AND status = ?", order.ID, model.MembershipOrderPending).
-				Updates(map[string]interface{}{
-					"status": model.MembershipOrderCancelled, "resolved_by": model.SystemActorID,
-					"resolution_note": automaticMembershipOrderCloseNote, "updated_at": now,
-				})
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				continue
-			}
-			if err := tx.Model(&model.PaymentCheckoutSession{}).
-				Where("order_id = ? AND order_type = ? AND status = ?", order.ID, model.PaymentOrderMembership, model.PaymentCheckoutActive).
-				Updates(map[string]interface{}{"status": model.PaymentCheckoutExpired, "updated_at": now}).Error; err != nil {
-				return err
-			}
-		}
+	}
 
-		var expiredSessions []model.PaymentCheckoutSession
-		if err := tx.Where("status = ? AND expires_at <= ?", model.PaymentCheckoutActive, now).
-			Order("order_type asc, order_id asc").Find(&expiredSessions).Error; err != nil {
+	var expiredSessions []model.PaymentCheckoutSession
+	if err := r.db.Where("status = ? AND expires_at <= ?", model.PaymentCheckoutActive, now).
+		Order("order_type asc, order_id asc").Find(&expiredSessions).Error; err != nil {
+		return err
+	}
+	for index := range expiredSessions {
+		if err := r.expirePaymentCheckoutCandidate(&expiredSessions[index], now); err != nil {
 			return err
 		}
-		for index := range expiredSessions {
-			session := &expiredSessions[index]
-			if _, err := lockPaymentOrderTx(tx, session.OrderType, session.OrderID, session.UserID); err != nil {
-				return err
-			}
-			var lockedSession model.PaymentCheckoutSession
-			lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedSession,
-				"id = ? AND status = ? AND expires_at <= ?", session.ID, model.PaymentCheckoutActive, now)
-			if errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
-				continue
-			}
-			if lookup.Error != nil {
-				return lookup.Error
-			}
-			if err := rejectPayablePaymentTx(tx, session.OrderType, session.OrderID); err != nil {
-				if errors.Is(err, ErrPaymentReconciliationRequired) {
-					continue
-				}
-				return err
-			}
-			if err := tx.Model(&model.PaymentCheckoutSession{}).Where("id = ? AND status = ?", session.ID, model.PaymentCheckoutActive).
-				Updates(map[string]interface{}{"status": model.PaymentCheckoutExpired, "updated_at": now}).Error; err != nil {
-				return err
-			}
-		}
-		// Fulfillment locks order/payment facts before the entitlement subject and subscriptions.
-		// Expire subscriptions last so lifecycle never introduces the inverse subscription→order order.
+	}
+
+	// Subscription expiry never shares a transaction with order locks, so it cannot retain one order while waiting for another.
+	return r.db.Transaction(func(tx *gorm.DB) error {
 		return tx.Model(&model.MembershipSubscription{}).
 			Where("status = ? AND ends_at IS NOT NULL AND ends_at <= ?", model.MembershipSubscriptionActive, now).
 			Updates(map[string]interface{}{"status": model.MembershipSubscriptionExpired, "updated_at": now}).Error
+	})
+}
+
+func (r *Repository) reconcileStaleMembershipOrder(orderID string, now time.Time, pendingCreatedBefore time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var order model.MembershipOrder
+		lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&order, "id = ? AND status = ? AND created_at <= ?", orderID, model.MembershipOrderPending, pendingCreatedBefore)
+		if errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if lookup.Error != nil {
+			return lookup.Error
+		}
+		var checkout model.PaymentCheckoutSession
+		checkoutLookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&checkout,
+			"order_id = ? AND order_type = ?", order.ID, model.PaymentOrderMembership)
+		if checkoutLookup.Error != nil && !errors.Is(checkoutLookup.Error, gorm.ErrRecordNotFound) {
+			return checkoutLookup.Error
+		}
+		// The order/checkout locks may wait for a concurrent fact writer. Recheck payment facts in the new statement snapshot.
+		if err := rejectPayablePaymentTx(tx, model.PaymentOrderMembership, order.ID); err != nil {
+			if errors.Is(err, ErrPaymentReconciliationRequired) {
+				return nil
+			}
+			return err
+		}
+		result := tx.Model(&model.MembershipOrder{}).Where("id = ? AND status = ?", order.ID, model.MembershipOrderPending).
+			Updates(map[string]interface{}{
+				"status": model.MembershipOrderCancelled, "resolved_by": model.SystemActorID,
+				"resolution_note": automaticMembershipOrderCloseNote, "updated_at": now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 || errors.Is(checkoutLookup.Error, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return tx.Model(&model.PaymentCheckoutSession{}).
+			Where("id = ? AND status = ?", checkout.ID, model.PaymentCheckoutActive).
+			Updates(map[string]interface{}{"status": model.PaymentCheckoutExpired, "updated_at": now}).Error
+	})
+}
+
+func (r *Repository) expirePaymentCheckoutCandidate(candidate *model.PaymentCheckoutSession, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := lockPaymentOrderTx(tx, candidate.OrderType, candidate.OrderID, candidate.UserID); err != nil {
+			return err
+		}
+		var checkout model.PaymentCheckoutSession
+		lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&checkout,
+			"id = ? AND status = ? AND expires_at <= ?", candidate.ID, model.PaymentCheckoutActive, now)
+		if errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if lookup.Error != nil {
+			return lookup.Error
+		}
+		if err := rejectPayablePaymentTx(tx, checkout.OrderType, checkout.OrderID); err != nil {
+			if errors.Is(err, ErrPaymentReconciliationRequired) {
+				return nil
+			}
+			return err
+		}
+		return tx.Model(&model.PaymentCheckoutSession{}).
+			Where("id = ? AND status = ?", checkout.ID, model.PaymentCheckoutActive).
+			Updates(map[string]interface{}{"status": model.PaymentCheckoutExpired, "updated_at": now}).Error
 	})
 }
 

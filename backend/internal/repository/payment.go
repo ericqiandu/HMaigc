@@ -219,6 +219,7 @@ func (r *Repository) RecordPaymentWebhookEvent(candidate *model.PaymentWebhookEv
 		if !errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
 			return lookup.Error
 		}
+		providerTradeConflict := false
 		if candidate.ProviderTradeNo != "" {
 			var existingTrade model.PaymentWebhookEvent
 			tradeLookup := tx.
@@ -228,9 +229,27 @@ func (r *Repository) RecordPaymentWebhookEvent(candidate *model.PaymentWebhookEv
 				candidate.Status = model.PaymentWebhookReviewRequired
 				candidate.FailureCode = "provider_trade_conflict"
 				candidate.FailureReason = "渠道交易号已绑定其他支付交易，必须人工复核"
+				providerTradeConflict = true
 			}
 			if tradeLookup.Error != nil && !errors.Is(tradeLookup.Error, gorm.ErrRecordNotFound) {
 				return tradeLookup.Error
+			}
+		}
+		if providerTradeConflict && (transaction.Status == model.PaymentTransactionCreated || transaction.Status == model.PaymentTransactionPending) {
+			result := tx.Model(&model.PaymentTransaction{}).
+				Where("id = ? AND status IN ?", transaction.ID, []model.PaymentTransactionStatus{
+					model.PaymentTransactionCreated, model.PaymentTransactionPending,
+				}).
+				Select("status", "failure_code", "failure_reason", "updated_at").
+				Updates(&model.PaymentTransaction{
+					Status: model.PaymentTransactionReviewRequired, FailureCode: candidate.FailureCode,
+					FailureReason: candidate.FailureReason, UpdatedAt: candidate.UpdatedAt,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("payment provider-trade conflict review state changed unexpectedly")
 			}
 		}
 		if err := tx.Create(candidate).Error; err != nil {
