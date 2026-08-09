@@ -74,6 +74,7 @@
     --brand-primary: #2979c9;
     --brand-hover: #428edb;
     --brand-active: #1e68b2;
+    --focus-ring: var(--brand-primary);
     --text-on-brand: #ffffff;
     --gold-primary: #a86b2d;
     --gold-light: #c98a4b;

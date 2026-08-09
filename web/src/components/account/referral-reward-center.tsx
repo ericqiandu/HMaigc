@@ -79,7 +79,7 @@ export function ReferralRewardCenter() {
                 centered
                 footer={null}
                 onCancel={() => setOpen(false)}
-                title={(
+                title={
                     <div className="referral-reward-title flex items-center gap-2">
                         <span className="referral-reward-title-icon grid size-8 place-items-center rounded-md bg-amber-400/12 text-amber-500">
                             <Gift className="referral-reward-title-gift size-4" aria-hidden="true" />
@@ -89,7 +89,7 @@ export function ReferralRewardCenter() {
                             <span className="referral-reward-title-caption mt-0.5 block text-[11px] font-normal text-foreground/45">邀请好友首购会员，双方获得长期积分</span>
                         </span>
                     </div>
-                )}
+                }
             >
                 {loading && !data ? <Skeleton className="referral-reward-loading py-5" active paragraph={{ rows: 8 }} /> : null}
                 {data ? (
@@ -97,7 +97,9 @@ export function ReferralRewardCenter() {
                         {!data.program.enabled ? (
                             <div className="referral-reward-closed mb-5 flex items-center justify-between bg-amber-500/[.07] px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
                                 <span className="referral-reward-closed-copy">邀请活动暂未开放，历史邀请与奖励记录仍可查看。</span>
-                                <Tag className="referral-reward-closed-tag m-0" color="warning">未开放</Tag>
+                                <Tag className="referral-reward-closed-tag m-0" color="warning">
+                                    未开放
+                                </Tag>
                             </div>
                         ) : null}
 
@@ -114,7 +116,12 @@ export function ReferralRewardCenter() {
                             </div>
                             <div className="referral-reward-code-row flex min-h-12 items-center bg-foreground/[.04] px-4">
                                 <span className="referral-reward-code flex-1 font-mono text-base font-semibold tracking-[0.16em]">{data.inviteCode}</span>
-                                <button type="button" className="referral-reward-copy inline-flex h-8 items-center gap-1.5 bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-82 disabled:opacity-45" disabled={!data.program.enabled} onClick={() => void copyInvite()}>
+                                <button
+                                    type="button"
+                                    className="referral-reward-copy inline-flex h-8 items-center gap-1.5 bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-82 disabled:opacity-45"
+                                    disabled={!data.program.enabled}
+                                    onClick={() => void copyInvite()}
+                                >
                                     {copied ? <Check className="referral-reward-copy-icon size-3.5" /> : <Copy className="referral-reward-copy-icon size-3.5" />}
                                     <span className="referral-reward-copy-label">{copied ? "已复制" : "复制邀请链接"}</span>
                                 </button>
@@ -134,8 +141,17 @@ export function ReferralRewardCenter() {
                                 dataSource={data.rules}
                                 locale={{ emptyText: "运营后台尚未配置生效套餐奖励" }}
                                 columns={[
-                                    { title: "购买周期", dataIndex: "billingCycle", render: (cycle: ReferralRule["billingCycle"]) => cycle === "year" ? "年付" : "月付" },
-                                    { title: "会员等级", dataIndex: "planName", render: (name: string, rule) => <span className="referral-reward-plan font-medium">{name}<span className="referral-reward-plan-cycle ml-1 text-[10px] font-normal text-foreground/38">{rule.billingCycle === "year" ? "年付" : "月付"}</span></span> },
+                                    { title: "购买周期", dataIndex: "billingCycle", render: (cycle: ReferralRule["billingCycle"]) => (cycle === "year" ? "年付" : "月付") },
+                                    {
+                                        title: "会员等级",
+                                        dataIndex: "planName",
+                                        render: (name: string, rule) => (
+                                            <span className="referral-reward-plan font-medium">
+                                                {name}
+                                                <span className="referral-reward-plan-cycle ml-1 text-[10px] font-normal text-foreground/38">{rule.billingCycle === "year" ? "年付" : "月付"}</span>
+                                            </span>
+                                        ),
+                                    },
                                     { title: "好友奖励", dataIndex: "inviteeRewardMicrocredits", align: "right", render: formatCredits },
                                     { title: "我的奖励", dataIndex: "inviterRewardMicrocredits", align: "right", render: formatCredits },
                                 ]}

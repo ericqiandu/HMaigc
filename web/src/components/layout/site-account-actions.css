@@ -60,6 +60,43 @@
     color: var(--brand-primary);
 }
 
+.site-account-upgrade:focus-visible,
+.site-account-auth:focus-visible,
+.site-account-notifications:focus-visible,
+.site-account-balance:focus-visible,
+.site-account-member:focus-visible,
+.site-account-trigger:focus-visible,
+.referral-reward-trigger:focus-visible,
+.site-account-menu-link:focus-visible,
+.site-account-theme-switch:focus-visible,
+.site-account-logout:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.site-account-logout {
+    color: var(--status-danger);
+}
+
+.site-account-logout:hover {
+    background: color-mix(in srgb, var(--status-danger) 8%, transparent);
+    color: var(--status-danger);
+}
+
+@media (max-width: 639px) {
+    .site-account-upgrade,
+    .site-account-auth,
+    .site-account-notifications,
+    .site-account-balance,
+    .site-account-member,
+    .site-account-trigger,
+    .site-account-pill,
+    .referral-reward-trigger {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}
+
 @media (max-width: 520px) {
     .site-account-notifications,
     .site-account-balance {
@@ -67,30 +104,13 @@
     }
 
     .site-account-guest {
-        gap: 6px;
-    }
-
-    .site-account-upgrade,
-    .site-account-auth,
-    .site-account-notifications,
-    .site-account-member,
-    .site-account-trigger,
-    .site-account-pill {
-        min-height: 44px;
-    }
-
-    .site-account-upgrade {
-        min-width: 44px;
-    }
-
-    .site-account-member {
-        min-width: 44px;
+        gap: var(--space-2);
     }
 
     .site-account-upgrade,
     .site-account-auth {
-        padding-right: 13px;
-        padding-left: 13px;
+        padding-right: var(--space-3);
+        padding-left: var(--space-3);
     }
 
     .site-account-upgrade-label {

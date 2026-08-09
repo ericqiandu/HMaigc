@@ -46,9 +46,7 @@
 }
 
 .updream-video-background-scrim {
-    background:
-        linear-gradient(180deg, rgba(248, 251, 255, 0.12) 0%, rgba(245, 247, 251, 0.24) 46%, #f5f7fb 94%),
-        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.05), rgba(238, 244, 252, 0.34) 72%);
+    background: linear-gradient(180deg, rgba(248, 251, 255, 0.12) 0%, rgba(245, 247, 251, 0.24) 46%, #f5f7fb 94%), radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.05), rgba(238, 244, 252, 0.34) 72%);
 }
 
 .updream-video-background-glow {
@@ -60,9 +58,7 @@
 }
 
 .dark .updream-video-background-scrim {
-    background:
-        linear-gradient(180deg, rgba(3, 5, 9, 0.24) 0%, rgba(5, 7, 11, 0.38) 48%, #05070b 94%),
-        radial-gradient(circle at 50% 42%, transparent 0%, rgba(2, 4, 8, 0.42) 76%);
+    background: linear-gradient(180deg, rgba(3, 5, 9, 0.24) 0%, rgba(5, 7, 11, 0.38) 48%, #05070b 94%), radial-gradient(circle at 50% 42%, transparent 0%, rgba(2, 4, 8, 0.42) 76%);
 }
 
 .dark .updream-video-background-glow {
@@ -85,16 +81,6 @@
 .updream-hero {
     min-height: 632px;
     padding-top: 315px;
-}
-
-.updream-header-logo {
-    filter:
-        drop-shadow(0 1px 1px rgba(15, 23, 42, 0.9))
-        drop-shadow(0 0 5px rgba(15, 23, 42, 0.28));
-}
-
-.dark .updream-header-logo {
-    filter: none;
 }
 
 @media (max-width: 520px) {
@@ -382,7 +368,6 @@
     .updream-skill-card {
         height: 180px !important;
     }
-
 }
 
 @media (max-width: 640px) {
