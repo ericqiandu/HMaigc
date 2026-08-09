@@ -1,0 +1,91 @@
+.site-account-actions,
+.site-account-guest,
+.site-account-loading {
+    position: relative;
+    z-index: 3;
+}
+
+.site-account-loading {
+    height: var(--space-7);
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.site-account-upgrade,
+.site-account-auth {
+    height: var(--space-7);
+}
+
+.site-account-upgrade,
+.site-account-notifications,
+.site-account-pill {
+    background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.site-account-upgrade:hover,
+.site-account-notifications:hover {
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.site-account-auth {
+    background: var(--text-primary);
+    color: var(--bg-primary);
+}
+
+.site-account-auth:hover {
+    background: color-mix(in srgb, var(--text-primary) 84%, transparent);
+}
+
+.site-account-notifications {
+    width: var(--space-7);
+    height: var(--space-7);
+    color: color-mix(in srgb, var(--text-primary) 65%, transparent);
+}
+
+.site-account-notifications:hover {
+    color: var(--text-primary);
+}
+
+.site-account-pill {
+    height: var(--space-7);
+    color: var(--text-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.site-account-trigger {
+    height: var(--space-7);
+}
+
+.site-account-balance-icon {
+    fill: currentcolor;
+    color: var(--brand-primary);
+}
+
+@media (max-width: 520px) {
+    .site-account-notifications,
+    .site-account-balance {
+        display: none;
+    }
+
+    .site-account-guest {
+        gap: 6px;
+    }
+
+    .site-account-upgrade,
+    .site-account-auth,
+    .site-account-notifications,
+    .site-account-member,
+    .site-account-trigger,
+    .site-account-pill {
+        min-height: 44px;
+    }
+
+    .site-account-upgrade,
+    .site-account-auth {
+        padding-right: 13px;
+        padding-left: 13px;
+    }
+
+    .site-account-upgrade-label {
+        display: none;
+    }
+}

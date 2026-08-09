@@ -97,65 +97,15 @@
     filter: none;
 }
 
-.updream-header-auth {
-    background: #172033;
-    color: #ffffff;
-}
-
-.updream-header-auth:hover {
-    background: rgba(23, 32, 51, 0.84);
-}
-
-.dark .updream-header-auth {
-    background: #ffffff;
-    color: #111111;
-}
-
-.dark .updream-header-auth:hover {
-    background: rgba(255, 255, 255, 0.85);
-}
-
-.updream-account-actions,
-.updream-account-guest,
-.updream-account-loading {
-    position: relative;
-    z-index: 3;
-}
-
 @media (max-width: 520px) {
     .updream-header {
         padding-right: 14px;
         padding-left: 14px;
     }
-
-    .updream-account-notifications,
-    .updream-account-balance {
-        display: none;
-    }
-
-    .updream-account-guest {
-        gap: 6px;
-    }
-
-    .updream-account-upgrade,
-    .updream-header-auth {
-        height: 36px;
-        padding-right: 13px;
-        padding-left: 13px;
-    }
-
-    .updream-account-upgrade-label {
-        display: none;
-    }
 }
 
 .updream-announcement-share {
     color: #1f2d3d;
-}
-
-.updream-account-balance-icon {
-    fill: currentcolor;
-    color: #5f6fff;
 }
 
 .updream-announcement-badge {
