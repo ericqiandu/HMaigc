@@ -7,9 +7,10 @@ import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
 import { TableSurface } from "@/components/layout/workspace-page";
 import { closeAdminMembershipOrder, listAdminMembershipOrders, listAdminMembershipPlans, type MembershipOrder, type MembershipPlan, type UpdateMembershipPlanInput, updateAdminMembershipPlan } from "@/services/api/membership";
-import { listAdminPaymentTransactions, listAdminPaymentWebhookEvents, type PaymentTransaction, type PaymentWebhookEvent } from "@/services/api/payment";
+import { listAdminPaymentTransactions, listAdminPaymentWebhookEvents, reconcileAdminPaymentTransaction, type PaymentTransaction, type PaymentWebhookEvent } from "@/services/api/payment";
 import { InvoiceAdminPanel } from "./invoice-admin-panel";
 import { MembershipStorefrontAdminPanel } from "./membership-storefront-admin-panel";
+import { executePaymentReconciliation, PaymentReconciliationConfirmation, paymentReconciliationOutcomeLabel, paymentStatusLabel, PaymentTransactionReconciliationAction, webhookStatusLabel } from "./payment-reconciliation";
 
 const credits = (value: number) => (value / 1_000_000).toLocaleString("zh-CN");
 const money = (value: number) => `¥${(value / 100).toLocaleString("zh-CN")}`;
@@ -45,11 +46,13 @@ export default function MembershipAdminPage() {
     const [closing, setClosing] = useState<MembershipOrder | null>(null);
     const [savingPlan, setSavingPlan] = useState(false);
     const [processingOrder, setProcessingOrder] = useState(false);
+    const [reconcilingTransactionIds, setReconcilingTransactionIds] = useState<Set<string>>(() => new Set<string>());
     const [planDirty, setPlanDirty] = useState(false);
     const [activeSection, setActiveSection] = useState<MembershipSection>("plans");
     const [form] = Form.useForm<PlanFormValues>();
     const [closeForm] = Form.useForm<{ note: string }>();
     const loadSequences = useRef<Record<Exclude<MembershipSection, "invoices" | "storefront">, number>>({ plans: 0, orders: 0, transactions: 0, webhooks: 0 });
+    const reconciliationInFlightIds = useRef(new Set<string>());
 
     const loadPlans = useCallback(async () => {
         const sequence = ++loadSequences.current.plans;
@@ -84,12 +87,14 @@ export default function MembershipAdminPage() {
         setTransactionsState((current) => ({ ...current, loading: true, error: "" }));
         try {
             const result = await listAdminPaymentTransactions();
-            if (sequence !== loadSequences.current.transactions) return;
+            if (sequence !== loadSequences.current.transactions) return null;
             setTransactionsState({ data: result.items, loading: false, loaded: true, error: "" });
+            return null;
         } catch (error) {
-            if (sequence !== loadSequences.current.transactions) return;
+            if (sequence !== loadSequences.current.transactions) return null;
             const description = error instanceof Error ? error.message : "支付交易加载失败";
             setTransactionsState((current) => ({ ...current, loading: false, loaded: true, error: description }));
+            return description;
         }
     }, []);
 
@@ -98,12 +103,14 @@ export default function MembershipAdminPage() {
         setWebhooksState((current) => ({ ...current, loading: true, error: "" }));
         try {
             const result = await listAdminPaymentWebhookEvents();
-            if (sequence !== loadSequences.current.webhooks) return;
+            if (sequence !== loadSequences.current.webhooks) return null;
             setWebhooksState({ data: result.items, loading: false, loaded: true, error: "" });
+            return null;
         } catch (error) {
-            if (sequence !== loadSequences.current.webhooks) return;
+            if (sequence !== loadSequences.current.webhooks) return null;
             const description = error instanceof Error ? error.message : "支付回调加载失败";
             setWebhooksState((current) => ({ ...current, loading: false, loaded: true, error: description }));
+            return description;
         }
     }, []);
 
@@ -122,6 +129,50 @@ export default function MembershipAdminPage() {
     };
 
     const activeLoading = activeSection === "plans" ? plansState.loading : activeSection === "orders" ? ordersState.loading : activeSection === "transactions" ? transactionsState.loading : activeSection === "webhooks" ? webhooksState.loading : false;
+
+    const setTransactionReconciliationBusy = useCallback((transactionId: string, busy: boolean) => {
+        setReconcilingTransactionIds((current) => {
+            const next = new Set(current);
+            if (busy) next.add(transactionId);
+            else next.delete(transactionId);
+            return next;
+        });
+    }, []);
+
+    const reconcileTransaction = useCallback(
+        async (transaction: PaymentTransaction) => {
+            await executePaymentReconciliation({
+                transaction,
+                inFlightIds: reconciliationInFlightIds.current,
+                reconcile: reconcileAdminPaymentTransaction,
+                replaceTransaction: (updated) => {
+                    setTransactionsState((current) => ({ ...current, data: current.data.map((item) => (item.id === updated.id ? updated : item)) }));
+                },
+                refreshTransactions: loadTransactions,
+                refreshWebhooks: loadWebhooks,
+                notifySuccess: (result) => message.success(paymentReconciliationOutcomeLabel(result.providerState)),
+                notifyError: (description) => message.error(description),
+                notifyRefreshError: (description) => message.warning(`支付事实刷新失败：${description}`),
+                setBusy: setTransactionReconciliationBusy,
+            });
+        },
+        [loadTransactions, loadWebhooks, message, setTransactionReconciliationBusy],
+    );
+
+    const requestTransactionReconciliation = useCallback(
+        (transaction: PaymentTransaction) => {
+            modal.confirm({
+                className: "admin-operation-modal workspace-ui-scope",
+                title: "向支付渠道核对这笔交易？",
+                content: <PaymentReconciliationConfirmation transaction={transaction} />,
+                okText: "确认渠道对账",
+                cancelText: "取消",
+                okButtonProps: { danger: true },
+                onOk: () => reconcileTransaction(transaction),
+            });
+        },
+        [modal, reconcileTransaction],
+    );
 
     const openPlan = (plan: MembershipPlan) => {
         setEditing(plan);
@@ -443,6 +494,18 @@ export default function MembershipAdminPage() {
                                                 { title: "渠道流水", render: (_, row) => row.providerTradeNo || "—", ellipsis: true },
                                                 { title: "失败原因", render: (_, row) => row.failureReason || "—", ellipsis: true },
                                                 { title: "创建时间", render: (_, row) => new Date(row.createdAt).toLocaleString("zh-CN") },
+                                                {
+                                                    title: "操作",
+                                                    fixed: "right",
+                                                    width: 108,
+                                                    render: (_, row) => (
+                                                        <PaymentTransactionReconciliationAction
+                                                            transaction={row}
+                                                            loading={reconcilingTransactionIds.has(row.id)}
+                                                            onRequest={requestTransactionReconciliation}
+                                                        />
+                                                    ),
+                                                },
                                             ]}
                                         />
                                     </TableSurface>
@@ -646,25 +709,4 @@ function billingCycleLabel(cycle: MembershipPlan["billingCycle"]) {
     if (cycle === "month") return "月付";
     if (cycle === "year") return "年付";
     return cycle;
-}
-
-function paymentStatusLabel(status: PaymentTransaction["status"]) {
-    const labels: Record<PaymentTransaction["status"], string> = {
-        created: "已创建",
-        pending: "待支付",
-        paid: "已支付",
-        closed: "已关闭",
-        failed: "失败",
-        refunded: "已退款",
-    };
-    return labels[status];
-}
-
-function webhookStatusLabel(status: PaymentWebhookEvent["status"]) {
-    const labels: Record<PaymentWebhookEvent["status"], string> = {
-        received: "已接收",
-        processed: "已处理",
-        rejected: "已拒绝",
-    };
-    return labels[status];
 }

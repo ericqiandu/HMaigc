@@ -67,8 +67,9 @@ export type UpdatePaymentSettingInput = {
 export type PaymentProvider = "wechat" | "alipay";
 export type PaymentOrderStatus = "pending" | "paid" | "cancelled" | "refunded";
 export type PaymentCheckoutStatus = "active" | "expired" | "consumed";
-export type PaymentTransactionStatus = "created" | "pending" | "paid" | "closed" | "failed" | "refunded";
-export type PaymentWebhookStatus = "received" | "processed" | "rejected";
+export type PaymentTransactionStatus = "created" | "pending" | "review_required" | "paid" | "closed" | "failed" | "refunded";
+export type PaymentWebhookStatus = "received" | "processed" | "rejected" | "review_required";
+export type PaymentProviderState = "paid" | "unpaid" | "not_found" | "unknown";
 
 export type PaymentTransaction = {
     id: string;
@@ -102,6 +103,11 @@ export type PaymentWebhookEvent = {
     processedAt?: string;
     createdAt: string;
     updatedAt: string;
+};
+
+export type AdminPaymentReconciliationResult = {
+    transaction: PaymentTransaction;
+    providerState: PaymentProviderState;
 };
 
 export type CreatePaymentCheckoutResult = {
@@ -180,6 +186,10 @@ export function listAdminPaymentTransactions() {
 
 export function listAdminPaymentWebhookEvents() {
     return request<AdminPaymentPage<PaymentWebhookEvent>>(api.get("/admin/payments/webhooks"));
+}
+
+export function reconcileAdminPaymentTransaction(transactionId: string) {
+    return request<AdminPaymentReconciliationResult>(api.post(`/admin/payments/transactions/${encodeURIComponent(transactionId)}/reconcile`));
 }
 
 export function createPaymentCheckout(orderId: string) {
