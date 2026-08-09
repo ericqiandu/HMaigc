@@ -4,7 +4,7 @@
 
 **Goal:** Make the shared homepage and workspace account header render the reference 16px purple filled credit bolt and the existing 16px gold layered membership diamond.
 
-**Architecture:** Keep `SiteAccountActions` as the only production owner for both homepage and workspace account actions. Add one semantic credit accent token, consume it from the shared balance icon style, preserve the existing layered membership SVG, then rebuild only the stateless local Web container so port 3000 serves the merged source.
+**Architecture:** 保持 `SiteAccountActions` 作为首页与工作区账户操作的唯一生产 owner；新增唯一的算力强调色语义 token，由共享余额图标样式消费；保留现有分层会员 SVG；最后仅重建无状态本地 Web 容器，使 3000 端口提供已提交的功能工作树源码。
 
 **Tech Stack:** React 19, TypeScript, Lucide React, CSS semantic tokens, Bun test/build, Docker Compose, Nginx, Chromium.
 
@@ -118,7 +118,7 @@ git commit -m "fix(web): 页头 - 统一算力与会员图标"
 
 **Interfaces:**
 - Consumes: the current repository Dockerfile, existing healthy `hmaigc-local-backend-1`, and the unchanged `.local/data` bind mount.
-- Produces: a freshly built stateless `hmaigc-web:local` container serving the current `main` source on `http://127.0.0.1:3000`.
+- Produces: a freshly built stateless `hmaigc-web:local` container serving the current committed feature-worktree HEAD (`codex/header-icon-unification`) on `http://127.0.0.1:3000`. Development and preview happen on this feature worktree; after all review passes, it will be locally merged to `main`.
 
 - [ ] **Step 1: Verify the exact runtime target before replacement**
 
@@ -181,4 +181,4 @@ git diff --check
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | Select-String -Pattern 'NAMES|hmaigc-local'
 ```
 
-Expected: `main` contains only committed changes, diff check is clean, and both local Web and backend services are healthy. Task 2 creates no source commit.
+Expected: `codex/header-icon-unification` contains only committed feature changes, diff check is clean, and both local Web and backend services are healthy. Task 2 creates no source commit; the feature is merged locally to `main` only after all review passes.

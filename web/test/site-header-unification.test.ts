@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 
+import {
+    collectCustomPropertyDefinitions,
+    collectPositiveClassDeclarations,
+    collectRouteScopedGemUsages,
+    findComponentClassTokens,
+    findMembershipSvgSignatures,
+    inspectMembershipRoutes,
+    readTsxSources,
+    type NamedSource,
+} from "./support/site-header-contract-parser";
+
 const homeHeader = await Bun.file(new URL("../src/pages/home/updream/updream-header.tsx", import.meta.url)).text();
 const workspaceHeader = await Bun.file(new URL("../src/components/layout/workspace-top-bar.tsx", import.meta.url)).text();
 const sharedBrand = Bun.file(new URL("../src/components/layout/site-brand-link.tsx", import.meta.url));
@@ -19,6 +30,9 @@ const canvasTopBar = await Bun.file(new URL("../src/pages/canvas/canvas-project-
 const workspaceShell = await Bun.file(new URL("../src/components/layout/app-top-nav.tsx", import.meta.url)).text();
 const layoutDirectory = new URL("../src/components/layout/", import.meta.url);
 const layoutSources = await Promise.all((await readdir(layoutDirectory)).filter((fileName) => fileName.endsWith(".tsx")).map(async (fileName) => [fileName, await Bun.file(new URL(fileName, layoutDirectory)).text()] as const));
+const sharedAccountSource: NamedSource = { fileName: "components/layout/site-account-actions.tsx", source: await sharedAccount.text() };
+const productionTsxSources = await readTsxSources(new URL("../src/", import.meta.url));
+const membershipSvgOwners = findMembershipSvgSignatures(productionTsxSources);
 
 describe("site header unification", () => {
     test("home and workspace share one brand owner", async () => {
@@ -44,8 +58,128 @@ describe("site header unification", () => {
         const source = await sharedAccount.text();
         expect(source).toContain('import "./site-account-actions.css";');
         expect(source).toContain("useMembershipAction");
-        expect(source).toContain("site-membership-icon");
-        expect(source).not.toContain("Gem");
+    });
+
+    test("membership SVG structure has exactly one recursive production owner", () => {
+        expect(membershipSvgOwners).toHaveLength(1);
+        expect(membershipSvgOwners[0].fileName).toBe("components/layout/site-account-actions.tsx");
+        expect(membershipSvgOwners[0].viewBox).toBe("0 0 1024 1024");
+        expect(membershipSvgOwners[0].pathCount).toBe(11);
+        expect(membershipSvgOwners[0].layerClassTokens).toEqual([
+            ["site-membership-icon-layer", "site-membership-icon-layer-1"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-2"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-3"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-4"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-5"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-6"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-7"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-8"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-9"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-10"],
+            ["site-membership-icon-layer", "site-membership-icon-layer-11"],
+        ]);
+    });
+
+    test("every shared membership icon owner keeps the 16px size-4 contract", () => {
+        const owner = membershipSvgOwners.find(({ fileName }) => fileName === sharedAccountSource.fileName);
+        expect(owner).toBeDefined();
+        if (!owner) throw new Error("shared membership SVG owner is missing");
+        expect(owner.componentName).toBeDefined();
+        const usages = findComponentClassTokens(sharedAccountSource, owner.componentName ?? "");
+        expect(usages).toHaveLength(3);
+        for (const usage of usages) {
+            expect(usage).toContain("size-4");
+        }
+    });
+
+    test("shared membership routes render the structural owner without Lucide Gem", () => {
+        const owner = membershipSvgOwners.find(({ fileName }) => fileName === sharedAccountSource.fileName);
+        expect(owner).toBeDefined();
+        if (!owner) throw new Error("shared membership SVG owner is missing");
+        expect(owner.componentName).toBeDefined();
+        expect(inspectMembershipRoutes(sharedAccountSource, owner.componentName ?? "")).toEqual({
+            entryCount: 3,
+            entriesUsingSignatureOwner: 3,
+            gemUsages: 0,
+        });
+    });
+
+    test("recursive production membership routes contain no Lucide Gem usages", () => {
+        expect(collectRouteScopedGemUsages(productionTsxSources)).toEqual([]);
+    });
+
+    test("route-scoped Gem inspection reports a membership entry usage", () => {
+        const fixture: NamedSource = {
+            fileName: "nested/membership-gem-fixture.tsx",
+            source: `
+                import { Gem as MembershipGem } from "lucide-react";
+
+                export const MembershipFixture = () => (
+                    <Link to="/membership" className="membership-link">
+                        <MembershipGem className="membership-icon" />
+                    </Link>
+                );
+            `,
+        };
+        expect(collectRouteScopedGemUsages([fixture])).toEqual([{ fileName: fixture.fileName, gemUsages: 1 }]);
+    });
+
+    test("Lucide Gem outside a membership route remains unrelated", () => {
+        const fixture: NamedSource = {
+            fileName: "unrelated-gem-fixture.tsx",
+            source: `
+                import { Gem } from "lucide-react";
+
+                const HeaderMembershipDiamond = ({ className }: { className: string }) => <svg className={className} />;
+                export const HeaderFixture = () => (
+                    <div className="header-fixture">
+                        <Link to="/membership" className="membership-link">
+                            <HeaderMembershipDiamond className="membership-icon" />
+                        </Link>
+                        <Gem className="unrelated-decoration" />
+                    </div>
+                );
+            `,
+        };
+        expect(inspectMembershipRoutes(fixture, "HeaderMembershipDiamond")).toEqual({ entryCount: 1, entriesUsingSignatureOwner: 1, gemUsages: 0 });
+        expect(collectRouteScopedGemUsages([fixture])).toEqual([]);
+    });
+
+    test("credit accent has one root owner and no dark-theme override", async () => {
+        expect(collectCustomPropertyDefinitions(await designTokens.text(), "--credit-accent")).toEqual([{ important: false, selectors: [":root"], value: "#5f6fff" }]);
+    });
+
+    test("selector AST ignores negated names, attribute strings, and declaration-free hover rules", () => {
+        const misleadingCss = `
+            :not(.site-account-balance-icon),
+            [data-icon=".site-account-balance-icon"] {
+                color: red !important;
+                fill: red;
+            }
+
+            .site-account-balance-icon:hover {
+                opacity: 0.8;
+            }
+
+            .site-account-balance-icon .child,
+            .wrapper:has(.site-account-balance-icon) {
+                color: red !important;
+                fill: red;
+            }
+        `;
+        expect(collectPositiveClassDeclarations(misleadingCss, "site-account-balance-icon", ["color", "fill"])).toEqual([]);
+    });
+
+    test("every positive credit-icon declaration preserves the unique color and fill contract", async () => {
+        const declarations = collectPositiveClassDeclarations(await sharedAccountStyles.text(), "site-account-balance-icon", ["color", "fill"])
+            .map(({ important, property, value }) => ({ important, property, value }))
+            .sort((left, right) => left.property.localeCompare(right.property));
+        expect(declarations).toEqual([
+            { important: false, property: "color", value: "var(--credit-accent)" },
+            { important: false, property: "fill", value: "currentcolor" },
+        ]);
+
+        expect(findComponentClassTokens(sharedAccountSource, "Zap")).toEqual([["site-account-balance-icon", "size-4"]]);
     });
 
     test("shared referral UI has an account owner without a homepage reverse dependency", async () => {

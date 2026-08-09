@@ -57,6 +57,7 @@
         "zustand": "^5.0.14"
     },
     "devDependencies": {
+        "@babel/parser": "^7.29.7",
         "@tailwindcss/postcss": "^4.3.3",
         "@types/file-saver": "^2.0.7",
         "@types/node": "^20.19.43",
@@ -64,6 +65,8 @@
         "@types/react-dom": "19.2.3",
         "@vitejs/plugin-react": "^6.0.3",
         "lighthouse": "13.4.1",
+        "postcss": "^8.5.19",
+        "postcss-selector-parser": "^7.1.1",
         "prettier": "^3.9.5",
         "typescript": "^7.0.2",
         "vite": "^8.1.5"
