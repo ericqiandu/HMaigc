@@ -26,6 +26,10 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			Signature: c.GetHeader("Wechatpay-Signature"),
 		}, body)
 		if err != nil {
+			if service.ShouldAcknowledgePaymentWebhook(err) {
+				c.Status(http.StatusNoContent)
+				return
+			}
 			writeWechatWebhookFailure(c, err)
 			return
 		}
@@ -38,6 +42,10 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			err = svc.HandleAlipayPaymentWebhook(body)
 		}
 		if err != nil {
+			if service.ShouldAcknowledgePaymentWebhook(err) {
+				c.String(http.StatusOK, "success")
+				return
+			}
 			_ = c.Error(err)
 			c.String(paymentWebhookErrorStatus(err), "failure")
 			return
@@ -159,6 +167,20 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		result, err := svc.AdminPaymentWebhookEvents(actor, service.AdminListQuery{
 			Type: c.Query("provider"), Status: c.Query("status"), Page: page, Limit: limit,
 		})
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
+	r.POST("/admin/payments/transactions/:id/reconcile", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.AdminReconcilePaymentTransaction(actor, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return

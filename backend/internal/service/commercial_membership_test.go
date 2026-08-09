@@ -156,7 +156,7 @@ func TestStalePendingMembershipOrderIsClosedDuringLifecycleReconciliation(t *tes
 	}
 }
 
-func TestRenewalCreditsAreGrantedWhenTheQueuedSubscriptionStarts(t *testing.T) {
+func TestRenewalCreditsAreGrantedExactlyOnceAtPaymentFulfillment(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
@@ -194,8 +194,8 @@ func TestRenewalCreditsAreGrantedWhenTheQueuedSubscriptionStarts(t *testing.T) {
 	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ?", owner.ID).Count(&ledgerCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledgerCount != 1 {
-		t.Fatalf("ledger count before renewal start = %d, want 1", ledgerCount)
+	if ledgerCount != 2 {
+		t.Fatalf("ledger count immediately after two paid orders = %d, want 2", ledgerCount)
 	}
 	now := time.Now()
 	if err := db.Model(&model.MembershipSubscription{}).Where("order_id = ?", firstOrder.ID).Updates(map[string]interface{}{
@@ -217,14 +217,14 @@ func TestRenewalCreditsAreGrantedWhenTheQueuedSubscriptionStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ledgerCount != 2 {
-		t.Fatalf("ledger count after renewal start = %d, want 2", ledgerCount)
+		t.Fatalf("lifecycle duplicated payment grants: ledger count = %d, want 2", ledgerCount)
 	}
 	var account model.CreditAccount
 	if err := db.First(&account, "user_id = ?", owner.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if account.AvailableMicrocredits != plan.CreditsPerPeriod*2 {
-		t.Fatalf("credits after renewal start = %d, want %d", account.AvailableMicrocredits, plan.CreditsPerPeriod*2)
+		t.Fatalf("credits after two paid orders = %d, want %d", account.AvailableMicrocredits, plan.CreditsPerPeriod*2)
 	}
 }
 
@@ -503,8 +503,128 @@ func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
 	if err := db.First(&transaction, "order_id = ?", order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if transaction.Status != model.PaymentTransactionFailed || transaction.CodeURL != "" || transaction.FailureReason == "" {
+	if transaction.Status != model.PaymentTransactionFailed || transaction.CodeURL != "" || transaction.FailureCode != "provider_rejected" || transaction.FailureReason == "" {
 		t.Fatalf("provider connector failure was not recorded explicitly: %#v", transaction)
+	}
+	if _, err := svc.CreatePaymentTransaction(checkoutToken(t, result.CheckoutURL), CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat}); err == nil {
+		t.Fatal("deterministic provider rejection unexpectedly returned success")
+	}
+	var failedCount int64
+	if err := db.Model(&model.PaymentTransaction{}).Where("order_id = ? AND status = ?", order.ID, model.PaymentTransactionFailed).Count(&failedCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedCount != 2 {
+		t.Fatalf("deterministic rejection transaction count = %d, want 2 released attempts", failedCount)
+	}
+}
+
+func TestPaymentPayableProviderTimeoutKeepsSingleMerchantOrderForReconciliation(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	merchantPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
+	setting := readyWechatPaymentSetting()
+	setting.Wechat.MerchantPrivateKey = rsaPrivateKeyPEM(t, merchantPrivate)
+	setting.Wechat.PlatformPublicKey = platformPublicPEM
+	setting.Wechat.APIv3Key = strings.Repeat("k", 32)
+	if _, err := svc.UpdatePaymentSetting(admin, setting); err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "provider-timeout-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, errors.New("injected provider timeout after request dispatch")
+	}))
+	token := checkoutToken(t, checkout.CheckoutURL)
+	if _, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat}); err == nil {
+		t.Fatal("ambiguous provider timeout unexpectedly returned success")
+	}
+	var first model.PaymentTransaction
+	if err := db.First(&first, "order_id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != model.PaymentTransactionReviewRequired || first.FailureCode != "provider_result_unknown" {
+		t.Fatalf("timeout transaction = %#v", first)
+	}
+	if _, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat}); err == nil {
+		t.Fatal("review-required replay unexpectedly created a public QR")
+	}
+	var count int64
+	if err := db.Model(&model.PaymentTransaction{}).Where("order_id = ?", order.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("timeout retry created %d merchant orders, want 1", count)
+	}
+}
+
+func TestPaymentPayableSameProviderReplayAndRefreshReuseOneQRWhileCrossProviderLocks(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	merchantPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
+	setting := readyWechatPaymentSetting()
+	setting.Wechat.MerchantPrivateKey = rsaPrivateKeyPEM(t, merchantPrivate)
+	setting.Wechat.PlatformPublicKey = platformPublicPEM
+	setting.Wechat.APIv3Key = strings.Repeat("k", 32)
+	setting.Alipay = PaymentChannelSettingRequest{
+		Enabled: true, AppID: "alipay-app", MerchantID: "alipay-merchant",
+		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
+		NotifyURL: "https://merchant.example.com/alipay", GatewayURL: "https://openapi.alipay.com/gateway.do",
+	}
+	if _, err := svc.UpdatePaymentSetting(admin, setting); err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(owner, CreateMembershipOrderRequest{PlanID: plan.ID}, "same-provider-replay-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return paymentTestResponse(request, http.StatusOK, `{"code_url":"weixin://wxpay/same-qr"}`, nil), nil
+	}))
+	token := checkoutToken(t, checkout.CheckoutURL)
+	first, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CodeURL != replay.CodeURL || first.CodeURL != "weixin://wxpay/same-qr" {
+		t.Fatalf("same-provider replay views first=%#v replay=%#v", first, replay)
+	}
+	if _, err := svc.CreatePaymentTransaction(token, CreatePaymentTransactionRequest{Provider: model.PaymentProviderAlipay}); err == nil {
+		t.Fatal("cross-provider replay unexpectedly claimed a second transaction")
+	} else {
+		requireAuthStatus(t, err, http.StatusConflict)
+	}
+	refreshed, err := svc.PaymentCheckout(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.ActiveTransaction == nil || refreshed.ActiveTransaction.CodeURL != first.CodeURL {
+		t.Fatalf("checkout refresh active transaction = %#v", refreshed.ActiveTransaction)
+	}
+	var count int64
+	if err := db.Model(&model.PaymentTransaction{}).Where("order_id = ?", order.ID).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("same/cross provider transaction count = %d, err=%v", count, err)
 	}
 }
 

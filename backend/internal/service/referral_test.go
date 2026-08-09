@@ -86,9 +86,9 @@ func TestReferralFirstPurchaseGrantsBothLedgersExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCreditBalance(t, db, inviter.ID, rule.InviterRewardMicrocredits)
-	// The renewal subscription starts after the active month and therefore its
-	// membership credits are granted by lifecycle reconciliation, not at payment.
-	assertCreditBalance(t, db, invitee.ID, plan.CreditsPerPeriod+rule.InviteeRewardMicrocredits)
+	// Each paid membership order grants its frozen periodic credits immediately;
+	// the invitation reward remains a first-purchase fact and is not duplicated.
+	assertCreditBalance(t, db, invitee.ID, plan.CreditsPerPeriod*2+rule.InviteeRewardMicrocredits)
 	var rewardCount int64
 	if err := db.Model(&model.ReferralReward{}).Count(&rewardCount).Error; err != nil {
 		t.Fatal(err)

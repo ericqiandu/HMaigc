@@ -608,6 +608,54 @@ func TestMembershipOrderConfirmationRollsBackWhenAuditInsertFails(t *testing.T) 
 	}
 }
 
+func TestPaymentMembershipCancellationAndLifecyclePreservePayableTransaction(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "payable-cancel-user", Username: "payable-cancel-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "payable-cancel-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	transaction := &model.PaymentTransaction{
+		ID: "payable-cancel-transaction", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID,
+		Provider: model.PaymentProviderWechat, MerchantOrderNo: "MPAYABLECANCEL", AmountCents: order.TotalPriceCents,
+		Currency: order.Currency, Status: model.PaymentTransactionReviewRequired, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(transaction).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CancelMembershipOrder(user, order.ID); err == nil {
+		t.Fatal("payable membership order was cancelled without provider reconciliation")
+	}
+	if err := db.Model(&model.MembershipOrder{}).Where("id = ?", order.ID).Update("created_at", now.Add(-48*time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.reconcileMembershipLifecycle(now); err != nil {
+		t.Fatal(err)
+	}
+	var persistedOrder model.MembershipOrder
+	if err := db.First(&persistedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedOrder.Status != model.MembershipOrderPending {
+		t.Fatalf("payable membership order status = %s, want pending", persistedOrder.Status)
+	}
+	var persistedTransaction model.PaymentTransaction
+	if err := db.First(&persistedTransaction, "id = ?", transaction.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedTransaction.Status != model.PaymentTransactionReviewRequired {
+		t.Fatalf("payable transaction status = %s, want review_required", persistedTransaction.Status)
+	}
+}
+
 func TestMembershipOrderCloseRollsBackWhenAuditInsertFails(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {

@@ -373,6 +373,9 @@ func (s *Service) CancelMembershipOrder(user *model.User, id string) (*model.Mem
 	}
 	now := time.Now()
 	if err := s.repo.CloseMembershipOrder(orderID, user.ID, user.ID, "用户主动取消订单", now, nil); err != nil {
+		if errors.Is(err, repository.ErrPaymentReconciliationRequired) {
+			return nil, &AuthError{Status: http.StatusConflict, Message: "订单存在待对账支付交易，不能取消"}
+		}
 		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
 			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能取消"}
 		}
@@ -460,6 +463,9 @@ func (s *Service) AdminCloseMembershipOrder(actor *model.User, id string, req Cl
 		return nil, err
 	}
 	if err := s.repo.CloseMembershipOrder(orderID, "", actor.ID, note, now, audit); err != nil {
+		if errors.Is(err, repository.ErrPaymentReconciliationRequired) {
+			return nil, &AuthError{Status: http.StatusConflict, Message: "订单存在待对账支付交易，不能关闭"}
+		}
 		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
 			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能关闭"}
 		}
@@ -506,26 +512,14 @@ func (s *Service) membershipFulfillmentForOrder(order *model.MembershipOrder, ac
 		return repository.MembershipActivation{}, err
 	}
 	plan := &facts.Plan
-	start := now
-	latestEnd, err := s.repo.LatestMembershipSubscriptionEnd(order.UserID, order.TeamID, now)
-	if err != nil {
-		return repository.MembershipActivation{}, err
-	}
-	if latestEnd != nil && latestEnd.After(start) {
-		start = *latestEnd
-	}
-	end := start.AddDate(0, 1, 0)
-	if plan.BillingCycle == model.MembershipBillingCycleYear {
-		end = start.AddDate(1, 0, 0)
-	}
 	subscription := &model.MembershipSubscription{
 		ID: newID(), UserID: order.UserID, TeamID: order.TeamID, PlanID: plan.ID, OrderID: order.ID,
 		Status: model.MembershipSubscriptionActive, Seats: order.Seats, PlanSnapshotJSON: order.PlanSnapshotJSON,
-		StartsAt: start, EndsAt: &end, CreatedAt: now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	}
-	activation := repository.MembershipActivation{Subscription: subscription}
+	activation := repository.MembershipActivation{BillingCycle: plan.BillingCycle, Subscription: subscription}
 	grant := facts.TotalCreditsPerPeriod
-	if grant > 0 && !start.After(now) {
+	if grant > 0 {
 		reference := "membership-order:" + order.ID
 		activation.MembershipLedger = &model.CreditLedgerEntry{
 			ID: newID(), UserID: order.UserID, Type: model.CreditLedgerMembership,

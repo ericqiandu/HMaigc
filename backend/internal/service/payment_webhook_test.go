@@ -8,11 +8,18 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestCanonicalAlipayWebhookFormExcludesSignatureFields(t *testing.T) {
@@ -73,7 +80,7 @@ func TestParseAmountCentsIsExact(t *testing.T) {
 	}
 }
 
-func TestFulfillVerifiedPaymentIsIdempotent(t *testing.T) {
+func TestPaymentWebhookFulfillVerifiedPaymentIsIdempotentAcrossEventIDs(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
@@ -88,13 +95,21 @@ func TestFulfillVerifiedPaymentIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	expiresAt := now.Add(15 * time.Minute)
+	if err := db.Create(&model.PaymentCheckoutSession{
+		ID: "payment-webhook-checkout", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID,
+		TokenHash: strings.Repeat("9", 64), TokenCipher: "enc:v1:test", Status: model.PaymentCheckoutActive,
+		ExpiresAt: expiresAt, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	transaction := &model.PaymentTransaction{
-		ID: "transaction-1", OrderID: order.ID, UserID: user.ID,
+		ID: "transaction-1", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID,
 		Provider: model.PaymentProviderWechat, MerchantOrderNo: "merchant-order-1",
 		AmountCents: order.TotalPriceCents, Currency: order.Currency,
-		Status: model.PaymentTransactionPending, CreatedAt: now, UpdatedAt: now,
+		Status: model.PaymentTransactionCreated, ExpiresAt: &expiresAt, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := svc.repo.CreatePaymentTransaction(transaction); err != nil {
+	if err := db.Create(transaction).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,6 +117,12 @@ func TestFulfillVerifiedPaymentIsIdempotent(t *testing.T) {
 	if err := svc.fulfillVerifiedPayment(
 		model.PaymentProviderWechat, "event-1", transaction.MerchantOrderNo,
 		"wechat-trade-1", transaction.AmountCents, transaction.Currency, now, body,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.fulfillVerifiedPayment(
+		model.PaymentProviderWechat, "event-2", transaction.MerchantOrderNo,
+		"wechat-trade-1", transaction.AmountCents, transaction.Currency, now, []byte(`{"id":"event-2"}`),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +159,600 @@ func TestFulfillVerifiedPaymentIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if events != 1 {
-		t.Fatalf("webhook event count = %d, want 1", events)
+		t.Fatalf("original webhook event count = %d, want 1", events)
 	}
+	if err := db.Model(&model.PaymentWebhookEvent{}).Where("provider_trade_no = ?", "wechat-trade-1").Count(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if events != 2 {
+		t.Fatalf("same-trade event count = %d, want two processed event facts", events)
+	}
+	var persistedEvent model.PaymentWebhookEvent
+	if err := db.First(&persistedEvent, "provider_event_id = ?", "event-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedEvent.MerchantOrderNo != transaction.MerchantOrderNo || persistedEvent.ProviderTradeNo != "wechat-trade-1" ||
+		persistedEvent.AmountCents != transaction.AmountCents || persistedEvent.Currency != transaction.Currency || persistedEvent.PaidAt == nil {
+		t.Fatalf("persisted webhook facts = %#v", persistedEvent)
+	}
+	if persistedEvent.Status != model.PaymentWebhookProcessed {
+		t.Fatalf("webhook status = %s, want processed", persistedEvent.Status)
+	}
+	if paidOrder.ResolvedBy != model.SystemActorID {
+		t.Fatalf("paid order resolved_by = %q, want system actor", paidOrder.ResolvedBy)
+	}
+	var ledger model.CreditLedgerEntry
+	if err := db.First(&ledger, "reference_key = ?", "membership-order:"+order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ledger.ActorUserID != model.SystemActorID {
+		t.Fatalf("automatic membership ledger actor = %q, want system", ledger.ActorUserID)
+	}
+}
+
+func TestPaymentWebhookRecordIsIdempotentAndProcessedCannotDowngrade(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	event := &model.PaymentWebhookEvent{
+		ID: "event-fact-1", Provider: model.PaymentProviderWechat, ProviderEventID: "provider-event-fact-1",
+		MerchantOrderNo: "M-EVENT-FACT", ProviderTradeNo: "provider-trade-fact", AmountCents: 1990, Currency: "CNY",
+		PaidAt: &now, PayloadDigest: strings.Repeat("a", 64), Status: model.PaymentWebhookReceived,
+		ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	winner, created, err := svc.repo.RecordPaymentWebhookEvent(event)
+	if err != nil || !created || winner.ID != event.ID {
+		t.Fatalf("record first webhook fact = winner:%#v created:%v err:%v", winner, created, err)
+	}
+	replay := *event
+	replay.ID = "event-fact-replay"
+	winner, created, err = svc.repo.RecordPaymentWebhookEvent(&replay)
+	if err != nil || created || winner.ID != event.ID {
+		t.Fatalf("record same digest replay = winner:%#v created:%v err:%v", winner, created, err)
+	}
+	conflict := replay
+	conflict.PayloadDigest = strings.Repeat("b", 64)
+	if _, _, err := svc.repo.RecordPaymentWebhookEvent(&conflict); !errors.Is(err, repository.ErrPaymentWebhookConflict) {
+		t.Fatalf("different digest event error = %v", err)
+	}
+	if err := svc.repo.MarkPaymentWebhookOutcome(event.ID, model.PaymentWebhookProcessed, "", "", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.MarkPaymentWebhookOutcome(event.ID, model.PaymentWebhookRejected, "late_payment", "must not win", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var persisted model.PaymentWebhookEvent
+	if err := db.First(&persisted, "id = ?", event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.PaymentWebhookProcessed || persisted.FailureCode != "" {
+		t.Fatalf("processed webhook was downgraded: %#v", persisted)
+	}
+}
+
+func TestPaymentWebhookPersistsPermanentValidationFailureAndAcknowledges(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "webhook-validation-user", Username: "webhook-validation-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "webhook-validation-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	transaction := &model.PaymentTransaction{
+		ID: "webhook-validation-transaction", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID,
+		Provider: model.PaymentProviderWechat, MerchantOrderNo: "M-WEBHOOK-VALIDATION", AmountCents: order.TotalPriceCents,
+		Currency: order.Currency, Status: model.PaymentTransactionPending, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(transaction).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"provider":"verified","event":"amount-mismatch"}`)
+	err = svc.fulfillVerifiedPayment(
+		transaction.Provider, "amount-mismatch-event", transaction.MerchantOrderNo, "amount-mismatch-trade",
+		transaction.AmountCents+1, transaction.Currency, now, body,
+	)
+	if err == nil || !ShouldAcknowledgePaymentWebhook(err) {
+		t.Fatalf("amount mismatch disposition err=%v acknowledged=%v", err, ShouldAcknowledgePaymentWebhook(err))
+	}
+	var event model.PaymentWebhookEvent
+	if err := db.First(&event, "provider_event_id = ?", "amount-mismatch-event").Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.Status != model.PaymentWebhookRejected || event.FailureCode != "amount_currency_mismatch" ||
+		event.MerchantOrderNo != transaction.MerchantOrderNo || event.ProviderTradeNo != "amount-mismatch-trade" {
+		t.Fatalf("durable mismatch event = %#v", event)
+	}
+
+	unknownBody := []byte(`{"provider":"verified","event":"unknown-merchant"}`)
+	err = svc.fulfillVerifiedPayment(
+		transaction.Provider, "unknown-merchant-event", "M-UNKNOWN-MERCHANT", "unknown-merchant-trade",
+		transaction.AmountCents, transaction.Currency, now, unknownBody,
+	)
+	if err == nil || !ShouldAcknowledgePaymentWebhook(err) {
+		t.Fatalf("unknown merchant disposition err=%v acknowledged=%v", err, ShouldAcknowledgePaymentWebhook(err))
+	}
+	event = model.PaymentWebhookEvent{}
+	if err := db.First(&event, "provider_event_id = ?", "unknown-merchant-event").Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.Status != model.PaymentWebhookRejected || event.FailureCode != "unknown_merchant_order" {
+		t.Fatalf("durable unknown merchant event = %#v", event)
+	}
+}
+
+func TestPaymentWebhookLateClosedAndSecondPaymentsEnterDurableReview(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "webhook-review-user", Username: "webhook-review-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	now := time.Now().UTC().Truncate(time.Second)
+	tests := []struct {
+		name        string
+		status      model.PaymentTransactionStatus
+		expiresAt   *time.Time
+		storedTrade string
+		callback    string
+		failureCode string
+	}{
+		{name: "late", status: model.PaymentTransactionPending, expiresAt: func() *time.Time { value := now.Add(-time.Minute); return &value }(), callback: "late-trade", failureCode: "late_payment"},
+		{name: "closed", status: model.PaymentTransactionClosed, callback: "closed-trade", failureCode: "non_payable_transaction"},
+		{name: "second", status: model.PaymentTransactionPaid, storedTrade: "first-trade", callback: "second-trade", failureCode: "second_payment"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, fmt.Sprintf("webhook-review-order-%d", index))
+			if err != nil {
+				t.Fatal(err)
+			}
+			transaction := &model.PaymentTransaction{
+				ID: fmt.Sprintf("webhook-review-transaction-%d", index), OrderType: model.PaymentOrderMembership,
+				OrderID: order.ID, UserID: user.ID, Provider: model.PaymentProviderWechat,
+				MerchantOrderNo: fmt.Sprintf("MWEBHOOKREVIEW%02d", index), ProviderTradeNo: test.storedTrade,
+				AmountCents: order.TotalPriceCents, Currency: order.Currency, Status: test.status,
+				ExpiresAt: test.expiresAt, CreatedAt: now, UpdatedAt: now,
+			}
+			if test.status == model.PaymentTransactionPaid {
+				transaction.PaidAt = &now
+			}
+			if err := db.Create(transaction).Error; err != nil {
+				t.Fatal(err)
+			}
+			err = svc.fulfillVerifiedPayment(
+				transaction.Provider, fmt.Sprintf("webhook-review-event-%d", index), transaction.MerchantOrderNo,
+				test.callback, transaction.AmountCents, transaction.Currency, now, []byte(fmt.Sprintf(`{"case":%q}`, test.name)),
+			)
+			if err == nil || !ShouldAcknowledgePaymentWebhook(err) {
+				t.Fatalf("review disposition err=%v acknowledged=%v", err, ShouldAcknowledgePaymentWebhook(err))
+			}
+			var event model.PaymentWebhookEvent
+			if err := db.First(&event, "provider_event_id = ?", fmt.Sprintf("webhook-review-event-%d", index)).Error; err != nil {
+				t.Fatal(err)
+			}
+			if event.Status != model.PaymentWebhookReviewRequired || event.FailureCode != test.failureCode {
+				t.Fatalf("durable review event = %#v", event)
+			}
+		})
+	}
+}
+
+func TestPaymentWebhookDifferentDigestConflictsWithoutOverwrite(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	now := time.Now().UTC()
+	first := &model.PaymentWebhookEvent{
+		ID: "digest-original", Provider: model.PaymentProviderAlipay, ProviderEventID: "digest-provider-event",
+		MerchantOrderNo: "M-DIGEST", ProviderTradeNo: "digest-trade", AmountCents: 100, Currency: "CNY", PaidAt: &now,
+		PayloadDigest: strings.Repeat("1", 64), Status: model.PaymentWebhookReceived, ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, _, err := svc.repo.RecordPaymentWebhookEvent(first); err != nil {
+		t.Fatal(err)
+	}
+	changed := *first
+	changed.ID = "digest-changed"
+	changed.PayloadDigest = strings.Repeat("2", 64)
+	_, _, err := svc.repo.RecordPaymentWebhookEvent(&changed)
+	if !errors.Is(err, repository.ErrPaymentWebhookConflict) || ShouldAcknowledgePaymentWebhook(err) {
+		t.Fatalf("digest conflict err=%v acknowledged=%v", err, ShouldAcknowledgePaymentWebhook(err))
+	}
+	var persisted model.PaymentWebhookEvent
+	if err := db.First(&persisted, "provider_event_id = ?", first.ProviderEventID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ID != first.ID || persisted.PayloadDigest != first.PayloadDigest {
+		t.Fatalf("digest conflict overwrote first fact: %#v", persisted)
+	}
+}
+
+func TestPaymentWebhookSignatureOrFactCommitFailureRequestsProviderRetry(t *testing.T) {
+	t.Run("signature failure", func(t *testing.T) {
+		svc, db := newMembershipTestService(t)
+		merchantPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
+		admin := &model.User{ID: "signature-admin", Username: "signature-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+		if err := db.Create(admin).Error; err != nil {
+			t.Fatal(err)
+		}
+		setting := readyWechatPaymentSetting()
+		setting.Wechat.MerchantPrivateKey = rsaPrivateKeyPEM(t, merchantPrivate)
+		setting.Wechat.PlatformPublicKey = platformPublicPEM
+		setting.Wechat.APIv3Key = strings.Repeat("k", 32)
+		if _, err := svc.UpdatePaymentSetting(admin, setting); err != nil {
+			t.Fatal(err)
+		}
+		err := svc.HandleWechatPaymentWebhook(WechatPaymentWebhookHeaders{
+			Timestamp: strconv.FormatInt(time.Now().Unix(), 10), Nonce: "invalid-signature-nonce",
+			Signature: base64.StdEncoding.EncodeToString([]byte("invalid-signature")),
+		}, []byte(`{"id":"must-not-persist"}`))
+		if err == nil || ShouldAcknowledgePaymentWebhook(err) {
+			t.Fatalf("signature failure err=%v acknowledged=%v", err, ShouldAcknowledgePaymentWebhook(err))
+		}
+		var count int64
+		if err := db.Model(&model.PaymentWebhookEvent{}).Count(&count).Error; err != nil || count != 0 {
+			t.Fatalf("signature failure event count = %d, err=%v", count, err)
+		}
+	})
+
+	t.Run("verified fact commit failure", func(t *testing.T) {
+		svc, db := newMembershipTestService(t)
+		if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+			t.Fatal(err)
+		}
+		user := &model.User{ID: "fact-commit-user", Username: "fact-commit-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+		if err := db.Create(user).Error; err != nil {
+			t.Fatal(err)
+		}
+		plan := membershipPlanByCode(t, db, "pro-month")
+		order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, "fact-commit-order")
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC()
+		transaction := &model.PaymentTransaction{
+			ID: "fact-commit-transaction", OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID,
+			Provider: model.PaymentProviderWechat, MerchantOrderNo: "MFACTCOMMIT", AmountCents: order.TotalPriceCents,
+			Currency: order.Currency, Status: model.PaymentTransactionPending, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(transaction).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec(`CREATE TRIGGER reject_verified_payment_fact BEFORE INSERT ON payment_webhook_events BEGIN SELECT RAISE(FAIL, 'injected verified fact commit failure'); END`).Error; err != nil {
+			t.Fatal(err)
+		}
+		err = svc.fulfillVerifiedPayment(
+			transaction.Provider, "fact-commit-event", transaction.MerchantOrderNo, "fact-commit-trade",
+			transaction.AmountCents, transaction.Currency, now, []byte(`{"id":"fact-commit-event"}`),
+		)
+		if err == nil || ShouldAcknowledgePaymentWebhook(err) {
+			t.Fatalf("fact commit failure err=%v acknowledged=%v", err, ShouldAcknowledgePaymentWebhook(err))
+		}
+		var count int64
+		if err := db.Model(&model.PaymentWebhookEvent{}).Count(&count).Error; err != nil || count != 0 {
+			t.Fatalf("fact commit failure event count = %d, err=%v", count, err)
+		}
+	})
+}
+
+func TestPaymentReconciliationAlipayQueryNormalizesSignedProviderStatesAndCloseFailure(t *testing.T) {
+	merchantPrivate, _ := newWebhookTestRSAKey(t)
+	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
+	channel := paymentChannelSettingValue{
+		AppID: "alipay-app", MerchantID: "alipay-merchant", MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate),
+		PlatformPublicKey: platformPublicPEM, GatewayURL: "https://openapi.alipay.com/gateway.do",
+	}
+	transaction := &model.PaymentTransaction{
+		Provider: model.PaymentProviderAlipay, MerchantOrderNo: "MALIPAYQUERY", AmountCents: 1990, Currency: "CNY",
+	}
+	tests := []struct {
+		name  string
+		inner string
+		state providerPaymentState
+	}{
+		{
+			name:  "paid",
+			inner: `{"code":"10000","msg":"Success","out_trade_no":"MALIPAYQUERY","trade_no":"202608090001","trade_status":"TRADE_SUCCESS","total_amount":"19.90","send_pay_date":"2026-08-09 13:14:15"}`,
+			state: providerPaymentPaid,
+		},
+		{
+			name:  "unpaid",
+			inner: `{"code":"10000","msg":"Success","out_trade_no":"MALIPAYQUERY","trade_status":"WAIT_BUYER_PAY","total_amount":"19.90"}`,
+			state: providerPaymentUnpaid,
+		},
+		{
+			name:  "not found",
+			inner: `{"code":"40004","msg":"Business Failed","sub_code":"ACQ.TRADE_NOT_EXIST","sub_msg":"trade not exist"}`,
+			state: providerPaymentNotFound,
+		},
+		{
+			name:  "unknown",
+			inner: `{"code":"20000","msg":"Service Currently Unavailable"}`,
+			state: providerPaymentUnknown,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				values, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if values.Get("method") != "alipay.trade.query" || !strings.Contains(values.Get("biz_content"), transaction.MerchantOrderNo) {
+					t.Fatalf("unexpected Alipay query form: %s", body)
+				}
+				signature := signWebhookTestMessage(t, platformPrivate, test.inner)
+				responseBody := fmt.Sprintf(`{"alipay_trade_query_response":%s,"sign":%q}`, test.inner, signature)
+				return paymentTestResponse(request, http.StatusOK, responseBody, nil), nil
+			}))
+			fact, err := queryProviderPayment(transaction, channel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fact.State != test.state {
+				t.Fatalf("query state = %s, want %s", fact.State, test.state)
+			}
+			if test.state == providerPaymentPaid && (fact.ProviderTradeNo != "202608090001" || fact.AmountCents != 1990 || fact.Currency != "CNY" || fact.PaidAt.IsZero()) {
+				t.Fatalf("paid Alipay fact = %#v", fact)
+			}
+		})
+	}
+
+	withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if values.Get("method") != "alipay.trade.close" {
+			t.Fatalf("Alipay close method = %q", values.Get("method"))
+		}
+		inner := `{"code":"40004","msg":"Business Failed","sub_code":"ACQ.TRADE_HAS_SUCCESS","sub_msg":"trade paid"}`
+		signature := signWebhookTestMessage(t, platformPrivate, inner)
+		responseBody := fmt.Sprintf(`{"alipay_trade_close_response":%s,"sign":%q}`, inner, signature)
+		return paymentTestResponse(request, http.StatusOK, responseBody, nil), nil
+	}))
+	if err := closeProviderPayment(transaction, channel); err == nil {
+		t.Fatal("provider close failure unexpectedly succeeded")
+	}
+}
+
+func TestPaymentReconciliationWechatQueryAndCloseUseSignedMerchantFacts(t *testing.T) {
+	merchantPrivate, _ := newWebhookTestRSAKey(t)
+	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
+	channel := paymentChannelSettingValue{
+		AppID: "wechat-app", MerchantID: "wechat-merchant", MerchantSerialNo: "merchant-serial",
+		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
+		GatewayURL: "https://api.mch.weixin.qq.com",
+	}
+	transaction := &model.PaymentTransaction{
+		Provider: model.PaymentProviderWechat, MerchantOrderNo: "MWECHATQUERY", AmountCents: 1990, Currency: "CNY",
+	}
+	withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if !strings.Contains(request.Header.Get("Authorization"), `mchid="wechat-merchant"`) {
+			t.Fatalf("missing signed WeChat authorization: %q", request.Header.Get("Authorization"))
+		}
+		if request.Method == http.MethodGet {
+			if request.URL.EscapedPath() != "/v3/pay/transactions/out-trade-no/MWECHATQUERY" || request.URL.Query().Get("mchid") != channel.MerchantID {
+				t.Fatalf("unexpected WeChat query URL: %s", request.URL.String())
+			}
+			body := `{"appid":"wechat-app","mchid":"wechat-merchant","out_trade_no":"MWECHATQUERY","transaction_id":"wechat-trade-1","trade_state":"SUCCESS","success_time":"2026-08-09T13:14:15+08:00","amount":{"total":1990,"currency":"CNY"}}`
+			return signedWechatTestResponse(t, request, http.StatusOK, body, platformPrivate), nil
+		}
+		if request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/close") {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), `"mchid":"wechat-merchant"`) {
+				t.Fatalf("unexpected WeChat close body: %s", body)
+			}
+			return signedWechatTestResponse(t, request, http.StatusNoContent, "", platformPrivate), nil
+		}
+		t.Fatalf("unexpected WeChat request: %s %s", request.Method, request.URL)
+		return nil, nil
+	}))
+	fact, err := queryProviderPayment(transaction, channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fact.State != providerPaymentPaid || fact.ProviderTradeNo != "wechat-trade-1" || fact.AmountCents != 1990 || fact.Currency != "CNY" || fact.PaidAt.IsZero() {
+		t.Fatalf("paid WeChat fact = %#v", fact)
+	}
+	if err := closeProviderPayment(transaction, channel); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPaymentReconciliationStrongAuditsPaidClosedAndFailedOutcomes(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	merchantPrivate, _ := newWebhookTestRSAKey(t)
+	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
+	admin := &model.User{ID: "reconcile-admin", Username: "reconcile-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	user := &model.User{ID: "reconcile-user", Username: "reconcile-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create([]*model.User{admin, user}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdatePaymentSetting(admin, PaymentSettingRequest{
+		Alipay: PaymentChannelSettingRequest{
+			Enabled: true, AppID: "reconcile-app", MerchantID: "reconcile-merchant",
+			MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
+			NotifyURL: "https://merchant.example.com/alipay", GatewayURL: "https://openapi.alipay.com/gateway.do",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	tests := []struct {
+		name          string
+		queryResponse func(transaction *model.PaymentTransaction) string
+		closeResponse string
+		wantStatus    model.PaymentTransactionStatus
+		wantError     bool
+	}{
+		{
+			name: "paid",
+			queryResponse: func(transaction *model.PaymentTransaction) string {
+				return fmt.Sprintf(`{"code":"10000","msg":"Success","out_trade_no":%q,"trade_no":"reconcile-paid-trade","trade_status":"TRADE_SUCCESS","total_amount":%q,"send_pay_date":"2026-08-09 13:14:15"}`, transaction.MerchantOrderNo, formatAmountCents(transaction.AmountCents))
+			},
+			wantStatus: model.PaymentTransactionPaid,
+		},
+		{
+			name: "unpaid closed",
+			queryResponse: func(transaction *model.PaymentTransaction) string {
+				return fmt.Sprintf(`{"code":"10000","msg":"Success","out_trade_no":%q,"trade_status":"WAIT_BUYER_PAY","total_amount":%q}`, transaction.MerchantOrderNo, formatAmountCents(transaction.AmountCents))
+			},
+			closeResponse: `{"code":"10000","msg":"Success"}`,
+			wantStatus:    model.PaymentTransactionClosed,
+		},
+		{
+			name: "unknown",
+			queryResponse: func(*model.PaymentTransaction) string {
+				return `{"code":"20000","msg":"Service Currently Unavailable"}`
+			},
+			wantStatus: model.PaymentTransactionReviewRequired,
+			wantError:  true,
+		},
+		{
+			name: "close failed",
+			queryResponse: func(transaction *model.PaymentTransaction) string {
+				return fmt.Sprintf(`{"code":"10000","msg":"Success","out_trade_no":%q,"trade_status":"WAIT_BUYER_PAY","total_amount":%q}`, transaction.MerchantOrderNo, formatAmountCents(transaction.AmountCents))
+			},
+			closeResponse: `{"code":"40004","msg":"Business Failed","sub_code":"ACQ.TRADE_HAS_SUCCESS","sub_msg":"trade paid"}`,
+			wantStatus:    model.PaymentTransactionReviewRequired,
+			wantError:     true,
+		},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID}, fmt.Sprintf("reconcile-order-%d", index))
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			expiresAt := now.Add(15 * time.Minute)
+			if err := db.Create(&model.PaymentCheckoutSession{
+				ID: fmt.Sprintf("reconcile-checkout-%d", index), OrderType: model.PaymentOrderMembership,
+				OrderID: order.ID, UserID: user.ID, TokenHash: fmt.Sprintf("%064d", index+70), TokenCipher: "enc:v1:test",
+				Status: model.PaymentCheckoutActive, ExpiresAt: expiresAt, CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			transaction := &model.PaymentTransaction{
+				ID: fmt.Sprintf("reconcile-transaction-%d", index), OrderType: model.PaymentOrderMembership,
+				OrderID: order.ID, UserID: user.ID, Provider: model.PaymentProviderAlipay,
+				MerchantOrderNo: fmt.Sprintf("MRECONCILE%02d", index), AmountCents: order.TotalPriceCents,
+				Currency: order.Currency, Status: model.PaymentTransactionPending, ExpiresAt: &expiresAt,
+				CreatedAt: now, UpdatedAt: now,
+			}
+			if err := db.Create(transaction).Error; err != nil {
+				t.Fatal(err)
+			}
+			withPaymentHTTPTransport(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				values, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				inner := test.queryResponse(transaction)
+				field := "alipay_trade_query_response"
+				if values.Get("method") == "alipay.trade.close" {
+					inner = test.closeResponse
+					field = "alipay_trade_close_response"
+				}
+				signature := signWebhookTestMessage(t, platformPrivate, inner)
+				responseBody := fmt.Sprintf(`{%q:%s,"sign":%q}`, field, inner, signature)
+				return paymentTestResponse(request, http.StatusOK, responseBody, nil), nil
+			}))
+			result, reconcileErr := svc.AdminReconcilePaymentTransaction(admin, transaction.ID)
+			if test.wantError && reconcileErr == nil || !test.wantError && reconcileErr != nil {
+				t.Fatalf("reconcile result=%#v err=%v, wantError=%v", result, reconcileErr, test.wantError)
+			}
+			var stored model.PaymentTransaction
+			if err := db.First(&stored, "id = ?", transaction.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if stored.Status != test.wantStatus {
+				t.Fatalf("transaction status = %s, want %s", stored.Status, test.wantStatus)
+			}
+			var audits []model.AdminAuditEvent
+			if err := db.Where("target_type = ? AND target_id = ?", "payment_transaction", transaction.ID).Order("created_at asc").Find(&audits).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(audits) != 2 || audits[0].Action != "payment_transaction.reconcile_attempt" {
+				t.Fatalf("strong reconcile audits = %#v", audits)
+			}
+			if stored.Status == model.PaymentTransactionPaid {
+				var paidOrder model.MembershipOrder
+				if err := db.First(&paidOrder, "id = ?", order.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				if paidOrder.ResolvedBy != model.SystemActorID {
+					t.Fatalf("reconciled paid order actor = %q, want system", paidOrder.ResolvedBy)
+				}
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func withPaymentHTTPTransport(t *testing.T, transport http.RoundTripper) {
+	t.Helper()
+	previous := paymentHTTPClient
+	paymentHTTPClient = &http.Client{Transport: transport, Timeout: time.Second}
+	t.Cleanup(func() { paymentHTTPClient = previous })
+}
+
+func paymentTestResponse(request *http.Request, status int, body string, header http.Header) *http.Response {
+	if header == nil {
+		header = make(http.Header)
+	}
+	return &http.Response{
+		StatusCode: status, Status: fmt.Sprintf("%d test", status), Header: header,
+		Body: io.NopCloser(strings.NewReader(body)), Request: request,
+	}
+}
+
+func signedWechatTestResponse(t *testing.T, request *http.Request, status int, body string, privateKey *rsa.PrivateKey) *http.Response {
+	t.Helper()
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	nonce := "wechat-response-nonce"
+	signature := signWebhookTestMessage(t, privateKey, timestamp+"\n"+nonce+"\n"+body+"\n")
+	header := make(http.Header)
+	header.Set("Wechatpay-Timestamp", timestamp)
+	header.Set("Wechatpay-Nonce", nonce)
+	header.Set("Wechatpay-Signature", signature)
+	header.Set("Wechatpay-Serial", "platform-key-id")
+	return paymentTestResponse(request, status, body, header)
+}
+
+func rsaPrivateKeyPEM(t *testing.T, privateKey *rsa.PrivateKey) string {
+	t.Helper()
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}))
 }
 
 func newWebhookTestRSAKey(t *testing.T) (*rsa.PrivateKey, string) {

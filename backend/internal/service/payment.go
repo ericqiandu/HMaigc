@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,6 +107,19 @@ type AdminPaymentWebhookPage struct {
 	Total int64                       `json:"total"`
 	Page  int                         `json:"page"`
 	Limit int                         `json:"limit"`
+}
+
+type AdminPaymentReconciliationResult struct {
+	Transaction   model.PaymentTransaction `json:"transaction"`
+	ProviderState providerPaymentState     `json:"providerState"`
+}
+
+type paymentReconciliationAudit struct {
+	Provider        model.PaymentProvider `json:"provider"`
+	MerchantOrderNo string                `json:"merchantOrderNo"`
+	ProviderState   providerPaymentState  `json:"providerState,omitempty"`
+	Outcome         string                `json:"outcome"`
+	FailureCode     string                `json:"failureCode,omitempty"`
 }
 
 type paymentChannelSettingValue struct {
@@ -217,6 +232,151 @@ func (s *Service) AdminPaymentWebhookEvents(actor *model.User, query AdminListQu
 		return nil, err
 	}
 	return &AdminPaymentWebhookPage{Items: items, Total: total, Page: page, Limit: limit}, nil
+}
+
+func (s *Service) AdminReconcilePaymentTransaction(actor *model.User, id string) (*AdminPaymentReconciliationResult, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	transaction, err := s.repo.PaymentTransaction(strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	attempt := paymentReconciliationAudit{
+		Provider: transaction.Provider, MerchantOrderNo: transaction.MerchantOrderNo, Outcome: "attempted",
+	}
+	if err := s.appendAdminAudit(actor, "payment_transaction.reconcile_attempt", "payment_transaction", transaction.ID, "发起支付渠道查单对账", attempt); err != nil {
+		return nil, err
+	}
+	_, setting, err := s.readPaymentSetting()
+	if err != nil {
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "payment_setting_unavailable", err)
+	}
+	channel, ok := paymentChannel(setting, transaction.Provider)
+	if !ok || !paymentChannelReady(transaction.Provider, channel) {
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "payment_channel_unavailable", errors.New("支付渠道尚未完整配置"))
+	}
+	fact, err := queryProviderPayment(transaction, channel)
+	if err != nil {
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "provider_query_failed", err)
+	}
+	switch fact.State {
+	case providerPaymentPaid:
+		return s.reconcileConfirmedPayment(actor, transaction, fact)
+	case providerPaymentUnpaid, providerPaymentNotFound:
+		if err := closeProviderPayment(transaction, channel); err != nil {
+			return nil, s.failPaymentReconciliation(actor, transaction, fact.State, "provider_close_failed", err)
+		}
+		now := time.Now()
+		outcome := paymentReconciliationAudit{
+			Provider: transaction.Provider, MerchantOrderNo: transaction.MerchantOrderNo,
+			ProviderState: fact.State, Outcome: "provider_closed",
+		}
+		audit, err := newAdminAuditEvent(actor, "payment_transaction.reconcile_closed", "payment_transaction", transaction.ID, "支付渠道确认未到账并完成远端关单", outcome)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.repo.ClosePaymentTransactionAfterProviderConfirmation(transaction.ID, now, audit); err != nil {
+			if auditErr := s.appendAdminAudit(actor, "payment_transaction.reconcile_failed", "payment_transaction", transaction.ID, "远端关单成功但本地状态已变化", paymentReconciliationAudit{
+				Provider: transaction.Provider, MerchantOrderNo: transaction.MerchantOrderNo, ProviderState: fact.State,
+				Outcome: "local_close_failed", FailureCode: "local_state_changed",
+			}); auditErr != nil {
+				return nil, fmt.Errorf("本地关单失败且失败审计写入失败: %v: %w", auditErr, err)
+			}
+			return nil, err
+		}
+	case providerPaymentUnknown:
+		return nil, s.failPaymentReconciliation(actor, transaction, fact.State, "provider_state_unknown", errors.New("支付渠道返回无法确认的交易状态"))
+	default:
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "provider_state_invalid", errors.New("支付渠道返回无效交易状态"))
+	}
+	updated, err := s.repo.PaymentTransaction(transaction.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminPaymentReconciliationResult{Transaction: *updated, ProviderState: fact.State}, nil
+}
+
+func (s *Service) reconcileConfirmedPayment(actor *model.User, transaction *model.PaymentTransaction, fact providerPaymentFact) (*AdminPaymentReconciliationResult, error) {
+	now := time.Now()
+	normalized := strings.Join([]string{
+		string(transaction.Provider), transaction.MerchantOrderNo, fact.ProviderTradeNo,
+		strconv.FormatInt(fact.AmountCents, 10), fact.Currency, fact.PaidAt.UTC().Format(time.RFC3339Nano),
+	}, "\x00")
+	digest := sha256.Sum256([]byte(normalized))
+	event := &model.PaymentWebhookEvent{
+		ID: newID(), Provider: transaction.Provider,
+		ProviderEventID: "reconcile:" + hex.EncodeToString(digest[:]), TransactionID: transaction.ID,
+		MerchantOrderNo: transaction.MerchantOrderNo, ProviderTradeNo: fact.ProviderTradeNo,
+		AmountCents: fact.AmountCents, Currency: fact.Currency, PaidAt: &fact.PaidAt,
+		PayloadDigest: hex.EncodeToString(digest[:]), Status: model.PaymentWebhookReceived,
+		ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	stored, _, err := s.repo.RecordPaymentWebhookEvent(event)
+	if err != nil {
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentPaid, "verified_fact_conflict", err)
+	}
+	event = stored
+	if fact.ProviderTradeNo == "" || fact.AmountCents != transaction.AmountCents || fact.Currency != transaction.Currency || fact.PaidAt.IsZero() {
+		if markErr := s.repo.MarkPaymentWebhookOutcome(event.ID, model.PaymentWebhookReviewRequired, "query_fact_mismatch", "渠道查单到账事实与本地交易不一致", now); markErr != nil {
+			return nil, markErr
+		}
+		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentPaid, "query_fact_mismatch", errors.New("支付渠道查单到账事实与本地交易不一致"))
+	}
+	var activation repository.MembershipActivation
+	if transaction.OrderType == model.PaymentOrderMembership {
+		order, lookupErr := s.repo.MembershipOrder(transaction.OrderID)
+		if lookupErr != nil {
+			return nil, s.failReconciliationFulfillment(actor, transaction, event, "membership_order_lookup_failed", lookupErr)
+		}
+		activation, err = s.membershipFulfillmentForOrder(order, model.SystemActorID, fact.PaidAt)
+		if err != nil {
+			return nil, s.failReconciliationFulfillment(actor, transaction, event, "membership_activation_invalid", err)
+		}
+	} else if transaction.OrderType != model.PaymentOrderCreditTopup {
+		return nil, s.failReconciliationFulfillment(actor, transaction, event, "unsupported_order_type", errors.New("支付交易订单类型无效"))
+	}
+	outcome := paymentReconciliationAudit{
+		Provider: transaction.Provider, MerchantOrderNo: transaction.MerchantOrderNo,
+		ProviderState: providerPaymentPaid, Outcome: "fulfilled",
+	}
+	audit, err := newAdminAuditEvent(actor, "payment_transaction.reconcile_paid", "payment_transaction", transaction.ID, "支付渠道确认到账并完成履约", outcome)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.FulfillPaymentTransaction(repository.PaymentFulfillment{
+		Event: event, TransactionID: transaction.ID, ProviderTradeNo: fact.ProviderTradeNo,
+		PaidAt: fact.PaidAt, PaymentConfirmed: true, Activation: activation, Audit: audit,
+	}); err != nil {
+		return nil, s.failReconciliationFulfillment(actor, transaction, event, "fulfillment_failed", err)
+	}
+	updated, err := s.repo.PaymentTransaction(transaction.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminPaymentReconciliationResult{Transaction: *updated, ProviderState: providerPaymentPaid}, nil
+}
+
+func (s *Service) failReconciliationFulfillment(actor *model.User, transaction *model.PaymentTransaction, event *model.PaymentWebhookEvent, code string, cause error) error {
+	if err := s.repo.MarkPaymentWebhookOutcome(event.ID, model.PaymentWebhookReviewRequired, code, truncateRunes(cause.Error(), 500), time.Now()); err != nil {
+		return fmt.Errorf("对账履约失败且验签事实结果更新失败: %v: %w", err, cause)
+	}
+	return s.failPaymentReconciliation(actor, transaction, providerPaymentPaid, code, cause)
+}
+
+func (s *Service) failPaymentReconciliation(actor *model.User, transaction *model.PaymentTransaction, state providerPaymentState, code string, cause error) error {
+	outcome := paymentReconciliationAudit{
+		Provider: transaction.Provider, MerchantOrderNo: transaction.MerchantOrderNo,
+		ProviderState: state, Outcome: "review_required", FailureCode: code,
+	}
+	audit, err := newAdminAuditEvent(actor, "payment_transaction.reconcile_failed", "payment_transaction", transaction.ID, "支付对账未能确认终态，保留人工复核", outcome)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.MarkPaymentTransactionReviewWithAudit(transaction.ID, code, truncateRunes(cause.Error(), 500), time.Now(), audit); err != nil {
+		return fmt.Errorf("支付对账失败且结果审计写入失败: %v: %w", err, cause)
+	}
+	return &AuthError{Status: http.StatusConflict, Message: "支付渠道状态仍需人工复核"}
 }
 
 func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*CreatePaymentCheckoutResult, error) {
@@ -372,13 +532,6 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	if !ok || !paymentChannelReady(req.Provider, channel) {
 		return nil, BadAuthRequest("所选支付渠道尚未完成商户配置")
 	}
-	existing, err := s.repo.LatestPaymentTransaction(order.ID, req.Provider)
-	if err == nil && existing.Status == model.PaymentTransactionPending && existing.ExpiresAt != nil && existing.ExpiresAt.After(time.Now()) {
-		return paymentCheckoutTransactionView(existing)
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
 	now := time.Now()
 	expiresAt := session.ExpiresAt
 	transaction := &model.PaymentTransaction{
@@ -387,12 +540,32 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 		Currency: order.Currency, Status: model.PaymentTransactionCreated, ExpiresAt: &expiresAt,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.repo.CreatePaymentTransaction(transaction); err != nil {
-		return nil, err
+	winner, claimed, err := s.repo.ClaimPayablePaymentTransaction(transaction)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrPaymentChannelLocked):
+			return nil, &AuthError{Status: 409, Message: "订单已有其他支付渠道交易，需先完成支付对账"}
+		case errors.Is(err, repository.ErrPaymentVerifiedFactExists), errors.Is(err, repository.ErrPaymentOrderNotPayable):
+			return nil, &AuthError{Status: 409, Message: "订单当前不可创建新的支付交易"}
+		default:
+			return nil, err
+		}
+	}
+	if !claimed {
+		if winner.Status == model.PaymentTransactionPending {
+			return paymentCheckoutTransactionView(winner)
+		}
+		return nil, &AuthError{Status: 409, Message: "支付交易结果待渠道对账，请勿重复创建"}
 	}
 	codeURL, err := createProviderPayment(transaction, paymentOrderReference{OrderNumber: order.OrderNumber, Description: order.Description}, channel)
 	if err != nil {
-		if saveErr := s.repo.UpdatePaymentTransactionCreation(transaction.ID, model.PaymentTransactionFailed, "", err.Error(), time.Now()); saveErr != nil {
+		status := model.PaymentTransactionReviewRequired
+		failureCode := "provider_result_unknown"
+		if isDeterministicProviderRejection(err) {
+			status = model.PaymentTransactionFailed
+			failureCode = "provider_rejected"
+		}
+		if saveErr := s.repo.UpdatePaymentTransactionCreation(transaction.ID, status, "", failureCode, truncateRunes(err.Error(), 500), time.Now()); saveErr != nil {
 			return nil, fmt.Errorf("渠道下单失败且交易审计写入失败: %v: %w", saveErr, err)
 		}
 		return nil, &AuthError{Status: 502, Message: "支付渠道暂时无法创建订单，请稍后重试"}
@@ -400,7 +573,7 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	transaction.Status = model.PaymentTransactionPending
 	transaction.CodeURL = codeURL
 	transaction.UpdatedAt = time.Now()
-	if err := s.repo.UpdatePaymentTransactionCreation(transaction.ID, transaction.Status, codeURL, "", transaction.UpdatedAt); err != nil {
+	if err := s.repo.UpdatePaymentTransactionCreation(transaction.ID, transaction.Status, codeURL, "", "", transaction.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return paymentCheckoutTransactionView(transaction)
@@ -647,6 +820,7 @@ func parsePaymentTransactionStatus(value string) (model.PaymentTransactionStatus
 	case "",
 		model.PaymentTransactionCreated,
 		model.PaymentTransactionPending,
+		model.PaymentTransactionReviewRequired,
 		model.PaymentTransactionPaid,
 		model.PaymentTransactionClosed,
 		model.PaymentTransactionFailed,
@@ -660,7 +834,7 @@ func parsePaymentTransactionStatus(value string) (model.PaymentTransactionStatus
 func parsePaymentWebhookStatus(value string) (model.PaymentWebhookStatus, error) {
 	status := model.PaymentWebhookStatus(strings.TrimSpace(value))
 	switch status {
-	case "", model.PaymentWebhookReceived, model.PaymentWebhookProcessed, model.PaymentWebhookRejected:
+	case "", model.PaymentWebhookReceived, model.PaymentWebhookProcessed, model.PaymentWebhookRejected, model.PaymentWebhookReviewRequired:
 		return status, nil
 	default:
 		return "", BadAuthRequest("不支持的支付回调状态")

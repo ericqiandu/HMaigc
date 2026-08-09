@@ -23,9 +23,10 @@ const (
 	PaymentTransactionFailed         PaymentTransactionStatus = "failed"
 	PaymentTransactionRefunded       PaymentTransactionStatus = "refunded"
 
-	PaymentWebhookReceived  PaymentWebhookStatus = "received"
-	PaymentWebhookProcessed PaymentWebhookStatus = "processed"
-	PaymentWebhookRejected  PaymentWebhookStatus = "rejected"
+	PaymentWebhookReceived       PaymentWebhookStatus = "received"
+	PaymentWebhookProcessed      PaymentWebhookStatus = "processed"
+	PaymentWebhookRejected       PaymentWebhookStatus = "rejected"
+	PaymentWebhookReviewRequired PaymentWebhookStatus = "review_required"
 )
 
 // PaymentCheckoutSession 以哈希校验 bearer token，并以绑定订单事实的密文支持所有者恢复同一链接。

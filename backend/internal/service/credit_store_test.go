@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,16 +86,32 @@ func TestCreditTopupOrderIsIdempotentAndPaymentCreditsExactlyOnce(t *testing.T) 
 		}
 	}
 	now := time.Now()
+	expiresAt := now.Add(15 * time.Minute)
+	if err := db.Create(&model.PaymentCheckoutSession{
+		ID: "credit-checkout", OrderType: model.PaymentOrderCreditTopup, OrderID: first.ID, UserID: user.ID,
+		TokenHash: strings.Repeat("c", 64), TokenCipher: "enc:v1:test", Status: model.PaymentCheckoutActive,
+		ExpiresAt: expiresAt, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	transaction := model.PaymentTransaction{
 		ID: "credit-payment", OrderType: model.PaymentOrderCreditTopup, OrderID: first.ID, UserID: user.ID,
 		Provider: model.PaymentProviderWechat, MerchantOrderNo: "credit-merchant-order", AmountCents: first.TotalPriceCents,
-		Currency: first.Currency, Status: model.PaymentTransactionPending, CreatedAt: now, UpdatedAt: now,
+		Currency: first.Currency, Status: model.PaymentTransactionPending, ExpiresAt: &expiresAt, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&transaction).Error; err != nil {
 		t.Fatal(err)
 	}
-	event := &model.PaymentWebhookEvent{ID: "credit-event", Provider: model.PaymentProviderWechat, ProviderEventID: "credit-provider-event", PayloadDigest: "digest", ReceivedAt: now, CreatedAt: now, UpdatedAt: now}
-	already, err := svc.repo.FulfillPaymentTransaction(repository.PaymentFulfillment{Event: event, TransactionID: transaction.ID, ProviderTradeNo: "provider-trade", PaidAt: now})
+	event := &model.PaymentWebhookEvent{
+		ID: "credit-event", Provider: model.PaymentProviderWechat, ProviderEventID: "credit-provider-event",
+		TransactionID: transaction.ID, MerchantOrderNo: transaction.MerchantOrderNo, ProviderTradeNo: "provider-trade",
+		AmountCents: transaction.AmountCents, Currency: transaction.Currency, PaidAt: &now, PayloadDigest: strings.Repeat("d", 64),
+		Status: model.PaymentWebhookReceived, ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, _, err := svc.repo.RecordPaymentWebhookEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	already, err := svc.repo.FulfillPaymentTransaction(repository.PaymentFulfillment{Event: event, TransactionID: transaction.ID, ProviderTradeNo: "provider-trade", PaidAt: now, PaymentConfirmed: true})
 	if err != nil || already {
 		t.Fatalf("first fulfillment already=%v err=%v", already, err)
 	}
@@ -105,8 +122,20 @@ func TestCreditTopupOrderIsIdempotentAndPaymentCreditsExactlyOnce(t *testing.T) 
 	if account.AvailableMicrocredits != first.TotalMicrocredits {
 		t.Fatalf("balance = %d, want %d", account.AvailableMicrocredits, first.TotalMicrocredits)
 	}
-	replayEvent := &model.PaymentWebhookEvent{ID: "credit-event-replay", Provider: model.PaymentProviderWechat, ProviderEventID: "credit-provider-event", PayloadDigest: "digest", ReceivedAt: now, CreatedAt: now, UpdatedAt: now}
-	already, err = svc.repo.FulfillPaymentTransaction(repository.PaymentFulfillment{Event: replayEvent, TransactionID: transaction.ID, ProviderTradeNo: "provider-trade", PaidAt: now})
+	var topupLedger model.CreditLedgerEntry
+	if err := db.First(&topupLedger, "reference_key = ?", "credit-topup:"+first.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if topupLedger.ActorUserID != model.SystemActorID {
+		t.Fatalf("automatic topup ledger actor = %q, want system", topupLedger.ActorUserID)
+	}
+	replayEvent := *event
+	replayEvent.ID = "credit-event-replay"
+	storedEvent, _, err := svc.repo.RecordPaymentWebhookEvent(&replayEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	already, err = svc.repo.FulfillPaymentTransaction(repository.PaymentFulfillment{Event: storedEvent, TransactionID: transaction.ID, ProviderTradeNo: "provider-trade", PaidAt: now, PaymentConfirmed: true})
 	if err != nil || !already {
 		t.Fatalf("replay fulfillment already=%v err=%v", already, err)
 	}
@@ -142,5 +171,58 @@ func TestCreditTopupProductUpdateDoesNotCreateMissingProduct(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("missing update created %d products", count)
+	}
+}
+
+func TestPaymentCreditTopupCancellationPreservesPayableTransaction(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := db.AutoMigrate(&model.CreditTopupProduct{}, &model.CreditTopupOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	product := &model.CreditTopupProduct{
+		ID: "credit-payable-product", Code: "credit-payable-product", Name: "Payable product",
+		Category: model.CreditProductCategoryGeneral, BaseMicrocredits: 1000, PriceCents: 100,
+		OriginalPriceCents: 100, Currency: "CNY", RequiredMembershipTier: "origin",
+		StockLimit: -1, Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.Create(product).Error; err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{ID: "credit-payable-user", Username: "credit-payable-user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	order, err := svc.CreateCreditTopupOrder(user, CreateCreditTopupOrderRequest{ProductID: product.ID}, "credit-payable-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	transaction := &model.PaymentTransaction{
+		ID: "credit-payable-transaction", OrderType: model.PaymentOrderCreditTopup, OrderID: order.ID, UserID: user.ID,
+		Provider: model.PaymentProviderAlipay, MerchantOrderNo: "MCREDITPAYABLE", AmountCents: order.TotalPriceCents,
+		Currency: order.Currency, Status: model.PaymentTransactionPending, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(transaction).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CancelCreditTopupOrder(user, order.ID); err == nil {
+		t.Fatal("payable credit topup order was cancelled without provider reconciliation")
+	}
+	var persistedOrder model.CreditTopupOrder
+	if err := db.First(&persistedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedOrder.Status != model.CreditTopupOrderPending {
+		t.Fatalf("credit topup order status = %s, want pending", persistedOrder.Status)
+	}
+	var persistedTransaction model.PaymentTransaction
+	if err := db.First(&persistedTransaction, "id = ?", transaction.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedTransaction.Status != model.PaymentTransactionPending {
+		t.Fatalf("credit topup transaction status = %s, want pending", persistedTransaction.Status)
 	}
 }

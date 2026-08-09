@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -207,6 +208,9 @@ func (s *Service) CancelCreditTopupOrder(user *model.User, id string) (*model.Cr
 		return nil, Unauthorized("请先登录")
 	}
 	if err := s.repo.CancelCreditTopupOrder(user.ID, strings.TrimSpace(id), time.Now()); err != nil {
+		if errors.Is(err, repository.ErrPaymentReconciliationRequired) {
+			return nil, &AuthError{Status: http.StatusConflict, Message: "订单存在待对账支付交易，不能取消"}
+		}
 		if errors.Is(err, repository.ErrCreditTopupOrderNotPending) {
 			return nil, BadAuthRequest("只有待支付积分订单可以取消")
 		}

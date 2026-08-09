@@ -155,6 +155,16 @@ func (r *Repository) CreditTopupOrders(userID string, limit int, offset int) ([]
 
 func (r *Repository) CancelCreditTopupOrder(userID string, id string, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		var order model.CreditTopupOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ? AND user_id = ?", id, userID).Error; err != nil {
+			return err
+		}
+		if order.Status != model.CreditTopupOrderPending {
+			return ErrCreditTopupOrderNotPending
+		}
+		if err := rejectPayablePaymentTx(tx, model.PaymentOrderCreditTopup, order.ID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.CreditTopupOrder{}).
 			Where("id = ? AND user_id = ? AND status = ?", id, userID, model.CreditTopupOrderPending).
 			Updates(map[string]interface{}{"status": model.CreditTopupOrderCancelled, "resolution_note": "用户主动取消订单", "updated_at": now})
@@ -206,7 +216,7 @@ func fulfillCreditTopupOrderTx(tx *gorm.DB, orderID string, provider string, pro
 		ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerTopup,
 		AmountMicrocredits: order.TotalMicrocredits, AvailableDeltaMicrocredits: order.TotalMicrocredits,
 		AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-		Scene: "credit_store", Note: "积分超市订单 " + order.OrderNumber, ReferenceKey: &referenceKey, CreatedAt: now,
+		ActorUserID: model.SystemActorID, Scene: "credit_store", Note: "积分超市订单 " + order.OrderNumber, ReferenceKey: &referenceKey, CreatedAt: now,
 	}
 	if err := tx.Create(&ledger).Error; err != nil {
 		return err
