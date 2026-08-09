@@ -1,82 +1,38 @@
 import { Alert, message, Spin } from "antd";
-import { ArrowLeft, Coins, Gift, Zap } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { createCreditTopupCheckout, createCreditTopupOrder, getCreditStorefront, type CreditProductCategory, type CreditTopupProduct } from "@/services/api/credit-store";
+import { createCreditTopupCheckout, createCreditTopupOrder, getCreditStorefront, type CreditTopupProduct } from "@/services/api/credit-store";
 
+import bannerImage from "./assets/banner-surprise.jpg";
+import { GeneralCard, SurpriseCard } from "./credit-store-cards";
 import "./credit-store.css";
 
-const categories: Array<{ key: CreditProductCategory; label: string; icon: typeof Gift }> = [
-    { key: "surprise", label: "惊喜专区", icon: Gift },
-    { key: "general", label: "通用积分卡", icon: Zap },
+type StoreSection = "surprise" | "general" | "model";
+
+const sections: Array<{ key: StoreSection; label: string; icon: string }> = [
+    { key: "surprise", label: "惊喜专区", icon: "🎁" },
+    { key: "general", label: "通用积分卡", icon: "⚡" },
+    { key: "model", label: "专属模型卡", icon: "🎲" },
 ];
 
-const numberFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 });
-
-function formatCredits(value: number) {
-    return numberFormatter.format(value / 1_000_000);
-}
-
-function formatMoney(value: number) {
-    return numberFormatter.format(value / 100);
-}
-
-function membershipName(tier?: string) {
-    return ({ origin: "基础版", pro: "标准版", max: "高级版", ultra: "至尊版" } as Record<string, string>)[tier ?? ""] ?? "会员";
-}
-
-function remainingTime(target: string | undefined, now: number) {
-    if (!target) return null;
-    const seconds = Math.max(0, Math.floor((new Date(target).getTime() - now) / 1000));
-    return {
-        days: Math.floor(seconds / 86400),
-        hours: Math.floor((seconds % 86400) / 3600),
-        minutes: Math.floor((seconds % 3600) / 60),
-        seconds: seconds % 60,
-    };
-}
-
-function ProductCard({ buying, onBuy, product }: { buying: boolean; onBuy: (product: CreditTopupProduct) => void; product: CreditTopupProduct }) {
-    const total = product.baseMicrocredits + product.bonusMicrocredits;
-	const effectivePrice = product.effectivePriceCents ?? product.priceCents;
-    const soldOut = product.stockLimit >= 0 && product.soldCount >= product.stockLimit;
-    return (
-        <article className={`credit-store-card is-${product.category}`}>
-            <div className="credit-store-card-heading">
-                <div className="credit-store-card-title-group">
-                    <span className="credit-store-card-scope">全模型通用</span>
-                    <h3 className="credit-store-card-title">{product.name}</h3>
-                </div>
-                {product.badge ? <span className="credit-store-card-badge">{product.badge}</span> : null}
-            </div>
-            <div className="credit-store-card-credit">
-                <Coins aria-hidden="true" className="credit-store-card-credit-icon" />
-                <strong className="credit-store-card-credit-value">{formatCredits(total)}</strong>
-                <span className="credit-store-card-credit-unit">积分</span>
-            </div>
-            {product.bonusMicrocredits > 0 ? (
-                <p className="credit-store-card-grant">充 {formatCredits(product.baseMicrocredits)} + 赠 {formatCredits(product.bonusMicrocredits)}</p>
-            ) : null}
-            <div className="credit-store-card-price">
-				<strong className="credit-store-card-price-current">¥{formatMoney(effectivePrice)}</strong>
-				{product.originalPriceCents > effectivePrice ? <span className="credit-store-card-price-original">¥{formatMoney(product.originalPriceCents)}</span> : null}
-            </div>
-            <p className="credit-store-card-description">{product.description || "到账积分长期有效"}</p>
-            <button className="credit-store-card-action" disabled={buying || soldOut} onClick={() => onBuy(product)} type="button">
-                {soldOut ? "已售罄" : buying ? "正在创建订单…" : "立即购买"}
-            </button>
-            <p className="credit-store-card-requirement">{membershipName(product.requiredMembershipTier)}及以上会员可购买</p>
-        </article>
-    );
+function countdownParts(target: string | undefined, now: number) {
+    const total = target ? Math.max(0, Math.floor((new Date(target).getTime() - now) / 1000)) : 0;
+    return [
+        { label: "天", value: Math.floor(total / 86400) },
+        { label: "时", value: Math.floor((total % 86400) / 3600) },
+        { label: "分", value: Math.floor((total % 3600) / 60) },
+        { label: "秒", value: total % 60 },
+    ];
 }
 
 export default function CreditStorePage() {
     const navigate = useNavigate();
+    const pageRef = useRef<HTMLDivElement>(null);
     const [products, setProducts] = useState<CreditTopupProduct[]>([]);
     const [serverOffset, setServerOffset] = useState(0);
     const [now, setNow] = useState(Date.now());
-    const [active, setActive] = useState<CreditProductCategory>("surprise");
+    const [activeSection, setActiveSection] = useState<StoreSection>("surprise");
     const [buyingId, setBuyingId] = useState("");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -95,18 +51,31 @@ export default function CreditStorePage() {
         }
     }, []);
 
-    useEffect(() => {
-        void load();
-    }, [load]);
-
+    useEffect(() => { void load(); }, [load]);
     useEffect(() => {
         const timer = window.setInterval(() => setNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
     }, []);
+    useEffect(() => {
+        const page = pageRef.current;
+        if (!page) return;
+        const updateActiveSection = () => {
+            let current: StoreSection = "surprise";
+            for (const section of sections) {
+                const element = document.getElementById(`points-${section.key}`);
+                if (element && element.getBoundingClientRect().top <= 140) current = section.key;
+            }
+            setActiveSection(current);
+        };
+        page.addEventListener("scroll", updateActiveSection, { passive: true });
+        updateActiveSection();
+        return () => page.removeEventListener("scroll", updateActiveSection);
+    }, [loading]);
 
-    const grouped = useMemo(() => new Map(categories.map(({ key }) => [key, products.filter((product) => product.category === key)])), [products]);
-    const saleEnd = grouped.get("surprise")?.map((product) => product.saleEndsAt).find(Boolean);
-    const countdown = remainingTime(saleEnd, now + serverOffset);
+    const surpriseProducts = useMemo(() => products.filter((product) => product.category === "surprise"), [products]);
+    const generalProducts = useMemo(() => products.filter((product) => product.category === "general"), [products]);
+    const saleEnd = surpriseProducts.map((product) => product.saleEndsAt).find(Boolean);
+    const countdown = countdownParts(saleEnd, now + serverOffset);
 
     const buy = async (product: CreditTopupProduct) => {
         setBuyingId(product.id);
@@ -125,38 +94,46 @@ export default function CreditStorePage() {
         }
     };
 
-    if (loading) return <div className="credit-store-loading"><Spin className="credit-store-loading-spinner" size="large" /></div>;
+    const scrollToSection = (section: StoreSection) => {
+        document.getElementById(`points-${section}`)?.scrollIntoView({ behavior: "smooth" });
+        setActiveSection(section);
+    };
 
     return (
-        <main className="credit-store-page">
-            <header className="credit-store-header">
-                <button aria-label="返回会员页面" className="credit-store-back" onClick={() => navigate("/membership")} type="button"><ArrowLeft aria-hidden="true" className="credit-store-back-icon" /></button>
-                <h1 className="credit-store-page-title">积分超市</h1>
-                <nav aria-label="积分超市分区" className="credit-store-tabs">
-                    {categories.map(({ icon: Icon, key, label }) => (
-                        <button className={`credit-store-tab${active === key ? " is-active" : ""}`} key={key} onClick={() => { setActive(key); document.getElementById(`credit-store-${key}`)?.scrollIntoView({ behavior: "smooth" }); }} type="button">
-                            <Icon aria-hidden="true" className="credit-store-tab-icon" />
-                            <span className="credit-store-tab-label">{label}</span>
-                        </button>
-                    ))}
+        <div className="points-market-page" ref={pageRef}>
+            <header className="points-market-header">
+                <nav aria-label="积分超市分区" className="points-market-tabs">
+                    {sections.map((section) => <button className={`points-market-tab${activeSection === section.key ? " is-active" : ""}`} key={section.key} onClick={() => scrollToSection(section.key)} type="button"><span aria-hidden="true" className="points-market-tab-icon">{section.icon}</span><span className="points-market-tab-label">{section.label}</span></button>)}
                 </nav>
+                <button aria-label="返回会员页" className="points-market-close" onClick={() => navigate("/membership")} title="返回会员页" type="button">×</button>
             </header>
-            {error ? <Alert className="credit-store-error" message="积分超市暂不可用" description={error} type="error" showIcon action={<button className="credit-store-retry" onClick={() => void load()} type="button">重新加载</button>} /> : null}
-            {!error && products.length === 0 ? <Alert className="credit-store-empty" message="积分商品尚未上架" description="管理员完成套餐配置后，商品会在这里展示。" type="info" showIcon /> : null}
-            {categories.map(({ key, label }) => {
-                const items = grouped.get(key) ?? [];
-                if (items.length === 0) return null;
-                return (
-                    <section className={`credit-store-section is-${key}`} id={`credit-store-${key}`} key={key}>
-                        <div className="credit-store-section-heading">
-                            <h2 className="credit-store-section-title">{label}</h2>
-                            {key === "surprise" && countdown ? <p className="credit-store-countdown">限时限量，距本场结束 <strong className="credit-store-countdown-value">{countdown.days}天 {String(countdown.hours).padStart(2, "0")}:{String(countdown.minutes).padStart(2, "0")}:{String(countdown.seconds).padStart(2, "0")}</strong></p> : null}
-                            {key === "general" ? <p className="credit-store-section-copy">全模型可用，到账与消费记录全程可追溯</p> : null}
-                        </div>
-                        <div className="credit-store-grid">{items.map((product) => <ProductCard buying={buyingId === product.id} key={product.id} onBuy={buy} product={product} />)}</div>
-                    </section>
-                );
-            })}
-        </main>
+            <main className="points-market-main">
+                {loading ? <div aria-busy="true" aria-label="正在加载积分商品" className="points-market-loading"><Spin className="points-market-spinner" size="large" /></div> : null}
+                {error ? <Alert action={<button className="points-market-retry" onClick={() => void load()} type="button">重新加载</button>} className="points-market-error" description={error} message="积分超市暂不可用" showIcon type="error" /> : null}
+                {!loading && !error ? (
+                    <>
+                        <section className="points-surprise-section" id="points-surprise">
+                            <img alt="" className="points-surprise-background" src={bannerImage} />
+                            <div className="points-surprise-overlay" />
+                            <div className="points-surprise-content">
+                                <h1 className="points-surprise-title">积分超市 惊喜专区</h1>
+                                <div className="points-countdown"><span className="points-countdown-copy">限时限量，距本场结束</span>{countdown.map((part) => <span className="points-countdown-cell" key={part.label}><strong className="points-countdown-value">{String(part.value).padStart(2, "0")}</strong><span className="points-countdown-label">{part.label}</span></span>)}</div>
+                                <div className="points-surprise-grid">{surpriseProducts.map((product) => <SurpriseCard buying={buyingId === product.id} key={product.id} onBuy={buy} product={product} />)}</div>
+                            </div>
+                        </section>
+                        <section className="points-general-section" id="points-general">
+                            <h2 className="points-section-title">通用积分卡</h2>
+                            <p className="points-section-copy">全模型可用 · 到账积分长期有效</p>
+                            <div className="points-general-grid">{generalProducts.map((product) => <GeneralCard buying={buyingId === product.id} key={product.id} onBuy={buy} product={product} />)}</div>
+                        </section>
+                        <section className="points-model-section" id="points-model">
+                            <h2 className="points-section-title">专属模型卡</h2>
+                            <p className="points-section-copy">指定模型使用更划算 · 套餐正在准备中</p>
+                            <div className="points-model-empty" role="status">专属模型套餐尚未上架</div>
+                        </section>
+                    </>
+                ) : null}
+            </main>
+        </div>
     );
 }

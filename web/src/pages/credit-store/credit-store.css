@@ -1,155 +1,112 @@
-.credit-store-page {
-    --credit-store-surface: color-mix(in srgb, var(--background) 94%, var(--foreground) 6%);
-    --credit-store-surface-strong: color-mix(in srgb, var(--background) 88%, var(--foreground) 12%);
-    --credit-store-border: color-mix(in srgb, var(--foreground) 14%, transparent);
-    --credit-store-muted: color-mix(in srgb, var(--foreground) 58%, transparent);
-    min-height: 100vh;
-    padding: 80px max(24px, calc((100vw - 1300px) / 2)) 96px;
-    background: var(--background);
-    color: var(--foreground);
-}
-
-.credit-store-header {
+.points-market-page {
     position: fixed;
-    z-index: 30;
+    inset: 0;
+    z-index: 80;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: #070b11;
+    color: #fff;
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.points-market-header {
+    position: sticky;
+    z-index: 40;
     top: 0;
-    right: 0;
-    left: 0;
-    display: grid;
-    grid-template-columns: 44px 1fr 44px;
+    display: flex;
+    min-height: 72px;
     align-items: center;
-    min-height: 64px;
-    padding: 8px 24px;
-    background: color-mix(in srgb, var(--background) 88%, transparent);
-    backdrop-filter: blur(18px);
+    justify-content: center;
+    padding: 16px 24px;
+    background: rgb(7 11 17 / 85%);
+    backdrop-filter: blur(16px);
 }
 
-.credit-store-page-title {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-}
+.points-market-tabs { display: flex; padding: 4px; border: 1px solid #232c38; border-radius: 999px; background: #121924; }
+.points-market-tab { display: flex; min-height: 40px; align-items: center; gap: 6px; padding: 0 24px; border: 0; border-radius: 999px; background: transparent; color: #8b95a5; font: inherit; font-size: 14px; cursor: pointer; transition: .2s ease; }
+.points-market-tab:hover { color: #fff; }
+.points-market-tab.is-active { background: #fff; color: #10161e; font-weight: 500; box-shadow: 0 4px 14px rgb(0 0 0 / 24%); }
+.points-market-tab-icon { font-size: 13px; }
+.points-market-close { position: absolute; right: 32px; display: grid; width: 40px; height: 40px; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #8b95a5; font: inherit; font-size: 25px; cursor: pointer; transition: .2s ease; }
+.points-market-close:hover { background: #1d2530; color: #fff; }
+.points-market-main { min-height: calc(100vh - 72px); padding-top: 16px; }
+.points-market-loading { display: grid; min-height: 60vh; place-items: center; }
+.points-market-error { max-width: 900px; margin: 48px auto; }
+.points-market-retry { min-height: 40px; padding: 0 16px; border: 0; border-radius: 8px; background: #fff; color: #10161e; font: inherit; cursor: pointer; }
 
-.credit-store-back,
-.credit-store-tab,
-.credit-store-card-action,
-.credit-store-retry {
-    border: 0;
-    font: inherit;
-    cursor: pointer;
-}
+.points-surprise-section { position: relative; max-width: 1300px; margin: 0 auto; overflow: hidden; scroll-margin-top: 96px; border-radius: 12px; }
+.points-surprise-background { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.points-surprise-overlay { position: absolute; inset: 0; background: rgb(0 0 0 / 35%); }
+.points-surprise-content { position: relative; padding: 40px 32px 32px; }
+.points-surprise-title { margin: 0; text-align: center; color: #fff; font-size: 32px; font-weight: 700; letter-spacing: .025em; text-shadow: 0 2px 10px rgb(0 0 0 / 50%); }
+.points-countdown { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; font-size: 14px; }
+.points-countdown-copy,
+.points-countdown-label { color: #d5dbe3; }
+.points-countdown-cell { display: flex; align-items: baseline; gap: 4px; }
+.points-countdown-value { color: #ff3ea5; font-size: 16px; }
+.points-surprise-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 32px; }
+.points-surprise-card { display: flex; min-width: 0; flex-direction: column; padding: 20px; border: 1px solid rgb(255 255 255 / 5%); border-radius: 12px; background: rgb(17 22 30 / 90%); backdrop-filter: blur(8px); }
 
-.credit-store-back {
-    display: grid;
-    width: 44px;
-    height: 44px;
-    place-items: center;
-    border-radius: 50%;
-    background: transparent;
-    color: var(--credit-store-muted);
-}
+.points-card-heading { display: flex; min-height: 22px; align-items: center; justify-content: space-between; gap: 8px; }
+.points-card-name { margin: 0; overflow: hidden; color: #dde4ec; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.points-surprise-badge { flex: 0 0 auto; padding: 2px 6px; border-radius: 2px; background: #ff3ea5; color: #fff; font-size: 10px; font-weight: 500; }
+.points-credit-line { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+.points-credit-icon { color: #ffd34d; font-size: 18px; }
+.points-surprise-credit { color: #fff; font-size: 28px; line-height: 1; letter-spacing: -.025em; }
+.points-membership-limit { display: flex; align-items: center; gap: 4px; margin: 8px 0 0; color: #c8a44e; font-size: 12px; }
+.points-membership-diamond { font-size: 11px; }
+.points-price-line { display: flex; align-items: baseline; gap: 8px; margin-top: 20px; }
+.points-current-price { color: #fff; font-size: 18px; }
+.points-original-price { color: #5f6a78; font-size: 13px; text-decoration: line-through; }
+.points-surprise-action { width: 100%; min-height: 44px; margin-top: 12px; border: 0; border-radius: 8px; background: #fff; color: #10161e; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: .2s ease; }
+.points-surprise-action:hover:not(:disabled) { background: #e6ebf0; }
+.points-surprise-action:disabled,
+.points-general-action:disabled { cursor: not-allowed; opacity: .55; }
+.points-card-note { margin: 12px 0 0; color: #7d8794; font-size: 11px; text-align: center; }
 
-.credit-store-back:hover { background: var(--credit-store-surface); color: var(--foreground); }
-.credit-store-back-icon { width: 19px; height: 19px; }
+.points-general-section,
+.points-model-section { max-width: 1300px; margin: 56px auto 0; scroll-margin-top: 96px; padding: 0 24px; }
+.points-model-section { padding-bottom: 96px; }
+.points-section-title { margin: 0; color: #fff; font-size: 28px; font-weight: 700; text-align: center; }
+.points-section-copy { margin: 8px 0 0; color: #8b95a5; font-size: 14px; text-align: center; }
+.points-general-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 32px; }
+.points-general-card { display: flex; min-width: 0; flex-direction: column; padding: 20px; border: 1px solid #232c38; border-radius: 12px; background: #0f151e; transition: border-color .2s ease; }
+.points-general-card:hover { border-color: #323d4c; }
+.points-general-card.is-highlighted { border-color: rgb(31 143 156 / 80%); background: linear-gradient(to bottom, #0e333c, #0d242e, #0c141d); }
+.points-general-badge { flex: 0 0 auto; padding: 2px 6px; border: 1px solid #2f6f78; border-radius: 2px; color: #4fd6e0; font-size: 10px; }
+.points-general-badge.is-filled { border-color: transparent; background: #123c46; }
+.points-general-credit { color: #fff; font-size: 26px; line-height: 1; letter-spacing: -.025em; }
+.points-grant-copy { margin: 8px 0 0; color: #8b95a5; font-size: 12px; }
+.points-grant-bonus { color: #4fd6e0; }
+.points-general-price { display: flex; align-items: baseline; gap: 8px; margin-top: 20px; }
+.points-saving-copy { color: #7d8794; font-size: 12px; }
+.points-saving-value { color: #fff; }
+.points-general-action { width: 100%; min-height: 44px; margin-top: 12px; border: 1px solid #2f6f78; border-radius: 8px; background: transparent; color: #45c8d4; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: .2s ease; }
+.points-general-action:hover:not(:disabled) { background: #12333a; }
+.points-general-action.is-highlighted { border: 0; background: linear-gradient(to right, #7fe3f0, #3fc4f5); color: #0a1218; }
+.points-general-action.is-highlighted:hover:not(:disabled) { opacity: .9; }
+.points-model-empty { display: grid; min-height: 180px; margin-top: 32px; place-items: center; border: 1px solid #232c38; border-radius: 12px; background: #0f151e; color: #7d8794; font-size: 14px; }
 
-.credit-store-tabs {
-    display: flex;
-    justify-self: center;
-    gap: 4px;
-    padding: 4px;
-    border: 1px solid var(--credit-store-border);
-    border-radius: 999px;
-    background: var(--credit-store-surface);
-}
-
-.credit-store-tab {
-    display: flex;
-    min-height: 36px;
-    align-items: center;
-    gap: 7px;
-    padding: 0 20px;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--credit-store-muted);
-    font-size: 13px;
-}
-
-.credit-store-tab.is-active { background: var(--foreground); color: var(--background); }
-.credit-store-tab-icon { width: 14px; height: 14px; }
-
-.credit-store-section {
-    scroll-margin-top: 88px;
-    padding: 56px 0 4px;
-}
-
-.credit-store-section.is-surprise {
-    margin-top: 12px;
-    padding: 48px 32px 32px;
-    border-radius: 20px;
-    background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--primary) 24%, transparent), transparent 58%), var(--credit-store-surface);
-}
-
-.credit-store-section-heading { text-align: center; }
-.credit-store-section-title { margin: 0; font-size: clamp(25px, 3vw, 34px); font-weight: 720; letter-spacing: -.03em; }
-.credit-store-section-copy,
-.credit-store-countdown { margin: 8px 0 0; color: var(--credit-store-muted); font-size: 13px; }
-.credit-store-countdown-value { margin-left: 5px; color: var(--primary); font-variant-numeric: tabular-nums; }
-
-.credit-store-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
-    margin-top: 28px;
-}
-
-.credit-store-card {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    padding: 22px;
-    border: 1px solid var(--credit-store-border);
-    border-radius: 16px;
-    background: var(--credit-store-surface);
-}
-
-.credit-store-card.is-surprise { background: color-mix(in srgb, var(--credit-store-surface) 90%, var(--primary) 10%); }
-.credit-store-card-heading { display: flex; min-height: 45px; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.credit-store-card-title-group { min-width: 0; }
-.credit-store-card-scope { display: block; overflow: hidden; color: var(--credit-store-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.credit-store-card-title { margin: 5px 0 0; font-size: 16px; font-weight: 650; }
-.credit-store-card-badge { flex: 0 0 auto; padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, var(--primary) 17%, transparent); color: var(--primary); font-size: 10px; }
-.credit-store-card-credit { display: flex; align-items: baseline; gap: 7px; margin-top: 20px; }
-.credit-store-card-credit-icon { width: 17px; height: 17px; align-self: center; color: var(--primary); }
-.credit-store-card-credit-value { font-size: 30px; line-height: 1; letter-spacing: -.035em; }
-.credit-store-card-credit-unit { color: var(--credit-store-muted); font-size: 11px; }
-.credit-store-card-grant { margin: 9px 0 0; color: var(--primary); font-size: 11px; }
-.credit-store-card-price { display: flex; align-items: baseline; gap: 9px; margin-top: 20px; }
-.credit-store-card-price-current { font-size: 19px; }
-.credit-store-card-price-original { color: var(--credit-store-muted); font-size: 12px; text-decoration: line-through; }
-.credit-store-card-description { min-height: 36px; margin: 9px 0 0; color: var(--credit-store-muted); font-size: 11px; line-height: 18px; }
-.credit-store-card-action { min-height: 44px; margin-top: 18px; border-radius: 9px; background: var(--foreground); color: var(--background); font-size: 13px; font-weight: 650; }
-.credit-store-card-action:disabled { cursor: not-allowed; opacity: .45; }
-.credit-store-card-requirement { margin: 10px 0 0; color: var(--credit-store-muted); font-size: 10px; text-align: center; }
-.credit-store-error,
-.credit-store-empty { margin: 24px 0; }
-.credit-store-retry { min-height: 36px; padding: 0 14px; border-radius: 8px; background: var(--foreground); color: var(--background); }
-.credit-store-loading { display: grid; min-height: 70vh; place-items: center; }
-
-@media (max-width: 900px) {
-    .credit-store-page { padding-right: 16px; padding-left: 16px; }
-    .credit-store-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1080px) {
+    .points-surprise-section { margin-right: 24px; margin-left: 24px; }
+    .points-surprise-grid,
+    .points-general-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
-    .credit-store-page { padding-top: 112px; padding-bottom: 64px; }
-    .credit-store-header { grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding: 8px 16px; }
-    .credit-store-tabs { max-width: 100%; justify-self: stretch; overflow-x: auto; border: 0; border-radius: 0; background: transparent; }
-    .credit-store-tab { min-width: max-content; min-height: 44px; padding: 0 14px; }
-    .credit-store-section { padding-top: 40px; }
-    .credit-store-section.is-surprise { margin-right: -16px; margin-left: -16px; padding: 36px 16px 24px; border-radius: 0; }
-    .credit-store-grid { grid-template-columns: 1fr; }
-    .credit-store-card { border-radius: 12px; }
+    .points-market-header { justify-content: flex-start; min-height: 64px; padding: 10px 56px 10px 12px; }
+    .points-market-tabs { max-width: 100%; overflow-x: auto; border: 0; border-radius: 0; background: transparent; scrollbar-width: none; }
+    .points-market-tabs::-webkit-scrollbar { display: none; }
+    .points-market-tab { min-height: 44px; padding: 0 14px; white-space: nowrap; }
+    .points-market-close { right: 8px; width: 44px; height: 44px; }
+    .points-market-main { padding-top: 8px; }
+    .points-surprise-section { margin-right: 12px; margin-left: 12px; }
+    .points-surprise-content { padding: 32px 16px 20px; }
+    .points-surprise-title { font-size: 25px; }
+    .points-countdown { flex-wrap: wrap; }
+    .points-surprise-grid,
+    .points-general-grid { grid-template-columns: 1fr; }
+    .points-general-section,
+    .points-model-section { margin-top: 40px; padding-right: 12px; padding-left: 12px; }
+    .points-section-title { font-size: 24px; }
 }

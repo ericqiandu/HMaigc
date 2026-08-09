@@ -9,6 +9,30 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
+func TestDefaultCreditTopupProductsFillTheStorefrontAndRemainIdempotent(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := db.AutoMigrate(&model.CreditTopupProduct{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureDefaultCreditTopupProducts(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureDefaultCreditTopupProducts(); err != nil {
+		t.Fatal(err)
+	}
+	var surpriseCount int64
+	if err := db.Model(&model.CreditTopupProduct{}).Where("category = ?", model.CreditProductCategorySurprise).Count(&surpriseCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	var generalCount int64
+	if err := db.Model(&model.CreditTopupProduct{}).Where("category = ?", model.CreditProductCategoryGeneral).Count(&generalCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if surpriseCount != 3 || generalCount != 6 {
+		t.Fatalf("default product counts surprise=%d general=%d, want 3 and 6", surpriseCount, generalCount)
+	}
+}
+
 func TestCreditTopupOrderIsIdempotentAndPaymentCreditsExactlyOnce(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	if err := db.AutoMigrate(&model.CreditTopupProduct{}, &model.CreditTopupOrder{}); err != nil {

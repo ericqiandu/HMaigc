@@ -22,4 +22,17 @@ describe("积分商城生产契约", () => {
         expect(api).toContain('"Idempotency-Key": idempotencyKey');
         expect(api).toContain('api.get("/credit-store")');
     });
+
+    test("保留交付稿的三分区导航、惊喜横幅与卡片视觉结构", () => {
+        const page = readFileSync(resolve(root, "src/pages/credit-store/index.tsx"), "utf8");
+        const styles = readFileSync(resolve(root, "src/pages/credit-store/credit-store.css"), "utf8");
+        expect(page).toContain('import bannerImage from "./assets/banner-surprise.jpg"');
+        expect(page).toContain('{ key: "surprise", label: "惊喜专区", icon: "🎁" }');
+        expect(page).toContain('{ key: "general", label: "通用积分卡", icon: "⚡" }');
+        expect(page).toContain('{ key: "model", label: "专属模型卡", icon: "🎲" }');
+        expect(page).toContain('className="points-surprise-grid"');
+        expect(page).toContain('className="points-general-grid"');
+        expect(styles).toContain("background: #070b11");
+        expect(styles).toContain("position: sticky");
+    });
 });
