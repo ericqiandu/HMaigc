@@ -1,14 +1,27 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+    CheckoutRequestCoordinator,
     applyCheckoutTransaction,
+    checkoutPaymentExpiresAt,
+    checkoutRequestFailed,
+    checkoutRequestFailedForToken,
+    checkoutRequestSucceeded,
+    checkoutRequestSucceededForToken,
     checkoutDiscountOriginalPrice,
+    checkoutTerminalPresentation,
     checkoutRemainingSeconds,
     checkoutServerOffsetMs,
     checkoutSummary,
+    createCheckoutLoadState,
+    hasCheckoutToken,
     mergeCheckoutResponse,
     mergePaymentCheckout,
+    resolveCheckoutProviderSelection,
     restoreActiveCheckoutPayment,
+    selectCheckoutProvider,
+    shouldContinueCheckoutPolling,
+    visibleCheckoutForToken,
     type CheckoutRequestState,
 } from "../src/pages/payment/payment-checkout-domain";
 import type { MembershipPaymentCheckout, CreditTopupPaymentCheckout } from "../src/services/api/payment";
@@ -46,8 +59,12 @@ describe("payment checkout domain", () => {
             audience: "team",
             billingCycle: "year",
             seats: 3,
+            unitPriceCents: 2500,
             actualPriceCents: 7500,
+            originalUnitPriceCents: 3500,
             originalPriceCents: 10500,
+            discountCents: 3000,
+            creditsPerPeriod: 500,
             totalCredits: 1500,
         });
         expect("creditTopupSummary" in membershipCheckout).toBe(false);
@@ -182,5 +199,240 @@ describe("payment checkout domain", () => {
             totalCredits: 1250,
         });
         expect("membershipSummary" in topup).toBe(false);
+    });
+
+    test("zero-valued credit topup facts remain valid read-only checkout history", () => {
+        const zeroTopup = {
+            orderType: "credit_topup",
+            orderNumber: "C202608090002",
+            orderStatus: "cancelled",
+            checkoutStatus: "consumed",
+            currency: "CNY",
+            serverNow: "2026-08-09T04:00:00.000Z",
+            expiresAt: "2026-08-09T04:02:00.000Z",
+            providers: [],
+            creditTopupSummary: {
+                actualPriceCents: 0,
+                totalMicrocredits: 0,
+            },
+        } satisfies CreditTopupPaymentCheckout;
+
+        expect(checkoutSummary(zeroTopup)).toEqual({
+            kind: "credit_topup",
+            title: "积分充值",
+            actualPriceCents: 0,
+            totalCredits: 0,
+        });
+    });
+
+    test("team totals are validated against frozen per-seat facts", () => {
+        expect(() =>
+            checkoutSummary({
+                ...membershipCheckout,
+                membershipSummary: {
+                    ...membershipCheckout.membershipSummary,
+                    totalCreditsPerPeriod: 1499,
+                },
+            }),
+        ).toThrow("团队积分合计与冻结单席积分不一致");
+
+        expect(() =>
+            checkoutSummary({
+                ...membershipCheckout,
+                membershipSummary: {
+                    ...membershipCheckout.membershipSummary,
+                    actualPriceCents: 7501,
+                },
+            }),
+        ).toThrow("团队实付金额无法还原为单席冻结金额");
+    });
+
+    test("a transient refresh failure preserves the loaded summary and active QR", () => {
+        const activeCheckout: MembershipPaymentCheckout = {
+            ...membershipCheckout,
+            activeTransaction: {
+                provider: "wechat",
+                status: "pending",
+                codeUrl: "https://qr.example.com/active-payment",
+                expiresAt: "2026-08-09T04:01:30.000Z",
+            },
+        };
+        const loaded = checkoutRequestSucceeded({ checkout: null, initialError: "", refreshError: "", token: "checkout-token-a" }, activeCheckout);
+        const failed = checkoutRequestFailed(loaded, "网络暂时不可用");
+
+        expect(failed).toEqual({
+            checkout: activeCheckout,
+            initialError: "",
+            refreshError: "网络暂时不可用",
+            token: "checkout-token-a",
+        });
+        if (!failed.checkout) throw new Error("expected preserved checkout");
+        expect(checkoutSummary(failed.checkout)).toMatchObject({ title: "团队版", totalCredits: 1500 });
+        expect(failed.checkout.activeTransaction?.codeUrl).toBe("https://qr.example.com/active-payment");
+        expect(checkoutRequestSucceeded(failed, activeCheckout).refreshError).toBe("");
+
+        const initialFailure = checkoutRequestFailed({ checkout: null, initialError: "", refreshError: "", token: "checkout-token-a" }, "结算凭证无效");
+        expect(initialFailure).toEqual({ checkout: null, initialError: "结算凭证无效", refreshError: "", token: "checkout-token-a" });
+    });
+
+    test("a checkout loaded for token A is never visible on token B's first render", () => {
+        const state = checkoutRequestSucceeded(createCheckoutLoadState("checkout-token-a"), membershipCheckout);
+
+        expect(visibleCheckoutForToken(state, "checkout-token-a")).toBe(membershipCheckout);
+        expect(visibleCheckoutForToken(state, "checkout-token-b")).toBeNull();
+        expect(createCheckoutLoadState("checkout-token-b")).toEqual({
+            checkout: null,
+            initialError: "",
+            refreshError: "",
+            token: "checkout-token-b",
+        });
+    });
+
+    test("only a non-whitespace checkout token enables loading and retry", () => {
+        expect(hasCheckoutToken("")).toBe(false);
+        expect(hasCheckoutToken("   \t")).toBe(false);
+        expect(hasCheckoutToken(" checkout-token ")).toBe(true);
+    });
+
+    test("a queued token A state update cannot bind its checkout or error to token B", () => {
+        const tokenB = createCheckoutLoadState("checkout-token-b");
+
+        expect(checkoutRequestSucceededForToken(tokenB, "checkout-token-a", membershipCheckout)).toBe(tokenB);
+        expect(checkoutRequestFailedForToken(tokenB, "checkout-token-a", "token A failed")).toBe(tokenB);
+        expect(checkoutRequestSucceededForToken(tokenB, "checkout-token-b", membershipCheckout).checkout).toBe(membershipCheckout);
+        expect(checkoutRequestFailedForToken(tokenB, "checkout-token-b", "token B failed").initialError).toBe("token B failed");
+    });
+
+    test("an active transaction locks its provider even after the provider leaves the current list", () => {
+        const activeCheckout: MembershipPaymentCheckout = {
+            ...membershipCheckout,
+            providers: ["wechat"],
+            activeTransaction: {
+                provider: "alipay",
+                status: "pending",
+                codeUrl: "https://qr.example.com/alipay-payment",
+                expiresAt: "2026-08-09T04:01:30.000Z",
+            },
+        };
+
+        expect(resolveCheckoutProviderSelection(activeCheckout, "wechat")).toEqual({
+            options: ["alipay", "wechat"],
+            selected: "alipay",
+            locked: true,
+            error: "",
+        });
+        expect(selectCheckoutProvider(activeCheckout, "wechat")).toBe("alipay");
+        expect(checkoutPaymentExpiresAt(activeCheckout)).toBe("2026-08-09T04:01:30.000Z");
+
+        expect(resolveCheckoutProviderSelection({ ...membershipCheckout, providers: [] }, null)).toEqual({
+            options: [],
+            selected: null,
+            locked: false,
+            error: "当前没有可用的支付渠道，请稍后重试或联系管理员。",
+        });
+    });
+
+    test("every server terminal fact has Chinese copy, clears payment actions, and stops polling", () => {
+        const cases: Array<{
+            checkout: MembershipPaymentCheckout;
+            title: string;
+        }> = [
+            { checkout: { ...membershipCheckout, orderStatus: "paid", checkoutStatus: "consumed" }, title: "支付成功" },
+            { checkout: { ...membershipCheckout, orderStatus: "refunded", checkoutStatus: "consumed" }, title: "订单已退款" },
+            { checkout: { ...membershipCheckout, orderStatus: "cancelled" }, title: "订单已关闭" },
+            { checkout: { ...membershipCheckout, checkoutStatus: "expired" }, title: "收银台已过期" },
+            { checkout: { ...membershipCheckout, checkoutStatus: "consumed" }, title: "收银台已关闭" },
+        ];
+
+        for (const item of cases) {
+            const presentation = checkoutTerminalPresentation(item.checkout);
+            expect(presentation?.title).toBe(item.title);
+            expect(presentation?.description).not.toMatch(/pending|paid|cancelled|refunded|active|expired|consumed/);
+            expect(presentation?.showPaymentControls).toBe(false);
+            expect(shouldContinueCheckoutPolling(item.checkout)).toBe(false);
+        }
+
+        expect(checkoutTerminalPresentation(membershipCheckout)).toBeNull();
+        expect(shouldContinueCheckoutPolling(membershipCheckout)).toBe(true);
+    });
+
+    test("the request coordinator prevents overlapping GETs and same-tick duplicate POSTs", () => {
+        const coordinator = new CheckoutRequestCoordinator();
+        coordinator.activate("checkout-token-a");
+
+        const firstLoad = coordinator.beginLoad("checkout-token-a");
+        if (!firstLoad) throw new Error("expected load lease");
+        expect(coordinator.beginLoad("checkout-token-a")).toBeNull();
+
+        const firstSubmit = coordinator.beginSubmission("checkout-token-a");
+        if (!firstSubmit) throw new Error("expected submission lease");
+        expect(coordinator.beginSubmission("checkout-token-a")).toBeNull();
+
+        expect(coordinator.completeLoad(firstLoad)).toBe(1);
+        expect(coordinator.completeSubmission(firstSubmit)).toBe(2);
+    });
+
+    test("a POST that completes before an older GET keeps its QR after the GET returns", () => {
+        const coordinator = new CheckoutRequestCoordinator();
+        coordinator.activate("checkout-token-a");
+        const olderLoad = coordinator.beginLoad("checkout-token-a");
+        const submission = coordinator.beginSubmission("checkout-token-a");
+        if (!olderLoad || !submission) throw new Error("expected overlapping GET and POST leases");
+        expect(coordinator.beginLoad("checkout-token-a")).toBeNull();
+
+        const submissionRevision = coordinator.completeSubmission(submission);
+        if (submissionRevision === null) throw new Error("expected accepted submission");
+        const transaction = {
+            provider: "wechat",
+            status: "pending",
+            codeUrl: "https://qr.example.com/new-payment",
+            expiresAt: membershipCheckout.expiresAt,
+        } as const;
+        const afterPost = applyCheckoutTransaction({ checkout: membershipCheckout, revision: 0 }, transaction, submissionRevision);
+
+        const loadRevision = coordinator.completeLoad(olderLoad);
+        if (loadRevision === null) throw new Error("expected accepted load");
+        const afterOlderGet = mergeCheckoutResponse(afterPost, membershipCheckout, loadRevision);
+        expect(loadRevision).toBe(1);
+        expect(submissionRevision).toBe(2);
+        expect(afterOlderGet.checkout.activeTransaction).toEqual(transaction);
+    });
+
+    test("token switches and disposal reject old GET and POST responses without touching the new lifecycle", () => {
+        const coordinator = new CheckoutRequestCoordinator();
+        coordinator.activate("checkout-token-a");
+        const oldLoad = coordinator.beginLoad("checkout-token-a");
+        const oldSubmit = coordinator.beginSubmission("checkout-token-a");
+        if (!oldLoad || !oldSubmit) throw new Error("expected first lifecycle leases");
+
+        coordinator.activate("checkout-token-b");
+        const newLoad = coordinator.beginLoad("checkout-token-b");
+        if (!newLoad) throw new Error("expected new lifecycle lease");
+        expect(coordinator.completeLoad(oldLoad)).toBeNull();
+        expect(coordinator.completeSubmission(oldSubmit)).toBeNull();
+        expect(coordinator.releaseLoad(oldLoad)).toBe(false);
+        expect(coordinator.releaseSubmission(oldSubmit)).toBe(false);
+        expect(coordinator.beginLoad("checkout-token-b")).toBeNull();
+        expect(coordinator.completeLoad(newLoad)).toBe(1);
+
+        const pending = coordinator.beginLoad("checkout-token-b");
+        if (!pending) throw new Error("expected current lifecycle lease");
+        coordinator.dispose();
+        expect(coordinator.completeLoad(pending)).toBeNull();
+        expect(coordinator.beginLoad("checkout-token-b")).toBeNull();
+    });
+
+    test("a failed request releases only its own in-flight slot", () => {
+        const coordinator = new CheckoutRequestCoordinator();
+        coordinator.activate("checkout-token-a");
+        const load = coordinator.beginLoad("checkout-token-a");
+        const submission = coordinator.beginSubmission("checkout-token-a");
+        if (!load || !submission) throw new Error("expected active leases");
+
+        expect(coordinator.releaseLoad(load)).toBe(true);
+        expect(coordinator.beginLoad("checkout-token-a")).toBeNull();
+        expect(coordinator.releaseSubmission(submission)).toBe(true);
+        expect(coordinator.beginLoad("checkout-token-a")).not.toBeNull();
+        expect(coordinator.beginSubmission("checkout-token-a")).not.toBeNull();
     });
 });

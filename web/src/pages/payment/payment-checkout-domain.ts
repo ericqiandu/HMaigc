@@ -7,8 +7,12 @@ export type CheckoutSummary =
           audience: "personal" | "team";
           billingCycle: "month" | "year";
           seats: number;
+          unitPriceCents: number;
           actualPriceCents: number;
+          originalUnitPriceCents: number;
           originalPriceCents: number;
+          discountCents: number;
+          creditsPerPeriod: number;
           totalCredits: number;
       }
     | {
@@ -27,6 +31,117 @@ export type CheckoutRequestState = {
     checkout: PaymentCheckout;
     revision: number;
 };
+
+export type CheckoutLoadState = {
+    checkout: PaymentCheckout | null;
+    initialError: string;
+    refreshError: string;
+    token: string;
+};
+
+export type CheckoutProviderSelection = {
+    options: PaymentProvider[];
+    selected: PaymentProvider | null;
+    locked: boolean;
+    error: string;
+};
+
+export type CheckoutTerminalPresentation = {
+    title: string;
+    description: string;
+    actionLabel: string;
+    tone: "success" | "neutral" | "warning";
+    showPaymentControls: false;
+};
+
+export type CheckoutRequestLease = {
+    generation: number;
+    token: string;
+    kind: "load" | "submission";
+    id: number;
+    revision: number;
+};
+
+export class CheckoutRequestCoordinator {
+    private active = false;
+    private generation = 0;
+    private token = "";
+    private nextLeaseID = 0;
+    private revision = 0;
+    private loadLeaseID: number | null = null;
+    private submissionLeaseID: number | null = null;
+
+    activate(token: string): void {
+        if (!hasCheckoutToken(token)) throw new Error("支付链接缺少结算凭证");
+        this.generation += 1;
+        this.active = true;
+        this.token = token;
+        this.revision = 0;
+        this.loadLeaseID = null;
+        this.submissionLeaseID = null;
+    }
+
+    dispose(): void {
+        this.generation += 1;
+        this.active = false;
+        this.token = "";
+        this.loadLeaseID = null;
+        this.submissionLeaseID = null;
+    }
+
+    beginLoad(token: string): CheckoutRequestLease | null {
+        if (!this.active || token !== this.token || this.loadLeaseID !== null || this.submissionLeaseID !== null) return null;
+        this.revision += 1;
+        const lease = this.createLease("load", this.revision);
+        this.loadLeaseID = lease.id;
+        return lease;
+    }
+
+    completeLoad(lease: CheckoutRequestLease): number | null {
+        if (!this.isCurrentLease(lease, "load", this.loadLeaseID)) return null;
+        this.loadLeaseID = null;
+        return lease.revision;
+    }
+
+    releaseLoad(lease: CheckoutRequestLease): boolean {
+        if (!this.isCurrentLease(lease, "load", this.loadLeaseID)) return false;
+        this.loadLeaseID = null;
+        return true;
+    }
+
+    beginSubmission(token: string): CheckoutRequestLease | null {
+        if (!this.active || token !== this.token || this.submissionLeaseID !== null) return null;
+        const lease = this.createLease("submission", 0);
+        this.submissionLeaseID = lease.id;
+        return lease;
+    }
+
+    completeSubmission(lease: CheckoutRequestLease): number | null {
+        if (!this.isCurrentLease(lease, "submission", this.submissionLeaseID)) return null;
+        this.submissionLeaseID = null;
+        this.revision += 1;
+        return this.revision;
+    }
+
+    releaseSubmission(lease: CheckoutRequestLease): boolean {
+        if (!this.isCurrentLease(lease, "submission", this.submissionLeaseID)) return false;
+        this.submissionLeaseID = null;
+        return true;
+    }
+
+    private createLease(kind: CheckoutRequestLease["kind"], revision: number): CheckoutRequestLease {
+        this.nextLeaseID += 1;
+        return { generation: this.generation, token: this.token, kind, id: this.nextLeaseID, revision };
+    }
+
+    private isCurrentLease(lease: CheckoutRequestLease, kind: CheckoutRequestLease["kind"], activeLeaseID: number | null): boolean {
+        return this.active && lease.kind === kind && lease.generation === this.generation && lease.token === this.token && lease.id === activeLeaseID;
+    }
+}
+
+export function hasCheckoutToken(token: string): boolean {
+    return token.trim() !== "";
+}
 
 const orderStatusRank: Record<PaymentOrderStatus, number> = {
     pending: 0,
@@ -55,6 +170,32 @@ export function checkoutServerOffsetMs(serverNow: string, receivedAtMs: number):
 export function checkoutRemainingSeconds(expiresAt: string, serverOffsetMs: number, clientNowMs: number): number {
     if (!Number.isFinite(serverOffsetMs) || !Number.isFinite(clientNowMs)) throw new Error("收银台计时基准无效");
     return Math.max(0, Math.ceil((parseCheckoutTime(expiresAt, "收银台过期时间") - clientNowMs - serverOffsetMs) / 1000));
+}
+
+export function createCheckoutLoadState(token: string): CheckoutLoadState {
+    return { checkout: null, initialError: "", refreshError: "", token };
+}
+
+export function visibleCheckoutForToken(state: CheckoutLoadState, token: string): PaymentCheckout | null {
+    return state.token === token ? state.checkout : null;
+}
+
+export function checkoutRequestSucceeded(current: CheckoutLoadState, checkout: PaymentCheckout): CheckoutLoadState {
+    return { ...current, checkout, initialError: "", refreshError: "" };
+}
+
+export function checkoutRequestFailed(current: CheckoutLoadState, reason: string): CheckoutLoadState {
+    const message = reason.trim() || "支付订单加载失败";
+    if (current.checkout) return { ...current, refreshError: message };
+    return { checkout: null, initialError: message, refreshError: "", token: current.token };
+}
+
+export function checkoutRequestSucceededForToken(current: CheckoutLoadState, token: string, checkout: PaymentCheckout): CheckoutLoadState {
+    return current.token === token ? checkoutRequestSucceeded(current, checkout) : current;
+}
+
+export function checkoutRequestFailedForToken(current: CheckoutLoadState, token: string, reason: string): CheckoutLoadState {
+    return current.token === token ? checkoutRequestFailed(current, reason) : current;
 }
 
 export function mergePaymentCheckout(current: PaymentCheckout, incoming: PaymentCheckout): PaymentCheckout {
@@ -106,19 +247,147 @@ export function restoreActiveCheckoutPayment(checkout: PaymentCheckout): Restore
     return { provider: transaction.provider, transaction };
 }
 
-export function checkoutSummary(checkout: PaymentCheckout): CheckoutSummary {
-    if (checkout.orderType === "membership") {
+export function resolveCheckoutProviderSelection(checkout: PaymentCheckout, requested: PaymentProvider | null): CheckoutProviderSelection {
+    const restored = restoreActiveCheckoutPayment(checkout);
+    if (restored) {
         return {
-            kind: "membership",
-            title: checkout.membershipSummary.name,
-            audience: checkout.membershipSummary.audience,
-            billingCycle: checkout.membershipSummary.billingCycle,
-            seats: checkout.membershipSummary.seats,
-            actualPriceCents: checkout.membershipSummary.actualPriceCents,
-            originalPriceCents: checkout.membershipSummary.originalPriceCents,
-            totalCredits: checkout.membershipSummary.totalCreditsPerPeriod,
+            options: [restored.provider, ...checkout.providers.filter((candidate) => candidate !== restored.provider)],
+            selected: restored.provider,
+            locked: true,
+            error: "",
         };
     }
+    const options = [...new Set(checkout.providers)];
+    if (options.length === 0) {
+        return {
+            options,
+            selected: null,
+            locked: false,
+            error: "当前没有可用的支付渠道，请稍后重试或联系管理员。",
+        };
+    }
+    return {
+        options,
+        selected: requested && options.includes(requested) ? requested : options[0],
+        locked: false,
+        error: "",
+    };
+}
+
+export function selectCheckoutProvider(checkout: PaymentCheckout, requested: PaymentProvider): PaymentProvider {
+    const selection = resolveCheckoutProviderSelection(checkout, requested);
+    if (selection.locked && selection.selected) return selection.selected;
+    if (!selection.options.includes(requested)) throw new Error("所选支付渠道当前不可用");
+    return requested;
+}
+
+export function checkoutPaymentExpiresAt(checkout: PaymentCheckout): string {
+    return checkout.activeTransaction?.expiresAt ?? checkout.expiresAt;
+}
+
+export function shouldContinueCheckoutPolling(checkout: PaymentCheckout): boolean {
+    return checkout.orderStatus === "pending" && checkout.checkoutStatus === "active";
+}
+
+export function checkoutTerminalPresentation(checkout: PaymentCheckout): CheckoutTerminalPresentation | null {
+    if (checkout.orderStatus === "refunded") {
+        return {
+            title: "订单已退款",
+            description: "本订单的款项状态已经更新，可返回订单入口查看记录。",
+            actionLabel: "查看订单记录",
+            tone: "neutral",
+            showPaymentControls: false,
+        };
+    }
+    if (checkout.orderStatus === "paid") {
+        return {
+            title: "支付成功",
+            description: checkout.orderType === "membership" ? "会员权益已激活，可返回会员中心查看。" : "积分已到账，可返回积分商城查看。",
+            actionLabel: "查看到账结果",
+            tone: "success",
+            showPaymentControls: false,
+        };
+    }
+    if (checkout.orderStatus === "cancelled") {
+        return {
+            title: "订单已关闭",
+            description: "本订单已经关闭，无法继续付款，请返回订单入口重新下单。",
+            actionLabel: "返回订单入口",
+            tone: "warning",
+            showPaymentControls: false,
+        };
+    }
+    if (checkout.checkoutStatus === "expired") {
+        return {
+            title: "收银台已过期",
+            description: "本次付款链接已经过期，请返回订单入口重新获取付款链接。",
+            actionLabel: "返回订单入口",
+            tone: "warning",
+            showPaymentControls: false,
+        };
+    }
+    if (checkout.checkoutStatus === "consumed") {
+        return {
+            title: "收银台已关闭",
+            description: "本次付款链接已经关闭，请返回订单入口查看订单状态。",
+            actionLabel: "返回订单入口",
+            tone: "neutral",
+            showPaymentControls: false,
+        };
+    }
+    return null;
+}
+
+function requireSafeNonNegativeInteger(value: number, field: string): void {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${field}必须是安全的非负整数`);
+}
+
+function requireSafePositiveInteger(value: number, field: string): void {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${field}必须是安全的正整数`);
+}
+
+function checkedProduct(left: number, right: number, field: string): number {
+    const value = left * right;
+    if (!Number.isSafeInteger(value)) throw new Error(`${field}超出安全整数范围`);
+    return value;
+}
+
+function exactUnitValue(total: number, seats: number, field: string): number {
+    if (total % seats !== 0) throw new Error(field);
+    return total / seats;
+}
+
+export function checkoutSummary(checkout: PaymentCheckout): CheckoutSummary {
+    if (checkout.orderType === "membership") {
+        const facts = checkout.membershipSummary;
+        requireSafePositiveInteger(facts.seats, "会员席位数");
+        requireSafePositiveInteger(facts.actualPriceCents, "会员实付金额");
+        requireSafeNonNegativeInteger(facts.originalPriceCents, "会员原价");
+        requireSafeNonNegativeInteger(facts.creditsPerPeriod, "会员单席积分");
+        requireSafeNonNegativeInteger(facts.totalCreditsPerPeriod, "会员积分合计");
+        if (facts.audience === "personal" && facts.seats !== 1) throw new Error("个人会员席位必须为 1");
+        if (facts.audience === "team" && facts.seats < 2) throw new Error("团队会员席位必须至少为 2");
+        const totalCredits = checkedProduct(facts.creditsPerPeriod, facts.seats, "会员积分合计");
+        if (totalCredits !== facts.totalCreditsPerPeriod) throw new Error(`${facts.audience === "team" ? "团队" : "个人"}积分合计与冻结单席积分不一致`);
+        const unitPriceCents = exactUnitValue(facts.actualPriceCents, facts.seats, `${facts.audience === "team" ? "团队" : "个人"}实付金额无法还原为单席冻结金额`);
+        const originalUnitPriceCents = exactUnitValue(facts.originalPriceCents, facts.seats, `${facts.audience === "team" ? "团队" : "个人"}原价无法还原为单席冻结金额`);
+        return {
+            kind: "membership",
+            title: facts.name,
+            audience: facts.audience,
+            billingCycle: facts.billingCycle,
+            seats: facts.seats,
+            unitPriceCents,
+            actualPriceCents: facts.actualPriceCents,
+            originalUnitPriceCents,
+            originalPriceCents: facts.originalPriceCents,
+            discountCents: facts.originalPriceCents > facts.actualPriceCents ? facts.originalPriceCents - facts.actualPriceCents : 0,
+            creditsPerPeriod: facts.creditsPerPeriod,
+            totalCredits: facts.totalCreditsPerPeriod,
+        };
+    }
+    requireSafeNonNegativeInteger(checkout.creditTopupSummary.actualPriceCents, "积分充值实付金额");
+    requireSafeNonNegativeInteger(checkout.creditTopupSummary.totalMicrocredits, "积分充值数量");
     return {
         kind: "credit_topup",
         title: "积分充值",

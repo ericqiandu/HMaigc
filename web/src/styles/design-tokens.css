@@ -82,6 +82,8 @@
     --status-success: #248a3d;
     --status-warning: #b65c00;
     --status-danger: #d70015;
+    --qr-foreground: #000000;
+    --qr-background: #ffffff;
     --overlay-light: rgb(0 0 0 / 12%);
     --overlay-default: rgb(0 0 0 / 28%);
     --overlay-heavy: rgb(0 0 0 / 48%);
