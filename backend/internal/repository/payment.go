@@ -42,7 +42,7 @@ type PaymentWebhookFilter struct {
 func (r *Repository) SavePaymentCheckoutSession(session *model.PaymentCheckoutSession) error {
 	return r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "order_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"token_hash", "status", "expires_at", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"order_type", "token_hash", "status", "expires_at", "updated_at"}),
 	}).Create(session).Error
 }
 
@@ -129,8 +129,17 @@ func (r *Repository) FulfillPaymentTransaction(input PaymentFulfillment) (bool, 
 		if result.RowsAffected != 1 {
 			return ErrPaymentTransactionNotPayable
 		}
-		if err := activateMembershipOrderTx(tx, transaction.OrderID, "", string(transaction.Provider), input.ProviderTradeNo, "支付渠道回调自动开通", input.Activation, now); err != nil {
-			return err
+		switch transaction.OrderType {
+		case model.PaymentOrderMembership:
+			if err := activateMembershipOrderTx(tx, transaction.OrderID, "", string(transaction.Provider), input.ProviderTradeNo, "支付渠道回调自动开通", input.Activation, now); err != nil {
+				return err
+			}
+		case model.PaymentOrderCreditTopup:
+			if err := fulfillCreditTopupOrderTx(tx, transaction.OrderID, string(transaction.Provider), input.ProviderTradeNo, now); err != nil {
+				return err
+			}
+		default:
+			return errors.New("payment transaction has unsupported order type")
 		}
 		if err := tx.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", transaction.OrderID).Updates(map[string]interface{}{
 			"status": model.PaymentCheckoutConsumed, "updated_at": now,

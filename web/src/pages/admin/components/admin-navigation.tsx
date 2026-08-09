@@ -74,6 +74,7 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
         label: "运营与内容",
         items: [
             { path: "/admin/credit-operations", label: "积分管理", description: "积分规则、人工调账与异常计费", icon: Coins },
+            { path: "/admin/credit-store", label: "积分商城", description: "积分套餐、限购库存与充值订单", icon: BadgeDollarSign },
             { path: "/admin/redemption-codes", label: "兑换码", description: "生成、导出与查看兑换码批次", icon: TicketCheck },
             { path: "/admin/announcements", label: "系统公告", description: "发布、关闭与查看历史公告", icon: BellRing },
             { path: "/admin/settings/legal", label: "法律与协议", description: "用户协议、隐私政策与公开内容", icon: ScrollText },

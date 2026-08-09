@@ -9,6 +9,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const navigate = useNavigate();
     const hideChrome = pathname === "/"
         || pathname === "/membership"
+        || pathname === "/credit-store"
         || pathname.startsWith("/admin")
         || /^\/canvas\/[^/]+/.test(pathname);
 

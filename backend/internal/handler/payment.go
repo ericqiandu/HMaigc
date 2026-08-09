@@ -59,6 +59,20 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, result)
 	})
 
+	r.POST("/credit-store/orders/:id/checkout", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.CreateCreditTopupCheckout(user, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
 	r.GET("/payments/checkout/:token", func(c *gin.Context) {
 		result, err := svc.PaymentCheckout(c.Param("token"))
 		if err != nil {

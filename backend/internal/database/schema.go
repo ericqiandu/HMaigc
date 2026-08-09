@@ -44,6 +44,8 @@ func Models() []any {
 		&model.TeamCreditAccount{},
 		&model.TeamCreditLedgerEntry{},
 		&model.MembershipOrder{},
+		&model.CreditTopupProduct{},
+		&model.CreditTopupOrder{},
 		&model.MembershipSubscription{},
 		&model.InvoiceRequest{},
 		&model.PaymentCheckoutSession{},

@@ -27,7 +27,12 @@ const paymentResponseLimit = 256 << 10
 
 var paymentHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
-func createProviderPayment(transaction *model.PaymentTransaction, order *model.MembershipOrder, channel paymentChannelSettingValue) (string, error) {
+type paymentOrderReference struct {
+	OrderNumber string
+	Description string
+}
+
+func createProviderPayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
 	switch transaction.Provider {
 	case model.PaymentProviderWechat:
 		return createWechatNativePayment(transaction, order, channel)
@@ -38,7 +43,7 @@ func createProviderPayment(transaction *model.PaymentTransaction, order *model.M
 	}
 }
 
-func createWechatNativePayment(transaction *model.PaymentTransaction, order *model.MembershipOrder, channel paymentChannelSettingValue) (string, error) {
+func createWechatNativePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
 	if transaction.ExpiresAt == nil {
 		return "", errors.New("支付交易缺少过期时间")
 	}
@@ -54,7 +59,7 @@ func createWechatNativePayment(transaction *model.PaymentTransaction, order *mod
 			Currency string `json:"currency"`
 		} `json:"amount"`
 	}{
-		AppID: channel.AppID, MerchantID: channel.MerchantID, Description: "会员订单 " + order.OrderNumber,
+		AppID: channel.AppID, MerchantID: channel.MerchantID, Description: order.Description,
 		MerchantOrder: transaction.MerchantOrderNo, NotifyURL: channel.NotifyURL,
 		ExpirationTime: transaction.ExpiresAt.Format(time.RFC3339),
 	}
@@ -107,14 +112,14 @@ func createWechatNativePayment(transaction *model.PaymentTransaction, order *mod
 	return response.CodeURL, nil
 }
 
-func createAlipayPrecreatePayment(transaction *model.PaymentTransaction, order *model.MembershipOrder, channel paymentChannelSettingValue) (string, error) {
+func createAlipayPrecreatePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
 	if transaction.Currency != "CNY" {
 		return "", fmt.Errorf("支付宝当面付仅支持 CNY，当前币种为 %s", transaction.Currency)
 	}
 	bizContent, err := json.Marshal(map[string]string{
 		"out_trade_no":    transaction.MerchantOrderNo,
 		"total_amount":    formatAmountCents(transaction.AmountCents),
-		"subject":         "会员订单 " + order.OrderNumber,
+		"subject":         order.Description,
 		"timeout_express": "15m",
 	})
 	if err != nil {

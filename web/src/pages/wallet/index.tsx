@@ -282,6 +282,7 @@ function ledgerTypeMeta(type: CreditLedgerEntry["type"]) {
         signup_bonus: { label: "注册奖励", tagColor: "gold", icon: <Sparkles className="size-4" />, iconClass: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
         checkin_bonus: { label: "签到奖励", tagColor: "cyan", icon: <CalendarCheck className="size-4" />, iconClass: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-300" },
         membership_grant: { label: "会员积分", tagColor: "purple", icon: <Sparkles className="size-4" />, iconClass: "bg-violet-500/10 text-violet-600 dark:text-violet-300" },
+        topup: { label: "积分商城", tagColor: "success", icon: <ArrowDownLeft className="size-4" />, iconClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
         referral_inviter_reward: { label: "邀请奖励", tagColor: "gold", icon: <Sparkles className="size-4" />, iconClass: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
         referral_invitee_reward: { label: "受邀奖励", tagColor: "cyan", icon: <Sparkles className="size-4" />, iconClass: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-300" },
     } as const;
@@ -295,6 +296,7 @@ function ledgerTitle(entry: CreditLedgerEntry) {
     if (entry.type === "signup_bonus") return "新用户注册奖励";
     if (entry.type === "checkin_bonus") return "每日签到奖励";
     if (entry.type === "membership_grant") return "会员套餐积分";
+    if (entry.type === "topup") return "积分商城充值";
     if (entry.type === "referral_inviter_reward") return "邀请好友首购会员奖励";
     if (entry.type === "referral_invitee_reward") return "受邀首购会员奖励";
     return entry.note || "积分调整";

@@ -196,6 +196,7 @@ func (r *Repository) CreditLedger(userID string, entryType string, limit int, of
 			model.CreditLedgerRedeem, model.CreditLedgerAdminGrant, model.CreditLedgerAdminAdjust,
 			model.CreditLedgerSignupBonus, model.CreditLedgerCheckinBonus,
 			model.CreditLedgerMembership, model.CreditLedgerReferralInviter, model.CreditLedgerReferralInvitee,
+			model.CreditLedgerTopup,
 		})
 	case "consume":
 		query = query.Where("type = ?", model.CreditLedgerConsume)

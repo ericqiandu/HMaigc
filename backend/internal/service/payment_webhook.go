@@ -168,13 +168,18 @@ func (s *Service) fulfillVerifiedPayment(provider model.PaymentProvider, eventID
 	if transaction.ExpiresAt != nil && paidAt.After(*transaction.ExpiresAt) {
 		return paymentWebhookRequestError("支付时间晚于本地交易有效期")
 	}
-	order, err := s.repo.MembershipOrder(transaction.OrderID)
-	if err != nil {
-		return err
-	}
-	activation, err := s.membershipFulfillmentForOrder(order, "", paidAt)
-	if err != nil {
-		return err
+	var activation repository.MembershipActivation
+	if transaction.OrderType == model.PaymentOrderMembership {
+		order, lookupErr := s.repo.MembershipOrder(transaction.OrderID)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		activation, err = s.membershipFulfillmentForOrder(order, "", paidAt)
+		if err != nil {
+			return err
+		}
+	} else if transaction.OrderType != model.PaymentOrderCreditTopup {
+		return errors.New("支付交易订单类型无效")
 	}
 	digest := sha256.Sum256(body)
 	now := time.Now()

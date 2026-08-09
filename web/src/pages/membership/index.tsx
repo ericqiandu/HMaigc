@@ -240,7 +240,7 @@ export default function MembershipPage() {
                         cycle={cycle}
                         onAudienceChange={selectAudience}
                         onCycleChange={setCycle}
-                        onOpenWallet={() => (user ? navigate("/wallet") : navigate("/login?next=%2Fwallet"))}
+                        onOpenWallet={() => (user ? navigate("/credit-store") : navigate("/login?next=%2Fcredit-store"))}
                         onPurchase={beginPurchase}
                         onSeatsChange={(plan, seats) => setTeamSeats((current) => ({ ...current, [plan.id]: clampSeats(plan, seats) }))}
                         plans={visiblePlans}

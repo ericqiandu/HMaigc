@@ -30,6 +30,7 @@ const (
 // PaymentCheckoutSession 保存统一收银台入口的哈希令牌，原始令牌只返回给创建者。
 type PaymentCheckoutSession struct {
 	ID        string                `json:"id" gorm:"primaryKey;size:36"`
+	OrderType PaymentOrderType      `json:"orderType" gorm:"index;size:24;default:membership"`
 	OrderID   string                `json:"orderId" gorm:"uniqueIndex;size:36"`
 	UserID    string                `json:"userId" gorm:"index;size:36"`
 	TokenHash string                `json:"-" gorm:"uniqueIndex;size:64"`
@@ -41,6 +42,7 @@ type PaymentCheckoutSession struct {
 
 type PaymentTransaction struct {
 	ID              string                   `json:"id" gorm:"primaryKey;size:36"`
+	OrderType       PaymentOrderType         `json:"orderType" gorm:"index;size:24;default:membership"`
 	OrderID         string                   `json:"orderId" gorm:"index;size:36"`
 	UserID          string                   `json:"userId" gorm:"index;size:36"`
 	Provider        PaymentProvider          `json:"provider" gorm:"index;size:24"`

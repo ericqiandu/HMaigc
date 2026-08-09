@@ -1,0 +1,155 @@
+.credit-store-page {
+    --credit-store-surface: color-mix(in srgb, var(--background) 94%, var(--foreground) 6%);
+    --credit-store-surface-strong: color-mix(in srgb, var(--background) 88%, var(--foreground) 12%);
+    --credit-store-border: color-mix(in srgb, var(--foreground) 14%, transparent);
+    --credit-store-muted: color-mix(in srgb, var(--foreground) 58%, transparent);
+    min-height: 100vh;
+    padding: 80px max(24px, calc((100vw - 1300px) / 2)) 96px;
+    background: var(--background);
+    color: var(--foreground);
+}
+
+.credit-store-header {
+    position: fixed;
+    z-index: 30;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    align-items: center;
+    min-height: 64px;
+    padding: 8px 24px;
+    background: color-mix(in srgb, var(--background) 88%, transparent);
+    backdrop-filter: blur(18px);
+}
+
+.credit-store-page-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.credit-store-back,
+.credit-store-tab,
+.credit-store-card-action,
+.credit-store-retry {
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+}
+
+.credit-store-back {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--credit-store-muted);
+}
+
+.credit-store-back:hover { background: var(--credit-store-surface); color: var(--foreground); }
+.credit-store-back-icon { width: 19px; height: 19px; }
+
+.credit-store-tabs {
+    display: flex;
+    justify-self: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--credit-store-border);
+    border-radius: 999px;
+    background: var(--credit-store-surface);
+}
+
+.credit-store-tab {
+    display: flex;
+    min-height: 36px;
+    align-items: center;
+    gap: 7px;
+    padding: 0 20px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--credit-store-muted);
+    font-size: 13px;
+}
+
+.credit-store-tab.is-active { background: var(--foreground); color: var(--background); }
+.credit-store-tab-icon { width: 14px; height: 14px; }
+
+.credit-store-section {
+    scroll-margin-top: 88px;
+    padding: 56px 0 4px;
+}
+
+.credit-store-section.is-surprise {
+    margin-top: 12px;
+    padding: 48px 32px 32px;
+    border-radius: 20px;
+    background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--primary) 24%, transparent), transparent 58%), var(--credit-store-surface);
+}
+
+.credit-store-section-heading { text-align: center; }
+.credit-store-section-title { margin: 0; font-size: clamp(25px, 3vw, 34px); font-weight: 720; letter-spacing: -.03em; }
+.credit-store-section-copy,
+.credit-store-countdown { margin: 8px 0 0; color: var(--credit-store-muted); font-size: 13px; }
+.credit-store-countdown-value { margin-left: 5px; color: var(--primary); font-variant-numeric: tabular-nums; }
+
+.credit-store-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 28px;
+}
+
+.credit-store-card {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    padding: 22px;
+    border: 1px solid var(--credit-store-border);
+    border-radius: 16px;
+    background: var(--credit-store-surface);
+}
+
+.credit-store-card.is-surprise { background: color-mix(in srgb, var(--credit-store-surface) 90%, var(--primary) 10%); }
+.credit-store-card-heading { display: flex; min-height: 45px; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.credit-store-card-title-group { min-width: 0; }
+.credit-store-card-scope { display: block; overflow: hidden; color: var(--credit-store-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.credit-store-card-title { margin: 5px 0 0; font-size: 16px; font-weight: 650; }
+.credit-store-card-badge { flex: 0 0 auto; padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, var(--primary) 17%, transparent); color: var(--primary); font-size: 10px; }
+.credit-store-card-credit { display: flex; align-items: baseline; gap: 7px; margin-top: 20px; }
+.credit-store-card-credit-icon { width: 17px; height: 17px; align-self: center; color: var(--primary); }
+.credit-store-card-credit-value { font-size: 30px; line-height: 1; letter-spacing: -.035em; }
+.credit-store-card-credit-unit { color: var(--credit-store-muted); font-size: 11px; }
+.credit-store-card-grant { margin: 9px 0 0; color: var(--primary); font-size: 11px; }
+.credit-store-card-price { display: flex; align-items: baseline; gap: 9px; margin-top: 20px; }
+.credit-store-card-price-current { font-size: 19px; }
+.credit-store-card-price-original { color: var(--credit-store-muted); font-size: 12px; text-decoration: line-through; }
+.credit-store-card-description { min-height: 36px; margin: 9px 0 0; color: var(--credit-store-muted); font-size: 11px; line-height: 18px; }
+.credit-store-card-action { min-height: 44px; margin-top: 18px; border-radius: 9px; background: var(--foreground); color: var(--background); font-size: 13px; font-weight: 650; }
+.credit-store-card-action:disabled { cursor: not-allowed; opacity: .45; }
+.credit-store-card-requirement { margin: 10px 0 0; color: var(--credit-store-muted); font-size: 10px; text-align: center; }
+.credit-store-error,
+.credit-store-empty { margin: 24px 0; }
+.credit-store-retry { min-height: 36px; padding: 0 14px; border-radius: 8px; background: var(--foreground); color: var(--background); }
+.credit-store-loading { display: grid; min-height: 70vh; place-items: center; }
+
+@media (max-width: 900px) {
+    .credit-store-page { padding-right: 16px; padding-left: 16px; }
+    .credit-store-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+    .credit-store-page { padding-top: 112px; padding-bottom: 64px; }
+    .credit-store-header { grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding: 8px 16px; }
+    .credit-store-tabs { max-width: 100%; justify-self: stretch; overflow-x: auto; border: 0; border-radius: 0; background: transparent; }
+    .credit-store-tab { min-width: max-content; min-height: 44px; padding: 0 14px; }
+    .credit-store-section { padding-top: 40px; }
+    .credit-store-section.is-surprise { margin-right: -16px; margin-left: -16px; padding: 36px 16px 24px; border-radius: 0; }
+    .credit-store-grid { grid-template-columns: 1fr; }
+    .credit-store-card { border-radius: 12px; }
+}

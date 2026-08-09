@@ -115,6 +115,7 @@ const (
 	CreditLedgerCheckinBonus    CreditLedgerType = "checkin_bonus"
 	CreditLedgerReferralInviter CreditLedgerType = "referral_inviter_reward"
 	CreditLedgerReferralInvitee CreditLedgerType = "referral_invitee_reward"
+	CreditLedgerTopup           CreditLedgerType = "topup"
 
 	RedeemCodeUnused   RedeemCodeStatus = "unused"
 	RedeemCodeRedeemed RedeemCodeStatus = "redeemed"

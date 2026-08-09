@@ -71,6 +71,7 @@ export type PaymentWebhookStatus = "received" | "processed" | "rejected";
 
 export type PaymentTransaction = {
     id: string;
+    orderType: "membership" | "credit_topup";
     orderId: string;
     userId: string;
     provider: PaymentProvider;
@@ -109,6 +110,7 @@ export type CreatePaymentCheckoutResult = {
 
 export type PaymentCheckout = {
     orderId: string;
+    orderType: "membership" | "credit_topup";
     orderNumber: string;
     amountCents: number;
     currency: string;

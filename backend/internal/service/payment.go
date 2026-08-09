@@ -65,9 +65,20 @@ type PaymentCheckoutView struct {
 	OrderNumber string                      `json:"orderNumber"`
 	AmountCents int64                       `json:"amountCents"`
 	Currency    string                      `json:"currency"`
+	OrderType   model.PaymentOrderType      `json:"orderType"`
 	Status      model.MembershipOrderStatus `json:"status"`
 	ExpiresAt   time.Time                   `json:"expiresAt"`
 	Providers   []model.PaymentProvider     `json:"providers"`
+}
+
+type paymentOrderDetails struct {
+	ID          string
+	UserID      string
+	OrderNumber string
+	AmountCents int64
+	Currency    string
+	Status      string
+	Description string
 }
 
 type CreatePaymentCheckoutResult struct {
@@ -235,7 +246,7 @@ func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*Crea
 		return nil, err
 	}
 	session := model.PaymentCheckoutSession{
-		ID: newID(), OrderID: order.ID, UserID: user.ID, TokenHash: tokenHash,
+		ID: newID(), OrderType: model.PaymentOrderMembership, OrderID: order.ID, UserID: user.ID, TokenHash: tokenHash,
 		Status: model.PaymentCheckoutActive, ExpiresAt: now.Add(paymentCheckoutLifetime),
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -248,14 +259,47 @@ func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*Crea
 	}, nil
 }
 
+func (s *Service) CreateCreditTopupCheckout(user *model.User, orderID string) (*CreatePaymentCheckoutResult, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	order, err := s.repo.CreditTopupOrderForUser(user.ID, strings.TrimSpace(orderID))
+	if err != nil {
+		return nil, err
+	}
+	if order.Status != model.CreditTopupOrderPending {
+		return nil, BadAuthRequest("只有待支付积分订单可以创建收银台")
+	}
+	_, setting, err := s.readPaymentSetting()
+	if err != nil {
+		return nil, err
+	}
+	if setting.CheckoutBaseURL == "" || len(readyPaymentProviders(setting)) == 0 {
+		return nil, BadAuthRequest("支付收银台或商户渠道尚未完成配置")
+	}
+	token, tokenHash, err := newPaymentCheckoutToken()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	session := model.PaymentCheckoutSession{
+		ID: newID(), OrderType: model.PaymentOrderCreditTopup, OrderID: order.ID, UserID: user.ID, TokenHash: tokenHash,
+		Status: model.PaymentCheckoutActive, ExpiresAt: now.Add(paymentCheckoutLifetime), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.repo.SavePaymentCheckoutSession(&session); err != nil {
+		return nil, err
+	}
+	return &CreatePaymentCheckoutResult{CheckoutURL: setting.CheckoutBaseURL + "/pay/" + token, ExpiresAt: session.ExpiresAt}, nil
+}
+
 func (s *Service) PaymentCheckout(token string) (*PaymentCheckoutView, error) {
 	session, order, setting, err := s.paymentCheckoutViewContext(token)
 	if err != nil {
 		return nil, err
 	}
 	return &PaymentCheckoutView{
-		OrderID: order.ID, OrderNumber: order.OrderNumber, AmountCents: order.TotalPriceCents,
-		Currency: order.Currency, Status: order.Status, ExpiresAt: session.ExpiresAt,
+		OrderID: order.ID, OrderType: session.OrderType, OrderNumber: order.OrderNumber, AmountCents: order.AmountCents,
+		Currency: order.Currency, Status: model.MembershipOrderStatus(order.Status), ExpiresAt: session.ExpiresAt,
 		Providers: readyPaymentProviders(setting),
 	}, nil
 }
@@ -279,15 +323,15 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	now := time.Now()
 	expiresAt := session.ExpiresAt
 	transaction := &model.PaymentTransaction{
-		ID: newID(), OrderID: order.ID, UserID: order.UserID, Provider: req.Provider,
-		MerchantOrderNo: paymentMerchantOrderNo(order.OrderNumber, now), AmountCents: order.TotalPriceCents,
+		ID: newID(), OrderType: session.OrderType, OrderID: order.ID, UserID: order.UserID, Provider: req.Provider,
+		MerchantOrderNo: paymentMerchantOrderNo(order.OrderNumber, now), AmountCents: order.AmountCents,
 		Currency: order.Currency, Status: model.PaymentTransactionCreated, ExpiresAt: &expiresAt,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.repo.CreatePaymentTransaction(transaction); err != nil {
 		return nil, err
 	}
-	codeURL, err := createProviderPayment(transaction, order, channel)
+	codeURL, err := createProviderPayment(transaction, paymentOrderReference{OrderNumber: order.OrderNumber, Description: order.Description}, channel)
 	if err != nil {
 		if saveErr := s.repo.UpdatePaymentTransactionCreation(transaction.ID, model.PaymentTransactionFailed, "", err.Error(), time.Now()); saveErr != nil {
 			return nil, fmt.Errorf("渠道下单失败且交易审计写入失败: %v: %w", saveErr, err)
@@ -303,7 +347,7 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	return transaction, nil
 }
 
-func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
+func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSession, *paymentOrderDetails, paymentSettingValue, error) {
 	trimmed := strings.TrimSpace(token)
 	if trimmed == "" {
 		return nil, nil, paymentSettingValue{}, BadAuthRequest("收银台令牌不能为空")
@@ -313,20 +357,33 @@ func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSe
 	if err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
-	order, err := s.repo.MembershipOrder(session.OrderID)
-	if err != nil {
-		return nil, nil, paymentSettingValue{}, err
+	var order *paymentOrderDetails
+	switch session.OrderType {
+	case model.PaymentOrderMembership:
+		membershipOrder, lookupErr := s.repo.MembershipOrder(session.OrderID)
+		if lookupErr != nil {
+			return nil, nil, paymentSettingValue{}, lookupErr
+		}
+		order = &paymentOrderDetails{ID: membershipOrder.ID, UserID: membershipOrder.UserID, OrderNumber: membershipOrder.OrderNumber, AmountCents: membershipOrder.TotalPriceCents, Currency: membershipOrder.Currency, Status: string(membershipOrder.Status), Description: "会员订单 " + membershipOrder.OrderNumber}
+	case model.PaymentOrderCreditTopup:
+		topupOrder, lookupErr := s.repo.CreditTopupOrder(session.OrderID)
+		if lookupErr != nil {
+			return nil, nil, paymentSettingValue{}, lookupErr
+		}
+		order = &paymentOrderDetails{ID: topupOrder.ID, UserID: topupOrder.UserID, OrderNumber: topupOrder.OrderNumber, AmountCents: topupOrder.TotalPriceCents, Currency: topupOrder.Currency, Status: string(topupOrder.Status), Description: "积分充值订单 " + topupOrder.OrderNumber}
+	default:
+		return nil, nil, paymentSettingValue{}, errors.New("收银台订单类型无效")
 	}
 	_, setting, err := s.readPaymentSetting()
 	return session, order, setting, err
 }
 
-func (s *Service) paymentCheckoutViewContext(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
+func (s *Service) paymentCheckoutViewContext(token string) (*model.PaymentCheckoutSession, *paymentOrderDetails, paymentSettingValue, error) {
 	session, order, setting, err := s.paymentCheckoutByToken(token)
 	if err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
-	if session.Status == model.PaymentCheckoutConsumed && order.Status == model.MembershipOrderPaid {
+	if session.Status == model.PaymentCheckoutConsumed && order.Status == "paid" {
 		return session, order, setting, nil
 	}
 	if err := s.requireActiveCheckout(session); err != nil {
@@ -335,7 +392,7 @@ func (s *Service) paymentCheckoutViewContext(token string) (*model.PaymentChecko
 	return session, order, setting, nil
 }
 
-func (s *Service) payableCheckoutContext(token string) (*model.PaymentCheckoutSession, *model.MembershipOrder, paymentSettingValue, error) {
+func (s *Service) payableCheckoutContext(token string) (*model.PaymentCheckoutSession, *paymentOrderDetails, paymentSettingValue, error) {
 	session, order, setting, err := s.paymentCheckoutByToken(token)
 	if err != nil {
 		return nil, nil, paymentSettingValue{}, err
@@ -343,7 +400,7 @@ func (s *Service) payableCheckoutContext(token string) (*model.PaymentCheckoutSe
 	if err := s.requireActiveCheckout(session); err != nil {
 		return nil, nil, paymentSettingValue{}, err
 	}
-	if order.Status != model.MembershipOrderPending {
+	if order.Status != "pending" {
 		return nil, nil, paymentSettingValue{}, BadAuthRequest("订单当前不可支付")
 	}
 	return session, order, setting, nil

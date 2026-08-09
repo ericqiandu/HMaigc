@@ -14,6 +14,7 @@ const EmailSettingsPage = lazy(() => import("@/pages/admin/admin-route-pages").t
 const ChannelsPage = lazy(() => import("@/pages/admin/channels/channels-page"));
 const LogsPage = lazy(() => import("@/pages/admin/logs/logs-page"));
 const MembershipAdminPage = lazy(() => import("@/pages/admin/membership/membership-page"));
+const CreditStoreAdminPage = lazy(() => import("@/pages/admin/credit-store/credit-store-page"));
 const ModelPricingPage = lazy(() => import("@/pages/admin/model-pricing/model-pricing-page"));
 const SuperResolutionPricingPage = lazy(() => import("@/pages/admin/super-resolution-pricing/super-resolution-pricing-page"));
 const OperationsPage = lazy(() => import("@/pages/admin/operations/operations-page"));
@@ -36,6 +37,7 @@ const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
 const HomePage = lazy(() => import("@/pages/home"));
 const LegalDocumentPage = lazy(() => import("@/pages/legal/legal-document-page").then((module) => ({ default: module.LegalDocumentPage })));
 const MembershipPage = lazy(() => import("@/pages/membership"));
+const CreditStorePage = lazy(() => import("@/pages/credit-store"));
 const PaymentCheckoutPage = lazy(() => import("@/pages/payment/payment-checkout-page"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const ProjectDetailPage = lazy(() => import("@/pages/projects/detail"));
@@ -85,6 +87,7 @@ export const router = createBrowserRouter([
             { path: "/legal/user-agreement", element: deferredRoute(<LegalDocumentPage document="userAgreement" />) },
             { path: "/legal/privacy-policy", element: deferredRoute(<LegalDocumentPage document="privacyPolicy" />) },
             { path: "/membership", element: deferredRoute(<MembershipPage />) },
+            { path: "/credit-store", element: protectedRoute(<CreditStorePage />) },
             { path: "/tasks", element: protectedRoute(<TasksPage />) },
             { path: "/teams", element: protectedRoute(<TeamsPage />) },
             { path: "/assets", element: protectedRoute(<AssetsPage />) },
@@ -114,6 +117,7 @@ export const router = createBrowserRouter([
                     { path: "referrals", element: deferredRoute(<ReferralProgramPage />) },
                     { path: "logs", element: deferredRoute(<LogsPage />) },
                     { path: "membership", element: deferredRoute(<MembershipAdminPage />) },
+                    { path: "credit-store", element: deferredRoute(<CreditStoreAdminPage />) },
                     { path: "operations", element: deferredRoute(<OperationsPage />) },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },
                     { path: "settings/concurrency", element: <Navigate to="/admin/settings/runtime-policy" replace /> },

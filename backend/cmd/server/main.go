@@ -76,6 +76,9 @@ func main() {
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		log.Fatal(err)
 	}
+	if err := svc.EnsureDefaultCreditTopupProducts(); err != nil {
+		log.Fatalf("initialize credit store: %v", err)
+	}
 	if err := svc.EnsureBuiltinProjectWorkflowTemplate(); err != nil {
 		log.Fatal(err)
 	}
@@ -104,6 +107,7 @@ func main() {
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)
+	handler.RegisterCreditStoreRoutes(api, svc)
 	handler.RegisterMembershipRoutes(api, svc)
 	handler.RegisterReferralRoutes(api, svc)
 	handler.RegisterTeamRoutes(api, svc)
