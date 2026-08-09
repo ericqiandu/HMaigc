@@ -51,6 +51,7 @@ function requirePlanHighlight(presentation: MembershipStorefrontSetting, tier: s
 
 function planActionLabel(plan: MembershipPlan): string {
     if (plan.priceCents <= 0) return "使用免费方案";
+    if (plan.audience === "team") return "开通团队会员";
     return "立即开通";
 }
 

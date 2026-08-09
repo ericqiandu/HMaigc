@@ -30,9 +30,10 @@ describe("会员商城交付稿视觉契约", () => {
         expect(storefront).toContain("overflow-y: auto");
     });
 
-    test("付费套餐统一使用立即开通主操作", () => {
+    test("个人与团队套餐使用对应的开通主操作", () => {
         const pricing = readFileSync(resolve(root, "src/pages/membership/membership-storefront-pricing.tsx"), "utf8");
         expect(pricing).toContain('return "立即开通"');
+        expect(pricing).toContain('if (plan.audience === "team") return "开通团队会员"');
         expect(pricing).not.toContain('return plan.tier === "ultra" ? "立即升级至尊版" : "选择此方案"');
     });
 });
