@@ -4,7 +4,18 @@ import { CheckCircle2, CircleAlert, FileCheck2, FileText, Image as ImageIcon, Me
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { staticAssetURL } from "@/lib/static-assets";
-import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, removeAdminMarketingPopupImage, removeAdminSiteLogo, updateAdminSiteSettings, uploadAdminMarketingPopupImage, uploadAdminSiteLogo, type SiteSettings, type UpdateSiteSettingsInput } from "@/services/api/site-settings";
+import {
+    adminSiteSettingsQueryKey,
+    getAdminSiteSettings,
+    publicSiteSettingsQueryKey,
+    removeAdminMarketingPopupImage,
+    removeAdminSiteLogo,
+    updateAdminSiteSettings,
+    uploadAdminMarketingPopupImage,
+    uploadAdminSiteLogo,
+    type SiteSettings,
+    type UpdateSiteSettingsInput,
+} from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, AdminSettingsSection, AdminSettingsSwitchPanel } from "../components/admin-ui";
 
@@ -191,9 +202,7 @@ export default function SiteSettingsPage() {
                         <div className={`site-settings-sync-status${dirty ? " is-dirty" : ""}`} role="status" aria-live="polite">
                             {dirty ? <CircleAlert className="site-settings-sync-icon size-4" aria-hidden="true" /> : <CheckCircle2 className="site-settings-sync-icon size-4" aria-hidden="true" />}
                             <span className="site-settings-sync-label">{dirty ? "有未保存的站点配置变更" : "公开页面配置已同步"}</span>
-                            <span className="site-settings-sync-meta">
-                                {setting.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "当前使用系统默认站点配置"}
-                            </span>
+                            <span className="site-settings-sync-meta">{setting.updatedAt ? `上次更新：${new Date(setting.updatedAt).toLocaleString("zh-CN", { hour12: false })}` : "当前使用系统默认站点配置"}</span>
                         </div>
                         <div id="site-brand" className="site-settings-section-anchor">
                             <AdminSettingsSwitchPanel
@@ -282,6 +291,17 @@ export default function SiteSettingsPage() {
                                     >
                                         <Input.TextArea className="site-settings-banner-text-input" autoSize={{ minRows: 2, maxRows: 4 }} maxLength={200} showCount placeholder="输入桌面端首页顶部展示的运营文案" />
                                     </Form.Item>
+                                    <Form.Item className="site-settings-banner-frequency-field mb-0" name="homeBannerFrequency" label="展示频率" rules={[{ required: true, message: "请选择展示频率" }]}>
+                                        <Select
+                                            className="site-settings-banner-frequency-select"
+                                            options={[
+                                                { value: "always", label: "每次访问首页都展示" },
+                                                { value: "once", label: "当前浏览器仅展示一次" },
+                                                { value: "daily", label: "当前浏览器每天展示一次" },
+                                                { value: "session", label: "每次浏览器会话展示一次" },
+                                            ]}
+                                        />
+                                    </Form.Item>
                                 </AdminSettingsSection>
                                 <AdminSettingsSection id="site-banner-actions-heading" icon={<Megaphone className="site-settings-banner-actions-icon size-4" />} title="行动入口" description="按钮名称与链接必须成对填写；未配置的按钮不会在首页展示。">
                                     <Form.Item
@@ -335,7 +355,12 @@ export default function SiteSettingsPage() {
                                     </Form.Item>
                                 }
                             >
-                                <AdminSettingsSection id="site-marketing-visual-heading" icon={<ImageIcon className="site-settings-marketing-visual-icon size-4" />} title="活动视觉" description="推荐使用 16:9 横图，主体与文字保留安全边距；桌面与移动端会按比例裁切。">
+                                <AdminSettingsSection
+                                    id="site-marketing-visual-heading"
+                                    icon={<ImageIcon className="site-settings-marketing-visual-icon size-4" />}
+                                    title="活动视觉"
+                                    description="推荐使用 16:9 横图，主体与文字保留安全边距；桌面与移动端会按比例裁切。"
+                                >
                                     <div className="site-settings-marketing-image-control">
                                         <span className="site-settings-marketing-image-label mb-2 block text-sm text-foreground/85">展示图片</span>
                                         {setting.marketingPopupImageUrl ? (
@@ -347,11 +372,23 @@ export default function SiteSettingsPage() {
                                         )}
                                         <input ref={marketingImageInputRef} className="site-settings-marketing-image-input !hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={selectMarketingImage} />
                                         <div className="site-settings-marketing-image-actions mt-3 flex flex-wrap items-center gap-2">
-                                            <Button className="site-settings-marketing-image-upload" icon={<Upload className="site-settings-marketing-image-upload-icon size-4" />} loading={marketingImageMutation.isPending} onClick={() => marketingImageInputRef.current?.click()}>
+                                            <Button
+                                                className="site-settings-marketing-image-upload"
+                                                icon={<Upload className="site-settings-marketing-image-upload-icon size-4" />}
+                                                loading={marketingImageMutation.isPending}
+                                                onClick={() => marketingImageInputRef.current?.click()}
+                                            >
                                                 {setting.marketingPopupImageUrl ? "替换图片" : "上传图片"}
                                             </Button>
                                             {setting.marketingPopupImageUrl ? (
-                                                <Button className="site-settings-marketing-image-remove" type="text" danger icon={<Trash2 className="site-settings-marketing-image-remove-icon size-4" />} loading={removeMarketingImageMutation.isPending} onClick={confirmRemoveMarketingImage}>
+                                                <Button
+                                                    className="site-settings-marketing-image-remove"
+                                                    type="text"
+                                                    danger
+                                                    icon={<Trash2 className="site-settings-marketing-image-remove-icon size-4" />}
+                                                    loading={removeMarketingImageMutation.isPending}
+                                                    onClick={confirmRemoveMarketingImage}
+                                                >
                                                     移除图片
                                                 </Button>
                                             ) : null}
@@ -359,17 +396,40 @@ export default function SiteSettingsPage() {
                                         </div>
                                     </div>
                                 </AdminSettingsSection>
-                                <AdminSettingsSection id="site-marketing-content-heading" icon={<Megaphone className="site-settings-marketing-content-icon size-4" />} title="活动内容" description="标题直接说明权益或新品，说明文字补充限制条件，按钮引导用户完成下一步。">
-                                    <Form.Item className="site-settings-marketing-title-field mb-0" name="marketingPopupTitle" label="标题" dependencies={["marketingPopupEnabled"]} rules={[{ max: 80, message: "标题不能超过 80 个字符" }, requiredMarketingField(form, "标题")]}>
+                                <AdminSettingsSection
+                                    id="site-marketing-content-heading"
+                                    icon={<Megaphone className="site-settings-marketing-content-icon size-4" />}
+                                    title="活动内容"
+                                    description="标题直接说明权益或新品，说明文字补充限制条件，按钮引导用户完成下一步。"
+                                >
+                                    <Form.Item
+                                        className="site-settings-marketing-title-field mb-0"
+                                        name="marketingPopupTitle"
+                                        label="标题"
+                                        dependencies={["marketingPopupEnabled"]}
+                                        rules={[{ max: 80, message: "标题不能超过 80 个字符" }, requiredMarketingField(form, "标题")]}
+                                    >
                                         <Input className="site-settings-marketing-title-input" maxLength={80} showCount placeholder="例如：Seedance 2.5 旗舰模型预售上线" />
                                     </Form.Item>
                                     <Form.Item className="site-settings-marketing-description-field mb-0" name="marketingPopupDescription" label="补充说明" rules={[{ max: 200, message: "补充说明不能超过 200 个字符" }]}>
                                         <Input.TextArea className="site-settings-marketing-description-input" autoSize={{ minRows: 2, maxRows: 4 }} maxLength={200} showCount placeholder="例如：预售加赠最高 60 条免费生成，最长可输出 30 秒视频" />
                                     </Form.Item>
-                                    <Form.Item className="site-settings-marketing-action-label-field mb-0" name="marketingPopupActionLabel" label="按钮名称" dependencies={["marketingPopupActionUrl"]} rules={[{ max: 20, message: "按钮名称不能超过 20 个字符" }, pairedActionFieldRule("营销弹窗按钮", () => form.getFieldValue("marketingPopupActionUrl"))]}>
+                                    <Form.Item
+                                        className="site-settings-marketing-action-label-field mb-0"
+                                        name="marketingPopupActionLabel"
+                                        label="按钮名称"
+                                        dependencies={["marketingPopupActionUrl"]}
+                                        rules={[{ max: 20, message: "按钮名称不能超过 20 个字符" }, pairedActionFieldRule("营销弹窗按钮", () => form.getFieldValue("marketingPopupActionUrl"))]}
+                                    >
                                         <Input className="site-settings-marketing-action-label-input" maxLength={20} placeholder="例如：立即抢购" />
                                     </Form.Item>
-                                    <Form.Item className="site-settings-marketing-action-url-field mb-0" name="marketingPopupActionUrl" label="跳转链接" dependencies={["marketingPopupActionLabel"]} rules={[{ max: 500, message: "跳转链接不能超过 500 个字符" }, pairedActionURLRule("营销弹窗按钮", () => form.getFieldValue("marketingPopupActionLabel"))]}>
+                                    <Form.Item
+                                        className="site-settings-marketing-action-url-field mb-0"
+                                        name="marketingPopupActionUrl"
+                                        label="跳转链接"
+                                        dependencies={["marketingPopupActionLabel"]}
+                                        rules={[{ max: 500, message: "跳转链接不能超过 500 个字符" }, pairedActionURLRule("营销弹窗按钮", () => form.getFieldValue("marketingPopupActionLabel"))]}
+                                    >
                                         <Input className="site-settings-marketing-action-url-input" maxLength={500} placeholder="https://example.com/campaign" />
                                     </Form.Item>
                                     <Form.Item className="site-settings-marketing-frequency-field mb-0" name="marketingPopupFrequency" label="展示频率" rules={[{ required: true, message: "请选择展示频率" }]}>
@@ -419,7 +479,6 @@ export default function SiteSettingsPage() {
                                 </Form.Item>
                             </AdminSettingsSection>
                         </AdminSettingsSwitchPanel>
-
                     </Form>
                 ) : null}
             </div>
@@ -442,6 +501,7 @@ function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
         homeBannerPrimaryActionUrl: setting.homeBannerPrimaryActionUrl,
         homeBannerSecondaryActionLabel: setting.homeBannerSecondaryActionLabel,
         homeBannerSecondaryActionUrl: setting.homeBannerSecondaryActionUrl,
+        homeBannerFrequency: setting.homeBannerFrequency,
         marketingPopupEnabled: setting.marketingPopupEnabled,
         marketingPopupTitle: setting.marketingPopupTitle,
         marketingPopupDescription: setting.marketingPopupDescription,
@@ -470,6 +530,7 @@ function normalizeSiteSettingsInput(input: UpdateSiteSettingsInput): UpdateSiteS
         homeBannerPrimaryActionUrl: input.homeBannerPrimaryActionUrl?.trim() || "",
         homeBannerSecondaryActionLabel: input.homeBannerSecondaryActionLabel?.trim() || "",
         homeBannerSecondaryActionUrl: input.homeBannerSecondaryActionUrl?.trim() || "",
+        homeBannerFrequency: input.homeBannerFrequency,
         marketingPopupEnabled: Boolean(input.marketingPopupEnabled),
         marketingPopupTitle: input.marketingPopupTitle?.trim() || "",
         marketingPopupDescription: input.marketingPopupDescription?.trim() || "",

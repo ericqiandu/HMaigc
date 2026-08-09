@@ -21,6 +21,7 @@ const bootstrapSiteSettings: SiteSettings = {
     homeBannerPrimaryActionUrl: "",
     homeBannerSecondaryActionLabel: "",
     homeBannerSecondaryActionUrl: "",
+    homeBannerFrequency: "always",
     marketingPopupEnabled: false,
     marketingPopupImageUrl: "",
     marketingPopupTitle: "",

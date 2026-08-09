@@ -28,6 +28,7 @@ export type SiteSettings = {
     homeBannerPrimaryActionUrl: string;
     homeBannerSecondaryActionLabel: string;
     homeBannerSecondaryActionUrl: string;
+    homeBannerFrequency: "always" | "once" | "daily" | "session";
     marketingPopupEnabled: boolean;
     marketingPopupImageUrl: string;
     marketingPopupTitle: string;
@@ -55,6 +56,7 @@ export type UpdateSiteSettingsInput = Pick<
     | "homeBannerPrimaryActionUrl"
     | "homeBannerSecondaryActionLabel"
     | "homeBannerSecondaryActionUrl"
+    | "homeBannerFrequency"
     | "marketingPopupEnabled"
     | "marketingPopupTitle"
     | "marketingPopupDescription"

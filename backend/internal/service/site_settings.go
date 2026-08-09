@@ -36,6 +36,10 @@ const (
 	marketingPopupFrequencyOnce    = "once"
 	marketingPopupFrequencyDaily   = "daily"
 	marketingPopupFrequencySession = "session"
+	homeBannerFrequencyAlways      = "always"
+	homeBannerFrequencyOnce        = "once"
+	homeBannerFrequencyDaily       = "daily"
+	homeBannerFrequencySession     = "session"
 )
 
 var ErrSiteLogoNotConfigured = errors.New("站点 Logo 尚未配置")
@@ -55,6 +59,7 @@ type SiteSettingRequest struct {
 	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
 	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
 	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	HomeBannerFrequency              string `json:"homeBannerFrequency"`
 	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
 	MarketingPopupTitle              string `json:"marketingPopupTitle"`
 	MarketingPopupDescription        string `json:"marketingPopupDescription"`
@@ -85,6 +90,7 @@ type PublicSiteSetting struct {
 	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
 	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
 	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	HomeBannerFrequency              string `json:"homeBannerFrequency"`
 	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
 	MarketingPopupImageURL           string `json:"marketingPopupImageUrl"`
 	MarketingPopupTitle              string `json:"marketingPopupTitle"`
@@ -115,6 +121,7 @@ type siteSettingValue struct {
 	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
 	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
 	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	HomeBannerFrequency              string `json:"homeBannerFrequency"`
 	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
 	MarketingPopupImageFile          string `json:"marketingPopupImageFile"`
 	MarketingPopupImageMimeType      string `json:"marketingPopupImageMimeType"`
@@ -180,6 +187,7 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		HomeBannerPrimaryActionURL:       strings.TrimSpace(req.HomeBannerPrimaryActionURL),
 		HomeBannerSecondaryActionLabel:   strings.TrimSpace(req.HomeBannerSecondaryActionLabel),
 		HomeBannerSecondaryActionURL:     strings.TrimSpace(req.HomeBannerSecondaryActionURL),
+		HomeBannerFrequency:              strings.TrimSpace(req.HomeBannerFrequency),
 		MarketingPopupEnabled:            req.MarketingPopupEnabled,
 		MarketingPopupImageFile:          current.MarketingPopupImageFile,
 		MarketingPopupImageMimeType:      current.MarketingPopupImageMimeType,
@@ -516,6 +524,7 @@ func defaultSiteSetting() siteSettingValue {
 		HomeBannerEnabled:       true,
 		HomeBannerLabel:         "招募中",
 		HomeBannerText:          "招增长伙伴：懂冷启动、内容增长或海外增长，欢迎加入 HMaigc。",
+		HomeBannerFrequency:     homeBannerFrequencyAlways,
 		MarketingPopupFrequency: marketingPopupFrequencyOnce,
 	}
 }
@@ -542,6 +551,9 @@ func validateSiteSetting(value siteSettingValue) error {
 	}
 	if err := validateSiteBannerAction("首页横幅次按钮", value.HomeBannerSecondaryActionLabel, value.HomeBannerSecondaryActionURL); err != nil {
 		return err
+	}
+	if value.HomeBannerFrequency != homeBannerFrequencyAlways && value.HomeBannerFrequency != homeBannerFrequencyOnce && value.HomeBannerFrequency != homeBannerFrequencyDaily && value.HomeBannerFrequency != homeBannerFrequencySession {
+		return errors.New("首页横幅展示频率无效")
 	}
 	if len([]rune(value.MarketingPopupTitle)) > siteMarketingTitleMaxLen {
 		return fmt.Errorf("营销弹窗标题不能超过 %d 个字符", siteMarketingTitleMaxLen)
@@ -773,6 +785,7 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 		HomeBannerPrimaryActionURL:       value.HomeBannerPrimaryActionURL,
 		HomeBannerSecondaryActionLabel:   value.HomeBannerSecondaryActionLabel,
 		HomeBannerSecondaryActionURL:     value.HomeBannerSecondaryActionURL,
+		HomeBannerFrequency:              value.HomeBannerFrequency,
 		MarketingPopupEnabled:            value.MarketingPopupEnabled,
 		MarketingPopupTitle:              value.MarketingPopupTitle,
 		MarketingPopupDescription:        value.MarketingPopupDescription,
