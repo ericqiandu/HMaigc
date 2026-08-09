@@ -325,7 +325,7 @@ func (s *Service) CancelMembershipOrder(user *model.User, id string) (*model.Mem
 		return nil, BadAuthRequest("订单 ID 不能为空")
 	}
 	now := time.Now()
-	if err := s.repo.CloseMembershipOrder(orderID, user.ID, user.ID, "用户主动取消订单", now); err != nil {
+	if err := s.repo.CloseMembershipOrder(orderID, user.ID, user.ID, "用户主动取消订单", now, nil); err != nil {
 		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
 			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能取消"}
 		}
@@ -403,13 +403,14 @@ func (s *Service) AdminCloseMembershipOrder(actor *model.User, id string, req Cl
 	}
 	orderID := strings.TrimSpace(id)
 	now := time.Now()
-	if err := s.repo.CloseMembershipOrder(orderID, "", actor.ID, note, now); err != nil {
+	audit, err := newAdminAuditEvent(actor, "membership_order.close", "membership_order", orderID, "关闭待支付会员订单", req)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.CloseMembershipOrder(orderID, "", actor.ID, note, now, audit); err != nil {
 		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
 			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能关闭"}
 		}
-		return nil, err
-	}
-	if err := s.appendAdminAudit(actor, "membership_order.close", "membership_order", orderID, "关闭待支付会员订单", req); err != nil {
 		return nil, err
 	}
 	return s.repo.MembershipOrder(orderID)
@@ -434,13 +435,14 @@ func (s *Service) AdminConfirmMembershipOrder(actor *model.User, id string, req 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.ActivateMembershipOrder(order.ID, actor.ID, "manual", strings.TrimSpace(req.ProviderTradeNo), strings.TrimSpace(req.Note), activation); err != nil {
+	audit, err := newAdminAuditEvent(actor, "membership_order.confirm", "membership_order", order.ID, "确认会员订单并开通订阅", req)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.ActivateMembershipOrder(order.ID, actor.ID, "manual", strings.TrimSpace(req.ProviderTradeNo), strings.TrimSpace(req.Note), activation, audit); err != nil {
 		if errors.Is(err, repository.ErrMembershipOrderNotPending) {
 			return nil, &AuthError{Status: http.StatusConflict, Message: "订单已处理，不能重复开通"}
 		}
-		return nil, err
-	}
-	if err := s.appendAdminAudit(actor, "membership_order.confirm", "membership_order", order.ID, "确认会员订单并开通订阅", req); err != nil {
 		return nil, err
 	}
 	return s.repo.MembershipOrder(order.ID)

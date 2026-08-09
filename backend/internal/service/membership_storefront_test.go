@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,16 @@ func TestMembershipStorefrontReturnsBackendManagedPresentationAndPlans(t *testin
 	}
 	if storefront.ServerNow.IsZero() {
 		t.Fatal("serverNow must be populated")
+	}
+	for _, note := range storefront.Presentation.MembershipNotes {
+		if strings.Contains(note, "31 天") || strings.Contains(note, "31天") {
+			t.Fatalf("default storefront must not promise an unsupported credit reset: %q", note)
+		}
+	}
+	for _, faq := range storefront.Presentation.FAQs {
+		if strings.Contains(faq.Answer, "31 天") || strings.Contains(faq.Answer, "31天") {
+			t.Fatalf("default storefront FAQ must not promise an unsupported credit reset: %q", faq.Answer)
+		}
 	}
 }
 

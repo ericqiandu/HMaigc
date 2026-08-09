@@ -9,15 +9,17 @@ import { TableSurface } from "@/components/layout/workspace-page";
 import { confirmAdminMembershipOrder, closeAdminMembershipOrder, listAdminMembershipOrders, listAdminMembershipPlans, type MembershipOrder, type MembershipPlan, type UpdateMembershipPlanInput, updateAdminMembershipPlan } from "@/services/api/membership";
 import { listAdminPaymentTransactions, listAdminPaymentWebhookEvents, type PaymentTransaction, type PaymentWebhookEvent } from "@/services/api/payment";
 import { InvoiceAdminPanel } from "./invoice-admin-panel";
+import { MembershipStorefrontAdminPanel } from "./membership-storefront-admin-panel";
 
 const credits = (value: number) => (value / 1_000_000).toLocaleString("zh-CN");
 const money = (value: number) => `¥${(value / 100).toLocaleString("zh-CN")}`;
 const tebibyte = 1024 ** 4;
 type PlanFormValues = Omit<UpdateMembershipPlanInput, "teamStorageBytes"> & { teamStorageTB: number };
-type MembershipSection = "plans" | "orders" | "invoices" | "transactions" | "webhooks";
+type MembershipSection = "plans" | "storefront" | "orders" | "invoices" | "transactions" | "webhooks";
 
 const membershipSectionOptions: Array<{ value: MembershipSection; label: string }> = [
     { value: "plans", label: "套餐与权益" },
+    { value: "storefront", label: "商城展示" },
     { value: "orders", label: "会员订单" },
     { value: "invoices", label: "开票处理" },
     { value: "transactions", label: "支付交易" },
@@ -49,7 +51,7 @@ export default function MembershipAdminPage() {
     const [form] = Form.useForm<PlanFormValues>();
     const [confirmForm] = Form.useForm<{ providerTradeNo: string; note: string }>();
     const [closeForm] = Form.useForm<{ note: string }>();
-    const loadSequences = useRef<Record<Exclude<MembershipSection, "invoices">, number>>({ plans: 0, orders: 0, transactions: 0, webhooks: 0 });
+    const loadSequences = useRef<Record<Exclude<MembershipSection, "invoices" | "storefront">, number>>({ plans: 0, orders: 0, transactions: 0, webhooks: 0 });
 
     const loadPlans = useCallback(async () => {
         const sequence = ++loadSequences.current.plans;
@@ -250,7 +252,7 @@ export default function MembershipAdminPage() {
             title="会员管理"
             description="统一维护套餐权益、会员订单、发票与支付事实。"
             actions={
-                activeSection !== "invoices" ? (
+                activeSection !== "invoices" && activeSection !== "storefront" ? (
                     <Button className="admin-membership-refresh" icon={<RefreshCw className="admin-membership-refresh-icon size-4" />} loading={activeLoading} onClick={refreshActiveSection}>
                         刷新数据
                     </Button>
@@ -354,6 +356,11 @@ export default function MembershipAdminPage() {
                                         />
                                     </TableSurface>
                                 ),
+                        },
+                        {
+                            key: "storefront",
+                            label: "商城展示",
+                            children: <MembershipStorefrontAdminPanel />,
                         },
                         {
                             key: "orders",

@@ -2015,6 +2015,176 @@
     line-height: 18px;
 }
 
+.admin-workspace .admin-storefront-panel {
+    display: grid;
+    gap: 20px;
+}
+
+.admin-workspace .admin-storefront-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 4px 0 16px;
+}
+
+.admin-workspace .admin-storefront-heading {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.admin-workspace .admin-storefront-title,
+.admin-workspace .admin-storefront-section-title {
+    color: var(--workspace-text-primary);
+    font-weight: 600;
+}
+
+.admin-workspace .admin-storefront-title {
+    font-size: 16px;
+}
+
+.admin-workspace .admin-storefront-description,
+.admin-workspace .admin-storefront-help {
+    color: var(--workspace-text-tertiary);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.admin-workspace .admin-storefront-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+}
+
+.admin-workspace .admin-storefront-form {
+    display: grid;
+    gap: 16px;
+}
+
+.admin-workspace .admin-storefront-section {
+    min-width: 0;
+    padding: 18px 20px;
+    background: color-mix(in srgb, var(--workspace-surface-raised) 82%, transparent);
+}
+
+.admin-workspace .admin-storefront-section-title {
+    margin: 0 0 14px;
+    font-size: 14px;
+}
+
+.admin-workspace .admin-storefront-help {
+    margin: -8px 0 14px;
+}
+
+.admin-workspace .admin-storefront-grid,
+.admin-workspace .admin-storefront-two-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 18px;
+}
+
+.admin-workspace .admin-storefront-grid.is-compact {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-workspace .admin-storefront-field,
+.admin-workspace .admin-storefront-icon-field,
+.admin-workspace .admin-storefront-tier-field,
+.admin-workspace .admin-storefront-unit-field,
+.admin-workspace .admin-storefront-grow-field,
+.admin-workspace .admin-storefront-matrix-model {
+    margin-bottom: 0;
+}
+
+.admin-workspace .admin-storefront-switch-row {
+    margin-bottom: 14px;
+}
+
+.admin-workspace .admin-storefront-list,
+.admin-workspace .admin-storefront-matrix-sections,
+.admin-workspace .admin-storefront-matrix-section {
+    display: grid;
+    gap: 10px;
+}
+
+.admin-workspace .admin-storefront-list-row,
+.admin-workspace .admin-storefront-matrix-row,
+.admin-workspace .admin-storefront-faq-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+}
+
+.admin-workspace .admin-storefront-list-row.is-activity {
+    grid-template-columns: 84px minmax(0, 1fr) auto;
+}
+
+.admin-workspace .admin-storefront-list-row.is-highlight {
+    grid-template-columns: 120px repeat(2, minmax(0, 1fr)) auto;
+}
+
+.admin-workspace .admin-storefront-matrix-row {
+    grid-template-columns: minmax(160px, 1fr) 72px 72px minmax(220px, 1.4fr) auto;
+}
+
+.admin-workspace .admin-storefront-faq-row {
+    grid-template-columns: minmax(150px, 0.7fr) minmax(240px, 1.3fr) auto;
+}
+
+.admin-workspace .admin-storefront-matrix-section {
+    padding-top: 14px;
+    border-top: 1px solid var(--workspace-border-subtle);
+}
+
+.admin-workspace .admin-storefront-add-button {
+    justify-self: start;
+}
+
+.admin-workspace .admin-storefront-input,
+.admin-workspace .admin-storefront-textarea,
+.admin-workspace .admin-storefront-date {
+    width: 100%;
+}
+
+@media (max-width: 960px) {
+    .admin-workspace .admin-storefront-grid.is-compact {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-workspace .admin-storefront-two-columns {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .admin-workspace .admin-storefront-matrix-row,
+    .admin-workspace .admin-storefront-faq-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .admin-workspace .admin-storefront-header,
+    .admin-workspace .admin-storefront-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .admin-workspace .admin-storefront-grid,
+    .admin-workspace .admin-storefront-grid.is-compact,
+    .admin-workspace .admin-storefront-list-row.is-activity,
+    .admin-workspace .admin-storefront-list-row.is-highlight {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-workspace .admin-storefront-actions,
+    .admin-workspace .admin-storefront-refresh,
+    .admin-workspace .admin-storefront-save {
+        width: 100%;
+    }
+}
+
 .admin-workspace .admin-invoice-panel {
     display: grid;
     min-width: 0;

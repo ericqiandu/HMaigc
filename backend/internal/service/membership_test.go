@@ -228,6 +228,115 @@ func TestMembershipOrderConfirmationGrantsSubscriptionAndCreditsOnce(t *testing.
 	if ledgerCountAfterDuplicate != ledgerCountBeforeDuplicate {
 		t.Fatalf("credit ledger count after duplicate confirmation = %d, want %d", ledgerCountAfterDuplicate, ledgerCountBeforeDuplicate)
 	}
+	var auditCount int64
+	if err := db.Model(&model.AdminAuditEvent{}).Where("action = ? AND target_id = ?", "membership_order.confirm", order.ID).Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("membership confirmation audit count = %d, want 1", auditCount)
+	}
+}
+
+func TestMembershipOrderConfirmationRollsBackWhenAuditInsertFails(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin := &model.User{ID: "admin-audit-failure", Username: "admin-audit-failure", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	user := &model.User{ID: "user-audit-failure", Username: "user-audit-failure", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`
+		CREATE TRIGGER reject_membership_confirmation_audit
+		BEFORE INSERT ON admin_audit_events
+		WHEN NEW.action = 'membership_order.confirm'
+		BEGIN
+			SELECT RAISE(ABORT, 'membership confirmation audit unavailable');
+		END
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.AdminConfirmMembershipOrder(admin, order.ID, ConfirmMembershipOrderRequest{
+		ProviderTradeNo: "audit-failure-trade",
+		Note:            "审计写入失败时必须整体回滚",
+	})
+	if err == nil || !strings.Contains(err.Error(), "membership confirmation audit unavailable") {
+		t.Fatalf("confirmation error = %v, want audit insertion failure", err)
+	}
+
+	var stored model.MembershipOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.MembershipOrderPending || stored.PaidAt != nil {
+		t.Fatalf("order changed despite audit failure: %#v", stored)
+	}
+	for name, table := range map[string]string{
+		"subscriptions":   "membership_subscriptions",
+		"credit ledgers":  "credit_ledger_entries",
+		"credit accounts": "credit_accounts",
+	} {
+		var count int64
+		if err := db.Table(table).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s count = %d after rollback, want 0", name, count)
+		}
+	}
+}
+
+func TestMembershipOrderCloseRollsBackWhenAuditInsertFails(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	admin := &model.User{ID: "admin-close-audit-failure", Username: "admin-close-audit-failure", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	user := &model.User{ID: "user-close-audit-failure", Username: "user-close-audit-failure", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if err := db.Create(admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := membershipPlanByCode(t, db, "pro-month")
+	order, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`
+		CREATE TRIGGER reject_membership_close_audit
+		BEFORE INSERT ON admin_audit_events
+		WHEN NEW.action = 'membership_order.close'
+		BEGIN
+			SELECT RAISE(ABORT, 'membership close audit unavailable');
+		END
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.AdminCloseMembershipOrder(admin, order.ID, CloseMembershipOrderRequest{Note: "审计写入失败时不得关闭订单"})
+	if err == nil || !strings.Contains(err.Error(), "membership close audit unavailable") {
+		t.Fatalf("close error = %v, want audit insertion failure", err)
+	}
+
+	var stored model.MembershipOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.MembershipOrderPending || stored.ResolvedBy != "" || stored.ResolutionNote != "" {
+		t.Fatalf("order changed despite close audit failure: %#v", stored)
+	}
 }
 
 func TestMembershipEntitlementUsesPurchasedPlanSnapshot(t *testing.T) {

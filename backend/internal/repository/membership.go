@@ -99,7 +99,7 @@ func (r *Repository) MembershipOrder(id string) (*model.MembershipOrder, error) 
 	return &order, r.db.First(&order, "id = ?", id).Error
 }
 
-func (r *Repository) CloseMembershipOrder(orderID string, userID string, actorID string, note string, now time.Time) error {
+func (r *Repository) CloseMembershipOrder(orderID string, userID string, actorID string, note string, now time.Time, audit *model.AdminAuditEvent) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var order model.MembershipOrder
 		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", orderID)
@@ -131,9 +131,15 @@ func (r *Repository) CloseMembershipOrder(orderID string, userID string, actorID
 			Updates(map[string]interface{}{"status": model.PaymentCheckoutExpired, "updated_at": now}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.PaymentTransaction{}).
+		if err := tx.Model(&model.PaymentTransaction{}).
 			Where("order_id = ? AND status IN ?", order.ID, []model.PaymentTransactionStatus{model.PaymentTransactionCreated, model.PaymentTransactionPending}).
-			Updates(map[string]interface{}{"status": model.PaymentTransactionClosed, "closed_at": now, "updated_at": now}).Error
+			Updates(map[string]interface{}{"status": model.PaymentTransactionClosed, "closed_at": now, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
 	})
 }
 
@@ -335,9 +341,15 @@ func (r *Repository) TeamMembers(teamID string) ([]model.TeamMember, error) {
 	return members, err
 }
 
-func (r *Repository) ActivateMembershipOrder(orderID string, actorID string, provider string, providerTradeNo string, note string, activation MembershipActivation) error {
+func (r *Repository) ActivateMembershipOrder(orderID string, actorID string, provider string, providerTradeNo string, note string, activation MembershipActivation, audit *model.AdminAuditEvent) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		return activateMembershipOrderTx(tx, orderID, actorID, provider, providerTradeNo, note, activation, time.Now())
+		if err := activateMembershipOrderTx(tx, orderID, actorID, provider, providerTradeNo, note, activation, time.Now()); err != nil {
+			return err
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
 	})
 }
 
