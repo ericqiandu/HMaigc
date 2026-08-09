@@ -48,6 +48,11 @@ describe("site header unification", () => {
         expect(styles).toMatch(/@media \(max-width: 520px\)[\s\S]*\.site-account-upgrade\s*\{[^}]*min-width: 44px/);
     });
 
+    test("signed-in membership action keeps a square mobile touch target", async () => {
+        const styles = await sharedAccountStyles.text();
+        expect(styles).toMatch(/@media \(max-width: 520px\)[\s\S]*\.site-account-member\s*\{[^}]*min-width: 44px/);
+    });
+
     test("shared account actions keep desktop density and mobile touch targets", async () => {
         const styles = await sharedAccountStyles.text();
         expect(styles).toContain("height: var(--space-7)");
