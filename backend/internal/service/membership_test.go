@@ -92,7 +92,17 @@ func TestDefaultMembershipPlansExposeExpectedCommercialTiers(t *testing.T) {
 		"team-max-year":   {8, 6},
 		"team-ultra-year": {12, 8},
 	}
+	expectedNames := map[string]string{
+		"origin-free": "基础版",
+		"pro-month":   "标准版", "pro-year": "标准版",
+		"max-month": "高级版", "max-year": "高级版",
+		"ultra-month": "至尊版", "ultra-year": "至尊版",
+		"team-pro-year": "标准版", "team-max-year": "高级版", "team-ultra-year": "至尊版",
+	}
 	for _, plan := range plans {
+		if plan.Name != expectedNames[plan.Code] {
+			t.Fatalf("%s name = %q, want %q", plan.Code, plan.Name, expectedNames[plan.Code])
+		}
 		expected, ok := expectedConcurrency[plan.Code]
 		if !ok {
 			continue
@@ -125,6 +135,53 @@ func TestEnsureDefaultMembershipPlansIsIdempotent(t *testing.T) {
 	}
 	if count != 10 {
 		t.Fatalf("plan count after repeated initialization = %d, want 10", count)
+	}
+}
+
+func TestMembershipCatalogRevisionReplacesLegacyConfigurationOnce(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	legacyPlan := model.MembershipPlan{
+		ID: "legacy-plan", Code: "legacy-vip", Name: "旧后台套餐", Tier: "legacy",
+		Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleMonth,
+		Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: true,
+	}
+	customizedStandard := model.MembershipPlan{
+		ID: "stable-pro-year", Code: "pro-year", Name: "旧标准套餐", Tier: "pro",
+		Audience: model.MembershipAudiencePersonal, BillingCycle: model.MembershipBillingCycleYear,
+		PriceCents: 1, Currency: "CNY", ImageConcurrency: 1, VideoConcurrency: 1, Enabled: false,
+	}
+	if err := db.Create(&[]model.MembershipPlan{legacyPlan, customizedStandard}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	replaced := membershipPlanByCode(t, db, "pro-year")
+	if replaced.ID != customizedStandard.ID || replaced.Name != "标准版" || replaced.PriceCents != 94900 || !replaced.Enabled {
+		t.Fatalf("canonical plan was not replaced in place: %#v", replaced)
+	}
+	archived := membershipPlanByCode(t, db, legacyPlan.Code)
+	if archived.Enabled {
+		t.Fatalf("legacy plan remained sellable: %#v", archived)
+	}
+	adminPlans, err := svc.MembershipPlans(&model.User{ID: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(adminPlans) != 10 {
+		t.Fatalf("admin catalog count = %d, want 10", len(adminPlans))
+	}
+
+	if err := db.Model(&model.MembershipPlan{}).Where("code = ?", "pro-year").Update("name", "运营自定义标准版").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
+		t.Fatal(err)
+	}
+	preserved := membershipPlanByCode(t, db, "pro-year")
+	if preserved.Name != "运营自定义标准版" {
+		t.Fatalf("completed catalog revision overwrote later admin configuration: %#v", preserved)
 	}
 }
 
@@ -375,8 +432,8 @@ func TestMembershipEntitlementUsesPurchasedPlanSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entitlement.PlanName != "Pro" || entitlement.Tier != "pro" {
-		t.Fatalf("entitlement identity = %s/%s, want purchased Pro/pro snapshot", entitlement.PlanName, entitlement.Tier)
+	if entitlement.PlanName != "标准版" || entitlement.Tier != "pro" {
+		t.Fatalf("entitlement identity = %s/%s, want purchased 标准版/pro snapshot", entitlement.PlanName, entitlement.Tier)
 	}
 	if entitlement.ImageConcurrency != 6 || entitlement.VideoConcurrency != 4 || entitlement.TopupDiscountBasis != 8000 {
 		t.Fatalf("entitlement mutated with current plan: %#v", entitlement)

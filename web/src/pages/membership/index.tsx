@@ -267,7 +267,7 @@ export default function MembershipPage() {
                                     </span>
                                     <div className="membership-overview-title membership-storefront-overview-title">
                                         <span className="membership-overview-label membership-storefront-overview-label">当前方案</span>
-                                        <strong className="membership-overview-plan membership-storefront-overview-plan">{publicPlanName({ name: overview.entitlement.planName, tier: overview.entitlement.tier })}</strong>
+                                        <strong className="membership-overview-plan membership-storefront-overview-plan">{publicPlanName({ name: overview.entitlement.planName })}</strong>
                                     </div>
                                 </div>
                                 <div className="membership-overview-metrics membership-storefront-overview-metrics">

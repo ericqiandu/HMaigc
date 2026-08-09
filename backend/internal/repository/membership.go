@@ -29,11 +29,71 @@ type MembershipActivation struct {
 
 const automaticMembershipOrderCloseNote = "订单超过 24 小时未支付，系统自动关闭"
 
-func (r *Repository) CreateMembershipPlanIfMissing(plan *model.MembershipPlan) error {
-	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "code"}},
-		DoNothing: true,
-	}).Create(plan).Error
+// ApplyMembershipPlanCatalogRevision replaces the sellable catalog exactly once.
+// Existing IDs are retained so historical orders and subscription snapshots keep
+// their original references. Plans outside the current catalog are archived by
+// disabling them instead of deleting financial history.
+func (r *Repository) ApplyMembershipPlanCatalogRevision(settingKey string, revision string, plans []model.MembershipPlan) error {
+	if settingKey == "" || revision == "" || len(plans) == 0 {
+		return errors.New("membership plan catalog revision is incomplete")
+	}
+	seenCodes := make(map[string]struct{}, len(plans))
+	for _, plan := range plans {
+		if plan.Code == "" {
+			return errors.New("membership plan catalog contains an empty code")
+		}
+		if _, exists := seenCodes[plan.Code]; exists {
+			return errors.New("membership plan catalog contains a duplicate code")
+		}
+		seenCodes[plan.Code] = struct{}{}
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		marker := model.SystemSetting{Key: settingKey}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&marker).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&marker, "key = ?", settingKey).Error; err != nil {
+			return err
+		}
+		if marker.ValueJSON == revision {
+			return nil
+		}
+
+		var stored []model.MembershipPlan
+		if err := tx.Find(&stored).Error; err != nil {
+			return err
+		}
+		storedByCode := make(map[string]model.MembershipPlan, len(stored))
+		for _, plan := range stored {
+			storedByCode[plan.Code] = plan
+		}
+
+		codes := make([]string, 0, len(plans))
+		for index := range plans {
+			plan := plans[index]
+			codes = append(codes, plan.Code)
+			if current, exists := storedByCode[plan.Code]; exists {
+				plan.ID = current.ID
+				plan.CreatedAt = current.CreatedAt
+				if err := tx.Save(&plan).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if err := tx.Create(&plan).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.MembershipPlan{}).
+			Where("code NOT IN ?", codes).
+			Updates(map[string]interface{}{"enabled": false, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+
+		marker.ValueJSON = revision
+		marker.UpdatedBy = ""
+		return tx.Save(&marker).Error
+	})
 }
 
 func (r *Repository) MembershipPlans(enabledOnly bool) ([]model.MembershipPlan, error) {
