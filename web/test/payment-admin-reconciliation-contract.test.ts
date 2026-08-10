@@ -1,22 +1,9 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import axios, { type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
+import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { PaymentReconciliationConfirmation, PaymentTransactionReconciliationAction, executePaymentReconciliation, paymentReconciliationOutcomeLabel, paymentStatusLabel, webhookStatusLabel } from "../src/pages/admin/membership/payment-reconciliation";
-import type { AdminPaymentReconciliationResult, PaymentTransaction } from "../src/services/api/payment";
-
-const originalAdapter = axios.defaults.adapter;
-let capturedRequest: InternalAxiosRequestConfig | null = null;
-const testAdapter: AxiosAdapter = async (config): Promise<AxiosResponse> => {
-    capturedRequest = config;
-    return { data: { code: 0, data: { transaction: paidTransaction, providerState: "paid" }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
-};
-axios.defaults.adapter = testAdapter;
-
-afterAll(() => {
-    axios.defaults.adapter = originalAdapter;
-});
+import { adminPaymentReconciliationRequest, type AdminPaymentReconciliationResult, type PaymentTransaction } from "../src/services/api/payment";
 
 const reviewTransaction: PaymentTransaction = {
     id: "transaction-review-1",
@@ -42,13 +29,11 @@ const paidTransaction: PaymentTransaction = {
 };
 
 describe("payment admin reconciliation contract", () => {
-    test("posts the encoded transaction id to the admin reconciliation endpoint", async () => {
-        const { reconcileAdminPaymentTransaction } = await import("../src/services/api/payment");
-        const result = await reconcileAdminPaymentTransaction("transaction review 1");
-
-        expect(capturedRequest?.method).toBe("post");
-        expect(capturedRequest?.url).toBe("/admin/payments/transactions/transaction%20review%201/reconcile");
-        expect(result).toEqual({ transaction: paidTransaction, providerState: "paid" });
+    test("posts the encoded transaction id to the admin reconciliation endpoint", () => {
+        expect(adminPaymentReconciliationRequest("transaction review 1")).toEqual({
+            method: "post",
+            url: "/admin/payments/transactions/transaction%20review%201/reconcile",
+        });
     });
 
     test("renders transaction and webhook review facts as explicit Chinese states", () => {

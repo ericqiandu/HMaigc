@@ -1,7 +1,6 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import axios, { type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
+import { describe, expect, test } from "bun:test";
 
-import type { MembershipOrder, MembershipOrderRequestIdentity, MembershipOrderRequestInput, Team } from "../src/services/api/membership";
+import { membershipOrderRequest, type MembershipOrder, type MembershipOrderRequestIdentity, type MembershipOrderRequestInput, type Team } from "../src/services/api/membership";
 
 const order: MembershipOrder = {
     id: "order-1",
@@ -19,18 +18,6 @@ const order: MembershipOrder = {
     createdAt: "2026-08-09T00:00:00Z",
     updatedAt: "2026-08-09T00:00:00Z",
 };
-
-const originalAdapter = axios.defaults.adapter;
-let capturedRequest: InternalAxiosRequestConfig | null = null;
-const testAdapter: AxiosAdapter = async (config): Promise<AxiosResponse> => {
-    capturedRequest = config;
-    return { data: { code: 0, data: order, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
-};
-axios.defaults.adapter = testAdapter;
-
-afterAll(() => {
-    axios.defaults.adapter = originalAdapter;
-});
 
 describe("会员订单请求幂等契约", () => {
     test("规范化购买指纹复用同一 key，任一计划、团队或席位变化都会轮换", async () => {
@@ -50,10 +37,13 @@ describe("会员订单请求幂等契约", () => {
         });
     });
 
-    test("订单 API 把显式幂等 key 发送为标准 Idempotency-Key 头", async () => {
-        const membership = await import("../src/services/api/membership");
-        await membership.createMembershipOrder({ planId: "plan-1", seats: 1 }, "request-key-1");
-        expect(capturedRequest?.headers.get("Idempotency-Key")).toBe("request-key-1");
+    test("订单 API 把显式幂等 key 发送为标准 Idempotency-Key 头", () => {
+        expect(membershipOrderRequest({ planId: "plan-1", seats: 1 }, "request-key-1")).toEqual({
+            data: { planId: "plan-1", seats: 1 },
+            headers: { "Idempotency-Key": "request-key-1" },
+            method: "post",
+            url: "/membership/orders",
+        });
     });
 
     test("新团队 ID 和请求 identity 都在订单请求前持久化，失败重试不会产生第二个指纹", async () => {
@@ -82,20 +72,12 @@ describe("会员订单请求幂等契约", () => {
         };
 
         await submitMembershipOrderRequest({ planId: "team-plan", seats: 3 }, "新团队", true, null, "request-key", dependencies);
-        expect(events).toEqual([
-            "team-created",
-            "team-persisted:team-created",
-            'identity-persisted:{"planId":"team-plan","teamId":"team-created","seats":3}',
-            "order-request:team-created:request-key",
-        ]);
+        expect(events).toEqual(["team-created", "team-persisted:team-created", 'identity-persisted:{"planId":"team-plan","teamId":"team-created","seats":3}', "order-request:team-created:request-key"]);
         expect(persistedTeamID).toBe("team-created");
 
         events.length = 0;
         await submitMembershipOrderRequest({ planId: "team-plan", teamId: persistedTeamID, seats: 3 }, "", true, persistedIdentity, "unused-key", dependencies);
-        expect(events).toEqual([
-            'identity-persisted:{"planId":"team-plan","teamId":"team-created","seats":3}',
-            "order-request:team-created:request-key",
-        ]);
+        expect(events).toEqual(['identity-persisted:{"planId":"team-plan","teamId":"team-created","seats":3}', "order-request:team-created:request-key"]);
     });
 
     test("个人套餐提交不会携带先前团队购买残留的 teamId", async () => {

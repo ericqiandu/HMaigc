@@ -114,11 +114,7 @@ function normalizeMembershipOrderRequest(input: MembershipOrderRequestInput): Re
     return { planId, teamId, seats };
 }
 
-export function bindMembershipOrderRequestIdentity(
-    input: MembershipOrderRequestInput,
-    current: MembershipOrderRequestIdentity | null,
-    nextKey: string,
-): MembershipOrderRequestIdentity {
+export function bindMembershipOrderRequestIdentity(input: MembershipOrderRequestInput, current: MembershipOrderRequestIdentity | null, nextKey: string): MembershipOrderRequestIdentity {
     const fingerprint = JSON.stringify(normalizeMembershipOrderRequest(input));
     if (current?.fingerprint === fingerprint) return current;
     if (new TextEncoder().encode(nextKey).byteLength < 1 || new TextEncoder().encode(nextKey).byteLength > 120) {
@@ -228,8 +224,17 @@ export function getMyMembership() {
     return request<MembershipOverview>(api.get("/membership"));
 }
 
+export function membershipOrderRequest(input: MembershipOrderRequestInput, idempotencyKey: string) {
+    return {
+        data: input,
+        headers: { "Idempotency-Key": idempotencyKey },
+        method: "post" as const,
+        url: "/membership/orders",
+    };
+}
+
 export function createMembershipOrder(input: MembershipOrderRequestInput, idempotencyKey: string) {
-    return request<MembershipOrder>(api.post("/membership/orders", input, { headers: { "Idempotency-Key": idempotencyKey } }));
+    return request<MembershipOrder>(api.request(membershipOrderRequest(input, idempotencyKey)));
 }
 
 export function cancelMembershipOrder(id: string) {

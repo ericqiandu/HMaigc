@@ -188,8 +188,15 @@ export function listAdminPaymentWebhookEvents() {
     return request<AdminPaymentPage<PaymentWebhookEvent>>(api.get("/admin/payments/webhooks"));
 }
 
+export function adminPaymentReconciliationRequest(transactionId: string) {
+    return {
+        method: "post" as const,
+        url: `/admin/payments/transactions/${encodeURIComponent(transactionId)}/reconcile`,
+    };
+}
+
 export function reconcileAdminPaymentTransaction(transactionId: string) {
-    return request<AdminPaymentReconciliationResult>(api.post(`/admin/payments/transactions/${encodeURIComponent(transactionId)}/reconcile`));
+    return request<AdminPaymentReconciliationResult>(api.request(adminPaymentReconciliationRequest(transactionId)));
 }
 
 export function createPaymentCheckout(orderId: string) {
