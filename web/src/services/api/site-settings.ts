@@ -21,6 +21,7 @@ export type SiteSettings = {
     publicSecurityRegistrationUrl: string;
     userAgreement: string;
     privacyPolicy: string;
+    membershipAgreement: string;
     homeBannerEnabled: boolean;
     homeBannerLabel: string;
     homeBannerText: string;
@@ -65,7 +66,7 @@ export type UpdateSiteSettingsInput = Pick<
     | "marketingPopupFrequency"
 >;
 
-export type UpdateLegalSettingsInput = Pick<SiteSettings, "userAgreement" | "privacyPolicy">;
+export type UpdateLegalSettingsInput = Pick<SiteSettings, "userAgreement" | "privacyPolicy" | "membershipAgreement">;
 
 export const publicSiteSettingsQueryKey = ["public-site-settings"] as const;
 export const adminSiteSettingsQueryKey = ["admin-site-settings"] as const;

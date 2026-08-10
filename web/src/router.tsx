@@ -1,6 +1,8 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate, Outlet } from "react-router";
 
+import { legalDocumentRoutes } from "@/constants/legal-documents";
+
 const RequireAuth = lazy(() => import("@/components/auth/require-auth").then((module) => ({ default: module.RequireAuth })));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
 const AuthScene = lazy(() => import("@/pages/auth/auth-scene").then((module) => ({ default: module.AuthScene })));
@@ -84,8 +86,9 @@ export const router = createBrowserRouter([
         errorElement: deferredRoute(<RouteErrorPage />),
         children: [
             { path: "/", element: deferredRoute(<HomePage />) },
-            { path: "/legal/user-agreement", element: deferredRoute(<LegalDocumentPage document="userAgreement" />) },
-            { path: "/legal/privacy-policy", element: deferredRoute(<LegalDocumentPage document="privacyPolicy" />) },
+            { path: legalDocumentRoutes.userAgreement, element: deferredRoute(<LegalDocumentPage document="userAgreement" />) },
+            { path: legalDocumentRoutes.privacyPolicy, element: deferredRoute(<LegalDocumentPage document="privacyPolicy" />) },
+            { path: legalDocumentRoutes.membershipAgreement, element: deferredRoute(<LegalDocumentPage document="membershipAgreement" />) },
             { path: "/membership", element: deferredRoute(<MembershipPage />) },
             { path: "/credit-store", element: protectedRoute(<CreditStorePage />) },
             { path: "/tasks", element: protectedRoute(<TasksPage />) },

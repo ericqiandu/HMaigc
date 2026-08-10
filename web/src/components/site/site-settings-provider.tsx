@@ -14,6 +14,7 @@ const bootstrapSiteSettings: SiteSettings = {
     publicSecurityRegistrationUrl: "",
     userAgreement: "",
     privacyPolicy: "",
+    membershipAgreement: "",
     homeBannerEnabled: false,
     homeBannerLabel: "",
     homeBannerText: "",

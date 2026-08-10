@@ -4,6 +4,7 @@ import { ExternalLink, Save, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useBlocker } from "react-router";
 
+import { legalDocumentDefinitions, type LegalDocumentKind } from "@/constants/legal-documents";
 import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQueryKey, updateAdminLegalSettings, type SiteSettings } from "@/services/api/site-settings";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, SettingsSectionCard } from "../components/admin-ui";
@@ -15,13 +16,13 @@ export default function LegalSettingsPage() {
     const queryClient = useQueryClient();
     const [draft, setDraft] = useState<LegalDraft>(emptyLegalDraft);
     const [baseline, setBaseline] = useState<LegalDraft>(emptyLegalDraft);
-    const [characterCounts, setCharacterCounts] = useState({ userAgreement: 0, privacyPolicy: 0 });
+    const [characterCounts, setCharacterCounts] = useState<Record<LegalDocumentKind, number>>({ userAgreement: 0, privacyPolicy: 0, membershipAgreement: 0 });
     const settingQuery = useQuery({ queryKey: adminSiteSettingsQueryKey, queryFn: getAdminSiteSettings });
     const dirty = useMemo(() => !legalDraftsEqual(draft, baseline), [baseline, draft]);
 
     useEffect(() => {
         if (!settingQuery.data || dirty) return;
-        const synchronized = normalizeLegalDraft({ userAgreement: settingQuery.data.userAgreement, privacyPolicy: settingQuery.data.privacyPolicy });
+        const synchronized = legalDraftFromSetting(settingQuery.data);
         setDraft(synchronized);
         setBaseline(synchronized);
     }, [dirty, settingQuery.data]);
@@ -30,7 +31,7 @@ export default function LegalSettingsPage() {
         mutationFn: updateAdminLegalSettings,
         onSuccess: (setting) => {
             synchronizeSetting(queryClient, setting);
-            const synchronized = normalizeLegalDraft({ userAgreement: setting.userAgreement, privacyPolicy: setting.privacyPolicy });
+            const synchronized = legalDraftFromSetting(setting);
             setDraft(synchronized);
             setBaseline(synchronized);
             message.success("法律内容已保存并同步到公开页面");
@@ -49,7 +50,7 @@ export default function LegalSettingsPage() {
         setCharacterCounts((current) => ({ ...current, [field]: characterCount }));
     };
 
-    const configuredCount = Number(characterCounts.userAgreement > 0) + Number(characterCounts.privacyPolicy > 0);
+    const configuredCount = legalDocumentDefinitions.reduce((count, document) => count + Number(characterCounts[document.kind] > 0), 0);
     const setting = settingQuery.data;
 
     useEffect(() => {
@@ -65,7 +66,7 @@ export default function LegalSettingsPage() {
         if (blocker.state !== "blocked") return;
         const instance = modal.confirm({
             title: "离开并放弃未保存的法律内容？",
-            content: "当前用户协议或隐私政策尚未保存，离开后本次修改将丢失。",
+            content: "当前用户协议、隐私政策或会员服务协议尚未保存，离开后本次修改将丢失。",
             okText: "放弃修改并离开",
             cancelText: "继续编辑",
             okButtonProps: { danger: true },
@@ -76,7 +77,7 @@ export default function LegalSettingsPage() {
     }, [blocker, modal]);
 
     return (
-        <AdminPageFrame title="法律与协议" description="独立维护用户协议、隐私政策及其公开展示内容">
+        <AdminPageFrame title="法律与协议" description="独立维护用户协议、隐私政策、会员服务协议及其公开展示内容">
             <div className="legal-settings-page space-y-5">
                 {settingQuery.isLoading ? (
                     <AdminContentSkeleton rows={16} label="正在加载法律内容" />
@@ -84,52 +85,51 @@ export default function LegalSettingsPage() {
                     <AdminContentError title="法律内容加载失败" description={settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"} onRetry={() => void settingQuery.refetch()} />
                 ) : setting ? (
                     <>
-                        {settingQuery.error ? <AdminContentError title="法律内容刷新失败" description={`${settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"}；当前继续显示上次成功读取的内容。`} onRetry={() => void settingQuery.refetch()} /> : null}
+                        {settingQuery.error ? (
+                            <AdminContentError title="法律内容刷新失败" description={`${settingQuery.error instanceof Error ? settingQuery.error.message : "请稍后重试"}；当前继续显示上次成功读取的内容。`} onRetry={() => void settingQuery.refetch()} />
+                        ) : null}
                         <SettingsSectionCard
                             className="legal-settings-editor-card"
                             icon={<ShieldCheck className="legal-settings-card-icon size-4" />}
                             title="公开法律文档"
-                            description="编辑内容会显示在登录、注册及站点底部链接对应的公开页面。"
-                            status={(
+                            description="三份文档分别发布到公开页面；会员服务协议未发布时不阻止订单创建或付款。"
+                            status={
                                 <div className="legal-settings-header-actions">
-                                    <Tag className="legal-settings-status" color={configuredCount === 2 ? "success" : "warning"}>{configuredCount === 2 ? "内容完整" : `${configuredCount}/2 已配置`}</Tag>
-                                    <Button className="legal-settings-save-button" type="primary" icon={<Save className="legal-settings-save-icon size-4" />} loading={saveMutation.isPending} disabled={!dirty} onClick={() => saveMutation.mutate(normalizeLegalDraft(draft))}>保存并发布</Button>
+                                    <Tag className="legal-settings-status" color={configuredCount === legalDocumentDefinitions.length ? "success" : "warning"}>
+                                        {configuredCount === legalDocumentDefinitions.length ? "内容完整" : `${configuredCount}/${legalDocumentDefinitions.length} 已配置`}
+                                    </Tag>
+                                    <Button
+                                        className="legal-settings-save-button"
+                                        type="primary"
+                                        icon={<Save className="legal-settings-save-icon size-4" />}
+                                        loading={saveMutation.isPending}
+                                        disabled={!dirty}
+                                        onClick={() => saveMutation.mutate(normalizeLegalDraft(draft))}
+                                    >
+                                        保存并发布
+                                    </Button>
                                 </div>
-                            )}
+                            }
                         >
                             <Tabs
                                 className="legal-settings-tabs"
                                 defaultActiveKey="userAgreement"
-                                items={[
-                                    {
-                                        key: "userAgreement",
-                                        label: "用户协议",
-                                        forceRender: true,
-                                        children: (
-                                            <LegalDocumentPane
-                                                title="用户协议"
-                                                description="建议覆盖账号使用、用户内容权利、付费服务、违约处理、知识产权和争议解决。"
-                                                previewPath="/legal/user-agreement"
-                                            >
-                                                <LegalRichTextEditor value={draft.userAgreement} placeholder="从用户协议第一条开始编辑……" disabled={saveMutation.isPending} onReady={initializeCharacterCount("userAgreement")} onChange={updateDraft("userAgreement")} />
-                                            </LegalDocumentPane>
-                                        ),
-                                    },
-                                    {
-                                        key: "privacyPolicy",
-                                        label: "隐私政策",
-                                        forceRender: true,
-                                        children: (
-                                            <LegalDocumentPane
-                                                title="隐私政策"
-                                                description="建议说明信息收集范围、处理目的、保存期限、第三方共享规则与用户权利。"
-                                                previewPath="/legal/privacy-policy"
-                                            >
-                                                <LegalRichTextEditor value={draft.privacyPolicy} placeholder="从隐私政策第一条开始编辑……" disabled={saveMutation.isPending} onReady={initializeCharacterCount("privacyPolicy")} onChange={updateDraft("privacyPolicy")} />
-                                            </LegalDocumentPane>
-                                        ),
-                                    },
-                                ]}
+                                items={legalDocumentDefinitions.map((document) => ({
+                                    key: document.kind,
+                                    label: document.tabLabel,
+                                    forceRender: true,
+                                    children: (
+                                        <LegalDocumentPane title={document.title} description={document.editorDescription} previewPath={document.route}>
+                                            <LegalRichTextEditor
+                                                value={draft[document.kind]}
+                                                placeholder={document.editorPlaceholder}
+                                                disabled={saveMutation.isPending}
+                                                onReady={initializeCharacterCount(document.kind)}
+                                                onChange={updateDraft(document.kind)}
+                                            />
+                                        </LegalDocumentPane>
+                                    ),
+                                }))}
                             />
                             <div className="legal-settings-sync-status" role="status">
                                 <ShieldCheck className="legal-settings-sync-icon size-3.5" />
@@ -165,4 +165,12 @@ function LegalDocumentPane({ title, description, previewPath, children }: { titl
 function synchronizeSetting(queryClient: ReturnType<typeof useQueryClient>, setting: SiteSettings) {
     queryClient.setQueryData(adminSiteSettingsQueryKey, setting);
     queryClient.setQueryData(publicSiteSettingsQueryKey, setting);
+}
+
+function legalDraftFromSetting(setting: SiteSettings): LegalDraft {
+    return normalizeLegalDraft({
+        userAgreement: setting.userAgreement,
+        privacyPolicy: setting.privacyPolicy,
+        membershipAgreement: setting.membershipAgreement,
+    });
 }
