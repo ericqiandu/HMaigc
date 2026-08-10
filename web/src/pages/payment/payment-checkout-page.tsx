@@ -3,8 +3,6 @@ import { useNavigate, useParams } from "react-router";
 
 import { PaymentCheckoutExperience, type PaymentCheckoutExitDestination } from "./payment-checkout-experience";
 
-import "./payment-checkout.css";
-
 export default function PaymentCheckoutPage() {
     const navigate = useNavigate();
     const { token = "" } = useParams();

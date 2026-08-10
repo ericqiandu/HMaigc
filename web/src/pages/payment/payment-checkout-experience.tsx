@@ -27,11 +27,14 @@ import {
 import { PaymentCheckoutInitialError, PaymentCheckoutShell } from "./payment-checkout-shell";
 import { PaymentQrPanel } from "./payment-qr-panel";
 
+import "./payment-checkout.css";
+
 export type PaymentCheckoutExitDestination = "/membership" | "/credit-store";
 
 export type PaymentCheckoutExperienceProps = {
     mode: "page" | "dialog";
     onExit: (destination: PaymentCheckoutExitDestination) => void;
+    onWriteStateChange?: (writing: boolean) => void;
     token: string;
 };
 
@@ -39,7 +42,7 @@ function errorMessage(reason: unknown, fallback: string): string {
     return reason instanceof Error ? reason.message : fallback;
 }
 
-export function PaymentCheckoutExperience({ mode, onExit, token }: PaymentCheckoutExperienceProps): ReactElement {
+export function PaymentCheckoutExperience({ mode, onExit, onWriteStateChange, token }: PaymentCheckoutExperienceProps): ReactElement {
     const coordinatorRef = useRef<CheckoutRequestCoordinator | null>(null);
     if (coordinatorRef.current === null) coordinatorRef.current = new CheckoutRequestCoordinator();
 
@@ -54,6 +57,11 @@ export function PaymentCheckoutExperience({ mode, onExit, token }: PaymentChecko
     const [checkoutSecondsLeft, setCheckoutSecondsLeft] = useState(0);
     const [paymentSecondsLeft, setPaymentSecondsLeft] = useState(0);
     const [serverOffsetMs, setServerOffsetMs] = useState(0);
+
+    useEffect(() => {
+        onWriteStateChange?.(submitting);
+        return () => onWriteStateChange?.(false);
+    }, [onWriteStateChange, submitting]);
 
     const checkout = visibleCheckoutForToken(loadState, token);
     const hasToken = hasCheckoutToken(token);

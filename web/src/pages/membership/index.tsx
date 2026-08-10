@@ -22,10 +22,11 @@ import {
 import { createPaymentCheckout } from "@/services/api/payment";
 import { useUserStore } from "@/stores/use-user-store";
 
+import { paymentCheckoutTokenFromURL } from "../payment/payment-checkout-domain";
 import { clampSeats, publicPlanName, topupDiscountLabel } from "./membership-formatters";
 import { MembershipOrderHistory } from "./membership-order-history";
 import { MembershipInvoiceCenter } from "./membership-invoice-center";
-import { MembershipPurchaseModal } from "./membership-purchase-modal";
+import { MembershipPaymentDialog, shouldNavigateFromMembershipPage } from "./membership-payment-dialog";
 import { MembershipStorefrontFAQs } from "./membership-storefront-faq";
 import { MembershipStorefrontGeneration } from "./membership-storefront-generation";
 import { MembershipStorefrontPricing } from "./membership-storefront-pricing";
@@ -55,15 +56,22 @@ export default function MembershipPage() {
     const [cycle, setCycle] = useState<MembershipBillingCycle>("year");
     const [teamSeats, setTeamSeats] = useState<Record<string, number>>({});
     const [selection, setSelection] = useState<PurchaseSelection | null>(null);
+    const [dialogOpen, setDialogOpen] = useState(false);
     const [teamId, setTeamId] = useState<string>();
     const [teamName, setTeamName] = useState("");
+    const [createdOrderId, setCreatedOrderId] = useState("");
+    const [createdOrderNumber, setCreatedOrderNumber] = useState("");
+    const [checkoutToken, setCheckoutToken] = useState("");
+    const [creationError, setCreationError] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    const [openingCheckout, setOpeningCheckout] = useState(false);
     const [payingId, setPayingId] = useState("");
     const [cancellingId, setCancellingId] = useState("");
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const orderRequestIdentityRef = useRef<MembershipOrderRequestIdentity | null>(null);
     const resolvedTeamIDRef = useRef<string | undefined>(undefined);
+    const paymentDialogWriteRef = useRef(false);
 
     const persistResolvedTeamID = useCallback((nextTeamID?: string) => {
         resolvedTeamIDRef.current = nextTeamID;
@@ -109,11 +117,11 @@ export default function MembershipPage() {
 
     useEffect(() => {
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === "Escape" && !selection) navigate(-1);
+            if (shouldNavigateFromMembershipPage(event.key, dialogOpen)) navigate(-1);
         };
         window.addEventListener("keydown", closeOnEscape);
         return () => window.removeEventListener("keydown", closeOnEscape);
-    }, [navigate, selection]);
+    }, [dialogOpen, navigate]);
 
     const plans = storefront?.plans ?? [];
 
@@ -142,70 +150,126 @@ export default function MembershipPage() {
         setAudience(nextAudience);
     };
 
+    const resetPaymentDialogFacts = useCallback(() => {
+        setCreatedOrderId("");
+        setCreatedOrderNumber("");
+        setCheckoutToken("");
+        setCreationError("");
+        setSubmitting(false);
+        setOpeningCheckout(false);
+        orderRequestIdentityRef.current = null;
+    }, []);
+
+    const openCheckoutForOrder = useCallback(async (orderId: string, orderNumber = "") => {
+        if (paymentDialogWriteRef.current) return;
+        paymentDialogWriteRef.current = true;
+        setOpeningCheckout(true);
+        setCreationError("");
+        try {
+            const checkout = await createPaymentCheckout(orderId);
+            setCheckoutToken(paymentCheckoutTokenFromURL(checkout.checkoutUrl, window.location.origin));
+        } catch (error) {
+            setCreationError(error instanceof Error ? error.message : "收银台打开失败");
+            setCreatedOrderId(orderId);
+            setCreatedOrderNumber(orderNumber);
+        } finally {
+            paymentDialogWriteRef.current = false;
+            setOpeningCheckout(false);
+        }
+    }, []);
+
+    const createOrderAndOpenCheckout = useCallback(
+        async (captured: PurchaseSelection) => {
+            if (paymentDialogWriteRef.current) return;
+            paymentDialogWriteRef.current = true;
+            setSubmitting(true);
+            setCreationError("");
+            let orderId = "";
+            let orderNumber = "";
+            try {
+                const order = await submitMembershipOrderRequest(
+                    {
+                        planId: captured.plan.id,
+                        seats: captured.plan.audience === "team" ? captured.seats : 1,
+                        teamId: resolvedTeamIDRef.current,
+                    },
+                    teamName,
+                    captured.plan.audience === "team",
+                    orderRequestIdentityRef.current,
+                    crypto.randomUUID(),
+                    {
+                        createTeam,
+                        createOrder: createMembershipOrder,
+                        persistResolvedTeamID,
+                        persistIdentity: (identity) => {
+                            orderRequestIdentityRef.current = identity;
+                        },
+                    },
+                );
+                orderId = order.id;
+                orderNumber = order.orderNumber;
+                setCreatedOrderId(order.id);
+                setCreatedOrderNumber(order.orderNumber);
+                orderRequestIdentityRef.current = null;
+                setSubmitting(false);
+                setOpeningCheckout(true);
+                const checkout = await createPaymentCheckout(order.id);
+                setCheckoutToken(paymentCheckoutTokenFromURL(checkout.checkoutUrl, window.location.origin));
+            } catch (error) {
+                setCreationError(error instanceof Error ? error.message : "创建付款订单失败");
+                if (orderId) {
+                    setCreatedOrderId(orderId);
+                    setCreatedOrderNumber(orderNumber);
+                    await load();
+                }
+            } finally {
+                paymentDialogWriteRef.current = false;
+                setSubmitting(false);
+                setOpeningCheckout(false);
+            }
+        },
+        [load, persistResolvedTeamID, teamName],
+    );
+
     const beginPurchase = (plan: MembershipPlan, seats: number) => {
         if (!user) {
             navigate("/login?next=%2Fmembership");
             return;
         }
-        const normalizedSeats = clampSeats(plan, seats);
-        setSelection({ plan, seats: normalizedSeats });
+        const next = { plan, seats: clampSeats(plan, seats) };
         persistResolvedTeamID(plan.audience === "team" ? (requestedTeamId && overview?.teams.some((team) => team.id === requestedTeamId) ? requestedTeamId : overview?.teams[0]?.id) : undefined);
         setTeamName("");
+        resetPaymentDialogFacts();
+        setSelection(next);
+        setDialogOpen(true);
+        if (plan.audience === "personal") void createOrderAndOpenCheckout(next);
     };
 
-    const submitOrder = async () => {
-        if (!selection) return;
-        setSubmitting(true);
-        let createdOrderId = "";
-        try {
-            const order = await submitMembershipOrderRequest(
-                {
-                    planId: selection.plan.id,
-                    seats: selection.plan.audience === "team" ? selection.seats : 1,
-                    teamId: resolvedTeamIDRef.current,
-                },
-                teamName,
-                selection.plan.audience === "team",
-                orderRequestIdentityRef.current,
-                crypto.randomUUID(),
-                {
-                    createTeam,
-                    createOrder: createMembershipOrder,
-                    persistResolvedTeamID,
-                    persistIdentity: (identity) => {
-                        orderRequestIdentityRef.current = identity;
-                    },
-                },
-            );
-            createdOrderId = order.id;
-            orderRequestIdentityRef.current = null;
-            setSelection(null);
-            const checkout = await createPaymentCheckout(order.id);
-            message.success(`订单 ${order.orderNumber} 已创建，正在进入收银台`);
-            window.location.assign(checkout.checkoutUrl);
-        } catch (error) {
-            const reason = error instanceof Error ? error.message : "创建订单失败";
-            if (createdOrderId) {
-                message.error(`订单已创建，但收银台打开失败：${reason}。请在会员订单中继续支付`);
-                await load();
-            } else {
-                message.error(reason);
-            }
-        } finally {
-            setSubmitting(false);
+    const retryPaymentDialog = () => {
+        if (createdOrderId) {
+            void openCheckoutForOrder(createdOrderId, createdOrderNumber);
+            return;
         }
+        if (selection) void createOrderAndOpenCheckout(selection);
     };
 
-    const openCheckout = async (orderId: string) => {
+    const closePaymentDialog = () => {
+        if (paymentDialogWriteRef.current || submitting || openingCheckout) return;
+        setDialogOpen(false);
+        setSelection(null);
+        resetPaymentDialogFacts();
+        void load();
+    };
+
+    const openCheckout = (orderId: string) => {
+        const orderNumber = overview?.orders.find((order) => order.id === orderId)?.orderNumber ?? "";
+        resetPaymentDialogFacts();
+        setSelection(null);
+        setCreatedOrderId(orderId);
+        setCreatedOrderNumber(orderNumber);
+        setDialogOpen(true);
         setPayingId(orderId);
-        try {
-            const checkout = await createPaymentCheckout(orderId);
-            window.location.assign(checkout.checkoutUrl);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "收银台打开失败");
-        } finally {
-            setPayingId("");
-        }
+        void openCheckoutForOrder(orderId, orderNumber).finally(() => setPayingId(""));
     };
 
     const cancelOrder = async (orderId: string) => {
@@ -326,14 +390,21 @@ export default function MembershipPage() {
                 </div>
             )}
 
-            <MembershipPurchaseModal
-                className="membership-purchase-dialog membership-storefront-purchase-dialog"
-                onCancel={() => setSelection(null)}
+            <MembershipPaymentDialog
+                checkoutToken={checkoutToken}
+                className="membership-storefront-payment-dialog"
+                createdOrderNumber={createdOrderNumber}
+                creationError={creationError}
+                onClose={closePaymentDialog}
+                onConfirm={() => {
+                    if (selection) void createOrderAndOpenCheckout(selection);
+                }}
+                onRetry={retryPaymentDialog}
                 onSeatsChange={(seats) => setSelection((current) => (current ? { ...current, seats: clampSeats(current.plan, seats) } : null))}
-                onSubmit={() => void submitOrder()}
                 onTeamIdChange={persistResolvedTeamID}
                 onTeamNameChange={setTeamName}
-                open={Boolean(selection)}
+                open={dialogOpen}
+                openingCheckout={openingCheckout}
                 plan={selection?.plan ?? null}
                 seats={selection?.seats ?? 1}
                 submitting={submitting}

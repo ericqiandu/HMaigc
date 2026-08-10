@@ -404,15 +404,4 @@ describe("checkout implementation boundaries", () => {
         }
     });
 
-    test("the pre-order modal locks dismissal and editable inputs while submitting", () => {
-        const modal = readFileSync(resolve(root, "src/pages/membership/membership-purchase-modal.tsx"), "utf8");
-
-        expect(modal).toContain("closable={!submitting}");
-        expect(modal).toContain("keyboard={!submitting}");
-        expect(modal).toContain("maskClosable={!submitting}");
-        expect(modal).toContain("disabled={submitting}");
-        expect(modal).toContain("membership-order-unit-price");
-        expect(modal).toContain("membership-order-total-price");
-        expect(modal).not.toMatch(/\bany\b/);
-    });
 });
