@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { MembershipPlan, Team } from "@/services/api/membership";
 
 import { PaymentCheckoutExperience } from "../payment/payment-checkout-experience";
+import type { MembershipOrderFactsModel } from "../payment/membership-order-facts-domain";
 import { MembershipPaymentSetup } from "./membership-payment-setup";
 
 export type MembershipPaymentDialogProps = {
@@ -11,6 +12,8 @@ export type MembershipPaymentDialogProps = {
     className?: string;
     createdOrderNumber: string;
     creationError: string;
+    frozenFacts: MembershipOrderFactsModel | null;
+    frozenFactsError: string;
     onClose: () => void;
     onConfirm: () => void;
     onRetry: () => void;
@@ -36,6 +39,8 @@ export function MembershipPaymentDialog({
     className = "",
     createdOrderNumber,
     creationError,
+    frozenFacts,
+    frozenFactsError,
     onClose,
     onConfirm,
     onRetry,
@@ -104,6 +109,8 @@ export function MembershipPaymentDialog({
                     <MembershipPaymentSetup
                         createdOrderNumber={createdOrderNumber}
                         creationError={creationError}
+                        frozenFacts={frozenFacts}
+                        frozenFactsError={frozenFactsError}
                         onConfirm={requestConfirm}
                         onRetry={onRetry}
                         onSeatsChange={onSeatsChange}

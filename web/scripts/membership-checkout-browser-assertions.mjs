@@ -180,11 +180,31 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
                 return { className: node.getAttribute("class") ?? node.tagName, left: rect.left, right: rect.right };
             })
             .filter((item) => item.left < dialogRect.left - 0.5 || item.right > dialogRect.right + 0.5);
+        const verticalCandidates = [content, dialog.closest(".ant-modal-wrap"), document.scrollingElement].filter((node, index, values) => node instanceof HTMLElement && values.indexOf(node) === index);
+        let verticalContainer = content;
+        for (const candidate of verticalCandidates) {
+            const candidateScrollTop = candidate.scrollTop;
+            candidate.scrollTop = candidate.scrollHeight;
+            const canReachBottom = candidate.scrollTop > candidateScrollTop;
+            candidate.scrollTop = candidateScrollTop;
+            if (canReachBottom) {
+                verticalContainer = candidate;
+                break;
+            }
+        }
+        const verticalStyle = getComputedStyle(verticalContainer);
+        const scrollTopBefore = verticalContainer.scrollTop;
+        const scrollable = verticalContainer.scrollHeight > verticalContainer.clientHeight + 1;
+        verticalContainer.scrollTop = verticalContainer.scrollHeight;
+        const scrollTopAfter = verticalContainer.scrollTop;
+        verticalContainer.scrollTop = scrollTopBefore;
         return {
             close: { height: closeRect.height, width: closeRect.width },
             contentBorderWidth: Number.parseFloat(contentStyle.borderTopWidth),
             contentRadius: Number.parseFloat(contentStyle.borderTopLeftRadius),
             contentShadow: contentStyle.boxShadow,
+            contentOverflowY: verticalStyle.overflowY,
+            contentScroll: { clientHeight: verticalContainer.clientHeight, scrollHeight: verticalContainer.scrollHeight, scrollTopAfter, scrollTopBefore, scrollable },
             dialog: { left: dialogRect.left, right: dialogRect.right, width: dialogRect.width },
             order: { left: orderRect.left, right: orderRect.right, top: orderRect.top, width: orderRect.width },
             orderRadius: Number.parseFloat(orderStyle.borderTopLeftRadius),
@@ -232,6 +252,11 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
         assert.ok(snapshot.payment.top >= snapshot.order.top, `${label}: 手机付款区顺序错误`);
         assert.ok(Math.abs(snapshot.payment.width - snapshot.order.width) <= 1, `${label}: 手机单列宽度未对齐`);
         assert.ok(snapshot.close.width >= 44 && snapshot.close.height >= 44, `${label}: 手机关闭热区不足 44×44`);
+        assert.ok(!["hidden", "clip"].includes(snapshot.contentOverflowY), `${label}: 手机纵向溢出不得被隐藏或裁剪`);
+        if (snapshot.contentScroll.scrollable) {
+            assert.ok(snapshot.contentScroll.scrollTopAfter > snapshot.contentScroll.scrollTopBefore, `${label}: 手机纵向内容无法实际滚动`);
+            assert.ok(snapshot.contentScroll.scrollTopAfter >= snapshot.contentScroll.scrollHeight - snapshot.contentScroll.clientHeight - 1, `${label}: 手机无法滚动至底部内容`);
+        }
     }
 }
 
@@ -239,10 +264,11 @@ export async function assertMembershipSetupDialogLayout(page, viewport, label) {
     const snapshot = await page.evaluate(() => {
         const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog.membership-payment-setup");
         const dialog = shell?.closest(".membership-payment-dialog");
+        const content = shell?.closest(".ant-modal-container, .ant-modal-content") ?? dialog;
         const order = shell?.querySelector(":scope > .payment-checkout-order-surface");
         const payment = shell?.querySelector(":scope > .payment-checkout-payment-surface");
         const facts = order?.querySelector(":scope > .membership-order-facts");
-        if (![dialog, shell, order, payment, facts].every((node) => node instanceof HTMLElement)) {
+        if (![dialog, content, shell, order, payment, facts].every((node) => node instanceof HTMLElement)) {
             throw new Error("会员付款创建态缺少共享收银台结构");
         }
         const dialogRect = dialog.getBoundingClientRect();
@@ -254,7 +280,27 @@ export async function assertMembershipSetupDialogLayout(page, viewport, label) {
             const rect = node.getBoundingClientRect();
             return { className: node.getAttribute("class") ?? node.tagName, left: rect.left, right: rect.right };
         });
+        const verticalCandidates = [content, dialog.closest(".ant-modal-wrap"), document.scrollingElement].filter((node, index, values) => node instanceof HTMLElement && values.indexOf(node) === index);
+        let verticalContainer = content;
+        for (const candidate of verticalCandidates) {
+            const candidateScrollTop = candidate.scrollTop;
+            candidate.scrollTop = candidate.scrollHeight;
+            const canReachBottom = candidate.scrollTop > candidateScrollTop;
+            candidate.scrollTop = candidateScrollTop;
+            if (canReachBottom) {
+                verticalContainer = candidate;
+                break;
+            }
+        }
+        const verticalStyle = getComputedStyle(verticalContainer);
+        const scrollTopBefore = verticalContainer.scrollTop;
+        const scrollable = verticalContainer.scrollHeight > verticalContainer.clientHeight + 1;
+        verticalContainer.scrollTop = verticalContainer.scrollHeight;
+        const scrollTopAfter = verticalContainer.scrollTop;
+        verticalContainer.scrollTop = scrollTopBefore;
         return {
+            contentOverflowY: verticalStyle.overflowY,
+            contentScroll: { clientHeight: verticalContainer.clientHeight, scrollHeight: verticalContainer.scrollHeight, scrollTopAfter, scrollTopBefore, scrollable },
             descendants,
             dialog: { left: dialogRect.left, right: dialogRect.right, width: dialogRect.width },
             order: { left: orderRect.left, right: orderRect.right, top: orderRect.top, width: orderRect.width },
@@ -272,12 +318,16 @@ export async function assertMembershipSetupDialogLayout(page, viewport, label) {
     const expectedWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
     assert.ok(Math.abs(snapshot.dialog.width - expectedWidth) <= 1, `${label}: 弹窗宽度未对齐 766px 收银台，期望 ${expectedWidth}，实际 ${snapshot.dialog.width}`);
     assert.ok(Math.abs(snapshot.shell.width - expectedWidth) <= 1, `${label}: 创建态 shell 宽度不正确，期望 ${expectedWidth}，实际 ${snapshot.shell.width}`);
-    assert.deepEqual(snapshot.owners, {
-        facts: "membership-order-facts membership-checkout-summary",
-        order: "payment-checkout-order-surface",
-        payment: "payment-checkout-payment-surface membership-payment-setup-action",
-        shell: "payment-checkout-shell is-dialog membership-payment-setup",
-    }, `${label}: 创建态未使用唯一的左侧事实结构`);
+    assert.deepEqual(
+        snapshot.owners,
+        {
+            facts: "membership-order-facts membership-checkout-summary",
+            order: "payment-checkout-order-surface",
+            payment: "payment-checkout-payment-surface membership-payment-setup-action",
+            shell: "payment-checkout-shell is-dialog membership-payment-setup",
+        },
+        `${label}: 创建态未使用唯一的左侧事实结构`,
+    );
     assert.deepEqual(
         snapshot.descendants.filter((item) => item.left < snapshot.dialog.left - 0.5 || item.right > snapshot.dialog.right + 0.5),
         [],
@@ -299,6 +349,11 @@ export async function assertMembershipSetupDialogLayout(page, viewport, label) {
         assert.ok(snapshot.payment.top >= snapshot.order.top, `${label}: 移动端付款区顺序错误`);
         assert.ok(Math.abs(snapshot.payment.left - snapshot.order.left) <= 1, `${label}: 移动端单列左右边界不一致`);
         assert.ok(Math.abs(snapshot.payment.width - snapshot.order.width) <= 1, `${label}: 移动端单列宽度不一致`);
+        assert.ok(!["hidden", "clip"].includes(snapshot.contentOverflowY), `${label}: 创建态手机纵向溢出不得被隐藏或裁剪`);
+        if (snapshot.contentScroll.scrollable) {
+            assert.ok(snapshot.contentScroll.scrollTopAfter > snapshot.contentScroll.scrollTopBefore, `${label}: 创建态手机纵向内容无法实际滚动`);
+            assert.ok(snapshot.contentScroll.scrollTopAfter >= snapshot.contentScroll.scrollHeight - snapshot.contentScroll.clientHeight - 1, `${label}: 创建态手机无法滚动至底部内容`);
+        }
     }
 
     return snapshot.owners;

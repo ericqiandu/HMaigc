@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { MembershipPaymentSetup } from "../src/pages/membership/membership-payment-setup";
 import { shouldNavigateFromMembershipPage } from "../src/pages/membership/membership-payment-dialog";
+import type { MembershipOrderFactsModel } from "../src/pages/payment/membership-order-facts-domain";
 import { PaymentCheckoutExperience } from "../src/pages/payment/payment-checkout-experience";
 import type { MembershipPlan, Team } from "../src/services/api/membership";
 
@@ -63,6 +64,21 @@ const teams = [
     },
 ] satisfies Team[];
 
+const frozenPersonalFacts = {
+    audience: "personal",
+    billingCycle: "month",
+    creditsPerPeriod: 32_800_000,
+    currency: "CNY",
+    orderNumber: "M202608100001",
+    originalTotalPriceCents: 139_900,
+    originalUnitPriceCents: 139_900,
+    seats: 1,
+    title: "冻结旗舰创作会员",
+    totalCredits: 32_800_000,
+    totalPriceCents: 129_900,
+    unitPriceCents: 129_900,
+} satisfies MembershipOrderFactsModel;
+
 const handlers = {
     onConfirm: () => undefined,
     onRetry: () => undefined,
@@ -95,6 +111,8 @@ describe("membership payment dialog", () => {
                 ...handlers,
                 createdOrderNumber: "",
                 creationError: "",
+                frozenFacts: null,
+                frozenFactsError: "",
                 openingCheckout: false,
                 plan: personalPlan,
                 seats: 1,
@@ -109,6 +127,8 @@ describe("membership payment dialog", () => {
                 ...handlers,
                 createdOrderNumber: "M202608100001",
                 creationError: "支付渠道暂时不可用",
+                frozenFacts: frozenPersonalFacts,
+                frozenFactsError: "",
                 openingCheckout: false,
                 plan: personalPlan,
                 seats: 1,
@@ -123,6 +143,8 @@ describe("membership payment dialog", () => {
                 ...handlers,
                 createdOrderNumber: "",
                 creationError: "",
+                frozenFacts: null,
+                frozenFactsError: "",
                 openingCheckout: false,
                 plan: teamPlan,
                 seats: 2,
@@ -155,12 +177,43 @@ describe("membership payment dialog", () => {
         expect(failureMarkup).toContain("支付渠道暂时不可用");
         expect(failureMarkup).toContain("不会重复创建订单");
         expect(failureMarkup).toContain("重新打开付款码");
-        expect(failureMarkup).toContain("豪华版");
+        expect(failureMarkup).toContain("冻结旗舰创作会员");
         expect(failureMarkup).toContain("按月购买");
-        expect(failureMarkup).toContain("50,500");
-        expect(failureMarkup).toContain("¥1,299");
+        expect(failureMarkup).toContain("32.8");
+        expect(failureMarkup).toContain("¥1,399");
         expect(failureMarkup).toContain("−¥100");
-        expect(failureMarkup).toContain("¥1,199");
+        expect(failureMarkup).toContain("¥1,299");
+        expect(failureMarkup).not.toContain("豪华版");
+    });
+
+    test("team configuration stays mounted and disabled while order creation or checkout opening writes", () => {
+        const renderWritingTeamSetup = (submitting: boolean, openingCheckout: boolean) =>
+            renderToStaticMarkup(
+                createElement(MembershipPaymentSetup, {
+                    ...handlers,
+                    createdOrderNumber: "",
+                    creationError: "",
+                    frozenFacts: null,
+                    frozenFactsError: "",
+                    openingCheckout,
+                    plan: teamPlan,
+                    seats: 2,
+                    submitting,
+                    teamId: "team-1",
+                    teamName: "",
+                    teams,
+                }),
+            );
+
+        for (const markup of [renderWritingTeamSetup(true, false), renderWritingTeamSetup(false, true)]) {
+            expect(markup).toContain("membership-payment-team-fields");
+            expect(markup).toContain("membership-payment-team-select");
+            expect(markup).toContain("membership-payment-team-seat-input");
+            expect(markup).toContain("确认配置并生成付款码");
+            expect(markup).toContain("membership-payment-setup-progress");
+            expect(markup).toMatch(/<input[^>]*disabled=""/u);
+            expect(markup).toMatch(/<button[^>]*membership-payment-setup-primary[^>]*disabled=""/u);
+        }
     });
 
     test("non-discount plans omit original and discount rows while frozen checkout loading keeps the shared shell", () => {
@@ -169,6 +222,8 @@ describe("membership payment dialog", () => {
                 ...handlers,
                 createdOrderNumber: "",
                 creationError: "",
+                frozenFacts: null,
+                frozenFactsError: "",
                 openingCheckout: false,
                 plan: { ...personalPlan, originalPriceCents: personalPlan.priceCents },
                 seats: 1,

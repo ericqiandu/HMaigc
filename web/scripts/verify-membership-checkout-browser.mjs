@@ -41,12 +41,7 @@ const viewports = [
     { name: "mobile", width: 390, height: 844 },
 ];
 const themes = ["light", "dark"];
-const membershipDialogStates = [
-    "membership-personal-creating-dialog",
-    "membership-personal-order-failure-dialog",
-    "membership-personal-checkout-failure-dialog",
-    "membership-personal-active-qr-dialog",
-];
+const membershipDialogStates = ["membership-personal-creating-dialog", "membership-personal-order-failure-dialog", "membership-personal-checkout-failure-dialog", "membership-personal-active-qr-dialog"];
 
 async function setMembershipDialogFixtureState(baseURL, state, label) {
     const response = await fetch(`${baseURL}/api/__checkout-fixture/membership-dialog-state`, {
@@ -59,6 +54,24 @@ async function setMembershipDialogFixtureState(baseURL, state, label) {
 
 async function waitForMembershipDialogAnimation() {
     await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+async function readMembershipFacts(page, label) {
+    const facts = await page.evaluate(() => {
+        const root = document.querySelector(".membership-payment-dialog .membership-order-facts");
+        const orderNumber = root?.querySelector(".membership-checkout-order-number");
+        const amount = root?.querySelector(".membership-checkout-total-price");
+        if (!(root instanceof HTMLElement) || !(orderNumber instanceof HTMLElement) || !(amount instanceof HTMLElement)) {
+            throw new Error("会员冻结事实节点不完整");
+        }
+        const normalize = (value) => value.replace(/\s+/gu, " ").trim();
+        return { amount: normalize(amount.innerText), orderNumber: normalize(orderNumber.innerText), text: normalize(root.innerText) };
+    });
+    assert.equal(facts.orderNumber, "订单 M202608100001", `${label}: 冻结订单号没有显示`);
+    assert.equal(facts.amount, "¥1,299", `${label}: 冻结订单金额没有显示`);
+    assert.ok(!facts.text.includes("豪华版VIP"), `${label}: mutable current plan 名称泄漏到冻结事实`);
+    assert.ok(!facts.text.includes("¥6,999") && !facts.text.includes("¥14,999"), `${label}: mutable current plan 金额泄漏到冻结事实`);
+    return facts;
 }
 
 async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state) {
@@ -101,18 +114,26 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
                     shell: shell.className,
                 };
             });
-            assert.deepEqual(frozenOwners, {
-                facts: "membership-order-facts membership-checkout-summary",
-                order: "payment-checkout-order-surface",
-                payment: "payment-checkout-payment-surface",
-                shell: "payment-checkout-shell is-dialog",
-            }, `${label}: 活跃付款码未使用冻结收银台结构`);
-            return frozenOwners;
+            assert.deepEqual(
+                frozenOwners,
+                {
+                    facts: "membership-order-facts membership-checkout-summary",
+                    order: "payment-checkout-order-surface",
+                    payment: "payment-checkout-payment-surface",
+                    shell: "payment-checkout-shell is-dialog",
+                },
+                `${label}: 活跃付款码未使用冻结收银台结构`,
+            );
+            return { facts: await readMembershipFacts(page, label), owners: frozenOwners };
         }
         await waitForMembershipDialogAnimation();
         const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
         await waitForStableMembershipDialog(page, expectedDialogWidth, label);
-        return await assertMembershipSetupDialogLayout(page, viewport, label);
+        const owners = await assertMembershipSetupDialogLayout(page, viewport, label);
+        if (state === "membership-personal-checkout-failure-dialog") {
+            return { facts: await readMembershipFacts(page, label), owners };
+        }
+        return { facts: null, owners };
     } finally {
         await page.close();
     }
@@ -609,13 +630,19 @@ async function main() {
         for (const viewport of viewports) {
             for (const theme of themes) {
                 let expectedLeftOwners = null;
+                let checkoutFailureFacts = null;
                 for (const state of membershipDialogStates) {
-                    const owners = await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
-                    const leftOwners = { facts: owners.facts, order: owners.order };
+                    const result = await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
+                    const leftOwners = { facts: result.owners.facts, order: result.owners.order };
                     if (expectedLeftOwners === null) {
                         expectedLeftOwners = leftOwners;
                     } else {
                         assert.deepEqual(leftOwners, expectedLeftOwners, `${viewport.name}/${theme}/${state}: 左侧结构 owner 与其他付款态不一致`);
+                    }
+                    if (state === "membership-personal-checkout-failure-dialog") checkoutFailureFacts = result.facts;
+                    if (state === "membership-personal-active-qr-dialog") {
+                        assert.ok(checkoutFailureFacts, `${viewport.name}/${theme}/${state}: 缺少收银台失败的冻结事实`);
+                        assert.deepEqual(result.facts, checkoutFailureFacts, `${viewport.name}/${theme}/${state}: 活跃付款码与收银台失败的冻结事实不一致`);
                     }
                     completed += 1;
                     process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/${state}\n`);

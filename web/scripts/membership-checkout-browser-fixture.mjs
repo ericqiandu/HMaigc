@@ -16,12 +16,7 @@ const scenarioNames = ["membership-personal", "membership-team", "provider-failu
 const tokenStates = new Map();
 const membershipOrdersByKey = new Map();
 const membershipOrdersByID = new Map();
-const membershipDialogStates = new Set([
-    "membership-personal-creating-dialog",
-    "membership-personal-order-failure-dialog",
-    "membership-personal-checkout-failure-dialog",
-    "membership-personal-active-qr-dialog",
-]);
+const membershipDialogStates = new Set(["membership-personal-creating-dialog", "membership-personal-order-failure-dialog", "membership-personal-checkout-failure-dialog", "membership-personal-active-qr-dialog"]);
 let membershipDialogState = "membership-personal-active-qr-dialog";
 
 const fixtureUser = {
@@ -80,6 +75,15 @@ const teamPlan = {
     sortOrder: 2,
 };
 
+const frozenPersonalPlan = {
+    ...personalPlan,
+    code: "creator-flagship-month",
+    name: "冻结旗舰创作会员",
+    billingCycle: "month",
+    priceCents: 129_900,
+    originalPriceCents: 139_900,
+};
+
 const fixtureTeam = {
     id: "gate-team",
     ownerUserId: fixtureUser.id,
@@ -119,6 +123,7 @@ const storefront = {
 };
 
 function membershipOrder(plan, seats, teamId, id = "gate-membership-order") {
+    const snapshot = plan.audience === "personal" ? frozenPersonalPlan : plan;
     return {
         id,
         orderNumber: "M202608100001",
@@ -126,11 +131,11 @@ function membershipOrder(plan, seats, teamId, id = "gate-membership-order") {
         teamId: teamId || undefined,
         planId: plan.id,
         seats,
-        unitPriceCents: plan.priceCents,
-        totalPriceCents: plan.priceCents * seats,
-        currency: plan.currency,
+        unitPriceCents: snapshot.priceCents,
+        totalPriceCents: snapshot.priceCents * seats,
+        currency: snapshot.currency,
         status: "pending",
-        planSnapshotJson: "{}",
+        planSnapshotJson: JSON.stringify(snapshot),
         paymentProvider: "",
         providerTradeNo: "",
         createdAt: "2026-08-10T08:00:00.000Z",
@@ -255,6 +260,28 @@ function membershipSummary(audience) {
     };
 }
 
+function membershipOrderForCheckoutToken(token) {
+    const prefix = "gate-membership-personal-";
+    if (!token.startsWith(prefix)) return null;
+    return membershipOrdersByID.get(token.slice(prefix.length)) ?? null;
+}
+
+function membershipSummaryFromOrder(order) {
+    const snapshot = JSON.parse(order.planSnapshotJson);
+    return {
+        audience: snapshot.audience,
+        code: snapshot.code,
+        name: snapshot.name,
+        tier: snapshot.tier,
+        billingCycle: snapshot.billingCycle,
+        seats: order.seats,
+        actualPriceCents: order.totalPriceCents,
+        originalPriceCents: snapshot.originalPriceCents * order.seats,
+        creditsPerPeriod: snapshot.creditsPerPeriod,
+        totalCreditsPerPeriod: snapshot.creditsPerPeriod * order.seats,
+    };
+}
+
 function activeTransaction(provider, now) {
     return {
         provider,
@@ -270,8 +297,9 @@ function checkoutFor(scenario, token) {
     const orderStatus = scenario === "paid" ? "paid" : scenario === "cancelled" ? "cancelled" : "pending";
     const checkoutStatus = scenario === "paid" ? "consumed" : scenario === "expired" ? "expired" : "active";
     const expiresAt = new Date(now + (scenario === "expired" ? -60_000 : 15 * 60_000)).toISOString();
+    const membershipOrder = membershipOrderForCheckoutToken(token);
     const base = {
-        orderNumber: `GATE-${scenario.toUpperCase()}`,
+        orderNumber: membershipOrder?.orderNumber ?? `GATE-${scenario.toUpperCase()}`,
         orderStatus,
         checkoutStatus,
         currency: "CNY",
@@ -298,34 +326,35 @@ function checkoutFor(scenario, token) {
     return {
         ...base,
         orderType: "membership",
-        membershipSummary:
-            scenario === "membership-personal"
+        membershipSummary: membershipOrder
+            ? membershipSummaryFromOrder(membershipOrder)
+            : scenario === "membership-personal"
+              ? {
+                    audience: "personal",
+                    code: personalPlan.code,
+                    name: personalPlan.name,
+                    tier: personalPlan.tier,
+                    billingCycle: "year",
+                    seats: 1,
+                    actualPriceCents: personalPlan.priceCents,
+                    originalPriceCents: personalPlan.originalPriceCents,
+                    creditsPerPeriod: personalPlan.creditsPerPeriod,
+                    totalCreditsPerPeriod: personalPlan.creditsPerPeriod,
+                }
+              : scenario === "membership-team"
                 ? {
-                      audience: "personal",
-                      code: personalPlan.code,
-                      name: personalPlan.name,
-                      tier: personalPlan.tier,
+                      audience: "team",
+                      code: teamPlan.code,
+                      name: teamPlan.name,
+                      tier: teamPlan.tier,
                       billingCycle: "year",
-                      seats: 1,
-                      actualPriceCents: personalPlan.priceCents,
-                      originalPriceCents: personalPlan.originalPriceCents,
-                      creditsPerPeriod: personalPlan.creditsPerPeriod,
-                      totalCreditsPerPeriod: personalPlan.creditsPerPeriod,
+                      seats: 2,
+                      actualPriceCents: teamPlan.priceCents * 2,
+                      originalPriceCents: teamPlan.originalPriceCents * 2,
+                      creditsPerPeriod: teamPlan.creditsPerPeriod,
+                      totalCreditsPerPeriod: teamPlan.creditsPerPeriod * 2,
                   }
-                : scenario === "membership-team"
-                  ? {
-                        audience: "team",
-                        code: teamPlan.code,
-                        name: teamPlan.name,
-                        tier: teamPlan.tier,
-                        billingCycle: "year",
-                        seats: 2,
-                        actualPriceCents: teamPlan.priceCents * 2,
-                        originalPriceCents: teamPlan.originalPriceCents * 2,
-                        creditsPerPeriod: teamPlan.creditsPerPeriod,
-                        totalCreditsPerPeriod: teamPlan.creditsPerPeriod * 2,
-                    }
-                  : membershipSummary(scenario === "team" ? "team" : "personal"),
+                : membershipSummary(scenario === "team" ? "team" : "personal"),
     };
 }
 
