@@ -67,6 +67,7 @@
     width: min(calc(100% - 48px), 880px);
     min-height: 520px;
     margin: var(--space-5) auto var(--space-8);
+    overflow: clip;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-secondary);
@@ -86,7 +87,7 @@
 .payment-checkout-payment-surface {
     padding: var(--space-5);
     border-left: 1px solid var(--border-light);
-    border-radius: 0 calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 0;
+    border-radius: 0;
     background: var(--bg-tertiary);
 }
 
@@ -568,7 +569,6 @@
         min-height: 400px;
         border-top: 1px solid var(--border-light);
         border-left: 0;
-        border-radius: 0 0 calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px);
     }
 
     .membership-checkout-product,

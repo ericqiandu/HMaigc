@@ -53,6 +53,7 @@ describe("payment admin reconciliation contract", () => {
 
     test("renders transaction and webhook review facts as explicit Chinese states", () => {
         expect(paymentStatusLabel("review_required")).toBe("待对账");
+        expect(paymentStatusLabel("refunded")).toBe("退款状态待核对");
         expect(webhookStatusLabel("review_required")).toBe("待复核");
     });
 

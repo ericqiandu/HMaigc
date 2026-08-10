@@ -427,7 +427,7 @@ export default function MembershipAdminPage() {
                                                     title: "状态",
                                                     render: (_, row) => (
                                                         <Tag className="admin-membership-order-status" color={row.status === "paid" ? "green" : row.status === "cancelled" ? "default" : row.status === "refunded" ? "blue" : "gold"}>
-                                                            {{ pending: "待支付", paid: "已支付", cancelled: "已关闭", refunded: "已退款" }[row.status]}
+                                                            {{ pending: "待支付", paid: "已支付", cancelled: "已关闭", refunded: "退款状态待核对" }[row.status]}
                                                         </Tag>
                                                     ),
                                                 },

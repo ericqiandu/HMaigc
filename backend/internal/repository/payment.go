@@ -557,22 +557,29 @@ func (r *Repository) ExpirePaymentCheckoutSession(id string, now time.Time) (boo
 		if checkout.Status != model.PaymentCheckoutActive || checkout.ExpiresAt.After(now) {
 			return nil
 		}
-		var payableCount int64
-		if err := tx.Model(&model.PaymentTransaction{}).
+		var payable model.PaymentTransaction
+		lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("order_type = ? AND order_id = ? AND status IN ?", checkout.OrderType, checkout.OrderID, []model.PaymentTransactionStatus{
 				model.PaymentTransactionCreated, model.PaymentTransactionPending, model.PaymentTransactionReviewRequired,
-			}).Count(&payableCount).Error; err != nil {
-			return err
+			}).Order("created_at asc").First(&payable)
+		if lookup.Error != nil && !errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
+			return lookup.Error
 		}
-		if payableCount > 0 {
-			return ErrPaymentReconciliationRequired
-		}
-		verified, err := verifiedPaymentFactExistsTx(tx, checkout.OrderType, checkout.OrderID)
-		if err != nil {
-			return err
-		}
-		if verified {
-			return ErrPaymentVerifiedFactExists
+		if lookup.Error == nil && payable.Status != model.PaymentTransactionReviewRequired {
+			result := tx.Model(&model.PaymentTransaction{}).
+				Where("id = ? AND status IN ?", payable.ID, []model.PaymentTransactionStatus{
+					model.PaymentTransactionCreated, model.PaymentTransactionPending,
+				}).Select("status", "failure_code", "failure_reason", "updated_at").
+				Updates(&model.PaymentTransaction{
+					Status: model.PaymentTransactionReviewRequired, FailureCode: "checkout_expired_requires_reconciliation",
+					FailureReason: "收银台已过期，支付渠道状态需对账确认", UpdatedAt: now,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("payment transaction expiry state changed unexpectedly")
+			}
 		}
 		result := tx.Model(&model.PaymentCheckoutSession{}).
 			Where("id = ? AND status = ? AND expires_at <= ?", checkout.ID, model.PaymentCheckoutActive, now).

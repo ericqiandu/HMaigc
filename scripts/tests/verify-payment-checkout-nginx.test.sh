@@ -156,6 +156,12 @@ run_case() {
       "http://${inner_address}" \
       "/api/payments/checkout/${bearer_token_sentinel}/transactions?${sensitive_query}" \
       "$tmp_dir/${label}-api.headers"
+    if [[ "$mode" == "success" ]]; then
+      curl --silent --show-error --http1.1 \
+        --dump-header "$tmp_dir/${label}-assets.spa-header" \
+        --output "$tmp_dir/${label}-assets.spa-body" \
+        "http://${inner_address}/assets/" || true
+    fi
     curl --silent --show-error --http1.1 \
       --header "Referer: https://referrer.invalid/${referer_sentinel}" \
       --output /dev/null \
@@ -258,6 +264,13 @@ done
 if ! grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)' "$tmp_dir/inner-failure-pay.headers"; then
   inner_failure_status="$(head -n 1 "$tmp_dir/inner-failure-pay.headers" | tr -d '\r')"
   echo "inner /pay/ failure fixture did not exercise its local error path: ${inner_failure_status}" >&2
+  failed=1
+fi
+
+if ! grep -Eq '^HTTP/[0-9.]+ 200([[:space:]]|$)' "$tmp_dir/inner-success-assets.spa-header" || \
+  ! grep -Fq 'checkout fixture' "$tmp_dir/inner-success-assets.spa-body"; then
+  assets_status="$(head -n 1 "$tmp_dir/inner-success-assets.spa-header" | tr -d '\r')"
+  echo "inner /assets/ did not serve the SPA shell: ${assets_status}" >&2
   failed=1
 fi
 

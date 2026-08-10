@@ -369,7 +369,7 @@ func TestPostgresPaymentVerifiedFactSerializesBeforeNewPayableClaim(t *testing.T
 	assertPostgresPaymentTransactionCount(t, db, "order_id = ?", order.ID, 1)
 }
 
-func TestPostgresPaymentWebhookVerifiedReviewFactBlocksCancellationExpiryAndLocalClose(t *testing.T) {
+func TestPostgresPaymentWebhookVerifiedReviewFactBlocksCancellationAndLifecycleCloseButAllowsSafeCheckoutExpiry(t *testing.T) {
 	t.Run("membership cancellation", func(t *testing.T) {
 		db := openPostgresPaymentIntegritySchema(t)
 		if err := database.EnsurePaymentIntegritySchema(db); err != nil {
@@ -411,10 +411,10 @@ func TestPostgresPaymentWebhookVerifiedReviewFactBlocksCancellationExpiryAndLoca
 			t.Fatal(err)
 		}
 		expired, err := repo.ExpirePaymentCheckoutSession(session.ID, now)
-		if expired || !errors.Is(err, ErrPaymentVerifiedFactExists) {
-			t.Fatalf("direct checkout expiry = expired:%v err:%v, want verified fact conflict", expired, err)
+		if !expired || err != nil {
+			t.Fatalf("direct checkout expiry = expired:%v err:%v, want safe expiry with durable review fact", expired, err)
 		}
-		assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutActive)
+		assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutExpired)
 	})
 
 	t.Run("credit cancellation", func(t *testing.T) {
@@ -497,6 +497,56 @@ func TestPostgresPaymentWebhookVerifiedReviewFactBlocksCancellationExpiryAndLoca
 			t.Fatalf("transaction status = %s, want pending", stored.Status)
 		}
 	})
+}
+
+func TestPostgresPaymentPayableCheckoutExpiryMovesTransactionToReview(t *testing.T) {
+	for _, initialStatus := range []model.PaymentTransactionStatus{
+		model.PaymentTransactionCreated,
+		model.PaymentTransactionPending,
+	} {
+		t.Run(string(initialStatus), func(t *testing.T) {
+			db := openPostgresPaymentIntegritySchema(t)
+			if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			suffix := "pxc"
+			if initialStatus == model.PaymentTransactionPending {
+				suffix = "pxp"
+			}
+			order, session := createPostgresPayableMembershipFixture(t, db, suffix, now)
+			expiredAt := now.Add(-time.Minute)
+			if err := db.Model(&model.PaymentCheckoutSession{}).Where("id = ?", session.ID).
+				Select("expires_at", "updated_at").Updates(&model.PaymentCheckoutSession{ExpiresAt: expiredAt, UpdatedAt: expiredAt}).Error; err != nil {
+				t.Fatal(err)
+			}
+			transaction := &model.PaymentTransaction{
+				ID: "payable-expiry-" + suffix, OrderType: model.PaymentOrderMembership,
+				OrderID: order.ID, UserID: order.UserID, Provider: model.PaymentProviderWechat,
+				MerchantOrderNo: "MPAYABLEEXPIRY" + strings.ToUpper(suffix),
+				AmountCents:     order.TotalPriceCents, Currency: order.Currency, Status: initialStatus,
+				ExpiresAt: &expiredAt, CreatedAt: expiredAt.Add(-time.Minute), UpdatedAt: expiredAt.Add(-time.Minute),
+			}
+			if initialStatus == model.PaymentTransactionPending {
+				transaction.CodeURL = "weixin://wxpay/postgres-expired"
+			}
+			if err := db.Create(transaction).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			expired, err := New(db).ExpirePaymentCheckoutSession(session.ID, now)
+			if err != nil || !expired {
+				t.Fatalf("expire payable checkout = expired:%v err:%v", expired, err)
+			}
+			if err := db.First(transaction, "id = ?", transaction.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if transaction.Status != model.PaymentTransactionReviewRequired || transaction.FailureCode != "checkout_expired_requires_reconciliation" {
+				t.Fatalf("expired payable transaction = status:%s code:%q", transaction.Status, transaction.FailureCode)
+			}
+			assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutExpired)
+		})
+	}
 }
 
 func TestPostgresPaymentPayableClaimRejectsAlreadyPaidTransaction(t *testing.T) {

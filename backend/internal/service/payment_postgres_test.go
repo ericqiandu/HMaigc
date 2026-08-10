@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -158,5 +160,23 @@ func TestPostgresPaymentCheckoutSessionConcurrentClaimReturnsFrozenWinner(t *tes
 	}
 	if afterRecovery.TokenHash != stored.TokenHash || afterRecovery.TokenCipher != stored.TokenCipher || !afterRecovery.ExpiresAt.Equal(stored.ExpiresAt) {
 		t.Fatalf("owner recovery mutated the PostgreSQL winner: before=%#v after=%#v", stored, afterRecovery)
+	}
+
+	expiredAt := now.Add(-time.Minute)
+	if err := db.Model(&model.PaymentCheckoutSession{}).Where("id = ?", stored.ID).
+		Select("status", "expires_at", "updated_at").Updates(&model.PaymentCheckoutSession{
+		Status: model.PaymentCheckoutExpired, ExpiresAt: expiredAt, UpdatedAt: expiredAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	conflictResult, conflictErr := svc.createOrRecoverPaymentCheckout(
+		model.PaymentOrderMembership, order.ID, owner.ID, readyWechatPaymentSetting().CheckoutBaseURL, now,
+	)
+	if conflictResult != nil {
+		t.Fatalf("unique-conflict path returned terminal checkout winner: %#v", conflictResult)
+	}
+	var authErr *AuthError
+	if !errors.As(conflictErr, &authErr) || authErr.Status != http.StatusConflict {
+		t.Fatalf("unique-conflict terminal winner error = %v, want HTTP 409", conflictErr)
 	}
 }

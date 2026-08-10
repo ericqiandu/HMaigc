@@ -299,6 +299,57 @@ func TestPaymentCheckoutViewOmitsActiveTransactionOutsidePayableState(t *testing
 	}
 }
 
+func TestPaymentCheckoutExpiryMovesCreatedAndPendingTransactionsToReview(t *testing.T) {
+	for _, initialStatus := range []model.PaymentTransactionStatus{
+		model.PaymentTransactionCreated,
+		model.PaymentTransactionPending,
+	} {
+		t.Run(string(initialStatus), func(t *testing.T) {
+			svc, db, owner, order := newPaymentCheckoutFixture(t, "expiry-review-"+string(initialStatus))
+			created, err := svc.CreatePaymentCheckout(owner, order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expiredAt := time.Now().Add(-time.Minute)
+			if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).
+				Select("expires_at", "updated_at").Updates(&model.PaymentCheckoutSession{ExpiresAt: expiredAt, UpdatedAt: expiredAt}).Error; err != nil {
+				t.Fatal(err)
+			}
+			transaction := model.PaymentTransaction{
+				ID: "expiry-tx-" + string(initialStatus), OrderType: model.PaymentOrderMembership,
+				OrderID: order.ID, UserID: owner.ID, Provider: model.PaymentProviderWechat,
+				MerchantOrderNo: "MEXPIRY" + strings.ToUpper(string(initialStatus)),
+				AmountCents:     order.TotalPriceCents, Currency: order.Currency, Status: initialStatus,
+				ExpiresAt: &expiredAt, CreatedAt: expiredAt.Add(-time.Minute), UpdatedAt: expiredAt.Add(-time.Minute),
+			}
+			if initialStatus == model.PaymentTransactionPending {
+				transaction.CodeURL = "weixin://wxpay/expired-review"
+			}
+			if err := db.Create(&transaction).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			view, err := svc.PaymentCheckout(checkoutToken(t, created.CheckoutURL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.CheckoutStatus != model.PaymentCheckoutExpired || view.ActiveTransaction != nil {
+				t.Fatalf("expired checkout view = status:%s active:%#v", view.CheckoutStatus, view.ActiveTransaction)
+			}
+			var storedTransaction model.PaymentTransaction
+			if err := db.First(&storedTransaction, "id = ?", transaction.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if storedTransaction.Status != model.PaymentTransactionReviewRequired {
+				t.Fatalf("expired %s transaction status = %s, want review_required", initialStatus, storedTransaction.Status)
+			}
+			if storedTransaction.FailureCode != "checkout_expired_requires_reconciliation" {
+				t.Fatalf("expired %s transaction failure code = %q", initialStatus, storedTransaction.FailureCode)
+			}
+		})
+	}
+}
+
 func TestPaymentCheckoutExpiryCASReturnsConcurrentConsumedWinner(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/checkout-expiry-race.db"), &gorm.Config{SkipDefaultTransaction: true})
 	if err != nil {
@@ -585,6 +636,111 @@ func TestPaymentCheckoutSessionSequentialCreationReturnsSameEncryptedToken(t *te
 	}
 	if count != 1 {
 		t.Fatalf("checkout session count = %d, want 1", count)
+	}
+}
+
+func TestPaymentCheckoutExpiredSessionCannotBeRecoveredForNewPayment(t *testing.T) {
+	for _, storedStatus := range []model.PaymentCheckoutStatus{model.PaymentCheckoutActive, model.PaymentCheckoutExpired} {
+		t.Run(string(storedStatus), func(t *testing.T) {
+			svc, db, owner, order := newPaymentCheckoutFixture(t, "expired-checkout-recovery-"+string(storedStatus))
+			created, err := svc.CreatePaymentCheckout(owner, order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expiredAt := time.Now().Add(-time.Minute)
+			if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).
+				Select("status", "expires_at", "updated_at").Updates(&model.PaymentCheckoutSession{
+				Status: storedStatus, ExpiresAt: expiredAt, UpdatedAt: expiredAt,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			recovered, err := svc.CreatePaymentCheckout(owner, order.ID)
+			if recovered != nil {
+				t.Fatalf("expired checkout unexpectedly recovered: %#v", recovered)
+			}
+			var authErr *AuthError
+			if !errors.As(err, &authErr) || authErr.Status != http.StatusConflict {
+				t.Fatalf("expired checkout recovery error = %v, want HTTP 409", err)
+			}
+			if !strings.Contains(authErr.Message, "关闭旧订单后重新下单") || !strings.Contains(authErr.Message, "提示需对账") {
+				t.Fatalf("expired checkout recovery message = %q", authErr.Message)
+			}
+			if strings.Contains(authErr.Message, created.CheckoutURL) {
+				t.Fatalf("expired checkout recovery leaked the stale capability URL")
+			}
+			var stored model.PaymentCheckoutSession
+			if err := db.First(&stored, "order_id = ?", order.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if stored.Status != model.PaymentCheckoutExpired {
+				t.Fatalf("elapsed checkout status = %s, want expired", stored.Status)
+			}
+		})
+	}
+}
+
+func TestCreditTopupCheckoutElapsedSessionCannotBeRecoveredForNewPayment(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := db.AutoMigrate(&model.CreditTopupProduct{}, &model.CreditTopupOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	admin, owner, _ := createCommercialTestUsers(t, db)
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+		t.Fatal(err)
+	}
+	order := model.CreditTopupOrder{
+		ID: "expired-topup-order", OrderNumber: "C202608100001", UserID: owner.ID, ProductID: "expired-topup-product",
+		BaseMicrocredits: 1000, TotalMicrocredits: 1000, TotalPriceCents: 990, Currency: "CNY",
+		Status: model.CreditTopupOrderPending, ProductSnapshotJSON: `{"id":"expired-topup-product","name":"积分包"}`,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateCreditTopupCheckout(owner, order.ID); err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).
+		Select("expires_at", "updated_at").Updates(&model.PaymentCheckoutSession{ExpiresAt: expiredAt, UpdatedAt: expiredAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := svc.CreateCreditTopupCheckout(owner, order.ID)
+	if recovered != nil {
+		t.Fatalf("elapsed credit checkout unexpectedly recovered: %#v", recovered)
+	}
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != http.StatusConflict {
+		t.Fatalf("elapsed credit checkout recovery error = %v, want HTTP 409", err)
+	}
+	var stored model.PaymentCheckoutSession
+	if err := db.First(&stored, "order_id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.PaymentCheckoutExpired {
+		t.Fatalf("elapsed credit checkout status = %s, want expired", stored.Status)
+	}
+}
+
+func TestPaymentCheckoutTerminalSessionRecoveryRejectsMismatchedBindingBeforeStatus(t *testing.T) {
+	svc, db, owner, order := newPaymentCheckoutFixture(t, "terminal-checkout-binding")
+	if _, err := svc.CreatePaymentCheckout(owner, order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.PaymentCheckoutSession{}).Where("order_id = ?", order.ID).
+		Select("status", "user_id").Updates(&model.PaymentCheckoutSession{
+		Status: model.PaymentCheckoutExpired, UserID: "different-owner",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.CreatePaymentCheckout(owner, order.ID)
+	if err == nil || !strings.Contains(err.Error(), "绑定订单事实") {
+		t.Fatalf("terminal checkout binding error = %v, want explicit binding failure", err)
+	}
+	if strings.Contains(err.Error(), "已过期") {
+		t.Fatalf("terminal checkout binding corruption was masked as expiry: %v", err)
 	}
 }
 

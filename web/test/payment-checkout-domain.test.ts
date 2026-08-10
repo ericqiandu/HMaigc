@@ -338,7 +338,7 @@ describe("payment checkout domain", () => {
             title: string;
         }> = [
             { checkout: { ...membershipCheckout, orderStatus: "paid", checkoutStatus: "consumed" }, title: "支付成功" },
-            { checkout: { ...membershipCheckout, orderStatus: "refunded", checkoutStatus: "consumed" }, title: "订单已退款" },
+            { checkout: { ...membershipCheckout, orderStatus: "refunded", checkoutStatus: "consumed" }, title: "订单状态待核对" },
             { checkout: { ...membershipCheckout, orderStatus: "cancelled" }, title: "订单已关闭" },
             { checkout: { ...membershipCheckout, checkoutStatus: "expired" }, title: "收银台已过期" },
             { checkout: { ...membershipCheckout, checkoutStatus: "consumed" }, title: "收银台已关闭" },
@@ -354,6 +354,14 @@ describe("payment checkout domain", () => {
 
         expect(checkoutTerminalPresentation(membershipCheckout)).toBeNull();
         expect(shouldContinueCheckoutPolling(membershipCheckout)).toBe(true);
+    });
+
+    test("expired checkout copy directs the user through the executable order workflow", () => {
+        const presentation = checkoutTerminalPresentation({ ...membershipCheckout, checkoutStatus: "expired" });
+
+        expect(presentation?.description).toContain("关闭旧订单后重新下单");
+        expect(presentation?.description).toContain("提示需对账");
+        expect(presentation?.description).not.toContain("重新获取付款链接");
     });
 
     test("the request coordinator prevents overlapping GETs and same-tick duplicate POSTs", () => {

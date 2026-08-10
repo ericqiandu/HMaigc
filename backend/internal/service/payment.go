@@ -441,7 +441,7 @@ func (s *Service) CreatePaymentCheckout(user *model.User, orderID string) (*Crea
 		return nil, BadAuthRequest("只有待支付订单可以创建收银台")
 	}
 	existing, hasExistingSession, err := s.recoverExistingPaymentCheckout(
-		model.PaymentOrderMembership, order.ID, user.ID,
+		model.PaymentOrderMembership, order.ID, user.ID, now,
 	)
 	if err != nil {
 		return nil, err
@@ -468,6 +468,7 @@ func (s *Service) CreateCreditTopupCheckout(user *model.User, orderID string) (*
 	if user == nil {
 		return nil, Unauthorized("请先登录")
 	}
+	now := time.Now()
 	order, err := s.repo.CreditTopupOrderForUser(user.ID, strings.TrimSpace(orderID))
 	if err != nil {
 		return nil, err
@@ -476,7 +477,7 @@ func (s *Service) CreateCreditTopupCheckout(user *model.User, orderID string) (*
 		return nil, BadAuthRequest("只有待支付积分订单可以创建收银台")
 	}
 	existing, hasExistingSession, err := s.recoverExistingPaymentCheckout(
-		model.PaymentOrderCreditTopup, order.ID, user.ID,
+		model.PaymentOrderCreditTopup, order.ID, user.ID, now,
 	)
 	if err != nil {
 		return nil, err
@@ -491,7 +492,6 @@ func (s *Service) CreateCreditTopupCheckout(user *model.User, orderID string) (*
 	if setting.CheckoutBaseURL == "" || len(readyPaymentProviders(setting)) == 0 {
 		return nil, BadAuthRequest("支付收银台或商户渠道尚未完成配置")
 	}
-	now := time.Now()
 	return s.createOrRecoverPaymentCheckout(
 		model.PaymentOrderCreditTopup, order.ID, user.ID, setting.CheckoutBaseURL, now,
 	)
@@ -526,6 +526,9 @@ func (s *Service) createOrRecoverPaymentCheckout(orderType model.PaymentOrderTyp
 	if err != nil {
 		return nil, err
 	}
+	if err := s.requireRecoverablePaymentCheckout(winner, orderType, orderID, userID, now); err != nil {
+		return nil, err
+	}
 	winnerPayload, err := s.recoverPaymentCheckoutPayload(winner, orderType, orderID, userID)
 	if err != nil {
 		return nil, err
@@ -533,13 +536,16 @@ func (s *Service) createOrRecoverPaymentCheckout(orderType model.PaymentOrderTyp
 	return paymentCheckoutResult(winner, winnerPayload), nil
 }
 
-func (s *Service) recoverExistingPaymentCheckout(orderType model.PaymentOrderType, orderID string, userID string) (*CreatePaymentCheckoutResult, bool, error) {
+func (s *Service) recoverExistingPaymentCheckout(orderType model.PaymentOrderType, orderID string, userID string, now time.Time) (*CreatePaymentCheckoutResult, bool, error) {
 	session, err := s.repo.PaymentCheckoutSessionByOrderID(orderID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
+	}
+	if err := s.requireRecoverablePaymentCheckout(session, orderType, orderID, userID, now); err != nil {
+		return nil, true, err
 	}
 	payload, err := s.recoverPaymentCheckoutPayload(session, orderType, orderID, userID)
 	if err != nil {
@@ -548,9 +554,35 @@ func (s *Service) recoverExistingPaymentCheckout(orderType model.PaymentOrderTyp
 	return paymentCheckoutResult(session, payload), true, nil
 }
 
+func (s *Service) requireRecoverablePaymentCheckout(session *model.PaymentCheckoutSession, orderType model.PaymentOrderType, orderID string, userID string, now time.Time) error {
+	if err := validatePaymentCheckoutSessionBinding(session, orderType, orderID, userID); err != nil {
+		return err
+	}
+	if session.Status == model.PaymentCheckoutActive && !session.ExpiresAt.After(now) {
+		expired, expireErr := s.repo.ExpirePaymentCheckoutSession(session.ID, now)
+		if expireErr != nil {
+			return expireErr
+		}
+		if !expired {
+			return Conflict("收银台状态已经变化，请返回订单记录查看最新状态")
+		}
+		session.Status = model.PaymentCheckoutExpired
+	}
+	switch session.Status {
+	case model.PaymentCheckoutActive:
+	case model.PaymentCheckoutExpired:
+		return Conflict("收银台已过期，请返回订单记录关闭旧订单后重新下单；若关闭时提示需对账，请等待管理员核对支付渠道结果")
+	case model.PaymentCheckoutConsumed:
+		return Conflict("收银台已关闭，请返回订单记录查看订单状态")
+	default:
+		return errors.New("已有收银台会话状态无效")
+	}
+	return nil
+}
+
 func (s *Service) recoverPaymentCheckoutPayload(session *model.PaymentCheckoutSession, orderType model.PaymentOrderType, orderID string, userID string) (*paymentCheckoutCipherPayload, error) {
-	if session == nil || session.OrderType != orderType || session.OrderID != orderID || session.UserID != userID {
-		return nil, errors.New("已有收银台会话与订单事实不一致")
+	if err := validatePaymentCheckoutSessionBinding(session, orderType, orderID, userID); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(session.TokenCipher) == "" {
 		return nil, errors.New("已有收银台会话仅保存令牌哈希，无法恢复所有者支付链接")
@@ -560,6 +592,13 @@ func (s *Service) recoverPaymentCheckoutPayload(session *model.PaymentCheckoutSe
 		return nil, err
 	}
 	return payload, nil
+}
+
+func validatePaymentCheckoutSessionBinding(session *model.PaymentCheckoutSession, orderType model.PaymentOrderType, orderID string, userID string) error {
+	if session == nil || session.OrderType != orderType || session.OrderID != orderID || session.UserID != userID {
+		return errors.New("已有收银台会话与绑定订单事实不一致")
+	}
+	return nil
 }
 
 func paymentCheckoutResult(session *model.PaymentCheckoutSession, payload *paymentCheckoutCipherPayload) *CreatePaymentCheckoutResult {

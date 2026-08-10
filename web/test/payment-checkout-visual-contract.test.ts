@@ -316,7 +316,7 @@ describe("membership checkout presentation", () => {
         expect(warning).toContain("lucide-circle-x");
         expect(warning).not.toContain("lucide-check");
 
-        const neutral = renderToStaticMarkup(
+        const reviewRequired = renderToStaticMarkup(
             createElement(PaymentQrPanel, {
                 ...handlers,
                 checkout: { ...personalCheckout, orderStatus: "refunded", checkoutStatus: "consumed" },
@@ -328,8 +328,8 @@ describe("membership checkout presentation", () => {
                 submitting: false,
             }),
         );
-        expect(neutral).toContain("lucide-circle-minus");
-        expect(neutral).not.toContain("lucide-check");
+        expect(reviewRequired).toContain("lucide-circle-x");
+        expect(reviewRequired).not.toContain("lucide-check");
     });
 });
 
@@ -365,6 +365,9 @@ describe("checkout implementation boundaries", () => {
         expect(css).toContain("@media (max-width: 767px)");
         expect(cssProperty(css, ".payment-checkout-page", "height")).toBe("100%");
         expect(cssProperty(css, ".payment-checkout-page", "overflow-y")).toBe("auto");
+        expect(cssProperty(css, ".payment-checkout-shell", "overflow")).toBe("clip");
+        expect(cssProperty(css, ".payment-checkout-payment-surface", "border-radius")).toBe("0");
+        expect(css).not.toContain("calc(var(--radius-md) - 1px)");
         expect(cssProperty(css, ".payment-checkout-qr-code", "padding")).toBe("var(--space-3)");
         expect(cssProperty(css, ".payment-checkout-qr-code", "background")).toBe("var(--qr-background)");
         expect(cssProperty(css, ".payment-checkout-provider-check", "opacity")).toBe("0");

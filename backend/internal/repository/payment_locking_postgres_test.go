@@ -45,8 +45,8 @@ func TestPostgresPaymentWebhookVerifiedFactSerializesBeforeCheckoutExpiry(t *tes
 	expiryResult := make(chan error, 1)
 	go func() {
 		expired, err := repo.ExpirePaymentCheckoutSession(session.ID, now)
-		if err == nil && expired {
-			err = errors.New("checkout expired before concurrent verified fact committed")
+		if err == nil && !expired {
+			err = errors.New("checkout did not expire after concurrent verified fact committed")
 		}
 		expiryResult <- err
 	}()
@@ -61,10 +61,10 @@ func TestPostgresPaymentWebhookVerifiedFactSerializesBeforeCheckoutExpiry(t *tes
 		t.Fatalf("record verified fact: %v", err)
 	}
 	expiryErr = <-expiryResult
-	if !errors.Is(expiryErr, ErrPaymentVerifiedFactExists) {
-		t.Fatalf("checkout expiry racing verified fact error = %v, want ErrPaymentVerifiedFactExists", expiryErr)
+	if expiryErr != nil {
+		t.Fatalf("checkout expiry racing verified fact error = %v", expiryErr)
 	}
-	assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutActive)
+	assertPostgresOrderAndCheckoutState(t, db, order.ID, model.MembershipOrderPending, session.ID, model.PaymentCheckoutExpired)
 }
 
 func TestPostgresPaymentFulfillmentAndLifecycleUseOrderBeforeSubscriptionLockOrder(t *testing.T) {

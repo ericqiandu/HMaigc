@@ -9,7 +9,7 @@ const orderStatus = {
     pending: { label: "待支付", color: "gold" },
     paid: { label: "已支付", color: "green" },
     cancelled: { label: "已关闭", color: "default" },
-    refunded: { label: "已退款", color: "blue" },
+    refunded: { label: "退款状态待核对", color: "orange" },
 } as const;
 
 type MembershipOrderHistoryProps = {

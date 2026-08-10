@@ -78,6 +78,7 @@ export async function assertCheckoutLayout(page, viewport) {
         const shellRect = shell.getBoundingClientRect();
         const orderRect = order.getBoundingClientRect();
         const paymentRect = payment.getBoundingClientRect();
+        const shellStyle = getComputedStyle(shell);
         const paymentStyle = getComputedStyle(payment);
         const viewportWidth = document.documentElement.clientWidth;
         const overflowing = Array.from(document.querySelectorAll(".payment-checkout-page *"))
@@ -94,7 +95,8 @@ export async function assertCheckoutLayout(page, viewport) {
             bodyScrollWidth: document.body.scrollWidth,
             shellClientWidth: shell.clientWidth,
             shellScrollWidth: shell.scrollWidth,
-            shellOverflowX: getComputedStyle(shell).overflowX,
+            shellOverflowX: shellStyle.overflowX,
+            shellRadius: Number.parseFloat(shellStyle.borderTopRightRadius),
             shellRect: { left: shellRect.left, right: shellRect.right },
             orderRect: { bottom: orderRect.bottom, left: orderRect.left, right: orderRect.right, top: orderRect.top },
             paymentRect: { bottom: paymentRect.bottom, left: paymentRect.left, right: paymentRect.right, top: paymentRect.top },
@@ -111,17 +113,21 @@ export async function assertCheckoutLayout(page, viewport) {
     assert.equal(snapshot.bodyScrollWidth, snapshot.bodyClientWidth, `${viewport.name}: body 存在横向溢出`);
     assert.equal(snapshot.shellScrollWidth, snapshot.shellClientWidth, `${viewport.name}: shell 存在被裁切内容`);
     assert.notEqual(snapshot.shellOverflowX, "hidden", `${viewport.name}: 禁止用 overflow-x:hidden 掩盖布局错误`);
+    assert.equal(snapshot.shellOverflowX, "clip", `${viewport.name}: 外壳只允许裁切圆角绘制，不创建隐藏滚动容器`);
+    assert.ok(snapshot.shellRadius > 0, `${viewport.name}: 唯一外壳必须保留圆角`);
     assert.ok(snapshot.shellRect.left >= 0 && snapshot.shellRect.right <= viewport.width + 0.5, `${viewport.name}: shell 超出视口`);
     assert.deepEqual(snapshot.overflowing, [], `${viewport.name}: 子节点超出视口边界`);
 
     if (viewport.width > 767) {
         assert.ok(snapshot.paymentRect.left >= snapshot.orderRect.right - 1, `${viewport.name}: 桌面/平板必须保持左右双栏`);
         assert.ok(Math.abs(snapshot.paymentRect.top - snapshot.orderRect.top) <= 1, `${viewport.name}: 双栏顶部必须对齐`);
-        assert.ok(snapshot.paymentRadii.topRight > 0 && snapshot.paymentRadii.bottomRight > 0, `${viewport.name}: 右侧表面必须贴合外层圆角`);
+        assert.equal(snapshot.paymentRadii.topRight, 0, `${viewport.name}: 右侧表面不得在外壳内重复圆角`);
+        assert.equal(snapshot.paymentRadii.bottomRight, 0, `${viewport.name}: 右侧表面不得在外壳内重复圆角`);
     } else {
         assert.ok(snapshot.paymentRect.top >= snapshot.orderRect.bottom - 1, `${viewport.name}: 手机必须改为上下单列`);
         assert.ok(Math.abs(snapshot.paymentRect.left - snapshot.orderRect.left) <= 1, `${viewport.name}: 手机单列左右边界必须对齐`);
-        assert.ok(snapshot.paymentRadii.bottomLeft > 0 && snapshot.paymentRadii.bottomRight > 0, `${viewport.name}: 底部表面必须贴合外层圆角`);
+        assert.equal(snapshot.paymentRadii.bottomLeft, 0, `${viewport.name}: 底部表面不得在外壳内重复圆角`);
+        assert.equal(snapshot.paymentRadii.bottomRight, 0, `${viewport.name}: 底部表面不得在外壳内重复圆角`);
     }
 }
 

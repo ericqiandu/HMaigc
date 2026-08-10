@@ -292,10 +292,10 @@ export function shouldContinueCheckoutPolling(checkout: PaymentCheckout): boolea
 export function checkoutTerminalPresentation(checkout: PaymentCheckout): CheckoutTerminalPresentation | null {
     if (checkout.orderStatus === "refunded") {
         return {
-            title: "订单已退款",
-            description: "本订单的款项状态已经更新，可返回订单入口查看记录。",
+            title: "订单状态待核对",
+            description: "系统记录为退款状态，但当前不提供在线退款结果确认，请联系管理员核对支付渠道记录。",
             actionLabel: "查看订单记录",
-            tone: "neutral",
+            tone: "warning",
             showPaymentControls: false,
         };
     }
@@ -320,7 +320,7 @@ export function checkoutTerminalPresentation(checkout: PaymentCheckout): Checkou
     if (checkout.checkoutStatus === "expired") {
         return {
             title: "收银台已过期",
-            description: "本次付款链接已经过期，请返回订单入口重新获取付款链接。",
+            description: "本次付款链接已经过期。请返回订单记录，关闭旧订单后重新下单；若关闭时提示需对账，请等待管理员核对支付渠道结果。",
             actionLabel: "返回订单入口",
             tone: "warning",
             showPaymentControls: false,

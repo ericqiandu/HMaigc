@@ -77,7 +77,7 @@ export function paymentStatusLabel(status: PaymentTransaction["status"]) {
         paid: "已支付",
         closed: "已关闭",
         failed: "失败",
-        refunded: "已退款",
+        refunded: "退款状态待核对",
     };
     return labels[status];
 }
