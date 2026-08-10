@@ -19,6 +19,7 @@ import {
     assertProductionMediaReads,
     assertSmallTextContrast,
     assertVisibleControlTargets,
+    waitForStableMembershipDialog,
 } from "./membership-checkout-browser-assertions.mjs";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -87,15 +88,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
             throw new Error(`${label}: 二维码未生成\n${bodyText}`, { cause: error });
         }
         const expectedDialogWidth = Math.min(880, viewport.width - (viewport.width <= 767 ? 32 : 48));
-        await page.waitForFunction(
-            (expectedWidth) => {
-                const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
-                const dialog = shell?.closest(".membership-payment-dialog");
-                return dialog instanceof HTMLElement && Math.abs(dialog.getBoundingClientRect().width - expectedWidth) <= 1;
-            },
-            { timeout: 5_000 },
-            expectedDialogWidth,
-        );
+        await waitForStableMembershipDialog(page, expectedDialogWidth, label);
         await page.waitForFunction(
             () => {
                 const close = document.querySelector(".membership-payment-dialog .ant-modal-close");

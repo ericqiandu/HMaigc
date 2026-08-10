@@ -11,9 +11,7 @@ const REQUIRED_CSP_DIRECTIVES = new Map([
     ["object-src", ["'none'"]],
 ]);
 
-const staticAssetBaseURL =
-    (process.env.HMAIGC_STATIC_ASSET_BASE_URL ?? "").trim() ||
-    "https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web";
+const staticAssetBaseURL = (process.env.HMAIGC_STATIC_ASSET_BASE_URL ?? "").trim() || "https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web";
 const staticAssetOrigin = new URL(staticAssetBaseURL).origin;
 
 function parseCSP(value) {
@@ -212,6 +210,43 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
         assert.ok(Math.abs(snapshot.payment.width - snapshot.order.width) <= 1, `${label}: 手机单列宽度未对齐`);
         assert.ok(snapshot.close.width >= 44 && snapshot.close.height >= 44, `${label}: 手机关闭热区不足 44×44`);
     }
+}
+
+export async function waitForStableMembershipDialog(page, expectedWidth, label) {
+    await page.evaluate(
+        ({ expectedWidth: targetWidth, label: dialogLabel }) =>
+            new Promise((resolve, reject) => {
+                const timeoutMs = 5_000;
+                const startedAt = performance.now();
+                let previousWidth = Number.NaN;
+                let stableFrames = 0;
+
+                const inspect = () => {
+                    const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
+                    const dialog = shell?.closest(".membership-payment-dialog");
+                    if (dialog instanceof HTMLElement) {
+                        const width = dialog.getBoundingClientRect().width;
+                        const animationRunning = dialog.getAnimations().some((animation) => animation.playState === "pending" || animation.playState === "running");
+                        const targetReached = Math.abs(width - targetWidth) <= 1;
+                        const geometryStable = Number.isFinite(previousWidth) && Math.abs(width - previousWidth) <= 0.1;
+                        stableFrames = targetReached && geometryStable && !animationRunning ? stableFrames + 1 : 0;
+                        previousWidth = width;
+                        if (stableFrames >= 3) {
+                            resolve();
+                            return;
+                        }
+                    }
+                    if (performance.now() - startedAt >= timeoutMs) {
+                        reject(new Error(`${dialogLabel}: 弹窗动画结束后仍未达到稳定宽度 ${targetWidth}`));
+                        return;
+                    }
+                    requestAnimationFrame(inspect);
+                };
+
+                requestAnimationFrame(inspect);
+            }),
+        { expectedWidth, label },
+    );
 }
 
 export async function assertVisibleControlTargets(page, label) {
