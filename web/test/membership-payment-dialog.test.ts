@@ -96,6 +96,7 @@ describe("membership payment dialog", () => {
     test("all membership payment dialog states use the approved 766px reference width", () => {
         const dialogSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-dialog.tsx"), "utf8");
         const setupSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-setup.tsx"), "utf8");
+        const storefrontSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/index.tsx"), "utf8");
 
         expect(dialogSource).toContain('checkoutToken ? "is-checkout" : "is-setup"');
         expect(dialogSource).toContain("width={766}");
@@ -106,6 +107,11 @@ describe("membership payment dialog", () => {
         expect(setupSource).toContain('orderLifecycle.kind === "frozen-ready"');
         expect(setupSource).not.toContain("createdOrderNumber");
         expect(setupSource).not.toContain("frozenFactsError || creationError");
+        expect(storefrontSource).toContain("const lifecycle = storeFrozenOrderFacts(order);");
+        expect(storefrontSource).toContain('if (lifecycle.kind !== "frozen-ready") return;');
+        expect(storefrontSource).not.toContain("storeFrozenOrderFacts = useCallback((order: MembershipOrder): boolean");
+        expect(storefrontSource).not.toContain("let createdOrder = false");
+        expect(storefrontSource).not.toContain("const frozenReady = storeFrozenOrderFacts(order)");
     });
     test("Escape never navigates away while the payment dialog owns keyboard dismissal", () => {
         expect(shouldNavigateFromMembershipPage("Escape", true)).toBe(false);

@@ -160,14 +160,15 @@ export default function MembershipPage() {
         orderRequestIdentityRef.current = null;
     }, []);
 
-    const storeFrozenOrderFacts = useCallback((order: MembershipOrder): boolean => {
+    const storeFrozenOrderFacts = useCallback((order: MembershipOrder): MembershipOrderLifecycle => {
+        let lifecycle: MembershipOrderLifecycle;
         try {
-            setOrderLifecycle({ facts: membershipOrderFactsFromOrder(order), kind: "frozen-ready", orderId: order.id });
-            return true;
+            lifecycle = { facts: membershipOrderFactsFromOrder(order), kind: "frozen-ready", orderId: order.id };
         } catch (error) {
-            setOrderLifecycle({ error: `订单冻结事实验证失败：${error instanceof Error ? error.message : "未知错误"}`, kind: "frozen-invalid" });
-            return false;
+            lifecycle = { error: `订单冻结事实验证失败：${error instanceof Error ? error.message : "未知错误"}`, kind: "frozen-invalid" };
         }
+        setOrderLifecycle(lifecycle);
+        return lifecycle;
     }, []);
 
     const openCheckoutForOrder = useCallback(async (orderId: string) => {
@@ -192,37 +193,42 @@ export default function MembershipPage() {
             paymentDialogWriteRef.current = true;
             setSubmitting(true);
             setCreationError("");
-            let createdOrder = false;
             try {
-                const order = await submitMembershipOrderRequest(
-                    {
-                        planId: captured.plan.id,
-                        seats: captured.plan.audience === "team" ? captured.seats : 1,
-                        teamId: resolvedTeamIDRef.current,
-                    },
-                    teamName,
-                    captured.plan.audience === "team",
-                    orderRequestIdentityRef.current,
-                    crypto.randomUUID(),
-                    {
-                        createTeam,
-                        createOrder: createMembershipOrder,
-                        persistResolvedTeamID,
-                        persistIdentity: (identity) => {
-                            orderRequestIdentityRef.current = identity;
+                let order: MembershipOrder;
+                try {
+                    order = await submitMembershipOrderRequest(
+                        {
+                            planId: captured.plan.id,
+                            seats: captured.plan.audience === "team" ? captured.seats : 1,
+                            teamId: resolvedTeamIDRef.current,
                         },
-                    },
-                );
-                createdOrder = true;
-                if (!storeFrozenOrderFacts(order)) return;
+                        teamName,
+                        captured.plan.audience === "team",
+                        orderRequestIdentityRef.current,
+                        crypto.randomUUID(),
+                        {
+                            createTeam,
+                            createOrder: createMembershipOrder,
+                            persistResolvedTeamID,
+                            persistIdentity: (identity) => {
+                                orderRequestIdentityRef.current = identity;
+                            },
+                        },
+                    );
+                } catch (error) {
+                    setCreationError(error instanceof Error ? error.message : "创建付款订单失败");
+                    return;
+                }
                 orderRequestIdentityRef.current = null;
+                const lifecycle = storeFrozenOrderFacts(order);
+                if (lifecycle.kind !== "frozen-ready") return;
                 setSubmitting(false);
                 setOpeningCheckout(true);
-                const checkout = await createPaymentCheckout(order.id);
-                setCheckoutToken(paymentCheckoutTokenFromURL(checkout.checkoutUrl, window.location.origin));
-            } catch (error) {
-                setCreationError(error instanceof Error ? error.message : "创建付款订单失败");
-                if (createdOrder) {
+                try {
+                    const checkout = await createPaymentCheckout(lifecycle.orderId);
+                    setCheckoutToken(paymentCheckoutTokenFromURL(checkout.checkoutUrl, window.location.origin));
+                } catch (error) {
+                    setCreationError(error instanceof Error ? error.message : "收银台打开失败");
                     await load();
                 }
             } finally {
@@ -272,11 +278,14 @@ export default function MembershipPage() {
         }
         resetPaymentDialogFacts();
         setSelection(null);
-        const frozenReady = storeFrozenOrderFacts(order);
+        const lifecycle = storeFrozenOrderFacts(order);
         setDialogOpen(true);
         setPayingId(orderId);
-        if (frozenReady) void openCheckoutForOrder(orderId).finally(() => setPayingId(""));
-        else setPayingId("");
+        if (lifecycle.kind !== "frozen-ready") {
+            setPayingId("");
+            return;
+        }
+        void openCheckoutForOrder(lifecycle.orderId).finally(() => setPayingId(""));
     };
 
     const cancelOrder = async (orderId: string) => {
