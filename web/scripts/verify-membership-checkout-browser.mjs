@@ -33,7 +33,7 @@ const supportedMutations = new Set(["", "team-total", "membership-single-provide
 if (!supportedMutations.has(mutation)) throw new Error(`未知收银台门禁 mutation: ${mutation}`);
 if (!chromeExecutable) throw new Error("缺少 HMAIGC_CHROMIUM_EXECUTABLE，收银台 Chromium 门禁禁止跳过");
 
-const scenarios = ["personal", "team", "topup", "topup-slow", "active-qr", "paid", "expired", "cancelled", "poll-failure", "provider-failure"];
+const scenarios = ["unknown-get-failure", "personal", "team", "topup", "topup-slow", "active-qr", "paid", "expired", "cancelled", "poll-failure", "provider-failure"];
 const viewports = [
     { name: "desktop", width: 1440, height: 900 },
     { name: "tablet", width: 768, height: 1024 },
@@ -382,6 +382,46 @@ async function exerciseScenario(page, scenario, label) {
     let bodyText = await page.$eval("body", (node) => node.innerText);
     requireText(bodyText, ["安全收银台"], label);
 
+    if (scenario === "unknown-get-failure") {
+        const failureOwner = await page.evaluate(() => {
+            const normalize = (value) => value?.replace(/\s+/gu, " ").trim() ?? "";
+            return {
+                hasBusyOwner: Boolean(document.querySelector('.payment-checkout-shell [aria-busy="true"]')),
+                hasFailedOwner: Boolean(document.querySelector(".payment-checkout-order-placeholder.is-failed")),
+                hasLoadingOwner: Boolean(document.querySelector(".payment-checkout-order-placeholder.is-loading")),
+                hasMembershipOwner: Boolean(document.querySelector(".membership-order-facts, .membership-checkout-summary")),
+                hasRenewalCopy: document.body.innerText.includes("到期不自动续费"),
+                hasTopupOwner: Boolean(document.querySelector(".credit-topup-order-facts")),
+                neutralText: normalize(document.querySelector(".payment-checkout-order-placeholder")?.textContent),
+                rightErrorText: normalize(document.querySelector(".payment-checkout-initial-error")?.textContent),
+            };
+        });
+        assert.deepEqual(
+            {
+                hasBusyOwner: failureOwner.hasBusyOwner,
+                hasFailedOwner: failureOwner.hasFailedOwner,
+                hasLoadingOwner: failureOwner.hasLoadingOwner,
+                hasMembershipOwner: failureOwner.hasMembershipOwner,
+                hasRenewalCopy: failureOwner.hasRenewalCopy,
+                hasTopupOwner: failureOwner.hasTopupOwner,
+                neutralText: failureOwner.neutralText,
+            },
+            {
+                hasBusyOwner: false,
+                hasFailedOwner: true,
+                hasLoadingOwner: false,
+                hasMembershipOwner: false,
+                hasRenewalCopy: false,
+                hasTopupOwner: false,
+                neutralText: "订单信息暂不可用未能读取订单类型与金额，请查看右侧错误并重试。",
+            },
+            `${label}: 未知 direct token GET 失败没有切换到中性失败 owner`,
+        );
+        assert.ok(!failureOwner.neutralText.includes("正在识别订单") && !failureOwner.neutralText.includes("请稍候"), `${label}: 中性失败 owner 仍包含加载文案`);
+        assert.ok(failureOwner.rightErrorText.includes("未知支付订单读取失败"), `${label}: 右侧没有保留原始 GET 错误`);
+        return;
+    }
+
     if (scenario === "personal" || scenario === "active-qr" || scenario === "poll-failure" || scenario === "paid" || scenario === "expired" || scenario === "cancelled" || scenario === "provider-failure") {
         requireText(bodyText, ["旗舰创作会员", "按月购买", "32.8 积分/月", "¥1,399", "−¥100", "¥1,299", "到期不自动续费"], label);
     }
@@ -443,6 +483,13 @@ async function exerciseScenario(page, scenario, label) {
 }
 
 function assertExpectedHTTPFailures(failures, scenario, label) {
+    if (scenario === "unknown-get-failure") {
+        assert.equal(failures.length, 1, `${label}: 未知 token GET 失败场景必须只有一次预期 503`);
+        assert.equal(failures[0].status, 503, `${label}: 未知 token GET 失败状态码错误`);
+        assert.equal(failures[0].method, "GET", `${label}: 未知 token 失败必须来自 checkout GET`);
+        assert.ok(!failures[0].pathname.endsWith("/transactions"), `${label}: 未知 token GET 失败路径错误`);
+        return;
+    }
     if (scenario === "provider-failure") {
         assert.equal(failures.length, 1, `${label}: 渠道失败场景必须只有一次预期 503`);
         assert.equal(failures[0].status, 503, `${label}: 渠道失败状态码错误`);
@@ -518,10 +565,18 @@ async function runCase(browser, baseURL, testCase, tokens) {
         await assertProductionMediaReads(page, label);
         await exerciseScenario(page, scenario, label);
 
-        assert.ok(
-            checkoutResponses.some((response) => response.method === "GET" && response.status === 200),
-            `${label}: 未观察到成功的结算 GET`,
-        );
+        if (scenario === "unknown-get-failure") {
+            assert.ok(
+                checkoutResponses.some((response) => response.method === "GET" && response.status === 503),
+                `${label}: 未观察到真实失败的结算 GET`,
+            );
+            assert.ok(!checkoutResponses.some((response) => response.method === "GET" && response.status === 200), `${label}: 未知 token GET 失败场景意外读取到结算事实`);
+        } else {
+            assert.ok(
+                checkoutResponses.some((response) => response.method === "GET" && response.status === 200),
+                `${label}: 未观察到成功的结算 GET`,
+            );
+        }
         for (const response of checkoutResponses) assertCheckoutSecurityHeaders(response.headers, `${label} ${response.method} ${response.status}`);
         assertExpectedHTTPFailures(httpFailures, scenario, label);
 
@@ -538,7 +593,7 @@ async function runCase(browser, baseURL, testCase, tokens) {
         assert.deepEqual(requestFailures, [], `${label}: 浏览器请求失败`);
         const unexpectedConsole = consoleEntries.filter((entry) => entry.startsWith("error:") || entry.startsWith("warning:"));
         const expectedResourceError = "error: Failed to load resource: the server responded with a status of 503 (Service Unavailable)";
-        if (scenario === "poll-failure" || scenario === "provider-failure") {
+        if (scenario === "unknown-get-failure" || scenario === "poll-failure" || scenario === "provider-failure") {
             assert.equal(unexpectedConsole.length, httpFailures.length, `${label}: 预期 HTTP 失败与浏览器控制台错误数量不一致`);
             assert.ok(
                 unexpectedConsole.every((entry) => entry === expectedResourceError),

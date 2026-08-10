@@ -12,7 +12,7 @@ if (!/^22\.12\./u.test(process.versions.node)) {
 const port = Number(process.env.PORT ?? "8080");
 if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("fixture PORT 无效");
 
-const scenarioNames = ["membership-personal", "membership-team", "provider-failure", "poll-failure", "active-qr", "cancelled", "expired", "personal", "team", "topup-slow", "topup", "paid"];
+const scenarioNames = ["membership-personal", "membership-team", "provider-failure", "poll-failure", "active-qr", "cancelled", "expired", "personal", "team", "topup-slow", "unknown-get-failure", "topup", "paid"];
 const tokenStates = new Map();
 const membershipOrdersByKey = new Map();
 const membershipOrdersByID = new Map();
@@ -518,6 +518,10 @@ const server = http.createServer(async (request, response) => {
             const state = stateForToken(token);
             if (scenario === "membership-personal" && membershipDialogState === "membership-personal-token-get-failure-dialog") {
                 sendJSON(response, 503, { code: 503, data: null, msg: "支付订单首次读取失败" }, true);
+                return;
+            }
+            if (scenario === "unknown-get-failure") {
+                sendJSON(response, 503, { code: 503, data: null, msg: "未知支付订单读取失败" }, true);
                 return;
             }
             if (scenario === "topup-slow") {

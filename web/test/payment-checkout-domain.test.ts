@@ -281,17 +281,33 @@ describe("payment checkout domain", () => {
         ).toThrow("团队实付金额无法还原为单席冻结金额");
     });
 
-    test("membership checkout rejects blank identity and original prices below the paid facts", () => {
+    test("membership checkout rejects blank order identity", () => {
         expect(() => checkoutSummary({ ...membershipCheckout, orderNumber: "   " })).toThrow("订单号为空");
-        expect(() =>
-            checkoutSummary({
-                ...membershipCheckout,
-                membershipSummary: {
-                    ...membershipCheckout.membershipSummary,
-                    originalPriceCents: 7497,
-                },
-            }),
-        ).toThrow("会员原价不得低于实付金额");
+    });
+
+    test("membership checkout accepts zero, below, and equal original totals as no-discount facts", () => {
+        for (const [originalPriceCents, originalUnitPriceCents] of [
+            [0, 0],
+            [7497, 2499],
+            [7500, 2500],
+        ] as const) {
+            expect(
+                checkoutSummary({
+                    ...membershipCheckout,
+                    membershipSummary: {
+                        ...membershipCheckout.membershipSummary,
+                        originalPriceCents,
+                    },
+                }),
+            ).toMatchObject({
+                actualPriceCents: 7500,
+                discountCents: 0,
+                kind: "membership",
+                originalPriceCents,
+                originalUnitPriceCents,
+                unitPriceCents: 2500,
+            });
+        }
     });
 
     test("a transient refresh failure preserves the loaded summary and active QR", () => {

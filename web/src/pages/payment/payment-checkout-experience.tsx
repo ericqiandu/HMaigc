@@ -215,7 +215,7 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
         onExit(exitDestination);
     }, [exitDestination, onExit]);
 
-    const initialOrderFacts = initialMembershipFacts ? <MembershipOrderFacts facts={initialMembershipFacts} /> : <PaymentCheckoutOrderPlaceholder />;
+    const knownMembershipOrderFacts = initialMembershipFacts ? <MembershipOrderFacts facts={initialMembershipFacts} /> : null;
 
     if ((loading || waitingForCurrentToken) && !checkout) {
         return (
@@ -229,13 +229,21 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
                         <span className="payment-checkout-skeleton-block" />
                     </div>
                 }
-                summary={initialOrderFacts}
+                summary={knownMembershipOrderFacts ?? <PaymentCheckoutOrderPlaceholder presentation="loading" />}
             />
         );
     }
 
     if (!checkout) {
-        return <PaymentCheckoutShell busy={false} mode={mode} onBack={returnToOrderEntry} payment={<PaymentCheckoutInitialError canRetry={hasToken} message={loadState.initialError} onRetry={retryCheckout} />} summary={initialOrderFacts} />;
+        return (
+            <PaymentCheckoutShell
+                busy={false}
+                mode={mode}
+                onBack={returnToOrderEntry}
+                payment={<PaymentCheckoutInitialError canRetry={hasToken} message={loadState.initialError} onRetry={retryCheckout} />}
+                summary={knownMembershipOrderFacts ?? <PaymentCheckoutOrderPlaceholder presentation="failed" />}
+            />
+        );
     }
 
     return (

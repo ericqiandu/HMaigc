@@ -95,7 +95,7 @@ export function validateMembershipOrderFacts(input: MembershipOrderValidationInp
     const originalUnitPriceCents = input.originalUnitPriceCents ?? exactUnitValue(input.originalPriceCents, input.seats, `${audienceLabel}原价无法还原为单席冻结金额`);
     requireSafeNonNegativeInteger(originalUnitPriceCents, "会员单席原价");
     if (checkedProduct(originalUnitPriceCents, input.seats, "会员原价合计") !== input.originalPriceCents) throw new Error("会员原价合计与单席原价不一致");
-    if (originalUnitPriceCents < unitPriceCents || input.originalPriceCents < input.totalPriceCents) throw new Error("会员原价不得低于实付金额");
+    // 原价只决定是否展示优惠；0、低于或等于实付价仍是合法的无优惠订单事实。
 
     requireSafeNonNegativeInteger(input.creditsPerPeriod, "会员单席积分");
     requireSafeNonNegativeInteger(input.totalCredits, "会员积分合计");

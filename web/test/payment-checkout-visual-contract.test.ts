@@ -9,6 +9,7 @@ import { legalDocumentRoutes } from "../src/constants/legal-documents";
 import { CreditTopupOrderFacts } from "../src/pages/payment/credit-topup-order-facts";
 import { membershipOrderFactsFromCheckout, membershipOrderFactsFromOrder, membershipOrderFactsFromPlan } from "../src/pages/payment/membership-order-facts-domain";
 import { MembershipOrderFacts } from "../src/pages/payment/membership-order-facts";
+import { PaymentCheckoutOrderPlaceholder } from "../src/pages/payment/payment-checkout-order-placeholder";
 import { PaymentCheckoutInitialError, PaymentCheckoutShell } from "../src/pages/payment/payment-checkout-shell";
 import { PaymentQrPanel } from "../src/pages/payment/payment-qr-panel";
 import type { MembershipOrder, MembershipPlan } from "../src/services/api/membership";
@@ -220,9 +221,33 @@ describe("membership checkout presentation", () => {
         expect(() => membershipOrderFactsFromOrder({ ...validOrder, planSnapshotJson: JSON.stringify({ ...frozenTeamPlan, minSeats: 5, maxSeats: 2 }) })).toThrow("团队会员冻结席位范围无效");
     });
 
-    test("frozen membership original prices cannot understate the paid amount", () => {
-        const invalidPlan = { ...personalPlan, originalPriceCents: personalPlan.priceCents - 1 };
-        expect(() => membershipOrderFactsFromOrder(frozenOrderFromPlan(invalidPlan, 1))).toThrow("会员原价不得低于实付金额");
+    test("a frozen personal order accepts zero original price and keeps its payable facts", () => {
+        const facts = membershipOrderFactsFromOrder(frozenOrderFromPlan({ ...personalPlan, originalPriceCents: 0 }, 1));
+        const markup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts }));
+
+        expect(facts).toMatchObject({ originalTotalPriceCents: 0, originalUnitPriceCents: 0, totalPriceCents: 119_900, unitPriceCents: 119_900 });
+        expect(markup).toContain("membership-order-facts");
+        expect(markup).toContain("应付金额");
+        expect(markup).toContain("¥1,199");
+        expect(markup).not.toContain("会员原价");
+        expect(markup).not.toContain("商品原价");
+        expect(markup).not.toContain("优惠金额");
+        expect(markup).not.toContain("<del");
+    });
+
+    test("a frozen team order accepts original price below actual and keeps its payable facts", () => {
+        const facts = membershipOrderFactsFromOrder(frozenOrderFromPlan({ ...frozenTeamPlan, originalPriceCents: 100_000 }, 2));
+        const markup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts }));
+
+        expect(facts).toMatchObject({ originalTotalPriceCents: 200_000, originalUnitPriceCents: 100_000, totalPriceCents: 239_800, unitPriceCents: 119_900 });
+        expect(markup).toContain("membership-order-facts");
+        expect(markup).toContain("2 席位");
+        expect(markup).toContain("应付金额");
+        expect(markup).toContain("¥2,398");
+        expect(markup).not.toContain("会员原价");
+        expect(markup).not.toContain("商品原价");
+        expect(markup).not.toContain("优惠金额");
+        expect(markup).not.toContain("<del");
     });
 
     test("membership checkout facts reject blank order and summary identities", () => {
@@ -327,22 +352,23 @@ describe("membership checkout presentation", () => {
         expect(topup).not.toContain("到期不自动续费");
     });
 
-    test("a non-discounted membership summary hides original-price and discount rows", () => {
-        const markup = renderToStaticMarkup(
-            createElement(MembershipOrderFacts, {
-                facts: membershipOrderFactsFromCheckout({
-                    ...personalCheckout,
-                    membershipSummary: {
-                        ...personalCheckout.membershipSummary,
-                        originalPriceCents: personalCheckout.membershipSummary.actualPriceCents,
-                    },
-                }),
-            }),
-        );
+    test("checkout original prices at or below actual stay payable without discount markup", () => {
+        for (const originalPriceCents of [0, personalCheckout.membershipSummary.actualPriceCents - 1, personalCheckout.membershipSummary.actualPriceCents]) {
+            const facts = membershipOrderFactsFromCheckout({
+                ...personalCheckout,
+                membershipSummary: { ...personalCheckout.membershipSummary, originalPriceCents },
+            });
+            const markup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts }));
 
-        expect(markup).not.toContain("商品原价");
-        expect(markup).not.toContain("优惠金额");
-        expect(markup).not.toContain("<del");
+            expect(facts).toMatchObject({ originalTotalPriceCents: originalPriceCents, totalPriceCents: 119_900, unitPriceCents: 119_900 });
+            expect(markup).toContain("membership-order-facts");
+            expect(markup).toContain("应付金额");
+            expect(markup).toContain("¥1,199");
+            expect(markup).not.toContain("会员原价");
+            expect(markup).not.toContain("商品原价");
+            expect(markup).not.toContain("优惠金额");
+            expect(markup).not.toContain("<del");
+        }
     });
 
     test("frozen non-CNY orders use their own currency instead of a hard-coded yuan symbol", () => {
@@ -389,6 +415,26 @@ describe("membership checkout presentation", () => {
         );
         expect(dialogMarkup).toContain("payment-checkout-shell is-dialog");
         expect(dialogMarkup).not.toContain("payment-checkout-header");
+    });
+
+    test("the neutral order placeholder distinguishes loading from failed presentation", () => {
+        const loadingMarkup = renderToStaticMarkup(createElement(PaymentCheckoutOrderPlaceholder, { presentation: "loading" }));
+        const failedMarkup = renderToStaticMarkup(createElement(PaymentCheckoutOrderPlaceholder, { presentation: "failed" }));
+
+        expect(loadingMarkup).toContain("payment-checkout-order-placeholder is-loading");
+        expect(loadingMarkup).toContain('aria-busy="true"');
+        expect(loadingMarkup).toContain("正在识别订单");
+        expect(loadingMarkup).toContain("请稍候");
+
+        expect(failedMarkup).toContain("payment-checkout-order-placeholder is-failed");
+        expect(failedMarkup).toContain("订单信息暂不可用");
+        expect(failedMarkup).toContain("未能读取订单类型与金额，请查看右侧错误并重试。");
+        expect(failedMarkup).not.toContain('aria-busy="true"');
+        expect(failedMarkup).not.toContain("正在识别订单");
+        expect(failedMarkup).not.toContain("请稍候");
+        expect(failedMarkup).not.toContain("membership-order-facts");
+        expect(failedMarkup).not.toContain("credit-topup-order-facts");
+        expect(failedMarkup).not.toContain("到期不自动续费");
     });
 
     test("a checkout without a token exposes no fake retry action", () => {
