@@ -166,6 +166,7 @@ const siteSettings = {
     publicSecurityRegistrationUrl: "",
     userAgreement: "",
     privacyPolicy: "",
+    membershipAgreement: "",
     homeBannerEnabled: false,
     homeBannerLabel: "",
     homeBannerText: "",
@@ -335,6 +336,16 @@ async function readJSON(request) {
 const server = http.createServer(async (request, response) => {
     try {
         const url = new URL(request.url ?? "/", "http://backend");
+        if (request.method === "POST" && url.pathname === "/api/__checkout-fixture/membership-agreement") {
+            const input = await readJSON(request);
+            if (typeof input?.published !== "boolean") {
+                sendJSON(response, 400, { code: 400, data: null, msg: "会员协议 fixture 状态无效" });
+                return;
+            }
+            siteSettings.membershipAgreement = input.published ? "<h2>会员购买规则</h2><p>这是浏览器门禁已发布的 HMaigc 会员服务协议。</p>" : "";
+            sendJSON(response, 200, envelope({ published: input.published }));
+            return;
+        }
         if (request.method === "GET" && url.pathname === "/api/public/site") {
             sendJSON(response, 200, envelope(siteSettings));
             return;

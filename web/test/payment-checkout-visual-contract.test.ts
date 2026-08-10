@@ -430,6 +430,10 @@ describe("checkout implementation boundaries", () => {
         expect(cssProperty(css, ".payment-checkout-qr-code", "background")).toBe("var(--qr-background)");
         expect(cssProperty(css, ".payment-checkout-qr-image", "width")).toBe("112px");
         expect(cssProperty(css, ".payment-checkout-qr-image", "height")).toBe("112px");
+        expect(cssProperty(css, ".payment-checkout-qr-image", "border")).toBe("0");
+        expect(tokens).toContain("--status-warning-text: #a65300");
+        expect(tokens).toContain("--status-warning-text: #ff9f0a");
+        expect(cssProperty(css, ".payment-checkout-countdown", "color")).toBe("var(--status-warning-text)");
         expect(css).toContain("width: 112px !important");
         expect(css).toContain("height: 112px !important");
         expect(cssProperty(css, ".payment-checkout-provider-check", "opacity")).toBe("0");

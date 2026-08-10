@@ -317,6 +317,15 @@
     width: min(766px, calc(100vw - 48px)) !important;
 }
 
+.membership-payment-dialog.is-checkout .ant-modal-container,
+.membership-payment-dialog.is-checkout .ant-modal-content {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
 .membership-payment-dialog .ant-modal-container,
 .membership-payment-dialog .ant-modal-content {
     padding: 0;
@@ -605,6 +614,13 @@
 
     .membership-payment-dialog.is-checkout.ant-modal {
         width: min(766px, calc(100vw - 32px)) !important;
+    }
+
+    .membership-payment-dialog.is-checkout .ant-modal-container,
+    .membership-payment-dialog.is-checkout .ant-modal-content {
+        max-height: calc(100vh - 32px);
+        overflow-x: auto;
+        overflow-y: auto;
     }
 
     .membership-payment-dialog .ant-modal-container,

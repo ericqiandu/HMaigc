@@ -87,7 +87,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
             const bodyText = await page.$eval("body", (node) => node.innerText);
             throw new Error(`${label}: 二维码未生成\n${bodyText}`, { cause: error });
         }
-        const expectedDialogWidth = Math.min(880, viewport.width - (viewport.width <= 767 ? 32 : 48));
+        const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
         await waitForStableMembershipDialog(page, expectedDialogWidth, label);
         await page.waitForFunction(
             () => {
@@ -102,6 +102,49 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
         assert.equal(await page.$(".membership-order-modal"), null, `${label}: 旧确认购买弹窗仍存在`);
         await assertMembershipDialogLayout(page, viewport, label);
         await assertQR(page, "微信支付", label);
+        await assertMembershipAgreementLink(page, label);
+    } finally {
+        await page.close();
+    }
+}
+
+async function runMembershipAgreementCase(browser, baseURL, theme, viewport, published) {
+    const state = published ? "published" : "unpublished";
+    const label = `${viewport.name}/${theme}/membership-agreement-${state}`;
+    const control = await fetch(`${baseURL}/api/__checkout-fixture/membership-agreement`, {
+        body: JSON.stringify({ published }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+    });
+    assert.equal(control.status, 200, `${label}: 无法设置会员协议 fixture 状态`);
+
+    const page = await browser.newPage();
+    try {
+        await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
+        await page.evaluateOnNewDocument((selectedTheme) => {
+            localStorage.setItem("infinite-canvas:theme_store", JSON.stringify({ state: { theme: selectedTheme }, version: 0 }));
+        }, theme);
+        const token = `gate-active-qr-agreement-${state}-${randomBytes(6).toString("hex")}`;
+        const navigation = await page.goto(`${baseURL}/pay/${encodeURIComponent(token)}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        assert.ok(navigation, `${label}: 付款页导航没有响应`);
+        assertCheckoutSecurityHeaders(navigation.headers(), `${label} /pay`);
+        await waitForCheckout(page);
+        await page.waitForSelector(".payment-checkout-qr-code", { timeout: 15_000 });
+        await assertQR(page, "微信支付", label);
+        await assertMembershipAgreementLink(page, label);
+
+        await page.goto(`${baseURL}/legal/membership-agreement`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        await page.waitForSelector(".legal-document-page", { timeout: 15_000 });
+        await page.waitForFunction((expectsPublished) => (expectsPublished ? Boolean(document.querySelector(".legal-document-body")) : Boolean(document.querySelector(".legal-document-empty"))), { timeout: 15_000 }, published);
+        const bodyText = await page.$eval("body", (node) => node.innerText);
+        requireText(bodyText, ["HMaigc会员服务协议"], label);
+        if (published) {
+            requireText(bodyText, ["会员购买规则", "浏览器门禁已发布"], label);
+            assert.ok(!bodyText.includes("会员服务协议尚未发布"), `${label}: 已发布协议误显示未发布状态`);
+        } else {
+            requireText(bodyText, ["会员服务协议尚未发布"], label);
+            assert.ok(!bodyText.includes("法律内容加载失败"), `${label}: 未发布协议被误报为加载失败`);
+        }
     } finally {
         await page.close();
     }
@@ -158,18 +201,68 @@ async function assertQR(page, providerLabel, label) {
         const right = Math.max(...darkGraphics.map((box) => box.x + box.width));
         const bottom = Math.max(...darkGraphics.map((box) => box.y + box.height));
         const rect = svg.getBoundingClientRect();
+        const surfaceRect = node.getBoundingClientRect();
+        const fills = [...new Set(Array.from(svg.querySelectorAll("path, rect"), (item) => getComputedStyle(item).fill))];
         return {
             ariaLabel: node.getAttribute("aria-label") ?? "",
             role: node.getAttribute("role"),
             width: rect.width,
             height: rect.height,
+            surfaceWidth: surfaceRect.width,
+            surfaceHeight: surfaceRect.height,
+            surfaceBackground: getComputedStyle(node).backgroundColor,
+            fills,
             quietZone: Math.min(left - viewBox.x, top - viewBox.y, viewBox.x + viewBox.width - right, viewBox.y + viewBox.height - bottom),
         };
     });
     assert.equal(qr.role, "img", `${label}: 二维码必须暴露 img 语义`);
     assert.equal(qr.ariaLabel, `${providerLabel}付款二维码`, `${label}: 二维码可访问名称错误`);
-    assert.ok(qr.width >= 160 && qr.height >= 160, `${label}: 二维码尺寸不足以可靠扫码`);
+    assert.ok(Math.abs(qr.width - 112) <= 1 && Math.abs(qr.height - 112) <= 1, `${label}: 二维码 SVG 必须为 112×112，实际 ${qr.width}×${qr.height}`);
+    assert.ok(Math.abs(qr.surfaceWidth - 128) <= 1 && Math.abs(qr.surfaceHeight - 128) <= 1, `${label}: 二维码白底整体必须为 128×128，实际 ${qr.surfaceWidth}×${qr.surfaceHeight}`);
+    assert.equal(qr.surfaceBackground, "rgb(255, 255, 255)", `${label}: 二维码静区背景必须保持白色`);
+    assert.ok(qr.fills.includes("rgb(0, 0, 0)"), `${label}: 二维码前景必须保持黑色`);
+    assert.ok(qr.fills.includes("rgb(255, 255, 255)"), `${label}: 二维码背景必须保持白色`);
     assert.ok(qr.quietZone >= 4, `${label}: 二维码静区不足 4 个 SVG 单位`);
+}
+
+async function assertMembershipAgreementLink(page, label) {
+    await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        document.body.tabIndex = -1;
+        document.body.focus();
+        document.body.removeAttribute("tabindex");
+    });
+    let agreementFocused = false;
+    for (let step = 0; step < 20; step += 1) {
+        await page.keyboard.press("Tab");
+        agreementFocused = await page.evaluate(() => document.activeElement?.classList.contains("payment-checkout-agreement-link") ?? false);
+        if (agreementFocused) break;
+    }
+    assert.equal(agreementFocused, true, `${label}: 键盘无法到达会员协议入口`);
+    const agreement = await page.$eval(".payment-checkout-agreement-link", (node) => {
+        if (!(node instanceof HTMLAnchorElement)) throw new Error("会员协议入口不是链接");
+        const style = getComputedStyle(node);
+        return {
+            href: new URL(node.href).pathname,
+            outlineStyle: style.outlineStyle,
+            outlineWidth: Number.parseFloat(style.outlineWidth),
+            rel: node.rel,
+            target: node.target,
+            text: node.textContent?.trim() ?? "",
+        };
+    });
+    assert.deepEqual(
+        agreement,
+        {
+            href: "/legal/membership-agreement",
+            outlineStyle: "solid",
+            outlineWidth: 2,
+            rel: "noopener noreferrer",
+            target: "_blank",
+            text: "《HMaigc会员服务协议》",
+        },
+        `${label}: 会员协议入口契约错误`,
+    );
 }
 
 async function exerciseScenario(page, scenario, label) {
@@ -192,17 +285,31 @@ async function exerciseScenario(page, scenario, label) {
         await page.click(".payment-checkout-action");
         await page.waitForSelector(".payment-checkout-qr-code", { timeout: 10_000 });
         await assertQR(page, "支付宝", label);
-        assert.equal(await page.$eval('.payment-checkout-provider-input[value="alipay"]', (node) => node.checked), true, `${label}: 支付宝选择未保持`);
-        assert.equal(await page.$eval(".payment-checkout-provider-fieldset", (node) => node.disabled), true, `${label}: 生成付款码后渠道未锁定`);
+        await assertMembershipAgreementLink(page, label);
+        assert.equal(await page.$(".payment-checkout-provider-fieldset"), null, `${label}: 生成付款码后仍重复显示渠道选择`);
     } else if (scenario === "active-qr" || scenario === "poll-failure") {
         await assertQR(page, "微信支付", label);
-        assert.equal(await page.$eval(".payment-checkout-provider-fieldset", (node) => node.disabled), true, `${label}: 恢复付款码后渠道未锁定`);
+        await assertMembershipAgreementLink(page, label);
+        assert.equal(await page.$(".payment-checkout-provider-fieldset"), null, `${label}: 恢复付款码后仍重复显示渠道选择`);
         if (scenario === "poll-failure") {
             await page.waitForFunction(() => Array.from(document.querySelectorAll('[role="alert"]')).some((node) => node.textContent?.includes("订单状态刷新失败，请重试")), { timeout: 8_000 });
             await assertQR(page, "微信支付", label);
             bodyText = await page.$eval("body", (node) => node.innerText);
             requireText(bodyText, ["订单状态刷新失败，请重试", "旗舰创作会员", "¥1,299"], label);
         }
+    } else if (scenario === "team") {
+        await page.click('.payment-checkout-provider-input[value="wechat"]');
+        await page.click(".payment-checkout-action");
+        await page.waitForSelector(".payment-checkout-qr-code", { timeout: 10_000 });
+        await assertQR(page, "微信支付", label);
+        await assertMembershipAgreementLink(page, label);
+        assert.equal(await page.$(".payment-checkout-provider-fieldset"), null, `${label}: 团队付款码生成后仍重复显示渠道选择`);
+    } else if (scenario === "topup") {
+        await page.click('.payment-checkout-provider-input[value="alipay"]');
+        await page.click(".payment-checkout-action");
+        await page.waitForSelector(".payment-checkout-qr-code", { timeout: 10_000 });
+        await assertQR(page, "支付宝", label);
+        assert.equal(await page.$(".payment-checkout-agreement"), null, `${label}: 积分充值错误显示会员协议`);
     } else if (scenario === "provider-failure") {
         await page.click('.payment-checkout-provider-input[value="alipay"]');
         await page.click(".payment-checkout-action");
@@ -364,7 +471,7 @@ async function main() {
     await command("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 30_000 });
 
     const caseMatrix = viewports.flatMap((viewport) => themes.flatMap((theme) => scenarios.map((scenario, matrixIndex) => ({ index: `${viewport.name}-${theme}-${matrixIndex}`, scenario, theme, viewport }))));
-    assert.equal(caseMatrix.length + viewports.length * themes.length * 3, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 72 个案例");
+    assert.equal(caseMatrix.length + viewports.length * themes.length * 5, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 84 个案例");
 
     const identifier = randomBytes(6).toString("hex");
     const resourcePrefix = `hmaigc-checkout-gate-${identifier}`;
@@ -427,6 +534,11 @@ async function main() {
                     await runMembershipDialogCase(browser, baseURL, theme, viewport, audience);
                     completed += 1;
                     process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/membership-${audience}-dialog\n`);
+                }
+                for (const published of [true, false]) {
+                    await runMembershipAgreementCase(browser, baseURL, theme, viewport, published);
+                    completed += 1;
+                    process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/membership-agreement-${published ? "published" : "unpublished"}\n`);
                 }
             }
         }

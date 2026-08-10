@@ -81,6 +81,7 @@
     --gold-light: #c98a4b;
     --status-success: #248a3d;
     --status-warning: #b65c00;
+    --status-warning-text: #a65300;
     --status-danger: #d70015;
     --qr-foreground: #000000;
     --qr-background: #ffffff;
@@ -110,6 +111,7 @@
     --gold-light: #f8dfc0;
     --status-success: #30d158;
     --status-warning: #ff9f0a;
+    --status-warning-text: #ff9f0a;
     --status-danger: #ff453a;
     --overlay-light: rgb(0 0 0 / 25%);
     --overlay-default: rgb(0 0 0 / 45%);

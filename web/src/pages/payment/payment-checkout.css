@@ -83,8 +83,10 @@
     margin: 0;
     overflow: visible;
     border: 0;
-    border-radius: 0;
-    box-shadow: none;
+    border-radius: var(--radius-xl);
+    box-shadow:
+        inset 0 0 0 1px var(--border-default),
+        var(--shadow-lg);
 }
 
 .payment-checkout-shell.is-dialog .payment-checkout-order-surface {
@@ -437,6 +439,7 @@
 .payment-checkout-qr-image {
     width: 112px !important;
     height: 112px !important;
+    border: 0 !important;
     flex: none;
 }
 
@@ -475,7 +478,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
-    color: var(--status-warning);
+    color: var(--status-warning-text);
 }
 
 .payment-checkout-generate {
@@ -629,6 +632,10 @@
 
     .payment-checkout-order-surface {
         background: var(--bg-secondary);
+    }
+
+    .payment-checkout-shell.is-dialog .payment-checkout-order-surface {
+        border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     }
 
     .payment-checkout-payment-surface {
