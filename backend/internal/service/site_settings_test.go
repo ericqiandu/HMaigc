@@ -76,11 +76,15 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" || updated.HomeBannerText != "商业合作伙伴招募计划" {
 		t.Fatalf("unexpected updated setting: %#v", updated)
 	}
-	updated, err = svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: "<p>第一条 用户权利与义务</p>", PrivacyPolicy: "<p>第一条 信息处理规则</p>"})
+	updated, err = svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{
+		UserAgreement:       "<p>第一条 用户权利与义务</p>",
+		PrivacyPolicy:       "<p>第一条 信息处理规则</p>",
+		MembershipAgreement: "<p>第一条 会员购买与服务规则</p>",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.UserAgreement == "" || updated.PrivacyPolicy == "" {
+	if updated.UserAgreement == "" || updated.PrivacyPolicy == "" || updated.MembershipAgreement == "" {
 		t.Fatalf("unexpected legal setting: %#v", updated)
 	}
 	legalDocumentsConfigured, err = svc.LegalDocumentsConfigured()
@@ -92,11 +96,12 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	}
 	legalAgreement := updated.UserAgreement
 	legalPrivacy := updated.PrivacyPolicy
+	legalMembership := updated.MembershipAgreement
 	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技", HomeBannerEnabled: true, HomeBannerText: "新版运营公告", HomeBannerFrequency: "session", MarketingPopupFrequency: "once"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.UserAgreement != legalAgreement || updated.PrivacyPolicy != legalPrivacy {
+	if updated.UserAgreement != legalAgreement || updated.PrivacyPolicy != legalPrivacy || updated.MembershipAgreement != legalMembership {
 		t.Fatalf("brand update overwrote legal content: %#v", updated)
 	}
 	reloaded, err := svc.PublicSiteSetting()
@@ -119,6 +124,58 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	}
 	if legalAuditCount != 1 {
 		t.Fatalf("legal audit count = %d, want 1", legalAuditCount)
+	}
+	var legalAudit model.AdminAuditEvent
+	if err := db.Where("action = ?", "site_setting.legal.update").First(&legalAudit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(legalAudit.MetadataJSON, "用户权利与义务") || strings.Contains(legalAudit.MetadataJSON, "信息处理规则") || strings.Contains(legalAudit.MetadataJSON, "会员购买与服务规则") {
+		t.Fatalf("legal audit leaked agreement body: %s", legalAudit.MetadataJSON)
+	}
+	for _, marker := range []string{`"userAgreementPublished":true`, `"privacyPolicyPublished":true`, `"membershipAgreementPublished":true`} {
+		if !strings.Contains(legalAudit.MetadataJSON, marker) {
+			t.Fatalf("legal audit metadata %s missing %s", legalAudit.MetadataJSON, marker)
+		}
+	}
+}
+
+func TestSiteSettingMembershipAgreementValidationIsAtomicAndDoesNotGateRegistration(t *testing.T) {
+	svc, _ := newSiteSettingTestService(t)
+	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
+	valid := LegalContentSettingRequest{
+		UserAgreement:       "<p>用户协议已发布</p>",
+		PrivacyPolicy:       "<p>隐私政策已发布</p>",
+		MembershipAgreement: "<p>会员服务协议已发布</p>",
+	}
+	if _, err := svc.UpdateLegalContentSetting(admin, valid); err != nil {
+		t.Fatal(err)
+	}
+
+	invalid := valid
+	invalid.UserAgreement = "<p>不应被部分保存的用户协议</p>"
+	invalid.MembershipAgreement = "<script>alert(1)</script>"
+	if _, err := svc.UpdateLegalContentSetting(admin, invalid); err == nil {
+		t.Fatal("unsafe membership agreement should be rejected")
+	}
+	reloaded, err := svc.PublicSiteSetting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.UserAgreement != valid.UserAgreement || reloaded.PrivacyPolicy != valid.PrivacyPolicy || reloaded.MembershipAgreement != valid.MembershipAgreement {
+		t.Fatalf("invalid legal update partially overwrote stored content: %#v", reloaded)
+	}
+
+	withoutMembership := valid
+	withoutMembership.MembershipAgreement = ""
+	if _, err := svc.UpdateLegalContentSetting(admin, withoutMembership); err != nil {
+		t.Fatalf("empty membership agreement should remain a valid publication state: %v", err)
+	}
+	configured, err := svc.LegalDocumentsConfigured()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !configured {
+		t.Fatal("membership agreement publication must not gate registration consent")
 	}
 }
 
@@ -292,6 +349,9 @@ func TestSiteSettingAppliesNewFieldDefaultsToStoredConfiguration(t *testing.T) {
 	}
 	if setting.SiteName != "弘梦" || !setting.HomeBannerEnabled || setting.HomeBannerText == "" || setting.HomeBannerFrequency != "always" || setting.MarketingPopupFrequency != "once" {
 		t.Fatalf("stored setting did not receive current schema defaults: %#v", setting)
+	}
+	if setting.MembershipAgreement != "" {
+		t.Fatalf("legacy site setting membership agreement = %q, want empty", setting.MembershipAgreement)
 	}
 }
 

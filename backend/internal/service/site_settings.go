@@ -69,8 +69,9 @@ type SiteSettingRequest struct {
 }
 
 type LegalContentSettingRequest struct {
-	UserAgreement string `json:"userAgreement"`
-	PrivacyPolicy string `json:"privacyPolicy"`
+	UserAgreement       string `json:"userAgreement"`
+	PrivacyPolicy       string `json:"privacyPolicy"`
+	MembershipAgreement string `json:"membershipAgreement"`
 }
 
 type PublicSiteSetting struct {
@@ -83,6 +84,7 @@ type PublicSiteSetting struct {
 	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
 	UserAgreement                    string `json:"userAgreement"`
 	PrivacyPolicy                    string `json:"privacyPolicy"`
+	MembershipAgreement              string `json:"membershipAgreement"`
 	HomeBannerEnabled                bool   `json:"homeBannerEnabled"`
 	HomeBannerLabel                  string `json:"homeBannerLabel"`
 	HomeBannerText                   string `json:"homeBannerText"`
@@ -114,6 +116,7 @@ type siteSettingValue struct {
 	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
 	UserAgreement                    string `json:"userAgreement"`
 	PrivacyPolicy                    string `json:"privacyPolicy"`
+	MembershipAgreement              string `json:"membershipAgreement"`
 	HomeBannerEnabled                bool   `json:"homeBannerEnabled"`
 	HomeBannerLabel                  string `json:"homeBannerLabel"`
 	HomeBannerText                   string `json:"homeBannerText"`
@@ -180,6 +183,7 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 		PublicSecurityRegistrationURL:    strings.TrimSpace(req.PublicSecurityRegistrationURL),
 		UserAgreement:                    current.UserAgreement,
 		PrivacyPolicy:                    current.PrivacyPolicy,
+		MembershipAgreement:              current.MembershipAgreement,
 		HomeBannerEnabled:                req.HomeBannerEnabled,
 		HomeBannerLabel:                  strings.TrimSpace(req.HomeBannerLabel),
 		HomeBannerText:                   strings.TrimSpace(req.HomeBannerText),
@@ -363,6 +367,7 @@ func (s *Service) UpdateLegalContentSetting(actor *model.User, req LegalContentS
 	next := current
 	next.UserAgreement = strings.TrimSpace(req.UserAgreement)
 	next.PrivacyPolicy = strings.TrimSpace(req.PrivacyPolicy)
+	next.MembershipAgreement = strings.TrimSpace(req.MembershipAgreement)
 	if err := validateSiteSetting(next); err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
@@ -371,7 +376,12 @@ func (s *Service) UpdateLegalContentSetting(actor *model.User, req LegalContentS
 		return nil, err
 	}
 	result := publicSiteSetting(setting, next)
-	if err := s.appendAdminAudit(actor, "site_setting.legal.update", "system_setting", siteSettingKey, "更新用户协议与隐私政策", result); err != nil {
+	audit := map[string]bool{
+		"userAgreementPublished":       next.UserAgreement != "",
+		"privacyPolicyPublished":       next.PrivacyPolicy != "",
+		"membershipAgreementPublished": next.MembershipAgreement != "",
+	}
+	if err := s.appendAdminAudit(actor, "site_setting.legal.update", "system_setting", siteSettingKey, "更新用户协议、隐私政策与会员服务协议", audit); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -599,6 +609,9 @@ func validateSiteSetting(value siteSettingValue) error {
 	if err := validateLegalRichText("隐私政策", value.PrivacyPolicy); err != nil {
 		return err
 	}
+	if err := validateLegalRichText("会员服务协议", value.MembershipAgreement); err != nil {
+		return err
+	}
 	if value.LogoFile != "" && filepath.Base(value.LogoFile) != value.LogoFile {
 		return errors.New("站点 Logo 文件配置无效")
 	}
@@ -778,6 +791,7 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 		PublicSecurityRegistrationURL:    value.PublicSecurityRegistrationURL,
 		UserAgreement:                    value.UserAgreement,
 		PrivacyPolicy:                    value.PrivacyPolicy,
+		MembershipAgreement:              value.MembershipAgreement,
 		HomeBannerEnabled:                value.HomeBannerEnabled,
 		HomeBannerLabel:                  value.HomeBannerLabel,
 		HomeBannerText:                   value.HomeBannerText,
