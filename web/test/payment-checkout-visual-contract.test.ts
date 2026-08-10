@@ -6,9 +6,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import postcss from "postcss";
 
 import { legalDocumentRoutes } from "../src/constants/legal-documents";
-import { MembershipCheckoutSummary } from "../src/pages/payment/membership-checkout-summary";
+import { CreditTopupOrderFacts } from "../src/pages/payment/credit-topup-order-facts";
+import { membershipOrderFactsFromCheckout, membershipOrderFactsFromPlan } from "../src/pages/payment/membership-order-facts-domain";
+import { MembershipOrderFacts } from "../src/pages/payment/membership-order-facts";
 import { PaymentCheckoutInitialError, PaymentCheckoutShell } from "../src/pages/payment/payment-checkout-shell";
 import { PaymentQrPanel } from "../src/pages/payment/payment-qr-panel";
+import type { MembershipPlan } from "../src/services/api/membership";
 import type { CreditTopupPaymentCheckout, MembershipPaymentCheckout } from "../src/services/api/payment";
 
 const root = resolve(import.meta.dir, "..");
@@ -68,6 +71,36 @@ const topupCheckout = {
     },
 } satisfies CreditTopupPaymentCheckout;
 
+const personalPlan = {
+    id: "plan-standard-year",
+    code: "creator-standard-year",
+    name: "标准版",
+    tier: "standard",
+    audience: "personal",
+    billingCycle: "year",
+    priceCents: 119_900,
+    originalPriceCents: 129_900,
+    currency: "CNY",
+    creditsPerPeriod: 32_800_000_000,
+    imageConcurrency: 2,
+    videoConcurrency: 1,
+    unlimitedTaskQueue: false,
+    teamStorageBytes: 0,
+    sharedAssetsEnabled: false,
+    projectPermissionsEnabled: false,
+    invoicingEnabled: false,
+    commercialUseEnabled: false,
+    topupDiscountBasisPoints: 0,
+    minSeats: 1,
+    maxSeats: 1,
+    benefitsJson: "[]",
+    benefits: [],
+    enabled: true,
+    sortOrder: 1,
+    createdAt: "2026-08-10T00:00:00.000Z",
+    updatedAt: "2026-08-10T00:00:00.000Z",
+} satisfies MembershipPlan;
+
 const handlers = {
     onProviderChange: () => undefined,
     onRetry: () => undefined,
@@ -124,10 +157,67 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("membership checkout presentation", () => {
+    test("plan previews and frozen membership orders share one facts model and structural owner", () => {
+        const preview = membershipOrderFactsFromPlan(personalPlan, 1);
+        const frozen = membershipOrderFactsFromCheckout(personalCheckout);
+
+        expect(preview).toEqual({
+            audience: "personal",
+            billingCycle: "year",
+            creditsPerPeriod: personalPlan.creditsPerPeriod,
+            currency: "CNY",
+            orderNumber: "",
+            originalTotalPriceCents: personalPlan.originalPriceCents,
+            originalUnitPriceCents: personalPlan.originalPriceCents,
+            seats: 1,
+            title: "标准版",
+            totalCredits: personalPlan.creditsPerPeriod,
+            totalPriceCents: personalPlan.priceCents,
+            unitPriceCents: personalPlan.priceCents,
+        });
+        expect(frozen.orderNumber).toBe("M202608100001");
+
+        const previewMarkup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts: preview }));
+        const frozenMarkup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts: frozen }));
+        for (const markup of [previewMarkup, frozenMarkup]) {
+            expect(markup).toContain("membership-order-facts");
+            expect(markup).toContain("membership-order-facts-heading");
+            expect(markup).toContain("membership-order-facts-product");
+            expect(markup).toContain("membership-order-facts-details");
+            expect(markup).toContain("商品信息");
+            expect(markup).toContain("订单明细");
+            expect(markup).toContain("本次为一次性购买，到期不自动续费。");
+        }
+    });
+
+    test("membership facts reveal truthful discounts and annual monthly equivalents only when applicable", () => {
+        const discountedMarkup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts: membershipOrderFactsFromPlan(personalPlan, 1) }));
+        const nonDiscountedMarkup = renderToStaticMarkup(
+            createElement(MembershipOrderFacts, {
+                facts: membershipOrderFactsFromPlan({ ...personalPlan, originalPriceCents: personalPlan.priceCents }, 1),
+            }),
+        );
+        const monthlyMarkup = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts: membershipOrderFactsFromCheckout(personalCheckout) }));
+
+        expect(discountedMarkup).toContain("会员原价");
+        expect(discountedMarkup).toContain("商品原价");
+        expect(discountedMarkup).toContain("优惠金额");
+        expect(discountedMarkup).toContain("¥99.92/月");
+        expect(nonDiscountedMarkup).not.toContain("会员原价");
+        expect(nonDiscountedMarkup).not.toContain("商品原价");
+        expect(nonDiscountedMarkup).not.toContain("优惠金额");
+        expect(monthlyMarkup).not.toContain("每月约");
+    });
+
+    test("membership and credit topup fact owners reject the other order type", () => {
+        expect(() => membershipOrderFactsFromCheckout(topupCheckout)).toThrow("积分充值订单不能映射为会员订单事实");
+        expect(() => renderToStaticMarkup(createElement(CreditTopupOrderFacts, { checkout: personalCheckout }))).toThrow("会员订单不能使用积分充值订单事实展示");
+    });
+
     test("personal, team, and topup summaries expose only their frozen facts", () => {
-        const personal = renderToStaticMarkup(createElement(MembershipCheckoutSummary, { checkout: personalCheckout }));
-        const team = renderToStaticMarkup(createElement(MembershipCheckoutSummary, { checkout: teamCheckout }));
-        const topup = renderToStaticMarkup(createElement(MembershipCheckoutSummary, { checkout: topupCheckout }));
+        const personal = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts: membershipOrderFactsFromCheckout(personalCheckout) }));
+        const team = renderToStaticMarkup(createElement(MembershipOrderFacts, { facts: membershipOrderFactsFromCheckout(teamCheckout) }));
+        const topup = renderToStaticMarkup(createElement(CreditTopupOrderFacts, { checkout: topupCheckout }));
 
         expect(personal).toContain("开通创作会员");
         expect(personal).toContain("开通创作会员「豪华版VIP 按月购买」 32,800 积分");
@@ -161,14 +251,14 @@ describe("membership checkout presentation", () => {
 
     test("a non-discounted membership summary hides original-price and discount rows", () => {
         const markup = renderToStaticMarkup(
-            createElement(MembershipCheckoutSummary, {
-                checkout: {
+            createElement(MembershipOrderFacts, {
+                facts: membershipOrderFactsFromCheckout({
                     ...personalCheckout,
                     membershipSummary: {
                         ...personalCheckout.membershipSummary,
                         originalPriceCents: personalCheckout.membershipSummary.actualPriceCents,
                     },
-                },
+                }),
             }),
         );
 
@@ -179,11 +269,11 @@ describe("membership checkout presentation", () => {
 
     test("frozen non-CNY orders use their own currency instead of a hard-coded yuan symbol", () => {
         const markup = renderToStaticMarkup(
-            createElement(MembershipCheckoutSummary, {
-                checkout: {
+            createElement(MembershipOrderFacts, {
+                facts: membershipOrderFactsFromCheckout({
                     ...personalCheckout,
                     currency: "USD",
-                },
+                }),
             }),
         );
 
@@ -197,7 +287,7 @@ describe("membership checkout presentation", () => {
                 busy: false,
                 mode: "page",
                 onBack: () => undefined,
-                summary: createElement(MembershipCheckoutSummary, { checkout: personalCheckout }),
+                summary: createElement(MembershipOrderFacts, { facts: membershipOrderFactsFromCheckout(personalCheckout) }),
                 payment: createElement("p", { className: "payment-test-slot" }, "支付面板"),
             }),
         );
@@ -215,7 +305,7 @@ describe("membership checkout presentation", () => {
                 busy: false,
                 mode: "dialog",
                 onBack: () => undefined,
-                summary: createElement(MembershipCheckoutSummary, { checkout: personalCheckout }),
+                summary: createElement(MembershipOrderFacts, { facts: membershipOrderFactsFromCheckout(personalCheckout) }),
                 payment: createElement("p", { className: "payment-test-slot" }, "支付面板"),
             }),
         );

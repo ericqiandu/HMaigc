@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 
 import { createPaymentTransaction, getPaymentCheckout, type PaymentProvider } from "@/services/api/payment";
 
-import { MembershipCheckoutSummary } from "./membership-checkout-summary";
+import { CreditTopupOrderFacts } from "./credit-topup-order-facts";
+import { membershipOrderFactsFromCheckout } from "./membership-order-facts-domain";
+import { MembershipOrderFacts, MembershipOrderFactsSkeleton } from "./membership-order-facts";
 import {
     CheckoutRequestCoordinator,
     applyCheckoutTransaction,
@@ -223,13 +225,7 @@ export function PaymentCheckoutExperience({ mode, onExit, onWriteStateChange, to
                         <span className="payment-checkout-skeleton-block" />
                     </div>
                 }
-                summary={
-                    <div aria-label="正在加载订单" className="payment-checkout-skeleton membership-checkout-summary" role="status">
-                        <span className="payment-checkout-skeleton-line is-short" />
-                        <span className="payment-checkout-skeleton-line" />
-                        <span className="payment-checkout-skeleton-block" />
-                    </div>
-                }
+                summary={<MembershipOrderFactsSkeleton />}
             />
         );
     }
@@ -276,7 +272,7 @@ export function PaymentCheckoutExperience({ mode, onExit, onWriteStateChange, to
                     submitting={submitting}
                 />
             }
-            summary={<MembershipCheckoutSummary checkout={checkout} />}
+            summary={checkout.orderType === "membership" ? <MembershipOrderFacts facts={membershipOrderFactsFromCheckout(checkout)} /> : <CreditTopupOrderFacts checkout={checkout} />}
         />
     );
 }
