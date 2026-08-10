@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -70,6 +72,12 @@ const handlers = {
 };
 
 describe("membership payment dialog", () => {
+    test("the checkout dialog uses the approved 766px reference width", () => {
+        const source = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-dialog.tsx"), "utf8");
+        expect(source).toContain('checkoutToken ? "is-checkout" : "is-setup"');
+        expect(source).toContain("width={checkoutToken ? 766 : 880}");
+        expect(source).not.toContain("width={880}");
+    });
     test("Escape never navigates away while the payment dialog owns keyboard dismissal", () => {
         expect(shouldNavigateFromMembershipPage("Escape", true)).toBe(false);
         expect(shouldNavigateFromMembershipPage("Escape", false)).toBe(true);

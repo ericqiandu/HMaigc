@@ -86,7 +86,7 @@ export function MembershipPaymentDialog({
 
     return (
         <Modal
-            className={`membership-payment-dialog ${className}`}
+            className={`membership-payment-dialog ${checkoutToken ? "is-checkout" : "is-setup"} ${className}`}
             closable={!writeInFlight}
             destroyOnHidden
             footer={null}
@@ -95,7 +95,7 @@ export function MembershipPaymentDialog({
             onCancel={requestClose}
             open={open}
             title={null}
-            width={880}
+            width={checkoutToken ? 766 : 880}
         >
             <div className="membership-payment-dialog-content">
                 {checkoutToken ? (

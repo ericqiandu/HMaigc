@@ -313,6 +313,10 @@
     padding-bottom: 0;
 }
 
+.membership-payment-dialog.is-checkout.ant-modal {
+    width: min(766px, calc(100vw - 48px)) !important;
+}
+
 .membership-payment-dialog .ant-modal-container,
 .membership-payment-dialog .ant-modal-content {
     padding: 0;
@@ -597,6 +601,10 @@
     .membership-payment-dialog.ant-modal {
         width: min(880px, calc(100vw - 32px)) !important;
         margin: var(--space-4) auto;
+    }
+
+    .membership-payment-dialog.is-checkout.ant-modal {
+        width: min(766px, calc(100vw - 32px)) !important;
     }
 
     .membership-payment-dialog .ant-modal-container,

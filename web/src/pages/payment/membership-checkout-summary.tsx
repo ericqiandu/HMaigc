@@ -56,31 +56,34 @@ export function MembershipCheckoutSummary({ checkout }: MembershipCheckoutSummar
     const hasDiscount = isMembership && summary.discountCents > 0;
     const cycleLabel = isMembership ? (summary.billingCycle === "year" ? "按年购买" : "按月购买") : "一次性充值";
     const periodLabel = isMembership ? (summary.billingCycle === "year" ? "年" : "月") : "次";
+    const membershipHeading = isMembership ? `${isTeam ? "开通团队会员" : "开通创作会员"}「${summary.title} ${cycleLabel}」 ${formatCredits(summary.totalCredits)} 积分` : "积分充值";
 
     return (
         <section aria-labelledby="payment-checkout-title" className="membership-checkout-summary">
             <header className="membership-checkout-heading">
-                <p className="membership-checkout-eyebrow">{isTeam ? "开通团队会员" : isMembership ? "开通创作会员" : "积分充值"}</p>
                 <h1 className="membership-checkout-title" id="payment-checkout-title">
-                    {summary.title}
+                    {membershipHeading}
                 </h1>
-                <p className="membership-checkout-order-number">订单 {checkout.orderNumber}</p>
             </header>
 
             <section aria-label="商品信息" className="membership-checkout-product">
-                <div className="membership-checkout-product-copy">
-                    <strong className="membership-checkout-product-title">{summary.title}</strong>
-                    <span className="membership-checkout-product-meta">{cycleLabel}</span>
-                </div>
-                {isMembership ? (
-                    <div className="membership-checkout-product-price">
-                        <strong className="membership-checkout-unit-price">{formatMoney(summary.unitPriceCents, checkout.currency)}</strong>
-                        <span className="membership-checkout-unit-suffix">
-                            /{periodLabel}
-                            {isTeam ? "/席位" : ""}
-                        </span>
+                <h2 className="membership-checkout-section-title">商品信息</h2>
+                <div className="membership-checkout-product-selection">
+                    <div className="membership-checkout-product-copy">
+                        <strong className="membership-checkout-product-title">{summary.title}</strong>
+                        <span className="membership-checkout-product-meta">{cycleLabel}</span>
                     </div>
-                ) : null}
+                    {isMembership ? (
+                        <div className="membership-checkout-product-price">
+                            <strong className="membership-checkout-unit-price">{formatMoney(summary.unitPriceCents, checkout.currency)}</strong>
+                            <span className="membership-checkout-unit-suffix">
+                                /{periodLabel}
+                                {isTeam ? "/席位" : ""}
+                            </span>
+                            {hasDiscount ? <span className="membership-checkout-product-original-price">{formatMoney(summary.originalUnitPriceCents, checkout.currency)}</span> : null}
+                        </div>
+                    ) : null}
+                </div>
             </section>
 
             <section aria-labelledby="membership-checkout-detail-title" className="membership-checkout-details">

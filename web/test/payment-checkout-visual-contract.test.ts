@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import postcss from "postcss";
 
+import { legalDocumentRoutes } from "../src/constants/legal-documents";
 import { MembershipCheckoutSummary } from "../src/pages/payment/membership-checkout-summary";
 import { PaymentCheckoutInitialError, PaymentCheckoutShell } from "../src/pages/payment/payment-checkout-shell";
 import { PaymentQrPanel } from "../src/pages/payment/payment-qr-panel";
@@ -86,6 +87,18 @@ function cssProperty(source: string, selector: string, property: string): string
     return value;
 }
 
+function rootCssProperty(source: string, selector: string, property: string): string {
+    let value = "";
+    postcss.parse(source).walkRules((rule) => {
+        if (rule.parent?.type !== "root" || !rule.selectors.includes(selector)) return;
+        rule.walkDecls(property, (declaration) => {
+            value = declaration.value;
+        });
+    });
+    expect(value).not.toBe("");
+    return value;
+}
+
 function cssPropertyOwners(source: string, property: string): string[] {
     const owners: string[] = [];
     postcss.parse(source).walkRules((rule) => {
@@ -117,6 +130,7 @@ describe("membership checkout presentation", () => {
         const topup = renderToStaticMarkup(createElement(MembershipCheckoutSummary, { checkout: topupCheckout }));
 
         expect(personal).toContain("开通创作会员");
+        expect(personal).toContain("开通创作会员「豪华版VIP 按月购买」 32,800 积分");
         expect(personal).toContain("豪华版VIP");
         expect(personal).toContain("按月购买");
         expect(personal).toContain("32,800");
@@ -126,6 +140,7 @@ describe("membership checkout presentation", () => {
         expect(personal).not.toContain("席位数量");
 
         expect(team).toContain("开通团队会员");
+        expect(team).toContain("开通团队会员「团队豪华版VIP 按年购买」 65,600 积分");
         expect(team).toContain("团队豪华版VIP");
         expect(team).toContain("席位数量");
         expect(team).toContain("2 席位");
@@ -255,8 +270,40 @@ describe("membership checkout presentation", () => {
         expect(markup).toContain("01:05");
         expect(markup).toContain('aria-live="off"');
         expect(markup).toContain("网络暂时不可用，正在保留当前付款码");
-        expect(markup).toMatch(/<fieldset[^>]*disabled/);
-        expect(markup).toMatch(/<input[^>]*type="radio"[^>]*checked[^>]*value="alipay"/);
+        expect(markup).not.toContain("payment-checkout-provider-fieldset");
+        expect(markup).not.toContain("payment-checkout-provider-input");
+        expect(markup).toContain("开通即代表同意");
+        expect(markup).toContain("《HMaigc会员服务协议》");
+        expect(markup).toContain(`href="${legalDocumentRoutes.membershipAgreement}"`);
+        expect(markup).toContain('target="_blank"');
+        expect(markup).toContain('rel="noopener noreferrer"');
+    });
+
+    test("credit topup QR never presents the membership agreement", () => {
+        const markup = renderToStaticMarkup(
+            createElement(PaymentQrPanel, {
+                ...handlers,
+                checkout: {
+                    ...topupCheckout,
+                    activeTransaction: {
+                        provider: "alipay",
+                        status: "pending",
+                        codeUrl: "https://qr.example.com/credit-topup",
+                        expiresAt: "2026-08-10T04:01:05.000Z",
+                    },
+                },
+                checkoutSecondsLeft: 600,
+                paymentSecondsLeft: 65,
+                provider: "alipay",
+                refreshError: "",
+                submissionError: "",
+                submitting: false,
+            }),
+        );
+
+        expect(markup).toContain("支付宝付款二维码");
+        expect(markup).not.toContain("HMaigc会员服务协议");
+        expect(markup).not.toContain(legalDocumentRoutes.membershipAgreement);
     });
 
     test("a transaction creation failure preserves the selected provider and an explicit retry action", () => {
@@ -367,16 +414,24 @@ describe("checkout implementation boundaries", () => {
         expect(css).not.toMatch(/#[\da-f]{3,8}\b|rgba?\(/i);
         expect(css).toContain("var(--bg-secondary)");
         expect(css).toContain("var(--bg-tertiary)");
-        expect(css).toContain("grid-template-columns: minmax(0, 1fr) 320px");
-        expect(css).toContain("width: min(calc(100% - 48px), 880px)");
+        expect(rootCssProperty(css, ".payment-checkout-shell", "grid-template-columns")).toBe("minmax(0, 425px) minmax(0, 341px)");
+        expect(rootCssProperty(css, ".payment-checkout-shell", "width")).toBe("min(calc(100% - 48px), 766px)");
+        expect(rootCssProperty(css, ".payment-checkout-shell.is-dialog", "grid-template-columns")).toBe("minmax(0, 425px) minmax(0, 341px)");
+        expect(css).toContain("grid-template-columns: minmax(0, 425fr) minmax(0, 341fr)");
         expect(css).toContain("@media (max-width: 767px)");
         expect(cssProperty(css, ".payment-checkout-page", "height")).toBe("100%");
         expect(cssProperty(css, ".payment-checkout-page", "overflow-y")).toBe("auto");
-        expect(cssProperty(css, ".payment-checkout-shell", "overflow")).toBe("clip");
+        expect(rootCssProperty(css, ".payment-checkout-shell", "overflow")).toBe("visible");
         expect(cssProperty(css, ".payment-checkout-payment-surface", "border-radius")).toBe("0");
         expect(css).not.toContain("calc(var(--radius-md) - 1px)");
-        expect(cssProperty(css, ".payment-checkout-qr-code", "padding")).toBe("var(--space-3)");
+        expect(cssProperty(css, ".payment-checkout-qr-code", "width")).toBe("128px");
+        expect(cssProperty(css, ".payment-checkout-qr-code", "height")).toBe("128px");
+        expect(cssProperty(css, ".payment-checkout-qr-code", "padding")).toBe("0");
         expect(cssProperty(css, ".payment-checkout-qr-code", "background")).toBe("var(--qr-background)");
+        expect(cssProperty(css, ".payment-checkout-qr-image", "width")).toBe("112px");
+        expect(cssProperty(css, ".payment-checkout-qr-image", "height")).toBe("112px");
+        expect(css).toContain("width: 112px !important");
+        expect(css).toContain("height: 112px !important");
         expect(cssProperty(css, ".payment-checkout-provider-check", "opacity")).toBe("0");
         expect(cssProperty(css, ".payment-checkout-provider.is-active .payment-checkout-provider-check", "opacity")).toBe("1");
         expect(cssProperty(css, ".membership-checkout-total-price", "color")).toBe("var(--brand-active)");
@@ -387,6 +442,11 @@ describe("checkout implementation boundaries", () => {
         expect(cssProperty(css, ".payment-checkout-inline-action", "color")).toBe("var(--brand-active)");
         expect(cssProperty(css, ".payment-checkout-inline-action", "min-width")).toBe("44px");
 
+        expect(qrPanel).toContain("size={112}");
+        expect(qrPanel).toContain("legalDocumentRoutes.membershipAgreement");
+        expect(qrPanel).not.toContain("useSiteSettings");
+        expect(qrPanel).not.toContain("membershipAgreementPublished");
+
         for (const selector of [
             ".membership-checkout-order-number",
             ".membership-checkout-product-meta",
@@ -396,13 +456,11 @@ describe("checkout implementation boundaries", () => {
             ".membership-checkout-renewal-note",
             ".payment-checkout-security",
             ".payment-checkout-qr-intro",
-            ".payment-checkout-provider-lock-note",
-            ".payment-checkout-payment-note",
+            ".payment-checkout-agreement",
             ".payment-checkout-clock-state-copy",
             ".payment-checkout-terminal-description",
         ]) {
             expect(cssProperty(css, selector, "color")).toBe("var(--text-secondary)");
         }
     });
-
 });

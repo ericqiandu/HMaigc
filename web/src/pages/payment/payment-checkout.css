@@ -11,7 +11,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    width: min(calc(100% - 48px), 880px);
+    width: min(calc(100% - 48px), 766px);
     min-height: var(--space-9);
     margin: 0 auto;
 }
@@ -63,21 +63,23 @@
 
 .payment-checkout-shell {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    width: min(calc(100% - 48px), 880px);
-    min-height: 520px;
+    grid-template-columns: minmax(0, 425px) minmax(0, 341px);
+    width: min(calc(100% - 48px), 766px);
+    min-height: 472px;
     margin: var(--space-5) auto var(--space-8);
-    overflow: clip;
-    border: 1px solid var(--border-default);
+    overflow: visible;
+    border: 0;
     border-radius: var(--radius-md);
-    background: var(--bg-secondary);
-    box-shadow: var(--shadow-xl);
+    background: linear-gradient(to right, var(--bg-secondary) 0 55.48%, var(--bg-tertiary) 55.48% 100%);
+    box-shadow:
+        inset 0 0 0 1px var(--border-default),
+        var(--shadow-xl);
 }
 
 .payment-checkout-shell.is-dialog {
-    grid-template-columns: minmax(0, 560px) 320px;
+    grid-template-columns: minmax(0, 425px) minmax(0, 341px);
     width: 100%;
-    min-height: 476px;
+    min-height: 470px;
     margin: 0;
     overflow: visible;
     border: 0;
@@ -86,11 +88,11 @@
 }
 
 .payment-checkout-shell.is-dialog .payment-checkout-order-surface {
-    padding: var(--space-6);
+    padding: var(--space-5) var(--space-6);
 }
 
 .payment-checkout-shell.is-dialog .payment-checkout-payment-surface {
-    padding: var(--space-6) var(--space-5);
+    padding: var(--space-5);
 }
 
 .payment-checkout-order-surface,
@@ -99,15 +101,16 @@
 }
 
 .payment-checkout-order-surface {
-    padding: var(--space-6);
-    background: var(--bg-secondary);
+    padding: var(--space-5) var(--space-6);
+    border-radius: 0;
+    background: transparent;
 }
 
 .payment-checkout-payment-surface {
     padding: var(--space-5);
     border-left: 1px solid var(--border-light);
     border-radius: 0;
-    background: var(--bg-tertiary);
+    background: transparent;
 }
 
 .membership-checkout-summary {
@@ -118,7 +121,9 @@
 }
 
 .membership-checkout-heading {
-    margin-bottom: var(--space-5);
+    min-height: 42px;
+    margin-bottom: var(--space-3);
+    padding-right: var(--space-4);
 }
 
 .membership-checkout-eyebrow,
@@ -127,8 +132,6 @@
 .membership-checkout-unit-suffix,
 .membership-checkout-renewal-note,
 .payment-checkout-qr-intro,
-.payment-checkout-provider-lock-note,
-.payment-checkout-payment-note,
 .payment-checkout-clock-state-copy,
 .payment-checkout-terminal-description,
 .payment-checkout-countdown {
@@ -142,29 +145,34 @@
 .membership-checkout-product-meta,
 .membership-checkout-renewal-note,
 .payment-checkout-qr-intro,
-.payment-checkout-provider-lock-note,
-.payment-checkout-payment-note,
 .payment-checkout-clock-state-copy,
 .payment-checkout-terminal-description {
     margin: 0;
 }
 
 .membership-checkout-title {
-    margin: var(--space-1) 0;
-    font-size: var(--text-lg);
+    margin: 0;
+    font-size: var(--text-md);
     font-weight: var(--font-semibold);
-    line-height: 24px;
+    line-height: 22px;
 }
 
 .membership-checkout-product {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    min-height: var(--space-9);
-    padding: var(--space-3) 0;
+    padding-top: var(--space-3);
     border-top: 1px solid var(--border-light);
-    border-bottom: 1px solid var(--border-light);
+}
+
+.membership-checkout-product-selection {
+    display: flex;
+    width: 250px;
+    min-height: 92px;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--brand-primary);
+    border-radius: var(--radius-xs);
+    background: var(--bg-surface);
 }
 
 .membership-checkout-product-copy,
@@ -186,12 +194,20 @@
 }
 
 .membership-checkout-product-price {
-    align-items: baseline;
+    align-items: flex-end;
     flex: none;
+    flex-direction: column;
+}
+
+.membership-checkout-product-original-price {
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    line-height: 17px;
+    text-decoration: line-through;
 }
 
 .membership-checkout-details {
-    margin-top: var(--space-5);
+    margin-top: var(--space-4);
 }
 
 .membership-checkout-section-title,
@@ -212,8 +228,8 @@
     align-items: baseline;
     justify-content: space-between;
     gap: var(--space-4);
-    min-height: 40px;
-    padding: var(--space-3) var(--space-4);
+    min-height: 34px;
+    padding: var(--space-2) var(--space-4);
 }
 
 .membership-checkout-detail-row + .membership-checkout-detail-row {
@@ -253,7 +269,7 @@
 }
 
 .membership-checkout-renewal-note {
-    margin-top: var(--space-4);
+    margin-top: var(--space-3);
 }
 
 .payment-checkout-qr-panel {
@@ -391,10 +407,6 @@
     white-space: nowrap;
 }
 
-.payment-checkout-provider-lock-note {
-    margin-top: var(--space-2);
-}
-
 .payment-checkout-qr-content,
 .payment-checkout-generate,
 .payment-checkout-clock-state,
@@ -410,20 +422,44 @@
 .payment-checkout-qr-content {
     flex: 1;
     gap: var(--space-3);
-    padding-top: var(--space-5);
+    padding-top: var(--space-6);
 }
 
 .payment-checkout-qr-code {
     display: grid;
+    width: 128px;
+    height: 128px;
     place-items: center;
-    padding: var(--space-3);
+    padding: 0;
     background: var(--qr-background);
 }
 
 .payment-checkout-qr-image {
-    width: 184px !important;
-    height: 184px !important;
+    width: 112px !important;
+    height: 112px !important;
     flex: none;
+}
+
+.payment-checkout-agreement {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    line-height: 17px;
+}
+
+.payment-checkout-agreement-link {
+    color: var(--text-primary);
+    font-weight: var(--font-medium);
+    text-decoration: none;
+}
+
+.payment-checkout-agreement-link:hover {
+    text-decoration: underline;
+}
+
+.payment-checkout-agreement-link:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: var(--space-1);
 }
 
 .payment-checkout-qr-provider,
@@ -440,10 +476,6 @@
     align-items: center;
     gap: var(--space-1);
     color: var(--status-warning);
-}
-
-.payment-checkout-payment-note {
-    max-width: 240px;
 }
 
 .payment-checkout-generate {
@@ -574,7 +606,7 @@
 @media (max-width: 767px) {
     .payment-checkout-header,
     .payment-checkout-shell {
-        width: min(calc(100% - 32px), 880px);
+        width: min(calc(100% - 32px), 766px);
     }
 
     .payment-checkout-shell.is-dialog {
@@ -586,11 +618,17 @@
     .payment-checkout-shell {
         grid-template-columns: minmax(0, 1fr);
         margin-top: var(--space-3);
+        background: var(--bg-tertiary);
     }
 
     .payment-checkout-order-surface,
     .payment-checkout-payment-surface {
         padding: var(--space-4);
+        border-radius: 0;
+    }
+
+    .payment-checkout-order-surface {
+        background: var(--bg-secondary);
     }
 
     .payment-checkout-payment-surface {
@@ -610,6 +648,13 @@
 
     .payment-checkout-inline-action {
         min-height: 44px;
+    }
+}
+
+@media (min-width: 768px) and (max-width: 813px) {
+    .payment-checkout-shell,
+    .payment-checkout-shell.is-dialog {
+        grid-template-columns: minmax(0, 425fr) minmax(0, 341fr);
     }
 }
 

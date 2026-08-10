@@ -1,6 +1,7 @@
 import { QRCode } from "antd";
 import { Check, CircleMinus, CircleX, Clock3, WalletCards } from "lucide-react";
 
+import { legalDocumentRoutes } from "@/constants/legal-documents";
 import type { PaymentCheckout, PaymentProvider } from "@/services/api/payment";
 
 import { checkoutTerminalPresentation, resolveCheckoutProviderSelection } from "./payment-checkout-domain";
@@ -58,10 +59,12 @@ export function PaymentQrPanel({ checkout, checkoutSecondsLeft, onProviderChange
 
     return (
         <section className="payment-checkout-qr-panel">
-            <header className="payment-checkout-qr-heading">
-                <h2 className="payment-checkout-qr-title">扫码支付</h2>
-                <p className="payment-checkout-qr-intro">选择支付方式并生成本订单唯一的付款码。</p>
-            </header>
+            {!transaction ? (
+                <header className="payment-checkout-qr-heading">
+                    <h2 className="payment-checkout-qr-title">扫码支付</h2>
+                    <p className="payment-checkout-qr-intro">选择支付方式并生成本订单唯一的付款码。</p>
+                </header>
+            ) : null}
 
             {refreshError ? (
                 <div className="payment-checkout-refresh-error" role="alert">
@@ -78,7 +81,7 @@ export function PaymentQrPanel({ checkout, checkoutSecondsLeft, onProviderChange
                 </div>
             ) : null}
 
-            {selection.error ? (
+            {transaction ? null : selection.error ? (
                 <div className="payment-checkout-provider-error" role="alert">
                     <span className="payment-checkout-provider-error-copy">{selection.error}</span>
                     <button className="payment-checkout-inline-action" onClick={onRetry} type="button">
@@ -98,21 +101,27 @@ export function PaymentQrPanel({ checkout, checkoutSecondsLeft, onProviderChange
                             </label>
                         ))}
                     </div>
-                    {selection.locked ? <p className="payment-checkout-provider-lock-note">付款码已生成，支付方式已锁定。</p> : null}
                 </fieldset>
             )}
 
             {transaction && !transactionExpired ? (
                 <div className="payment-checkout-qr-content">
                     <div aria-label={`${providerLabels[transaction.provider]}付款二维码`} className="payment-checkout-qr-code" role="img">
-                        <QRCode bgColor="var(--qr-background)" bordered={false} className="payment-checkout-qr-image" color="var(--qr-foreground)" errorLevel="M" marginSize={4} size={184} type="svg" value={transaction.codeUrl} />
+                        <QRCode bgColor="var(--qr-background)" bordered={false} className="payment-checkout-qr-image" color="var(--qr-foreground)" errorLevel="M" marginSize={4} size={112} type="svg" value={transaction.codeUrl} />
                     </div>
                     <strong className="payment-checkout-qr-provider">请使用{providerLabels[transaction.provider]}扫码支付</strong>
                     <span aria-live="off" className="payment-checkout-countdown" role="timer">
                         <Clock3 aria-hidden="true" className="payment-checkout-countdown-icon" />
                         {formatCountdown(paymentSecondsLeft)} 后付款码失效
                     </span>
-                    <p className="payment-checkout-payment-note">付款完成后本页会自动更新，请勿重复支付。</p>
+                    {checkout.orderType === "membership" ? (
+                        <p className="payment-checkout-agreement">
+                            开通即代表同意
+                            <a className="payment-checkout-agreement-link" href={legalDocumentRoutes.membershipAgreement} rel="noopener noreferrer" target="_blank">
+                                《HMaigc会员服务协议》
+                            </a>
+                        </p>
+                    ) : null}
                 </div>
             ) : transactionExpired ? (
                 <div aria-live="polite" className="payment-checkout-clock-state">
