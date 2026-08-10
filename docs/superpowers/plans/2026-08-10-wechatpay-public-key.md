@@ -306,4 +306,3 @@ docs(payment): 微信支付公钥 - 同步配置与真实商户验收边界
 - [ ] **Step 6: Report external acceptance boundary**
 
 Report commits and fresh command evidence. State that real WeChat Native payment remains unverified until merchant certificate, AppID binding, public key ID, public key and API v3 key are configured and the user authorizes a controlled low-value production payment. Never call the channel connected before that evidence exists.
-
