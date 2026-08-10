@@ -148,9 +148,9 @@ function WechatPaymentChannelCard({ form, setting }: { form: FormInstance<Paymen
                 title="签名凭据"
                 description="公钥 ID 与公钥来自商户平台：账户中心 → API安全 → 微信支付公钥。敏感内容保存后不回显。"
             >
-                <SecretInput form={form} channel="wechat" field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
+                <PemSecretInput form={form} channel="wechat" field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
                 <ChannelInput form={form} channel="wechat" field="wechatpayPublicKeyId" label="微信支付公钥 ID" placeholder="PUB_KEY_ID_..." requiredWhenEnabled />
-                <SecretInput form={form} channel="wechat" field="wechatpayPublicKey" label="微信支付公钥" configured={setting.hasWechatpayPublicKey} />
+                <PemSecretInput form={form} channel="wechat" field="wechatpayPublicKey" label="微信支付公钥" configured={setting.hasWechatpayPublicKey} />
                 <SecretInput form={form} channel="wechat" field="apiV3Key" label="API v3 密钥" configured={setting.hasApiV3Key} />
             </AdminSettingsSection>
         </AdminSettingsSwitchPanel>
@@ -177,8 +177,8 @@ function AlipayPaymentChannelCard({ form, setting }: { form: FormInstance<Paymen
                 <ChannelInput form={form} channel="alipay" field="gatewayUrl" label="支付网关地址" placeholder="https://openapi.alipay.com/gateway.do" url requiredWhenEnabled />
             </AdminSettingsSection>
             <AdminSettingsSection id="payment-alipay-signature-heading" icon={<KeyRound className="payment-settings-alipay-signature-icon size-4" />} title="签名凭据" description="支付宝需要商户私钥与平台公钥。敏感内容保存后不回显。">
-                <SecretInput form={form} channel="alipay" field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
-                <SecretInput form={form} channel="alipay" field="platformPublicKey" label="平台公钥" configured={setting.hasPlatformPublicKey} />
+                <PemSecretInput form={form} channel="alipay" field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
+                <PemSecretInput form={form} channel="alipay" field="platformPublicKey" label="平台公钥" configured={setting.hasPlatformPublicKey} />
             </AdminSettingsSection>
         </AdminSettingsSwitchPanel>
     );
@@ -232,6 +232,27 @@ function SecretInput({ form, channel, field, label, configured }: { form: FormIn
             rules={[requiredChannelSecret(form, channel, label, configured)]}
         >
             <Input.Password className={`payment-settings-${channel}-${field}-input`} autoComplete="new-password" placeholder={configured ? "留空保留原密钥" : `请输入${label}`} />
+        </Form.Item>
+    );
+}
+
+function PemSecretInput({ form, channel, field, label, configured }: { form: FormInstance<PaymentFormValues>; channel: ChannelName; field: ChannelField; label: string; configured: boolean }) {
+    return (
+        <Form.Item
+            className={`payment-settings-${channel}-${field}-field`}
+            name={[channel, field]}
+            label={configured ? `${label}（${configuredSecretText}）` : label}
+            extra="请粘贴包含 BEGIN/END 行的完整 PEM 内容，并保留原始换行"
+            dependencies={[[channel, "enabled"]]}
+            rules={[requiredChannelSecret(form, channel, label, configured)]}
+        >
+            <Input.TextArea
+                className={`payment-settings-${channel}-${field}-input payment-settings-pem-secret-input`}
+                autoComplete="off"
+                autoSize={{ minRows: 4, maxRows: 8 }}
+                spellCheck={false}
+                placeholder={configured ? "留空保留原凭据" : `请粘贴完整的${label} PEM 内容`}
+            />
         </Form.Item>
     );
 }

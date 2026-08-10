@@ -67,34 +67,38 @@ describe("payment settings WeChat public-key contract", () => {
     });
 
     test("emits separate trimmed provider requests with no cross-provider credential fields", () => {
+        const merchantPrivateKey = "-----BEGIN PRIVATE KEY-----\nMERCHANT-KEY-BODY\n-----END PRIVATE KEY-----";
+        const wechatpayPublicKey = "-----BEGIN PUBLIC KEY-----\nWECHATPAY-KEY-BODY\n-----END PUBLIC KEY-----";
+        const alipayPrivateKey = "-----BEGIN PRIVATE KEY-----\nALIPAY-KEY-BODY\n-----END PRIVATE KEY-----";
+        const alipayPublicKey = "-----BEGIN PUBLIC KEY-----\nALIPAY-PUBLIC-KEY-BODY\n-----END PUBLIC KEY-----";
         const values: PaymentFormValues = {
             checkoutBaseUrl: " https://hm.kunagent.com ",
             wechat: {
                 ...toPaymentFormValues(adminSetting).wechat,
                 wechatpayPublicKeyId: " PUB_KEY_ID_3000000001 ",
-                wechatpayPublicKey: " PUBLIC KEY PEM ",
-                merchantPrivateKey: " MERCHANT PRIVATE KEY ",
+                wechatpayPublicKey: ` ${wechatpayPublicKey} `,
+                merchantPrivateKey: ` ${merchantPrivateKey} `,
                 apiV3Key: " 0123456789ABCDEF0123456789ABCDEF ",
             },
             alipay: {
                 ...toPaymentFormValues(adminSetting).alipay,
-                merchantPrivateKey: " ALIPAY PRIVATE KEY ",
-                platformPublicKey: " ALIPAY PUBLIC KEY ",
+                merchantPrivateKey: ` ${alipayPrivateKey} `,
+                platformPublicKey: ` ${alipayPublicKey} `,
             },
         };
 
         const request = toPaymentSettingRequest(values) satisfies UpdatePaymentSettingInput;
         expect(request.wechat).toMatchObject({
             merchantSerialNo: "merchant-api-certificate-serial",
-            merchantPrivateKey: "MERCHANT PRIVATE KEY",
+            merchantPrivateKey,
             wechatpayPublicKeyId: "PUB_KEY_ID_3000000001",
-            wechatpayPublicKey: "PUBLIC KEY PEM",
+            wechatpayPublicKey,
             apiV3Key: "0123456789ABCDEF0123456789ABCDEF",
         });
         expect(Object.hasOwn(request.wechat, "platformPublicKey")).toBe(false);
         expect(request.alipay).toMatchObject({
-            merchantPrivateKey: "ALIPAY PRIVATE KEY",
-            platformPublicKey: "ALIPAY PUBLIC KEY",
+            merchantPrivateKey: alipayPrivateKey,
+            platformPublicKey: alipayPublicKey,
         });
         expect(Object.hasOwn(request.alipay, "merchantSerialNo")).toBe(false);
         expect(Object.hasOwn(request.alipay, "wechatpayPublicKeyId")).toBe(false);
@@ -110,5 +114,19 @@ describe("payment settings WeChat public-key contract", () => {
         }
         expect(page).not.toContain("微信支付需要商户私钥、平台公钥");
         expect(page).not.toContain("<PaymentChannelCard");
+    });
+
+    test("routes every PEM credential through a multiline input while keeping the API v3 key single-line", () => {
+        const page = readFileSync(new URL("../src/pages/admin/settings/payment-settings-page.tsx", import.meta.url), "utf8");
+
+        expect(page).toContain('<PemSecretInput form={form} channel="wechat" field="merchantPrivateKey"');
+        expect(page).toContain('<PemSecretInput form={form} channel="wechat" field="wechatpayPublicKey"');
+        expect(page).toContain('<PemSecretInput form={form} channel="alipay" field="merchantPrivateKey"');
+        expect(page).toContain('<PemSecretInput form={form} channel="alipay" field="platformPublicKey"');
+        expect(page).toContain('<SecretInput form={form} channel="wechat" field="apiV3Key"');
+
+        const pemInputImplementation = page.slice(page.indexOf("function PemSecretInput"), page.indexOf("function requiredChannelField"));
+        expect(pemInputImplementation).toContain("<Input.TextArea");
+        expect(pemInputImplementation).not.toContain("<Input.Password");
     });
 });
