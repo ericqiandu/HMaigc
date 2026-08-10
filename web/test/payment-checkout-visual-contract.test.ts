@@ -385,6 +385,7 @@ describe("checkout implementation boundaries", () => {
         expect(cssProperty(css, ".payment-checkout-action", "background")).toBe("var(--brand-active)");
         expect(cssProperty(css, ".payment-checkout-action:hover:not(:disabled)", "background")).toBe("var(--brand-active)");
         expect(cssProperty(css, ".payment-checkout-inline-action", "color")).toBe("var(--brand-active)");
+        expect(cssProperty(css, ".payment-checkout-inline-action", "min-width")).toBe("44px");
 
         for (const selector of [
             ".membership-checkout-order-number",

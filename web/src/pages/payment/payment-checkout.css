@@ -488,6 +488,7 @@
 }
 
 .payment-checkout-inline-action {
+    min-width: 44px;
     min-height: 44px;
     padding: 0;
     background: transparent;
