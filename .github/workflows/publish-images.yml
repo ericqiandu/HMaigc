@@ -70,12 +70,15 @@ jobs:
         run: bun run build
 
       - name: Verify payment checkout Nginx sentinels
+        env:
+          HMAIGC_STATIC_ASSET_BASE_URL: ${{ vars.HMAIGC_STATIC_ASSET_BASE_URL }}
         run: bash scripts/tests/verify-payment-checkout-nginx.test.sh
 
       - name: Verify membership checkout in production Chromium
         working-directory: web
         env:
           HMAIGC_CHROMIUM_EXECUTABLE: ${{ steps.setup-chrome.outputs.chrome-path }}
+          HMAIGC_STATIC_ASSET_BASE_URL: ${{ vars.HMAIGC_STATIC_ASSET_BASE_URL }}
         run: bun run verify:membership-checkout-browser
 
       - name: Validate production Compose

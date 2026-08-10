@@ -63,11 +63,11 @@ bash deploy/hmaigc-ops.sh rollback
 
 从 `v1.0.13` 起，正式标签发布会先把 Web 构建产物写入独立静态资源 Bucket，再构建引用该不可变目录的 Web 镜像。用户媒体 Bucket 保持私有且通过业务接口鉴权读取，禁止与公开静态资源 Bucket 混用。
 
-建议静态 Bucket 使用 `hmaigc-prod-static`，对象前缀使用 `hmaigc/web`，并把 `static.hmaigc.ai` 的 CDN 回源根目录指向该 Bucket。仓库需要配置：
+当前正式静态资源直接使用 `hmaigc-prod-static` Bucket 的 HTTPS 读取域名，对象前缀为 `hmaigc/web`。仓库需要配置：
 
 | 类型 | 名称 | 示例 |
 | --- | --- | --- |
-| Repository variable | `HMAIGC_STATIC_ASSET_BASE_URL` | `https://static.hmaigc.ai/hmaigc/web` |
+| Repository variable | `HMAIGC_STATIC_ASSET_BASE_URL` | `https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web` |
 | Repository variable | `HMAIGC_STATIC_OSS_ENDPOINT` | `https://oss-cn-hongkong.aliyuncs.com` |
 | Repository variable | `HMAIGC_STATIC_OSS_BUCKET` | `hmaigc-prod-static` |
 | Repository variable | `HMAIGC_STATIC_OSS_PREFIX` | `hmaigc/web` |
@@ -75,6 +75,8 @@ bash deploy/hmaigc-ops.sh rollback
 | Repository secret | `HMAIGC_STATIC_OSS_ACCESS_KEY_SECRET` | 对应 Secret |
 
 `HMAIGC_STATIC_ASSET_BASE_URL` 末尾不能带 `/`，并且 URL 路径必须与 CDN 回源后的 `HMAIGC_STATIC_OSS_PREFIX` 一致。Bucket/CDN 还必须满足：
+
+正式 Web CSP 必须允许 `HMAIGC_STATIC_ASSET_BASE_URL` 的精确 Origin。若以后切换自定义 CDN 域名，必须在同一版本同步修改仓库变量和 `nginx.conf`；Nginx 与 Chromium 发布门禁会以仓库变量为准拒绝域名漂移，禁止先改变量、后补 CSP。
 
 - CDN 对 `hmaigc/web/releases/*` 缓存 365 天；对象名与版本目录不可变，不执行覆盖发布；
 - 只允许 `https://hmaigc.ai`、`https://www.hmaigc.ai` 与正式业务主域 `https://hm.kunagent.com` 跨域 GET/HEAD，禁止开放写方法；

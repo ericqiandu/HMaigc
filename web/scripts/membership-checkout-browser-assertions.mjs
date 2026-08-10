@@ -9,8 +9,12 @@ const REQUIRED_CSP_DIRECTIVES = new Map([
     ["form-action", ["'self'"]],
     ["frame-ancestors", ["'self'"]],
     ["object-src", ["'none'"]],
-    ["worker-src", ["'self'", "blob:"]],
 ]);
+
+const staticAssetBaseURL =
+    (process.env.HMAIGC_STATIC_ASSET_BASE_URL ?? "").trim() ||
+    "https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web";
+const staticAssetOrigin = new URL(staticAssetBaseURL).origin;
 
 function parseCSP(value) {
     return new Map(
@@ -39,7 +43,7 @@ export function assertCheckoutSecurityHeaders(headers, label) {
 
     const scripts = directives.get("script-src") ?? [];
     assert.ok(scripts.includes("'self'"), `${label}: script-src 必须允许同源构建产物`);
-    assert.ok(scripts.includes("https://static.hmaigc.ai"), `${label}: script-src 必须允许正式静态 CDN`);
+    assert.ok(scripts.includes(staticAssetOrigin), `${label}: script-src 必须允许实际发布静态资源 Origin`);
     assert.ok(scripts.includes("'wasm-unsafe-eval'"), `${label}: script-src 必须显式允许 WebAssembly 编译`);
     assert.ok(
         scripts.some((source) => source.startsWith("'sha256-")),
@@ -49,6 +53,11 @@ export function assertCheckoutSecurityHeaders(headers, label) {
     assert.ok(!scripts.includes("'unsafe-eval'"), `${label}: script-src 禁止 broad unsafe-eval`);
     assert.ok(!scripts.includes("*"), `${label}: script-src 禁止通配源`);
     assert.ok(!scripts.includes("https:"), `${label}: script-src 禁止任意 HTTPS 脚本`);
+
+    for (const directive of ["font-src", "style-src", "worker-src"]) {
+        const sources = directives.get(directive) ?? [];
+        assert.ok(sources.includes(staticAssetOrigin), `${label}: ${directive} 必须允许实际发布静态资源 Origin`);
+    }
 }
 
 export async function assertProductionMediaReads(page, label) {
