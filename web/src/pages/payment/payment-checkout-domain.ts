@@ -1,5 +1,7 @@
 import type { PaymentCheckout, PaymentCheckoutActiveTransaction, PaymentCheckoutStatus, PaymentOrderStatus, PaymentProvider } from "@/services/api/payment";
 
+import { validateMembershipOrderFacts } from "./membership-order-validation";
+
 export type CheckoutSummary =
     | {
           kind: "membership";
@@ -363,44 +365,33 @@ function requireSafeNonNegativeInteger(value: number, field: string): void {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${field}必须是安全的非负整数`);
 }
 
-function requireSafePositiveInteger(value: number, field: string): void {
-    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${field}必须是安全的正整数`);
-}
-
-function checkedProduct(left: number, right: number, field: string): number {
-    const value = left * right;
-    if (!Number.isSafeInteger(value)) throw new Error(`${field}超出安全整数范围`);
-    return value;
-}
-
-function exactUnitValue(total: number, seats: number, field: string): number {
-    if (total % seats !== 0) throw new Error(field);
-    return total / seats;
-}
-
 export function checkoutSummary(checkout: PaymentCheckout): CheckoutSummary {
     if (checkout.orderType === "membership") {
         const facts = checkout.membershipSummary;
-        requireSafePositiveInteger(facts.seats, "会员席位数");
-        requireSafePositiveInteger(facts.actualPriceCents, "会员实付金额");
-        requireSafeNonNegativeInteger(facts.originalPriceCents, "会员原价");
-        requireSafeNonNegativeInteger(facts.creditsPerPeriod, "会员单席积分");
-        requireSafeNonNegativeInteger(facts.totalCreditsPerPeriod, "会员积分合计");
-        if (facts.audience === "personal" && facts.seats !== 1) throw new Error("个人会员席位必须为 1");
-        if (facts.audience === "team" && facts.seats < 2) throw new Error("团队会员席位必须至少为 2");
-        const totalCredits = checkedProduct(facts.creditsPerPeriod, facts.seats, "会员积分合计");
-        if (totalCredits !== facts.totalCreditsPerPeriod) throw new Error(`${facts.audience === "team" ? "团队" : "个人"}积分合计与冻结单席积分不一致`);
-        const unitPriceCents = exactUnitValue(facts.actualPriceCents, facts.seats, `${facts.audience === "team" ? "团队" : "个人"}实付金额无法还原为单席冻结金额`);
-        const originalUnitPriceCents = exactUnitValue(facts.originalPriceCents, facts.seats, `${facts.audience === "team" ? "团队" : "个人"}原价无法还原为单席冻结金额`);
+        const validated = validateMembershipOrderFacts({
+            audience: facts.audience,
+            billingCycle: facts.billingCycle,
+            code: facts.code,
+            creditsPerPeriod: facts.creditsPerPeriod,
+            currency: checkout.currency,
+            name: facts.name,
+            orderNumber: checkout.orderNumber,
+            originalPriceCents: facts.originalPriceCents,
+            seats: facts.seats,
+            source: "checkout",
+            tier: facts.tier,
+            totalCredits: facts.totalCreditsPerPeriod,
+            totalPriceCents: facts.actualPriceCents,
+        });
         return {
             kind: "membership",
             title: facts.name,
             audience: facts.audience,
             billingCycle: facts.billingCycle,
             seats: facts.seats,
-            unitPriceCents,
+            unitPriceCents: validated.unitPriceCents,
             actualPriceCents: facts.actualPriceCents,
-            originalUnitPriceCents,
+            originalUnitPriceCents: validated.originalUnitPriceCents,
             originalPriceCents: facts.originalPriceCents,
             discountCents: facts.originalPriceCents > facts.actualPriceCents ? facts.originalPriceCents - facts.actualPriceCents : 0,
             creditsPerPeriod: facts.creditsPerPeriod,

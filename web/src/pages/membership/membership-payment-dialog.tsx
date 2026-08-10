@@ -100,7 +100,7 @@ export function MembershipPaymentDialog({
         >
             <div className="membership-payment-dialog-content">
                 {checkoutToken ? (
-                    <PaymentCheckoutExperience mode="dialog" onExit={() => onClose()} onWriteStateChange={setCheckoutWriting} token={checkoutToken} />
+                    <PaymentCheckoutExperience initialMembershipFacts={orderLifecycle.kind === "frozen-ready" ? orderLifecycle.facts : undefined} mode="dialog" onExit={() => onClose()} onWriteStateChange={setCheckoutWriting} token={checkoutToken} />
                 ) : (
                     <MembershipPaymentSetup
                         creationError={creationError}

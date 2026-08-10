@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 
-export const EXPECTED_CASE_COUNT = 108;
-
 const REQUIRED_CSP_DIRECTIVES = new Map([
     ["default-src", ["'self'"]],
     ["base-uri", ["'self'"]],

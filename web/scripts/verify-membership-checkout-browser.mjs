@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import puppeteer, { PUPPETEER_REVISIONS } from "puppeteer-core";
 
 import {
-    EXPECTED_CASE_COUNT,
     accessibilityText,
     assertCheckoutLayout,
     assertMembershipDialogLayout,
@@ -29,19 +28,21 @@ const fixtureScript = path.join(webRoot, "scripts", "membership-checkout-browser
 const distDirectory = path.join(webRoot, "dist");
 const chromeExecutable = (process.env.HMAIGC_CHROMIUM_EXECUTABLE ?? "").trim();
 const mutation = (process.env.HMAIGC_CHECKOUT_GATE_MUTATION ?? "").trim();
-const supportedMutations = new Set(["", "team-total", "membership-single-provider-double"]);
+const supportedMutations = new Set(["", "team-total", "membership-single-provider-double", "topup-owner"]);
 
 if (!supportedMutations.has(mutation)) throw new Error(`未知收银台门禁 mutation: ${mutation}`);
 if (!chromeExecutable) throw new Error("缺少 HMAIGC_CHROMIUM_EXECUTABLE，收银台 Chromium 门禁禁止跳过");
 
-const scenarios = ["personal", "team", "topup", "active-qr", "paid", "expired", "cancelled", "poll-failure", "provider-failure"];
+const scenarios = ["personal", "team", "topup", "topup-slow", "active-qr", "paid", "expired", "cancelled", "poll-failure", "provider-failure"];
 const viewports = [
     { name: "desktop", width: 1440, height: 900 },
     { name: "tablet", width: 768, height: 1024 },
     { name: "mobile", width: 390, height: 844 },
 ];
 const themes = ["light", "dark"];
-const membershipDialogStates = ["membership-personal-creating-dialog", "membership-personal-order-failure-dialog", "membership-personal-checkout-failure-dialog", "membership-personal-active-qr-dialog"];
+const membershipDialogStates = ["membership-personal-creating-dialog", "membership-personal-order-failure-dialog", "membership-personal-checkout-failure-dialog", "membership-personal-token-get-failure-dialog", "membership-personal-active-qr-dialog"];
+const membershipDialogAudiences = ["personal", "team", "history"];
+const membershipAgreementPublicationStates = [true, false];
 
 async function setMembershipDialogFixtureState(baseURL, state, label) {
     const response = await fetch(`${baseURL}/api/__checkout-fixture/membership-dialog-state`, {
@@ -74,6 +75,33 @@ async function readMembershipFacts(page, label) {
     return facts;
 }
 
+async function readFrozenMembershipOwners(page, label) {
+    const owners = await page.evaluate(() => {
+        const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
+        const order = shell?.querySelector(":scope > .payment-checkout-order-surface");
+        const payment = shell?.querySelector(":scope > .payment-checkout-payment-surface");
+        const facts = order?.querySelector(":scope > .membership-order-facts");
+        if (![shell, order, payment, facts].every((node) => node instanceof HTMLElement)) throw new Error("会员冻结收银台结构不完整");
+        return {
+            facts: facts.className,
+            order: order.className,
+            payment: payment.className,
+            shell: shell.className,
+        };
+    });
+    assert.deepEqual(
+        owners,
+        {
+            facts: "membership-order-facts membership-checkout-summary",
+            order: "payment-checkout-order-surface",
+            payment: "payment-checkout-payment-surface",
+            shell: "payment-checkout-shell is-dialog",
+        },
+        `${label}: 已知会员订单未保留冻结收银台结构`,
+    );
+    return owners;
+}
+
 async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state) {
     const label = `${viewport.name}/${theme}/${state}`;
     await setMembershipDialogFixtureState(baseURL, state, label);
@@ -93,6 +121,9 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
         } else if (state === "membership-personal-checkout-failure-dialog") {
             await page.waitForFunction(() => document.body.innerText.includes("支付收银台暂时不可用"), { timeout: 15_000 });
             assert.ok(await page.$(".membership-payment-setup-error .membership-payment-setup-primary"), `${label}: 收银台恢复失败缺少重试入口`);
+        } else if (state === "membership-personal-token-get-failure-dialog") {
+            await page.waitForFunction(() => document.body.innerText.includes("支付订单首次读取失败"), { timeout: 15_000 });
+            assert.ok(await page.$(".payment-checkout-initial-error"), `${label}: 首次 GET 失败缺少右侧原始错误`);
         } else if (state === "membership-personal-creating-dialog") {
             await page.waitForSelector(".membership-payment-setup-progress", { timeout: 15_000 });
         } else {
@@ -101,34 +132,17 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
             const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
             await waitForStableMembershipDialog(page, expectedDialogWidth, label);
             await assertMembershipDialogLayout(page, viewport, label);
-            const frozenOwners = await page.evaluate(() => {
-                const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
-                const order = shell?.querySelector(":scope > .payment-checkout-order-surface");
-                const payment = shell?.querySelector(":scope > .payment-checkout-payment-surface");
-                const facts = order?.querySelector(":scope > .membership-order-facts");
-                if (![shell, order, payment, facts].every((node) => node instanceof HTMLElement)) throw new Error("活跃付款码缺少收银台结构");
-                return {
-                    facts: facts.className,
-                    order: order.className,
-                    payment: payment.className,
-                    shell: shell.className,
-                };
-            });
-            assert.deepEqual(
-                frozenOwners,
-                {
-                    facts: "membership-order-facts membership-checkout-summary",
-                    order: "payment-checkout-order-surface",
-                    payment: "payment-checkout-payment-surface",
-                    shell: "payment-checkout-shell is-dialog",
-                },
-                `${label}: 活跃付款码未使用冻结收银台结构`,
-            );
+            const frozenOwners = await readFrozenMembershipOwners(page, label);
             return { facts: await readMembershipFacts(page, label), owners: frozenOwners };
         }
         await waitForMembershipDialogAnimation();
         const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
         await waitForStableMembershipDialog(page, expectedDialogWidth, label);
+        if (state === "membership-personal-token-get-failure-dialog") {
+            await assertCheckoutLayout(page, viewport);
+            const owners = await readFrozenMembershipOwners(page, label);
+            return { facts: await readMembershipFacts(page, label), owners };
+        }
         const owners = await assertMembershipSetupDialogLayout(page, viewport, label);
         if (state === "membership-personal-checkout-failure-dialog") {
             return { facts: await readMembershipFacts(page, label), owners };
@@ -374,7 +388,8 @@ async function exerciseScenario(page, scenario, label) {
     if (scenario === "team") {
         requireText(bodyText, ["开通团队会员", "旗舰团队会员", "按年购买", "3 席位", "¥7,999/年", "32.8 积分/年/席位", "98.4 积分/年", "¥29,997", "−¥6,000", "¥23,997", "到期不自动续费"], label);
     }
-    if (scenario === "topup") {
+    if (scenario === "topup" || scenario === "topup-slow") {
+        assert.ok(await page.$(".credit-topup-order-facts"), `${label}: 积分充值加载后未切换到独立事实 owner`);
         requireText(bodyText, ["积分充值", "500 积分", "¥199"], label);
         assert.ok(!bodyText.includes("到期不自动续费"), `${label}: 积分充值不得伪造会员续费说明`);
     }
@@ -403,7 +418,7 @@ async function exerciseScenario(page, scenario, label) {
         await assertQR(page, "微信支付", label);
         await assertMembershipAgreementLink(page, label);
         assert.equal(await page.$(".payment-checkout-provider-fieldset"), null, `${label}: 团队付款码生成后仍重复显示渠道选择`);
-    } else if (scenario === "topup") {
+    } else if (scenario === "topup" || scenario === "topup-slow") {
         await page.click('.payment-checkout-provider-input[value="alipay"]');
         await page.click(".payment-checkout-action");
         await page.waitForSelector(".payment-checkout-qr-code", { timeout: 10_000 });
@@ -482,6 +497,23 @@ async function runCase(browser, baseURL, testCase, tokens) {
         assert.ok(navigation, `${label}: 页面导航没有响应`);
         assert.equal(navigation.status(), 200, `${label}: 生产 Nginx 页面状态错误`);
         assertCheckoutSecurityHeaders(navigation.headers(), `${label} /pay`);
+        if (scenario === "topup-slow") {
+            await page.waitForSelector(".payment-checkout-order-placeholder", { timeout: 1_000 });
+            const loadingOwner = await page.evaluate(() => ({
+                hasMembershipOwner: Boolean(document.querySelector(".membership-order-facts, .membership-checkout-summary")),
+                hasRenewalCopy: document.body.innerText.includes("到期不自动续费"),
+                neutralText: document.querySelector(".payment-checkout-order-placeholder")?.textContent?.replace(/\s+/gu, " ").trim() ?? "",
+            }));
+            assert.deepEqual(
+                loadingOwner,
+                {
+                    hasMembershipOwner: false,
+                    hasRenewalCopy: false,
+                    neutralText: "正在识别订单正在读取冻结订单类型与金额，请稍候。",
+                },
+                `${label}: 未知 direct token 加载阶段错误归属为会员订单`,
+            );
+        }
         await waitForCheckout(page);
         await assertProductionMediaReads(page, label);
         await exerciseScenario(page, scenario, label);
@@ -570,7 +602,8 @@ async function main() {
     await command("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 30_000 });
 
     const caseMatrix = viewports.flatMap((viewport) => themes.flatMap((theme) => scenarios.map((scenario, matrixIndex) => ({ index: `${viewport.name}-${theme}-${matrixIndex}`, scenario, theme, viewport }))));
-    assert.equal(caseMatrix.length + viewports.length * themes.length * 9, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 108 个案例");
+    const dialogCaseCount = viewports.length * themes.length * (membershipDialogStates.length + membershipDialogAudiences.length + membershipAgreementPublicationStates.length);
+    const caseCount = caseMatrix.length + dialogCaseCount;
 
     const identifier = randomBytes(6).toString("hex");
     const resourcePrefix = `hmaigc-checkout-gate-${identifier}`;
@@ -631,6 +664,7 @@ async function main() {
             for (const theme of themes) {
                 let expectedLeftOwners = null;
                 let checkoutFailureFacts = null;
+                let tokenGetFailureFacts = null;
                 for (const state of membershipDialogStates) {
                     const result = await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
                     const leftOwners = { facts: result.owners.facts, order: result.owners.order };
@@ -640,31 +674,34 @@ async function main() {
                         assert.deepEqual(leftOwners, expectedLeftOwners, `${viewport.name}/${theme}/${state}: 左侧结构 owner 与其他付款态不一致`);
                     }
                     if (state === "membership-personal-checkout-failure-dialog") checkoutFailureFacts = result.facts;
+                    if (state === "membership-personal-token-get-failure-dialog") tokenGetFailureFacts = result.facts;
                     if (state === "membership-personal-active-qr-dialog") {
                         assert.ok(checkoutFailureFacts, `${viewport.name}/${theme}/${state}: 缺少收银台失败的冻结事实`);
                         assert.deepEqual(result.facts, checkoutFailureFacts, `${viewport.name}/${theme}/${state}: 活跃付款码与收银台失败的冻结事实不一致`);
+                        assert.ok(tokenGetFailureFacts, `${viewport.name}/${theme}/${state}: 缺少首次 GET 失败的冻结事实`);
+                        assert.deepEqual(result.facts, tokenGetFailureFacts, `${viewport.name}/${theme}/${state}: 活跃付款码与首次 GET 失败的冻结事实不一致`);
                     }
                     completed += 1;
-                    process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/${state}\n`);
+                    process.stdout.write(`PASS ${completed}/${caseCount} ${viewport.name}/${theme}/${state}\n`);
                 }
-                for (const audience of ["personal", "team", "history"]) {
+                for (const audience of membershipDialogAudiences) {
                     await runMembershipDialogCase(browser, baseURL, theme, viewport, audience);
                     completed += 1;
-                    process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/membership-${audience}-dialog\n`);
+                    process.stdout.write(`PASS ${completed}/${caseCount} ${viewport.name}/${theme}/membership-${audience}-dialog\n`);
                 }
-                for (const published of [true, false]) {
+                for (const published of membershipAgreementPublicationStates) {
                     await runMembershipAgreementCase(browser, baseURL, theme, viewport, published);
                     completed += 1;
-                    process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/membership-agreement-${published ? "published" : "unpublished"}\n`);
+                    process.stdout.write(`PASS ${completed}/${caseCount} ${viewport.name}/${theme}/membership-agreement-${published ? "published" : "unpublished"}\n`);
                 }
             }
         }
         for (const testCase of caseMatrix) {
             await runCase(browser, baseURL, testCase, tokens);
             completed += 1;
-            process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${testCase.viewport.name}/${testCase.theme}/${testCase.scenario}\n`);
+            process.stdout.write(`PASS ${completed}/${caseCount} ${testCase.viewport.name}/${testCase.theme}/${testCase.scenario}\n`);
         }
-        assert.equal(completed, EXPECTED_CASE_COUNT, "收银台浏览器矩阵存在跳过案例");
+        assert.equal(completed, caseCount, "收银台浏览器矩阵存在跳过案例");
 
         const logsResult = await command("docker", ["logs", webContainer], { allowFailure: true, timeoutMs: 30_000 });
         if (logsResult.code !== 0) throw new Error(`无法读取生产 Nginx 日志\n${logsResult.stdout}${logsResult.stderr}`);
@@ -703,7 +740,7 @@ async function main() {
     if (primaryError && cleanupErrors.length > 0) throw new AggregateError([primaryError, ...cleanupErrors], "收银台浏览器门禁和资源清理同时失败");
     if (primaryError) throw primaryError;
     if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "收银台浏览器门禁资源清理失败");
-    process.stdout.write(`membership checkout production Chromium gate passed (${EXPECTED_CASE_COUNT}/${EXPECTED_CASE_COUNT})\n`);
+    process.stdout.write(`membership checkout production Chromium gate passed (${caseCount}/${caseCount})\n`);
 }
 
 await main();

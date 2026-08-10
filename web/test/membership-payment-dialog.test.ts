@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createElement } from "react";
+import { Children, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MembershipPaymentSetup } from "../src/pages/membership/membership-payment-setup";
@@ -91,6 +91,24 @@ const handlers = {
     onTeamIdChange: () => undefined,
     onTeamNameChange: () => undefined,
 };
+
+function locateElementByClassName(node: ReactNode, targetClassName: string): ReactElement<Record<string, unknown>> | null {
+    for (const child of Children.toArray(node)) {
+        if (!isValidElement(child)) continue;
+        const element = child as ReactElement<Record<string, unknown>>;
+        const className = element.props.className;
+        if (typeof className === "string" && className.split(/\s+/u).includes(targetClassName)) return element;
+        const nested = locateElementByClassName(element.props.children as ReactNode, targetClassName);
+        if (nested) return nested;
+    }
+    return null;
+}
+
+function findElementByClassName(node: ReactNode, targetClassName: string): ReactElement<Record<string, unknown>> {
+    const element = locateElementByClassName(node, targetClassName);
+    if (element) return element;
+    throw new Error(`找不到渲染控件 ${targetClassName}`);
+}
 
 describe("membership payment dialog", () => {
     test("all membership payment dialog states use the approved 766px reference width", () => {
@@ -222,6 +240,81 @@ describe("membership payment dialog", () => {
         }
     });
 
+    test("team preorder errors keep controlled inputs editable and retry the corrected values", () => {
+        let currentName = "错误团队名";
+        let currentSeats = 2;
+        let retriedInput: { seats: number; teamName: string } | null = null;
+        const renderControlledSetup = () =>
+            MembershipPaymentSetup({
+                ...handlers,
+                creationError: "团队名称不符合服务端规则",
+                onConfirm: () => {
+                    retriedInput = { seats: currentSeats, teamName: currentName };
+                },
+                onSeatsChange: (seats) => {
+                    currentSeats = seats;
+                },
+                onTeamNameChange: (teamName) => {
+                    currentName = teamName;
+                },
+                orderLifecycle: preorderLifecycle,
+                openingCheckout: false,
+                plan: teamPlan,
+                seats: currentSeats,
+                submitting: false,
+                teamId: undefined,
+                teamName: currentName,
+                teams: [],
+            });
+
+        const failedTree = renderControlledSetup();
+        const nameInput = findElementByClassName(failedTree, "membership-payment-team-name-input");
+        const seatInput = findElementByClassName(failedTree, "membership-payment-team-seat-input");
+        const onNameChange = nameInput.props.onChange;
+        const onSeatsChange = seatInput.props.onChange;
+        if (typeof onNameChange !== "function" || typeof onSeatsChange !== "function") throw new Error("团队配置控件缺少受控变更处理器");
+        onNameChange({ target: { value: "修正后的星河工作室" } });
+        onSeatsChange(4);
+
+        const correctedTree = renderControlledSetup();
+        const retry = findElementByClassName(correctedTree, "membership-payment-setup-primary");
+        const onRetry = retry.props.onClick;
+        if (typeof onRetry !== "function") throw new Error("团队重试操作缺少点击处理器");
+        onRetry();
+
+        const correctedMarkup = renderToStaticMarkup(correctedTree);
+        expect(correctedMarkup).toContain("团队名称不符合服务端规则");
+        expect(correctedMarkup).toContain("membership-payment-team-fields");
+        expect(correctedMarkup).toContain("修正后的星河工作室");
+        expect(correctedMarkup).toContain('value="4"');
+        expect(correctedMarkup).toContain("使用当前配置重试");
+        expect(correctedMarkup).not.toContain('disabled=""');
+        expect(retriedInput).toEqual({ seats: 4, teamName: "修正后的星河工作室" });
+    });
+
+    test("frozen membership states never remount team editing controls", () => {
+        for (const orderLifecycle of [frozenReadyLifecycle, frozenInvalidLifecycle]) {
+            const markup = renderToStaticMarkup(
+                createElement(MembershipPaymentSetup, {
+                    ...handlers,
+                    creationError: orderLifecycle.kind === "frozen-ready" ? "支付收银台暂时不可用" : "",
+                    orderLifecycle,
+                    openingCheckout: false,
+                    plan: teamPlan,
+                    seats: 4,
+                    submitting: false,
+                    teamId: undefined,
+                    teamName: "不应重新出现",
+                    teams: [],
+                }),
+            );
+
+            expect(markup).not.toContain("membership-payment-team-fields");
+            expect(markup).not.toContain("membership-payment-team-name-input");
+            expect(markup).not.toContain("membership-payment-team-seat-input");
+        }
+    });
+
     test("an invalid created-order identity never falls back to mutable plan facts", () => {
         const markup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
@@ -268,7 +361,7 @@ describe("membership payment dialog", () => {
         expect(markup).toContain("membership-payment-setup-server-error");
     });
 
-    test("non-discount plans omit original and discount rows while frozen checkout loading keeps the shared shell", () => {
+    test("non-discount plans omit original and discount rows while known membership loading keeps frozen facts", () => {
         const nonDiscountMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
@@ -283,13 +376,33 @@ describe("membership payment dialog", () => {
                 teams: [],
             }),
         );
-        const frozenLoadingMarkup = renderToStaticMarkup(createElement(PaymentCheckoutExperience, { mode: "dialog", onExit: () => undefined, token: "checkout-token-1" }));
+        const frozenLoadingMarkup = renderToStaticMarkup(
+            createElement(PaymentCheckoutExperience, {
+                initialMembershipFacts: frozenPersonalFacts,
+                mode: "dialog",
+                onExit: () => undefined,
+                token: "checkout-token-1",
+            }),
+        );
 
         expect(nonDiscountMarkup).not.toContain("会员原价");
         expect(nonDiscountMarkup).not.toContain("商品原价");
         expect(nonDiscountMarkup).not.toContain("优惠金额");
         expect(frozenLoadingMarkup).toContain("payment-checkout-shell is-dialog");
-        expect(frozenLoadingMarkup).toContain("正在加载订单");
+        expect(frozenLoadingMarkup).toContain("冻结旗舰创作会员");
+        expect(frozenLoadingMarkup).toContain("订单 M202608100001");
+        expect(frozenLoadingMarkup).toContain("¥1,299");
+        expect(frozenLoadingMarkup).not.toContain("正在加载订单");
         expect(frozenLoadingMarkup).not.toContain("payment-checkout-header");
+    });
+
+    test("an unknown direct checkout token starts with a neutral owner instead of membership copy", () => {
+        const markup = renderToStaticMarkup(createElement(PaymentCheckoutExperience, { mode: "page", onExit: () => undefined, token: "unknown-checkout-token" }));
+
+        expect(markup).toContain("payment-checkout-order-placeholder");
+        expect(markup).toContain("正在识别订单");
+        expect(markup).not.toContain("membership-order-facts");
+        expect(markup).not.toContain("membership-checkout-summary");
+        expect(markup).not.toContain("到期不自动续费");
     });
 });

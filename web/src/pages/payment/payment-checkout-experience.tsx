@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import { createPaymentTransaction, getPaymentCheckout, type PaymentProvider } from "@/services/api/payment";
 
 import { CreditTopupOrderFacts } from "./credit-topup-order-facts";
-import { membershipOrderFactsFromCheckout } from "./membership-order-facts-domain";
-import { MembershipOrderFacts, MembershipOrderFactsSkeleton } from "./membership-order-facts";
+import { membershipOrderFactsFromCheckout, type MembershipOrderFactsModel } from "./membership-order-facts-domain";
+import { MembershipOrderFacts } from "./membership-order-facts";
 import {
     CheckoutRequestCoordinator,
     applyCheckoutTransaction,
@@ -26,6 +26,7 @@ import {
     type CheckoutLoadState,
     type CheckoutRequestState,
 } from "./payment-checkout-domain";
+import { PaymentCheckoutOrderPlaceholder } from "./payment-checkout-order-placeholder";
 import { PaymentCheckoutInitialError, PaymentCheckoutShell } from "./payment-checkout-shell";
 import { PaymentQrPanel } from "./payment-qr-panel";
 
@@ -34,6 +35,7 @@ import "./payment-checkout.css";
 export type PaymentCheckoutExitDestination = "/membership" | "/credit-store";
 
 export type PaymentCheckoutExperienceProps = {
+    initialMembershipFacts?: MembershipOrderFactsModel;
     mode: "page" | "dialog";
     onExit: (destination: PaymentCheckoutExitDestination) => void;
     onWriteStateChange?: (writing: boolean) => void;
@@ -44,7 +46,7 @@ function errorMessage(reason: unknown, fallback: string): string {
     return reason instanceof Error ? reason.message : fallback;
 }
 
-export function PaymentCheckoutExperience({ mode, onExit, onWriteStateChange, token }: PaymentCheckoutExperienceProps): ReactElement {
+export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit, onWriteStateChange, token }: PaymentCheckoutExperienceProps): ReactElement {
     const coordinatorRef = useRef<CheckoutRequestCoordinator | null>(null);
     if (coordinatorRef.current === null) coordinatorRef.current = new CheckoutRequestCoordinator();
 
@@ -213,6 +215,8 @@ export function PaymentCheckoutExperience({ mode, onExit, onWriteStateChange, to
         onExit(exitDestination);
     }, [exitDestination, onExit]);
 
+    const initialOrderFacts = initialMembershipFacts ? <MembershipOrderFacts facts={initialMembershipFacts} /> : <PaymentCheckoutOrderPlaceholder />;
+
     if ((loading || waitingForCurrentToken) && !checkout) {
         return (
             <PaymentCheckoutShell
@@ -225,29 +229,13 @@ export function PaymentCheckoutExperience({ mode, onExit, onWriteStateChange, to
                         <span className="payment-checkout-skeleton-block" />
                     </div>
                 }
-                summary={<MembershipOrderFactsSkeleton />}
+                summary={initialOrderFacts}
             />
         );
     }
 
     if (!checkout) {
-        return (
-            <PaymentCheckoutShell
-                busy={false}
-                mode={mode}
-                onBack={returnToOrderEntry}
-                payment={<PaymentCheckoutInitialError canRetry={hasToken} message={loadState.initialError} onRetry={retryCheckout} />}
-                summary={
-                    <section className="membership-checkout-summary payment-checkout-error-summary">
-                        <p className="membership-checkout-eyebrow">安全收银台</p>
-                        <h1 className="membership-checkout-title" id="payment-checkout-title">
-                            无法验证订单信息
-                        </h1>
-                        <p className="membership-checkout-order-number">请检查支付链接后重试，或返回订单入口重新获取链接。</p>
-                    </section>
-                }
-            />
-        );
+        return <PaymentCheckoutShell busy={false} mode={mode} onBack={returnToOrderEntry} payment={<PaymentCheckoutInitialError canRetry={hasToken} message={loadState.initialError} onRetry={retryCheckout} />} summary={initialOrderFacts} />;
     }
 
     return (

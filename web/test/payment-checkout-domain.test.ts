@@ -281,6 +281,19 @@ describe("payment checkout domain", () => {
         ).toThrow("团队实付金额无法还原为单席冻结金额");
     });
 
+    test("membership checkout rejects blank identity and original prices below the paid facts", () => {
+        expect(() => checkoutSummary({ ...membershipCheckout, orderNumber: "   " })).toThrow("订单号为空");
+        expect(() =>
+            checkoutSummary({
+                ...membershipCheckout,
+                membershipSummary: {
+                    ...membershipCheckout.membershipSummary,
+                    originalPriceCents: 7497,
+                },
+            }),
+        ).toThrow("会员原价不得低于实付金额");
+    });
+
     test("a transient refresh failure preserves the loaded summary and active QR", () => {
         const activeCheckout: MembershipPaymentCheckout = {
             ...membershipCheckout,

@@ -3,6 +3,7 @@ import type { MembershipOrder, MembershipPlan } from "@/services/api/membership"
 import type { PaymentCheckout } from "@/services/api/payment";
 
 import { checkoutSummary } from "./payment-checkout-domain";
+import { validateMembershipOrderFacts } from "./membership-order-validation";
 
 export type MembershipOrderFactsModel = {
     audience: "personal" | "team";
@@ -54,7 +55,7 @@ function readSnapshotInteger(snapshot: Record<string, unknown>, key: string): nu
     return value;
 }
 
-type MembershipPlanSnapshot = Pick<MembershipPlan, "code" | "creditsPerPeriod" | "currency" | "id" | "name" | "originalPriceCents" | "priceCents" | "tier"> & {
+type MembershipPlanSnapshot = Pick<MembershipPlan, "code" | "creditsPerPeriod" | "currency" | "id" | "maxSeats" | "minSeats" | "name" | "originalPriceCents" | "priceCents" | "tier"> & {
     audience: MembershipOrderFactsModel["audience"];
     billingCycle: MembershipOrderFactsModel["billingCycle"];
 };
@@ -84,6 +85,8 @@ function membershipPlanSnapshotFromOrder(order: MembershipOrder): MembershipPlan
         creditsPerPeriod: readSnapshotInteger(snapshot, "creditsPerPeriod"),
         currency,
         id: planId,
+        maxSeats: readSnapshotInteger(snapshot, "maxSeats"),
+        minSeats: readSnapshotInteger(snapshot, "minSeats"),
         name: readSnapshotString(snapshot, "name"),
         originalPriceCents: readSnapshotInteger(snapshot, "originalPriceCents"),
         priceCents: readSnapshotInteger(snapshot, "priceCents"),
@@ -114,30 +117,42 @@ export function membershipOrderFactsFromPlan(plan: MembershipPlan, seats: number
 }
 
 export function membershipOrderFactsFromOrder(order: MembershipOrder): MembershipOrderFactsModel {
-    if (order.id.trim().length === 0) throw new Error("订单 ID 为空");
-    if (order.orderNumber.trim().length === 0) throw new Error("订单号为空");
-    if (!Number.isSafeInteger(order.seats) || order.seats < 1) throw new Error("订单席位数量无效");
-    if (!Number.isSafeInteger(order.unitPriceCents) || order.unitPriceCents < 0 || !Number.isSafeInteger(order.totalPriceCents) || order.totalPriceCents < 0) {
-        throw new Error("订单冻结金额无效");
-    }
     const snapshot = membershipPlanSnapshotFromOrder(order);
-    if (snapshot.audience === "personal" && order.seats !== 1) throw new Error("个人会员订单席位数量无效");
-    if (snapshot.priceCents !== order.unitPriceCents || checkedProduct(order.unitPriceCents, order.seats, "订单冻结总价") !== order.totalPriceCents) {
-        throw new Error("订单冻结金额与套餐快照不一致");
-    }
-    return {
+    if (snapshot.audience === "personal" && order.teamId?.trim()) throw new Error("个人会员订单不能绑定团队");
+    if (snapshot.audience === "team" && !order.teamId?.trim()) throw new Error("团队会员订单缺少团队身份");
+    if (snapshot.priceCents !== order.unitPriceCents) throw new Error("订单冻结金额与套餐快照不一致");
+    const validated = validateMembershipOrderFacts({
         audience: snapshot.audience,
         billingCycle: snapshot.billingCycle,
+        code: snapshot.code,
         creditsPerPeriod: snapshot.creditsPerPeriod,
         currency: order.currency,
+        name: snapshot.name,
         orderNumber: order.orderNumber,
-        originalTotalPriceCents: checkedProduct(snapshot.originalPriceCents, order.seats, "订单冻结原价"),
+        originalPriceCents: checkedProduct(snapshot.originalPriceCents, order.seats, "订单冻结原价"),
         originalUnitPriceCents: snapshot.originalPriceCents,
+        orderId: order.id,
+        seatBounds: { maxSeats: snapshot.maxSeats, minSeats: snapshot.minSeats },
         seats: order.seats,
-        title: snapshot.name,
+        source: "frozen-order",
+        tier: snapshot.tier,
         totalCredits: checkedProduct(snapshot.creditsPerPeriod, order.seats, "订单冻结积分"),
         totalPriceCents: order.totalPriceCents,
         unitPriceCents: order.unitPriceCents,
+    });
+    return {
+        audience: validated.audience,
+        billingCycle: validated.billingCycle,
+        creditsPerPeriod: validated.creditsPerPeriod,
+        currency: validated.currency,
+        orderNumber: validated.orderNumber,
+        originalTotalPriceCents: validated.originalPriceCents,
+        originalUnitPriceCents: validated.originalUnitPriceCents,
+        seats: validated.seats,
+        title: snapshot.name,
+        totalCredits: validated.totalCredits,
+        totalPriceCents: validated.totalPriceCents,
+        unitPriceCents: validated.unitPriceCents,
     };
 }
 

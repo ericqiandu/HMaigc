@@ -101,6 +101,36 @@ const personalPlan = {
     updatedAt: "2026-08-10T00:00:00.000Z",
 } satisfies MembershipPlan;
 
+const frozenTeamPlan = {
+    ...personalPlan,
+    id: "plan-team-standard-year",
+    code: "team-standard-year",
+    name: "团队标准版",
+    audience: "team",
+    minSeats: 2,
+    maxSeats: 20,
+} satisfies MembershipPlan;
+
+function frozenOrderFromPlan(plan: MembershipPlan, seats: number): MembershipOrder {
+    return {
+        id: `order-${plan.id}`,
+        orderNumber: `M-${plan.id}`,
+        userId: "user-1",
+        teamId: plan.audience === "team" ? "team-1" : undefined,
+        planId: plan.id,
+        seats,
+        unitPriceCents: plan.priceCents,
+        totalPriceCents: plan.priceCents * seats,
+        currency: plan.currency,
+        status: "pending",
+        planSnapshotJson: JSON.stringify(plan),
+        paymentProvider: "",
+        providerTradeNo: "",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        updatedAt: "2026-08-10T00:00:00.000Z",
+    };
+}
+
 const handlers = {
     onProviderChange: () => undefined,
     onRetry: () => undefined,
@@ -158,25 +188,48 @@ function contrastRatio(foreground: string, background: string): number {
 
 describe("membership checkout presentation", () => {
     test("an order snapshot rejects either missing immutable identity before checkout can open", () => {
-        const frozenOrder = {
-            id: "order-1",
-            orderNumber: "M202608100001",
-            userId: "user-1",
-            planId: personalPlan.id,
-            seats: 1,
-            unitPriceCents: personalPlan.priceCents,
-            totalPriceCents: personalPlan.priceCents,
-            currency: personalPlan.currency,
-            status: "pending",
-            planSnapshotJson: JSON.stringify(personalPlan),
-            paymentProvider: "",
-            providerTradeNo: "",
-            createdAt: "2026-08-10T00:00:00.000Z",
-            updatedAt: "2026-08-10T00:00:00.000Z",
-        } satisfies MembershipOrder;
+        const frozenOrder = frozenOrderFromPlan(personalPlan, 1);
 
         expect(() => membershipOrderFactsFromOrder({ ...frozenOrder, id: "" })).toThrow("订单 ID 为空");
         expect(() => membershipOrderFactsFromOrder({ ...frozenOrder, orderNumber: "" })).toThrow("订单号为空");
+    });
+
+    test("paid frozen membership orders reject zero unit or total prices", () => {
+        const zeroPricePlan = { ...personalPlan, priceCents: 0 };
+        expect(() => membershipOrderFactsFromOrder({ ...frozenOrderFromPlan(zeroPricePlan, 1), totalPriceCents: 1 })).toThrow("会员实付单价必须是安全的正整数");
+
+        const frozenOrder = frozenOrderFromPlan(personalPlan, 1);
+        expect(() => membershipOrderFactsFromOrder({ ...frozenOrder, totalPriceCents: 0 })).toThrow("会员实付总价必须是安全的正整数");
+    });
+
+    test("team frozen orders reject one seat and seats outside verified snapshot bounds", () => {
+        expect(() => membershipOrderFactsFromOrder(frozenOrderFromPlan(frozenTeamPlan, 1))).toThrow("团队会员席位必须至少为 2");
+
+        const minimumThree = { ...frozenTeamPlan, minSeats: 3 };
+        expect(() => membershipOrderFactsFromOrder(frozenOrderFromPlan(minimumThree, 2))).toThrow("团队会员席位超出冻结范围");
+
+        const maximumThree = { ...frozenTeamPlan, maxSeats: 3 };
+        expect(() => membershipOrderFactsFromOrder(frozenOrderFromPlan(maximumThree, 4))).toThrow("团队会员席位超出冻结范围");
+    });
+
+    test("team frozen orders reject missing, non-positive, or inverted snapshot bounds", () => {
+        const validOrder = frozenOrderFromPlan(frozenTeamPlan, 2);
+        expect(() => membershipOrderFactsFromOrder({ ...validOrder, planSnapshotJson: JSON.stringify({ ...frozenTeamPlan, minSeats: undefined }) })).toThrow("订单冻结套餐 minSeats 无效");
+        expect(() => membershipOrderFactsFromOrder({ ...validOrder, planSnapshotJson: JSON.stringify({ ...frozenTeamPlan, maxSeats: undefined }) })).toThrow("订单冻结套餐 maxSeats 无效");
+        expect(() => membershipOrderFactsFromOrder({ ...validOrder, planSnapshotJson: JSON.stringify({ ...frozenTeamPlan, minSeats: 0 }) })).toThrow("团队会员冻结席位范围无效");
+        expect(() => membershipOrderFactsFromOrder({ ...validOrder, planSnapshotJson: JSON.stringify({ ...frozenTeamPlan, minSeats: 5, maxSeats: 2 }) })).toThrow("团队会员冻结席位范围无效");
+    });
+
+    test("frozen membership original prices cannot understate the paid amount", () => {
+        const invalidPlan = { ...personalPlan, originalPriceCents: personalPlan.priceCents - 1 };
+        expect(() => membershipOrderFactsFromOrder(frozenOrderFromPlan(invalidPlan, 1))).toThrow("会员原价不得低于实付金额");
+    });
+
+    test("membership checkout facts reject blank order and summary identities", () => {
+        expect(() => membershipOrderFactsFromCheckout({ ...personalCheckout, orderNumber: "  " })).toThrow("订单号为空");
+        expect(() => membershipOrderFactsFromCheckout({ ...personalCheckout, membershipSummary: { ...personalCheckout.membershipSummary, name: " " } })).toThrow("会员套餐名称为空");
+        expect(() => membershipOrderFactsFromCheckout({ ...personalCheckout, membershipSummary: { ...personalCheckout.membershipSummary, code: " " } })).toThrow("会员套餐编码为空");
+        expect(() => membershipOrderFactsFromCheckout({ ...personalCheckout, membershipSummary: { ...personalCheckout.membershipSummary, tier: " " } })).toThrow("会员套餐层级为空");
     });
 
     test("plan previews and frozen membership orders share one facts model and structural owner", () => {

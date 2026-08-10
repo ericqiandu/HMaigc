@@ -1,6 +1,6 @@
 import http from "node:http";
 
-const supportedMutations = new Set(["", "team-total", "membership-single-provider-double"]);
+const supportedMutations = new Set(["", "team-total", "membership-single-provider-double", "topup-owner"]);
 const mutation = (process.env.HMAIGC_CHECKOUT_GATE_MUTATION ?? "").trim();
 if (!supportedMutations.has(mutation)) {
     throw new Error(`未知收银台门禁 mutation: ${mutation}`);
@@ -12,11 +12,17 @@ if (!/^22\.12\./u.test(process.versions.node)) {
 const port = Number(process.env.PORT ?? "8080");
 if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("fixture PORT 无效");
 
-const scenarioNames = ["membership-personal", "membership-team", "provider-failure", "poll-failure", "active-qr", "cancelled", "expired", "personal", "team", "topup", "paid"];
+const scenarioNames = ["membership-personal", "membership-team", "provider-failure", "poll-failure", "active-qr", "cancelled", "expired", "personal", "team", "topup-slow", "topup", "paid"];
 const tokenStates = new Map();
 const membershipOrdersByKey = new Map();
 const membershipOrdersByID = new Map();
-const membershipDialogStates = new Set(["membership-personal-creating-dialog", "membership-personal-order-failure-dialog", "membership-personal-checkout-failure-dialog", "membership-personal-active-qr-dialog"]);
+const membershipDialogStates = new Set([
+    "membership-personal-creating-dialog",
+    "membership-personal-order-failure-dialog",
+    "membership-personal-checkout-failure-dialog",
+    "membership-personal-token-get-failure-dialog",
+    "membership-personal-active-qr-dialog",
+]);
 let membershipDialogState = "membership-personal-active-qr-dialog";
 
 const fixtureUser = {
@@ -313,7 +319,7 @@ function checkoutFor(scenario, token) {
     }
     if (state.activeTransaction) base.activeTransaction = state.activeTransaction;
 
-    if (scenario === "topup") {
+    if ((scenario === "topup" || scenario === "topup-slow") && !(scenario === "topup-slow" && mutation === "topup-owner")) {
         return {
             ...base,
             orderType: "credit_topup",
@@ -510,6 +516,13 @@ const server = http.createServer(async (request, response) => {
                 return;
             }
             const state = stateForToken(token);
+            if (scenario === "membership-personal" && membershipDialogState === "membership-personal-token-get-failure-dialog") {
+                sendJSON(response, 503, { code: 503, data: null, msg: "支付订单首次读取失败" }, true);
+                return;
+            }
+            if (scenario === "topup-slow") {
+                await new Promise((resolve) => setTimeout(resolve, 2_000));
+            }
             if (scenario === "poll-failure" && Date.now() - state.firstCheckoutAt >= 2_200) {
                 sendJSON(response, 503, { code: 503, data: null, msg: "订单状态刷新失败，请重试" }, true);
                 return;
