@@ -3,26 +3,7 @@ import type { ReactElement } from "react";
 import type { PaymentCheckout } from "@/services/api/payment";
 
 import { checkoutSummary } from "./payment-checkout-domain";
-
-const creditFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
-const moneyFormatters = new Map<string, Intl.NumberFormat>();
-
-function formatMoney(cents: number, currency: string): string {
-    const normalizedCurrency = currency.trim().toUpperCase();
-    if (!normalizedCurrency) throw new Error("收银台币种不能为空");
-    let formatter = moneyFormatters.get(normalizedCurrency);
-    if (!formatter) {
-        formatter = new Intl.NumberFormat("zh-CN", {
-            currency: normalizedCurrency,
-            currencyDisplay: "narrowSymbol",
-            maximumFractionDigits: 2,
-            minimumFractionDigits: 0,
-            style: "currency",
-        });
-        moneyFormatters.set(normalizedCurrency, formatter);
-    }
-    return formatter.format(cents / 100);
-}
+import { formatPaymentOrderCredits, formatPaymentOrderMoney } from "./payment-order-formatters";
 
 export function CreditTopupOrderFacts({ checkout }: { checkout: PaymentCheckout }): ReactElement {
     const summary = checkoutSummary(checkout);
@@ -52,11 +33,11 @@ export function CreditTopupOrderFacts({ checkout }: { checkout: PaymentCheckout 
                 <dl className="membership-checkout-detail-list">
                     <div className="membership-checkout-detail-row">
                         <dt className="membership-checkout-detail-label">充值积分</dt>
-                        <dd className="membership-checkout-detail-value">{creditFormatter.format(summary.totalCredits / 1_000_000)} 积分</dd>
+                        <dd className="membership-checkout-detail-value">{formatPaymentOrderCredits(summary.totalCredits)} 积分</dd>
                     </div>
                     <div className="membership-checkout-detail-row">
                         <dt className="membership-checkout-detail-label">应付金额</dt>
-                        <dd className="membership-checkout-detail-value membership-checkout-total-price">{formatMoney(summary.actualPriceCents, checkout.currency)}</dd>
+                        <dd className="membership-checkout-detail-value membership-checkout-total-price">{formatPaymentOrderMoney(summary.actualPriceCents, checkout.currency)}</dd>
                     </div>
                 </dl>
             </section>

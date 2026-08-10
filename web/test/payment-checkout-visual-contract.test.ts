@@ -202,6 +202,9 @@ describe("membership checkout presentation", () => {
         expect(discountedMarkup).toContain("会员原价");
         expect(discountedMarkup).toContain("商品原价");
         expect(discountedMarkup).toContain("优惠金额");
+        expect(discountedMarkup).toMatch(/membership-order-facts-original-unit-price[^>]*>会员原价 <del[^>]*>¥1,299<\/del>/);
+        expect(discountedMarkup).toMatch(/<dt[^>]*>商品原价<\/dt><dd[^>]*>¥1,299<\/dd>/);
+        expect(discountedMarkup).toMatch(/<dt[^>]*>优惠金额<\/dt><dd[^>]*>−¥100<\/dd>/);
         expect(discountedMarkup).toContain("¥99.92/月");
         expect(nonDiscountedMarkup).not.toContain("会员原价");
         expect(nonDiscountedMarkup).not.toContain("商品原价");

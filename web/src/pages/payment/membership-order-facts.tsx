@@ -1,30 +1,7 @@
 import type { ReactElement } from "react";
 
 import { membershipBillingCycleLabel, type MembershipOrderFactsModel } from "./membership-order-facts-domain";
-
-const moneyFormatters = new Map<string, Intl.NumberFormat>();
-const creditFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
-
-function formatMoney(cents: number, currency: string): string {
-    const normalizedCurrency = currency.trim().toUpperCase();
-    if (!normalizedCurrency) throw new Error("收银台币种不能为空");
-    let formatter = moneyFormatters.get(normalizedCurrency);
-    if (!formatter) {
-        formatter = new Intl.NumberFormat("zh-CN", {
-            currency: normalizedCurrency,
-            currencyDisplay: "narrowSymbol",
-            maximumFractionDigits: 2,
-            minimumFractionDigits: 0,
-            style: "currency",
-        });
-        moneyFormatters.set(normalizedCurrency, formatter);
-    }
-    return formatter.format(cents / 100);
-}
-
-function formatCredits(microcredits: number): string {
-    return creditFormatter.format(microcredits / 1_000_000);
-}
+import { formatPaymentOrderCredits, formatPaymentOrderMoney } from "./payment-order-formatters";
 
 type OrderFactsRowProps = {
     label: string;
@@ -45,7 +22,7 @@ export function MembershipOrderFacts({ facts }: { facts: MembershipOrderFactsMod
     const isTeam = facts.audience === "team";
     const periodLabel = facts.billingCycle === "year" ? "年" : "月";
     const hasDiscount = facts.originalTotalPriceCents > facts.totalPriceCents;
-    const title = `${isTeam ? "开通团队会员" : "开通创作会员"}「${facts.title} ${membershipBillingCycleLabel(facts)}」 ${formatCredits(facts.totalCredits)} 积分`;
+    const title = `${isTeam ? "开通团队会员" : "开通创作会员"}「${facts.title} ${membershipBillingCycleLabel(facts)}」 ${formatPaymentOrderCredits(facts.totalCredits)} 积分`;
 
     return (
         <section aria-labelledby="payment-checkout-title" className="membership-order-facts membership-checkout-summary">
@@ -63,17 +40,17 @@ export function MembershipOrderFacts({ facts }: { facts: MembershipOrderFactsMod
                         <span className="membership-checkout-product-meta">{membershipBillingCycleLabel(facts)}</span>
                     </div>
                     <div className="membership-checkout-product-price">
-                        <strong className="membership-checkout-unit-price">{formatMoney(facts.unitPriceCents, facts.currency)}</strong>
+                        <strong className="membership-checkout-unit-price">{formatPaymentOrderMoney(facts.unitPriceCents, facts.currency)}</strong>
                         <span className="membership-checkout-unit-suffix">
                             /{periodLabel}
                             {isTeam ? "/席位" : ""}
                         </span>
                         {hasDiscount ? (
                             <span className="membership-order-facts-original-unit-price membership-checkout-product-meta">
-                                会员原价 <del className="membership-checkout-product-original-price">{formatMoney(facts.originalUnitPriceCents, facts.currency)}</del>
+                                会员原价 <del className="membership-checkout-product-original-price">{formatPaymentOrderMoney(facts.originalUnitPriceCents, facts.currency)}</del>
                             </span>
                         ) : null}
-                        {facts.billingCycle === "year" ? <span className="membership-order-facts-monthly-equivalent membership-checkout-product-meta">每月约 {formatMoney(facts.unitPriceCents / 12, facts.currency)}/月</span> : null}
+                        {facts.billingCycle === "year" ? <span className="membership-order-facts-monthly-equivalent membership-checkout-product-meta">每月约 {formatPaymentOrderMoney(facts.unitPriceCents / 12, facts.currency)}/月</span> : null}
                     </div>
                 </div>
             </section>
@@ -83,13 +60,13 @@ export function MembershipOrderFacts({ facts }: { facts: MembershipOrderFactsMod
                 </h2>
                 <dl className="membership-checkout-detail-list">
                     {isTeam ? <OrderFactsRow label="席位数量" value={`${facts.seats} 席位`} /> : null}
-                    {isTeam ? <OrderFactsRow label="单席价格" value={`${formatMoney(facts.unitPriceCents, facts.currency)}/${periodLabel}`} /> : null}
-                    {isTeam ? <OrderFactsRow label="单席积分" value={`${formatCredits(facts.creditsPerPeriod)} 积分/${periodLabel}/席位`} /> : null}
-                    <OrderFactsRow label={isTeam ? "团队积分合计" : "周期积分"} value={`${formatCredits(facts.totalCredits)} 积分/${periodLabel}`} />
+                    {isTeam ? <OrderFactsRow label="单席价格" value={`${formatPaymentOrderMoney(facts.unitPriceCents, facts.currency)}/${periodLabel}`} /> : null}
+                    {isTeam ? <OrderFactsRow label="单席积分" value={`${formatPaymentOrderCredits(facts.creditsPerPeriod)} 积分/${periodLabel}/席位`} /> : null}
+                    <OrderFactsRow label={isTeam ? "团队积分合计" : "周期积分"} value={`${formatPaymentOrderCredits(facts.totalCredits)} 积分/${periodLabel}`} />
                     <OrderFactsRow label="续费方式" value="到期不自动续费" />
-                    {hasDiscount ? <OrderFactsRow label="商品原价" value={formatMoney(facts.originalTotalPriceCents, facts.currency)} valueClassName="membership-checkout-original-price" /> : null}
-                    {hasDiscount ? <OrderFactsRow label="优惠金额" value={`−${formatMoney(facts.originalTotalPriceCents - facts.totalPriceCents, facts.currency)}`} valueClassName="membership-checkout-discount" /> : null}
-                    <OrderFactsRow label="应付金额" value={formatMoney(facts.totalPriceCents, facts.currency)} valueClassName="membership-checkout-total-price" />
+                    {hasDiscount ? <OrderFactsRow label="商品原价" value={formatPaymentOrderMoney(facts.originalTotalPriceCents, facts.currency)} valueClassName="membership-checkout-original-price" /> : null}
+                    {hasDiscount ? <OrderFactsRow label="优惠金额" value={`−${formatPaymentOrderMoney(facts.originalTotalPriceCents - facts.totalPriceCents, facts.currency)}`} valueClassName="membership-checkout-discount" /> : null}
+                    <OrderFactsRow label="应付金额" value={formatPaymentOrderMoney(facts.totalPriceCents, facts.currency)} valueClassName="membership-checkout-total-price" />
                 </dl>
             </section>
             <p className="membership-order-facts-renewal-note membership-checkout-renewal-note">本次为一次性购买，到期不自动续费。</p>
