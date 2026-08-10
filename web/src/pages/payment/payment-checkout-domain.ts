@@ -143,6 +143,20 @@ export function hasCheckoutToken(token: string): boolean {
     return token.trim() !== "";
 }
 
+export function paymentCheckoutTokenFromURL(checkoutURL: string, baseOrigin: string): string {
+    try {
+        const parsed = new URL(checkoutURL, baseOrigin);
+        if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.search || parsed.hash) throw new Error("invalid checkout URL");
+        const segments = parsed.pathname.split("/").filter(Boolean);
+        if (segments.length !== 2 || segments[0] !== "pay") throw new Error("invalid checkout path");
+        const token = decodeURIComponent(segments[1]);
+        if (!hasCheckoutToken(token) || token.includes("/")) throw new Error("invalid checkout token");
+        return token;
+    } catch {
+        throw new Error("支付链接返回的结算凭证无效");
+    }
+}
+
 const orderStatusRank: Record<PaymentOrderStatus, number> = {
     pending: 0,
     cancelled: 1,
@@ -272,6 +286,13 @@ export function resolveCheckoutProviderSelection(checkout: PaymentCheckout, requ
         locked: false,
         error: "",
     };
+}
+
+export function automaticPaymentProvider(checkout: PaymentCheckout, selected: PaymentProvider | null, attempted: boolean): PaymentProvider | null {
+    if (attempted || checkout.orderStatus !== "pending" || checkout.checkoutStatus !== "active" || checkout.activeTransaction) return null;
+    const selection = resolveCheckoutProviderSelection(checkout, selected);
+    if (selection.locked || selection.options.length !== 1 || selection.selected !== selection.options[0]) return null;
+    return selection.selected;
 }
 
 export function selectCheckoutProvider(checkout: PaymentCheckout, requested: PaymentProvider): PaymentProvider {

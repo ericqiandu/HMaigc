@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 type PaymentCheckoutShellProps = {
     busy: boolean;
+    mode: "page" | "dialog";
     onBack: () => void;
     payment: ReactNode;
     summary: ReactNode;
@@ -27,7 +28,18 @@ export function PaymentCheckoutInitialError({ canRetry, message, onRetry }: Paym
     );
 }
 
-export function PaymentCheckoutShell({ busy, onBack, payment, summary }: PaymentCheckoutShellProps) {
+export function PaymentCheckoutShell({ busy, mode, onBack, payment, summary }: PaymentCheckoutShellProps) {
+    const checkout = (
+        <section aria-busy={busy} aria-label="订单收银台" className={`payment-checkout-shell is-${mode}`}>
+            <div className="payment-checkout-order-surface">{summary}</div>
+            <aside aria-label="扫码支付" className="payment-checkout-payment-surface">
+                {payment}
+            </aside>
+        </section>
+    );
+
+    if (mode === "dialog") return checkout;
+
     return (
         <main className="payment-checkout-page">
             <header className="payment-checkout-header">
@@ -40,12 +52,7 @@ export function PaymentCheckoutShell({ busy, onBack, payment, summary }: Payment
                     <span className="payment-checkout-security-label">安全收银台</span>
                 </span>
             </header>
-            <section aria-busy={busy} aria-label="订单收银台" className="payment-checkout-shell">
-                <div className="payment-checkout-order-surface">{summary}</div>
-                <aside aria-label="扫码支付" className="payment-checkout-payment-surface">
-                    {payment}
-                </aside>
-            </section>
+            {checkout}
         </main>
     );
 }

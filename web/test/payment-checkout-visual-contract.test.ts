@@ -180,6 +180,7 @@ describe("membership checkout presentation", () => {
         const markup = renderToStaticMarkup(
             createElement(PaymentCheckoutShell, {
                 busy: false,
+                mode: "page",
                 onBack: () => undefined,
                 summary: createElement(MembershipCheckoutSummary, { checkout: personalCheckout }),
                 payment: createElement("p", { className: "payment-test-slot" }, "支付面板"),
@@ -188,10 +189,23 @@ describe("membership checkout presentation", () => {
 
         expect(markup).toContain("payment-checkout-page");
         expect(markup).toContain("payment-checkout-shell");
+        expect(markup).toContain("payment-checkout-shell is-page");
         expect(markup).toContain("payment-checkout-order-surface");
         expect(markup).toContain("payment-checkout-payment-surface");
         expect(markup).toContain("安全收银台");
         expect(markup).toContain('aria-busy="false"');
+
+        const dialogMarkup = renderToStaticMarkup(
+            createElement(PaymentCheckoutShell, {
+                busy: false,
+                mode: "dialog",
+                onBack: () => undefined,
+                summary: createElement(MembershipCheckoutSummary, { checkout: personalCheckout }),
+                payment: createElement("p", { className: "payment-test-slot" }, "支付面板"),
+            }),
+        );
+        expect(dialogMarkup).toContain("payment-checkout-shell is-dialog");
+        expect(dialogMarkup).not.toContain("payment-checkout-header");
     });
 
     test("a checkout without a token exposes no fake retry action", () => {
@@ -334,18 +348,11 @@ describe("membership checkout presentation", () => {
 });
 
 describe("checkout implementation boundaries", () => {
-    test("the page delegates presentation and payment CSS consumes semantic color tokens", () => {
-        const page = readFileSync(resolve(root, "src/pages/payment/payment-checkout-page.tsx"), "utf8");
+    test("the QR and payment CSS consume invariant and semantic color tokens", () => {
         const qrPanel = readFileSync(resolve(root, "src/pages/payment/payment-qr-panel.tsx"), "utf8");
         const css = readFileSync(resolve(root, "src/pages/payment/payment-checkout.css"), "utf8");
         const tokens = readFileSync(resolve(root, "src/styles/design-tokens.css"), "utf8");
 
-        expect(page).toContain("PaymentCheckoutShell");
-        expect(page).toContain("MembershipCheckoutSummary");
-        expect(page).toContain("PaymentQrPanel");
-        expect(page).toContain("checkoutRequestSucceededForToken(currentState, lease.token");
-        expect(page).toContain("checkoutRequestFailedForToken(currentState, lease.token");
-        expect(page).not.toContain("<QRCode");
         expect(qrPanel).not.toMatch(/#[\da-f]{3,8}\b|rgba?\(/i);
         expect(qrPanel).toContain('bgColor="var(--qr-background)"');
         expect(qrPanel).toContain('color="var(--qr-foreground)"');

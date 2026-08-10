@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
     CheckoutRequestCoordinator,
     applyCheckoutTransaction,
+    automaticPaymentProvider,
     checkoutPaymentExpiresAt,
     checkoutRequestFailed,
     checkoutRequestFailedForToken,
@@ -17,6 +18,7 @@ import {
     hasCheckoutToken,
     mergeCheckoutResponse,
     mergePaymentCheckout,
+    paymentCheckoutTokenFromURL,
     resolveCheckoutProviderSelection,
     restoreActiveCheckoutPayment,
     selectCheckoutProvider,
@@ -50,6 +52,38 @@ const membershipCheckout = {
 } satisfies MembershipPaymentCheckout;
 
 describe("payment checkout domain", () => {
+    test("extracts only a non-empty capability from an exact payment path", () => {
+        expect(paymentCheckoutTokenFromURL("https://hm.kunagent.com/pay/order-token-1", "https://hm.kunagent.com")).toBe("order-token-1");
+        expect(paymentCheckoutTokenFromURL("/pay/local-token", "http://127.0.0.1:3000")).toBe("local-token");
+
+        for (const invalidURL of [
+            "https://hm.kunagent.com/prefix/pay/order-token-1",
+            "https://hm.kunagent.com/pay/%20%20",
+            "https://hm.kunagent.com/pay/order-token-1/extra",
+            "https://hm.kunagent.com/pay/order-token-1?token=other",
+            "https://hm.kunagent.com/pay/order-token-1#other",
+        ]) {
+            expect(() => paymentCheckoutTokenFromURL(invalidURL, "https://hm.kunagent.com")).toThrow("支付链接返回的结算凭证无效");
+        }
+    });
+
+    test("auto-starts only one real provider once for a payable checkout", () => {
+        const alipayOnly: MembershipPaymentCheckout = { ...membershipCheckout, providers: ["alipay"] };
+        const activeTransaction = {
+            provider: "alipay",
+            status: "pending",
+            codeUrl: "https://qr.example.com/alipay-payment",
+            expiresAt: membershipCheckout.expiresAt,
+        } as const;
+
+        expect(automaticPaymentProvider(alipayOnly, "alipay", false)).toBe("alipay");
+        expect(automaticPaymentProvider({ ...membershipCheckout, providers: ["wechat", "alipay"] }, "wechat", false)).toBeNull();
+        expect(automaticPaymentProvider(alipayOnly, "alipay", true)).toBeNull();
+        expect(automaticPaymentProvider({ ...alipayOnly, activeTransaction }, "alipay", false)).toBeNull();
+        expect(automaticPaymentProvider({ ...alipayOnly, checkoutStatus: "expired" }, "alipay", false)).toBeNull();
+        expect(automaticPaymentProvider({ ...alipayOnly, orderStatus: "paid", checkoutStatus: "consumed" }, "alipay", false)).toBeNull();
+    });
+
     test("the membership discriminator exposes only the membership summary", () => {
         const summary = checkoutSummary(membershipCheckout);
 
