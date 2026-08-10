@@ -80,6 +80,7 @@ function StorefrontPlanCard({ allPlans, onPurchase, onSeatsChange, plan, present
     return (
         <article
             className={`membership-storefront-plan-card relative flex flex-col rounded-xl border p-6 transition-colors ${featured ? "is-featured border-[#1f6f78]/70 bg-gradient-to-b from-[#10303a] via-[#0e2029] to-[#0c141d]" : "border-[#232c38] bg-[#0f151e] hover:border-[#323d4c]"}`}
+            data-plan-code={plan.code}
         >
             {featured ? <div className="membership-storefront-plan-recommendation">热门推荐</div> : null}
             {discount ? <span className="membership-storefront-plan-discount absolute right-5 top-6 rounded bg-[#0f4b52] px-2 py-0.5 text-[11px] text-[#4fd6e0]">{discount}</span> : null}

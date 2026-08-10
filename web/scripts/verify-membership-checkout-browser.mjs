@@ -12,6 +12,7 @@ import {
     EXPECTED_CASE_COUNT,
     accessibilityText,
     assertCheckoutLayout,
+    assertMembershipDialogLayout,
     assertCheckoutSecurityHeaders,
     assertKeyboardFocus,
     assertNoSensitivePresentation,
@@ -26,7 +27,7 @@ const fixtureScript = path.join(webRoot, "scripts", "membership-checkout-browser
 const distDirectory = path.join(webRoot, "dist");
 const chromeExecutable = (process.env.HMAIGC_CHROMIUM_EXECUTABLE ?? "").trim();
 const mutation = (process.env.HMAIGC_CHECKOUT_GATE_MUTATION ?? "").trim();
-const supportedMutations = new Set(["", "team-total"]);
+const supportedMutations = new Set(["", "team-total", "membership-single-provider-double"]);
 
 if (!supportedMutations.has(mutation)) throw new Error(`未知收银台门禁 mutation: ${mutation}`);
 if (!chromeExecutable) throw new Error("缺少 HMAIGC_CHROMIUM_EXECUTABLE，收银台 Chromium 门禁禁止跳过");
@@ -38,6 +39,80 @@ const viewports = [
     { name: "mobile", width: 390, height: 844 },
 ];
 const themes = ["light", "dark"];
+
+async function runMembershipDialogCase(browser, baseURL, theme, viewport, audience) {
+    const label = `${viewport.name}/${theme}/membership-${audience}-dialog`;
+    const page = await browser.newPage();
+    try {
+        await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
+        await page.evaluateOnNewDocument((selectedTheme) => {
+            localStorage.setItem("infinite-canvas:theme_store", JSON.stringify({ state: { theme: selectedTheme }, version: 0 }));
+        }, theme);
+        const navigation = await page.goto(`${baseURL}/membership`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        assert.ok(navigation, `${label}: 会员页导航没有响应`);
+        if (audience === "history") {
+            await page.waitForSelector(".membership-orders-summary", { timeout: 15_000 });
+            await page.click(".membership-orders-summary");
+            await page.waitForSelector(".membership-pay-order", { timeout: 15_000, visible: true });
+            await page.click(".membership-pay-order");
+        } else if (audience === "team") {
+            await page.waitForSelector('.membership-storefront-audience-tab[aria-selected="false"]', { timeout: 15_000 });
+            await page.click('.membership-storefront-audience-tab[aria-selected="false"]');
+        }
+        if (audience !== "history") {
+            const planCode = audience === "team" ? "team-flagship-year" : "creator-flagship-year";
+            await page.waitForSelector(`[data-plan-code="${planCode}"] .membership-storefront-plan-action`, { timeout: 15_000 });
+            await page.click(`[data-plan-code="${planCode}"] .membership-storefront-plan-action`);
+            if (audience === "team") {
+                await page.waitForSelector(".membership-payment-setup-primary", { timeout: 15_000 });
+                await page.click(".membership-payment-setup-primary");
+            }
+        }
+        try {
+            await page.waitForSelector(".membership-payment-dialog .payment-checkout-shell.is-dialog", { timeout: 15_000 });
+        } catch (error) {
+            const bodyText = await page.$eval("body", (node) => node.innerText);
+            throw new Error(`${label}: 收银台未打开\n${bodyText}`, { cause: error });
+        }
+        if (audience !== "history") {
+            await page.waitForFunction(() => document.querySelector(".membership-payment-dialog .payment-checkout-action")?.textContent?.includes("正在生成"), { timeout: 5_000 });
+            assert.equal(await page.$(".membership-payment-dialog .ant-modal-close"), null, `${label}: 创建支付交易期间仍可关闭弹窗`);
+            await page.keyboard.press("Escape");
+            assert.ok(await page.$(".membership-payment-dialog .payment-checkout-shell.is-dialog"), `${label}: 写入期间 Escape 关闭了弹窗`);
+        }
+        try {
+            await page.waitForSelector(".membership-payment-dialog .payment-checkout-qr-code", { timeout: 15_000 });
+        } catch (error) {
+            const bodyText = await page.$eval("body", (node) => node.innerText);
+            throw new Error(`${label}: 二维码未生成\n${bodyText}`, { cause: error });
+        }
+        const expectedDialogWidth = Math.min(880, viewport.width - (viewport.width <= 767 ? 32 : 48));
+        await page.waitForFunction(
+            (expectedWidth) => {
+                const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
+                const dialog = shell?.closest(".membership-payment-dialog");
+                return dialog instanceof HTMLElement && Math.abs(dialog.getBoundingClientRect().width - expectedWidth) <= 1;
+            },
+            { timeout: 5_000 },
+            expectedDialogWidth,
+        );
+        await page.waitForFunction(
+            () => {
+                const close = document.querySelector(".membership-payment-dialog .ant-modal-close");
+                if (!(close instanceof HTMLElement)) return false;
+                const rect = close.getBoundingClientRect();
+                return rect.width >= 44 && rect.height >= 44;
+            },
+            { timeout: 5_000 },
+        );
+        assert.equal(new URL(page.url()).pathname, "/membership", `${label}: 生成二维码后离开了会员页`);
+        assert.equal(await page.$(".membership-order-modal"), null, `${label}: 旧确认购买弹窗仍存在`);
+        await assertMembershipDialogLayout(page, viewport, label);
+        await assertQR(page, "微信支付", label);
+    } finally {
+        await page.close();
+    }
+}
 
 function command(commandName, args, { allowFailure = false, timeoutMs = 300_000 } = {}) {
     return new Promise((resolve, reject) => {
@@ -296,7 +371,7 @@ async function main() {
     await command("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 30_000 });
 
     const caseMatrix = viewports.flatMap((viewport) => themes.flatMap((theme) => scenarios.map((scenario, matrixIndex) => ({ index: `${viewport.name}-${theme}-${matrixIndex}`, scenario, theme, viewport }))));
-    assert.equal(caseMatrix.length, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 54 个案例");
+    assert.equal(caseMatrix.length + viewports.length * themes.length * 3, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 72 个案例");
 
     const identifier = randomBytes(6).toString("hex");
     const resourcePrefix = `hmaigc-checkout-gate-${identifier}`;
@@ -353,6 +428,15 @@ async function main() {
         assert.equal(actualChromeMajor, expectedChromeMajor, `Chromium major ${actualChromeMajor} 与 puppeteer-core 要求 ${expectedChromeMajor} 不一致`);
 
         let completed = 0;
+        for (const viewport of viewports) {
+            for (const theme of themes) {
+                for (const audience of ["personal", "team", "history"]) {
+                    await runMembershipDialogCase(browser, baseURL, theme, viewport, audience);
+                    completed += 1;
+                    process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/membership-${audience}-dialog\n`);
+                }
+            }
+        }
         for (const testCase of caseMatrix) {
             await runCase(browser, baseURL, testCase, tokens);
             completed += 1;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export const EXPECTED_CASE_COUNT = 54;
+export const EXPECTED_CASE_COUNT = 72;
 
 const REQUIRED_CSP_DIRECTIVES = new Map([
     ["default-src", ["'self'"]],
@@ -128,6 +128,80 @@ export async function assertCheckoutLayout(page, viewport) {
         assert.ok(Math.abs(snapshot.paymentRect.left - snapshot.orderRect.left) <= 1, `${viewport.name}: 手机单列左右边界必须对齐`);
         assert.equal(snapshot.paymentRadii.bottomLeft, 0, `${viewport.name}: 底部表面不得在外壳内重复圆角`);
         assert.equal(snapshot.paymentRadii.bottomRight, 0, `${viewport.name}: 底部表面不得在外壳内重复圆角`);
+    }
+}
+
+export async function assertMembershipDialogLayout(page, viewport, label) {
+    const snapshot = await page.evaluate(() => {
+        const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
+        const dialog = shell?.closest(".membership-payment-dialog");
+        const content = shell?.closest(".ant-modal-container, .ant-modal-content") ?? dialog;
+        const order = document.querySelector(".membership-payment-dialog .payment-checkout-order-surface");
+        const payment = document.querySelector(".membership-payment-dialog .payment-checkout-payment-surface");
+        const close = document.querySelector(".membership-payment-dialog .ant-modal-close");
+        const qr = document.querySelector(".membership-payment-dialog .payment-checkout-qr-image");
+        if (![dialog, content, shell, order, payment, close, qr].every((node) => node instanceof HTMLElement || node instanceof SVGElement)) {
+            throw new Error(`会员付款弹窗布局节点不完整: ${[dialog, content, shell, order, payment, close, qr].map(Boolean).join(",")}`);
+        }
+        const dialogRect = dialog.getBoundingClientRect();
+        const shellRect = shell.getBoundingClientRect();
+        const orderRect = order.getBoundingClientRect();
+        const paymentRect = payment.getBoundingClientRect();
+        const closeRect = close.getBoundingClientRect();
+        const qrRect = qr.getBoundingClientRect();
+        const contentStyle = getComputedStyle(content);
+        const shellStyle = getComputedStyle(shell);
+        const orderStyle = getComputedStyle(order);
+        const paymentStyle = getComputedStyle(payment);
+        const overflowing = Array.from(dialog.querySelectorAll("*"))
+            .filter((node) => node instanceof HTMLElement || node instanceof SVGElement)
+            .map((node) => {
+                const rect = node.getBoundingClientRect();
+                return { className: node.getAttribute("class") ?? node.tagName, left: rect.left, right: rect.right };
+            })
+            .filter((item) => item.left < dialogRect.left - 0.5 || item.right > dialogRect.right + 0.5);
+        return {
+            close: { height: closeRect.height, width: closeRect.width },
+            contentBorderWidth: Number.parseFloat(contentStyle.borderTopWidth),
+            contentRadius: Number.parseFloat(contentStyle.borderTopLeftRadius),
+            dialog: { left: dialogRect.left, right: dialogRect.right, width: dialogRect.width },
+            order: { left: orderRect.left, right: orderRect.right, top: orderRect.top, width: orderRect.width },
+            orderRadius: Number.parseFloat(orderStyle.borderTopLeftRadius),
+            overflowing,
+            payment: { left: paymentRect.left, right: paymentRect.right, top: paymentRect.top, width: paymentRect.width },
+            paymentRadius: Number.parseFloat(paymentStyle.borderTopRightRadius),
+            qr: { height: qrRect.height, width: qrRect.width },
+            shell: { left: shellRect.left, right: shellRect.right, width: shellRect.width },
+            shellBorderWidth: Number.parseFloat(shellStyle.borderTopWidth),
+            shellOverflowX: shellStyle.overflowX,
+            shellRadius: Number.parseFloat(shellStyle.borderTopLeftRadius),
+            shellShadow: shellStyle.boxShadow,
+        };
+    });
+
+    const expectedWidth = Math.min(880, viewport.width - (viewport.width <= 767 ? 32 : 48));
+    assert.ok(Math.abs(snapshot.dialog.width - expectedWidth) <= 1, `${label}: 弹窗宽度未对齐参考层级，期望 ${expectedWidth}，实际 ${snapshot.dialog.width}`);
+    assert.ok(snapshot.dialog.left >= 0 && snapshot.dialog.right <= viewport.width + 0.5, `${label}: 弹窗超出视口`);
+    assert.ok(snapshot.contentBorderWidth >= 1, `${label}: 唯一外壳缺少边界`);
+    assert.ok(snapshot.contentRadius >= 12, `${label}: 唯一外壳圆角不足`);
+    assert.equal(snapshot.shellBorderWidth, 0, `${label}: 内层收银台不得重复边框`);
+    assert.equal(snapshot.shellRadius, 0, `${label}: 内层收银台不得重复圆角`);
+    assert.equal(snapshot.shellShadow, "none", `${label}: 内层收银台不得重复阴影`);
+    assert.notEqual(snapshot.shellOverflowX, "hidden", `${label}: 禁止隐藏横向溢出掩盖布局错误`);
+    assert.equal(snapshot.orderRadius, 0, `${label}: 订单表面不得重复圆角`);
+    assert.equal(snapshot.paymentRadius, 0, `${label}: 二维码表面不得重复圆角`);
+    assert.ok(Math.abs(snapshot.qr.width - 184) <= 1 && Math.abs(snapshot.qr.height - 184) <= 1, `${label}: 二维码必须保持 184×184，实际 ${snapshot.qr.width}×${snapshot.qr.height}`);
+    assert.deepEqual(snapshot.overflowing, [], `${label}: 弹窗子节点存在横向溢出`);
+
+    if (viewport.width > 767) {
+        assert.ok(Math.abs(snapshot.order.width - (snapshot.dialog.width - 320)) <= 2, `${label}: 左侧订单区宽度错误`);
+        assert.ok(Math.abs(snapshot.payment.width - 320) <= 2, `${label}: 右侧二维码区宽度错误`);
+        assert.ok(snapshot.payment.left >= snapshot.order.right - 1, `${label}: 双栏表面发生重叠`);
+        assert.ok(Math.abs(snapshot.payment.top - snapshot.order.top) <= 1, `${label}: 双栏顶部未对齐`);
+    } else {
+        assert.ok(snapshot.payment.top >= snapshot.order.top, `${label}: 手机付款区顺序错误`);
+        assert.ok(Math.abs(snapshot.payment.width - snapshot.order.width) <= 1, `${label}: 手机单列宽度未对齐`);
+        assert.ok(snapshot.close.width >= 44 && snapshot.close.height >= 44, `${label}: 手机关闭热区不足 44×44`);
     }
 }
 
