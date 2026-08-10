@@ -510,6 +510,7 @@ describe("checkout implementation boundaries", () => {
         expect(rootCssProperty(css, ".payment-checkout-shell", "grid-template-columns")).toBe("minmax(0, 425px) minmax(0, 341px)");
         expect(rootCssProperty(css, ".payment-checkout-shell", "width")).toBe("min(calc(100% - 48px), 766px)");
         expect(rootCssProperty(css, ".payment-checkout-shell.is-dialog", "grid-template-columns")).toBe("minmax(0, 425px) minmax(0, 341px)");
+        expect(rootCssProperty(css, ".payment-checkout-shell.is-dialog", "max-width")).toBe("100%");
         expect(css).toContain("grid-template-columns: minmax(0, 425fr) minmax(0, 341fr)");
         expect(css).toContain("@media (max-width: 767px)");
         expect(cssProperty(css, ".payment-checkout-page", "height")).toBe("100%");

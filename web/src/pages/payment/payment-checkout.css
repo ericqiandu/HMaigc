@@ -79,6 +79,7 @@
 .payment-checkout-shell.is-dialog {
     grid-template-columns: minmax(0, 425px) minmax(0, 341px);
     width: 100%;
+    max-width: 100%;
     min-height: 470px;
     margin: 0;
     overflow: visible;

@@ -72,11 +72,16 @@ const handlers = {
 };
 
 describe("membership payment dialog", () => {
-    test("the checkout dialog uses the approved 766px reference width", () => {
-        const source = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-dialog.tsx"), "utf8");
-        expect(source).toContain('checkoutToken ? "is-checkout" : "is-setup"');
-        expect(source).toContain("width={checkoutToken ? 766 : 880}");
-        expect(source).not.toContain("width={880}");
+    test("all membership payment dialog states use the approved 766px reference width", () => {
+        const dialogSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-dialog.tsx"), "utf8");
+        const setupSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-setup.tsx"), "utf8");
+
+        expect(dialogSource).toContain('checkoutToken ? "is-checkout" : "is-setup"');
+        expect(dialogSource).toContain("width={766}");
+        expect(dialogSource).not.toContain("checkoutToken ? 766 : 880");
+        expect(setupSource).not.toContain("membership-payment-dialog-heading");
+        expect(setupSource).not.toContain("membership-payment-preview");
+        expect(setupSource).not.toContain("membership-payment-product");
     });
     test("Escape never navigates away while the payment dialog owns keyboard dismissal", () => {
         expect(shouldNavigateFromMembershipPage("Escape", true)).toBe(false);
@@ -84,8 +89,36 @@ describe("membership payment dialog", () => {
         expect(shouldNavigateFromMembershipPage("Enter", false)).toBe(false);
     });
 
-    test("team configuration presents editable purchase facts before the frozen checkout", () => {
-        const markup = renderToStaticMarkup(
+    test("creation, failure, and team confirmation retain the shared left order facts", () => {
+        const personalCreationMarkup = renderToStaticMarkup(
+            createElement(MembershipPaymentSetup, {
+                ...handlers,
+                createdOrderNumber: "",
+                creationError: "",
+                openingCheckout: false,
+                plan: personalPlan,
+                seats: 1,
+                submitting: true,
+                teamId: undefined,
+                teamName: "",
+                teams: [],
+            }),
+        );
+        const failureMarkup = renderToStaticMarkup(
+            createElement(MembershipPaymentSetup, {
+                ...handlers,
+                createdOrderNumber: "M202608100001",
+                creationError: "支付渠道暂时不可用",
+                openingCheckout: false,
+                plan: personalPlan,
+                seats: 1,
+                submitting: false,
+                teamId: undefined,
+                teamName: "",
+                teams: [],
+            }),
+        );
+        const teamConfirmationMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
                 createdOrderNumber: "",
@@ -100,25 +133,44 @@ describe("membership payment dialog", () => {
             }),
         );
 
-        expect(markup).toContain("membership-payment-setup");
-        expect(markup).toContain("开通团队会员");
-        expect(markup).toContain("至尊版");
-        expect(markup).toContain("开通团队");
-        expect(markup).toContain("席位数量");
-        expect(markup).toContain("2 席位");
-        expect(markup).toContain("确认配置并生成付款码");
-        expect(markup).not.toContain("确认购买");
-        expect(markup).not.toContain("创建订单并支付");
+        for (const markup of [personalCreationMarkup, failureMarkup, teamConfirmationMarkup]) {
+            expect(markup).toContain("payment-checkout-shell is-dialog membership-payment-setup");
+            expect(markup).toContain("payment-checkout-order-surface");
+            expect(markup).toContain("payment-checkout-payment-surface");
+            expect(markup).toContain("membership-order-facts");
+            expect(markup).toContain("membership-order-facts-product");
+            expect(markup).toContain("membership-order-facts-details");
+        }
+
+        expect(personalCreationMarkup).toContain("正在创建付款订单");
+        expect(teamConfirmationMarkup).toContain("开通团队");
+        expect(teamConfirmationMarkup).toContain("席位数量");
+        expect(teamConfirmationMarkup).toContain("2 席位");
+        expect(teamConfirmationMarkup).toContain("确认配置并生成付款码");
+        expect(teamConfirmationMarkup).not.toContain("确认购买");
+        expect(teamConfirmationMarkup).not.toContain("创建订单并支付");
+
+        expect(failureMarkup).toContain('role="alert"');
+        expect(failureMarkup).toContain("订单 M202608100001 已创建");
+        expect(failureMarkup).toContain("支付渠道暂时不可用");
+        expect(failureMarkup).toContain("不会重复创建订单");
+        expect(failureMarkup).toContain("重新打开付款码");
+        expect(failureMarkup).toContain("豪华版");
+        expect(failureMarkup).toContain("按月购买");
+        expect(failureMarkup).toContain("50,500");
+        expect(failureMarkup).toContain("¥1,299");
+        expect(failureMarkup).toContain("−¥100");
+        expect(failureMarkup).toContain("¥1,199");
     });
 
-    test("personal purchase immediately exposes an in-place order creation state", () => {
-        const markup = renderToStaticMarkup(
+    test("non-discount plans omit original and discount rows while frozen checkout loading keeps the shared shell", () => {
+        const nonDiscountMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
                 createdOrderNumber: "",
                 creationError: "",
                 openingCheckout: false,
-                plan: personalPlan,
+                plan: { ...personalPlan, originalPriceCents: personalPlan.priceCents },
                 seats: 1,
                 submitting: true,
                 teamId: undefined,
@@ -126,39 +178,13 @@ describe("membership payment dialog", () => {
                 teams: [],
             }),
         );
+        const frozenLoadingMarkup = renderToStaticMarkup(createElement(PaymentCheckoutExperience, { mode: "dialog", onExit: () => undefined, token: "checkout-token-1" }));
 
-        expect(markup).toContain("开通创作会员");
-        expect(markup).toContain("正在创建付款订单");
-        expect(markup).not.toContain("确认配置并生成付款码");
-    });
-
-    test("checkout creation failure keeps the created order fact and a recovery action", () => {
-        const markup = renderToStaticMarkup(
-            createElement(MembershipPaymentSetup, {
-                ...handlers,
-                createdOrderNumber: "M202608100001",
-                creationError: "支付渠道暂时不可用",
-                openingCheckout: false,
-                plan: personalPlan,
-                seats: 1,
-                submitting: false,
-                teamId: undefined,
-                teamName: "",
-                teams: [],
-            }),
-        );
-
-        expect(markup).toContain('role="alert"');
-        expect(markup).toContain("订单 M202608100001 已创建");
-        expect(markup).toContain("不会重复创建订单");
-        expect(markup).toContain("重新打开付款码");
-    });
-
-    test("the direct checkout experience renders its shared dialog shell", () => {
-        const markup = renderToStaticMarkup(createElement(PaymentCheckoutExperience, { mode: "dialog", onExit: () => undefined, token: "checkout-token-1" }));
-
-        expect(markup).toContain("payment-checkout-shell is-dialog");
-        expect(markup).toContain("正在加载订单");
-        expect(markup).not.toContain("payment-checkout-header");
+        expect(nonDiscountMarkup).not.toContain("会员原价");
+        expect(nonDiscountMarkup).not.toContain("商品原价");
+        expect(nonDiscountMarkup).not.toContain("优惠金额");
+        expect(frozenLoadingMarkup).toContain("payment-checkout-shell is-dialog");
+        expect(frozenLoadingMarkup).toContain("正在加载订单");
+        expect(frozenLoadingMarkup).not.toContain("payment-checkout-header");
     });
 });

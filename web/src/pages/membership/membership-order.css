@@ -308,32 +308,19 @@
 }
 
 .membership-payment-dialog.ant-modal {
-    width: min(880px, calc(100vw - 48px)) !important;
+    width: min(766px, calc(100vw - 48px)) !important;
     max-width: none;
     padding-bottom: 0;
-}
-
-.membership-payment-dialog.is-checkout.ant-modal {
-    width: min(766px, calc(100vw - 48px)) !important;
-}
-
-.membership-payment-dialog.is-checkout .ant-modal-container,
-.membership-payment-dialog.is-checkout .ant-modal-content {
-    overflow: visible;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
 }
 
 .membership-payment-dialog .ant-modal-container,
 .membership-payment-dialog .ant-modal-content {
     padding: 0;
-    overflow: clip;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-xl);
-    background: var(--bg-secondary);
-    box-shadow: var(--shadow-lg);
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
 }
 
 .membership-payment-dialog .ant-modal-body {
@@ -368,42 +355,17 @@
     min-width: 0;
 }
 
-.membership-payment-setup {
-    display: grid;
-    grid-template-columns: minmax(0, 560px) 320px;
-    min-width: 0;
-    min-height: 476px;
-}
-
-.membership-payment-setup-order,
 .membership-payment-setup-action {
     min-width: 0;
 }
 
-.membership-payment-setup-order {
-    padding: var(--space-6);
-    background: var(--bg-secondary);
-}
-
 .membership-payment-setup-action {
     display: grid;
-    min-height: 476px;
+    min-height: 470px;
     place-items: center;
-    padding: var(--space-6) var(--space-5);
-    border-left: 1px solid var(--membership-payment-divider);
-    background: var(--bg-tertiary);
 }
 
-.membership-payment-dialog-heading {
-    margin-bottom: var(--space-5);
-}
-
-.membership-payment-dialog-eyebrow,
-.membership-payment-dialog-order-number,
-.membership-payment-product-cycle,
-.membership-payment-product-price-suffix,
 .membership-payment-team-field-label,
-.membership-payment-preview-label,
 .membership-payment-setup-progress-copy,
 .membership-payment-setup-confirmation-copy,
 .membership-payment-setup-error-copy,
@@ -413,8 +375,6 @@
     line-height: 17px;
 }
 
-.membership-payment-dialog-eyebrow,
-.membership-payment-dialog-order-number,
 .membership-payment-setup-progress-copy,
 .membership-payment-setup-confirmation-copy,
 .membership-payment-setup-error-copy,
@@ -422,54 +382,11 @@
     margin: 0;
 }
 
-.membership-payment-dialog-title {
-    margin: var(--space-1) 0;
-    color: var(--text-primary);
-    font-size: var(--text-lg);
-    font-weight: var(--font-semibold);
-    line-height: 24px;
-}
-
-.membership-payment-setup-facts {
-    display: grid;
-    gap: var(--space-5);
-}
-
-.membership-payment-product {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    min-height: var(--space-9);
-    padding: var(--space-3) 0;
-    border-top: 1px solid var(--membership-payment-divider);
-    border-bottom: 1px solid var(--membership-payment-divider);
-}
-
-.membership-payment-product-copy {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-}
-
-.membership-payment-product-name,
-.membership-payment-product-price-value {
-    color: var(--text-primary);
-    font-size: var(--text-sm);
-    font-weight: var(--font-semibold);
-    line-height: 20px;
-}
-
-.membership-payment-product-price {
-    display: flex;
-    align-items: baseline;
-    flex: none;
-}
-
 .membership-payment-team-fields {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 128px;
-    gap: var(--space-4);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+    width: 100%;
 }
 
 .membership-payment-team-field {
@@ -498,48 +415,9 @@
     height: 42px;
 }
 
-.membership-payment-preview {
-    margin: 0;
-    background: var(--bg-surface);
-}
-
-.membership-payment-preview-row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-4);
-    min-height: 44px;
-    padding: var(--space-3) var(--space-4);
-}
-
-.membership-payment-preview-row + .membership-payment-preview-row {
-    border-top: 1px solid var(--membership-payment-divider);
-}
-
-.membership-payment-preview-label,
-.membership-payment-preview-value,
-.membership-payment-preview-total {
-    margin: 0;
-}
-
-.membership-payment-preview-value {
-    color: var(--text-primary);
-    font-size: var(--text-sm);
-    line-height: 20px;
-    text-align: right;
-}
-
-.membership-payment-preview-total {
-    color: var(--brand-active);
-    font-size: var(--text-xl);
-    font-weight: var(--font-semibold);
-    line-height: 32px;
-}
-
 .membership-payment-setup-progress,
 .membership-payment-setup-confirmation,
-.membership-payment-setup-error,
-.membership-payment-setup-placeholder {
+.membership-payment-setup-error {
     display: grid;
     width: 100%;
     place-items: center;
@@ -588,18 +466,6 @@
     box-shadow: var(--shadow-sm);
 }
 
-.membership-payment-setup-placeholder-line {
-    display: block;
-    width: 100%;
-    height: var(--space-3);
-    background: var(--bg-hover);
-}
-
-.membership-payment-setup-placeholder-line.is-short {
-    width: 56%;
-    justify-self: start;
-}
-
 @keyframes membership-payment-spin {
     to {
         transform: rotate(360deg);
@@ -608,45 +474,19 @@
 
 @media (max-width: 767px) {
     .membership-payment-dialog.ant-modal {
-        width: min(880px, calc(100vw - 32px)) !important;
-        margin: var(--space-4) auto;
-    }
-
-    .membership-payment-dialog.is-checkout.ant-modal {
         width: min(766px, calc(100vw - 32px)) !important;
-    }
-
-    .membership-payment-dialog.is-checkout .ant-modal-container,
-    .membership-payment-dialog.is-checkout .ant-modal-content {
-        max-height: calc(100vh - 32px);
-        overflow-x: auto;
-        overflow-y: auto;
+        margin: var(--space-4) auto;
     }
 
     .membership-payment-dialog .ant-modal-container,
     .membership-payment-dialog .ant-modal-content {
         max-height: calc(100vh - 32px);
-        overflow-x: clip;
+        overflow-x: visible;
         overflow-y: auto;
     }
 
-    .membership-payment-setup {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .membership-payment-setup-order,
     .membership-payment-setup-action {
-        padding: var(--space-4);
-    }
-
-    .membership-payment-setup-action {
-        min-height: 320px;
-        border-top: 1px solid var(--membership-payment-divider);
-        border-left: 0;
-    }
-
-    .membership-payment-team-fields {
-        grid-template-columns: minmax(0, 1fr);
+        min-height: 400px;
     }
 }
 

@@ -13,6 +13,7 @@ import {
     accessibilityText,
     assertCheckoutLayout,
     assertMembershipDialogLayout,
+    assertMembershipSetupDialogLayout,
     assertCheckoutSecurityHeaders,
     assertKeyboardFocus,
     assertNoSensitivePresentation,
@@ -40,6 +41,82 @@ const viewports = [
     { name: "mobile", width: 390, height: 844 },
 ];
 const themes = ["light", "dark"];
+const membershipDialogStates = [
+    "membership-personal-creating-dialog",
+    "membership-personal-order-failure-dialog",
+    "membership-personal-checkout-failure-dialog",
+    "membership-personal-active-qr-dialog",
+];
+
+async function setMembershipDialogFixtureState(baseURL, state, label) {
+    const response = await fetch(`${baseURL}/api/__checkout-fixture/membership-dialog-state`, {
+        body: JSON.stringify({ state }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+    });
+    assert.equal(response.status, 200, `${label}: 无法设置会员付款弹窗 fixture 状态`);
+}
+
+async function waitForMembershipDialogAnimation() {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state) {
+    const label = `${viewport.name}/${theme}/${state}`;
+    await setMembershipDialogFixtureState(baseURL, state, label);
+    const page = await browser.newPage();
+    try {
+        await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
+        await page.evaluateOnNewDocument((selectedTheme) => {
+            localStorage.setItem("infinite-canvas:theme_store", JSON.stringify({ state: { theme: selectedTheme }, version: 0 }));
+        }, theme);
+        const navigation = await page.goto(`${baseURL}/membership`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        assert.ok(navigation, `${label}: 会员页导航没有响应`);
+        await page.waitForSelector('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action', { timeout: 15_000 });
+        await page.click('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action');
+        if (state === "membership-personal-order-failure-dialog") {
+            await page.waitForFunction(() => document.body.innerText.includes("会员订单服务暂时不可用"), { timeout: 15_000 });
+            assert.ok(await page.$(".membership-payment-setup-error .membership-payment-setup-primary"), `${label}: 创建失败缺少重试入口`);
+        } else if (state === "membership-personal-checkout-failure-dialog") {
+            await page.waitForFunction(() => document.body.innerText.includes("支付收银台暂时不可用"), { timeout: 15_000 });
+            assert.ok(await page.$(".membership-payment-setup-error .membership-payment-setup-primary"), `${label}: 收银台恢复失败缺少重试入口`);
+        } else if (state === "membership-personal-creating-dialog") {
+            await page.waitForSelector(".membership-payment-setup-progress", { timeout: 15_000 });
+        } else {
+            await page.waitForSelector(".membership-payment-dialog .payment-checkout-qr-code", { timeout: 15_000 });
+            await waitForMembershipDialogAnimation();
+            const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+            await waitForStableMembershipDialog(page, expectedDialogWidth, label);
+            await assertMembershipDialogLayout(page, viewport, label);
+            const frozenOwners = await page.evaluate(() => {
+                const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog");
+                const order = shell?.querySelector(":scope > .payment-checkout-order-surface");
+                const payment = shell?.querySelector(":scope > .payment-checkout-payment-surface");
+                const facts = order?.querySelector(":scope > .membership-order-facts");
+                if (![shell, order, payment, facts].every((node) => node instanceof HTMLElement)) throw new Error("活跃付款码缺少收银台结构");
+                return {
+                    facts: facts.className,
+                    order: order.className,
+                    payment: payment.className,
+                    shell: shell.className,
+                };
+            });
+            assert.deepEqual(frozenOwners, {
+                facts: "membership-order-facts membership-checkout-summary",
+                order: "payment-checkout-order-surface",
+                payment: "payment-checkout-payment-surface",
+                shell: "payment-checkout-shell is-dialog",
+            }, `${label}: 活跃付款码未使用冻结收银台结构`);
+            return frozenOwners;
+        }
+        await waitForMembershipDialogAnimation();
+        const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+        await waitForStableMembershipDialog(page, expectedDialogWidth, label);
+        return await assertMembershipSetupDialogLayout(page, viewport, label);
+    } finally {
+        await page.close();
+    }
+}
 
 async function runMembershipDialogCase(browser, baseURL, theme, viewport, audience) {
     const label = `${viewport.name}/${theme}/membership-${audience}-dialog`;
@@ -77,6 +154,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
         }
         if (audience !== "history") {
             await page.waitForFunction(() => document.querySelector(".membership-payment-dialog .payment-checkout-action")?.textContent?.includes("正在生成"), { timeout: 5_000 });
+            await page.waitForFunction(() => document.querySelector(".membership-payment-dialog .ant-modal-close") === null, { timeout: 5_000 });
             assert.equal(await page.$(".membership-payment-dialog .ant-modal-close"), null, `${label}: 创建支付交易期间仍可关闭弹窗`);
             await page.keyboard.press("Escape");
             assert.ok(await page.$(".membership-payment-dialog .payment-checkout-shell.is-dialog"), `${label}: 写入期间 Escape 关闭了弹窗`);
@@ -471,7 +549,7 @@ async function main() {
     await command("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 30_000 });
 
     const caseMatrix = viewports.flatMap((viewport) => themes.flatMap((theme) => scenarios.map((scenario, matrixIndex) => ({ index: `${viewport.name}-${theme}-${matrixIndex}`, scenario, theme, viewport }))));
-    assert.equal(caseMatrix.length + viewports.length * themes.length * 5, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 84 个案例");
+    assert.equal(caseMatrix.length + viewports.length * themes.length * 9, EXPECTED_CASE_COUNT, "收银台浏览器矩阵必须精确执行 108 个案例");
 
     const identifier = randomBytes(6).toString("hex");
     const resourcePrefix = `hmaigc-checkout-gate-${identifier}`;
@@ -530,6 +608,18 @@ async function main() {
         let completed = 0;
         for (const viewport of viewports) {
             for (const theme of themes) {
+                let expectedLeftOwners = null;
+                for (const state of membershipDialogStates) {
+                    const owners = await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
+                    const leftOwners = { facts: owners.facts, order: owners.order };
+                    if (expectedLeftOwners === null) {
+                        expectedLeftOwners = leftOwners;
+                    } else {
+                        assert.deepEqual(leftOwners, expectedLeftOwners, `${viewport.name}/${theme}/${state}: 左侧结构 owner 与其他付款态不一致`);
+                    }
+                    completed += 1;
+                    process.stdout.write(`PASS ${completed}/${EXPECTED_CASE_COUNT} ${viewport.name}/${theme}/${state}\n`);
+                }
                 for (const audience of ["personal", "team", "history"]) {
                     await runMembershipDialogCase(browser, baseURL, theme, viewport, audience);
                     completed += 1;

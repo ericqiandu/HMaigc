@@ -95,7 +95,7 @@ export function MembershipPaymentDialog({
             onCancel={requestClose}
             open={open}
             title={null}
-            width={checkoutToken ? 766 : 880}
+            width={766}
         >
             <div className="membership-payment-dialog-content">
                 {checkoutToken ? (

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export const EXPECTED_CASE_COUNT = 84;
+export const EXPECTED_CASE_COUNT = 108;
 
 const REQUIRED_CSP_DIRECTIVES = new Map([
     ["default-src", ["'self'"]],
@@ -233,6 +233,75 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
         assert.ok(Math.abs(snapshot.payment.width - snapshot.order.width) <= 1, `${label}: 手机单列宽度未对齐`);
         assert.ok(snapshot.close.width >= 44 && snapshot.close.height >= 44, `${label}: 手机关闭热区不足 44×44`);
     }
+}
+
+export async function assertMembershipSetupDialogLayout(page, viewport, label) {
+    const snapshot = await page.evaluate(() => {
+        const shell = document.querySelector(".membership-payment-dialog .payment-checkout-shell.is-dialog.membership-payment-setup");
+        const dialog = shell?.closest(".membership-payment-dialog");
+        const order = shell?.querySelector(":scope > .payment-checkout-order-surface");
+        const payment = shell?.querySelector(":scope > .payment-checkout-payment-surface");
+        const facts = order?.querySelector(":scope > .membership-order-facts");
+        if (![dialog, shell, order, payment, facts].every((node) => node instanceof HTMLElement)) {
+            throw new Error("会员付款创建态缺少共享收银台结构");
+        }
+        const dialogRect = dialog.getBoundingClientRect();
+        const shellRect = shell.getBoundingClientRect();
+        const orderRect = order.getBoundingClientRect();
+        const paymentRect = payment.getBoundingClientRect();
+        const owner = (node) => node.className;
+        const descendants = Array.from(dialog.querySelectorAll("*")).map((node) => {
+            const rect = node.getBoundingClientRect();
+            return { className: node.getAttribute("class") ?? node.tagName, left: rect.left, right: rect.right };
+        });
+        return {
+            descendants,
+            dialog: { left: dialogRect.left, right: dialogRect.right, width: dialogRect.width },
+            order: { left: orderRect.left, right: orderRect.right, top: orderRect.top, width: orderRect.width },
+            owners: {
+                facts: owner(facts),
+                order: owner(order),
+                payment: owner(payment),
+                shell: owner(shell),
+            },
+            payment: { left: paymentRect.left, right: paymentRect.right, top: paymentRect.top, width: paymentRect.width },
+            shell: { left: shellRect.left, right: shellRect.right, width: shellRect.width },
+        };
+    });
+
+    const expectedWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+    assert.ok(Math.abs(snapshot.dialog.width - expectedWidth) <= 1, `${label}: 弹窗宽度未对齐 766px 收银台，期望 ${expectedWidth}，实际 ${snapshot.dialog.width}`);
+    assert.ok(Math.abs(snapshot.shell.width - expectedWidth) <= 1, `${label}: 创建态 shell 宽度不正确，期望 ${expectedWidth}，实际 ${snapshot.shell.width}`);
+    assert.deepEqual(snapshot.owners, {
+        facts: "membership-order-facts membership-checkout-summary",
+        order: "payment-checkout-order-surface",
+        payment: "payment-checkout-payment-surface membership-payment-setup-action",
+        shell: "payment-checkout-shell is-dialog membership-payment-setup",
+    }, `${label}: 创建态未使用唯一的左侧事实结构`);
+    assert.deepEqual(
+        snapshot.descendants.filter((item) => item.left < snapshot.dialog.left - 0.5 || item.right > snapshot.dialog.right + 0.5),
+        [],
+        `${label}: 创建态子节点出现横向溢出`,
+    );
+
+    if (viewport.width > 767) {
+        const expectedOrderWidth = snapshot.dialog.width * (425 / 766);
+        const expectedPaymentWidth = snapshot.dialog.width * (341 / 766);
+        assert.ok(Math.abs(snapshot.order.width - expectedOrderWidth) <= 2, `${label}: 左侧订单区未保持 425:341 比例`);
+        assert.ok(Math.abs(snapshot.payment.width - expectedPaymentWidth) <= 2, `${label}: 右侧付款区未保持 425:341 比例`);
+        if (viewport.width >= 814) {
+            assert.ok(Math.abs(snapshot.order.width - 425) <= 1, `${label}: 桌面左侧订单区必须为 425px`);
+            assert.ok(Math.abs(snapshot.payment.width - 341) <= 1, `${label}: 桌面右侧付款区必须为 341px`);
+        }
+        assert.ok(snapshot.payment.left >= snapshot.order.right - 1, `${label}: 双栏表面发生重叠`);
+        assert.ok(Math.abs(snapshot.payment.top - snapshot.order.top) <= 1, `${label}: 双栏顶部未对齐`);
+    } else {
+        assert.ok(snapshot.payment.top >= snapshot.order.top, `${label}: 移动端付款区顺序错误`);
+        assert.ok(Math.abs(snapshot.payment.left - snapshot.order.left) <= 1, `${label}: 移动端单列左右边界不一致`);
+        assert.ok(Math.abs(snapshot.payment.width - snapshot.order.width) <= 1, `${label}: 移动端单列宽度不一致`);
+    }
+
+    return snapshot.owners;
 }
 
 export async function waitForStableMembershipDialog(page, expectedWidth, label) {

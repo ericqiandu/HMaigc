@@ -16,6 +16,13 @@ const scenarioNames = ["membership-personal", "membership-team", "provider-failu
 const tokenStates = new Map();
 const membershipOrdersByKey = new Map();
 const membershipOrdersByID = new Map();
+const membershipDialogStates = new Set([
+    "membership-personal-creating-dialog",
+    "membership-personal-order-failure-dialog",
+    "membership-personal-checkout-failure-dialog",
+    "membership-personal-active-qr-dialog",
+]);
+let membershipDialogState = "membership-personal-active-qr-dialog";
 
 const fixtureUser = {
     id: "gate-user",
@@ -346,6 +353,16 @@ const server = http.createServer(async (request, response) => {
             sendJSON(response, 200, envelope({ published: input.published }));
             return;
         }
+        if (request.method === "POST" && url.pathname === "/api/__checkout-fixture/membership-dialog-state") {
+            const input = await readJSON(request);
+            if (!membershipDialogStates.has(input?.state)) {
+                sendJSON(response, 400, { code: 400, data: null, msg: "会员付款弹窗 fixture 状态无效" });
+                return;
+            }
+            membershipDialogState = input.state;
+            sendJSON(response, 200, envelope({ state: membershipDialogState }));
+            return;
+        }
         if (request.method === "GET" && url.pathname === "/api/public/site") {
             sendJSON(response, 200, envelope(siteSettings));
             return;
@@ -388,6 +405,13 @@ const server = http.createServer(async (request, response) => {
                 sendJSON(response, 400, { code: 400, data: null, msg: "会员订单参数错误" });
                 return;
             }
+            if (selectedPlan.audience === "personal" && membershipDialogState === "membership-personal-creating-dialog") {
+                await new Promise((resolve) => setTimeout(resolve, 5_000));
+            }
+            if (selectedPlan.audience === "personal" && membershipDialogState === "membership-personal-order-failure-dialog") {
+                sendJSON(response, 503, { code: 503, data: null, msg: "会员订单服务暂时不可用" });
+                return;
+            }
             const fingerprint = JSON.stringify(input);
             const existing = membershipOrdersByKey.get(key);
             if (existing && existing.fingerprint !== fingerprint) {
@@ -405,6 +429,10 @@ const server = http.createServer(async (request, response) => {
             const order = membershipOrdersByID.get(decodeURIComponent(membershipCheckoutMatch[1]));
             if (!order) {
                 sendJSON(response, 404, { code: 404, data: null, msg: "会员订单不存在" });
+                return;
+            }
+            if (order.planId === personalPlan.id && membershipDialogState === "membership-personal-checkout-failure-dialog") {
+                sendJSON(response, 503, { code: 503, data: null, msg: "支付收银台暂时不可用" });
                 return;
             }
             const prefix = order.planId === teamPlan.id ? "gate-membership-team" : "gate-membership-personal";
