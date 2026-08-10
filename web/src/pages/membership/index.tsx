@@ -24,7 +24,7 @@ import { createPaymentCheckout } from "@/services/api/payment";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { paymentCheckoutTokenFromURL } from "../payment/payment-checkout-domain";
-import { membershipOrderFactsFromOrder, type MembershipOrderFactsModel } from "../payment/membership-order-facts-domain";
+import { membershipOrderFactsFromOrder, type MembershipOrderLifecycle } from "../payment/membership-order-facts-domain";
 import { clampSeats, publicPlanName, topupDiscountLabel } from "./membership-formatters";
 import { MembershipOrderHistory } from "./membership-order-history";
 import { MembershipInvoiceCenter } from "./membership-invoice-center";
@@ -61,10 +61,7 @@ export default function MembershipPage() {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [teamId, setTeamId] = useState<string>();
     const [teamName, setTeamName] = useState("");
-    const [createdOrderId, setCreatedOrderId] = useState("");
-    const [createdOrderNumber, setCreatedOrderNumber] = useState("");
-    const [frozenFacts, setFrozenFacts] = useState<MembershipOrderFactsModel | null>(null);
-    const [frozenFactsError, setFrozenFactsError] = useState("");
+    const [orderLifecycle, setOrderLifecycle] = useState<MembershipOrderLifecycle>({ kind: "preorder" });
     const [checkoutToken, setCheckoutToken] = useState("");
     const [creationError, setCreationError] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -155,10 +152,7 @@ export default function MembershipPage() {
     };
 
     const resetPaymentDialogFacts = useCallback(() => {
-        setCreatedOrderId("");
-        setCreatedOrderNumber("");
-        setFrozenFacts(null);
-        setFrozenFactsError("");
+        setOrderLifecycle({ kind: "preorder" });
         setCheckoutToken("");
         setCreationError("");
         setSubmitting(false);
@@ -166,19 +160,17 @@ export default function MembershipPage() {
         orderRequestIdentityRef.current = null;
     }, []);
 
-    const storeFrozenOrderFacts = useCallback((order: MembershipOrder) => {
-        setCreatedOrderId(order.id);
-        setCreatedOrderNumber(order.orderNumber);
+    const storeFrozenOrderFacts = useCallback((order: MembershipOrder): boolean => {
         try {
-            setFrozenFacts(membershipOrderFactsFromOrder(order));
-            setFrozenFactsError("");
+            setOrderLifecycle({ facts: membershipOrderFactsFromOrder(order), kind: "frozen-ready", orderId: order.id });
+            return true;
         } catch (error) {
-            setFrozenFacts(null);
-            setFrozenFactsError(`订单冻结事实验证失败：${error instanceof Error ? error.message : "未知错误"}`);
+            setOrderLifecycle({ error: `订单冻结事实验证失败：${error instanceof Error ? error.message : "未知错误"}`, kind: "frozen-invalid" });
+            return false;
         }
     }, []);
 
-    const openCheckoutForOrder = useCallback(async (orderId: string, orderNumber = "") => {
+    const openCheckoutForOrder = useCallback(async (orderId: string) => {
         if (paymentDialogWriteRef.current) return;
         paymentDialogWriteRef.current = true;
         setOpeningCheckout(true);
@@ -188,8 +180,6 @@ export default function MembershipPage() {
             setCheckoutToken(paymentCheckoutTokenFromURL(checkout.checkoutUrl, window.location.origin));
         } catch (error) {
             setCreationError(error instanceof Error ? error.message : "收银台打开失败");
-            setCreatedOrderId(orderId);
-            setCreatedOrderNumber(orderNumber);
         } finally {
             paymentDialogWriteRef.current = false;
             setOpeningCheckout(false);
@@ -202,8 +192,7 @@ export default function MembershipPage() {
             paymentDialogWriteRef.current = true;
             setSubmitting(true);
             setCreationError("");
-            let orderId = "";
-            let orderNumber = "";
+            let createdOrder = false;
             try {
                 const order = await submitMembershipOrderRequest(
                     {
@@ -224,9 +213,8 @@ export default function MembershipPage() {
                         },
                     },
                 );
-                orderId = order.id;
-                orderNumber = order.orderNumber;
-                storeFrozenOrderFacts(order);
+                createdOrder = true;
+                if (!storeFrozenOrderFacts(order)) return;
                 orderRequestIdentityRef.current = null;
                 setSubmitting(false);
                 setOpeningCheckout(true);
@@ -234,9 +222,7 @@ export default function MembershipPage() {
                 setCheckoutToken(paymentCheckoutTokenFromURL(checkout.checkoutUrl, window.location.origin));
             } catch (error) {
                 setCreationError(error instanceof Error ? error.message : "创建付款订单失败");
-                if (orderId) {
-                    setCreatedOrderId(orderId);
-                    setCreatedOrderNumber(orderNumber);
+                if (createdOrder) {
                     await load();
                 }
             } finally {
@@ -263,11 +249,11 @@ export default function MembershipPage() {
     };
 
     const retryPaymentDialog = () => {
-        if (createdOrderId) {
-            void openCheckoutForOrder(createdOrderId, createdOrderNumber);
+        if (orderLifecycle.kind === "frozen-ready") {
+            void openCheckoutForOrder(orderLifecycle.orderId);
             return;
         }
-        if (selection) void createOrderAndOpenCheckout(selection);
+        if (orderLifecycle.kind === "preorder" && selection) void createOrderAndOpenCheckout(selection);
     };
 
     const closePaymentDialog = () => {
@@ -286,10 +272,11 @@ export default function MembershipPage() {
         }
         resetPaymentDialogFacts();
         setSelection(null);
-        storeFrozenOrderFacts(order);
+        const frozenReady = storeFrozenOrderFacts(order);
         setDialogOpen(true);
         setPayingId(orderId);
-        void openCheckoutForOrder(orderId, order.orderNumber).finally(() => setPayingId(""));
+        if (frozenReady) void openCheckoutForOrder(orderId).finally(() => setPayingId(""));
+        else setPayingId("");
     };
 
     const cancelOrder = async (orderId: string) => {
@@ -413,10 +400,7 @@ export default function MembershipPage() {
             <MembershipPaymentDialog
                 checkoutToken={checkoutToken}
                 className="membership-storefront-payment-dialog"
-                createdOrderNumber={createdOrderNumber}
                 creationError={creationError}
-                frozenFacts={frozenFacts}
-                frozenFactsError={frozenFactsError}
                 onClose={closePaymentDialog}
                 onConfirm={() => {
                     if (selection) void createOrderAndOpenCheckout(selection);
@@ -427,6 +411,7 @@ export default function MembershipPage() {
                 onTeamNameChange={setTeamName}
                 open={dialogOpen}
                 openingCheckout={openingCheckout}
+                orderLifecycle={orderLifecycle}
                 plan={selection?.plan ?? null}
                 seats={selection?.seats ?? 1}
                 submitting={submitting}

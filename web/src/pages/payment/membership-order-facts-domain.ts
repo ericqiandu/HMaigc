@@ -19,6 +19,8 @@ export type MembershipOrderFactsModel = {
     unitPriceCents: number;
 };
 
+export type MembershipOrderLifecycle = { kind: "preorder" } | { facts: MembershipOrderFactsModel; kind: "frozen-ready"; orderId: string } | { error: string; kind: "frozen-invalid" };
+
 function checkedProduct(left: number, right: number, field: string): number {
     if (!Number.isSafeInteger(left) || !Number.isSafeInteger(right)) throw new Error(`${field}必须使用安全整数计算`);
     const result = left * right;
@@ -112,6 +114,8 @@ export function membershipOrderFactsFromPlan(plan: MembershipPlan, seats: number
 }
 
 export function membershipOrderFactsFromOrder(order: MembershipOrder): MembershipOrderFactsModel {
+    if (order.id.trim().length === 0) throw new Error("订单 ID 为空");
+    if (order.orderNumber.trim().length === 0) throw new Error("订单号为空");
     if (!Number.isSafeInteger(order.seats) || order.seats < 1) throw new Error("订单席位数量无效");
     if (!Number.isSafeInteger(order.unitPriceCents) || order.unitPriceCents < 0 || !Number.isSafeInteger(order.totalPriceCents) || order.totalPriceCents < 0) {
         throw new Error("订单冻结金额无效");

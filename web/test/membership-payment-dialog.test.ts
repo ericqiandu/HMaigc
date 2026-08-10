@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { MembershipPaymentSetup } from "../src/pages/membership/membership-payment-setup";
 import { shouldNavigateFromMembershipPage } from "../src/pages/membership/membership-payment-dialog";
-import type { MembershipOrderFactsModel } from "../src/pages/payment/membership-order-facts-domain";
+import type { MembershipOrderFactsModel, MembershipOrderLifecycle } from "../src/pages/payment/membership-order-facts-domain";
 import { PaymentCheckoutExperience } from "../src/pages/payment/payment-checkout-experience";
 import type { MembershipPlan, Team } from "../src/services/api/membership";
 
@@ -79,8 +79,13 @@ const frozenPersonalFacts = {
     unitPriceCents: 129_900,
 } satisfies MembershipOrderFactsModel;
 
+const preorderLifecycle = { kind: "preorder" } satisfies MembershipOrderLifecycle;
+const frozenReadyLifecycle = { facts: frozenPersonalFacts, kind: "frozen-ready", orderId: "order-1" } satisfies MembershipOrderLifecycle;
+const frozenInvalidLifecycle = { error: "订单冻结事实验证失败：订单号为空", kind: "frozen-invalid" } satisfies MembershipOrderLifecycle;
+
 const handlers = {
     onConfirm: () => undefined,
+    onClose: () => undefined,
     onRetry: () => undefined,
     onSeatsChange: () => undefined,
     onTeamIdChange: () => undefined,
@@ -98,6 +103,9 @@ describe("membership payment dialog", () => {
         expect(setupSource).not.toContain("membership-payment-dialog-heading");
         expect(setupSource).not.toContain("membership-payment-preview");
         expect(setupSource).not.toContain("membership-payment-product");
+        expect(setupSource).toContain('orderLifecycle.kind === "frozen-ready"');
+        expect(setupSource).not.toContain("createdOrderNumber");
+        expect(setupSource).not.toContain("frozenFactsError || creationError");
     });
     test("Escape never navigates away while the payment dialog owns keyboard dismissal", () => {
         expect(shouldNavigateFromMembershipPage("Escape", true)).toBe(false);
@@ -109,10 +117,8 @@ describe("membership payment dialog", () => {
         const personalCreationMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
-                createdOrderNumber: "",
                 creationError: "",
-                frozenFacts: null,
-                frozenFactsError: "",
+                orderLifecycle: preorderLifecycle,
                 openingCheckout: false,
                 plan: personalPlan,
                 seats: 1,
@@ -125,10 +131,8 @@ describe("membership payment dialog", () => {
         const failureMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
-                createdOrderNumber: "M202608100001",
                 creationError: "支付渠道暂时不可用",
-                frozenFacts: frozenPersonalFacts,
-                frozenFactsError: "",
+                orderLifecycle: frozenReadyLifecycle,
                 openingCheckout: false,
                 plan: personalPlan,
                 seats: 1,
@@ -141,10 +145,8 @@ describe("membership payment dialog", () => {
         const teamConfirmationMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
-                createdOrderNumber: "",
                 creationError: "",
-                frozenFacts: null,
-                frozenFactsError: "",
+                orderLifecycle: preorderLifecycle,
                 openingCheckout: false,
                 plan: teamPlan,
                 seats: 2,
@@ -191,10 +193,8 @@ describe("membership payment dialog", () => {
             renderToStaticMarkup(
                 createElement(MembershipPaymentSetup, {
                     ...handlers,
-                    createdOrderNumber: "",
                     creationError: "",
-                    frozenFacts: null,
-                    frozenFactsError: "",
+                    orderLifecycle: preorderLifecycle,
                     openingCheckout,
                     plan: teamPlan,
                     seats: 2,
@@ -216,14 +216,58 @@ describe("membership payment dialog", () => {
         }
     });
 
+    test("an invalid created-order identity never falls back to mutable plan facts", () => {
+        const markup = renderToStaticMarkup(
+            createElement(MembershipPaymentSetup, {
+                ...handlers,
+                creationError: "",
+                orderLifecycle: frozenInvalidLifecycle,
+                openingCheckout: false,
+                plan: personalPlan,
+                seats: 1,
+                submitting: false,
+                teamId: undefined,
+                teamName: "",
+                teams: [],
+            }),
+        );
+
+        expect(markup).toContain("订单冻结事实验证失败：订单号为空");
+        expect(markup).toContain("membership-order-facts-skeleton");
+        expect(markup).not.toContain("豪华版");
+        expect(markup).not.toContain("¥1,199");
+        expect(markup).not.toContain("重新打开付款码");
+        expect(markup).toContain("关闭付款窗口");
+    });
+
+    test("frozen validation and checkout server errors remain independently visible", () => {
+        const markup = renderToStaticMarkup(
+            createElement(MembershipPaymentSetup, {
+                ...handlers,
+                creationError: "支付收银台暂时不可用",
+                orderLifecycle: frozenInvalidLifecycle,
+                openingCheckout: false,
+                plan: personalPlan,
+                seats: 1,
+                submitting: false,
+                teamId: undefined,
+                teamName: "",
+                teams: [],
+            }),
+        );
+
+        expect(markup).toContain("订单冻结事实验证失败：订单号为空");
+        expect(markup).toContain("支付收银台暂时不可用");
+        expect(markup).toContain("membership-payment-setup-frozen-error");
+        expect(markup).toContain("membership-payment-setup-server-error");
+    });
+
     test("non-discount plans omit original and discount rows while frozen checkout loading keeps the shared shell", () => {
         const nonDiscountMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {
                 ...handlers,
-                createdOrderNumber: "",
                 creationError: "",
-                frozenFacts: null,
-                frozenFactsError: "",
+                orderLifecycle: preorderLifecycle,
                 openingCheckout: false,
                 plan: { ...personalPlan, originalPriceCents: personalPlan.priceCents },
                 seats: 1,

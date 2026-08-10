@@ -4,16 +4,13 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { MembershipPlan, Team } from "@/services/api/membership";
 
 import { PaymentCheckoutExperience } from "../payment/payment-checkout-experience";
-import type { MembershipOrderFactsModel } from "../payment/membership-order-facts-domain";
+import type { MembershipOrderLifecycle } from "../payment/membership-order-facts-domain";
 import { MembershipPaymentSetup } from "./membership-payment-setup";
 
 export type MembershipPaymentDialogProps = {
     checkoutToken: string;
     className?: string;
-    createdOrderNumber: string;
     creationError: string;
-    frozenFacts: MembershipOrderFactsModel | null;
-    frozenFactsError: string;
     onClose: () => void;
     onConfirm: () => void;
     onRetry: () => void;
@@ -22,6 +19,7 @@ export type MembershipPaymentDialogProps = {
     onTeamNameChange: (teamName: string) => void;
     open: boolean;
     openingCheckout: boolean;
+    orderLifecycle: MembershipOrderLifecycle;
     plan: MembershipPlan | null;
     seats: number;
     submitting: boolean;
@@ -37,10 +35,7 @@ export function shouldNavigateFromMembershipPage(key: string, paymentDialogOpen:
 export function MembershipPaymentDialog({
     checkoutToken,
     className = "",
-    createdOrderNumber,
     creationError,
-    frozenFacts,
-    frozenFactsError,
     onClose,
     onConfirm,
     onRetry,
@@ -49,6 +44,7 @@ export function MembershipPaymentDialog({
     onTeamNameChange,
     open,
     openingCheckout,
+    orderLifecycle,
     plan,
     seats,
     submitting,
@@ -107,16 +103,15 @@ export function MembershipPaymentDialog({
                     <PaymentCheckoutExperience mode="dialog" onExit={() => onClose()} onWriteStateChange={setCheckoutWriting} token={checkoutToken} />
                 ) : (
                     <MembershipPaymentSetup
-                        createdOrderNumber={createdOrderNumber}
                         creationError={creationError}
-                        frozenFacts={frozenFacts}
-                        frozenFactsError={frozenFactsError}
+                        onClose={requestClose}
                         onConfirm={requestConfirm}
                         onRetry={onRetry}
                         onSeatsChange={onSeatsChange}
                         onTeamIdChange={onTeamIdChange}
                         onTeamNameChange={onTeamNameChange}
                         openingCheckout={openingCheckout}
+                        orderLifecycle={orderLifecycle}
                         plan={plan}
                         seats={seats}
                         submitting={submitting}

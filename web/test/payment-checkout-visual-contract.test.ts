@@ -7,11 +7,11 @@ import postcss from "postcss";
 
 import { legalDocumentRoutes } from "../src/constants/legal-documents";
 import { CreditTopupOrderFacts } from "../src/pages/payment/credit-topup-order-facts";
-import { membershipOrderFactsFromCheckout, membershipOrderFactsFromPlan } from "../src/pages/payment/membership-order-facts-domain";
+import { membershipOrderFactsFromCheckout, membershipOrderFactsFromOrder, membershipOrderFactsFromPlan } from "../src/pages/payment/membership-order-facts-domain";
 import { MembershipOrderFacts } from "../src/pages/payment/membership-order-facts";
 import { PaymentCheckoutInitialError, PaymentCheckoutShell } from "../src/pages/payment/payment-checkout-shell";
 import { PaymentQrPanel } from "../src/pages/payment/payment-qr-panel";
-import type { MembershipPlan } from "../src/services/api/membership";
+import type { MembershipOrder, MembershipPlan } from "../src/services/api/membership";
 import type { CreditTopupPaymentCheckout, MembershipPaymentCheckout } from "../src/services/api/payment";
 
 const root = resolve(import.meta.dir, "..");
@@ -157,6 +157,28 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("membership checkout presentation", () => {
+    test("an order snapshot rejects either missing immutable identity before checkout can open", () => {
+        const frozenOrder = {
+            id: "order-1",
+            orderNumber: "M202608100001",
+            userId: "user-1",
+            planId: personalPlan.id,
+            seats: 1,
+            unitPriceCents: personalPlan.priceCents,
+            totalPriceCents: personalPlan.priceCents,
+            currency: personalPlan.currency,
+            status: "pending",
+            planSnapshotJson: JSON.stringify(personalPlan),
+            paymentProvider: "",
+            providerTradeNo: "",
+            createdAt: "2026-08-10T00:00:00.000Z",
+            updatedAt: "2026-08-10T00:00:00.000Z",
+        } satisfies MembershipOrder;
+
+        expect(() => membershipOrderFactsFromOrder({ ...frozenOrder, id: "" })).toThrow("订单 ID 为空");
+        expect(() => membershipOrderFactsFromOrder({ ...frozenOrder, orderNumber: "" })).toThrow("订单号为空");
+    });
+
     test("plan previews and frozen membership orders share one facts model and structural owner", () => {
         const preview = membershipOrderFactsFromPlan(personalPlan, 1);
         const frozen = membershipOrderFactsFromCheckout(personalCheckout);
