@@ -24,44 +24,67 @@ async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promi
     }
 }
 
-export type AdminPaymentChannelSetting = {
+export type AdminWechatPaymentChannelSetting = {
     enabled: boolean;
     appId: string;
     merchantId: string;
     merchantSerialNo: string;
+    wechatpayPublicKeyId: string;
+    notifyUrl: string;
+    gatewayUrl: string;
+    hasMerchantPrivateKey: boolean;
+    hasWechatpayPublicKey: boolean;
+    hasApiV3Key: boolean;
+    ready: boolean;
+};
+
+export type AdminAlipayPaymentChannelSetting = {
+    enabled: boolean;
+    appId: string;
+    merchantId: string;
     notifyUrl: string;
     gatewayUrl: string;
     hasMerchantPrivateKey: boolean;
     hasPlatformPublicKey: boolean;
-    hasApiV3Key: boolean;
     ready: boolean;
 };
 
 export type AdminPaymentSetting = {
     checkoutBaseUrl: string;
-    wechat: AdminPaymentChannelSetting;
-    alipay: AdminPaymentChannelSetting;
+    wechat: AdminWechatPaymentChannelSetting;
+    alipay: AdminAlipayPaymentChannelSetting;
     updatedBy: string;
     createdAt: string;
     updatedAt: string;
 };
 
-export type PaymentChannelSettingInput = {
+export type WechatPaymentChannelSettingInput = {
     enabled: boolean;
     appId: string;
     merchantId: string;
     merchantSerialNo: string;
     merchantPrivateKey: string;
-    platformPublicKey: string;
+    wechatpayPublicKeyId: string;
+    wechatpayPublicKey: string;
     apiV3Key: string;
+    notifyUrl: string;
+    gatewayUrl: string;
+};
+
+export type AlipayPaymentChannelSettingInput = {
+    enabled: boolean;
+    appId: string;
+    merchantId: string;
+    merchantPrivateKey: string;
+    platformPublicKey: string;
     notifyUrl: string;
     gatewayUrl: string;
 };
 
 export type UpdatePaymentSettingInput = {
     checkoutBaseUrl: string;
-    wechat: PaymentChannelSettingInput;
-    alipay: PaymentChannelSettingInput;
+    wechat: WechatPaymentChannelSettingInput;
+    alipay: AlipayPaymentChannelSettingInput;
 };
 
 export type PaymentProvider = "wechat" | "alipay";

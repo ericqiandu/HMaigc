@@ -2,18 +2,12 @@ import { Alert, App, Button, Form, Input, Space, Switch, Tag, type FormInstance 
 import { BadgeDollarSign, CreditCard, KeyRound, ShieldCheck, Webhook } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { getAdminPaymentSetting, updateAdminPaymentSetting, type AdminPaymentChannelSetting, type AdminPaymentSetting, type PaymentChannelSettingInput, type UpdatePaymentSettingInput } from "@/services/api/payment";
+import { getAdminPaymentSetting, updateAdminPaymentSetting, type AdminAlipayPaymentChannelSetting, type AdminPaymentSetting, type AdminWechatPaymentChannelSetting } from "@/services/api/payment";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, AdminSettingsActionBar, AdminSettingsSection, AdminSettingsSwitchPanel, configuredSecretText } from "../components/admin-ui";
+import { paymentFormValuesEqual, toPaymentFormValues, toPaymentSettingRequest, type PaymentFormValues } from "./payment-settings-form";
 
-type PaymentChannelFormValues = Partial<PaymentChannelSettingInput>;
-type PaymentFormValues = {
-    checkoutBaseUrl?: string;
-    wechat?: PaymentChannelFormValues;
-    alipay?: PaymentChannelFormValues;
-};
-
-type ChannelField = keyof PaymentChannelFormValues;
+type ChannelField = keyof NonNullable<PaymentFormValues["wechat"]> | keyof NonNullable<PaymentFormValues["alipay"]>;
 type ChannelName = "wechat" | "alipay";
 
 export default function PaymentSettingsPage() {
@@ -31,7 +25,7 @@ export default function PaymentSettingsPage() {
         try {
             const value = await getAdminPaymentSetting();
             setSetting(value);
-            form.setFieldsValue(toFormValues(value));
+            form.setFieldsValue(toPaymentFormValues(value));
             setDirty(false);
         } catch (error) {
             const reason = error instanceof Error ? error.message : "读取支付配置失败";
@@ -55,9 +49,9 @@ export default function PaymentSettingsPage() {
         }
         setSaving(true);
         try {
-            const result = await updateAdminPaymentSetting(toRequest(values));
+            const result = await updateAdminPaymentSetting(toPaymentSettingRequest(values));
             setSetting(result);
-            form.setFieldsValue(toFormValues(result));
+            form.setFieldsValue(toPaymentFormValues(result));
             setDirty(false);
             message.success("支付配置已保存");
         } catch (error) {
@@ -83,7 +77,7 @@ export default function PaymentSettingsPage() {
                 {loading ? (
                     <AdminContentSkeleton rows={10} label="正在加载支付配置" />
                 ) : !loadError && setting ? (
-                    <Form className="payment-settings-form" form={form} layout="vertical" requiredMark={false} disabled={saving} onValuesChange={(_, values: PaymentFormValues) => setDirty(!paymentValuesEqual(values, setting))}>
+                    <Form className="payment-settings-form" form={form} layout="vertical" requiredMark={false} disabled={saving} onValuesChange={(_, values: PaymentFormValues) => setDirty(!paymentFormValuesEqual(values, setting))}>
                         <AdminSettingsSwitchPanel
                             icon={<CreditCard className="payment-settings-checkout-icon size-4" />}
                             title="统一收银台"
@@ -106,9 +100,9 @@ export default function PaymentSettingsPage() {
                             </AdminSettingsSection>
                         </AdminSettingsSwitchPanel>
 
-                        <PaymentChannelCard form={form} channel="wechat" title="微信支付" description="配置微信支付商户号、API v3 密钥和平台证书。" icon={<BadgeDollarSign className="payment-settings-wechat-icon size-4" />} setting={setting.wechat} />
+                        <WechatPaymentChannelCard form={form} setting={setting.wechat} />
 
-                        <PaymentChannelCard form={form} channel="alipay" title="支付宝" description="配置支付宝应用、商户私钥和平台公钥。" icon={<BadgeDollarSign className="payment-settings-alipay-icon size-4" />} setting={setting.alipay} />
+                        <AlipayPaymentChannelCard form={form} setting={setting.alipay} />
 
                         <AdminSettingsActionBar meta={setting.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}` : "尚未保存支付配置"} status={dirty ? "有未保存的支付配置变更" : "支付配置已同步 · 商户密钥仅管理员可见"}>
                             <Button className="payment-settings-save-button" type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
@@ -128,64 +122,99 @@ export default function PaymentSettingsPage() {
     );
 }
 
-function PaymentChannelCard({ form, channel, title, description, icon, setting }: { form: FormInstance<PaymentFormValues>; channel: ChannelName; title: string; description: string; icon: ReactNode; setting: AdminPaymentChannelSetting }) {
+function WechatPaymentChannelCard({ form, setting }: { form: FormInstance<PaymentFormValues>; setting: AdminWechatPaymentChannelSetting }) {
     return (
         <AdminSettingsSwitchPanel
-            icon={icon}
-            title={title}
-            description={description}
-            status={
-                <Space className={`payment-settings-${channel}-status`} size={6}>
-                    <Tag className={`payment-settings-${channel}-enabled-tag`} color={setting?.enabled ? "success" : "default"}>
-                        {setting.enabled ? "已启用" : "未启用"}
-                    </Tag>
-                    <Tag className={`payment-settings-${channel}-ready-tag`} color={setting?.ready ? "blue" : "warning"}>
-                        {setting.ready ? "参数完整" : "待补充参数"}
-                    </Tag>
-                </Space>
-            }
+            icon={<BadgeDollarSign className="payment-settings-wechat-icon size-4" />}
+            title="微信支付"
+            description="配置微信 Native 支付商户身份、API v3 密钥与微信支付公钥。"
+            status={<PaymentChannelStatus channel="wechat" enabled={setting.enabled} ready={setting.ready} />}
         >
-            <AdminSettingsSection
-                id={`payment-${channel}-merchant-heading`}
-                icon={<BadgeDollarSign className={`payment-settings-${channel}-merchant-icon size-4`} />}
-                title="商户身份"
-                description={channel === "wechat" ? "配置渠道状态、微信支付应用与商户证书身份。" : "配置渠道状态、支付宝应用与商户身份。"}
-            >
-                <Form.Item className={`payment-settings-${channel}-enabled-field`} name={[channel, "enabled"]} label="启用渠道" valuePropName="checked">
-                    <Switch className={`payment-settings-${channel}-enabled-switch`} />
+            <AdminSettingsSection id="payment-wechat-merchant-heading" icon={<BadgeDollarSign className="payment-settings-wechat-merchant-icon size-4" />} title="商户身份" description="配置渠道状态、已绑定的微信支付应用与商户 API 证书身份。">
+                <Form.Item className="payment-settings-wechat-enabled-field" name={["wechat", "enabled"]} label="启用渠道" valuePropName="checked">
+                    <Switch className="payment-settings-wechat-enabled-switch" />
                 </Form.Item>
-                <ChannelInput form={form} channel={channel} field="appId" label="应用 ID（App ID）" placeholder="支付平台分配的应用 ID" requiredWhenEnabled />
-                <ChannelInput form={form} channel={channel} field="merchantId" label="商户号" placeholder="支付平台分配的商户号" requiredWhenEnabled />
-                {channel === "wechat" ? <ChannelInput form={form} channel={channel} field="merchantSerialNo" label="商户证书序列号" placeholder="微信支付商户证书序列号" requiredWhenEnabled /> : null}
+                <ChannelInput form={form} channel="wechat" field="appId" label="应用 ID（App ID）" placeholder="与商户号完成绑定的 AppID" requiredWhenEnabled />
+                <ChannelInput form={form} channel="wechat" field="merchantId" label="商户号" placeholder="微信支付商户号" requiredWhenEnabled />
+                <ChannelInput form={form} channel="wechat" field="merchantSerialNo" label="商户 API 证书序列号" placeholder="商户 API 证书序列号" requiredWhenEnabled />
+            </AdminSettingsSection>
+            <AdminSettingsSection id="payment-wechat-endpoint-heading" icon={<Webhook className="payment-settings-wechat-endpoint-icon size-4" />} title="接口地址" description="生产环境使用微信支付官方网关与可公开访问的 HTTPS 通知入口。">
+                <ChannelInput form={form} channel="wechat" field="notifyUrl" label="异步通知地址" placeholder="https://hm.kunagent.com/api/payments/webhooks/wechat" url requiredWhenEnabled />
+                <ChannelInput form={form} channel="wechat" field="gatewayUrl" label="支付网关地址" placeholder="https://api.mch.weixin.qq.com" url requiredWhenEnabled />
             </AdminSettingsSection>
             <AdminSettingsSection
-                id={`payment-${channel}-endpoint-heading`}
-                icon={<Webhook className={`payment-settings-${channel}-endpoint-icon size-4`} />}
-                title="接口地址"
-                description="配置支付平台网关与异步通知入口，生产环境必须使用可公开访问的 HTTPS 地址。"
-            >
-                <ChannelInput form={form} channel={channel} field="notifyUrl" label="异步通知地址" placeholder="https://api.example.com/payment/notify" url requiredWhenEnabled />
-                <ChannelInput form={form} channel={channel} field="gatewayUrl" label="支付网关地址" placeholder="支付平台网关地址" url requiredWhenEnabled />
-            </AdminSettingsSection>
-            <AdminSettingsSection
-                id={`payment-${channel}-signature-heading`}
-                icon={<KeyRound className={`payment-settings-${channel}-signature-icon size-4`} />}
+                id="payment-wechat-signature-heading"
+                icon={<KeyRound className="payment-settings-wechat-signature-icon size-4" />}
                 title="签名凭据"
-                description={channel === "wechat" ? "微信支付需要商户私钥、平台公钥与 API v3 密钥。敏感内容保存后不回显。" : "支付宝需要商户私钥与平台公钥。敏感内容保存后不回显。"}
+                description="公钥 ID 与公钥来自商户平台：账户中心 → API安全 → 微信支付公钥。敏感内容保存后不回显。"
             >
-                <SecretInput form={form} channel={channel} field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
-                <SecretInput form={form} channel={channel} field="platformPublicKey" label="平台公钥" configured={setting.hasPlatformPublicKey} />
-                {channel === "wechat" ? <SecretInput form={form} channel={channel} field="apiV3Key" label="API v3 密钥" configured={setting.hasApiV3Key} /> : null}
+                <SecretInput form={form} channel="wechat" field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
+                <ChannelInput form={form} channel="wechat" field="wechatpayPublicKeyId" label="微信支付公钥 ID" placeholder="PUB_KEY_ID_..." requiredWhenEnabled />
+                <SecretInput form={form} channel="wechat" field="wechatpayPublicKey" label="微信支付公钥" configured={setting.hasWechatpayPublicKey} />
+                <SecretInput form={form} channel="wechat" field="apiV3Key" label="API v3 密钥" configured={setting.hasApiV3Key} />
             </AdminSettingsSection>
         </AdminSettingsSwitchPanel>
     );
 }
 
-function ChannelInput({ form, channel, field, label, placeholder, url = false, requiredWhenEnabled = false }: { form: FormInstance<PaymentFormValues>; channel: ChannelName; field: ChannelField; label: string; placeholder: string; url?: boolean; requiredWhenEnabled?: boolean }) {
-    const rules = [
-        ...(requiredWhenEnabled ? [requiredChannelField(form, channel, label)] : []),
-        ...(url ? [{ type: "url" as const, message: "请输入完整的 HTTP(S) 地址" }] : []),
-    ];
+function AlipayPaymentChannelCard({ form, setting }: { form: FormInstance<PaymentFormValues>; setting: AdminAlipayPaymentChannelSetting }) {
+    return (
+        <AdminSettingsSwitchPanel
+            icon={<BadgeDollarSign className="payment-settings-alipay-icon size-4" />}
+            title="支付宝"
+            description="配置支付宝应用、商户私钥和平台公钥。"
+            status={<PaymentChannelStatus channel="alipay" enabled={setting.enabled} ready={setting.ready} />}
+        >
+            <AdminSettingsSection id="payment-alipay-merchant-heading" icon={<BadgeDollarSign className="payment-settings-alipay-merchant-icon size-4" />} title="商户身份" description="配置渠道状态、支付宝应用与商户身份。">
+                <Form.Item className="payment-settings-alipay-enabled-field" name={["alipay", "enabled"]} label="启用渠道" valuePropName="checked">
+                    <Switch className="payment-settings-alipay-enabled-switch" />
+                </Form.Item>
+                <ChannelInput form={form} channel="alipay" field="appId" label="应用 ID（App ID）" placeholder="支付宝开放平台应用 ID" requiredWhenEnabled />
+                <ChannelInput form={form} channel="alipay" field="merchantId" label="商户号" placeholder="支付宝商户号" requiredWhenEnabled />
+            </AdminSettingsSection>
+            <AdminSettingsSection id="payment-alipay-endpoint-heading" icon={<Webhook className="payment-settings-alipay-endpoint-icon size-4" />} title="接口地址" description="配置支付宝网关与异步通知入口，生产环境必须使用可公开访问的 HTTPS 地址。">
+                <ChannelInput form={form} channel="alipay" field="notifyUrl" label="异步通知地址" placeholder="https://hm.kunagent.com/api/payments/webhooks/alipay" url requiredWhenEnabled />
+                <ChannelInput form={form} channel="alipay" field="gatewayUrl" label="支付网关地址" placeholder="https://openapi.alipay.com/gateway.do" url requiredWhenEnabled />
+            </AdminSettingsSection>
+            <AdminSettingsSection id="payment-alipay-signature-heading" icon={<KeyRound className="payment-settings-alipay-signature-icon size-4" />} title="签名凭据" description="支付宝需要商户私钥与平台公钥。敏感内容保存后不回显。">
+                <SecretInput form={form} channel="alipay" field="merchantPrivateKey" label="商户私钥" configured={setting.hasMerchantPrivateKey} />
+                <SecretInput form={form} channel="alipay" field="platformPublicKey" label="平台公钥" configured={setting.hasPlatformPublicKey} />
+            </AdminSettingsSection>
+        </AdminSettingsSwitchPanel>
+    );
+}
+
+function PaymentChannelStatus({ channel, enabled, ready }: { channel: ChannelName; enabled: boolean; ready: boolean }) {
+    return (
+        <Space className={`payment-settings-${channel}-status`} size={6}>
+            <Tag className={`payment-settings-${channel}-enabled-tag`} color={enabled ? "success" : "default"}>
+                {enabled ? "已启用" : "未启用"}
+            </Tag>
+            <Tag className={`payment-settings-${channel}-ready-tag`} color={ready ? "blue" : "warning"}>
+                {ready ? "参数完整" : "待补充参数"}
+            </Tag>
+        </Space>
+    );
+}
+
+function ChannelInput({
+    form,
+    channel,
+    field,
+    label,
+    placeholder,
+    url = false,
+    requiredWhenEnabled = false,
+}: {
+    form: FormInstance<PaymentFormValues>;
+    channel: ChannelName;
+    field: ChannelField;
+    label: string;
+    placeholder: string;
+    url?: boolean;
+    requiredWhenEnabled?: boolean;
+}) {
+    const rules = [...(requiredWhenEnabled ? [requiredChannelField(form, channel, label)] : []), ...(url ? [{ type: "url" as const, message: "请输入完整的 HTTP(S) 地址" }] : [])];
     return (
         <Form.Item className={`payment-settings-${channel}-${field}-field`} name={[channel, field]} label={label} dependencies={[[channel, "enabled"]]} rules={rules}>
             <Input className={`payment-settings-${channel}-${field}-input`} autoComplete="off" placeholder={placeholder} />
@@ -195,7 +224,13 @@ function ChannelInput({ form, channel, field, label, placeholder, url = false, r
 
 function SecretInput({ form, channel, field, label, configured }: { form: FormInstance<PaymentFormValues>; channel: ChannelName; field: ChannelField; label: string; configured: boolean }) {
     return (
-        <Form.Item className={`payment-settings-${channel}-${field}-field`} name={[channel, field]} label={configured ? `${label}（${configuredSecretText}）` : label} dependencies={[[channel, "enabled"]]} rules={[requiredChannelSecret(form, channel, label, configured)]}>
+        <Form.Item
+            className={`payment-settings-${channel}-${field}-field`}
+            name={[channel, field]}
+            label={configured ? `${label}（${configuredSecretText}）` : label}
+            dependencies={[[channel, "enabled"]]}
+            rules={[requiredChannelSecret(form, channel, label, configured)]}
+        >
             <Input.Password className={`payment-settings-${channel}-${field}-input`} autoComplete="new-password" placeholder={configured ? "留空保留原密钥" : `请输入${label}`} />
         </Form.Item>
     );
@@ -217,72 +252,6 @@ function requiredChannelSecret(form: FormInstance<PaymentFormValues>, channel: C
             return Promise.reject(new Error(`启用渠道前请填写${label}`));
         },
     };
-}
-
-function toFormValues(setting: AdminPaymentSetting): PaymentFormValues {
-    return {
-        checkoutBaseUrl: setting.checkoutBaseUrl,
-        wechat: channelFormValues(setting.wechat),
-        alipay: channelFormValues(setting.alipay),
-    };
-}
-
-function channelFormValues(setting: AdminPaymentChannelSetting): PaymentChannelFormValues {
-    return {
-        enabled: setting.enabled,
-        appId: setting.appId,
-        merchantId: setting.merchantId,
-        merchantSerialNo: setting.merchantSerialNo,
-        merchantPrivateKey: "",
-        platformPublicKey: "",
-        apiV3Key: "",
-        notifyUrl: setting.notifyUrl,
-        gatewayUrl: setting.gatewayUrl,
-    };
-}
-
-function toRequest(values: PaymentFormValues): UpdatePaymentSettingInput {
-    return {
-        checkoutBaseUrl: clean(values.checkoutBaseUrl),
-        wechat: channelRequest(values.wechat),
-        alipay: channelRequest(values.alipay),
-    };
-}
-
-function paymentValuesEqual(values: PaymentFormValues, setting: AdminPaymentSetting) {
-    return clean(values.checkoutBaseUrl) === clean(setting.checkoutBaseUrl) && channelValuesEqual(values.wechat, setting.wechat) && channelValuesEqual(values.alipay, setting.alipay);
-}
-
-function channelValuesEqual(values: PaymentChannelFormValues | undefined, setting: AdminPaymentChannelSetting) {
-    return (
-        (values?.enabled === true) === setting.enabled &&
-        clean(values?.appId) === clean(setting.appId) &&
-        clean(values?.merchantId) === clean(setting.merchantId) &&
-        clean(values?.merchantSerialNo) === clean(setting.merchantSerialNo) &&
-        clean(values?.notifyUrl) === clean(setting.notifyUrl) &&
-        clean(values?.gatewayUrl) === clean(setting.gatewayUrl) &&
-        !clean(values?.merchantPrivateKey) &&
-        !clean(values?.platformPublicKey) &&
-        !clean(values?.apiV3Key)
-    );
-}
-
-function channelRequest(values?: PaymentChannelFormValues): PaymentChannelSettingInput {
-    return {
-        enabled: values?.enabled === true,
-        appId: clean(values?.appId),
-        merchantId: clean(values?.merchantId),
-        merchantSerialNo: clean(values?.merchantSerialNo),
-        merchantPrivateKey: clean(values?.merchantPrivateKey),
-        platformPublicKey: clean(values?.platformPublicKey),
-        apiV3Key: clean(values?.apiV3Key),
-        notifyUrl: clean(values?.notifyUrl),
-        gatewayUrl: clean(values?.gatewayUrl),
-    };
-}
-
-function clean(value?: string) {
-    return value?.trim() || "";
 }
 
 function formatTime(value: string) {
