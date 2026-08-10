@@ -70,7 +70,13 @@ export default function PaymentSettingsPage() {
     return (
         <AdminPageFrame title="支付配置" description="统一收银台与微信、支付宝商户参数">
             <div className="payment-settings-page admin-settings-page space-y-5">
-                <Alert className="payment-settings-notice" type="info" showIcon message="当前阶段仅开放商户参数配置" description="配置保存后不会自动启用真实扣款。支付下单、异步回调验签和退款通道接通前，系统会显式返回“支付服务未接通”。" />
+                <Alert
+                    className="payment-settings-notice"
+                    type="warning"
+                    showIcon
+                    message="启用前请完成真实支付验收"
+                    description="渠道启用且参数完整后，用户下单会直接请求真实支付渠道。请先在公网 HTTPS 环境完成回调与小额支付验证；当前仅支持一次性扫码支付，尚未接入退款通道。"
+                />
 
                 {loadError ? <AdminContentError title="支付配置加载失败" description={loadError} onRetry={() => void loadSetting()} /> : null}
 
