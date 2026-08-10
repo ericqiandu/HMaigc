@@ -12,7 +12,7 @@
 ## 首次准备
 
 1. 安装 Docker Engine 与 Docker Compose 插件。
-2. 推送与根目录 `VERSION` 完全一致的 `vX.Y.Z` 标签，等待镜像工作流通过。
+2. 发布人员创建与根目录 `VERSION` 完全一致的不可变 `vX.Y.Z` 标签并等待镜像工作流通过；服务器运维人员只选择已经存在且摘要核验通过的标签，不在生产机创建或推送标签。
 3. 私有 GHCR 包需先执行一次 `docker login ghcr.io`。
 4. 在服务器仓库根目录执行：
 
@@ -31,23 +31,27 @@ chmod 600 .env.production
 
 stock Nginx upstream error 格式无法移除 incoming Referer，所以示例仅在实际 reverse-proxy location 关闭该原生行，并用条件 access log 为普通 4xx/5xx 写入不含 Referer、query 或上游正文的 safe proxy-error（时间、客户端、方法、URI、状态和 upstream status）；普通 2xx access 仍可观测。server/main/global 的配置、启动和静态错误日志继续保留，禁止把静默范围扩到整个 server。
 
-从旧版本切换到本安全边界前，先暂停新的下单/checkout 创建，在旧版后台把 checkout base 改为无 path 的 HTTPS Origin、把 notify URL 改为 HTTPS并核验 CORS；随后至少等待 `15 分钟` checkout TTL，使旧 HTTP/pathful 加密链接自然失效。不得清库、轮换 bearer 或关闭门禁。若升级被支付运行时门禁拒绝，保持自动回滚，回旧版修正配置后再升级。
+从旧版本切换到本安全边界前，先在外层 Nginx/网关精确拒绝 `POST /api/membership/orders`、`POST /api/credit-store/orders`、两类 `POST /api/*/orders/:id/checkout` 和 `POST /api/payments/checkout/:token/transactions`；必须继续放行 checkout GET 与微信/支付宝 webhook POST。完整验证步骤以 `PRODUCTION.md` 第 2 节为准。随后在旧版后台把 checkout base 改为无 path 的 HTTPS Origin、把 notify URL 改为 HTTPS并核验 CORS，至少等待 `15 分钟` checkout TTL，使旧 HTTP/pathful 加密链接自然失效。不得清库、轮换 bearer 或关闭门禁。若升级被支付运行时门禁拒绝，保持自动回滚，回旧版修正配置后再升级。
 
 ## 唯一正式操作入口
 
 ```bash
+TARGET_VERSION='vX.Y.Z'
+
 # 首次安装
-bash deploy/hmaigc-ops.sh install v1.0.18
+bash deploy/hmaigc-ops.sh install "$TARGET_VERSION"
 
 # 状态与环境验收
 bash deploy/hmaigc-ops.sh status
 bash deploy/hmaigc-ops.sh verify
 
 # 命令行升级、备份和回滚（后台页面也通过同一控制器队列执行）
-bash deploy/hmaigc-ops.sh upgrade v1.0.18
+bash deploy/hmaigc-ops.sh upgrade "$TARGET_VERSION"
 bash deploy/hmaigc-ops.sh backup
 bash deploy/hmaigc-ops.sh rollback
 ```
+
+必须把 `vX.Y.Z` 替换为已经发布且镜像摘要可核对的实际标签；仍在 `CHANGELOG.md`“未发布”小节中的功能没有可用于生产安装的版本号。
 
 `deploy/hmaigc.sh` 是控制器镜像内部的执行器，不是生产人员的正式入口。`hmaigc-ops.sh` 会先启动独立控制器，再由 `hmaigc-opsctl` 创建任务、持续读取独立审计库中的日志，并等待明确成功或失败。
 
@@ -73,7 +77,7 @@ bash deploy/hmaigc-ops.sh rollback
 `HMAIGC_STATIC_ASSET_BASE_URL` 末尾不能带 `/`，并且 URL 路径必须与 CDN 回源后的 `HMAIGC_STATIC_OSS_PREFIX` 一致。Bucket/CDN 还必须满足：
 
 - CDN 对 `hmaigc/web/releases/*` 缓存 365 天；对象名与版本目录不可变，不执行覆盖发布；
-- 允许 `https://hmaigc.ai` 和实际启用的 `www` 域名跨域 GET/HEAD，禁止开放写方法；
+- 只允许 `https://hmaigc.ai`、`https://www.hmaigc.ai` 与正式业务主域 `https://hm.kunagent.com` 跨域 GET/HEAD，禁止开放写方法；
 - `index.html` 不上传 OSS，继续由版本化 Web 镜像提供且不得配置长期缓存；
 - 发布器逐文件 PUT 后执行 HEAD 大小和 ETag 校验，最后才写 `manifest.json`；清单经 CDN 无法读取时镜像发布被阻止；
 - 旧版本目录不自动删除，因此镜像回滚可继续读取同版本静态资源。
@@ -113,4 +117,4 @@ bash deploy/hmaigc-ops.sh rollback
 
 ## 发布前提
 
-一键发布只解决可重复部署和回滚，不替代发布质量门禁。版本标签必须先通过 GitHub Actions 中的 Go 全量测试、Web 测试、生产构建、`bash scripts/tests/verify-payment-checkout-nginx.test.sh`、控制器镜像构建和两个 Compose 文件校验。涉及不可逆数据库变更时，即使脚本具备备份恢复能力，也必须先在隔离环境完成恢复演练。
+一键发布只解决可重复部署和回滚，不替代发布质量门禁。版本标签必须先通过 GitHub Actions 中的 Go 全量测试、真实 PostgreSQL 17/Redis 7 支付矩阵、Web 测试与生产构建、`bash scripts/tests/verify-payment-checkout-nginx.test.sh`、生产 Nginx Chromium 收银台矩阵、控制器镜像构建和三份 Compose 配置校验。涉及不可逆数据库变更时，即使脚本具备备份恢复能力，也必须先在隔离环境完成恢复演练。

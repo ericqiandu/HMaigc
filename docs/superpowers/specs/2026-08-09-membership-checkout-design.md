@@ -45,8 +45,8 @@
 2. `MembershipPurchaseModal` 使用统一的左侧订单视觉确认可编辑事实：套餐、周期、团队和席位。此时不创建订单或支付交易。
 3. 用户明确点击“创建订单并支付”后，前端为规范化的 `{planId, teamId, seats}` 请求指纹分配一次性的 `Idempotency-Key` 创建不可变会员订单；同一指纹的网络重试复用该键，任一购买输入变化必须生成新键。随后幂等创建或重放该订单唯一的活动收银台会话并跳转到 `/pay/:token`。
 4. 收银台读取服务端返回的会员订单摘要。摘要必须来自该订单的 `planSnapshotJson` 与订单金额字段，而不是当前套餐表。
-5. 用户选择真实可用支付渠道并显式生成付款码；同一订单任一时刻只允许存在一笔可支付交易。重复请求和刷新必须返回同一商户订单与二维码，生成二维码后锁定渠道，直至交易失败、关闭或过期。
-6. 页面轮询订单状态；支付成功、过期、关闭或失败均使用明确状态替换可支付界面。
+5. 用户选择真实可用支付渠道并显式生成付款码；同一订单任一时刻只允许存在一笔可支付交易。重复请求和刷新必须返回同一商户订单与二维码，生成二维码后锁定渠道。收银台到期时 `created/pending` 交易原子转入 `review_required`，不再返回旧二维码，但继续占用同一付款槽直到渠道对账确认终态。
+6. 页面轮询订单状态；支付成功、过期、关闭或失败均使用明确状态替换可支付界面。`refunded` 仅是当前模型枚举，在真实退款通道上线前必须显示“状态待核对”而不是声称款项已经退回。
 
 ## 后端结算契约
 
@@ -59,30 +59,27 @@
 - 返回服务端 `serverNow`、`expiresAt` 与可选 `activeTransaction`；后者只包含恢复页面所需的 `provider`、`status`、`codeUrl` 与 `expiresAt`，不得包含渠道密钥或内部失败载荷。
 - 公共交易创建接口改为专用最小响应 DTO，字段与 `activeTransaction` 一致；禁止继续直接序列化含 `userId`、内部 `orderId`、商户审计字段和失败详情的数据库模型。
 - 会员订单返回 `membershipSummary`；积分充值订单返回独立的 `creditTopupSummary`，不得伪造会员字段。两个摘要按 `orderType` 构成互斥联合。
-- `membershipSummary` 至少包含：
+- `membershipSummary` 使用已经落地的最小不可变投影：
   - `audience`：`personal | team`
-  - `planCode`
-  - `planName`
-  - `tier`
-  - `billingCycle`
-  - `isAutoRenew`（当前能力固定为 `false`）
+  - `code`
+  - `name`
+  - `tier`：冻结套餐的展示层级字符串，不在收银台引入第二套枚举
+  - `billingCycle`：`month | year`
   - `seats`
-  - `unitPriceCents`
-  - `originalUnitPriceCents`
-  - `totalPriceCents`
-  - `originalTotalPriceCents`
-  - `discountCents`
-  - `creditsPerPeriodMicrocredits`
-  - `totalCreditsPerPeriodMicrocredits`
-  - `currency`
+  - `actualPriceCents`：整笔订单实付总额
+  - `originalPriceCents`：整笔订单原价总额
+  - `creditsPerPeriod`：单席位周期积分，单位为 microcredits
+  - `totalCreditsPerPeriod`：整笔订单周期总积分，单位为 microcredits
+- 币种由 `PaymentCheckoutView.currency` 统一提供，两个互斥摘要不重复保存。当前能力是一次性支付且不自动续费，这是支付能力规则，不伪装为订单快照字段。
+- `1 积分 = 1,000,000 microcredits`；接口保持整数 microcredits，只有前端展示层执行换算和本地化格式化。
 
 ### 数据来源与校验
 
 - 套餐名称、等级、受众、周期、原价、积分和币种只从订单的 `planSnapshotJson` 解析。
 - 席位、单价、总价与团队 ID 以订单记录为准，并与快照价格、币种和受众进行一致性校验。
 - 收银台接口使用随机令牌作为 bearer capability。团队名称不在不可变订单快照中，因此本次不向该接口追加可变团队资料，也不因展示需要扩大令牌可读范围；团队名称只保留在创建订单前、已经登录且经过团队权限校验的确认弹窗中。
-- `totalCreditsPerPeriodMicrocredits = creditsPerPeriodMicrocredits × seats`，个人订单席位必须为 1；价格与积分乘法必须先做整数溢出检查。
-- `originalTotalPriceCents = originalUnitPriceCents × seats`。后台允许原价为 `0` 或不高于实付价；这种快照仍是合法订单事实，但不构成优惠。只有 `originalTotalPriceCents > totalPriceCents` 时才返回正数 `discountCents` 并展示划线原价，否则 `discountCents = 0` 且前端不展示优惠文案。
+- `totalCreditsPerPeriod = creditsPerPeriod × seats`，个人订单席位必须为 1；价格与积分乘法必须先做整数溢出检查。
+- 服务端验证 `actualPriceCents = snapshot.priceCents × seats = order.totalPriceCents`，`originalPriceCents = snapshot.originalPriceCents × seats`。因此前端只在需要展示单席位事实时做可整除派生，不读取当前套餐。后台允许原价为 `0` 或不高于实付价；这种快照仍是合法订单事实，但不构成优惠。只有 `originalPriceCents > actualPriceCents` 时才由展示模型派生正数优惠并显示划线原价。
 - 快照缺失、损坏、套餐 ID/币种/价格不一致时明确返回错误，禁止退回当前套餐或默认值。
 - `month | year` 付费周期必须具有严格大于零的价格；后台保存、启动完整性扫描和下单都拒绝 `priceCents <= 0`。本轮不实现零元扫码或隐式免费开通；真正的免费套餐继续使用独立 `free` 周期。
 - `GET checkout` 对合法 bearer 即使已经 `expired` 或 `consumed` 也返回只读事实视图；创建支付交易的写接口继续严格拒绝非活动、非待支付状态。
@@ -158,7 +155,7 @@
 - 接口失败：展示真实原因和原地重试，不渲染伪造订单摘要。
 - 快照无效：后端显式失败，前端展示“订单信息无法验证”，禁止继续生成付款码。
 - 渠道下单失败：保留订单摘要和已选渠道，展示真实错误，可由用户重试。
-- 订单过期或不可支付：禁用支付操作并提供返回会员中心重新下单的入口。
+- 订单过期或不可支付：禁用支付操作并提供返回会员中心关闭旧订单后重新下单的入口；活动时间已到或已过期的 checkout 不得由所有者创建接口恢复为可支付链接，存在付款事实时必须等待渠道对账。
 - 已支付：替换为成功状态，继续轮询时不得重复创建交易或发放权益。
 - 轮询响应必须按服务端事实和时间顺序收敛；较晚到达的旧响应或瞬时网络失败不得覆盖已经确认的 paid 状态，也不得清空已加载的订单摘要与二维码。
 - 组件卸载、切换渠道和重复点击不得泄漏计时器或并发创建多个交易。

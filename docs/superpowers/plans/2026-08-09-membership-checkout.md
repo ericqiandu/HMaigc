@@ -63,13 +63,13 @@
 - `MigrateBaseSchema(db)` adds tables/columns/defaults only. `EnsurePaymentIntegritySchema(db)` verifies and creates post-data integrity indexes only after conflict scans pass. Runtime `MigrateSchema(db)` calls both in order; SQLite-to-PostgreSQL calls base schema, copies data, then calls integrity schema.
 - `model.SystemActorID` is the only system-actor literal.
 
-- [ ] **Step 1: Write failing model, migration, service, and PostgreSQL concurrency tests**
+- [x] **Step 1: Write failing model, migration, service, and PostgreSQL concurrency tests**
 
 Cover missing/oversize idempotency key, same key/same request replay, same key/different plan/team/seats conflict, cross-user key reuse, replay after plan update/archive, paid month/year plan price `0` or negative at admin update/startup/order creation, concurrent inserts producing one row, real old-schema rows containing NULL, exact index predicates, wrong existing index name/predicate, and migration rejection of duplicate payable rows or duplicate non-empty provider trade numbers. A migration rejection must identify order type/order ID and merchant facts without deleting data.
 
 Update every Go caller to pass an explicit stable test key; do not hide the requirement behind a variadic/default wrapper. Add a Web contract test proving the key is bound to a canonical `{planId, teamId, seats}` fingerprint: identical request retries reuse it, any plan/team/seat change rotates it, it is sent as `Idempotency-Key`, and successful new-team creation stores the resolved team ID before the order request so a later retry does not create another order fingerprint.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 cd backend
@@ -81,7 +81,7 @@ bash scripts/tests/run-payment-integration.sh --run 'TestPostgres.*MembershipOrd
 
 Expected: non-zero exits for missing schema/repository/service contracts, not environment setup errors. The runner supplies a real PostgreSQL DSN and required mode, so a skipped integration package is also a test failure.
 
-- [ ] **Step 3: Implement the additive schema and atomic membership-order claim**
+- [x] **Step 3: Implement the additive schema and atomic membership-order claim**
 
 Use deterministic JSON over normalized `{planId, teamId, seats}` plus SHA-256. Do not hash the mutable current plan snapshot. Insert with `ON CONFLICT ... DO NOTHING`, then read and compare the winner. Add `Idempotency-Key` to CORS allow-headers. Implement:
 
@@ -103,7 +103,7 @@ Use `NOT NULL DEFAULT ''` for the new scan-safe strings and test a real pre-chan
 
 Hard-cut the Web membership order call in the same task: a small pure request-fingerprint helper owns `{fingerprint, key}` and `createMembershipOrder(input, idempotencyKey)` sends the standard header. Same-fingerprint retries reuse the key; changing any normalized purchase input rotates it. This keeps the Task 1 commit deployable without a temporary header-optional backend path.
 
-- [ ] **Step 4: Run focused SQLite and real PostgreSQL tests**
+- [x] **Step 4: Run focused SQLite and real PostgreSQL tests**
 
 ```powershell
 bash scripts/tests/run-payment-integration.sh --run 'Test.*(PaymentIntegrity|MembershipOrderIdempotency)'
@@ -114,12 +114,13 @@ bun run build
 
 The script creates a unique `hmaigc-payment-integration-<run-suffix>` PostgreSQL 17/Redis 7 project, waits for health, exports both the DSN and `CANVAS_REQUIRE_INTEGRATION_TESTS=1`, executes the requested Go packages, and removes only that run's containers/network/volumes in a trap. The Go harness rejects non-loopback/non-test DSNs and gives every package/test a random isolated schema with cleanup, so parallel packages never migrate or truncate each other's data. CI invokes the same script; no integration test may skip in required mode.
 
-- [ ] **Step 5: Review and commit Task 1**
+- [x] **Step 5: Review and commit Task 1**
 
-Confirm only additive financial schema, handler/service/repository changes, tests, and required CI wiring are staged. Commit:
+Confirm only additive financial schema, handler/service/repository changes, tests, and required CI wiring are staged. Actual commits:
 
 ```text
 feat(payment): enforce membership order idempotency
+fix(payment): validate prices before catalog writes
 ```
 
 ---
@@ -146,13 +147,13 @@ feat(payment): enforce membership order idempotency
 - `PaymentCheckoutView` separates `orderStatus` and `checkoutStatus`, and includes `serverNow`, `expiresAt`, `providers`, optional `activeTransaction`, and exactly one discriminated `membershipSummary` or `creditTopupSummary` selected by `orderType`.
 - `MembershipCheckoutSummary` includes only frozen audience, code/name/tier/cycle, seats, actual/original price, credits per period, and total credits per period; `CreditTopupCheckoutSummary` remains a separate minimal type.
 
-- [ ] **Step 1: Write failing checkout-session and snapshot-projection tests**
+- [x] **Step 1: Write failing checkout-session and snapshot-projection tests**
 
 Cover personal/team arithmetic, original price `0`, original price equal/below actual, corrupted/missing snapshot, ID/audience/currency/price mismatch, multiplication overflow, credit-topup preservation, no internal JSON fields, sequential/concurrent checkout creation returning the same URL/expiry, database absence of plaintext token, invalid cipher, hash mismatch, and missing key.
 
 Add failing Web domain tests for the discriminated DTO, server-offset countdown, terminal-state monotonicity, active QR restoration, and credit-topup compatibility. The same task hard-cuts `payment-checkout-page.tsx` from legacy `status/amountCents` to `orderStatus/checkoutStatus` and the typed summary; no dual-field compatibility branch is allowed.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 cd backend
@@ -161,17 +162,17 @@ cd ../web
 bun test test/payment-checkout-domain.test.ts
 ```
 
-- [ ] **Step 3: Implement the shared snapshot validator and typed view**
+- [x] **Step 3: Implement the shared snapshot validator and typed view**
 
 Extract one snapshot parser/validator used by checkout projection and membership fulfillment. Preserve original price exactly; derive UI discount only when original exceeds actual. Validate all `int64` products before multiplication. Keep valid expired/consumed bearer GET readable, while write APIs require active checkout and pending order.
 
-- [ ] **Step 4: Implement recoverable single checkout creation**
+- [x] **Step 4: Implement recoverable single checkout creation**
 
 Generate token/hash/cipher once, atomically insert-or-read by order, decrypt and hash-verify the winning row, and return the same public URL to all callers. Existing active hash-only rows must not be rotated; direct bearer read remains possible, while owner-side URL recovery fails explicitly.
 
 Implement the minimal functional Web hard cut in this task: consume the new DTO, preserve personal/team/credit-topup rendering and polling, restore any `activeTransaction`, and compile without legacy response fields. The full reference-inspired component split and visual refinement remains Task 5.
 
-- [ ] **Step 5: Run focused and package tests**
+- [x] **Step 5: Run focused and package tests**
 
 ```powershell
 cd backend
@@ -182,12 +183,13 @@ bun test test/payment-checkout-domain.test.ts
 bun run build
 ```
 
-- [ ] **Step 6: Review and commit Task 2**
+- [x] **Step 6: Review and commit Task 2**
 
-Commit:
+Actual commits:
 
 ```text
 feat(payment): expose immutable checkout facts
+fix(payment): harden checkout fact recovery
 ```
 
 ---
@@ -220,27 +222,27 @@ feat(payment): expose immutable checkout facts
 - `AdminReconcilePaymentTransaction(actor, id)` is a strong audited action: it queries the real provider by persisted merchant order, fulfills confirmed payment, or closes only after the provider confirms unpaid/not-found and its close operation succeeds; ambiguity stays `review_required` and keeps the payable slot occupied.
 - Membership fulfillment locks the entitlement subject in a fixed order (personal user row or team row) and computes the next subscription start/end inside the same transaction. Webhook, provider-query reconciliation, and any admin-confirmed path use this single fulfillment implementation.
 
-- [ ] **Step 1: Write failing PostgreSQL race and fault tests**
+- [x] **Step 1: Write failing PostgreSQL race and fault tests**
 
 Cover concurrent same-provider and cross-provider claims racing with fulfillment and cancellation/expiry, exactly one payable row, no new transaction after paid or verified review-required fact, cancellation/expiry refusing to blind-close a possibly payable transaction, two different paid orders for the same personal user and same team producing consecutive non-overlapping subscriptions with both exact credit grants, same-provider replay, active channel lock, refresh returning the same QR, provider timeout entering `review_required`, provider query paid/unpaid/unknown outcomes, provider close failure, strong audit rejected/failed attempts, created-state callback success, duplicate event/same digest exactly once, same non-empty provider trade number across distinct event IDs/orders, event ID/different digest conflict, late/closed/second payment review, unknown merchant and amount/currency mismatch rejection, plus injected ledger/subscription INSERT and COMMIT failure leaving an independently committed event.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 bash scripts/tests/run-payment-integration.sh --run 'Test(Postgres|Payment).*(Payable|Webhook|Fulfillment|Reconciliation)'
 ```
 
-- [ ] **Step 3: Implement atomic payable claim and response recovery**
+- [x] **Step 3: Implement atomic payable claim and response recovery**
 
 In one transaction, lock the concrete order row and checkout row, verify pending/active status and absence of paid or verified-success review facts, then persist the unique merchant order and `created` row. Fulfillment takes the same order lock, then locks the personal user or team entitlement row before reading the latest subscription end and computing/inserting the next interval. No subscription dates are precomputed outside that transaction. The partial unique index decides residual races. Same-provider retries return the existing transaction. Cross-provider attempts return a stable channel-locked conflict. Deterministic provider rejection releases the slot; an uncertain result becomes `review_required` and continues to occupy it. Membership/credit cancellation and lifecycle expiry must no longer blindly close `created|pending|review_required`: they either find no transaction, obtain provider-confirmed close through the reconciliation path, or explicitly reject/defer the cancellation while keeping the payable fact intact.
 
-- [ ] **Step 4: Move webhook facts outside the fulfillment transaction**
+- [x] **Step 4: Move webhook facts outside the fulfillment transaction**
 
 Persist provider/event ID, digest, merchant order, provider trade number, amount, currency, paid time, and stable failure code without raw payload. Mark the event review-required before automated fulfillment. On success, atomically update transaction/order/entitlement/ledger/checkout/event. On rejection or fulfillment failure, independently retain `review_required` or `rejected` and emit a structured secret-free alert. Signature/fact-commit failure returns provider failure; durable permanent rejection/late/duplicate/review facts return provider success; retryable fulfillment database failure returns provider failure and a same-ID/same-digest notification re-enters fulfillment. Digest conflict returns failure without overwriting the first fact.
 
 Add provider order-query/close implementations for WeChat and Alipay and a strong-audited admin reconciliation endpoint. A timeout or lost response never auto-retries into a second merchant order. Query-confirmed payment reuses the webhook fulfillment pipeline with a deterministic normalized fact digest; confirmed unpaid/not-found is closed at the provider before local close; unknown remains review-required.
 
-- [ ] **Step 5: Run focused and full backend correctness gates**
+- [x] **Step 5: Run focused and full backend correctness gates**
 
 ```powershell
 bash scripts/tests/run-payment-integration.sh --run 'Test(Postgres|Payment).*(Payable|Webhook|Fulfillment|Reconciliation)'
@@ -251,12 +253,14 @@ go vet ./...
 go build ./...
 ```
 
-- [ ] **Step 6: Review and commit Task 3**
+- [x] **Step 6: Review and commit Task 3**
 
-Commit:
+Actual commits:
 
 ```text
 fix(payment): serialize payable transactions and webhook facts
+fix(payment): close reconciliation and locking races
+fix(payment): 会员收银台 - 消除对账死锁并隔离冲突二维码
 ```
 
 ---
@@ -289,11 +293,11 @@ fix(payment): serialize payable transactions and webhook facts
 - `CANVAS_ENVIRONMENT=development|production` controls URL rules; missing or unknown values fail startup, production requires HTTPS, and development permits HTTP only for loopback.
 - Access logs use redacted route templates and never include bearer tokens, checkout URLs, QR code URLs, token hashes, raw provider errors, or Referer.
 
-- [ ] **Step 1: Write failing handler, runtime, logger, and Nginx tests**
+- [x] **Step 1: Write failing handler, runtime, logger, and Nginx tests**
 
 Use sentinels for bearer token, token hash, QR code URL, and provider error. Assert headers on 2xx/4xx/5xx, production rejection of HTTP, development acceptance of loopback HTTP only, server startup rejection of saved insecure config, Gin path redaction, parameterized GORM logging, and absence of sentinels from inner/edge Nginx logs.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 cd backend
@@ -302,15 +306,15 @@ cd ..
 bash scripts/tests/verify-payment-checkout-nginx.test.sh
 ```
 
-- [ ] **Step 3: Implement headers, environment validation, and startup gate**
+- [x] **Step 3: Implement headers, environment validation, and startup gate**
 
 Apply the headers before handler branching. Missing/unknown environment fails. Permit development HTTP only for loopback; production requires HTTPS and valid origins. Validate persisted provider/base URLs before opening the listener or readiness.
 
-- [ ] **Step 4: Implement application and proxy log redaction**
+- [x] **Step 4: Implement application and proxy log redaction**
 
 Replace canvas-only redaction with a sensitive route redactor. Remove raw `ErrorMessage` from request logs. Enable GORM parameterized query logging. Use fixed placeholders or disabled access logs for `/pay/` and `/api/payments/checkout/`; remove Referer from sensitive log formats.
 
-- [ ] **Step 5: Run backend, Nginx, and Compose gates**
+- [x] **Step 5: Run backend, Nginx, and Compose gates**
 
 ```powershell
 cd backend
@@ -331,9 +335,9 @@ docker compose -f docker-compose.production.yml config --quiet
 docker compose -f deploy/docker-compose.ops.yml config --quiet
 ```
 
-- [ ] **Step 6: Review and commit Task 4**
+- [x] **Step 6: Review and commit Task 4**
 
-Commit:
+Actual commit:
 
 ```text
 fix(payment): protect checkout capabilities and logs
@@ -358,26 +362,26 @@ fix(payment): protect checkout capabilities and logs
 - Polling is monotonic: a late pending response cannot replace a paid terminal state. A transient poll error preserves the loaded summary/QR and shows an explicit retry state.
 - Existing active transaction restores the same provider and QR; provider selection locks while it is payable.
 
-- [ ] **Step 1: Write failing pure-domain and source-contract tests**
+- [x] **Step 1: Write failing pure-domain and source-contract tests**
 
-Cover personal/team/credit-topup component composition, original-price visibility, expired/consumed/paid/cancelled presentation, transient failure preservation, active QR restoration, semantic-token-only styling, and required component separation.
+Cover personal/team/credit-topup component composition, original-price visibility, expired/consumed/paid/cancelled presentation, a non-promissory `refunded` review state, transient failure preservation, active QR restoration, semantic-token-only styling, and required component separation.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 cd web
 bun test test/payment-checkout-visual-contract.test.ts
 ```
 
-- [ ] **Step 3: Implement the typed API and pure presentation domain**
+- [x] **Step 3: Implement the typed API and pure presentation domain**
 
 Reuse the typed Task 2 presentation domain. Format one-time payment truthfully and do not calculate a pre-payment entitlement end date.
 
-- [ ] **Step 4: Implement the LibTV-inspired HMaigc shell**
+- [x] **Step 4: Implement the LibTV-inspired HMaigc shell**
 
 Desktop: reference-like left order summary and fixed-width right QR panel. Team summary includes frozen seat count and total credits. Mobile: ordered vertical flow with intact QR and no horizontal scroll. Retain real provider choice when more than one provider is configured. Use semantic tokens, restrained cyan only for selection/payable total/status, and one visible rounded-border layer per block.
 
-- [ ] **Step 5: Run focused and full Web gates**
+- [x] **Step 5: Run focused and full Web gates**
 
 ```powershell
 cd web
@@ -385,12 +389,12 @@ bun test
 bun run build
 ```
 
-- [ ] **Step 6: Review and commit Task 5**
+- [x] **Step 6: Review and commit Task 5**
 
-Commit:
+Actual commit:
 
 ```text
-feat(web): redesign personal and team checkout
+feat(web): 会员收银台 - 重构个人与团队响应式付款界面
 ```
 
 ---
@@ -399,10 +403,15 @@ feat(web): redesign personal and team checkout
 
 **Files:**
 - Add: `web/scripts/verify-membership-checkout-browser.mjs`
+- Add: `web/scripts/membership-checkout-browser-fixture.mjs`
+- Add: `web/scripts/membership-checkout-browser-assertions.mjs`
+- Modify: `nginx.conf`
+- Modify: `scripts/tests/verify-payment-checkout-nginx.test.sh`
 - Modify: `web/package.json`
 - Modify: `web/bun.lock`
 - Modify: `.github/workflows/publish-images.yml`
-- Modify: `docs/content/docs/pending-test.mdx`
+- Modify: `web/src/pages/payment/payment-checkout.css` only when a real Chromium assertion fails
+- Modify: `web/test/payment-checkout-visual-contract.test.ts` only when replacing a source-only false-green with the real browser contract
 
 **Interfaces:**
 - The gate serves the production Web build through the real Nginx image and a deterministic local API fixture containing no secrets.
@@ -410,32 +419,33 @@ feat(web): redesign personal and team checkout
 - It covers personal, team, credit-topup, existing QR restore, paid, expired, cancelled, transient poll failure, and provider failure.
 - It fails when Chromium is unavailable, required variables are absent, or any scenario is skipped.
 
-- [ ] **Step 1: Write the browser gate and first run it against the pre-change artifact**
+- [x] **Step 1: Write the browser gate and first run it against the pre-change artifact**
 
 Assert at 1440×900, 768×1024, and 390×844: correct summary facts, QR image size and accessibility name, provider selection/lock, 44px controls, visible keyboard focus, zero overflow, zero console/page errors, zero unexpected CSP violations, readable light/dark contrast, terminal states, and no internal identifiers or auto-renew claims.
 
-- [ ] **Step 2: Verify the gate RED or catches a deliberate fixture mutation**
+- [x] **Step 2: Verify the gate RED or catches a deliberate fixture mutation**
 
 Run the script once with a fixture mutation that changes team total, removes QR alt text, or forces mobile overflow; capture a non-zero exit. Restore the fixture immediately.
 
-- [ ] **Step 3: Make only the minimal UI/CSS adjustments required for GREEN**
+- [x] **Step 3: Make only the minimal UI/CSS adjustments required for GREEN**
 
 Do not introduce a browser-only production branch or test hook. Any fixture transport is external to the production bundle.
 
-- [ ] **Step 4: Run production artifact and Chromium gates**
+- [x] **Step 4: Run production artifact and Chromium gates**
 
 ```powershell
 cd web
 bun run build
+$env:HMAIGC_CHROMIUM_EXECUTABLE='C:\path\to\chrome.exe'
 bun run verify:membership-checkout-browser
 ```
 
-- [ ] **Step 5: Add the non-skippable CI command and commit Task 6**
+- [x] **Step 5: Add the non-skippable CI command and commit Task 6**
 
-Place the Chromium gate in `verify` before image publication. Commit:
+Place the Chromium gate in `verify` before image publication. Actual commit:
 
 ```text
-test(web): gate membership checkout in Chromium
+test(web): 会员收银台 - 增加生产 Nginx Chromium 回归门禁
 ```
 
 ---
@@ -443,21 +453,25 @@ test(web): gate membership checkout in Chromium
 ### Task 7: Synchronize operational documentation and run the final commercial review
 
 **Files:**
+- Modify: `.env.production.example`
 - Modify: `docs/content/docs/backend/backend-database.mdx`
 - Modify: `docs/content/docs/pending-test.mdx`
 - Modify: `PRODUCTION.md`
 - Modify: `deploy/README.md`
+- Modify: `CHANGELOG.md`
+- Modify: `docs/superpowers/specs/2026-08-09-membership-checkout-design.md`
 - Modify: `docs/superpowers/plans/2026-08-09-membership-checkout.md`
 
 **Interfaces:**
 - Documents state the real one-time-payment provider behavior, idempotency requirements, encrypted checkout recovery dependency on `.settings-key`, partial unique indexes, webhook review workflow, backup/rollback sequence, no-store/log contract, and exact validation commands.
 - The plan checklist and final evidence must match the actual diff and commands; no unrun command may be reported as passing.
+- Pre-documentation corrections are recorded by `ci(payment): 支付集成测试 - 强制运行完整 PostgreSQL 对账矩阵` and `fix(payment): 支付对账 - 补齐待复核交易运营入口`; the final review must include both rather than treating them as documentation-only work.
 
-- [ ] **Step 1: Update the operating and database contracts**
+- [x] **Step 1: Update the operating and database contracts**
 
 Document pre-migration conflict scans and backup, restore of PostgreSQL plus backend data together, how to triage `review_required`, why legacy hash-only checkout tokens cannot be reconstructed, and how production URL/environment validation fails startup.
 
-- [ ] **Step 2: Run the complete required backend environment**
+- [x] **Step 2: Run the complete required backend environment**
 
 Use the scoped integration runner, which starts isolated PostgreSQL 17 and Redis 7 and exports `CANVAS_REQUIRE_INTEGRATION_TESTS=1` plus the test DSN:
 
@@ -465,12 +479,15 @@ Use the scoped integration runner, which starts isolated PostgreSQL 17 and Redis
 bash scripts/tests/run-payment-integration.sh --all
 ```
 
-- [ ] **Step 3: Run the complete Web and infrastructure gates**
+- [x] **Step 3: Run the complete Web and infrastructure gates**
+
+`PRODUCTION.md` 第 1 节是唯一完整发布门禁清单；以下只列出 Task 7 当前阶段需要补跑的环境化检查子集。未重复列出的 frozen install、Go 全量/race/vet/build 与 SPA route 检查仍必须按该唯一清单执行，不能把本段当成较低标准或完整替代。
 
 ```powershell
 cd web
 bun test
 bun run build
+$env:HMAIGC_CHROMIUM_EXECUTABLE='C:\path\to\chrome.exe'
 bun run verify:membership-checkout-browser
 cd ..
 bash scripts/tests/verify-payment-checkout-nginx.test.sh
@@ -487,16 +504,20 @@ docker run --rm -v "${PWD}:/repo" -w /repo rhysd/actionlint:1.7.7
 git diff --check
 ```
 
-- [ ] **Step 4: Perform the explicit final review**
+- [x] **Step 4: Perform the explicit final review**
 
 Compare the original request, approved design, this plan, the complete diff, backend/frontend DTOs, schema and rollback impact, security/logging behavior, personal/team/credit-topup UI, all test evidence, and documentation. Any missing item returns to its owning task before completion.
 
-- [ ] **Step 5: Commit only the synchronized documentation/evidence**
+Final independent standards, specification/visual, and documentation reviews found no remaining Critical, Important, or Minor issues after the expired-checkout recovery and binding-order fixes.
 
-The `docs/` tree is ignored by the root `.gitignore`, while this execution plan is intentionally a delivery artifact. Review its exact path and stage it explicitly with `git add -f -- docs/superpowers/plans/2026-08-09-membership-checkout.md`; do not force-add any other ignored docs or generated files.
+The final review corrections are recorded by `fix(payment): 收银台到期 - 封闭旧链接与待对账事实` (`673afb0`).
+
+- [x] **Step 5: Commit only the synchronized documentation/evidence**
+
+All listed documentation files are already tracked. Stage only the reviewed paths with normal `git add -- <paths>`; do not use `-f` and do not add ignored `.superpowers/sdd` reports or generated artifacts.
 
 Commit:
 
 ```text
-docs(payment): document checkout operations and evidence
+docs(payment): 会员收银台 - 同步运维契约与验收证据
 ```
