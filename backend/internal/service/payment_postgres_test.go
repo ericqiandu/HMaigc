@@ -52,7 +52,7 @@ func TestPostgresPaymentCheckoutSessionConcurrentClaimReturnsFrozenWinner(t *tes
 	}
 	dataDir := t.TempDir()
 	svc := New(repository.New(db), dataDir)
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,7 +141,7 @@ func TestPostgresPaymentCheckoutSessionConcurrentClaimReturnsFrozenWinner(t *tes
 		t.Fatalf("loser overwrote or spliced winning checkout facts: stored=%#v returned=%#v", stored, winner)
 	}
 
-	changed := readyWechatPaymentSetting()
+	changed := readyWechatPaymentSetting(t)
 	changed.CheckoutBaseURL = "https://changed-checkout.example.com"
 	changed.Wechat.Enabled = false
 	if _, err := svc.UpdatePaymentSetting(admin, changed); err != nil {
@@ -170,7 +170,7 @@ func TestPostgresPaymentCheckoutSessionConcurrentClaimReturnsFrozenWinner(t *tes
 		t.Fatal(err)
 	}
 	conflictResult, conflictErr := svc.createOrRecoverPaymentCheckout(
-		model.PaymentOrderMembership, order.ID, owner.ID, readyWechatPaymentSetting().CheckoutBaseURL, now,
+		model.PaymentOrderMembership, order.ID, owner.ID, readyWechatPaymentSetting(t).CheckoutBaseURL, now,
 	)
 	if conflictResult != nil {
 		t.Fatalf("unique-conflict path returned terminal checkout winner: %#v", conflictResult)

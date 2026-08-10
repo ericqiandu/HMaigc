@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -74,46 +75,46 @@ func isDeterministicProviderRejection(err error) bool {
 	return true
 }
 
-func createProviderPayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
+func createProviderPayment(transaction *model.PaymentTransaction, order paymentOrderReference, setting paymentSettingValue) (string, error) {
 	switch transaction.Provider {
 	case model.PaymentProviderWechat:
-		return createWechatNativePayment(transaction, order, channel)
+		return createWechatNativePayment(transaction, order, setting.Wechat)
 	case model.PaymentProviderAlipay:
-		return createAlipayPrecreatePayment(transaction, order, channel)
+		return createAlipayPrecreatePayment(transaction, order, setting.Alipay)
 	default:
 		return "", fmt.Errorf("不支持的支付渠道 %q", transaction.Provider)
 	}
 }
 
-func queryProviderPayment(transaction *model.PaymentTransaction, channel paymentChannelSettingValue) (providerPaymentFact, error) {
+func queryProviderPayment(transaction *model.PaymentTransaction, setting paymentSettingValue) (providerPaymentFact, error) {
 	switch transaction.Provider {
 	case model.PaymentProviderWechat:
-		return queryWechatPayment(transaction, channel)
+		return queryWechatPayment(transaction, setting.Wechat)
 	case model.PaymentProviderAlipay:
-		return queryAlipayPayment(transaction, channel)
+		return queryAlipayPayment(transaction, setting.Alipay)
 	default:
 		return providerPaymentFact{}, fmt.Errorf("不支持的支付渠道 %q", transaction.Provider)
 	}
 }
 
-func closeProviderPayment(transaction *model.PaymentTransaction, channel paymentChannelSettingValue) error {
+func closeProviderPayment(transaction *model.PaymentTransaction, setting paymentSettingValue) error {
 	switch transaction.Provider {
 	case model.PaymentProviderWechat:
-		return closeWechatPayment(transaction, channel)
+		return closeWechatPayment(transaction, setting.Wechat)
 	case model.PaymentProviderAlipay:
-		return closeAlipayPayment(transaction, channel)
+		return closeAlipayPayment(transaction, setting.Alipay)
 	default:
 		return fmt.Errorf("不支持的支付渠道 %q", transaction.Provider)
 	}
 }
 
-func queryWechatPayment(transaction *model.PaymentTransaction, channel paymentChannelSettingValue) (providerPaymentFact, error) {
+func queryWechatPayment(transaction *model.PaymentTransaction, channel wechatPaymentChannelSettingValue) (providerPaymentFact, error) {
 	endpoint := strings.TrimRight(channel.GatewayURL, "/") + "/v3/pay/transactions/out-trade-no/" + url.PathEscape(transaction.MerchantOrderNo) + "?mchid=" + url.QueryEscape(channel.MerchantID)
 	req, err := signedWechatRequest(http.MethodGet, endpoint, nil, channel)
 	if err != nil {
 		return providerPaymentFact{}, err
 	}
-	body, status, _, err := doSignedWechatRequest(req, channel.PlatformPublicKey)
+	body, status, _, err := doSignedWechatRequest(req, "query", channel)
 	if err != nil {
 		return providerPaymentFact{}, err
 	}
@@ -160,7 +161,7 @@ func queryWechatPayment(transaction *model.PaymentTransaction, channel paymentCh
 	}
 }
 
-func closeWechatPayment(transaction *model.PaymentTransaction, channel paymentChannelSettingValue) error {
+func closeWechatPayment(transaction *model.PaymentTransaction, channel wechatPaymentChannelSettingValue) error {
 	body, err := json.Marshal(map[string]string{"mchid": channel.MerchantID})
 	if err != nil {
 		return err
@@ -170,7 +171,7 @@ func closeWechatPayment(transaction *model.PaymentTransaction, channel paymentCh
 	if err != nil {
 		return err
 	}
-	_, status, _, err := doSignedWechatRequest(req, channel.PlatformPublicKey)
+	_, status, _, err := doSignedWechatRequest(req, "close", channel)
 	if err != nil {
 		return err
 	}
@@ -180,7 +181,7 @@ func closeWechatPayment(transaction *model.PaymentTransaction, channel paymentCh
 	return nil
 }
 
-func signedWechatRequest(method string, endpoint string, body []byte, channel paymentChannelSettingValue) (*http.Request, error) {
+func signedWechatRequest(method string, endpoint string, body []byte, channel wechatPaymentChannelSettingValue) (*http.Request, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, err
@@ -207,13 +208,25 @@ func signedWechatRequest(method string, endpoint string, body []byte, channel pa
 		`WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%s",serial_no="%s",signature="%s"`,
 		channel.MerchantID, nonce, timestamp, channel.MerchantSerialNo, signature,
 	))
+	req.Header.Set("Wechatpay-Serial", channel.WechatpayPublicKeyID)
 	return req, nil
 }
 
-func doSignedWechatRequest(req *http.Request, publicKeyPEM string) ([]byte, int, http.Header, error) {
+func doSignedWechatRequest(req *http.Request, operation string, channel wechatPaymentChannelSettingValue) ([]byte, int, http.Header, error) {
 	responseBody, status, headers, err := doPaymentRequestWithHeaders(req)
 	if err != nil {
 		return nil, 0, nil, err
+	}
+	requestID := strings.TrimSpace(headers.Get("Request-ID"))
+	log.Printf(
+		"payment_provider_response provider=wechat operation=%s status=%d request_id=%q request_id_missing=%t",
+		operation,
+		status,
+		truncateRunes(requestID, 160),
+		requestID == "",
+	)
+	if headers.Get("Wechatpay-Serial") != channel.WechatpayPublicKeyID {
+		return nil, status, headers, errors.New("微信支付响应公钥 ID 与当前配置不一致")
 	}
 	timestamp := headers.Get("Wechatpay-Timestamp")
 	nonce := headers.Get("Wechatpay-Nonce")
@@ -229,13 +242,13 @@ func doSignedWechatRequest(req *http.Request, publicKeyPEM string) ([]byte, int,
 	if signedAt.Before(time.Now().Add(-paymentWebhookClockSkew)) || signedAt.After(time.Now().Add(paymentWebhookClockSkew)) {
 		return nil, status, headers, errors.New("微信支付响应时间戳超出允许范围")
 	}
-	if err := verifyRSA2(publicKeyPEM, timestamp+"\n"+nonce+"\n"+string(responseBody)+"\n", signature); err != nil {
+	if err := verifyRSA2(channel.WechatpayPublicKey, timestamp+"\n"+nonce+"\n"+string(responseBody)+"\n", signature); err != nil {
 		return nil, status, headers, fmt.Errorf("微信支付响应验签失败: %w", err)
 	}
 	return responseBody, status, headers, nil
 }
 
-func queryAlipayPayment(transaction *model.PaymentTransaction, channel paymentChannelSettingValue) (providerPaymentFact, error) {
+func queryAlipayPayment(transaction *model.PaymentTransaction, channel alipayPaymentChannelSettingValue) (providerPaymentFact, error) {
 	inner, err := alipayTradeOperation("alipay.trade.query", transaction, channel)
 	if err != nil {
 		return providerPaymentFact{}, err
@@ -278,7 +291,7 @@ func queryAlipayPayment(transaction *model.PaymentTransaction, channel paymentCh
 	}
 }
 
-func closeAlipayPayment(transaction *model.PaymentTransaction, channel paymentChannelSettingValue) error {
+func closeAlipayPayment(transaction *model.PaymentTransaction, channel alipayPaymentChannelSettingValue) error {
 	inner, err := alipayTradeOperation("alipay.trade.close", transaction, channel)
 	if err != nil {
 		return err
@@ -298,7 +311,7 @@ func closeAlipayPayment(transaction *model.PaymentTransaction, channel paymentCh
 	return nil
 }
 
-func alipayTradeOperation(method string, transaction *model.PaymentTransaction, channel paymentChannelSettingValue) (json.RawMessage, error) {
+func alipayTradeOperation(method string, transaction *model.PaymentTransaction, channel alipayPaymentChannelSettingValue) (json.RawMessage, error) {
 	bizContent, err := json.Marshal(map[string]string{"out_trade_no": transaction.MerchantOrderNo})
 	if err != nil {
 		return nil, err
@@ -348,7 +361,7 @@ func verifiedAlipayResponse(body []byte, responseField string, publicKeyPEM stri
 	return inner, nil
 }
 
-func createWechatNativePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
+func createWechatNativePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel wechatPaymentChannelSettingValue) (string, error) {
 	if transaction.ExpiresAt == nil {
 		return "", errors.New("支付交易缺少过期时间")
 	}
@@ -378,7 +391,7 @@ func createWechatNativePayment(transaction *model.PaymentTransaction, order paym
 	if err != nil {
 		return "", err
 	}
-	responseBody, status, _, err := doSignedWechatRequest(req, channel.PlatformPublicKey)
+	responseBody, status, _, err := doSignedWechatRequest(req, "native_create", channel)
 	if err != nil {
 		return "", ambiguousProviderError(err)
 	}
@@ -416,7 +429,7 @@ func deterministicWechatCreateRejection(code string) bool {
 	}
 }
 
-func createAlipayPrecreatePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel paymentChannelSettingValue) (string, error) {
+func createAlipayPrecreatePayment(transaction *model.PaymentTransaction, order paymentOrderReference, channel alipayPaymentChannelSettingValue) (string, error) {
 	if transaction.Currency != "CNY" {
 		return "", fmt.Errorf("支付宝当面付仅支持 CNY，当前币种为 %s", transaction.Currency)
 	}

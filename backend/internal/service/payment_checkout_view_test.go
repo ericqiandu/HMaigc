@@ -195,7 +195,7 @@ func newPaymentCheckoutFixture(t *testing.T, idempotencyKey string) (*Service, *
 		t.Fatal(err)
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
@@ -517,7 +517,7 @@ func TestPaymentCheckoutProviderFailureDoesNotExposeRawResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			privateKey, _ := newWebhookTestRSAKey(t)
-			request := readyWechatPaymentSetting()
+			request := readyWechatPaymentSetting(t)
 			request.Wechat.MerchantPrivateKey = string(pem.EncodeToMemory(&pem.Block{
 				Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 			}))
@@ -566,7 +566,7 @@ func TestPaymentCheckoutViewPreservesCreditTopupAsSeparateSummary(t *testing.T) 
 		t.Fatal(err)
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 	order := model.CreditTopupOrder{
@@ -686,7 +686,7 @@ func TestCreditTopupCheckoutElapsedSessionCannotBeRecoveredForNewPayment(t *test
 		t.Fatal(err)
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 	order := model.CreditTopupOrder{

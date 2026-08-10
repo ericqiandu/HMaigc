@@ -37,44 +37,67 @@ const (
 	paymentEnvironmentProduction  paymentRuntimeEnvironment = "production"
 )
 
-type PaymentChannelSettingRequest struct {
+type WechatPaymentChannelSettingRequest struct {
+	Enabled              bool   `json:"enabled"`
+	AppID                string `json:"appId"`
+	MerchantID           string `json:"merchantId"`
+	MerchantSerialNo     string `json:"merchantSerialNo"`
+	MerchantPrivateKey   string `json:"merchantPrivateKey"`
+	WechatpayPublicKeyID string `json:"wechatpayPublicKeyId"`
+	WechatpayPublicKey   string `json:"wechatpayPublicKey"`
+	APIv3Key             string `json:"apiV3Key"`
+	NotifyURL            string `json:"notifyUrl"`
+	GatewayURL           string `json:"gatewayUrl"`
+}
+
+type AlipayPaymentChannelSettingRequest struct {
 	Enabled            bool   `json:"enabled"`
 	AppID              string `json:"appId"`
 	MerchantID         string `json:"merchantId"`
-	MerchantSerialNo   string `json:"merchantSerialNo"`
 	MerchantPrivateKey string `json:"merchantPrivateKey"`
 	PlatformPublicKey  string `json:"platformPublicKey"`
-	APIv3Key           string `json:"apiV3Key"`
 	NotifyURL          string `json:"notifyUrl"`
 	GatewayURL         string `json:"gatewayUrl"`
 }
 
 type PaymentSettingRequest struct {
-	CheckoutBaseURL string                       `json:"checkoutBaseUrl"`
-	Wechat          PaymentChannelSettingRequest `json:"wechat"`
-	Alipay          PaymentChannelSettingRequest `json:"alipay"`
+	CheckoutBaseURL string                             `json:"checkoutBaseUrl"`
+	Wechat          WechatPaymentChannelSettingRequest `json:"wechat"`
+	Alipay          AlipayPaymentChannelSettingRequest `json:"alipay"`
 }
 
-type PublicPaymentChannelSetting struct {
+type PublicWechatPaymentChannelSetting struct {
 	Enabled               bool   `json:"enabled"`
 	AppID                 string `json:"appId"`
 	MerchantID            string `json:"merchantId"`
 	MerchantSerialNo      string `json:"merchantSerialNo"`
+	WechatpayPublicKeyID  string `json:"wechatpayPublicKeyId"`
 	NotifyURL             string `json:"notifyUrl"`
 	GatewayURL            string `json:"gatewayUrl"`
 	HasMerchantPrivateKey bool   `json:"hasMerchantPrivateKey"`
-	HasPlatformPublicKey  bool   `json:"hasPlatformPublicKey"`
+	HasWechatpayPublicKey bool   `json:"hasWechatpayPublicKey"`
 	HasAPIv3Key           bool   `json:"hasApiV3Key"`
 	Ready                 bool   `json:"ready"`
 }
 
+type PublicAlipayPaymentChannelSetting struct {
+	Enabled               bool   `json:"enabled"`
+	AppID                 string `json:"appId"`
+	MerchantID            string `json:"merchantId"`
+	NotifyURL             string `json:"notifyUrl"`
+	GatewayURL            string `json:"gatewayUrl"`
+	HasMerchantPrivateKey bool   `json:"hasMerchantPrivateKey"`
+	HasPlatformPublicKey  bool   `json:"hasPlatformPublicKey"`
+	Ready                 bool   `json:"ready"`
+}
+
 type PublicPaymentSetting struct {
-	CheckoutBaseURL string                      `json:"checkoutBaseUrl"`
-	Wechat          PublicPaymentChannelSetting `json:"wechat"`
-	Alipay          PublicPaymentChannelSetting `json:"alipay"`
-	UpdatedBy       string                      `json:"updatedBy"`
-	CreatedAt       time.Time                   `json:"createdAt"`
-	UpdatedAt       time.Time                   `json:"updatedAt"`
+	CheckoutBaseURL string                            `json:"checkoutBaseUrl"`
+	Wechat          PublicWechatPaymentChannelSetting `json:"wechat"`
+	Alipay          PublicAlipayPaymentChannelSetting `json:"alipay"`
+	UpdatedBy       string                            `json:"updatedBy"`
+	CreatedAt       time.Time                         `json:"createdAt"`
+	UpdatedAt       time.Time                         `json:"updatedAt"`
 }
 
 type paymentOrderDetails struct {
@@ -135,22 +158,33 @@ type paymentReconciliationAccessAudit struct {
 	FailureCode string `json:"failureCode"`
 }
 
-type paymentChannelSettingValue struct {
+type wechatPaymentChannelSettingValue struct {
+	Enabled              bool   `json:"enabled"`
+	AppID                string `json:"appId"`
+	MerchantID           string `json:"merchantId"`
+	MerchantSerialNo     string `json:"merchantSerialNo"`
+	MerchantPrivateKey   string `json:"merchantPrivateKey"`
+	WechatpayPublicKeyID string `json:"wechatpayPublicKeyId"`
+	WechatpayPublicKey   string `json:"wechatpayPublicKey"`
+	APIv3Key             string `json:"apiV3Key"`
+	NotifyURL            string `json:"notifyUrl"`
+	GatewayURL           string `json:"gatewayUrl"`
+}
+
+type alipayPaymentChannelSettingValue struct {
 	Enabled            bool   `json:"enabled"`
 	AppID              string `json:"appId"`
 	MerchantID         string `json:"merchantId"`
-	MerchantSerialNo   string `json:"merchantSerialNo"`
 	MerchantPrivateKey string `json:"merchantPrivateKey"`
 	PlatformPublicKey  string `json:"platformPublicKey"`
-	APIv3Key           string `json:"apiV3Key"`
 	NotifyURL          string `json:"notifyUrl"`
 	GatewayURL         string `json:"gatewayUrl"`
 }
 
 type paymentSettingValue struct {
-	CheckoutBaseURL string                     `json:"checkoutBaseUrl"`
-	Wechat          paymentChannelSettingValue `json:"wechat"`
-	Alipay          paymentChannelSettingValue `json:"alipay"`
+	CheckoutBaseURL string                           `json:"checkoutBaseUrl"`
+	Wechat          wechatPaymentChannelSettingValue `json:"wechat"`
+	Alipay          alipayPaymentChannelSettingValue `json:"alipay"`
 }
 
 func (s *Service) AdminPaymentSetting(actor *model.User) (*PublicPaymentSetting, error) {
@@ -175,14 +209,17 @@ func (s *Service) UpdatePaymentSetting(actor *model.User, req PaymentSettingRequ
 	}
 	next := paymentSettingValue{
 		CheckoutBaseURL: strings.TrimRight(strings.TrimSpace(req.CheckoutBaseURL), "/"),
-		Wechat:          mergePaymentChannel(req.Wechat, current.Wechat),
-		Alipay:          mergePaymentChannel(req.Alipay, current.Alipay),
+		Wechat:          mergeWechatPaymentChannel(req.Wechat, current.Wechat),
+		Alipay:          mergeAlipayPaymentChannel(req.Alipay, current.Alipay),
 	}
 	environment, err := currentPaymentRuntimeEnvironment()
 	if err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
 	if err := validatePaymentSetting(next, environment); err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
+	if err := validateSubmittedPaymentCredentials(next); err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
 	stored := next
@@ -287,11 +324,10 @@ func (s *Service) AdminReconcilePaymentTransaction(actor *model.User, id string)
 	if err != nil {
 		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "payment_setting_unavailable", err)
 	}
-	channel, ok := paymentChannel(setting, transaction.Provider)
-	if !ok || !paymentChannelReady(transaction.Provider, channel) {
+	if !paymentProviderReady(setting, transaction.Provider) {
 		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "payment_channel_unavailable", errors.New("支付渠道尚未完整配置"))
 	}
-	fact, err := queryProviderPayment(transaction, channel)
+	fact, err := queryProviderPayment(transaction, setting)
 	if err != nil {
 		return nil, s.failPaymentReconciliation(actor, transaction, providerPaymentUnknown, "provider_query_failed", err)
 	}
@@ -299,7 +335,7 @@ func (s *Service) AdminReconcilePaymentTransaction(actor *model.User, id string)
 	case providerPaymentPaid:
 		return s.reconcileConfirmedPayment(actor, transaction, fact)
 	case providerPaymentUnpaid, providerPaymentNotFound:
-		if err := closeProviderPayment(transaction, channel); err != nil {
+		if err := closeProviderPayment(transaction, setting); err != nil {
 			return nil, s.failPaymentReconciliation(actor, transaction, fact.State, "provider_close_failed", err)
 		}
 		now := time.Now()
@@ -613,8 +649,7 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 	if err != nil {
 		return nil, err
 	}
-	channel, ok := paymentChannel(setting, req.Provider)
-	if !ok || !paymentChannelReady(req.Provider, channel) {
+	if !paymentProviderReady(setting, req.Provider) {
 		return nil, BadAuthRequest("所选支付渠道尚未完成商户配置")
 	}
 	now := time.Now()
@@ -642,7 +677,7 @@ func (s *Service) CreatePaymentTransaction(token string, req CreatePaymentTransa
 		}
 		return nil, &AuthError{Status: 409, Message: "支付交易结果待渠道对账，请勿重复创建"}
 	}
-	codeURL, err := createProviderPayment(transaction, paymentOrderReference{OrderNumber: order.OrderNumber, Description: order.Description}, channel)
+	codeURL, err := createProviderPayment(transaction, paymentOrderReference{OrderNumber: order.OrderNumber, Description: order.Description}, setting)
 	if err != nil {
 		status := model.PaymentTransactionReviewRequired
 		failureCode := "provider_result_unknown"
@@ -771,8 +806,8 @@ func (s *Service) readPaymentSetting() (*model.SystemSetting, paymentSettingValu
 		return nil, paymentSettingValue{}, err
 	}
 	for _, secret := range []*string{
-		&value.Wechat.MerchantPrivateKey, &value.Wechat.PlatformPublicKey, &value.Wechat.APIv3Key,
-		&value.Alipay.MerchantPrivateKey, &value.Alipay.PlatformPublicKey, &value.Alipay.APIv3Key,
+		&value.Wechat.MerchantPrivateKey, &value.Wechat.WechatpayPublicKey, &value.Wechat.APIv3Key,
+		&value.Alipay.MerchantPrivateKey, &value.Alipay.PlatformPublicKey,
 	} {
 		plain, decryptErr := s.decryptSettingSecret(*secret)
 		if decryptErr != nil {
@@ -819,8 +854,8 @@ func (s *Service) ValidatePaymentRuntime() error {
 
 func (s *Service) encryptPaymentSecrets(value *paymentSettingValue) error {
 	for _, secret := range []*string{
-		&value.Wechat.MerchantPrivateKey, &value.Wechat.PlatformPublicKey, &value.Wechat.APIv3Key,
-		&value.Alipay.MerchantPrivateKey, &value.Alipay.PlatformPublicKey, &value.Alipay.APIv3Key,
+		&value.Wechat.MerchantPrivateKey, &value.Wechat.WechatpayPublicKey, &value.Wechat.APIv3Key,
+		&value.Alipay.MerchantPrivateKey, &value.Alipay.PlatformPublicKey,
 	} {
 		encrypted, err := s.encryptSettingSecret(*secret)
 		if err != nil {
@@ -831,11 +866,30 @@ func (s *Service) encryptPaymentSecrets(value *paymentSettingValue) error {
 	return nil
 }
 
-func mergePaymentChannel(req PaymentChannelSettingRequest, current paymentChannelSettingValue) paymentChannelSettingValue {
-	next := paymentChannelSettingValue{
+func mergeWechatPaymentChannel(req WechatPaymentChannelSettingRequest, current wechatPaymentChannelSettingValue) wechatPaymentChannelSettingValue {
+	next := wechatPaymentChannelSettingValue{
 		Enabled: req.Enabled, AppID: strings.TrimSpace(req.AppID), MerchantID: strings.TrimSpace(req.MerchantID),
 		MerchantSerialNo: strings.TrimSpace(req.MerchantSerialNo), MerchantPrivateKey: strings.TrimSpace(req.MerchantPrivateKey),
-		PlatformPublicKey: strings.TrimSpace(req.PlatformPublicKey), APIv3Key: strings.TrimSpace(req.APIv3Key),
+		WechatpayPublicKeyID: strings.TrimSpace(req.WechatpayPublicKeyID), WechatpayPublicKey: strings.TrimSpace(req.WechatpayPublicKey),
+		APIv3Key:  strings.TrimSpace(req.APIv3Key),
+		NotifyURL: strings.TrimSpace(req.NotifyURL), GatewayURL: strings.TrimSpace(req.GatewayURL),
+	}
+	if next.MerchantPrivateKey == "" {
+		next.MerchantPrivateKey = current.MerchantPrivateKey
+	}
+	if next.WechatpayPublicKey == "" {
+		next.WechatpayPublicKey = current.WechatpayPublicKey
+	}
+	if next.APIv3Key == "" {
+		next.APIv3Key = current.APIv3Key
+	}
+	return next
+}
+
+func mergeAlipayPaymentChannel(req AlipayPaymentChannelSettingRequest, current alipayPaymentChannelSettingValue) alipayPaymentChannelSettingValue {
+	next := alipayPaymentChannelSettingValue{
+		Enabled: req.Enabled, AppID: strings.TrimSpace(req.AppID), MerchantID: strings.TrimSpace(req.MerchantID),
+		MerchantPrivateKey: strings.TrimSpace(req.MerchantPrivateKey), PlatformPublicKey: strings.TrimSpace(req.PlatformPublicKey),
 		NotifyURL: strings.TrimSpace(req.NotifyURL), GatewayURL: strings.TrimSpace(req.GatewayURL),
 	}
 	if next.MerchantPrivateKey == "" {
@@ -843,9 +897,6 @@ func mergePaymentChannel(req PaymentChannelSettingRequest, current paymentChanne
 	}
 	if next.PlatformPublicKey == "" {
 		next.PlatformPublicKey = current.PlatformPublicKey
-	}
-	if next.APIv3Key == "" {
-		next.APIv3Key = current.APIv3Key
 	}
 	return next
 }
@@ -857,23 +908,85 @@ func validatePaymentSetting(value paymentSettingValue, environment paymentRuntim
 		}
 	}
 	for _, item := range []struct {
-		name     string
-		provider model.PaymentProvider
-		channel  paymentChannelSettingValue
+		name       string
+		provider   model.PaymentProvider
+		notifyURL  string
+		gatewayURL string
 	}{
-		{name: "微信支付", provider: model.PaymentProviderWechat, channel: value.Wechat},
-		{name: "支付宝", provider: model.PaymentProviderAlipay, channel: value.Alipay},
+		{name: "微信支付", provider: model.PaymentProviderWechat, notifyURL: value.Wechat.NotifyURL, gatewayURL: value.Wechat.GatewayURL},
+		{name: "支付宝", provider: model.PaymentProviderAlipay, notifyURL: value.Alipay.NotifyURL, gatewayURL: value.Alipay.GatewayURL},
 	} {
-		name, channel := item.name, item.channel
-		if channel.NotifyURL != "" {
-			if err := validatePaymentPublicURL(channel.NotifyURL, name+"回调地址", environment, false); err != nil {
+		if item.notifyURL != "" {
+			if err := validatePaymentPublicURL(item.notifyURL, item.name+"回调地址", environment, false); err != nil {
 				return err
 			}
 		}
-		if channel.GatewayURL != "" {
-			if err := validatePaymentGatewayURL(item.provider, channel.GatewayURL); err != nil {
+		if item.gatewayURL != "" {
+			if err := validatePaymentGatewayURL(item.provider, item.gatewayURL); err != nil {
 				return err
 			}
+		}
+	}
+	if value.Wechat.WechatpayPublicKeyID != "" {
+		if err := validateWechatpayPublicKeyID(value.Wechat.WechatpayPublicKeyID); err != nil {
+			return err
+		}
+	}
+	if value.Wechat.Enabled && !wechatPaymentChannelReady(value.Wechat) {
+		return errors.New("启用微信支付前必须完整配置 AppID、商户号、商户证书、公钥 ID、公钥、API v3 密钥和接口地址")
+	}
+	if value.Alipay.Enabled && !alipayPaymentChannelReady(value.Alipay) {
+		return errors.New("启用支付宝前必须完整配置应用、商户身份、签名凭据和接口地址")
+	}
+	return nil
+}
+
+func validateSubmittedPaymentCredentials(value paymentSettingValue) error {
+	wechat := value.Wechat
+	if wechat.MerchantPrivateKey != "" {
+		if _, err := parseRSAPrivateKey(wechat.MerchantPrivateKey); err != nil {
+			return fmt.Errorf("微信商户私钥无效: %w", err)
+		}
+	}
+	if wechat.WechatpayPublicKey != "" {
+		if _, err := parseRSAPublicKey(wechat.WechatpayPublicKey); err != nil {
+			return fmt.Errorf("微信支付公钥无效: %w", err)
+		}
+	}
+	if wechat.APIv3Key != "" {
+		if err := validateWechatAPIv3Key(wechat.APIv3Key); err != nil {
+			return err
+		}
+	}
+	if value.Alipay.MerchantPrivateKey != "" {
+		if _, err := parseRSAPrivateKey(value.Alipay.MerchantPrivateKey); err != nil {
+			return fmt.Errorf("支付宝商户私钥无效: %w", err)
+		}
+	}
+	if value.Alipay.PlatformPublicKey != "" {
+		if _, err := parseRSAPublicKey(value.Alipay.PlatformPublicKey); err != nil {
+			return fmt.Errorf("支付宝平台公钥无效: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateWechatpayPublicKeyID(value string) error {
+	const prefix = "PUB_KEY_ID_"
+	if !strings.HasPrefix(value, prefix) || len(value) == len(prefix) {
+		return errors.New("微信支付公钥 ID 必须使用 PUB_KEY_ID_ 格式")
+	}
+	return nil
+}
+
+func validateWechatAPIv3Key(value string) error {
+	if len(value) != 32 {
+		return errors.New("微信支付 API v3 密钥必须为 32 个字符")
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if (character < '0' || character > '9') && (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') {
+			return errors.New("微信支付 API v3 密钥只允许数字和大小写字母")
 		}
 	}
 	return nil
@@ -1005,39 +1118,42 @@ func parsePaymentWebhookStatus(value string) (model.PaymentWebhookStatus, error)
 
 func readyPaymentProviders(value paymentSettingValue) []model.PaymentProvider {
 	providers := make([]model.PaymentProvider, 0, 2)
-	if paymentChannelReady(model.PaymentProviderWechat, value.Wechat) {
+	if wechatPaymentChannelReady(value.Wechat) {
 		providers = append(providers, model.PaymentProviderWechat)
 	}
-	if paymentChannelReady(model.PaymentProviderAlipay, value.Alipay) {
+	if alipayPaymentChannelReady(value.Alipay) {
 		providers = append(providers, model.PaymentProviderAlipay)
 	}
 	return providers
 }
 
-func paymentChannel(value paymentSettingValue, provider model.PaymentProvider) (paymentChannelSettingValue, bool) {
+func paymentProviderReady(value paymentSettingValue, provider model.PaymentProvider) bool {
 	switch provider {
 	case model.PaymentProviderWechat:
-		return value.Wechat, true
+		return wechatPaymentChannelReady(value.Wechat)
 	case model.PaymentProviderAlipay:
-		return value.Alipay, true
+		return alipayPaymentChannelReady(value.Alipay)
 	default:
-		return paymentChannelSettingValue{}, false
+		return false
 	}
 }
 
-func paymentChannelReady(provider model.PaymentProvider, value paymentChannelSettingValue) bool {
-	common := value.Enabled && value.AppID != "" && value.MerchantPrivateKey != "" && value.NotifyURL != "" && value.GatewayURL != ""
-	if provider == model.PaymentProviderWechat {
-		return common && value.MerchantID != "" && value.MerchantSerialNo != "" && value.PlatformPublicKey != "" && value.APIv3Key != ""
-	}
-	return common && value.MerchantID != "" && value.PlatformPublicKey != ""
+func wechatPaymentChannelReady(value wechatPaymentChannelSettingValue) bool {
+	return value.Enabled && value.AppID != "" && value.MerchantID != "" && value.MerchantSerialNo != "" &&
+		value.MerchantPrivateKey != "" && value.WechatpayPublicKeyID != "" && value.WechatpayPublicKey != "" &&
+		value.APIv3Key != "" && value.NotifyURL != "" && value.GatewayURL != ""
+}
+
+func alipayPaymentChannelReady(value alipayPaymentChannelSettingValue) bool {
+	return value.Enabled && value.AppID != "" && value.MerchantID != "" && value.MerchantPrivateKey != "" &&
+		value.PlatformPublicKey != "" && value.NotifyURL != "" && value.GatewayURL != ""
 }
 
 func publicPaymentSetting(setting *model.SystemSetting, value paymentSettingValue) PublicPaymentSetting {
 	result := PublicPaymentSetting{
 		CheckoutBaseURL: value.CheckoutBaseURL,
-		Wechat:          publicPaymentChannel(model.PaymentProviderWechat, value.Wechat),
-		Alipay:          publicPaymentChannel(model.PaymentProviderAlipay, value.Alipay),
+		Wechat:          publicWechatPaymentChannel(value.Wechat),
+		Alipay:          publicAlipayPaymentChannel(value.Alipay),
 	}
 	if setting != nil {
 		result.UpdatedBy, result.CreatedAt, result.UpdatedAt = setting.UpdatedBy, setting.CreatedAt, setting.UpdatedAt
@@ -1045,12 +1161,22 @@ func publicPaymentSetting(setting *model.SystemSetting, value paymentSettingValu
 	return result
 }
 
-func publicPaymentChannel(provider model.PaymentProvider, value paymentChannelSettingValue) PublicPaymentChannelSetting {
-	return PublicPaymentChannelSetting{
+func publicWechatPaymentChannel(value wechatPaymentChannelSettingValue) PublicWechatPaymentChannelSetting {
+	return PublicWechatPaymentChannelSetting{
 		Enabled: value.Enabled, AppID: value.AppID, MerchantID: value.MerchantID, MerchantSerialNo: value.MerchantSerialNo,
+		WechatpayPublicKeyID: value.WechatpayPublicKeyID,
+		NotifyURL:            value.NotifyURL, GatewayURL: value.GatewayURL,
+		HasMerchantPrivateKey: value.MerchantPrivateKey != "", HasWechatpayPublicKey: value.WechatpayPublicKey != "",
+		HasAPIv3Key: value.APIv3Key != "", Ready: wechatPaymentChannelReady(value),
+	}
+}
+
+func publicAlipayPaymentChannel(value alipayPaymentChannelSettingValue) PublicAlipayPaymentChannelSetting {
+	return PublicAlipayPaymentChannelSetting{
+		Enabled: value.Enabled, AppID: value.AppID, MerchantID: value.MerchantID,
 		NotifyURL: value.NotifyURL, GatewayURL: value.GatewayURL,
 		HasMerchantPrivateKey: value.MerchantPrivateKey != "", HasPlatformPublicKey: value.PlatformPublicKey != "",
-		HasAPIv3Key: value.APIv3Key != "", Ready: paymentChannelReady(provider, value),
+		Ready: alipayPaymentChannelReady(value),
 	}
 }
 

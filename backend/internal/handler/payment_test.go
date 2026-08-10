@@ -56,8 +56,9 @@ func TestPaymentHeadersOnCheckoutBearerSuccess(t *testing.T) {
 			"merchantId":"merchant-id",
 			"merchantSerialNo":"merchant-serial",
 			"merchantPrivateKey":"merchant-private-key",
-			"platformPublicKey":"platform-public-key",
-			"apiV3Key":"api-v3-key",
+			"wechatpayPublicKeyId":"PUB_KEY_ID_3000000001",
+			"wechatpayPublicKey":"wechatpay-public-key",
+			"apiV3Key":"0123456789ABCDEF0123456789ABCDEF",
 			"notifyUrl":"https://api.example.com/api/payments/webhooks/wechat",
 			"gatewayUrl":"https://api.mch.weixin.qq.com"
 		},
@@ -140,6 +141,21 @@ func TestPaymentHeadersOnCheckoutBearerSuccess(t *testing.T) {
 		t.Fatalf("provider failure status = %d, body = %s", providerFailureResponse.Code, providerFailureResponse.Body.String())
 	}
 	assertPaymentCapabilityHeaders(t, providerFailureResponse)
+}
+
+func TestWechatWebhookHeadersIncludePublicKeyID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/payments/webhooks/wechat", strings.NewReader("{}"))
+	context.Request.Header.Set("Wechatpay-Serial", "PUB_KEY_ID_3000000001")
+	context.Request.Header.Set("Wechatpay-Timestamp", "1700000000")
+	context.Request.Header.Set("Wechatpay-Nonce", "nonce")
+	context.Request.Header.Set("Wechatpay-Signature", "signature")
+
+	headers := wechatPaymentWebhookHeaders(context)
+	if headers.Serial != "PUB_KEY_ID_3000000001" || headers.Timestamp != "1700000000" || headers.Nonce != "nonce" || headers.Signature != "signature" {
+		t.Fatalf("unexpected WeChat webhook headers: %+v", headers)
+	}
 }
 
 func TestPaymentHeadersOnCheckoutBearerServerErrorDoesNotExposeInternalOrderFacts(t *testing.T) {
@@ -310,8 +326,9 @@ func TestPaymentHeadersOnSuccessfulCheckoutURLCreation(t *testing.T) {
 			"merchantId":"merchant-id",
 			"merchantSerialNo":"merchant-serial",
 			"merchantPrivateKey":"merchant-private-key",
-			"platformPublicKey":"platform-public-key",
-			"apiV3Key":"api-v3-key",
+			"wechatpayPublicKeyId":"PUB_KEY_ID_3000000001",
+			"wechatpayPublicKey":"wechatpay-public-key",
+			"apiV3Key":"0123456789ABCDEF0123456789ABCDEF",
 			"notifyUrl":"https://api.example.com/api/payments/webhooks/wechat",
 			"gatewayUrl":"https://api.mch.weixin.qq.com"
 		},

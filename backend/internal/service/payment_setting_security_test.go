@@ -51,7 +51,7 @@ func TestPaymentRuntimeEnvironmentControlsCheckoutAndNotifyURLs(t *testing.T) {
 			environment: "production",
 			request: PaymentSettingRequest{
 				CheckoutBaseURL: "https://checkout.example.com",
-				Wechat: PaymentChannelSettingRequest{
+				Wechat: WechatPaymentChannelSettingRequest{
 					NotifyURL: "http://api.example.com/api/payments/webhooks/wechat",
 				},
 			},
@@ -102,7 +102,7 @@ func TestPaymentRuntimeEnvironmentControlsCheckoutAndNotifyURLs(t *testing.T) {
 		{
 			name:        "production notify fragment",
 			environment: "production",
-			request: PaymentSettingRequest{Wechat: PaymentChannelSettingRequest{
+			request: PaymentSettingRequest{Wechat: WechatPaymentChannelSettingRequest{
 				NotifyURL: "https://api.example.com/api/payments/webhooks/wechat#fragment",
 			}},
 			wantError: true,
@@ -110,7 +110,7 @@ func TestPaymentRuntimeEnvironmentControlsCheckoutAndNotifyURLs(t *testing.T) {
 		{
 			name:        "production notify empty fragment delimiter",
 			environment: "production",
-			request: PaymentSettingRequest{Wechat: PaymentChannelSettingRequest{
+			request: PaymentSettingRequest{Wechat: WechatPaymentChannelSettingRequest{
 				NotifyURL: "https://api.example.com/api/payments/webhooks/wechat#",
 			}},
 			wantError: true,
@@ -125,7 +125,7 @@ func TestPaymentRuntimeEnvironmentControlsCheckoutAndNotifyURLs(t *testing.T) {
 			environment: "development",
 			request: PaymentSettingRequest{
 				CheckoutBaseURL: "http://127.42.8.9:3000",
-				Alipay: PaymentChannelSettingRequest{
+				Alipay: AlipayPaymentChannelSettingRequest{
 					NotifyURL: "http://127.99.1.2:8080/api/payments/webhooks/alipay",
 				},
 			},
@@ -209,7 +209,7 @@ func TestPaymentRuntimeRejectsPersistedInsecureConfigurationAndPublicOrigins(t *
 			publicOrigins: "https://app.example.com",
 			persisted: &paymentSettingValue{
 				CheckoutBaseURL: "https://checkout.example.com",
-				Wechat: paymentChannelSettingValue{
+				Wechat: wechatPaymentChannelSettingValue{
 					NotifyURL: "http://api.example.com/api/payments/webhooks/wechat",
 				},
 			},
@@ -290,7 +290,7 @@ func TestPaymentRuntimeRejectsPersistedInsecureConfigurationAndPublicOrigins(t *
 			publicOrigins: "http://localhost:3000,http://127.20.1.1:4173,http://[::1]:3001",
 			persisted: &paymentSettingValue{
 				CheckoutBaseURL: "http://127.0.0.1:3000",
-				Wechat: paymentChannelSettingValue{
+				Wechat: wechatPaymentChannelSettingValue{
 					NotifyURL: "http://[::1]:8080/api/payments/webhooks/wechat",
 				},
 			},
@@ -301,7 +301,7 @@ func TestPaymentRuntimeRejectsPersistedInsecureConfigurationAndPublicOrigins(t *
 			publicOrigins: "https://app.example.com,https://admin.example.com:8443",
 			persisted: &paymentSettingValue{
 				CheckoutBaseURL: "https://checkout.example.com",
-				Alipay: paymentChannelSettingValue{
+				Alipay: alipayPaymentChannelSettingValue{
 					NotifyURL: "https://api.example.com/api/payments/webhooks/alipay",
 				},
 			},

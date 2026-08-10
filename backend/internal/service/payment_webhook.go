@@ -29,6 +29,7 @@ import (
 const paymentWebhookClockSkew = 5 * time.Minute
 
 type WechatPaymentWebhookHeaders struct {
+	Serial    string
 	Timestamp string
 	Nonce     string
 	Signature string
@@ -66,10 +67,13 @@ func (s *Service) HandleWechatPaymentWebhook(headers WechatPaymentWebhookHeaders
 		return err
 	}
 	channel := setting.Wechat
-	if !paymentChannelReady(model.PaymentProviderWechat, channel) {
+	if !wechatPaymentChannelReady(channel) {
 		return paymentWebhookRequestError("微信支付渠道尚未完整配置")
 	}
-	if err := verifyWechatWebhookSignature(headers, body, channel.PlatformPublicKey, time.Now()); err != nil {
+	if headers.Serial != channel.WechatpayPublicKeyID {
+		return paymentWebhookRequestError("微信支付通知公钥 ID 与当前配置不一致")
+	}
+	if err := verifyWechatWebhookSignature(headers, body, channel.WechatpayPublicKey, time.Now()); err != nil {
 		return paymentWebhookRequestError(err.Error())
 	}
 	var envelope wechatWebhookEnvelope
@@ -119,7 +123,7 @@ func (s *Service) HandleAlipayPaymentWebhook(body []byte) error {
 		return err
 	}
 	channel := setting.Alipay
-	if !paymentChannelReady(model.PaymentProviderAlipay, channel) {
+	if !alipayPaymentChannelReady(channel) {
 		return paymentWebhookRequestError("支付宝渠道尚未完整配置")
 	}
 	if err := verifyAlipayWebhookSignature(values, channel.PlatformPublicKey); err != nil {

@@ -27,19 +27,23 @@ func createCommercialTestUsers(t *testing.T, db *gorm.DB) (*model.User, *model.U
 	return admin, owner, other
 }
 
-func readyWechatPaymentSetting() PaymentSettingRequest {
+func readyWechatPaymentSetting(t *testing.T) PaymentSettingRequest {
+	t.Helper()
+	merchantPrivateKey, _ := newWebhookTestRSAKey(t)
+	_, wechatpayPublicKey := newWebhookTestRSAKey(t)
 	return PaymentSettingRequest{
 		CheckoutBaseURL: "https://checkout.example.com",
-		Wechat: PaymentChannelSettingRequest{
-			Enabled:            true,
-			AppID:              "wx-app-id",
-			MerchantID:         "merchant-id",
-			MerchantSerialNo:   "merchant-serial",
-			MerchantPrivateKey: "merchant-private-key",
-			PlatformPublicKey:  "platform-public-key",
-			APIv3Key:           "api-v3-key",
-			NotifyURL:          "https://api.example.com/payment/wechat/notify",
-			GatewayURL:         "https://api.mch.weixin.qq.com",
+		Wechat: WechatPaymentChannelSettingRequest{
+			Enabled:              true,
+			AppID:                "wx-app-id",
+			MerchantID:           "merchant-id",
+			MerchantSerialNo:     "merchant-serial",
+			MerchantPrivateKey:   rsaPrivateKeyPEM(t, merchantPrivateKey),
+			WechatpayPublicKeyID: "PUB_KEY_ID_3000000001",
+			WechatpayPublicKey:   wechatpayPublicKey,
+			APIv3Key:             strings.Repeat("k", 32),
+			NotifyURL:            "https://api.example.com/payment/wechat/notify",
+			GatewayURL:           "https://api.mch.weixin.qq.com",
 		},
 	}
 }
@@ -330,26 +334,26 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 func TestPaymentSecretsAreEncryptedAndBlankUpdatePreservesThem(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	admin, _, _ := createCommercialTestUsers(t, db)
-	request := readyWechatPaymentSetting()
+	request := readyWechatPaymentSetting(t)
 	public, err := svc.UpdatePaymentSetting(admin, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !public.Wechat.Ready || !public.Wechat.HasMerchantPrivateKey || !public.Wechat.HasPlatformPublicKey || !public.Wechat.HasAPIv3Key {
+	if !public.Wechat.Ready || !public.Wechat.HasMerchantPrivateKey || !public.Wechat.HasWechatpayPublicKey || !public.Wechat.HasAPIv3Key {
 		t.Fatalf("public setting does not report ready secret flags: %#v", public.Wechat)
 	}
 	var stored model.SystemSetting
 	if err := db.First(&stored, "key = ?", paymentSettingKey).Error; err != nil {
 		t.Fatal(err)
 	}
-	for _, plaintext := range []string{"merchant-private-key", "platform-public-key", "api-v3-key"} {
+	for _, plaintext := range []string{request.Wechat.MerchantPrivateKey, request.Wechat.WechatpayPublicKey, request.Wechat.APIv3Key} {
 		if strings.Contains(stored.ValueJSON, plaintext) {
 			t.Fatalf("stored payment setting leaked plaintext %q", plaintext)
 		}
 	}
 	blankSecrets := request
 	blankSecrets.Wechat.MerchantPrivateKey = ""
-	blankSecrets.Wechat.PlatformPublicKey = ""
+	blankSecrets.Wechat.WechatpayPublicKey = ""
 	blankSecrets.Wechat.APIv3Key = ""
 	blankSecrets.Wechat.AppID = "wx-app-id-updated"
 	updated, err := svc.UpdatePaymentSetting(admin, blankSecrets)
@@ -367,7 +371,7 @@ func TestPaymentCheckoutProtectsOwnershipTokenAndExpiration(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin, owner, other := createCommercialTestUsers(t, db)
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
@@ -431,7 +435,8 @@ func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	incomplete := readyWechatPaymentSetting()
+	incomplete := readyWechatPaymentSetting(t)
+	incomplete.Wechat.Enabled = false
 	incomplete.Wechat.APIv3Key = ""
 	if _, err := svc.UpdatePaymentSetting(admin, incomplete); err != nil {
 		t.Fatal(err)
@@ -445,7 +450,7 @@ func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
 	if sessionCount != 0 {
 		t.Fatalf("incomplete merchant config created %d checkout sessions", sessionCount)
 	}
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 	result, err := svc.CreatePaymentCheckout(owner, order.ID)
@@ -458,18 +463,18 @@ func TestPaymentDoesNotFabricateCheckoutOrProviderSuccess(t *testing.T) {
 	if err := db.First(&transaction, "order_id = ?", order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if transaction.Status != model.PaymentTransactionFailed || transaction.CodeURL != "" || transaction.FailureCode != "provider_rejected" || transaction.FailureReason == "" {
+	if transaction.Status != model.PaymentTransactionReviewRequired || transaction.CodeURL != "" || transaction.FailureCode != "provider_result_unknown" || transaction.FailureReason == "" {
 		t.Fatalf("provider connector failure was not recorded explicitly: %#v", transaction)
 	}
 	if _, err := svc.CreatePaymentTransaction(checkoutToken(t, result.CheckoutURL), CreatePaymentTransactionRequest{Provider: model.PaymentProviderWechat}); err == nil {
-		t.Fatal("deterministic provider rejection unexpectedly returned success")
+		t.Fatal("untrusted provider rejection unexpectedly returned success")
 	}
-	var failedCount int64
-	if err := db.Model(&model.PaymentTransaction{}).Where("order_id = ? AND status = ?", order.ID, model.PaymentTransactionFailed).Count(&failedCount).Error; err != nil {
+	var transactionCount int64
+	if err := db.Model(&model.PaymentTransaction{}).Where("order_id = ?", order.ID).Count(&transactionCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedCount != 2 {
-		t.Fatalf("deterministic rejection transaction count = %d, want 2 released attempts", failedCount)
+	if transactionCount != 1 {
+		t.Fatalf("untrusted rejection transaction count = %d, want 1 retained review fact", transactionCount)
 	}
 }
 
@@ -480,9 +485,9 @@ func TestPaymentPayableProviderTimeoutKeepsSingleMerchantOrderForReconciliation(
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
 	merchantPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
-	setting := readyWechatPaymentSetting()
+	setting := readyWechatPaymentSetting(t)
 	setting.Wechat.MerchantPrivateKey = rsaPrivateKeyPEM(t, merchantPrivate)
-	setting.Wechat.PlatformPublicKey = platformPublicPEM
+	setting.Wechat.WechatpayPublicKey = platformPublicPEM
 	setting.Wechat.APIv3Key = strings.Repeat("k", 32)
 	if _, err := svc.UpdatePaymentSetting(admin, setting); err != nil {
 		t.Fatal(err)
@@ -529,11 +534,11 @@ func TestPaymentPayableSameProviderReplayAndRefreshReuseOneQRWhileCrossProviderL
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
 	merchantPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
-	setting := readyWechatPaymentSetting()
+	setting := readyWechatPaymentSetting(t)
 	setting.Wechat.MerchantPrivateKey = rsaPrivateKeyPEM(t, merchantPrivate)
-	setting.Wechat.PlatformPublicKey = platformPublicPEM
+	setting.Wechat.WechatpayPublicKey = platformPublicPEM
 	setting.Wechat.APIv3Key = strings.Repeat("k", 32)
-	setting.Alipay = PaymentChannelSettingRequest{
+	setting.Alipay = AlipayPaymentChannelSettingRequest{
 		Enabled: true, AppID: "alipay-app", MerchantID: "alipay-merchant",
 		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
 		NotifyURL: "https://merchant.example.com/alipay", GatewayURL: "https://openapi.alipay.com/gateway.do",
@@ -589,7 +594,7 @@ func TestPaymentCheckoutRemainsReadableAfterSuccessfulPayment(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin, owner, _ := createCommercialTestUsers(t, db)
-	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting()); err != nil {
+	if _, err := svc.UpdatePaymentSetting(admin, readyWechatPaymentSetting(t)); err != nil {
 		t.Fatal(err)
 	}
 	plan := membershipPlanByCode(t, db, "pro-month")
@@ -636,7 +641,7 @@ func TestPaymentGatewayRejectsNonOfficialOrInsecureEndpoints(t *testing.T) {
 		"embedded credentials": "https://merchant:secret@api.mch.weixin.qq.com",
 	} {
 		t.Run(name, func(t *testing.T) {
-			request := readyWechatPaymentSetting()
+			request := readyWechatPaymentSetting(t)
 			request.Wechat.GatewayURL = gatewayURL
 			_, err := svc.UpdatePaymentSetting(admin, request)
 			requireAuthStatus(t, err, http.StatusBadRequest)

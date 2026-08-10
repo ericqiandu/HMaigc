@@ -16,9 +16,9 @@ func TestPaymentCreateWechatRequiresSignedResponse(t *testing.T) {
 	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
 	wrongPrivate, _ := newWebhookTestRSAKey(t)
 	transaction, order := paymentCreateTestFacts(model.PaymentProviderWechat)
-	channel := paymentChannelSettingValue{
+	channel := wechatPaymentChannelSettingValue{
 		AppID: "wechat-app", MerchantID: "wechat-merchant", MerchantSerialNo: "merchant-serial",
-		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
+		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), WechatpayPublicKeyID: "PUB_KEY_ID_3000000001", WechatpayPublicKey: platformPublicPEM,
 		NotifyURL: "https://merchant.example.com/wechat", GatewayURL: "https://api.mch.weixin.qq.com",
 	}
 
@@ -85,7 +85,7 @@ func TestPaymentCreateAlipayRequiresSignedMerchantOrderResponse(t *testing.T) {
 	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
 	wrongPrivate, _ := newWebhookTestRSAKey(t)
 	transaction, order := paymentCreateTestFacts(model.PaymentProviderAlipay)
-	channel := paymentChannelSettingValue{
+	channel := alipayPaymentChannelSettingValue{
 		AppID: "alipay-app", MerchantID: "alipay-merchant",
 		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
 		NotifyURL: "https://merchant.example.com/alipay", GatewayURL: "https://openapi.alipay.com/gateway.do",
@@ -163,9 +163,9 @@ func TestPaymentCreateProviderBusinessCodesReleaseOnlyProvenRejections(t *testin
 		merchantPrivate, _ := newWebhookTestRSAKey(t)
 		platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
 		transaction, order := paymentCreateTestFacts(model.PaymentProviderWechat)
-		channel := paymentChannelSettingValue{
+		channel := wechatPaymentChannelSettingValue{
 			AppID: "wechat-app", MerchantID: "wechat-merchant", MerchantSerialNo: "merchant-serial",
-			MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
+			MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), WechatpayPublicKeyID: "PUB_KEY_ID_3000000001", WechatpayPublicKey: platformPublicPEM,
 			NotifyURL: "https://merchant.example.com/wechat", GatewayURL: "https://api.mch.weixin.qq.com",
 		}
 		tests := []struct {
@@ -199,7 +199,7 @@ func TestPaymentCreateProviderBusinessCodesReleaseOnlyProvenRejections(t *testin
 		merchantPrivate, _ := newWebhookTestRSAKey(t)
 		platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
 		transaction, order := paymentCreateTestFacts(model.PaymentProviderAlipay)
-		channel := paymentChannelSettingValue{
+		channel := alipayPaymentChannelSettingValue{
 			AppID: "alipay-app", MerchantID: "alipay-merchant",
 			MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
 			NotifyURL: "https://merchant.example.com/alipay", GatewayURL: "https://openapi.alipay.com/gateway.do",
@@ -253,7 +253,7 @@ func signedWechatCreateTestResponse(t *testing.T, request *http.Request, status 
 	header.Set("Wechatpay-Timestamp", timestamp)
 	header.Set("Wechatpay-Nonce", nonce)
 	header.Set("Wechatpay-Signature", signature)
-	header.Set("Wechatpay-Serial", "platform-key-id")
+	header.Set("Wechatpay-Serial", "PUB_KEY_ID_3000000001")
 	return paymentTestResponse(request, status, body, header)
 }
 

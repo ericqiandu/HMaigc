@@ -21,11 +21,7 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			writeWechatWebhookFailure(c, err)
 			return
 		}
-		err = svc.HandleWechatPaymentWebhook(service.WechatPaymentWebhookHeaders{
-			Timestamp: c.GetHeader("Wechatpay-Timestamp"),
-			Nonce:     c.GetHeader("Wechatpay-Nonce"),
-			Signature: c.GetHeader("Wechatpay-Signature"),
-		}, body)
+		err = svc.HandleWechatPaymentWebhook(wechatPaymentWebhookHeaders(c), body)
 		if err != nil {
 			if service.ShouldAcknowledgePaymentWebhook(err) {
 				c.Status(http.StatusNoContent)
@@ -187,6 +183,15 @@ func RegisterPaymentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, result)
 	})
+}
+
+func wechatPaymentWebhookHeaders(c *gin.Context) service.WechatPaymentWebhookHeaders {
+	return service.WechatPaymentWebhookHeaders{
+		Serial:    c.GetHeader("Wechatpay-Serial"),
+		Timestamp: c.GetHeader("Wechatpay-Timestamp"),
+		Nonce:     c.GetHeader("Wechatpay-Nonce"),
+		Signature: c.GetHeader("Wechatpay-Signature"),
+	}
 }
 
 // PaymentCapabilityHeaders 必须在 CORS 之前注册，使 OPTIONS 短路也不会缓存 bearer 能力路径的响应。

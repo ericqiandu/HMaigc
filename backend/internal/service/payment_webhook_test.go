@@ -595,15 +595,15 @@ func TestPaymentWebhookSignatureOrFactCommitFailureRequestsProviderRetry(t *test
 		if err := db.Create(admin).Error; err != nil {
 			t.Fatal(err)
 		}
-		setting := readyWechatPaymentSetting()
+		setting := readyWechatPaymentSetting(t)
 		setting.Wechat.MerchantPrivateKey = rsaPrivateKeyPEM(t, merchantPrivate)
-		setting.Wechat.PlatformPublicKey = platformPublicPEM
+		setting.Wechat.WechatpayPublicKey = platformPublicPEM
 		setting.Wechat.APIv3Key = strings.Repeat("k", 32)
 		if _, err := svc.UpdatePaymentSetting(admin, setting); err != nil {
 			t.Fatal(err)
 		}
 		err := svc.HandleWechatPaymentWebhook(WechatPaymentWebhookHeaders{
-			Timestamp: strconv.FormatInt(time.Now().Unix(), 10), Nonce: "invalid-signature-nonce",
+			Serial: "PUB_KEY_ID_3000000001", Timestamp: strconv.FormatInt(time.Now().Unix(), 10), Nonce: "invalid-signature-nonce",
 			Signature: base64.StdEncoding.EncodeToString([]byte("invalid-signature")),
 		}, []byte(`{"id":"must-not-persist"}`))
 		if err == nil || ShouldAcknowledgePaymentWebhook(err) {
@@ -658,7 +658,7 @@ func TestPaymentWebhookSignatureOrFactCommitFailureRequestsProviderRetry(t *test
 func TestPaymentReconciliationAlipayQueryNormalizesSignedProviderStatesAndCloseFailure(t *testing.T) {
 	merchantPrivate, _ := newWebhookTestRSAKey(t)
 	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
-	channel := paymentChannelSettingValue{
+	channel := alipayPaymentChannelSettingValue{
 		AppID: "alipay-app", MerchantID: "alipay-merchant", MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate),
 		PlatformPublicKey: platformPublicPEM, GatewayURL: "https://openapi.alipay.com/gateway.do",
 	}
@@ -709,7 +709,7 @@ func TestPaymentReconciliationAlipayQueryNormalizesSignedProviderStatesAndCloseF
 				responseBody := fmt.Sprintf(`{"alipay_trade_query_response":%s,"sign":%q}`, test.inner, signature)
 				return paymentTestResponse(request, http.StatusOK, responseBody, nil), nil
 			}))
-			fact, err := queryProviderPayment(transaction, channel)
+			fact, err := queryProviderPayment(transaction, paymentSettingValue{Alipay: channel})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -739,7 +739,7 @@ func TestPaymentReconciliationAlipayQueryNormalizesSignedProviderStatesAndCloseF
 		responseBody := fmt.Sprintf(`{"alipay_trade_close_response":%s,"sign":%q}`, inner, signature)
 		return paymentTestResponse(request, http.StatusOK, responseBody, nil), nil
 	}))
-	if err := closeProviderPayment(transaction, channel); err == nil {
+	if err := closeProviderPayment(transaction, paymentSettingValue{Alipay: channel}); err == nil {
 		t.Fatal("provider close failure unexpectedly succeeded")
 	}
 }
@@ -747,9 +747,9 @@ func TestPaymentReconciliationAlipayQueryNormalizesSignedProviderStatesAndCloseF
 func TestPaymentReconciliationWechatQueryAndCloseUseSignedMerchantFacts(t *testing.T) {
 	merchantPrivate, _ := newWebhookTestRSAKey(t)
 	platformPrivate, platformPublicPEM := newWebhookTestRSAKey(t)
-	channel := paymentChannelSettingValue{
+	channel := wechatPaymentChannelSettingValue{
 		AppID: "wechat-app", MerchantID: "wechat-merchant", MerchantSerialNo: "merchant-serial",
-		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
+		MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), WechatpayPublicKeyID: "PUB_KEY_ID_3000000001", WechatpayPublicKey: platformPublicPEM,
 		GatewayURL: "https://api.mch.weixin.qq.com",
 	}
 	transaction := &model.PaymentTransaction{
@@ -779,14 +779,14 @@ func TestPaymentReconciliationWechatQueryAndCloseUseSignedMerchantFacts(t *testi
 		t.Fatalf("unexpected WeChat request: %s %s", request.Method, request.URL)
 		return nil, nil
 	}))
-	fact, err := queryProviderPayment(transaction, channel)
+	fact, err := queryProviderPayment(transaction, paymentSettingValue{Wechat: channel})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fact.State != providerPaymentPaid || fact.ProviderTradeNo != "wechat-trade-1" || fact.AmountCents != 1990 || fact.Currency != "CNY" || fact.PaidAt.IsZero() {
 		t.Fatalf("paid WeChat fact = %#v", fact)
 	}
-	if err := closeProviderPayment(transaction, channel); err != nil {
+	if err := closeProviderPayment(transaction, paymentSettingValue{Wechat: channel}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -804,7 +804,7 @@ func TestPaymentReconciliationStrongAuditsPaidClosedAndFailedOutcomes(t *testing
 		t.Fatal(err)
 	}
 	if _, err := svc.UpdatePaymentSetting(admin, PaymentSettingRequest{
-		Alipay: PaymentChannelSettingRequest{
+		Alipay: AlipayPaymentChannelSettingRequest{
 			Enabled: true, AppID: "reconcile-app", MerchantID: "reconcile-merchant",
 			MerchantPrivateKey: rsaPrivateKeyPEM(t, merchantPrivate), PlatformPublicKey: platformPublicPEM,
 			NotifyURL: "https://merchant.example.com/alipay", GatewayURL: "https://openapi.alipay.com/gateway.do",
@@ -1013,7 +1013,7 @@ func signedWechatTestResponse(t *testing.T, request *http.Request, status int, b
 	header.Set("Wechatpay-Timestamp", timestamp)
 	header.Set("Wechatpay-Nonce", nonce)
 	header.Set("Wechatpay-Signature", signature)
-	header.Set("Wechatpay-Serial", "platform-key-id")
+	header.Set("Wechatpay-Serial", "PUB_KEY_ID_3000000001")
 	return paymentTestResponse(request, status, body, header)
 }
 
