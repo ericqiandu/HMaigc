@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,6 +17,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestDevelopmentConfigAllowsBothLocalBrowserOrigins(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	expectedConfiguration := map[string]string{
+		".env.example":       "CANVAS_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000",
+		"docker-compose.yml": "${CANVAS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}",
+	}
+	for relativePath, expected := range expectedConfiguration {
+		contents, err := os.ReadFile(filepath.Join(repositoryRoot, relativePath))
+		if err != nil {
+			t.Fatalf("read %s: %v", relativePath, err)
+		}
+		if !strings.Contains(string(contents), expected) {
+			t.Errorf("%s development CORS config does not contain %q", relativePath, expected)
+		}
+	}
+}
 
 func TestAllowedOriginRejectsWildcard(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
