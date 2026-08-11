@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
-import type { AdminProviderAccount } from "../src/services/api/provider-accounts";
+import { parseAdminProviderAccount, type AdminProviderAccount } from "../src/services/api/provider-accounts";
 
 type Deferred<T> = {
     promise: Promise<T>;
@@ -45,12 +45,15 @@ function account(overrides: Partial<AdminProviderAccount> = {}): AdminProviderAc
         credentials: [
             {
                 family: "fixture-family",
-                hasKey: true,
-                keyFingerprint: "sha256:active",
-                version: 1,
-                healthStatus: "healthy",
-                walletBalanceSubunits: "100",
-                verifiedAt: "2026-08-11T08:00:00Z",
+                active: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:active",
+                    version: 1,
+                    healthStatus: "healthy",
+                    walletBalanceSubunits: "100",
+                    verifiedAt: "2026-08-11T08:00:00Z",
+                },
+                candidate: null,
             },
         ],
         adapters: [{ providerKind: "kuaizi", family: "fixture-family", models: [model] }],
@@ -158,6 +161,39 @@ async function mount(api: InjectedProviderApi) {
 }
 
 describe("kuaizi provider page mutation controller", () => {
+    test("opens an explicitly role-tagged first failed candidate without presenting it as active", async () => {
+        const firstFailedCandidate = parseAdminProviderAccount({
+            ...account(),
+            credentials: [
+                {
+                    family: "fixture-family",
+                    active: null,
+                    candidate: {
+                        hasKey: true,
+                        keyFingerprint: "sha256:first-failed-candidate",
+                        version: 1,
+                        healthStatus: "blocked",
+                        walletBalanceSubunits: "",
+                    },
+                },
+            ],
+        });
+        const api: InjectedProviderApi = {
+            get: async () => firstFailedCandidate,
+            saveEndpoint: async () => firstFailedCandidate,
+            saveCredential: async () => firstFailedCandidate,
+            verifyCredential: async () => firstFailedCandidate,
+        };
+        await mount(api);
+
+        expect(document.body.textContent).toContain("尚未激活凭据");
+        expect(document.body.textContent).toContain("候选版本 1");
+        expect(document.body.textContent).not.toContain("凭据版本");
+        await act(async () => button("更新密钥").click());
+        expect(document.querySelector('input[type="password"]')).not.toBeNull();
+        expect(document.body.textContent).toContain("sha256:first-failed-candidate");
+    });
+
     test("clears a replacement secret, orders save before verify, locks dismissal, rejects duplicate clicks, and fills the verified result", async () => {
         const save = deferred<AdminProviderAccount | null>();
         const verify = deferred<AdminProviderAccount>();
@@ -217,9 +253,13 @@ describe("kuaizi provider page mutation controller", () => {
             credentials: [
                 {
                     ...account().credentials[0]!,
-                    keyFingerprint: "sha256:verified-v2",
-                    version: 2,
-                    walletBalanceSubunits: "101",
+                    active: {
+                        ...account().credentials[0]!.active!,
+                        keyFingerprint: "sha256:verified-v2",
+                        version: 2,
+                        walletBalanceSubunits: "101",
+                    },
+                    candidate: null,
                 },
             ],
         });
@@ -238,11 +278,14 @@ describe("kuaizi provider page mutation controller", () => {
             credentials: [
                 {
                     family: "fixture-family",
-                    hasKey: true,
-                    keyFingerprint: "sha256:first-candidate",
-                    version: 1,
-                    healthStatus: "unverified",
-                    walletBalanceSubunits: "",
+                    active: null,
+                    candidate: {
+                        hasKey: true,
+                        keyFingerprint: "sha256:first-candidate",
+                        version: 1,
+                        healthStatus: "unverified",
+                        walletBalanceSubunits: "",
+                    },
                 },
             ],
         });
@@ -363,6 +406,120 @@ describe("kuaizi provider page mutation controller", () => {
         expect(document.body.textContent).toContain("code=timeout");
         expect(document.body.textContent).toContain("写入结果待同步");
         expect(document.body.textContent).not.toContain("有未保存变更");
+    });
+
+    test("blocks every write while endpoint facts await sync and unlocks only after an explicit GET succeeds", async () => {
+        const uncertainDraft = "https://uncertain.example.com";
+        const synchronized = deferred<AdminProviderAccount>();
+        let getCalls = 0;
+        let endpointCalls = 0;
+        let credentialSaveCalls = 0;
+        let verifyCalls = 0;
+        const api: InjectedProviderApi = {
+            get: () => {
+                getCalls += 1;
+                if (getCalls === 1) return Promise.resolve(account());
+                if (getCalls === 2) return Promise.reject(new Error("候选事实读取失败"));
+                return synchronized.promise;
+            },
+            saveEndpoint: async () => {
+                endpointCalls += 1;
+                throw new Error("筷子凭据验证失败（code=timeout, trace_id=trace-awaiting-sync）");
+            },
+            saveCredential: async () => {
+                credentialSaveCalls += 1;
+                return null;
+            },
+            verifyCredential: async () => {
+                verifyCalls += 1;
+                return account();
+            },
+        };
+        await mount(api);
+
+        await changeInput(input("#kuaizi-provider-base-url"), uncertainDraft);
+        await act(async () => button("保存服务地址").click());
+        await settle();
+
+        const baseUrl = input("#kuaizi-provider-base-url");
+        const updateCredential = button("更新密钥");
+        const verifyCredential = button("验证凭据");
+        expect(baseUrl.disabled).toBe(true);
+        expect(updateCredential.disabled).toBe(true);
+        expect(verifyCredential.disabled).toBe(true);
+
+        baseUrl.disabled = false;
+        await changeInput(baseUrl, "https://must-not-overwrite.example.com");
+        updateCredential.disabled = false;
+        verifyCredential.disabled = false;
+        await act(async () => {
+            updateCredential.click();
+            verifyCredential.click();
+        });
+        baseUrl.disabled = true;
+        updateCredential.disabled = true;
+        verifyCredential.disabled = true;
+        await settle();
+        await act(async () => button("重试").click());
+        expect(input("#kuaizi-provider-base-url").value).toBe(uncertainDraft);
+        expect(document.querySelector('input[type="password"]')).toBeNull();
+        expect({ endpointCalls, credentialSaveCalls, verifyCalls }).toEqual({ endpointCalls: 1, credentialSaveCalls: 0, verifyCalls: 0 });
+        expect(button("更新密钥").disabled).toBe(true);
+        const serverFact = account({ endpointCandidate: { baseUrl: "https://server-fact.example.com", version: 2, active: false } });
+        await act(async () => synchronized.resolve(serverFact));
+        await settle();
+
+        expect(input("#kuaizi-provider-base-url").value).toBe("https://server-fact.example.com");
+        expect(input("#kuaizi-provider-base-url").disabled).toBe(false);
+        expect(button("更新密钥").disabled).toBe(false);
+        expect(button("验证凭据").disabled).toBe(false);
+        expect(document.body.textContent).not.toContain("写入结果待同步");
+    });
+
+    test("locks an already-open credential editor and rejects its submit while endpoint facts await sync", async () => {
+        let getCalls = 0;
+        let credentialSaveCalls = 0;
+        let verifyCalls = 0;
+        const api: InjectedProviderApi = {
+            get: async () => {
+                getCalls += 1;
+                if (getCalls === 1) return account();
+                throw new Error("候选事实读取失败");
+            },
+            saveEndpoint: async () => {
+                throw new Error("筷子凭据验证失败（code=timeout, trace_id=trace-modal-awaiting-sync）");
+            },
+            saveCredential: async () => {
+                credentialSaveCalls += 1;
+                return null;
+            },
+            verifyCredential: async () => {
+                verifyCalls += 1;
+                return account();
+            },
+        };
+        await mount(api);
+
+        await changeInput(input("#kuaizi-provider-base-url"), "https://uncertain-with-modal.example.com");
+        await act(async () => button("更新密钥").click());
+        expect(input('input[type="password"]').disabled).toBe(false);
+        await act(async () => button("保存服务地址").click());
+        await settle();
+
+        const secretInput = input('input[type="password"]');
+        expect(secretInput.disabled).toBe(true);
+        expect(button("取消").disabled).toBe(true);
+        expect(button("保存并验证").disabled).toBe(true);
+        expect(document.querySelector(".ant-modal-close")).toBeNull();
+
+        secretInput.disabled = false;
+        await changeInput(secretInput, "sentinel-awaiting-sync-secret");
+        const submit = button("保存并验证");
+        submit.disabled = false;
+        await act(async () => submit.click());
+        await settle();
+        expect({ credentialSaveCalls, verifyCalls }).toEqual({ credentialSaveCalls: 0, verifyCalls: 0 });
+        expect(document.body.textContent).not.toContain("sentinel-awaiting-sync-secret");
     });
 
     test("claims one global mutation synchronously and releases only after its owner finishes", async () => {

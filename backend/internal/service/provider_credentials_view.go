@@ -15,7 +15,7 @@ type AdminProviderEndpointView struct {
 	Active  bool   `json:"active"`
 }
 
-type AdminProviderCredentialCandidateView struct {
+type AdminProviderCredentialVersionView struct {
 	HasKey                bool       `json:"hasKey"`
 	KeyFingerprint        string     `json:"keyFingerprint"`
 	Version               int64      `json:"version"`
@@ -25,14 +25,9 @@ type AdminProviderCredentialCandidateView struct {
 }
 
 type AdminProviderCredentialView struct {
-	Family                string                                `json:"family"`
-	HasKey                bool                                  `json:"hasKey"`
-	KeyFingerprint        string                                `json:"keyFingerprint"`
-	Version               int64                                 `json:"version"`
-	HealthStatus          string                                `json:"healthStatus"`
-	WalletBalanceSubunits string                                `json:"walletBalanceSubunits"`
-	VerifiedAt            *time.Time                            `json:"verifiedAt,omitempty"`
-	Candidate             *AdminProviderCredentialCandidateView `json:"candidate,omitempty"`
+	Family    string                              `json:"family"`
+	Active    *AdminProviderCredentialVersionView `json:"active"`
+	Candidate *AdminProviderCredentialVersionView `json:"candidate"`
 }
 
 type AdminProviderAccountView struct {
@@ -83,18 +78,15 @@ func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
 		if versionsErr != nil {
 			return nil, versionsErr
 		}
-		credentialView := AdminProviderCredentialView{Family: credential.Family, HealthStatus: credential.HealthStatus}
+		credentialView := AdminProviderCredentialView{Family: credential.Family}
 		active := activeCredentialVersion(versions)
 		if active != nil {
-			fillProviderCredentialView(&credentialView, active, credential.HealthStatus)
+			activeView := providerCredentialVersionView(active, credential.HealthStatus)
+			credentialView.Active = &activeView
 		}
 		if pending := pendingCredentialVersion(versions); pending != nil {
 			candidate := providerCredentialCandidateView(pending)
-			if active == nil {
-				fillProviderCredentialView(&credentialView, pending, candidate.HealthStatus)
-			} else {
-				credentialView.Candidate = &candidate
-			}
+			credentialView.Candidate = &candidate
 		}
 		view.Credentials = append(view.Credentials, credentialView)
 	}
@@ -162,16 +154,14 @@ func providerEndpointView(version *model.ProviderEndpointVersion) *AdminProvider
 	return &AdminProviderEndpointView{BaseURL: version.BaseURL, Version: version.Version, Active: version.Status == "active"}
 }
 
-func fillProviderCredentialView(view *AdminProviderCredentialView, version *model.ProviderCredentialVersion, healthStatus string) {
-	view.HasKey = version.KeyCipher != ""
-	view.KeyFingerprint = version.KeyFingerprint
-	view.Version = version.Version
-	view.HealthStatus = healthStatus
-	view.WalletBalanceSubunits = version.LastBalanceSubunits
-	view.VerifiedAt = version.VerifiedAt
+func providerCredentialVersionView(version *model.ProviderCredentialVersion, healthStatus string) AdminProviderCredentialVersionView {
+	return AdminProviderCredentialVersionView{
+		HasKey: version.KeyCipher != "", KeyFingerprint: version.KeyFingerprint, Version: version.Version,
+		HealthStatus: healthStatus, WalletBalanceSubunits: version.LastBalanceSubunits, VerifiedAt: version.VerifiedAt,
+	}
 }
 
-func providerCredentialCandidateView(version *model.ProviderCredentialVersion) AdminProviderCredentialCandidateView {
+func providerCredentialCandidateView(version *model.ProviderCredentialVersion) AdminProviderCredentialVersionView {
 	status := "unverified"
 	if version.LastVerificationCode != "" {
 		switch version.LastVerificationCode {
@@ -184,8 +174,5 @@ func providerCredentialCandidateView(version *model.ProviderCredentialVersion) A
 			status = kuaiziHealthStatusForCode(version.LastVerificationCode)
 		}
 	}
-	return AdminProviderCredentialCandidateView{
-		HasKey: version.KeyCipher != "", KeyFingerprint: version.KeyFingerprint, Version: version.Version,
-		HealthStatus: status, WalletBalanceSubunits: version.LastBalanceSubunits, VerifiedAt: version.VerifiedAt,
-	}
+	return providerCredentialVersionView(version, status)
 }

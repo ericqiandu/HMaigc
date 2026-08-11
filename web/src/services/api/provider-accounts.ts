@@ -27,7 +27,7 @@ export type ProviderAdapterDescriptor = {
 
 export type AdminProviderEndpoint = { baseUrl: string; version: number; active: boolean };
 
-export type AdminProviderCredentialCandidate = {
+export type AdminProviderCredentialVersion = {
     hasKey: boolean;
     keyFingerprint: string;
     version: number;
@@ -36,9 +36,10 @@ export type AdminProviderCredentialCandidate = {
     verifiedAt?: string;
 };
 
-export type AdminProviderCredential = AdminProviderCredentialCandidate & {
+export type AdminProviderCredential = {
     family: string;
-    candidate?: AdminProviderCredentialCandidate;
+    active: AdminProviderCredentialVersion | null;
+    candidate: AdminProviderCredentialVersion | null;
 };
 
 export type AdminProviderAccount = {
@@ -123,7 +124,7 @@ function parseEndpoint(value: unknown, label: string): AdminProviderEndpoint {
     };
 }
 
-function parseCredentialCandidate(value: unknown, label: string): AdminProviderCredentialCandidate {
+function parseCredentialVersion(value: unknown, label: string): AdminProviderCredentialVersion {
     const source = record(value, label);
     return {
         hasKey: booleanField(source, "hasKey", label),
@@ -138,11 +139,11 @@ function parseCredentialCandidate(value: unknown, label: string): AdminProviderC
 function parseCredential(value: unknown, index: number): AdminProviderCredential {
     const label = `credentials[${index}]`;
     const source = record(value, label);
-    const candidate = source.candidate === undefined ? undefined : parseCredentialCandidate(source.candidate, `${label}.candidate`);
+    if (!("active" in source) || !("candidate" in source)) throw new Error(`${label} 必须显式提供 active 与 candidate 生命周期角色`);
     return {
-        ...parseCredentialCandidate(source, label),
         family: stringField(source, "family", label),
-        candidate,
+        active: source.active === null ? null : parseCredentialVersion(source.active, `${label}.active`),
+        candidate: source.candidate === null ? null : parseCredentialVersion(source.candidate, `${label}.candidate`),
     };
 }
 

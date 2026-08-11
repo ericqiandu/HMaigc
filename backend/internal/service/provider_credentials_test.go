@@ -38,7 +38,7 @@ func TestKuaiziCredentialFirstVerificationActivatesEndpointAndKeyAtomically(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Endpoint == nil || !view.Endpoint.Active || len(view.Credentials) != 1 || !view.Credentials[0].HasKey || view.Credentials[0].HealthStatus != "healthy" || view.Credentials[0].WalletBalanceSubunits != "123456" {
+	if view.Endpoint == nil || !view.Endpoint.Active || len(view.Credentials) != 1 || view.Credentials[0].Active == nil || !view.Credentials[0].Active.HasKey || view.Credentials[0].Active.HealthStatus != "healthy" || view.Credentials[0].Active.WalletBalanceSubunits != "123456" || view.Credentials[0].Candidate != nil {
 		t.Fatalf("verified provider view = %#v", view)
 	}
 	assertProviderActiveCounts(t, db, 1, 1)
@@ -78,6 +78,100 @@ func TestKuaiziCredentialFailedCandidateDoesNotChangeActiveVersion(t *testing.T)
 	if credential.HealthStatus != "healthy" {
 		t.Fatalf("old active credential health = %q", credential.HealthStatus)
 	}
+}
+
+func TestKuaiziCredentialViewSeparatesLifecycleRoleFromHealthStatus(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		statusCode int
+		wantHealth string
+	}{
+		{name: "invalid", statusCode: http.StatusUnauthorized, wantHealth: "invalid"},
+		{name: "blocked", statusCode: http.StatusForbidden, wantHealth: "blocked"},
+		{name: "unavailable", statusCode: http.StatusServiceUnavailable, wantHealth: "unavailable"},
+	} {
+		t.Run(test.name+" first candidate", func(t *testing.T) {
+			server := newKuaiziBalanceServer(t, test.statusCode, `upstream failure`)
+			defer server.Close()
+			svc, _ := openProviderCredentialService(t)
+			admin := providerAdmin()
+			if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "first-candidate-key"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err == nil {
+				t.Fatal("first candidate verification succeeded")
+			}
+			view, err := svc.AdminKuaiziProvider(admin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential := providerCredentialLifecycleJSON(t, view)
+			if string(credential["active"]) != "null" {
+				t.Fatalf("first candidate active role = %s", credential["active"])
+			}
+			candidate := providerCredentialRoleJSON(t, credential, "candidate")
+			if candidate.HealthStatus != test.wantHealth {
+				t.Fatalf("first candidate health = %q, want %q", candidate.HealthStatus, test.wantHealth)
+			}
+		})
+
+		t.Run(test.name+" active", func(t *testing.T) {
+			server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"balance":"100"},"trace_id":"trace-active-role"}`)
+			defer server.Close()
+			svc, db := openProviderCredentialService(t)
+			admin := providerAdmin()
+			activateInitialKuaiziCredential(t, svc, admin, server.URL, "active-role-key")
+			if err := db.Model(&model.ProviderCredential{}).Where("family = ?", "seedance").Update("health_status", test.wantHealth).Error; err != nil {
+				t.Fatal(err)
+			}
+			view, err := svc.AdminKuaiziProvider(admin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential := providerCredentialLifecycleJSON(t, view)
+			active := providerCredentialRoleJSON(t, credential, "active")
+			if active.HealthStatus != test.wantHealth {
+				t.Fatalf("active health = %q, want %q", active.HealthStatus, test.wantHealth)
+			}
+			if string(credential["candidate"]) != "null" {
+				t.Fatalf("active candidate role = %s", credential["candidate"])
+			}
+		})
+	}
+}
+
+func providerCredentialLifecycleJSON(t *testing.T, view *AdminProviderAccountView) map[string]json.RawMessage {
+	t.Helper()
+	serialized, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Credentials []map[string]json.RawMessage `json:"credentials"`
+	}
+	if err := json.Unmarshal(serialized, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Credentials) != 1 {
+		t.Fatalf("credentials = %s", serialized)
+	}
+	return payload.Credentials[0]
+}
+
+func providerCredentialRoleJSON(t *testing.T, credential map[string]json.RawMessage, role string) AdminProviderCredentialVersionView {
+	t.Helper()
+	raw, exists := credential[role]
+	if !exists || string(raw) == "null" {
+		t.Fatalf("credential %s role is absent: %#v", role, credential)
+	}
+	var view AdminProviderCredentialVersionView
+	if err := json.Unmarshal(raw, &view); err != nil {
+		t.Fatal(err)
+	}
+	return view
 }
 
 func TestKuaiziCredentialCandidateViewPreservesVerificationHealthClassification(t *testing.T) {
@@ -151,7 +245,7 @@ func TestKuaiziCredentialZeroBalanceActivatesAsInsufficientBalance(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Credentials[0].HealthStatus != "insufficient_balance" || view.Credentials[0].WalletBalanceSubunits != "0" {
+	if view.Credentials[0].Active == nil || view.Credentials[0].Active.HealthStatus != "insufficient_balance" || view.Credentials[0].Active.WalletBalanceSubunits != "0" || view.Credentials[0].Candidate != nil {
 		t.Fatalf("zero-balance view = %#v", view.Credentials[0])
 	}
 	assertProviderActiveCounts(t, db, 1, 1)

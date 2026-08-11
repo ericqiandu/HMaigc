@@ -74,6 +74,26 @@ func TestProviderAccountHandlerNeverReturnsOrAuditsCredentialSecret(t *testing.T
 	if credentialResponse.Code != http.StatusOK {
 		t.Fatalf("credential status = %d, body = %s", credentialResponse.Code, credentialResponse.Body.String())
 	}
+	var credentialEnvelope struct {
+		Data struct {
+			Credentials []map[string]json.RawMessage `json:"credentials"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(credentialResponse.Body.Bytes(), &credentialEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(credentialEnvelope.Data.Credentials) != 1 {
+		t.Fatalf("credential response = %s", credentialResponse.Body.String())
+	}
+	credentialJSON := credentialEnvelope.Data.Credentials[0]
+	if string(credentialJSON["active"]) != "null" || string(credentialJSON["candidate"]) == "" || string(credentialJSON["candidate"]) == "null" {
+		t.Fatalf("credential lifecycle roles are not explicit: %s", credentialResponse.Body.String())
+	}
+	for _, retiredField := range []string{"hasKey", "keyFingerprint", "version", "healthStatus", "walletBalanceSubunits", "verifiedAt"} {
+		if _, exists := credentialJSON[retiredField]; exists {
+			t.Fatalf("credential response kept retired flattened field %q: %s", retiredField, credentialResponse.Body.String())
+		}
+	}
 	verifyResponse := fixture.request(http.MethodPost, "/api/admin/providers/kuaizi/credentials/seedance/verify", "", fixture.adminCookie, "ApiKey "+secret)
 	if verifyResponse.Code != http.StatusOK {
 		t.Fatalf("verify status = %d, body = %s", verifyResponse.Code, verifyResponse.Body.String())
