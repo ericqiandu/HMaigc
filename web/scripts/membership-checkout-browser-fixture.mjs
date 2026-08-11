@@ -12,6 +12,12 @@ if (!/^22\.12\./u.test(process.versions.node)) {
 const port = Number(process.env.PORT ?? "8080");
 if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("fixture PORT 无效");
 
+const storefrontDelayMilliseconds = Number(process.env.HMAIGC_CHECKOUT_FIXTURE_STOREFRONT_DELAY_MS ?? "0");
+if (!Number.isSafeInteger(storefrontDelayMilliseconds) || storefrontDelayMilliseconds < 0 || storefrontDelayMilliseconds > 30_000) {
+    throw new Error("fixture 商城延迟必须是 0 至 30000 毫秒的整数");
+}
+let storefrontDelayPending = storefrontDelayMilliseconds > 0;
+
 const scenarioNames = ["membership-personal", "membership-team", "provider-failure", "poll-failure", "active-qr", "cancelled", "expired", "personal", "team", "topup-slow", "unknown-get-failure", "topup", "paid"];
 const tokenStates = new Map();
 const membershipOrdersByKey = new Map();
@@ -415,6 +421,10 @@ const server = http.createServer(async (request, response) => {
             return;
         }
         if (request.method === "GET" && url.pathname === "/api/membership/storefront") {
+            if (storefrontDelayPending) {
+                storefrontDelayPending = false;
+                await new Promise((resolve) => setTimeout(resolve, storefrontDelayMilliseconds));
+            }
             sendJSON(response, 200, envelope(storefront));
             return;
         }

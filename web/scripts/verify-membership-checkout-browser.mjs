@@ -57,6 +57,36 @@ async function waitForMembershipDialogAnimation() {
     await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
+async function waitForMembershipPlanAction(page, planCode, label) {
+    let waitError = null;
+    try {
+        const stateHandle = await page.waitForFunction(
+            (expectedPlanCode) => {
+                const plan = [...document.querySelectorAll("[data-plan-code]")].find((candidate) => candidate.getAttribute("data-plan-code") === expectedPlanCode);
+                if (plan?.querySelector(".membership-storefront-plan-action")) return { kind: "ready", message: "" };
+                const error = document.querySelector(".membership-storefront-error-alert");
+                return error instanceof HTMLElement ? { kind: "error", message: error.innerText.replace(/\s+/gu, " ").trim() } : null;
+            },
+            { polling: 100, timeout: 45_000 },
+            planCode,
+        );
+        const state = await stateHandle.jsonValue();
+        await stateHandle.dispose();
+        if (state.kind === "ready") return;
+        waitError = new Error(`${label}: 会员商城进入明确失败态：${state.message || "未提供错误原因"}`);
+    } catch (error) {
+        waitError = error;
+    }
+
+    const diagnostics = await page.evaluate(() => ({
+        bodyText: document.body.innerText.replace(/\s+/gu, " ").trim().slice(0, 1_000),
+        hasError: Boolean(document.querySelector(".membership-storefront-error-alert")),
+        hasLoading: Boolean(document.querySelector(".membership-storefront-loading")),
+        readyState: document.readyState,
+    }));
+    throw new Error(`${label}: 会员套餐未就绪；url=${page.url()} readyState=${diagnostics.readyState} loading=${diagnostics.hasLoading} error=${diagnostics.hasError} body=${diagnostics.bodyText || "<empty>"}`, { cause: waitError });
+}
+
 async function readMembershipFacts(page, label) {
     const facts = await page.evaluate(() => {
         const root = document.querySelector(".membership-payment-dialog .membership-order-facts");
@@ -113,7 +143,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
         }, theme);
         const navigation = await page.goto(`${baseURL}/membership`, { waitUntil: "domcontentloaded", timeout: 30_000 });
         assert.ok(navigation, `${label}: 会员页导航没有响应`);
-        await page.waitForSelector('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action', { timeout: 15_000 });
+        await waitForMembershipPlanAction(page, "creator-flagship-year", label);
         await page.click('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action');
         if (state === "membership-personal-order-failure-dialog") {
             await page.waitForFunction(() => document.body.innerText.includes("会员订单服务暂时不可用"), { timeout: 15_000 });
@@ -174,7 +204,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
         }
         if (audience !== "history") {
             const planCode = audience === "team" ? "team-flagship-year" : "creator-flagship-year";
-            await page.waitForSelector(`[data-plan-code="${planCode}"] .membership-storefront-plan-action`, { timeout: 15_000 });
+            await waitForMembershipPlanAction(page, planCode, label);
             await page.click(`[data-plan-code="${planCode}"] .membership-storefront-plan-action`);
             if (audience === "team") {
                 await page.waitForSelector(".membership-payment-setup-primary", { timeout: 15_000 });
@@ -667,6 +697,7 @@ async function main() {
     const network = `${resourcePrefix}-network`;
     const image = `${resourcePrefix}:test`;
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "hmaigc-checkout-gate-"));
+    const storefrontDelayMilliseconds = (process.env.HMAIGC_CHECKOUT_FIXTURE_STOREFRONT_DELAY_MS ?? "0").trim();
     const tokens = [];
     const cleanupErrors = [];
     let browser = null;
@@ -689,6 +720,8 @@ async function main() {
             "backend",
             "--env",
             `HMAIGC_CHECKOUT_GATE_MUTATION=${mutation}`,
+            "--env",
+            `HMAIGC_CHECKOUT_FIXTURE_STOREFRONT_DELAY_MS=${storefrontDelayMilliseconds}`,
             "--mount",
             `type=bind,source=${fixtureScript},target=/app/fixture.mjs,readonly`,
             "node:22.12.0-alpine",
