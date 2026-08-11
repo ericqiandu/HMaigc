@@ -12,6 +12,7 @@ import {
     Gift,
     Globe2,
     HardDrive,
+    KeyRound,
     Mail,
     MessageSquareText,
     RadioTower,
@@ -63,6 +64,7 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
         label: "模型与计费",
         items: [
             { path: "/admin/models", label: "AI 模型", description: "渠道接入、模型目录、图标与启停", icon: RadioTower },
+            { path: "/admin/providers/kuaizi", label: "筷子科技", description: "公共服务地址、系列凭据与验证状态", icon: KeyRound },
             { path: "/admin/voices", label: "音色管理", description: "系统音色、克隆音色、权限与模型兼容", icon: AudioLines },
             { path: "/admin/model-pricing", label: "商业定价", description: "供应商成本、积分售价与利润率", icon: BadgeDollarSign },
             { path: "/admin/super-resolution-pricing", label: "超分定价", description: "独立视频增强成本、帧率档与积分售价", icon: Sparkles },

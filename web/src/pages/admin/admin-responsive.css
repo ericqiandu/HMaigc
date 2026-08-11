@@ -11,6 +11,22 @@
 }
 
 @media (max-width: 1279px) {
+        .admin-workspace .kuaizi-provider-facts {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            row-gap: 16px;
+        }
+
+        .admin-workspace .kuaizi-provider-fact:nth-child(2) {
+            border-right: 0;
+        }
+
+        .admin-workspace .kuaizi-provider-family-actions > .ant-btn,
+        .admin-workspace .kuaizi-provider-endpoint-footer > .ant-btn,
+        .kuaizi-provider-modal .kuaizi-provider-editor-actions > .ant-btn,
+        .kuaizi-provider-modal .kuaizi-provider-secret-input {
+            min-height: 44px;
+        }
+
         .admin-workspace .workspace-list-toolbar,
         .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
             align-items: stretch;
@@ -69,6 +85,30 @@
 }
 
 @media (max-width: 639px) {
+        .admin-workspace .kuaizi-provider-facts {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .admin-workspace .kuaizi-provider-fact,
+        .admin-workspace .kuaizi-provider-fact:first-child,
+        .admin-workspace .kuaizi-provider-fact:last-child {
+            padding: 0;
+            border-right: 0;
+        }
+
+        .admin-workspace .kuaizi-provider-endpoint-footer,
+        .admin-workspace .kuaizi-provider-family-actions,
+        .kuaizi-provider-modal .kuaizi-provider-editor-actions {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .admin-workspace .kuaizi-provider-family-actions > .ant-btn,
+        .admin-workspace .kuaizi-provider-endpoint-footer > .ant-btn,
+        .kuaizi-provider-modal .kuaizi-provider-editor-actions > .ant-btn {
+            width: 100%;
+        }
+
         .admin-workspace .workspace-list-toolbar-fields > :where(.app-list-search, .ant-select, .ant-dropdown-trigger) {
             width: 100% !important;
         }

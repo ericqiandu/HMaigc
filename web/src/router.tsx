@@ -24,6 +24,7 @@ const RedemptionCodesPage = lazy(() => import("@/pages/admin/redemption-codes/re
 const ReferralProgramPage = lazy(() => import("@/pages/admin/referrals/referral-program-page"));
 const LegalSettingsPage = lazy(() => import("@/pages/admin/settings/legal-settings-page"));
 const PaymentSettingsPage = lazy(() => import("@/pages/admin/settings/payment-settings-page"));
+const KuaiziProviderPage = lazy(() => import("@/pages/admin/providers/kuaizi-provider-page"));
 const RuntimePolicySettingsPage = lazy(() => import("@/pages/admin/settings/runtime-policy-settings-page"));
 const SiteSettingsPage = lazy(() => import("@/pages/admin/settings/site-settings-page"));
 const StorageSettingsPage = lazy(() => import("@/pages/admin/settings/storage-settings-page"));
@@ -110,6 +111,7 @@ export const router = createBrowserRouter([
                     { index: true, element: deferredRoute(<AnalyticsPage />) },
                     { path: "users", element: deferredRoute(<UsersPage />) },
                     { path: "models", element: deferredRoute(<ChannelsPage />) },
+                    { path: "providers/kuaizi", element: deferredRoute(<KuaiziProviderPage />) },
                     { path: "voices", element: deferredRoute(<VoicesPage />) },
                     { path: "model-pricing", element: deferredRoute(<ModelPricingPage />) },
                     { path: "super-resolution-pricing", element: deferredRoute(<SuperResolutionPricingPage />) },
