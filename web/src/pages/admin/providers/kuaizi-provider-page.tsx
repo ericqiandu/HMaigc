@@ -6,9 +6,8 @@ import { providerAccountsApi, type AdminProviderAccount, type AdminProviderCrede
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, SettingsSectionCard, configuredSecretText } from "../components/admin-ui";
 import { endpointDraftChanged, formatKuaiziBalance, providerFamilyViews } from "./kuaizi-provider-domain";
+import { createKuaiziAwaitingSync, isKuaiziAwaitingSync, kuaiziAwaitingSyncError, type KuaiziMutationScope, type KuaiziProviderOperation } from "./kuaizi-provider-mutation";
 import "./kuaizi-provider.css";
-
-type ProviderOperation = "endpoint" | "awaiting-endpoint-sync" | `credential:${string}` | null;
 
 type KuaiziProviderPageViewProps = {
     account: AdminProviderAccount;
@@ -16,7 +15,7 @@ type KuaiziProviderPageViewProps = {
     endpointDirty: boolean;
     endpointSyncPending: boolean;
     loading: boolean;
-    operation: ProviderOperation;
+    operation: KuaiziProviderOperation;
     loadError: Error | null;
     operationErrors: Record<string, Error>;
     onEndpointChange: (value: string) => void;
@@ -306,23 +305,30 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
     const [endpointDraft, setEndpointDraft] = useState("");
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<Error | null>(null);
-    const [operation, setOperation] = useState<ProviderOperation>(null);
+    const [operation, setOperation] = useState<KuaiziProviderOperation>(null);
     const [operationErrors, setOperationErrors] = useState<Record<string, Error>>({});
     const [editingFamily, setEditingFamily] = useState<string | null>(null);
-    const operationOwnerRef = useRef<ProviderOperation>(null);
-    const endpointSyncPending = operation === "awaiting-endpoint-sync";
+    const operationOwnerRef = useRef<KuaiziProviderOperation>(null);
+    const endpointSyncPending = isKuaiziAwaitingSync(operation) && operation.scope === "endpoint";
 
-    const claimOperation = (owner: Exclude<ProviderOperation, null>): boolean => {
+    const claimOperation = (owner: KuaiziMutationScope): boolean => {
         if (operationOwnerRef.current) return false;
         operationOwnerRef.current = owner;
         setOperation(owner);
         return true;
     };
 
-    const releaseOperation = (owner: Exclude<ProviderOperation, null>) => {
+    const releaseOperation = (owner: KuaiziMutationScope) => {
         if (operationOwnerRef.current !== owner) return;
         operationOwnerRef.current = null;
         setOperation(null);
+    };
+
+    const awaitFactSync = (scope: KuaiziMutationScope, mutationError: Error, syncError: Error) => {
+        const awaiting = createKuaiziAwaitingSync(scope, mutationError, syncError);
+        operationOwnerRef.current = awaiting;
+        setOperation(awaiting);
+        setLoadError(kuaiziAwaitingSyncError(awaiting));
     };
 
     const load = useCallback(async () => {
@@ -331,13 +337,22 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
             const next = await api.get();
             setAccount(next);
             setEndpointDraft(endpointBaseline(next));
-            if (operationOwnerRef.current === "awaiting-endpoint-sync") {
+            if (isKuaiziAwaitingSync(operationOwnerRef.current)) {
                 operationOwnerRef.current = null;
                 setOperation(null);
             }
             setLoadError(null);
         } catch (error) {
-            setLoadError(errorValue(error));
+            const syncError = errorValue(error);
+            const owner = operationOwnerRef.current;
+            if (isKuaiziAwaitingSync(owner)) {
+                const awaiting = { ...owner, syncError };
+                operationOwnerRef.current = awaiting;
+                setOperation(awaiting);
+                setLoadError(kuaiziAwaitingSyncError(awaiting));
+            } else {
+                setLoadError(syncError);
+            }
         } finally {
             setLoading(false);
         }
@@ -376,29 +391,18 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
                 return nextErrors;
             });
         } catch (error) {
-            setOperationErrors((current) => ({ ...current, endpoint: errorValue(error) }));
+            const mutationError = errorValue(error);
+            setOperationErrors((current) => ({ ...current, endpoint: mutationError }));
             try {
                 const next = await api.get();
                 setAccount(next);
                 setEndpointDraft(endpointBaseline(next));
                 setLoadError(null);
             } catch (syncError) {
-                operationOwnerRef.current = "awaiting-endpoint-sync";
-                setOperation("awaiting-endpoint-sync");
-                setLoadError(new Error(`写入结果待同步：${errorValue(syncError).message}`));
+                awaitFactSync(owner, mutationError, errorValue(syncError));
             }
         } finally {
             releaseOperation(owner);
-        }
-    };
-
-    const refreshAfterVerificationFailure = async () => {
-        try {
-            const next = await api.get();
-            setAccount(next);
-            setLoadError(null);
-        } catch (error) {
-            setLoadError(errorValue(error));
         }
     };
 
@@ -419,8 +423,16 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
             setLoadError(null);
             setEditingFamily(null);
         } catch (error) {
-            setOperationErrors((current) => ({ ...current, [family]: errorValue(error) }));
-            await refreshAfterVerificationFailure();
+            const mutationError = errorValue(error);
+            setOperationErrors((current) => ({ ...current, [family]: mutationError }));
+            try {
+                const next = await api.get();
+                setAccount(next);
+                setEndpointDraft(endpointBaseline(next));
+                setLoadError(null);
+            } catch (syncError) {
+                awaitFactSync(owner, mutationError, errorValue(syncError));
+            }
         } finally {
             releaseOperation(owner);
         }

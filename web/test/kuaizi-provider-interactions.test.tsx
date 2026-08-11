@@ -369,6 +369,150 @@ describe("kuaizi provider page mutation controller", () => {
         expect(document.body.textContent).not.toContain("sentinel-failed-secret");
     });
 
+    test("keeps the global owner when a committed credential candidate response and its convergence GET both fail", async () => {
+        const synchronized = deferred<AdminProviderAccount>();
+        let getCalls = 0;
+        let saveCalls = 0;
+        let verifyCalls = 0;
+        let endpointCalls = 0;
+        const serverCandidate = account({
+            credentials: [
+                {
+                    ...account().credentials[0]!,
+                    candidate: {
+                        hasKey: true,
+                        keyFingerprint: "sha256:committed-candidate",
+                        version: 2,
+                        healthStatus: "unverified",
+                        walletBalanceSubunits: "",
+                    },
+                },
+            ],
+        });
+        const api: InjectedProviderApi = {
+            get: () => {
+                getCalls += 1;
+                if (getCalls === 1) return Promise.resolve(account());
+                if (getCalls === 2) return Promise.reject(new Error("凭据候选事实读取失败"));
+                return synchronized.promise;
+            },
+            saveEndpoint: async () => {
+                endpointCalls += 1;
+                return account();
+            },
+            saveCredential: async () => {
+                saveCalls += 1;
+                throw new Error(saveCalls === 1 ? "筷子候选保存响应丢失（code=candidate_response_lost, trace_id=trace-candidate-commit）" : "不应发出第二次候选保存（code=duplicate_candidate_write, trace_id=trace-duplicate）");
+            },
+            verifyCredential: async () => {
+                verifyCalls += 1;
+                return account();
+            },
+        };
+        await mount(api);
+
+        await act(async () => button("更新密钥").click());
+        await changeInput(input('input[type="password"]'), "sentinel-committed-candidate-secret");
+        await act(async () => button("保存并验证").click());
+        await settle();
+
+        expect(document.body.textContent).toContain("code=candidate_response_lost");
+        expect(document.body.textContent).toContain("trace_id=trace-candidate-commit");
+        expect(document.body.textContent).toContain("写入结果待同步（fixture-family 凭据）");
+        expect(document.body.textContent).toContain("凭据候选事实读取失败");
+        const secretInput = input('input[type="password"]');
+        secretInput.disabled = false;
+        await changeInput(secretInput, "sentinel-second-candidate-secret");
+        const submit = button("保存并验证");
+        submit.disabled = false;
+        await act(async () => submit.click());
+        await settle();
+        expect({ saveCalls, verifyCalls, endpointCalls }).toEqual({ saveCalls: 1, verifyCalls: 0, endpointCalls: 0 });
+        expect(document.body.textContent).not.toContain("sentinel-committed-candidate-secret");
+        expect(document.body.textContent).not.toContain("sentinel-second-candidate-secret");
+
+        await act(async () => button("重试").click());
+        await act(async () => synchronized.resolve(serverCandidate));
+        await settle();
+        expect(document.body.textContent).toContain("sha256:committed-candidate");
+        expect(document.body.textContent).toContain("code=candidate_response_lost");
+        expect(document.body.textContent).toContain("trace_id=trace-candidate-commit");
+        expect(button("取消").disabled).toBe(false);
+        expect(button("保存并验证").disabled).toBe(false);
+        expect(document.body.textContent).not.toContain("写入结果待同步");
+    });
+
+    test("keeps the global owner when an activated credential response and its convergence GET both fail", async () => {
+        const synchronized = deferred<AdminProviderAccount>();
+        let getCalls = 0;
+        let verifyCalls = 0;
+        let endpointCalls = 0;
+        const serverActive = account({
+            credentials: [
+                {
+                    ...account().credentials[0]!,
+                    active: {
+                        ...account().credentials[0]!.active!,
+                        keyFingerprint: "sha256:activated-after-response-loss",
+                        version: 2,
+                        walletBalanceSubunits: "250",
+                    },
+                    candidate: null,
+                },
+            ],
+        });
+        const api: InjectedProviderApi = {
+            get: () => {
+                getCalls += 1;
+                if (getCalls === 1) return Promise.resolve(account());
+                if (getCalls === 2) return Promise.reject(new Error("活动凭据事实读取失败"));
+                return synchronized.promise;
+            },
+            saveEndpoint: async () => {
+                endpointCalls += 1;
+                return account();
+            },
+            saveCredential: async () => null,
+            verifyCredential: async () => {
+                verifyCalls += 1;
+                throw new Error(verifyCalls === 1 ? "筷子验证响应丢失（code=activation_response_lost, trace_id=trace-active-commit）" : "不应发出第二次验证（code=duplicate_verify, trace_id=trace-duplicate-verify）");
+            },
+        };
+        await mount(api);
+
+        await act(async () => button("验证凭据").click());
+        await settle();
+        expect(document.body.textContent).toContain("code=activation_response_lost");
+        expect(document.body.textContent).toContain("trace_id=trace-active-commit");
+        expect(document.body.textContent).toContain("写入结果待同步（fixture-family 凭据）");
+        expect(document.body.textContent).toContain("活动凭据事实读取失败");
+
+        const baseUrl = input("#kuaizi-provider-base-url");
+        baseUrl.disabled = false;
+        await changeInput(baseUrl, "https://must-not-write-after-activation.example.com");
+        const endpointSubmit = button("保存服务地址");
+        endpointSubmit.disabled = false;
+        const verifySubmit = button("验证凭据");
+        verifySubmit.disabled = false;
+        await act(async () => endpointSubmit.click());
+        await settle();
+        verifySubmit.disabled = false;
+        await act(async () => verifySubmit.click());
+        await settle();
+        expect({ endpointCalls, verifyCalls }).toEqual({ endpointCalls: 0, verifyCalls: 1 });
+
+        await act(async () => button("重试").click());
+        await act(async () => synchronized.resolve(serverActive));
+        await settle();
+        expect(document.body.textContent).toContain("sha256:activated-after-response-loss");
+        expect(document.body.textContent).toContain("2.50 筷子点数");
+        expect(document.body.textContent).toContain("code=activation_response_lost");
+        expect(document.body.textContent).toContain("trace_id=trace-active-commit");
+        expect(input("#kuaizi-provider-base-url").disabled).toBe(false);
+        expect(button("验证凭据").disabled).toBe(false);
+        expect(document.body.textContent).not.toContain("写入结果待同步");
+    });
+
     test("converges a failed endpoint write, and exposes an uncertain write when refetch also fails", async () => {
         const draft = "https://candidate.example.com";
         let getCount = 0;
