@@ -292,29 +292,8 @@ func (r *Repository) reconcileStaleMembershipOrder(orderID string, now time.Time
 }
 
 func (r *Repository) expirePaymentCheckoutCandidate(candidate *model.PaymentCheckoutSession, now time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := lockPaymentOrderTx(tx, candidate.OrderType, candidate.OrderID, candidate.UserID); err != nil {
-			return err
-		}
-		var checkout model.PaymentCheckoutSession
-		lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&checkout,
-			"id = ? AND status = ? AND expires_at <= ?", candidate.ID, model.PaymentCheckoutActive, now)
-		if errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		if lookup.Error != nil {
-			return lookup.Error
-		}
-		if err := rejectPayablePaymentTx(tx, checkout.OrderType, checkout.OrderID); err != nil {
-			if errors.Is(err, ErrPaymentReconciliationRequired) {
-				return nil
-			}
-			return err
-		}
-		return tx.Model(&model.PaymentCheckoutSession{}).
-			Where("id = ? AND status = ?", checkout.ID, model.PaymentCheckoutActive).
-			Updates(map[string]interface{}{"status": model.PaymentCheckoutExpired, "updated_at": now}).Error
-	})
+	_, err := r.ExpirePaymentCheckoutSession(candidate.ID, now)
+	return err
 }
 
 func (r *Repository) ActiveMembershipSubscriptions(userID string, now time.Time) ([]model.MembershipSubscription, error) {

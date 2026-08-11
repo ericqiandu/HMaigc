@@ -549,6 +549,84 @@ func TestPostgresPaymentPayableCheckoutExpiryMovesTransactionToReview(t *testing
 	}
 }
 
+func TestPostgresPaymentLifecycleExpiresPayableCheckoutIntoReview(t *testing.T) {
+	for _, orderType := range []model.PaymentOrderType{model.PaymentOrderMembership, model.PaymentOrderCreditTopup} {
+		t.Run(string(orderType), func(t *testing.T) {
+			db := openPostgresPaymentIntegritySchema(t)
+			if err := database.EnsurePaymentIntegritySchema(db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			expiredAt := now.Add(-time.Minute)
+			var orderID string
+			var userID string
+			var amountCents int64
+			var session *model.PaymentCheckoutSession
+
+			switch orderType {
+			case model.PaymentOrderMembership:
+				order, membershipSession := createPostgresPayableMembershipFixture(t, db, "life-m", now)
+				orderID, userID, amountCents, session = order.ID, order.UserID, order.TotalPriceCents, membershipSession
+			case model.PaymentOrderCreditTopup:
+				user := &model.User{ID: "life-credit-user", Username: "life-credit-user", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: now, UpdatedAt: now}
+				if err := db.Create(user).Error; err != nil {
+					t.Fatal(err)
+				}
+				order := &model.CreditTopupOrder{
+					ID: "life-credit-order", OrderNumber: "C-LIFE-CREDIT", UserID: user.ID, ProductID: "life-credit-product",
+					BaseMicrocredits: 1000, TotalMicrocredits: 1000, TotalPriceCents: 499, Currency: "CNY",
+					Status: model.CreditTopupOrderPending, ProductSnapshotJSON: `{"id":"life-credit-product"}`,
+					IdempotencyKey: "life-credit-key", RequestHash: strings.Repeat("c", 64), CreatedAt: now, UpdatedAt: now,
+				}
+				if err := db.Create(order).Error; err != nil {
+					t.Fatal(err)
+				}
+				orderID, userID, amountCents = order.ID, order.UserID, order.TotalPriceCents
+				session = &model.PaymentCheckoutSession{
+					ID: "life-credit-session", OrderType: orderType, OrderID: order.ID, UserID: user.ID,
+					TokenHash: strings.Repeat("b", 64), TokenCipher: "enc:v1:test", Status: model.PaymentCheckoutActive,
+					ExpiresAt: now.Add(15 * time.Minute), CreatedAt: now, UpdatedAt: now,
+				}
+				if err := db.Create(session).Error; err != nil {
+					t.Fatal(err)
+				}
+			default:
+				t.Fatalf("unsupported order type %q", orderType)
+			}
+
+			if err := db.Model(&model.PaymentCheckoutSession{}).Where("id = ?", session.ID).
+				Select("expires_at", "updated_at").Updates(&model.PaymentCheckoutSession{ExpiresAt: expiredAt, UpdatedAt: expiredAt}).Error; err != nil {
+				t.Fatal(err)
+			}
+			transaction := &model.PaymentTransaction{
+				ID: "life-tx-" + string(orderType), OrderType: orderType, OrderID: orderID, UserID: userID,
+				Provider: model.PaymentProviderWechat, MerchantOrderNo: "LIFE-" + strings.ToUpper(string(orderType)),
+				AmountCents: amountCents, Currency: "CNY", Status: model.PaymentTransactionPending,
+				CodeURL: "weixin://wxpay/lifecycle-expired", ExpiresAt: &expiredAt, CreatedAt: expiredAt.Add(-time.Minute), UpdatedAt: expiredAt.Add(-time.Minute),
+			}
+			if err := db.Create(transaction).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			if err := New(db).ReconcileMembershipLifecycle(now, now.Add(-24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.First(session, "id = ?", session.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.First(transaction, "id = ?", transaction.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if session.Status != model.PaymentCheckoutExpired {
+				t.Fatalf("checkout status = %s, want expired", session.Status)
+			}
+			if transaction.Status != model.PaymentTransactionReviewRequired || transaction.FailureCode != "checkout_expired_requires_reconciliation" {
+				t.Fatalf("transaction = status:%s code:%q, want review_required/checkout_expired_requires_reconciliation", transaction.Status, transaction.FailureCode)
+			}
+		})
+	}
+}
+
 func TestPostgresPaymentPayableClaimRejectsAlreadyPaidTransaction(t *testing.T) {
 	db := openPostgresPaymentIntegritySchema(t)
 	if err := database.EnsurePaymentIntegritySchema(db); err != nil {

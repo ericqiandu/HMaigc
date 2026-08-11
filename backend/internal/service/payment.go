@@ -707,6 +707,9 @@ func (s *Service) paymentCheckoutByToken(token string) (*model.PaymentCheckoutSe
 	digest := sha256.Sum256([]byte(trimmed))
 	session, err := s.repo.PaymentCheckoutSessionByTokenHash(hex.EncodeToString(digest[:]))
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, NotFound("收银台不存在或已失效")
+		}
 		return nil, nil, err
 	}
 	var order *paymentOrderDetails

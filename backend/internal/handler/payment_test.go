@@ -210,6 +210,31 @@ func TestPaymentHeadersOnCheckoutBearerServerErrorDoesNotExposeInternalOrderFact
 	assertPaymentCapabilityHeaders(t, response)
 }
 
+func TestPaymentUnknownCheckoutCapabilityReturnsNotFound(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.PaymentCheckoutSession{}); err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPaymentRoutes(router.Group("/api"), service.New(repository.New(db), t.TempDir()))
+	request := httptest.NewRequest(http.MethodGet, "/api/payments/checkout/UNKNOWN-CHECKOUT-CAPABILITY", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("response status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "收银台不存在或已失效") {
+		t.Fatalf("response body = %s, want stable not-found message", response.Body.String())
+	}
+	assertPaymentCapabilityHeaders(t, response)
+}
+
 func TestPaymentHeadersCoverClientErrorsAndCheckoutURLCreationFailures(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

@@ -49,7 +49,6 @@
         "react-router": "^8.3.0",
         "recharts": "^3.9.2",
         "remark-gfm": "^4.0.1",
-        "shadcn": "^4.16.1",
         "tailwind-merge": "^3.6.0",
         "tailwindcss": "^4.3.3",
         "three": "^0.185.1",
@@ -66,10 +65,11 @@
         "@types/react-dom": "19.2.3",
         "@vitejs/plugin-react": "^6.0.3",
         "lighthouse": "13.4.1",
-        "postcss": "^8.5.19",
+        "postcss": "^8.5.26",
         "postcss-selector-parser": "^7.1.1",
         "prettier": "^3.9.5",
         "puppeteer-core": "25.4.0",
+        "shadcn": "^4.16.2",
         "typescript": "^7.0.2",
         "vite": "^8.1.5"
     },
@@ -77,12 +77,15 @@
         "@babel/core": "7.29.7",
         "@hono/node-server": "2.0.10",
         "body-parser": "2.3.0",
-        "brace-expansion": "5.0.8",
-        "fast-uri": "3.1.4",
+        "brace-expansion": "5.0.9",
+        "fast-uri": "3.1.5",
         "form-data": "4.0.6",
-        "hono": "4.12.30",
-        "js-yaml": "4.3.0",
+        "hono": "4.12.34",
+        "ip-address": "10.5.0",
+        "js-yaml": "4.3.1",
+        "postcss": "8.5.26",
         "prismjs": "1.30.0",
-        "qs": "6.15.3"
+        "qs": "6.15.3",
+        "undici": "7.29.0"
     }
 }

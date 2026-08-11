@@ -259,8 +259,8 @@ func TestPostgresPaymentReconciliationLifecycleConcurrentAdjacentCutoffsNeverHol
 	if firstErr != nil || secondErr != nil {
 		t.Fatalf("concurrent lifecycle calls with adjacent cutoffs = first:%v second:%v", firstErr, secondErr)
 	}
-	assertPostgresOrderAndCheckoutState(t, db, payableOrder.ID, model.MembershipOrderPending, payableSession.ID, model.PaymentCheckoutActive)
-	assertPostgresOrderAndCheckoutState(t, db, reviewOrder.ID, model.MembershipOrderPending, reviewSession.ID, model.PaymentCheckoutActive)
+	assertPostgresOrderAndCheckoutState(t, db, payableOrder.ID, model.MembershipOrderPending, payableSession.ID, model.PaymentCheckoutExpired)
+	assertPostgresOrderAndCheckoutState(t, db, reviewOrder.ID, model.MembershipOrderPending, reviewSession.ID, model.PaymentCheckoutExpired)
 	assertPostgresOrderAndCheckoutState(t, db, staleOrder.ID, model.MembershipOrderCancelled, staleSession.ID, model.PaymentCheckoutExpired)
 }
 
