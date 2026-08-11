@@ -21,6 +21,7 @@ import {
     assertVisibleControlTargets,
     waitForStableMembershipDialog,
 } from "./membership-checkout-browser-assertions.mjs";
+import { MembershipCheckoutBrowserCaseError, shouldRetryInitialNetworkChange } from "./membership-checkout-browser-network-retry.mjs";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(webRoot, "..");
@@ -107,10 +108,33 @@ async function waitForMembershipPlanAction(page, planCode, label, failures) {
         hasLoading: Boolean(document.querySelector(".membership-storefront-loading")),
         readyState: document.readyState,
     }));
-    throw new Error(
+    throw new MembershipCheckoutBrowserCaseError(
         `${label}: 会员套餐未就绪；url=${page.url()} readyState=${diagnostics.readyState} loading=${diagnostics.hasLoading} error=${diagnostics.hasError} responses=${failures.failedResponses.join(" | ") || "<none>"} requests=${failures.requestFailures.join(" | ") || "<none>"} pageErrors=${failures.pageErrors.join(" | ") || "<none>"} body=${diagnostics.bodyText || "<empty>"}`,
+        failures,
         { cause: waitError },
     );
+}
+
+async function runInitialMembershipSetupDialogCase(browser, baseURL, theme, viewport, state, completedCases) {
+    let attempt = 0;
+    try {
+        return await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
+    } catch (error) {
+        if (
+            !(error instanceof MembershipCheckoutBrowserCaseError) ||
+            !shouldRetryInitialNetworkChange({
+                attempt,
+                completedCases,
+                failedResponses: error.failedResponses,
+                requestFailures: error.requestFailures,
+            })
+        ) {
+            throw error;
+        }
+        attempt += 1;
+        process.stdout.write(`${viewport.name}/${theme}/${state}: Chromium 启动时网络发生切换，重建首个页面后重试一次\n`);
+        return runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
+    }
 }
 
 async function readMembershipFacts(page, label) {
@@ -808,7 +832,7 @@ async function main() {
                 let checkoutFailureFacts = null;
                 let tokenGetFailureFacts = null;
                 for (const state of membershipDialogStates) {
-                    const result = await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
+                    const result = completed === 0 ? await runInitialMembershipSetupDialogCase(browser, baseURL, theme, viewport, state, completed) : await runMembershipSetupDialogCase(browser, baseURL, theme, viewport, state);
                     const leftOwners = { facts: result.owners.facts, order: result.owners.order };
                     if (expectedLeftOwners === null) {
                         expectedLeftOwners = leftOwners;
