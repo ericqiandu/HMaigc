@@ -229,7 +229,7 @@ type ActiveTaskPolicy struct {
 	Unlimited       bool
 }
 
-func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy) error {
+func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, providerFact *model.ProviderTaskFact, policy ActiveTaskPolicy) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := enforceActiveTaskLimit(tx, task.UserID, policy); err != nil {
 			return err
@@ -237,7 +237,13 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		if err := reserveBillingOrder(tx, order); err != nil {
 			return err
 		}
-		return tx.Create(task).Error
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		if providerFact != nil {
+			return tx.Create(providerFact).Error
+		}
+		return nil
 	})
 }
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -10,6 +11,19 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestSeedance25AdapterDoesNotInferTaskSemanticsFromPromptText(t *testing.T) {
+	source, err := os.ReadFile("provider_kuaizi_seedance25.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	production := string(source)
+	for _, forbidden := range []string{"regexp.", "strings.Contains(input.Prompt", "strings.Contains(strings.ToLower(input.Prompt"} {
+		if strings.Contains(production, forbidden) {
+			t.Fatalf("Seedance 2.5 adapter contains forbidden prompt semantic inference: %s", forbidden)
+		}
+	}
+}
 
 func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

@@ -363,19 +363,25 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
-	billingOrder, err := s.taskBillingOrder(userID, &task, normalizedInput)
+	commercialFacts, persistedInput, err := s.buildTaskCommercialFacts(userID, &task, normalizedInput)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.protectTaskSecrets(normalizedInput); err != nil {
+	billingOrder := commercialFacts.BillingOrder
+	if commercialFacts.ProviderFact == nil {
+		if err := s.protectTaskSecrets(persistedInput); err != nil {
+			return nil, err
+		}
+	}
+	inputJSON, err := json.Marshal(persistedInput)
+	if err != nil {
 		return nil, err
 	}
-	inputJSON, _ := json.Marshal(normalizedInput)
 	task.InputJSON = string(inputJSON)
 	task.BillingOrderID = billingOrder.ID
 	task.Provider = "system"
 	task.Model = billingOrder.Model
-	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, activeTaskPolicy)
+	err = s.createTaskWithinStorageQuota(&task, billingOrder, commercialFacts.ProviderFact, policy, activeTaskPolicy)
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
 	}
@@ -469,6 +475,16 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	}
 	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("only failed or cancelled tasks can be retried")
+	}
+	providerFact, providerFactErr := s.repo.ProviderTaskFact(task.ID)
+	if providerFactErr == nil {
+		if providerFact.ProviderStatus == "create_uncertain" {
+			return nil, BadAuthRequest("上游创建结果不确定，禁止重新创建；请先完成供应商核对")
+		}
+		return nil, BadAuthRequest("冻结上游任务不允许通过手工重试创建新任务")
+	}
+	if !errors.Is(providerFactErr, gorm.ErrRecordNotFound) {
+		return nil, providerFactErr
 	}
 	if isContentModerationFailure(task.Error) {
 		return nil, BadAuthRequest(contentModerationRetryMessage)
@@ -835,6 +851,21 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	if err != nil {
 		return err
 	}
+	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
+		claimed, claimErr := s.repo.ClaimProviderTaskExecution(task.ID, s.workerID)
+		if claimErr != nil {
+			return claimErr
+		}
+		if !claimed {
+			if err := s.repo.RequeueTaskWaitingForProviderCapacity(task.ID, s.workerID); err != nil {
+				return err
+			}
+			_ = s.log(task.UserID, task.ID, "info", "等待上游凭据并发名额", "")
+			return nil
+		}
+	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
+		return factErr
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), taskExecutionTimeoutWithPolicy(task.Type, policy.Task))
 	defer cancel()
 	leaseDone := make(chan struct{})
@@ -997,21 +1028,21 @@ func taskTimeoutMessage(taskType string) string {
 }
 
 func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]interface{}, []map[string]interface{}, error) {
+	ctx = withProviderAnalytics(ctx, s, task)
+	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
+		result, err := s.processCanvasGenerationTask(ctx, task)
+		return result, nil, err
+	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
 	if err != nil {
 		return nil, nil, err
 	}
 	task.InputJSON = decryptedInput
-	ctx = withProviderAnalytics(ctx, s, task)
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)
-	}
-	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
-		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.Type, task.Prompt, task.InputJSON)
-		return result, nil, err
 	}
 	return nil, nil, fmt.Errorf("不支持的任务类型：%s", task.Type)
 }

@@ -390,6 +390,17 @@ func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, 
 		if itemErr != nil {
 			return nil, itemErr
 		}
+		visibleItems := make([]model.ChannelModel, 0, len(items))
+		for _, item := range items {
+			available, availabilityErr := s.kuaiziSeedance25ModelAvailable(item)
+			if availabilityErr != nil {
+				return nil, availabilityErr
+			}
+			if !available || (item.ProviderCredentialID != "" && item.AccessPolicy == model.ModelAccessMember && !hasMembership) {
+				continue
+			}
+			visibleItems = append(visibleItems, item)
+		}
 		voices, voiceErr := s.repo.ChannelVoicesForUser(channel.ID, user.ID, false)
 		if voiceErr != nil {
 			return nil, voiceErr
@@ -402,7 +413,7 @@ func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, 
 		if favoriteErr != nil {
 			return nil, favoriteErr
 		}
-		public := publicChannel(channel, false, items, hasMembership)
+		public := publicChannel(channel, false, visibleItems, hasMembership)
 		public.Voices, err = publicChannelVoicesForUser(voices, hasMembership, false, user.ID, favorites)
 		if err != nil {
 			return nil, err
@@ -719,7 +730,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 			})
 		}
 	}
-	if len(models) == 0 {
+	if admin && len(models) == 0 {
 		_ = json.Unmarshal([]byte(channel.ModelsJSON), &models)
 	}
 	apiKey := ""

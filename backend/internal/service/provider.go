@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -73,6 +74,7 @@ type providerMedia struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Type       string `json:"type"`
+	Role       string `json:"role"`
 	DataURL    string `json:"dataUrl"`
 	URL        string `json:"url"`
 	StorageKey string `json:"storageKey"`
@@ -168,18 +170,29 @@ func (e providerHTTPError) Error() string {
 	return fmt.Sprintf("接口请求失败：%s %s", e.Status, e.Body)
 }
 
-func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string, taskType string, fallbackPrompt string, rawInput string) (map[string]interface{}, error) {
+func (s *Service) processCanvasGenerationTask(ctx context.Context, task model.Task) (map[string]interface{}, error) {
+	providerFact, factErr := s.repo.ProviderTaskFact(task.ID)
+	if factErr == nil {
+		return s.processFrozenProviderCanvasTask(ctx, task, *providerFact)
+	}
+	if !errors.Is(factErr, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("读取冻结上游任务事实失败：%w", factErr)
+	}
+	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
+	if err != nil {
+		return nil, err
+	}
 	var input canvasGenerationInput
-	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
+	if err := json.Unmarshal([]byte(decryptedInput), &input); err != nil {
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
-		input.Prompt = fallbackPrompt
+		input.Prompt = task.Prompt
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
-	if input.Mode == "" && strings.HasPrefix(taskType, "video_") {
+	if input.Mode == "" && strings.HasPrefix(task.Type, "video_") {
 		input.Mode = "video"
 	}
 	config, err := s.resolveProviderConfig(input.Config)
@@ -188,7 +201,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	}
 	input.Config = config
 	if input.Mode == "audio" {
-		if err := s.validateAudioTaskVoice(userID, input.Config); err != nil {
+		if err := s.validateAudioTaskVoice(task.UserID, input.Config); err != nil {
 			return nil, err
 		}
 	}
@@ -206,7 +219,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceMiniMaxVideo) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceKlingVideo)
-		if err := s.hydrateGenerationMedia(userID, &input, requirePublicMedia); err != nil {
+		if err := s.hydrateGenerationMedia(task.UserID, &input, requirePublicMedia); err != nil {
 			return nil, err
 		}
 	}
@@ -323,14 +336,17 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	}
 	modelName := strings.TrimSpace(config.Model)
 	if modelName == "" {
-		models := channelModelNames(*channel)
-		if len(models) == 0 {
-			return providerConfig{}, errors.New("系统渠道未配置可用模型")
-		}
-		modelName = models[0]
+		return providerConfig{}, errors.New("生成任务必须显式指定模型")
 	}
 	if !stringInSlice(modelName, channelModelNames(*channel)) {
 		return providerConfig{}, errors.New("当前系统渠道未授权该模型")
+	}
+	channelModel, modelErr := s.repo.ChannelModelByKey(channel.ID, modelName)
+	if modelErr == nil && strings.TrimSpace(channelModel.ProviderCredentialID) != "" {
+		return providerConfig{}, errors.New("绑定上游凭据的模型只能通过冻结任务运行时执行")
+	}
+	if modelErr != nil && !errors.Is(modelErr, gorm.ErrRecordNotFound) {
+		return providerConfig{}, modelErr
 	}
 	config.ChannelID = channel.ID
 	config.APIFormat = channel.APIFormat
@@ -1159,17 +1175,25 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 				status = model.ApiCallStatusFailed
 				errorText = fmt.Sprintf("MiniMax 接口错误（%s）：%s", code, defaultString(message, "请求失败"))
 			}
+			if (req.URL.Path == kuaiziSeedance25CreatePath || req.URL.Path == kuaiziSeedance25StatusPath) && firstInt64(payload, "code") != 0 {
+				status = model.ApiCallStatusFailed
+				errorText = fmt.Sprintf("筷子上游业务码 %d", firstInt64(payload, "code"))
+			}
 		}
 	}
 	requestKind := providerRequestKind(req.Method, req.URL.Path)
 	if metadata.RequestKind != "" {
 		requestKind = metadata.RequestKind
 	}
+	apiFormat := "openai"
+	if req.URL.Path == kuaiziSeedance25CreatePath || req.URL.Path == kuaiziSeedance25StatusPath {
+		apiFormat = "kuaizi"
+	}
 	log := model.ApiCallLog{
 		UserID: metadata.UserID, ChannelID: metadata.ChannelID, TaskID: metadata.TaskID, BillingOrderID: metadata.BillingOrderID,
 		Source: defaultString(metadata.Source, "backend-task"), Capability: metadata.Capability, Operation: metadata.Operation,
 		RequestKind: requestKind, Billable: req.Method == http.MethodPost,
-		APIFormat: "openai", Method: req.Method, Path: req.URL.Path, Model: metadata.Model,
+		APIFormat: apiFormat, Method: req.Method, Path: req.URL.Path, Model: metadata.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
 		PricingSpecification: metadata.PricingSpecification, InputCharacterCount: metadata.InputCharacterCount, InputImageCount: metadata.InputImageCount,
 		InputVideoCount: metadata.InputVideoCount, InputVideoDurationMs: metadata.InputVideoDurationMs, InputVideoDurationComplete: metadata.InputVideoDurationComplete,
@@ -1183,13 +1207,6 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 	}
 	if requestKind == "create" && metadata.Capability == "video" {
 		log.VideoSeconds = metadata.VideoSeconds
-		if log.VideoSeconds <= 0 {
-			if strings.Contains(strings.ToLower(metadata.Model), "seedance") || strings.Contains(req.URL.Path, "/contents/generations/tasks") {
-				log.VideoSeconds = 5
-			} else {
-				log.VideoSeconds = 6
-			}
-		}
 	}
 	metadata.Service.EnrichAPICallLog(&log, responseBody)
 	if err := metadata.Service.LogAPICall(log); err != nil {

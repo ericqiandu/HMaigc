@@ -845,7 +845,7 @@ func TestProcessTaskValidatesInterfaceBeforeHydratingMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.ModelChannel{}); err != nil {
+	if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.ProviderTaskFact{}); err != nil {
 		t.Fatal(err)
 	}
 	channel := model.ModelChannel{
@@ -869,7 +869,8 @@ func TestProcessTaskValidatesInterfaceBeforeHydratingMedia(t *testing.T) {
 		ReferenceImages: []providerMedia{{StorageKey: "resource:missing"}},
 	}
 	raw, _ := json.Marshal(input)
-	_, err = (&Service{repo: repository.New(db)}).processCanvasGenerationTask(context.Background(), "user-1", "video_generate", "", string(raw))
+	task := model.Task{ID: "task-1", UserID: "user-1", Type: "video_generate", Prompt: "make it move", InputJSON: string(raw)}
+	_, err = (&Service{repo: repository.New(db)}).processCanvasGenerationTask(context.Background(), task)
 	if err == nil || !strings.Contains(err.Error(), "不支持video生成") {
 		t.Fatalf("processCanvasGenerationTask() error = %v", err)
 	}

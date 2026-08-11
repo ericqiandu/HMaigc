@@ -376,12 +376,15 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 		return nil, BadAuthRequest("任务能力类型无效，无法计费")
 	}
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
-	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingUsage(capability, config))
+	usage := billingUsage(capability, config)
+	usage.InputVariant = taskPricingInputVariant(input)
+	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, usage)
 }
 
 type BillingUsage struct {
 	Quantity                  int64
 	Resolution                string
+	InputVariant              string
 	SuperResolutionEnabled    bool
 	SuperResolutionResolution string
 	SuperResolutionVersion    string
@@ -444,6 +447,7 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	unitPrice := item.UnitPriceMicrocredits
 	priceTierID := ""
 	pricingResolution := ""
+	pricingInputVariant := ""
 	switch item.PriceStrategy {
 	case "flat":
 		if unitPrice <= 0 {
@@ -475,15 +479,17 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		if pricingResolution == "" {
 			return nil, BadAuthRequest("视频分辨率无效，无法匹配积分价格")
 		}
+		pricingInputVariant = firstNonEmpty(strings.TrimSpace(usage.InputVariant), "standard")
 		for _, tier := range item.PriceTiers {
-			if tier.Resolution == pricingResolution {
+			tierInputVariant := firstNonEmpty(strings.TrimSpace(tier.InputVariant), "standard")
+			if tier.Resolution == pricingResolution && tierInputVariant == pricingInputVariant {
 				unitPrice = tier.UnitPriceMicrocredits
 				priceTierID = tier.ID
 				break
 			}
 		}
 		if priceTierID == "" || unitPrice <= 0 {
-			return nil, BadAuthRequest("当前模型未配置规格 " + pricingResolution + " 的积分价格")
+			return nil, BadAuthRequest("当前模型未配置规格 " + pricingResolution + "/" + pricingInputVariant + " 的积分价格")
 		}
 	default:
 		return nil, BadAuthRequest("当前模型尚未配置有效的价格策略")
@@ -545,13 +551,31 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
-		PriceTierID: priceTierID, PricingResolution: pricingResolution,
+		PriceTierID: priceTierID, PricingResolution: pricingResolution, PricingInputVariant: pricingInputVariant,
 		UnitPriceMicrocredits: unitPrice, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
 		EnhancementPricingRuleID: enhancementRuleID, EnhancementUnitPriceMicrocredits: enhancementUnitPrice,
 		EnhancementAmountMicrocredits: enhancementAmount, EnhancementSupplierCostMinMicros: enhancementSupplierMin,
 		EnhancementSupplierCostMaxMicros: enhancementSupplierMax, EnhancementPricingSnapshotJSON: enhancementSnapshot,
 		Status: model.BillingStatusReserved,
 	}, nil
+}
+
+func taskPricingInputVariant(input map[string]any) string {
+	value, exists := input["referenceVideos"]
+	if !exists || value == nil {
+		return "standard"
+	}
+	switch videos := value.(type) {
+	case []any:
+		if len(videos) > 0 {
+			return "reference_video"
+		}
+	case []providerMedia:
+		if len(videos) > 0 {
+			return "reference_video"
+		}
+	}
+	return "standard"
 }
 
 func (s *Service) requireAccessibleChannelModel(userID string, channelID string, modelKey string) (*model.ChannelModel, error) {
@@ -561,6 +585,13 @@ func (s *Service) requireAccessibleChannelModel(userID string, channelID string,
 	}
 	if err != nil {
 		return nil, err
+	}
+	available, err := s.kuaiziSeedance25ModelAvailable(*item)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, BadAuthRequest("当前系统渠道模型的上游运行事实不可用")
 	}
 	switch item.AccessPolicy {
 	case model.ModelAccessAuthenticated:
@@ -587,7 +618,11 @@ func billingUsage(capability string, config map[string]any) BillingUsage {
 		return usage
 	}
 	if capability == "video" {
-		usage.Quantity = positiveInteger(config["videoSeconds"])
+		if strings.TrimSpace(fmt.Sprint(config["videoSeconds"])) == "-1" {
+			usage.Quantity = 30
+		} else {
+			usage.Quantity = positiveInteger(config["videoSeconds"])
+		}
 		usage.Resolution = strings.TrimSpace(fmt.Sprint(config["vquality"]))
 		usage.SuperResolutionEnabled = strings.EqualFold(strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionEnabled"])), "true")
 		usage.SuperResolutionResolution = strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionResolution"]))

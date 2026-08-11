@@ -71,6 +71,13 @@ func TestAIOpenPlatformVideoBodyRejectsInvalidSuperResolutionTransition(t *testi
 	}
 }
 
+func TestAIOpenPlatformVideoLegacyAdapterRejectsSeedance25(t *testing.T) {
+	_, err := aiOpenPlatformVideoModelMode("kuaizi-seedance-2.5")
+	if err == nil {
+		t.Fatal("legacy AI Open Platform adapter accepted Seedance 2.5")
+	}
+}
+
 func TestAIOpenPlatformVideoResolutionMatchesSeedanceModelCapabilities(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -179,6 +179,7 @@ func aiOpenPlatformVideoBody(input canvasGenerationInput) (aiOpenPlatformVideoCr
 }
 
 func aiOpenPlatformVideoModelMode(modelName string) (string, error) {
+	// 该旧渠道仅拥有下列 Seedance 2.0 模型；2.5 必须经冻结凭据运行时适配器执行。
 	switch strings.TrimSpace(modelName) {
 	case "doubao-seedance-2-0-fast-260128":
 		return "fast", nil
