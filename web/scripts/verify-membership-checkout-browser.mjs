@@ -57,7 +57,19 @@ async function waitForMembershipDialogAnimation() {
     await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
-async function waitForMembershipPlanAction(page, planCode, label) {
+function observePageFailures(page) {
+    const failedResponses = [];
+    const pageErrors = [];
+    const requestFailures = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("requestfailed", (request) => requestFailures.push(`${request.failure()?.errorText ?? "unknown"} ${request.url()}`));
+    page.on("response", (response) => {
+        if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+    });
+    return { failedResponses, pageErrors, requestFailures };
+}
+
+async function waitForMembershipPlanAction(page, planCode, label, failures) {
     let waitError = null;
     try {
         const stateHandle = await page.waitForFunction(
@@ -65,7 +77,9 @@ async function waitForMembershipPlanAction(page, planCode, label) {
                 const plan = [...document.querySelectorAll("[data-plan-code]")].find((candidate) => candidate.getAttribute("data-plan-code") === expectedPlanCode);
                 if (plan?.querySelector(".membership-storefront-plan-action")) return { kind: "ready", message: "" };
                 const error = document.querySelector(".membership-storefront-error-alert");
-                return error instanceof HTMLElement ? { kind: "error", message: error.innerText.replace(/\s+/gu, " ").trim() } : null;
+                if (error instanceof HTMLElement) return { kind: "error", message: error.innerText.replace(/\s+/gu, " ").trim() };
+                const routeError = document.querySelector("main:not(.membership-storefront-page)");
+                return routeError instanceof HTMLElement ? { kind: "error", message: routeError.innerText.replace(/\s+/gu, " ").trim() } : null;
             },
             { polling: 100, timeout: 45_000 },
             planCode,
@@ -84,7 +98,10 @@ async function waitForMembershipPlanAction(page, planCode, label) {
         hasLoading: Boolean(document.querySelector(".membership-storefront-loading")),
         readyState: document.readyState,
     }));
-    throw new Error(`${label}: 会员套餐未就绪；url=${page.url()} readyState=${diagnostics.readyState} loading=${diagnostics.hasLoading} error=${diagnostics.hasError} body=${diagnostics.bodyText || "<empty>"}`, { cause: waitError });
+    throw new Error(
+        `${label}: 会员套餐未就绪；url=${page.url()} readyState=${diagnostics.readyState} loading=${diagnostics.hasLoading} error=${diagnostics.hasError} responses=${failures.failedResponses.join(" | ") || "<none>"} requests=${failures.requestFailures.join(" | ") || "<none>"} pageErrors=${failures.pageErrors.join(" | ") || "<none>"} body=${diagnostics.bodyText || "<empty>"}`,
+        { cause: waitError },
+    );
 }
 
 async function readMembershipFacts(page, label) {
@@ -136,6 +153,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
     const label = `${viewport.name}/${theme}/${state}`;
     await setMembershipDialogFixtureState(baseURL, state, label);
     const page = await browser.newPage();
+    const failures = observePageFailures(page);
     try {
         await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
         await page.evaluateOnNewDocument((selectedTheme) => {
@@ -143,7 +161,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
         }, theme);
         const navigation = await page.goto(`${baseURL}/membership`, { waitUntil: "domcontentloaded", timeout: 30_000 });
         assert.ok(navigation, `${label}: 会员页导航没有响应`);
-        await waitForMembershipPlanAction(page, "creator-flagship-year", label);
+        await waitForMembershipPlanAction(page, "creator-flagship-year", label, failures);
         await page.click('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action');
         if (state === "membership-personal-order-failure-dialog") {
             await page.waitForFunction(() => document.body.innerText.includes("会员订单服务暂时不可用"), { timeout: 15_000 });
@@ -186,6 +204,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
 async function runMembershipDialogCase(browser, baseURL, theme, viewport, audience) {
     const label = `${viewport.name}/${theme}/membership-${audience}-dialog`;
     const page = await browser.newPage();
+    const failures = observePageFailures(page);
     try {
         await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
         await page.evaluateOnNewDocument((selectedTheme) => {
@@ -204,7 +223,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
         }
         if (audience !== "history") {
             const planCode = audience === "team" ? "team-flagship-year" : "creator-flagship-year";
-            await waitForMembershipPlanAction(page, planCode, label);
+            await waitForMembershipPlanAction(page, planCode, label, failures);
             await page.click(`[data-plan-code="${planCode}"] .membership-storefront-plan-action`);
             if (audience === "team") {
                 await page.waitForSelector(".membership-payment-setup-primary", { timeout: 15_000 });
