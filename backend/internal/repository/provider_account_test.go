@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -12,6 +13,23 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestProviderCredentialSecretDoesNotMarshalKeyCipher(t *testing.T) {
+	encoded, err := json.Marshal(ProviderCredentialSecret{
+		ProviderAccountID:    "account",
+		ProviderCredentialID: "credential",
+		CredentialVersionID:  "version",
+		Version:              1,
+		KeyCipher:            "sentinel-cipher",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialized := string(encoded)
+	if strings.Contains(serialized, "KeyCipher") || strings.Contains(serialized, "sentinel-cipher") {
+		t.Fatalf("provider credential secret leaked key cipher into JSON: %s", serialized)
+	}
+}
 
 func TestProviderAccountEndpointActivationRequiresCurrentVersion(t *testing.T) {
 	db := openProviderRepositorySQLite(t)

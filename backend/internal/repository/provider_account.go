@@ -22,7 +22,7 @@ type ProviderCredentialSecret struct {
 	ProviderCredentialID string `gorm:"column:provider_credential_id"`
 	CredentialVersionID  string `gorm:"column:credential_version_id"`
 	Version              int64  `gorm:"column:version"`
-	KeyCipher            string `gorm:"column:key_cipher"`
+	KeyCipher            string `json:"-" gorm:"column:key_cipher"`
 }
 
 func (r *Repository) CreateProviderAccount(account *model.ProviderAccount) error {
