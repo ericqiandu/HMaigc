@@ -240,7 +240,7 @@ func TestExternalBinaryTransportRejectsSpecialUseAddressBeforeEveryDial(t *testi
 					return nil, errors.New("unexpected dial")
 				},
 			)
-			transport := client.Transport.(*http.Transport)
+			transport := client.Transport.(*externalBinaryRoundTripper).transport
 			if _, err := transport.DialContext(context.Background(), "tcp", "cdn.example.com:443"); err == nil {
 				t.Fatal("special-use address reached external binary dial")
 			}
@@ -262,7 +262,7 @@ func TestExternalBinaryTransportRejectsSpecialUseAddressBeforeEveryDial(t *testi
 				return nil, errors.New("unexpected dial")
 			},
 		)
-		transport := client.Transport.(*http.Transport)
+		transport := client.Transport.(*externalBinaryRoundTripper).transport
 		if _, err := transport.DialContext(context.Background(), "tcp", "cdn.example.com:443"); err == nil {
 			t.Fatal("mixed DNS facts reached external binary dial")
 		}
@@ -303,7 +303,7 @@ func TestExternalBinaryRedirectRejectsSpecialUseDNSRebindingBeforeDial(t *testin
 	if err := client.CheckRedirect(redirect, []*http.Request{previous}); err != nil {
 		t.Fatalf("public redirect validation error = %v", err)
 	}
-	transport := client.Transport.(*http.Transport)
+	transport := client.Transport.(*externalBinaryRoundTripper).transport
 	if _, err := transport.DialContext(context.Background(), "tcp", "redirect.example.com:443"); err == nil {
 		t.Fatal("DNS-rebound redirect reached external binary dial")
 	}
@@ -336,5 +336,58 @@ func TestExternalBinaryRedirectRejectsSpecialUseAddressDuringRedirectValidation(
 	}
 	if err := client.CheckRedirect(redirect, []*http.Request{previous}); err == nil {
 		t.Fatal("special-use redirect target passed redirect validation")
+	}
+}
+
+func TestExternalBinaryClientRejectsInitialHTTPBeforeDial(t *testing.T) {
+	dialed := false
+	client := newExternalBinaryHTTPClientWithDialer(
+		time.Second,
+		func(_ context.Context, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil
+		},
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("unexpected dial")
+		},
+	)
+	if _, err := client.Get("http://public.example.com/result.mp4"); err == nil {
+		t.Fatal("initial HTTP external binary URL was accepted")
+	}
+	if dialed {
+		t.Fatal("initial HTTP external binary URL reached network dial")
+	}
+}
+
+func TestExternalBinaryClientRejectsHTTPSRedirectToHTTPBeforeSecondDial(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Location", "http://redirect.example.com/result.mp4")
+		writer.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+	serverAddress := strings.TrimPrefix(server.URL, "https://")
+	dialCount := 0
+	dialer := &net.Dialer{}
+	client := newExternalBinaryHTTPClientWithDialer(
+		time.Second,
+		func(_ context.Context, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil
+		},
+		func(ctx context.Context, network string, _ string) (net.Conn, error) {
+			dialCount++
+			if dialCount > 1 {
+				return nil, errors.New("second hop dial attempted")
+			}
+			return dialer.DialContext(ctx, network, serverAddress)
+		},
+	)
+	transport := client.Transport.(*externalBinaryRoundTripper).transport
+	transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	transport.TLSClientConfig.InsecureSkipVerify = true // 仅测试注入域名连接本地 TLS server。
+	if _, err := client.Get("https://origin.example.com/result.mp4"); err == nil {
+		t.Fatal("HTTPS to HTTP redirect was accepted")
+	}
+	if dialCount != 1 {
+		t.Fatalf("dial count = %d, want only the initial HTTPS dial", dialCount)
 	}
 }

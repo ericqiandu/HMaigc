@@ -435,6 +435,7 @@ func TestProviderFailureSentinelsNeverReachPersistedOrHTTPFacts(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	ciphertext, err := NewProviderSecretCipher(svc.dataDir).Encrypt("account", "credential", "credential-v1", secret)
 	if err != nil {
 		t.Fatal(err)
@@ -1011,7 +1012,7 @@ func TestResolvedProviderFactRejectsStaleTaskCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if storedTask.Status != model.TaskStatusFailed || storedTask.Stage != "任务已人工核对终结" || storedTask.Error != "上游任务已完成人工核对" || storedTask.LeaseOwner != "" || storedTask.LeaseToken != "" || storedTask.LeaseExpiresAt != nil || order.Status != model.BillingStatusRefunded {
+	if storedTask.Status != model.TaskStatusQueued || storedTask.Stage != providerResolvedPostprocessStage || storedTask.Error != providerResolvedTaskError || storedTask.LeaseOwner != "" || storedTask.LeaseToken != "" || storedTask.LeaseExpiresAt != nil || order.Status != model.BillingStatusRefunded {
 		t.Fatalf("stale completion task=%s billing=%s", storedTask.Status, order.Status)
 	}
 }
@@ -1185,7 +1186,7 @@ func TestProviderAdminResolutionLetsInflightResourceWriterRecordReadyWithoutChan
 	}
 	resolved, err := svc.repo.RefundProviderTaskBilling(fixture.order.ID, repository.ProviderTaskBillingResolution{
 		ExpectedProviderStatus: "succeeded", ExpectedReconciliationStatus: "manual_review", ExpectedBillingStatus: model.BillingStatusRunning,
-		ResolvedProviderStatus: "succeeded_resolved", ActorUserID: "admin", Note: "verified refund",
+		ResolvedProviderStatus: "succeeded", ActorUserID: "admin", Note: "verified refund",
 		TaskStatus: model.TaskStatusFailed, TaskStage: "resolved", TaskError: "resolved",
 	})
 	if err != nil || !resolved {
@@ -1206,8 +1207,340 @@ func TestProviderAdminResolutionLetsInflightResourceWriterRecordReadyWithoutChan
 	if storedResource.Status != model.ResourceStatusReady || storedResource.ETag != "etag-ready" {
 		t.Fatalf("resource after resolution = %#v", storedResource)
 	}
-	if storedTask.Status != model.TaskStatusFailed || storedOrder.Status != model.BillingStatusRefunded || storedFact.ReconciliationStatus != "resolved" {
+	if storedTask.Status != model.TaskStatusQueued || storedOrder.Status != model.BillingStatusRefunded || storedFact.ReconciliationStatus != "resolved" {
 		t.Fatalf("commercial facts changed after writer completion: task=%s billing=%s fact=%s", storedTask.Status, storedOrder.Status, storedFact.ReconciliationStatus)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim ready resolved postprocess = %#v, %v", reclaimed, err)
+	}
+	if claimedExecution, err := svc.repo.ClaimProviderTaskExecution(reclaimed.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken); err != nil || !claimedExecution {
+		t.Fatalf("claim ready resolved execution = %t, %v", claimedExecution, err)
+	}
+	if err := svc.repo.CompleteResolvedProviderPostprocess(fixture.task.ID, repository.ProviderTaskLease{Owner: reclaimed.LeaseOwner, Token: reclaimed.LeaseToken}, model.TaskStatusFailed, "resolved", "resolved", reclaimed.InputJSON, `{"resourceId":"`+resource.ID+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	storedTask, _ = svc.repo.Task(fixture.task.ID)
+	if storedTask.Status != model.TaskStatusFailed {
+		t.Fatalf("ready resolved postprocess did not reach terminal projection: %#v", storedTask)
+	}
+}
+
+func TestProviderAdminResolutionLeavesPendingResourcePostprocessClaimableUntilAssetReady(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	admin := model.User{ID: "pending-postprocess-admin", Username: "pending-postprocess-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "pending-postprocess-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("pending-postprocess-video")
+	source := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/result.mp4" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "video/mp4")
+		_, _ = writer.Write(payload)
+	}))
+	defer source.Close()
+	originalOutboundTransport := externalBinaryTransport
+	testOutboundTransport := externalBinaryTransport.Clone()
+	testOutboundTransport.TLSClientConfig = source.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	testOutboundTransport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, source.Listener.Addr().String())
+	}
+	externalBinaryTransport = testOutboundTransport
+	t.Cleanup(func() { externalBinaryTransport = originalOutboundTransport })
+	sourceURL := strings.Replace(source.URL, "127.0.0.1", "example.com", 1) + "/result.mp4"
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-pending-postprocess", "execution_lease_token": fixture.task.LeaseToken,
+		"asset_source_url": sourceURL, "last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource, err := svc.prepareSourceTaskResource(fixture.task.UserID, fixture.task.ID, "video", "generated.mp4", "video/mp4", int64(len(payload)), 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.WriteToken != "" || resource.QuotaReserved {
+		t.Fatalf("new pending resource unexpectedly claimed: %#v", resource)
+	}
+
+	if _, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "preserve pending success asset"}); err != nil {
+		t.Fatal(err)
+	}
+	handoffTask, _ := svc.repo.Task(fixture.task.ID)
+	handoffResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	if handoffTask.Status != model.TaskStatusQueued || handoffResource.Status != model.ResourceStatusPending || handoffResource.WriteResolution != "resolving" {
+		t.Fatalf("pending postprocess handoff: task=%#v resource=%#v", handoffTask, handoffResource)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim pending postprocess = %#v, %v", reclaimed, err)
+	}
+	if err := svc.processClaimedTask(reclaimed); err != nil {
+		t.Fatalf("process pending postprocess = %v", err)
+	}
+
+	finalTask, _ := svc.repo.Task(fixture.task.ID)
+	finalFact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	finalOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	finalResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	var usage model.UserDailyUploadUsage
+	if err := db.First(&usage, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finalTask.Status != model.TaskStatusFailed || finalFact.ReconciliationStatus != "resolved" || finalOrder.Status != model.BillingStatusRefunded || finalResource.Status != model.ResourceStatusReady || usage.Bytes != int64(len(payload)) {
+		t.Fatalf("pending postprocess completion: task=%#v fact=%#v order=%#v resource=%#v usage=%#v", finalTask, finalFact, finalOrder, finalResource, usage)
+	}
+}
+
+func TestProviderAdminResolutionBeforeResourceCreationLeavesSucceededPostprocessClaimable(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	admin := model.User{ID: "pre-resource-admin", Username: "pre-resource-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "pre-resource-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("postprocess-created-after-resolution")
+	source := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "video/mp4")
+		_, _ = writer.Write(payload)
+	}))
+	defer source.Close()
+	originalOutboundTransport := externalBinaryTransport
+	testOutboundTransport := externalBinaryTransport.Clone()
+	testOutboundTransport.TLSClientConfig = source.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	testOutboundTransport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, source.Listener.Addr().String())
+	}
+	externalBinaryTransport = testOutboundTransport
+	t.Cleanup(func() { externalBinaryTransport = originalOutboundTransport })
+	sourceURL := strings.Replace(source.URL, "127.0.0.1", "example.com", 1) + "/result.mp4"
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-before-resource", "execution_lease_token": fixture.task.LeaseToken,
+		"asset_source_url": sourceURL, "last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "resolve before resource creation"}); err != nil {
+		t.Fatal(err)
+	}
+	storedTask, _ := svc.repo.Task(fixture.task.ID)
+	storedFact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	storedOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	if storedTask.Status != model.TaskStatusQueued || storedTask.LeaseToken != "" || storedFact.ReconciliationStatus != "resolved" || storedOrder.Status != model.BillingStatusRefunded {
+		t.Fatalf("pre-resource resolution did not preserve postprocess entry: task=%#v fact=%#v order=%#v", storedTask, storedFact, storedOrder)
+	}
+	if _, err := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("resource unexpectedly exists before postprocess recovery: %v", err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim postprocess without prior resource = %#v, %v", reclaimed, err)
+	}
+	if err := svc.processClaimedTask(reclaimed); err != nil {
+		t.Fatalf("process postprocess without prior resource = %v", err)
+	}
+	finalTask, _ := svc.repo.Task(fixture.task.ID)
+	finalResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	var usage model.UserDailyUploadUsage
+	if err := db.First(&usage, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finalTask.Status != model.TaskStatusFailed || finalResource.Status != model.ResourceStatusReady || usage.Bytes != int64(len(payload)) {
+		t.Fatalf("postprocess created after resolution did not converge: task=%#v resource=%#v usage=%#v", finalTask, finalResource, usage)
+	}
+}
+
+func TestProviderAdminResolutionKeepsInflightWriteFailureRetryable(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	admin := model.User{ID: "failed-write-admin", Username: "failed-write-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "failed-write-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-failed-write", "execution_lease_token": fixture.task.LeaseToken,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource, err := svc.prepareSourceTaskResource(fixture.task.UserID, fixture.task.ID, "video", "generated.mp4", "video/mp4", 24, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.claimPreparedGeneratedResourceWrite(fixture.task.UserID, fixture.task, resource, "failed-write-token", "pending/failed-write.mp4", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "resolve during failed write"}); err != nil {
+		t.Fatal(err)
+	}
+	claimed.Status = model.ResourceStatusFailed
+	claimed.Error = "recoverable object write failure"
+	if err := svc.repo.CompleteSourceTaskResourceWrite(claimed, fixture.task.LeaseOwner, fixture.task.LeaseToken, "failed-write-token"); err != nil {
+		t.Fatal(err)
+	}
+	queuedTask, _ := svc.repo.Task(fixture.task.ID)
+	failedResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	if queuedTask.Status != model.TaskStatusQueued || failedResource.Status != model.ResourceStatusFailed || failedResource.QuotaReserved {
+		t.Fatalf("failed resolved writer lost retry entry: task=%#v resource=%#v", queuedTask, failedResource)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim failed resolved postprocess = %#v, %v", reclaimed, err)
+	}
+	if claimedExecution, err := svc.repo.ClaimProviderTaskExecution(reclaimed.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken); err != nil || !claimedExecution {
+		t.Fatalf("claim failed resolved execution = %t, %v", claimedExecution, err)
+	}
+	retry, err := svc.repo.ClaimSourceTaskResourceWriteWithQuota(fixture.task.UserID, fixture.task.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken, "retry-write-token", "pending/retry-write.mp4", time.Minute, "2026-08-12", 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry.Status = model.ResourceStatusReady
+	retry.ETag = "retry-ready"
+	if err := svc.repo.CompleteSourceTaskResourceWrite(retry, reclaimed.LeaseOwner, reclaimed.LeaseToken, "retry-write-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CompleteResolvedProviderPostprocess(fixture.task.ID, repository.ProviderTaskLease{Owner: reclaimed.LeaseOwner, Token: reclaimed.LeaseToken}, model.TaskStatusFailed, "resolved", "resolved", reclaimed.InputJSON, `{"resourceId":"`+retry.ID+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	finalTask, _ := svc.repo.Task(fixture.task.ID)
+	finalResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	finalOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	if finalTask.Status != model.TaskStatusFailed || finalResource.Status != model.ResourceStatusReady || finalOrder.Status != model.BillingStatusRefunded {
+		t.Fatalf("failed writer retry did not converge: task=%#v resource=%#v order=%#v", finalTask, finalResource, finalOrder)
+	}
+}
+
+func TestProviderQuotaAndWriteClaimAreAtomicAgainstAdminResolution(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	admin := model.User{ID: "atomic-resource-admin", Username: "atomic-resource-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "atomic-resource-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-atomic-resource", "execution_lease_token": fixture.task.LeaseToken,
+		"asset_source_url": "https://cdn.example/result.mp4", "last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource, err := svc.prepareSourceTaskResource(fixture.task.UserID, fixture.task.ID, "video", "generated.mp4", "video/mp4", 24, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	claimPaused := make(chan struct{})
+	releaseClaim := make(chan struct{})
+	const callbackName = "test:provider-quota-write-claim"
+	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "resources" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if !ok || updates["write_token"] != "atomic-write-token" {
+			return
+		}
+		close(claimPaused)
+		<-releaseClaim
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Update().Remove(callbackName) })
+
+	claimDone := make(chan struct {
+		resource *model.Resource
+		err      error
+	}, 1)
+	go func() {
+		claimed, claimErr := svc.claimPreparedGeneratedResourceWrite(fixture.task.UserID, fixture.task, resource, "atomic-write-token", "pending/atomic-result.mp4", time.Minute)
+		claimDone <- struct {
+			resource *model.Resource
+			err      error
+		}{claimed, claimErr}
+	}()
+	select {
+	case <-claimPaused:
+	case <-time.After(5 * time.Second):
+		close(releaseClaim)
+		t.Fatal("combined quota/write claim did not reach atomic resource update")
+	}
+	visibleResource, err := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	if err != nil {
+		close(releaseClaim)
+		t.Fatal(err)
+	}
+	if visibleResource.QuotaReserved || visibleResource.WriteToken != "" {
+		close(releaseClaim)
+		t.Fatalf("quota or write claim became separately visible: %#v", visibleResource)
+	}
+	close(releaseClaim)
+	claimedResult := <-claimDone
+	if claimedResult.err != nil {
+		t.Fatal(claimedResult.err)
+	}
+	if _, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "admin raced atomic resource claim"}); err != nil {
+		t.Fatal(err)
+	}
+	claimedResult.resource.Status = model.ResourceStatusReady
+	claimedResult.resource.ETag = "atomic-ready"
+	if err := svc.repo.CompleteSourceTaskResourceWrite(claimedResult.resource, fixture.task.LeaseOwner, fixture.task.LeaseToken, "atomic-write-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim atomic resolved postprocess = %#v, %v", reclaimed, err)
+	}
+	if claimedExecution, err := svc.repo.ClaimProviderTaskExecution(reclaimed.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken); err != nil || !claimedExecution {
+		t.Fatalf("claim atomic resolved execution = %t, %v", claimedExecution, err)
+	}
+	if err := svc.repo.CompleteResolvedProviderPostprocess(fixture.task.ID, repository.ProviderTaskLease{Owner: reclaimed.LeaseOwner, Token: reclaimed.LeaseToken}, model.TaskStatusFailed, "resolved", "resolved", reclaimed.InputJSON, `{"resourceId":"`+claimedResult.resource.ID+`"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	storedTask, _ := svc.repo.Task(fixture.task.ID)
+	storedFact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	storedOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	storedResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	var usage model.UserDailyUploadUsage
+	if err := db.First(&usage, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusFailed || storedFact.ReconciliationStatus != "resolved" || storedOrder.Status != model.BillingStatusRefunded || storedResource.Status != model.ResourceStatusReady || usage.Bytes != resource.Size {
+		t.Fatalf("atomic quota/write claim convergence: task=%#v fact=%#v order=%#v resource=%#v usage=%#v", storedTask, storedFact, storedOrder, storedResource, usage)
 	}
 }
 
@@ -1251,7 +1584,7 @@ func TestProviderSucceededPostprocessFailureRequeuesAndNextGenerationCompletesSa
 	if err != nil || !claimed {
 		t.Fatalf("postprocess execution claim = %t, %v", claimed, err)
 	}
-	current, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, newTask.LeaseOwner, newTask.LeaseToken, "new-put", "pending/new.mp4", time.Minute)
+	current, err := svc.repo.ClaimSourceTaskResourceWriteWithQuota(fixture.task.UserID, fixture.task.ID, newTask.LeaseOwner, newTask.LeaseToken, "new-put", "pending/new.mp4", time.Minute, "2026-08-12", 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,6 +1672,237 @@ func TestActiveTaskCancellationIsGenerationScopedAndCancelsAllActiveGenerations(
 	}
 }
 
+func TestProviderCancelTaskBeforeOutboundAtomicallyRefundsAndReleasesCapacity(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken); err != nil || !claimed {
+		t.Fatalf("provider execution claim = %t, %v", claimed, err)
+	}
+
+	cancelled, err := svc.CancelTask(fixture.task.UserID, fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, err := svc.repo.ProviderTaskFact(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order, err := svc.repo.BillingOrder(fixture.order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := svc.repo.CreditAccount(fixture.task.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refunds int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("billing_order_id = ? AND type = ?", fixture.order.ID, model.CreditLedgerRefund).Count(&refunds).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != model.TaskStatusCancelled || order.Status != model.BillingStatusRefunded || fact.ProviderStatus != "cancelled_before_create" || fact.ReconciliationStatus != "resolved" {
+		t.Fatalf("provider cancel facts: task=%s billing=%s provider=%s reconciliation=%s", cancelled.Status, order.Status, fact.ProviderStatus, fact.ReconciliationStatus)
+	}
+	if account.AvailableMicrocredits != 100 || account.ReservedMicrocredits != 0 || refunds != 1 {
+		t.Fatalf("provider cancel credits: account=%#v refunds=%d", account, refunds)
+	}
+
+	secondTask := providerRuntimeTask("task-after-provider-cancel", "user-after-provider-cancel", "worker-after-provider-cancel")
+	secondTask.BillingOrderID = ""
+	if err := db.Create(&secondTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondFact := providerRuntimeFact(secondTask.ID, "", "reserved")
+	if err := db.Create(&secondFact).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken); err != nil || !claimed {
+		t.Fatalf("provider capacity after terminal cancel = %t, %v", claimed, err)
+	}
+}
+
+func TestProviderCancelTaskAfterCreateBoundaryStaysClaimableUntilAdminResolution(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	admin := model.User{ID: "provider-cancel-admin", Username: "provider-cancel-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "provider-cancel-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	lease := repository.ProviderTaskLease{Owner: fixture.task.LeaseOwner, Token: fixture.task.LeaseToken}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(fixture.task.ID, lease.Owner, lease.Token); err != nil || !claimed {
+		t.Fatalf("provider execution claim = %t, %v", claimed, err)
+	}
+	if err := svc.repo.MarkProviderTaskCreateStartedForLease(fixture.task.ID, lease); err != nil {
+		t.Fatal(err)
+	}
+
+	requested, err := svc.CancelTask(fixture.task.UserID, fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	order, _ := svc.repo.BillingOrder(fixture.order.ID)
+	if requested.Status != model.TaskStatusQueued || requested.LeaseToken != "" || fact.ProviderStatus != "creating" || fact.ReconciliationStatus != "cancel_requested" || order.Status != model.BillingStatusUncertain {
+		t.Fatalf("outbound cancel request: task=%#v fact=%#v order=%#v", requested, fact, order)
+	}
+
+	secondTask := providerRuntimeTask("task-blocked-by-provider-cancel", "user-blocked-by-provider-cancel", "worker-blocked-by-provider-cancel")
+	secondTask.BillingOrderID = ""
+	if err := db.Create(&secondTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondFact := providerRuntimeFact(secondTask.ID, "", "reserved")
+	if err := db.Create(&secondFact).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken); err != nil || claimed {
+		t.Fatalf("cancel review capacity claim = %t, %v, want occupied", claimed, err)
+	}
+
+	if _, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "cancel review resolved"}); err != nil {
+		t.Fatal(err)
+	}
+	resolvedTask, _ := svc.repo.Task(fixture.task.ID)
+	resolvedFact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	resolvedOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	if resolvedTask.Status != model.TaskStatusFailed || resolvedFact.ReconciliationStatus != "resolved" || resolvedOrder.Status != model.BillingStatusRefunded {
+		t.Fatalf("resolved cancel request: task=%#v fact=%#v order=%#v", resolvedTask, resolvedFact, resolvedOrder)
+	}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken); err != nil || !claimed {
+		t.Fatalf("provider capacity after cancel resolution = %t, %v", claimed, err)
+	}
+}
+
+func TestProviderCancelTaskDuringPollRequeuesSameProviderTask(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "running", "provider_task_id": "provider-cancel-poll", "execution_lease_token": fixture.task.LeaseToken,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	requested, err := svc.CancelTask(fixture.task.UserID, fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.Status != model.TaskStatusQueued {
+		t.Fatalf("poll cancellation task status = %s", requested.Status)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(fixture.task.LeaseOwner, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim cancellation review task = %#v, %v", reclaimed, err)
+	}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(reclaimed.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken); err != nil || !claimed {
+		t.Fatalf("claim cancellation review provider execution = %t, %v", claimed, err)
+	}
+	fact, err := svc.repo.ProviderTaskFact(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fact.ProviderTaskID != "provider-cancel-poll" || fact.ProviderStatus != "running" || fact.ReconciliationStatus != "cancel_requested" || fact.ExecutionLeaseToken != reclaimed.LeaseToken {
+		t.Fatalf("reclaimed cancellation review fact = %#v", fact)
+	}
+	if err := svc.repo.MarkProviderTaskCreateStartedForLease(fixture.task.ID, repository.ProviderTaskLease{Owner: reclaimed.LeaseOwner, Token: reclaimed.LeaseToken}); err == nil {
+		t.Fatal("poll cancellation review allowed a second create")
+	}
+}
+
+func TestProviderCancelTaskDuringResourcePutPreservesRetryableSuccessAsset(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("cancel-during-put-video")
+	source := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "video/mp4")
+		_, _ = writer.Write(payload)
+	}))
+	defer source.Close()
+	originalOutboundTransport := externalBinaryTransport
+	testOutboundTransport := externalBinaryTransport.Clone()
+	testOutboundTransport.TLSClientConfig = source.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	testOutboundTransport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, source.Listener.Addr().String())
+	}
+	externalBinaryTransport = testOutboundTransport
+	t.Cleanup(func() { externalBinaryTransport = originalOutboundTransport })
+	sourceURL := strings.Replace(source.URL, "127.0.0.1", "example.com", 1) + "/result.mp4"
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-cancel-put", "execution_lease_token": fixture.task.LeaseToken,
+		"asset_source_url": sourceURL, "last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource, err := svc.prepareSourceTaskResource(fixture.task.UserID, fixture.task.ID, "video", "generated.mp4", "video/mp4", int64(len(payload)), 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.claimPreparedGeneratedResourceWrite(fixture.task.UserID, fixture.task, resource, "cancel-put-old", "pending/cancel-put-old.mp4", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &gatedProviderResourceReader{payload: payload, started: make(chan struct{}), release: make(chan struct{})}
+	putDone := make(chan error, 1)
+	go func() {
+		_, putErr := svc.writeClaimedSourceTaskResource(fixture.task.UserID, claimed, fixture.task.LeaseOwner, fixture.task.LeaseToken, "cancel-put-old", reader)
+		putDone <- putErr
+	}()
+	select {
+	case <-reader.started:
+	case <-time.After(5 * time.Second):
+		close(reader.release)
+		t.Fatal("resource put did not block")
+	}
+	requested, err := svc.CancelTask(fixture.task.UserID, fixture.task.ID)
+	if err != nil {
+		close(reader.release)
+		t.Fatal(err)
+	}
+	if requested.Status != model.TaskStatusQueued {
+		close(reader.release)
+		t.Fatalf("resource put cancellation status = %s", requested.Status)
+	}
+	close(reader.release)
+	if putErr := <-putDone; putErr == nil {
+		t.Fatal("stale resource writer completed after cancellation cleared its Task lease")
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("claim cancelled resource postprocess = %#v, %v", reclaimed, err)
+	}
+	if err := svc.processClaimedTask(reclaimed); err != nil {
+		t.Fatal(err)
+	}
+	finalTask, _ := svc.repo.Task(fixture.task.ID)
+	finalFact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	finalOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	finalResource, _ := svc.repo.ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	var usage model.UserDailyUploadUsage
+	if err := db.First(&usage, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finalTask.Status != model.TaskStatusSucceeded || finalFact.ReconciliationStatus != "resolved" || finalOrder.Status != model.BillingStatusSettled || finalResource.Status != model.ResourceStatusReady || usage.Bytes != int64(len(payload)) {
+		t.Fatalf("cancelled resource put recovery: task=%#v fact=%#v order=%#v resource=%#v usage=%#v", finalTask, finalFact, finalOrder, finalResource, usage)
+	}
+}
+
 func TestLateProviderCreateResponseHandsOffToCurrentGenerationWithoutSecondCreate(t *testing.T) {
 	svc, db := openProviderCredentialService(t)
 	fixture := saveProviderRuntimeFixture(t, svc, db)
@@ -1380,8 +1944,9 @@ func TestLateProviderCreateResponseHandsOffToCurrentGenerationWithoutSecondCreat
 	if stored.ProviderTaskID != "provider-late-create" || stored.ProviderStatus != "running" || stored.CreateLeaseToken != oldLease.Token || stored.ExecutionLeaseToken != newLease.Token {
 		t.Fatalf("late create handoff facts = %#v", stored)
 	}
-	if err := svc.repo.RequeueProviderTaskExecution(fixture.task.ID, newLease, "handoff observed after execution snapshot"); err != nil {
-		t.Fatal(err)
+	decision, err := svc.repo.DecideProviderCreateUncertain(fixture.task.ID, newLease, "", "handoff observed after execution snapshot")
+	if err != nil || decision != repository.ProviderCreateUncertainRequeued {
+		t.Fatalf("create handoff decision = %q, %v", decision, err)
 	}
 	requeued, err := svc.repo.Task(fixture.task.ID)
 	if err != nil {
@@ -1409,6 +1974,83 @@ func TestLateProviderCreateResponseHandsOffToCurrentGenerationWithoutSecondCreat
 	}
 	if err := svc.repo.MarkProviderTaskCreateStartedForLease(fixture.task.ID, repository.ProviderTaskLease{Owner: polledTask.LeaseOwner, Token: polledTask.LeaseToken}); err == nil {
 		t.Fatal("handed-off provider task allowed a second create after requeue")
+	}
+}
+
+func TestProcessClaimedTaskAtomicallyRequeuesLateCreateHandoffWithoutManualReview(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldLease := repository.ProviderTaskLease{Owner: fixture.task.LeaseOwner, Token: fixture.task.LeaseToken}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(fixture.task.ID, oldLease.Owner, oldLease.Token); err != nil || !claimed {
+		t.Fatalf("old provider execution claim = %t, %v", claimed, err)
+	}
+	if err := svc.repo.MarkProviderTaskCreateStartedForLease(fixture.task.ID, oldLease); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("lease_expires_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.repo.ClaimNextTask(svc.workerID, time.Minute)
+	if err != nil || current == nil {
+		t.Fatalf("new task generation = %#v, %v", current, err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("late create recovery sent a second upstream request")
+	}))
+	defer server.Close()
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	if err := db.Model(&model.ProviderEndpointVersion{}).Where("id = ?", "endpoint-v1").Update("base_url", server.URL).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	firstServiceDecisionRead := make(chan struct{})
+	releaseServiceDecision := make(chan struct{})
+	var factReads atomic.Int64
+	const callbackName = "test:late-create-after-service-decision-read"
+	if err := db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if _, ok := tx.Statement.Dest.(*model.ProviderTaskFact); !ok {
+			return
+		}
+		if factReads.Add(1) != 6 {
+			return
+		}
+		close(firstServiceDecisionRead)
+		<-releaseServiceDecision
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
+
+	processDone := make(chan error, 1)
+	go func() { processDone <- svc.processClaimedTask(current) }()
+	select {
+	case <-firstServiceDecisionRead:
+	case <-time.After(5 * time.Second):
+		close(releaseServiceDecision)
+		t.Fatalf("processClaimedTask did not reach create-uncertain decision read; fact reads=%d", factReads.Load())
+	}
+	write, err := svc.repo.SaveProviderTaskCreationForLease(fixture.task.ID, oldLease, "provider-late-process", "trace-late-process")
+	if err != nil || !write.HandedOff {
+		close(releaseServiceDecision)
+		t.Fatalf("late create handoff = %#v, %v", write, err)
+	}
+	close(releaseServiceDecision)
+	select {
+	case <-processDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processClaimedTask did not finish after late create handoff")
+	}
+
+	storedTask, _ := svc.repo.Task(fixture.task.ID)
+	storedFact, _ := svc.repo.ProviderTaskFact(fixture.task.ID)
+	storedOrder, _ := svc.repo.BillingOrder(fixture.order.ID)
+	if storedTask.Status != model.TaskStatusQueued || storedFact.ProviderTaskID != "provider-late-process" || storedFact.ProviderStatus != "submitted" || storedFact.ReconciliationStatus != "pending" || storedOrder.Status != model.BillingStatusRunning {
+		t.Fatalf("late create service decision: task=%#v fact=%#v order=%#v", storedTask, storedFact, storedOrder)
 	}
 }
 
@@ -1467,11 +2109,11 @@ func TestSourceTaskResourceWriteUsesFencedClaim(t *testing.T) {
 	if err := db.Create(&resource).Error; err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-one", "pending/result-write-one.mp4", time.Minute)
+	first, err := svc.repo.ClaimSourceTaskResourceWriteWithQuota(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-one", "pending/result-write-one.mp4", time.Minute, "2026-08-12", 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-two", "pending/result-write-two.mp4", time.Minute); err == nil {
+	if _, err := svc.repo.ClaimSourceTaskResourceWriteWithQuota(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-two", "pending/result-write-two.mp4", time.Minute, "2026-08-12", 1<<30); err == nil {
 		t.Fatal("second writer claimed an unexpired resource write")
 	}
 	newTaskLeaseToken := "new-task-generation"
@@ -1481,7 +2123,7 @@ func TestSourceTaskResourceWriteUsesFencedClaim(t *testing.T) {
 	if claimed, err := svc.repo.ClaimProviderTaskExecution(fixture.task.ID, fixture.task.LeaseOwner, newTaskLeaseToken); err != nil || !claimed {
 		t.Fatalf("replacement resource execution claim = %t, %v", claimed, err)
 	}
-	second, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, newTaskLeaseToken, "write-two", "pending/result-write-two.mp4", time.Minute)
+	second, err := svc.repo.ClaimSourceTaskResourceWriteWithQuota(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, newTaskLeaseToken, "write-two", "pending/result-write-two.mp4", time.Minute, "2026-08-12", 1<<30)
 	if err != nil {
 		t.Fatalf("new task generation could not resume an unexpired stale resource claim: %v", err)
 	}
@@ -1977,7 +2619,7 @@ func TestPostgresProviderLeaseAndResourceFencingAcrossConnections(t *testing.T) 
 	if err := db.Create(&resource).Error; err != nil {
 		t.Fatal(err)
 	}
-	claimedFirst, err := first.ClaimSourceTaskResourceWrite(resource.UserID, fixture.task.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken, "pg-write-one", "pending/result-one.mp4", time.Minute)
+	claimedFirst, err := first.ClaimSourceTaskResourceWriteWithQuota(resource.UserID, fixture.task.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken, "pg-write-one", "pending/result-one.mp4", time.Minute, "2026-08-12", 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1991,7 +2633,7 @@ func TestPostgresProviderLeaseAndResourceFencingAcrossConnections(t *testing.T) 
 	if claimed, err := second.ClaimProviderTaskExecution(secondGeneration.ID, secondGeneration.LeaseOwner, secondGeneration.LeaseToken); err != nil || !claimed {
 		t.Fatalf("second reclaimed execution = %t, %v", claimed, err)
 	}
-	claimedSecond, err := second.ClaimSourceTaskResourceWrite(resource.UserID, fixture.task.ID, secondGeneration.LeaseOwner, secondGeneration.LeaseToken, "pg-write-two", "pending/result-two.mp4", time.Minute)
+	claimedSecond, err := second.ClaimSourceTaskResourceWriteWithQuota(resource.UserID, fixture.task.ID, secondGeneration.LeaseOwner, secondGeneration.LeaseToken, "pg-write-two", "pending/result-two.mp4", time.Minute, "2026-08-12", 1<<30)
 	if err != nil {
 		t.Fatalf("new task generation could not fence an unexpired resource claim: %v", err)
 	}
@@ -2129,12 +2771,189 @@ func TestPostgresProviderLateCreateHandsOffAfterReclaimWithoutSecondCreate(t *te
 	}
 }
 
+func TestPostgresProviderCancelBeforeOutboundAtomicallyReleasesBillingAndCapacityAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	first := db.Session(&gorm.Session{NewDB: true})
+	second := db.Session(&gorm.Session{NewDB: true})
+	svc := New(repository.New(first), t.TempDir())
+	fixture := saveProviderRuntimeFixture(t, svc, first)
+	if err := first.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := svc.repo.ClaimProviderTaskExecution(fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken); err != nil || !claimed {
+		t.Fatalf("provider execution claim = %t, %v", claimed, err)
+	}
+	if _, err := svc.CancelTask(fixture.task.UserID, fixture.task.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	storedTask, _ := repository.New(second).Task(fixture.task.ID)
+	storedFact, _ := repository.New(second).ProviderTaskFact(fixture.task.ID)
+	storedOrder, _ := repository.New(second).BillingOrder(fixture.order.ID)
+	var account model.CreditAccount
+	if err := second.First(&account, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var refunds int64
+	if err := second.Model(&model.CreditLedgerEntry{}).Where("billing_order_id = ? AND type = ?", fixture.order.ID, model.CreditLedgerRefund).Count(&refunds).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusCancelled || storedFact.ProviderStatus != "cancelled_before_create" || storedFact.ReconciliationStatus != "resolved" || storedOrder.Status != model.BillingStatusRefunded || account.AvailableMicrocredits != 100 || account.ReservedMicrocredits != 0 || refunds != 1 {
+		t.Fatalf("PostgreSQL provider cancel: task=%#v fact=%#v order=%#v account=%#v refunds=%d", storedTask, storedFact, storedOrder, account, refunds)
+	}
+	secondTask := providerRuntimeTask("pg-task-after-provider-cancel", "pg-user-after-provider-cancel", "pg-worker-after-provider-cancel")
+	secondTask.BillingOrderID = ""
+	secondFact := providerRuntimeFact(secondTask.ID, "", "reserved")
+	if err := second.Create(&secondTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Create(&secondFact).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := repository.New(second).ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken); err != nil || !claimed {
+		t.Fatalf("PostgreSQL capacity after provider cancel = %t, %v", claimed, err)
+	}
+}
+
+func TestPostgresProviderQuotaWriteClaimSerializesAdminResolutionAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	claimDB := db.Session(&gorm.Session{NewDB: true})
+	adminDB := db.Session(&gorm.Session{NewDB: true})
+	claimService := New(repository.New(claimDB), t.TempDir())
+	adminService := New(repository.New(adminDB), t.TempDir())
+	fixture := saveProviderRuntimeFixture(t, claimService, claimDB)
+	admin := model.User{ID: "pg-resource-admin", Username: "pg-resource-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "pg-resource-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := claimDB.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := claimDB.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 96, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := claimDB.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-pg-atomic-resource", "execution_lease_token": fixture.task.LeaseToken,
+		"asset_source_url": "https://cdn.example/result.mp4", "last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource, err := claimService.prepareSourceTaskResource(fixture.task.UserID, fixture.task.ID, "video", "generated.mp4", "video/mp4", 24, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimPaused := make(chan struct{})
+	releaseClaim := make(chan struct{})
+	const callbackName = "test:pg-provider-quota-write-claim"
+	if err := claimDB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "resources" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if !ok || updates["write_token"] != "pg-atomic-write" {
+			return
+		}
+		close(claimPaused)
+		<-releaseClaim
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = claimDB.Callback().Update().Remove(callbackName) })
+	claimDone := make(chan struct {
+		resource *model.Resource
+		err      error
+	}, 1)
+	go func() {
+		claimed, claimErr := claimService.claimPreparedGeneratedResourceWrite(fixture.task.UserID, fixture.task, resource, "pg-atomic-write", "pending/pg-atomic.mp4", time.Minute)
+		claimDone <- struct {
+			resource *model.Resource
+			err      error
+		}{claimed, claimErr}
+	}()
+	select {
+	case <-claimPaused:
+	case <-time.After(5 * time.Second):
+		close(releaseClaim)
+		t.Fatal("PostgreSQL quota/write claim did not pause")
+	}
+	adminDone := make(chan error, 1)
+	go func() {
+		_, resolveErr := adminService.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "PG admin raced atomic resource claim"})
+		adminDone <- resolveErr
+	}()
+	select {
+	case resolveErr := <-adminDone:
+		close(releaseClaim)
+		t.Fatalf("PostgreSQL admin crossed atomic quota/write claim: %v", resolveErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(releaseClaim)
+	claimedResult := <-claimDone
+	if claimedResult.err != nil {
+		t.Fatal(claimedResult.err)
+	}
+	if err := <-adminDone; err != nil {
+		t.Fatal(err)
+	}
+	claimedResult.resource.Status = model.ResourceStatusReady
+	claimedResult.resource.ETag = "pg-atomic-ready"
+	if err := repository.New(claimDB).CompleteSourceTaskResourceWrite(claimedResult.resource, fixture.task.LeaseOwner, fixture.task.LeaseToken, "pg-atomic-write"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adminDB.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := repository.New(adminDB).ClaimNextTask(adminService.workerID, time.Minute)
+	if err != nil || reclaimed == nil {
+		t.Fatalf("PostgreSQL claim resolved resource completion = %#v, %v", reclaimed, err)
+	}
+	if claimedExecution, err := repository.New(adminDB).ClaimProviderTaskExecution(reclaimed.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken); err != nil || !claimedExecution {
+		t.Fatalf("PostgreSQL claim resolved provider completion = %t, %v", claimedExecution, err)
+	}
+	if err := repository.New(adminDB).CompleteResolvedProviderPostprocess(fixture.task.ID, repository.ProviderTaskLease{Owner: reclaimed.LeaseOwner, Token: reclaimed.LeaseToken}, model.TaskStatusFailed, "resolved", "resolved", reclaimed.InputJSON, `{"resourceId":"`+claimedResult.resource.ID+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	storedTask, _ := repository.New(adminDB).Task(fixture.task.ID)
+	storedFact, _ := repository.New(adminDB).ProviderTaskFact(fixture.task.ID)
+	storedOrder, _ := repository.New(adminDB).BillingOrder(fixture.order.ID)
+	storedResource, _ := repository.New(adminDB).ResourceForSourceTask(fixture.task.UserID, fixture.task.ID)
+	var usage model.UserDailyUploadUsage
+	if err := adminDB.First(&usage, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusFailed || storedFact.ReconciliationStatus != "resolved" || storedOrder.Status != model.BillingStatusRefunded || storedResource.Status != model.ResourceStatusReady || usage.Bytes != resource.Size {
+		t.Fatalf("PostgreSQL atomic resource convergence: task=%#v fact=%#v order=%#v resource=%#v usage=%#v", storedTask, storedFact, storedOrder, storedResource, usage)
+	}
+}
+
 type providerRuntimeFixture struct {
 	task         model.Task
 	order        model.BillingOrder
 	channel      model.ModelChannel
 	channelModel model.ChannelModel
 	endpointV1   string
+}
+
+type gatedProviderResourceReader struct {
+	payload []byte
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	done    bool
+}
+
+func (reader *gatedProviderResourceReader) Read(buffer []byte) (int, error) {
+	if reader.done {
+		return 0, io.EOF
+	}
+	reader.once.Do(func() { close(reader.started) })
+	<-reader.release
+	reader.done = true
+	return copy(buffer, reader.payload), nil
 }
 
 func saveProviderRuntimeFixture(t *testing.T, svc *Service, db *gorm.DB) providerRuntimeFixture {

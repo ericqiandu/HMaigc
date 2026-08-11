@@ -206,14 +206,11 @@ func (s *Service) persistKuaiziSeedance25Resource(task model.Task, result map[st
 	if resource.Size != int64(len(data)) || resource.MimeType != mimeType {
 		return nil, errors.New("Seedance 2.5 任务资源幂等事实与下载内容不一致")
 	}
-	if err := s.reservePreparedGeneratedResourceQuota(task.UserID, resource); err != nil {
-		return nil, err
-	}
 	writeToken, err := newResourceWriteToken()
 	if err != nil {
 		return nil, err
 	}
-	resource, err = s.repo.ClaimSourceTaskResourceWrite(task.UserID, task.ID, task.LeaseOwner, task.LeaseToken, writeToken, resourceWriteObjectKey(resource, writeToken), 2*time.Minute)
+	resource, err = s.claimPreparedGeneratedResourceWrite(task.UserID, task, resource, writeToken, resourceWriteObjectKey(resource, writeToken), 2*time.Minute)
 	if err != nil {
 		return nil, err
 	}

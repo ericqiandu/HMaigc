@@ -691,45 +691,6 @@ func (r *Repository) ReserveDailyUpload(userID string, day string, size int64, l
 	})
 }
 
-func (r *Repository) ReserveResourceDailyUpload(userID string, resourceID string, day string, limit int64) (string, error) {
-	reservedDay := ""
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		var resource model.Resource
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&resource, "id = ? AND user_id = ?", resourceID, userID).Error; err != nil {
-			return err
-		}
-		if resource.QuotaReserved {
-			reservedDay = resource.QuotaDay
-			return nil
-		}
-		usage := model.UserDailyUploadUsage{ID: userID + ":" + day, UserID: userID, Day: day}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&usage).Error; err != nil {
-			return err
-		}
-		usageUpdate := tx.Model(&model.UserDailyUploadUsage{}).
-			Where("id = ? AND bytes + ? < ?", usage.ID, resource.Size, limit).
-			Updates(map[string]any{"bytes": gorm.Expr("bytes + ?", resource.Size), "updated_at": time.Now()})
-		if usageUpdate.Error != nil {
-			return usageUpdate.Error
-		}
-		if usageUpdate.RowsAffected != 1 {
-			return ErrDailyUploadLimitExceeded
-		}
-		resourceUpdate := tx.Model(&model.Resource{}).Where("id = ? AND quota_reserved = ?", resource.ID, false).Updates(map[string]any{
-			"quota_day": day, "quota_reserved": true, "updated_at": time.Now(),
-		})
-		if resourceUpdate.Error != nil {
-			return resourceUpdate.Error
-		}
-		if resourceUpdate.RowsAffected != 1 {
-			return errors.New("resource upload quota reservation conflict")
-		}
-		reservedDay = day
-		return nil
-	})
-	return reservedDay, err
-}
-
 func (r *Repository) ReleaseDailyUpload(userID string, day string, size int64) error {
 	id := userID + ":" + day
 	return r.db.Model(&model.UserDailyUploadUsage{}).
@@ -780,7 +741,7 @@ func (r *Repository) ResourceForSourceTask(userID string, taskID string) (*model
 	return &resource, nil
 }
 
-func (r *Repository) ClaimSourceTaskResourceWrite(userID string, taskID string, leaseOwner string, leaseToken string, writeToken string, objectKey string, leaseDuration time.Duration) (*model.Resource, error) {
+func (r *Repository) ClaimSourceTaskResourceWriteWithQuota(userID string, taskID string, leaseOwner string, leaseToken string, writeToken string, objectKey string, leaseDuration time.Duration, quotaDay string, dailyLimit int64) (*model.Resource, error) {
 	var resource model.Resource
 	now := time.Now()
 	err := r.db.Transaction(func(tx *gorm.DB) error {
@@ -788,7 +749,7 @@ func (r *Repository) ClaimSourceTaskResourceWrite(userID string, taskID string, 
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" || fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != leaseToken {
+		if fact.ProviderStatus != "succeeded" || fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != leaseToken {
 			return errors.New("source task resource provider fact state conflict")
 		}
 		var task model.Task
@@ -804,15 +765,40 @@ func (r *Repository) ClaimSourceTaskResourceWrite(userID string, taskID string, 
 		if resource.Status == model.ResourceStatusReady {
 			return errors.New("source task resource is already ready")
 		}
+		if fact.ReconciliationStatus == "resolved" && resource.WriteResolution != "" && resource.WriteResolution != "resolving" && resource.WriteResolution != "resolved" {
+			return errors.New("source task resource resolution handoff state is invalid")
+		}
 		if resource.WriteToken != "" && resource.WriteToken != writeToken && resource.WriteTaskLeaseToken == leaseToken && resource.WriteLeaseExpiresAt != nil && resource.WriteLeaseExpiresAt.After(now) {
 			return errors.New("source task resource write is already claimed")
+		}
+		reservedDay := resource.QuotaDay
+		if !resource.QuotaReserved {
+			usage := model.UserDailyUploadUsage{ID: userID + ":" + quotaDay, UserID: userID, Day: quotaDay}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&usage).Error; err != nil {
+				return err
+			}
+			usageUpdate := tx.Model(&model.UserDailyUploadUsage{}).
+				Where("id = ? AND bytes + ? < ?", usage.ID, resource.Size, dailyLimit).
+				Updates(map[string]any{"bytes": gorm.Expr("bytes + ?", resource.Size), "updated_at": now})
+			if usageUpdate.Error != nil {
+				return usageUpdate.Error
+			}
+			if usageUpdate.RowsAffected != 1 {
+				return ErrDailyUploadLimitExceeded
+			}
+			reservedDay = quotaDay
+		}
+		writeResolution := ""
+		if fact.ReconciliationStatus == "resolved" {
+			writeResolution = "resolving"
 		}
 		updated := tx.Model(&model.Resource{}).
 			Where("id = ? AND status IN ?", resource.ID, []model.ResourceStatus{model.ResourceStatusPending, model.ResourceStatusFailed}).
 			Updates(map[string]any{
 				"status": model.ResourceStatusPending, "error": "", "object_key": objectKey,
 				"write_token": writeToken, "write_task_lease_token": leaseToken,
-				"write_lease_expires_at": now.Add(leaseDuration), "updated_at": now,
+				"write_lease_expires_at": now.Add(leaseDuration), "write_resolution": writeResolution,
+				"quota_day": reservedDay, "quota_reserved": true, "updated_at": now,
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -838,7 +824,7 @@ func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, l
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", resource.SourceTaskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" && fact.ProviderStatus != "succeeded_resolved" {
+		if fact.ProviderStatus != "succeeded" {
 			return errors.New("source task resource provider fact state conflict")
 		}
 		var stored model.Resource

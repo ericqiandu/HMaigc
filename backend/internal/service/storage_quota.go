@@ -100,6 +100,25 @@ func (s *Service) saveProviderTaskCompletionWithinStorageQuota(task *model.Task,
 	return s.saveTaskCompletionWithinStorageQuotaMode(task, resultJSON, opsJSON, hasCanvasOps, true)
 }
 
+func (s *Service) saveResolvedProviderPostprocessWithinStorageQuota(task *model.Task, resultJSON []byte, status model.TaskStatus, stage string, taskError string) error {
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return err
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	usage, err := s.repo.UserStorageUsage(task.UserID)
+	if err != nil {
+		return err
+	}
+	publicInputJSON := publicTaskInputJSON(task.InputJSON)
+	taskDelta := int64(len(resultJSON) + len(publicInputJSON) - len(task.ResultJSON) - len(task.InputJSON))
+	if err := validateTaskDataGrowthQuotaWithPolicy(usage, taskDelta, policy.Resource); err != nil {
+		return err
+	}
+	return s.repo.CompleteResolvedProviderPostprocess(task.ID, repository.ProviderTaskLease{Owner: task.LeaseOwner, Token: task.LeaseToken}, status, stage, taskError, publicInputJSON, string(resultJSON))
+}
+
 func (s *Service) saveTaskCompletionWithinStorageQuotaMode(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool, providerTask bool) error {
 	policy, err := s.RuntimePolicy()
 	if err != nil {

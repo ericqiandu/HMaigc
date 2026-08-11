@@ -17,7 +17,12 @@ import (
 	"gorm.io/gorm"
 )
 
-const CreditScale int64 = 1_000_000
+const (
+	CreditScale                      int64 = 1_000_000
+	providerResolvedTaskStage              = "任务已人工核对终结"
+	providerResolvedTaskError              = "上游任务已完成人工核对"
+	providerResolvedPostprocessStage       = "等待保存已生成资产后完成核对"
+)
 
 type WalletSummary struct {
 	Account model.CreditAccount       `json:"account"`
@@ -298,8 +303,6 @@ func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveB
 		return nil, BadAuthRequest("请选择结算或退款")
 	}
 	var providerResolved bool
-	const resolvedTaskStage = "任务已人工核对终结"
-	const resolvedTaskError = "上游任务已完成人工核对"
 	providerFact, factErr := s.repo.ProviderTaskFactForBillingOrder(id)
 	if factErr == nil {
 		resolvedProviderStatus := providerFact.ProviderStatus
@@ -313,7 +316,7 @@ func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveB
 			ExpectedProviderStatus: providerFact.ProviderStatus, ExpectedReconciliationStatus: providerFact.ReconciliationStatus,
 			ExpectedBillingStatus: order.Status, ResolvedProviderStatus: resolvedProviderStatus,
 			ActorUserID: actor.ID, Note: truncateRunes(note, 500),
-			TaskStatus: model.TaskStatusFailed, TaskStage: resolvedTaskStage, TaskError: resolvedTaskError,
+			TaskStatus: model.TaskStatusFailed, TaskStage: providerResolvedTaskStage, TaskError: providerResolvedTaskError, PostprocessStage: providerResolvedPostprocessStage,
 		}
 		if action == "settle" {
 			providerResolved, err = s.repo.SettleProviderTaskBilling(id, resolution)

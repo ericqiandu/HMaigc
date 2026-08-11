@@ -561,6 +561,25 @@ func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {
 	if task.Status == model.TaskStatusSucceeded {
 		return nil, errors.New("completed task cannot be cancelled")
 	}
+	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
+		result, cancelErr := s.repo.CancelProviderTask(userID, task.ID, "用户请求取消上游任务")
+		if cancelErr != nil {
+			return nil, cancelErr
+		}
+		s.cancelActiveTask(task.ID)
+		if result.Task.SessionID != "" && result.Decision == repository.ProviderTaskCancelledBeforeOutbound {
+			_ = s.markSessionFailed(result.Task, "会话任务已取消。")
+		}
+		message := "上游任务取消请求已进入核对队列"
+		if result.Decision == repository.ProviderTaskCancelledBeforeOutbound {
+			message = "任务已取消"
+		}
+		_ = s.log(userID, task.ID, "warn", message, "")
+		output := taskForOutput(result.Task)
+		return output, nil
+	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
+		return nil, factErr
+	}
 	now := time.Now()
 	if task.Status == model.TaskStatusQueued {
 		cancelled, err := s.repo.CancelTaskIfStatus(userID, task.ID, model.TaskStatusQueued, now)
@@ -902,6 +921,13 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
 		if orderErr != nil {
 			markBillingErr = orderErr
+		} else if order.Status == model.BillingStatusSettled || order.Status == model.BillingStatusRefunded {
+			fact, factErr := s.repo.ProviderTaskFact(task.ID)
+			if factErr != nil {
+				markBillingErr = factErr
+			} else if fact.ReconciliationStatus != "resolved" {
+				markBillingErr = errors.New("terminal provider billing requires resolved reconciliation")
+			}
 		} else if order.Status != model.BillingStatusUncertain {
 			markBillingErr = s.MarkBillingRunning(task.BillingOrderID)
 		}
@@ -944,6 +970,23 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	}
 	if err != nil {
 		if providerTask {
+			var createUncertain *KuaiziSeedance25CreateUncertainError
+			if errors.As(err, &createUncertain) {
+				traceID := ""
+				var providerErr *KuaiziSeedance25Error
+				if errors.As(err, &providerErr) {
+					traceID = providerErr.TraceID
+				}
+				decision, decisionErr := s.repo.DecideProviderCreateUncertain(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, traceID, taskFailureMessage(err))
+				if decisionErr != nil {
+					return errors.Join(err, decisionErr)
+				}
+				if decision == repository.ProviderCreateUncertainManualReview {
+					_ = s.markSessionFailed(*task, taskFailureMessage(err))
+					_ = s.log(task.UserID, task.ID, "error", "上游创建结果已原子进入核对", "")
+				}
+				return err
+			}
 			fact, factErr := s.repo.ProviderTaskFact(task.ID)
 			if factErr != nil {
 				return errors.Join(err, factErr)
@@ -954,14 +997,6 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 					return errors.Join(err, requeueErr)
 				}
 				_ = s.log(task.UserID, task.ID, "warn", "上游成功结果后处理待重试", "")
-				return err
-			}
-			var createUncertain *KuaiziSeedance25CreateUncertainError
-			if errors.As(err, &createUncertain) && fact.ProviderTaskID != "" && fact.ReconciliationStatus == "pending" && repository.ProviderExecutionStatus(fact.ProviderStatus) {
-				requeueErr := s.repo.RequeueProviderTaskExecution(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, "上游创建响应已由当前代次接管")
-				if requeueErr != nil {
-					return errors.Join(err, requeueErr)
-				}
 				return err
 			}
 			finalizeErr := s.finalizeProviderExecutionFailure(*task, err)
@@ -1045,8 +1080,17 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		return err
 	}
 	var completionErr error
+	resolvedPostprocess := false
 	if providerTask {
-		completionErr = s.saveProviderTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
+		fact, factErr := s.repo.ProviderTaskFact(task.ID)
+		if factErr != nil {
+			completionErr = factErr
+		} else if fact.ReconciliationStatus == "resolved" {
+			resolvedPostprocess = true
+			completionErr = s.saveResolvedProviderPostprocessWithinStorageQuota(task, resultJSON, model.TaskStatusFailed, providerResolvedTaskStage, providerResolvedTaskError)
+		} else {
+			completionErr = s.saveProviderTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
+		}
 	} else {
 		completionErr = s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
 	}
@@ -1075,6 +1119,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务结果保存失败", task.Error)
 		return completionErr
+	}
+	if resolvedPostprocess {
+		_ = s.log(task.UserID, task.ID, "info", "已保存人工核对任务的上游成功资产", "")
+		return nil
 	}
 	if completedTask, fetchErr := s.repo.Task(task.ID); fetchErr == nil {
 		if registerErr := s.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {

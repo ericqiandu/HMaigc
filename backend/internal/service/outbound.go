@@ -111,7 +111,7 @@ func newExternalBinaryHTTPClientWithDialer(timeout time.Duration, resolver outbo
 
 func newExternalBinaryHTTPClient(timeout time.Duration, resolver outboundHostResolver, transport *http.Transport) *http.Client {
 	return &http.Client{
-		Transport: transport,
+		Transport: &externalBinaryRoundTripper{transport: transport, resolver: resolver},
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxOutboundRedirects {
@@ -121,6 +121,18 @@ func newExternalBinaryHTTPClient(timeout time.Duration, resolver outboundHostRes
 			return err
 		},
 	}
+}
+
+type externalBinaryRoundTripper struct {
+	transport *http.Transport
+	resolver  outboundHostResolver
+}
+
+func (roundTripper *externalBinaryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, err := validateExternalBinaryURLWithResolver(req.Context(), req.URL.String(), roundTripper.resolver); err != nil {
+		return nil, err
+	}
+	return roundTripper.transport.RoundTrip(req)
 }
 
 type outboundHostResolver func(context.Context, string) ([]net.IP, error)
@@ -189,8 +201,8 @@ func validateExternalBinaryURLWithResolver(ctx context.Context, rawURL string, r
 	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
 		return nil, BadAuthRequest("外部产物地址无效")
 	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return nil, BadAuthRequest("外部产物地址只支持 http/https")
+	if parsed.Scheme != "https" {
+		return nil, BadAuthRequest("外部产物地址只支持 HTTPS")
 	}
 	if parsed.User != nil {
 		return nil, BadAuthRequest("外部产物地址不允许包含认证信息")
