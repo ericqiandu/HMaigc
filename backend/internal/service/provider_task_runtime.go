@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 type TaskCommercialFacts struct {
@@ -30,6 +32,64 @@ type ProviderTaskRuntime struct {
 	Credential        model.ProviderCredential
 	CredentialVersion model.ProviderCredentialVersion
 	ChannelModel      model.ChannelModel
+}
+
+func (s *Service) finalizeProviderExecutionFailure(task model.Task, cause error) error {
+	fact, err := s.repo.ProviderTaskFact(task.ID)
+	if err != nil {
+		return err
+	}
+	lease := repository.ProviderTaskLease{Owner: task.LeaseOwner, Token: task.LeaseToken}
+	message := taskFailureMessage(cause)
+	resolution := repository.ProviderTaskFailureResolution{
+		ExpectedStatuses: []string{fact.ProviderStatus}, TaskStage: "任务失败", TaskError: message,
+	}
+	var providerErr *KuaiziSeedance25Error
+	if errors.As(cause, &providerErr) {
+		resolution.TraceID = providerErr.TraceID
+	}
+	switch fact.ProviderStatus {
+	case "reserved", "execution_claimed":
+		resolution.ProviderStatus = "execution_failed"
+		resolution.ReconciliationStatus = "resolved"
+		return s.repo.FinalizeProviderTaskRefund(task.ID, lease, resolution)
+	case "creating":
+		definitiveCreateRejection := false
+		if errors.As(cause, &providerErr) && providerErr.Stage == "create" && providerErr.Kind == "http" {
+			if statusCode, parseErr := strconv.Atoi(providerErr.Code); parseErr == nil {
+				definitiveCreateRejection = kuaiziCreateHTTPDefinitiveRejection(statusCode)
+			}
+		}
+		if definitiveCreateRejection {
+			resolution.ProviderStatus = "create_failed"
+			resolution.ReconciliationStatus = "resolved"
+			return s.repo.FinalizeProviderTaskRefund(task.ID, lease, resolution)
+		}
+		resolution.ProviderStatus = "create_uncertain"
+		resolution.ReconciliationStatus = "manual_review"
+		return s.repo.FinalizeProviderTaskUncertain(task.ID, lease, resolution)
+	case "submitted", "pending", "running", "poll_uncertain":
+		resolution.ProviderStatus = "poll_uncertain"
+		if errors.As(cause, &providerErr) && providerErr.Stage == "poll" && providerErr.Kind == "provider_failed" {
+			resolution.ProviderStatus = "failed"
+		}
+		resolution.ReconciliationStatus = "manual_review"
+		return s.repo.FinalizeProviderTaskUncertain(task.ID, lease, resolution)
+	case "create_failed":
+		resolution.ProviderStatus = "create_failed"
+		resolution.ReconciliationStatus = "resolved"
+		return s.repo.FinalizeProviderTaskRefund(task.ID, lease, resolution)
+	case "create_uncertain":
+		resolution.ProviderStatus = "create_uncertain"
+		resolution.ReconciliationStatus = "manual_review"
+		return s.repo.FinalizeProviderTaskUncertain(task.ID, lease, resolution)
+	case "failed":
+		resolution.ProviderStatus = "failed"
+		resolution.ReconciliationStatus = "manual_review"
+		return s.repo.FinalizeProviderTaskUncertain(task.ID, lease, resolution)
+	default:
+		return fmt.Errorf("provider failure cannot finalize from status %s", fact.ProviderStatus)
+	}
 }
 
 func (s *Service) processFrozenProviderCanvasTask(ctx context.Context, task model.Task, fact model.ProviderTaskFact) (map[string]interface{}, error) {
@@ -103,7 +163,7 @@ func (s *Service) processSucceededProviderTask(ctx context.Context, task model.T
 }
 
 func (s *Service) downloadKuaiziSeedance25Result(ctx context.Context, providerTaskID string, sourceURL string, lastFrameURL string, duration any, totalTokens any) (map[string]interface{}, error) {
-	data, mimeType, err := getExternalBinary(withProviderRequestKind(ctx, "download"), sourceURL)
+	data, mimeType, err := getStrictExternalBinary(withProviderRequestKind(ctx, "download"), sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("Seedance 2.5 上游已成功但结果下载失败（任务 %s）：%w", providerTaskID, err)
 	}
@@ -460,6 +520,7 @@ func validateFrozenProviderRuntime(runtime *ProviderTaskRuntime) error {
 }
 
 func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *ProviderTaskRuntime, input canvasGenerationInput, client *KuaiziSeedance25Client, pollInterval time.Duration) (map[string]any, error) {
+	lease := repository.ProviderTaskLease{Owner: runtime.Task.LeaseOwner, Token: runtime.Task.LeaseToken}
 	switch runtime.ProviderFact.ProviderStatus {
 	case "create_uncertain":
 		return nil, &KuaiziSeedance25CreateUncertainError{Cause: errors.New("stored create uncertainty")}
@@ -471,61 +532,52 @@ func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *Prov
 	providerTaskID := strings.TrimSpace(runtime.ProviderFact.ProviderTaskID)
 	if providerTaskID == "" {
 		if runtime.ProviderFact.ProviderStatus == "creating" {
-			uncertain := &KuaiziSeedance25CreateUncertainError{Cause: errors.New("worker recovered after create boundary")}
-			if persistErr := s.repo.MarkProviderTaskCreateUncertain(runtime.Task.ID, "上游创建边界中断，结果不确定"); persistErr != nil {
-				return nil, errors.Join(uncertain, persistErr)
+			latest, latestErr := s.repo.ProviderTaskFact(runtime.Task.ID)
+			if latestErr != nil {
+				return nil, latestErr
 			}
-			return nil, uncertain
+			if latest.ExecutionLeaseToken == lease.Token && latest.ProviderTaskID != "" && repository.ProviderExecutionStatus(latest.ProviderStatus) {
+				runtime.ProviderFact = *latest
+				providerTaskID = latest.ProviderTaskID
+			} else {
+				return nil, &KuaiziSeedance25CreateUncertainError{Cause: errors.New("worker recovered after create boundary")}
+			}
 		}
-		if err := s.repo.MarkProviderTaskCreateStarted(runtime.Task.ID); err != nil {
-			return nil, err
-		}
-		runtime.ProviderFact.ProviderStatus = "creating"
-		created, err := client.Create(ctx, runtime, input)
-		if err != nil {
-			var uncertain *KuaiziSeedance25CreateUncertainError
-			if errors.As(err, &uncertain) {
-				if persistErr := s.repo.MarkProviderTaskCreateUncertain(runtime.Task.ID, "上游创建结果不确定"); persistErr != nil {
-					return nil, errors.Join(err, persistErr)
-				}
+		if providerTaskID == "" {
+			if err := s.repo.MarkProviderTaskCreateStartedForLease(runtime.Task.ID, lease); err != nil {
 				return nil, err
 			}
-			var providerErr *KuaiziSeedance25Error
-			traceID := ""
-			if errors.As(err, &providerErr) {
-				traceID = providerErr.TraceID
+			runtime.ProviderFact.ProviderStatus = "creating"
+			created, err := client.Create(ctx, runtime, input)
+			if err != nil {
+				return nil, err
 			}
-			if persistErr := s.repo.MarkProviderTaskCreateFailed(runtime.Task.ID, traceID); persistErr != nil {
-				return nil, errors.Join(err, persistErr)
+			creation, err := s.repo.SaveProviderTaskCreationForLease(runtime.Task.ID, lease, created.TaskID, created.TraceID)
+			if err != nil {
+				return nil, err
 			}
-			return nil, err
+			if creation.HandedOff {
+				return nil, errors.New("provider create response handed off to a newer task generation")
+			}
+			providerTaskID = created.TaskID
+			runtime.ProviderFact.ProviderTaskID = created.TaskID
+			runtime.ProviderFact.CreateTraceID = created.TraceID
+			runtime.ProviderFact.ProviderStatus = "submitted"
 		}
-		if err := s.repo.SaveProviderTaskCreation(runtime.Task.ID, created.TaskID, created.TraceID); err != nil {
-			return nil, err
-		}
-		providerTaskID = created.TaskID
-		runtime.ProviderFact.ProviderTaskID = created.TaskID
-		runtime.ProviderFact.CreateTraceID = created.TraceID
-		runtime.ProviderFact.ProviderStatus = "submitted"
 	}
 	polled, err := client.PollUntilTerminal(ctx, runtime, providerTaskID, pollInterval, func(observed KuaiziSeedance25Polled) error {
-		return s.repo.UpdateProviderTaskPoll(runtime.Task.ID, observed.State.ProviderStatus, observed.TraceID)
+		if observed.State.Terminal {
+			return nil
+		}
+		return s.repo.UpdateProviderTaskPollForLease(runtime.Task.ID, lease, observed.State.ProviderStatus, observed.TraceID)
 	})
 	if err != nil {
-		var providerErr *KuaiziSeedance25Error
-		traceID := ""
-		if errors.As(err, &providerErr) {
-			traceID = providerErr.TraceID
-		}
-		if persistErr := s.repo.MarkProviderTaskPollUncertain(runtime.Task.ID, traceID, "上游轮询结果不确定"); persistErr != nil {
-			return nil, errors.Join(err, persistErr)
-		}
 		return nil, err
 	}
 	if !polled.State.Succeeded {
 		return nil, &KuaiziSeedance25Error{Stage: "poll", Kind: "provider_failed", TraceID: polled.TraceID, Message: polled.State.FailureReason}
 	}
-	if err := s.repo.SaveProviderTaskSuccess(runtime.Task.ID, polled.State.ProviderStatus, polled.TraceID, polled.State.AssetSourceURL, polled.State.LastFrameURL, polled.State.ActualDurationSeconds, polled.State.TotalTokens); err != nil {
+	if err := s.repo.SaveProviderTaskSuccessForLease(runtime.Task.ID, lease, polled.TraceID, polled.State.AssetSourceURL, polled.State.LastFrameURL, polled.State.ActualDurationSeconds, polled.State.TotalTokens); err != nil {
 		return nil, err
 	}
 	return map[string]any{

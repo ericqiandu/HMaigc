@@ -163,6 +163,10 @@ var providerIntegrityIndexes = []providerIntegrityIndex{
 		createSQL: `CREATE UNIQUE INDEX idx_provider_task_fact_provider_task ON provider_task_facts(provider_credential_version_id, provider_task_id) WHERE provider_task_id <> ''`,
 	},
 	{
+		name: "idx_provider_task_fact_billing_order", table: "provider_task_facts", columns: "billing_order_id", predicate: "billing_order_id <> ''",
+		createSQL: `CREATE UNIQUE INDEX idx_provider_task_fact_billing_order ON provider_task_facts(billing_order_id) WHERE billing_order_id <> ''`,
+	},
+	{
 		name: "idx_provider_billing_upstream_order", table: "provider_billing_facts", columns: "provider_credential_version_id,upstream_order_id", predicate: "upstream_order_id <> ''",
 		createSQL: `CREATE UNIQUE INDEX idx_provider_billing_upstream_order ON provider_billing_facts(provider_credential_version_id, upstream_order_id) WHERE upstream_order_id <> ''`,
 	},
@@ -285,6 +289,7 @@ func rejectProviderIntegrityConflicts(db *gorm.DB) error {
 		{&model.ProviderCredential{}, "provider_account_id AS first_value, family AS second_value, COUNT(*) AS count", "", "provider_account_id, family", "账号凭据系列"},
 		{&model.ProviderCredentialVersion{}, "provider_credential_id AS first_value, '' AS second_value, COUNT(*) AS count", "status = 'active'", "provider_credential_id", "活动凭据版本"},
 		{&model.ProviderTaskFact{}, "provider_credential_version_id AS first_value, provider_task_id AS second_value, COUNT(*) AS count", "provider_task_id <> ''", "provider_credential_version_id, provider_task_id", "上游任务"},
+		{&model.ProviderTaskFact{}, "billing_order_id AS first_value, '' AS second_value, COUNT(*) AS count", "billing_order_id <> ''", "billing_order_id", "计费订单上游任务"},
 		{&model.ProviderBillingFact{}, "provider_credential_version_id AS first_value, upstream_order_id AS second_value, COUNT(*) AS count", "upstream_order_id <> ''", "provider_credential_version_id, upstream_order_id", "上游账单"},
 		{&model.ChannelModelPriceTier{}, "channel_model_id AS first_value, resolution || ':' || input_variant AS second_value, COUNT(*) AS count", "", "channel_model_id, resolution, input_variant", "模型价格规格"},
 		{&model.Resource{}, "source_task_id AS first_value, '' AS second_value, COUNT(*) AS count", "source_task_id <> ''", "source_task_id", "任务来源资源"},

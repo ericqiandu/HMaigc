@@ -38,7 +38,7 @@ type Service struct {
 	characterTaskMu      sync.Mutex
 	siteSettingMu        sync.Mutex
 	voicePreviewGroup    singleflight.Group
-	activeCancels        map[string]context.CancelFunc
+	activeCancels        map[string]map[string]context.CancelFunc
 	pendingStorage       map[string]int64
 	pendingTeamStorage   map[string]int64
 	coordinator          *runtimeCoordinator
@@ -171,7 +171,7 @@ type agentStoryboardShot struct {
 
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
-	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
+	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
 }
 
 func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
@@ -868,16 +868,6 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
 		return factErr
 	}
-	if providerTask {
-		finalized, finalizeErr := s.repo.FinalizeProviderTaskRecovery(task.ID, s.workerID, task.LeaseToken)
-		if finalizeErr != nil {
-			return finalizeErr
-		}
-		if finalized {
-			_ = s.log(task.UserID, task.ID, "warn", "已按冻结上游事实恢复为终态", "")
-			return nil
-		}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), taskExecutionTimeoutWithPolicy(task.Type, policy.Task))
 	defer cancel()
 	leaseDone := make(chan struct{})
@@ -899,8 +889,8 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		}
 	}()
 	defer close(leaseDone)
-	s.registerActiveTask(task.ID, cancel)
-	defer s.unregisterActiveTask(task.ID)
+	s.registerActiveTask(task.ID, task.LeaseToken, cancel)
+	defer s.unregisterActiveTask(task.ID, task.LeaseToken)
 
 	task.Stage = "调用生成模型"
 	task.Progress = 35
@@ -919,6 +909,13 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		markBillingErr = s.MarkBillingRunning(task.BillingOrderID)
 	}
 	if markBillingErr != nil {
+		if providerTask {
+			finalizeErr := s.finalizeProviderExecutionFailure(*task, markBillingErr)
+			if finalizeErr != nil {
+				return errors.Join(markBillingErr, finalizeErr)
+			}
+			return markBillingErr
+		}
 		task.Status = model.TaskStatusFailed
 		task.Stage = "计费准备失败"
 		task.Error = taskFailureMessage(markBillingErr)
@@ -946,6 +943,35 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		_, err = s.finalizeCharacterTurnaroundTask(*task, result)
 	}
 	if err != nil {
+		if providerTask {
+			fact, factErr := s.repo.ProviderTaskFact(task.ID)
+			if factErr != nil {
+				return errors.Join(err, factErr)
+			}
+			if fact.ProviderStatus == "succeeded" {
+				requeueErr := s.repo.RequeueProviderTaskPostprocess(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, taskFailureMessage(err))
+				if requeueErr != nil {
+					return errors.Join(err, requeueErr)
+				}
+				_ = s.log(task.UserID, task.ID, "warn", "上游成功结果后处理待重试", "")
+				return err
+			}
+			var createUncertain *KuaiziSeedance25CreateUncertainError
+			if errors.As(err, &createUncertain) && fact.ProviderTaskID != "" && fact.ReconciliationStatus == "pending" && repository.ProviderExecutionStatus(fact.ProviderStatus) {
+				requeueErr := s.repo.RequeueProviderTaskExecution(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, "上游创建响应已由当前代次接管")
+				if requeueErr != nil {
+					return errors.Join(err, requeueErr)
+				}
+				return err
+			}
+			finalizeErr := s.finalizeProviderExecutionFailure(*task, err)
+			if finalizeErr != nil {
+				return errors.Join(err, finalizeErr)
+			}
+			_ = s.markSessionFailed(*task, taskFailureMessage(err))
+			_ = s.log(task.UserID, task.ID, "error", "上游任务已原子收口", "")
+			return err
+		}
 		channelSlotFailedBeforeRequest := false
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
@@ -1025,6 +1051,14 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		completionErr = s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
 	}
 	if completionErr != nil {
+		if providerTask {
+			requeueErr := s.repo.RequeueProviderTaskPostprocess(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, taskFailureMessage(completionErr))
+			if requeueErr != nil {
+				return errors.Join(completionErr, requeueErr)
+			}
+			_ = s.log(task.UserID, task.ID, "warn", "上游成功结果保存待重试", "")
+			return completionErr
+		}
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务结果保存失败"
 		task.Error = taskFailureMessage(completionErr)
@@ -1709,23 +1743,34 @@ func truncateTaskLogPayload(payload string) string {
 	return payload[:end] + fmt.Sprintf("\n...（日志内容已截断，原始长度 %d 字符）", len(payload))
 }
 
-func (s *Service) registerActiveTask(id string, cancel context.CancelFunc) {
+func (s *Service) registerActiveTask(id string, leaseToken string, cancel context.CancelFunc) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
-	s.activeCancels[id] = cancel
+	if s.activeCancels[id] == nil {
+		s.activeCancels[id] = make(map[string]context.CancelFunc)
+	}
+	s.activeCancels[id][leaseToken] = cancel
 }
 
-func (s *Service) unregisterActiveTask(id string) {
+func (s *Service) unregisterActiveTask(id string, leaseToken string) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
-	delete(s.activeCancels, id)
+	active := s.activeCancels[id]
+	delete(active, leaseToken)
+	if len(active) == 0 {
+		delete(s.activeCancels, id)
+	}
 }
 
 func (s *Service) cancelActiveTask(id string) {
 	s.cancelMu.Lock()
-	cancel := s.activeCancels[id]
+	active := s.activeCancels[id]
+	cancels := make([]context.CancelFunc, 0, len(active))
+	for _, cancel := range active {
+		cancels = append(cancels, cancel)
+	}
 	s.cancelMu.Unlock()
-	if cancel != nil {
+	for _, cancel := range cancels {
 		cancel()
 	}
 }

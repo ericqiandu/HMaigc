@@ -664,15 +664,35 @@ func safeKuaiziSeedance25TaskID(value string, sensitiveValues []string) (string,
 }
 
 func containsKuaiziSensitiveURLValue(rawURL string, sensitiveValues []string) bool {
-	if strings.TrimSpace(rawURL) == "" {
+	const (
+		maxRawURLBytes           = 4096
+		maxDecodeSteps           = 16
+		maxCumulativeDecodeBytes = 32 * 1024
+	)
+	if len(rawURL) > maxRawURLBytes {
+		return true
+	}
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
 		return false
 	}
-	candidates := []string{rawURL}
+	containsSensitive := func(candidate string) bool {
+		for _, sensitive := range sensitiveValues {
+			if sensitive = strings.TrimSpace(sensitive); sensitive != "" && strings.Contains(candidate, sensitive) {
+				return true
+			}
+		}
+		return false
+	}
+	if containsSensitive(rawURL) {
+		return true
+	}
 	seen := map[string]struct{}{rawURL: {}}
 	frontier := []string{rawURL}
-	// 每轮解码都会严格缩短百分号编码；遍历至稳定，拒绝任意编码深度的敏感反射。
+	decodeSteps := 0
+	cumulativeDecodeBytes := 0
 	for len(frontier) > 0 {
-		next := make([]string, 0, len(frontier)*2)
+		next := make([]string, 0, len(frontier))
 		for _, candidate := range frontier {
 			for _, decode := range []func(string) (string, error){url.QueryUnescape, url.PathUnescape} {
 				decoded, err := decode(candidate)
@@ -682,22 +702,19 @@ func containsKuaiziSensitiveURLValue(rawURL string, sensitiveValues []string) bo
 				if _, exists := seen[decoded]; exists {
 					continue
 				}
-				seen[decoded] = struct{}{}
-				candidates = append(candidates, decoded)
-				if len(candidates) > 128 {
+				if decodeSteps >= maxDecodeSteps || cumulativeDecodeBytes+len(decoded) > maxCumulativeDecodeBytes {
 					return true
 				}
+				decodeSteps++
+				cumulativeDecodeBytes += len(decoded)
+				if containsSensitive(decoded) {
+					return true
+				}
+				seen[decoded] = struct{}{}
 				next = append(next, decoded)
 			}
 		}
 		frontier = next
-	}
-	for _, candidate := range candidates {
-		for _, sensitive := range sensitiveValues {
-			if sensitive = strings.TrimSpace(sensitive); sensitive != "" && strings.Contains(candidate, sensitive) {
-				return true
-			}
-		}
 	}
 	return false
 }

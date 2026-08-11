@@ -101,6 +101,8 @@ type providerHTTPError struct {
 
 type providerAnalyticsKey struct{}
 
+type externalBinaryDownloadKey struct{}
+
 type providerAnalyticsContext struct {
 	Service                    *Service
 	Source                     string
@@ -1027,6 +1029,15 @@ func getExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 	return doBinary(req)
 }
 
+func getStrictExternalBinary(ctx context.Context, rawURL string) ([]byte, string, error) {
+	ctx = context.WithValue(ctx, externalBinaryDownloadKey{}, true)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	return doBinary(req)
+}
+
 func doJSON(req *http.Request, target interface{}) error {
 	data, mimeType, err := doBinary(req)
 	if err != nil {
@@ -1108,6 +1119,9 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 		return nil, "", err
 	}
 	client := OutboundHTTPClient(requestTimeout)
+	if strictDownload, _ := req.Context().Value(externalBinaryDownloadKey{}).(bool); strictDownload {
+		client = ExternalBinaryHTTPClient(requestTimeout)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if runtimeService != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -447,6 +448,31 @@ func TestSeedance25ClientRejectsSensitiveOrMalformedSuccessfulFields(t *testing.
 				t.Fatalf("error leaked successful field sentinel: %v", err)
 			}
 		})
+	}
+}
+
+func TestSeedance25SensitiveURLScanFailsClosedAtRawLengthBoundary(t *testing.T) {
+	if containsKuaiziSensitiveURLValue(strings.Repeat("x", 4096), nil) {
+		t.Fatal("4096-byte URL was rejected")
+	}
+	if !containsKuaiziSensitiveURLValue(strings.Repeat("x", 4097), nil) {
+		t.Fatal("4097-byte URL was accepted")
+	}
+	if !containsKuaiziSensitiveURLValue(strings.Repeat("x", 4<<20), nil) {
+		t.Fatal("4 MiB URL was accepted")
+	}
+}
+
+func TestSeedance25SensitiveURLScanFailsClosedWhenDecodeBudgetIsExhausted(t *testing.T) {
+	encoded := "https://cdn.example.com/result.mp4"
+	for range 20 {
+		encoded = url.QueryEscape(encoded)
+	}
+	if len(encoded) > 4096 {
+		t.Fatalf("test URL length = %d", len(encoded))
+	}
+	if !containsKuaiziSensitiveURLValue(encoded, nil) {
+		t.Fatal("deeply encoded URL exhausted the decode budget without rejection")
 	}
 }
 

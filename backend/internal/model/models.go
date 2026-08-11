@@ -581,6 +581,7 @@ type Resource struct {
 	WriteToken          string         `json:"-" gorm:"size:64;index"`
 	WriteTaskLeaseToken string         `json:"-" gorm:"size:64;index"`
 	WriteLeaseExpiresAt *time.Time     `json:"-" gorm:"index"`
+	WriteResolution     string         `json:"-" gorm:"not null;default:'';size:24;index"`
 	Kind                string         `json:"kind" gorm:"index;size:24"`
 	Status              ResourceStatus `json:"status" gorm:"index;size:24"`
 	Provider            string         `json:"provider" gorm:"size:24"`

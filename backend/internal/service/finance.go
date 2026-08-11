@@ -310,9 +310,9 @@ func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveB
 			resolvedProviderStatus = "poll_uncertain_resolved"
 		}
 		resolution := repository.ProviderTaskBillingResolution{
-			ExpectedProviderStatus: providerFact.ProviderStatus,
-			ResolvedProviderStatus: resolvedProviderStatus,
-			ActorUserID:            actor.ID, Note: truncateRunes(note, 500),
+			ExpectedProviderStatus: providerFact.ProviderStatus, ExpectedReconciliationStatus: providerFact.ReconciliationStatus,
+			ExpectedBillingStatus: order.Status, ResolvedProviderStatus: resolvedProviderStatus,
+			ActorUserID: actor.ID, Note: truncateRunes(note, 500),
 			TaskStatus: model.TaskStatusFailed, TaskStage: resolvedTaskStage, TaskError: resolvedTaskError,
 		}
 		if action == "settle" {
@@ -325,6 +325,9 @@ func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveB
 	}
 	if err != nil {
 		return nil, err
+	}
+	if factErr == nil && !providerResolved {
+		return nil, errors.New("上游任务计费事实已被并发处理")
 	}
 	if !providerResolved {
 		if action == "settle" {

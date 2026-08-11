@@ -405,6 +405,9 @@ func (r *Repository) SaveProviderTaskCompletion(task *model.Task, leaseOwner str
 		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" {
 			return errors.New("provider task completion fact state conflict")
 		}
+		if fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != leaseToken {
+			return errors.New("provider task completion generation state conflict")
+		}
 		if err := settleBillingOrderTx(tx, fact.BillingOrderID, fact.ProviderTaskID); err != nil {
 			return err
 		}
@@ -785,7 +788,7 @@ func (r *Repository) ClaimSourceTaskResourceWrite(userID string, taskID string, 
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" {
+		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" || fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != leaseToken {
 			return errors.New("source task resource provider fact state conflict")
 		}
 		var task model.Task
@@ -835,21 +838,31 @@ func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, l
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", resource.SourceTaskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" {
+		if fact.ProviderStatus != "succeeded" && fact.ProviderStatus != "succeeded_resolved" {
 			return errors.New("source task resource provider fact state conflict")
 		}
-		var task model.Task
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", resource.SourceTaskID).Error; err != nil {
+		var stored model.Resource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&stored, "id = ? AND user_id = ? AND source_task_id = ?", resource.ID, resource.UserID, resource.SourceTaskID).Error; err != nil {
 			return err
 		}
-		if task.Status != model.TaskStatusRunning || task.LeaseOwner != leaseOwner || task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
-			return errors.New("source task resource lease state conflict")
+		if fact.ReconciliationStatus == "resolved" {
+			if stored.WriteResolution != "resolving" {
+				return errors.New("source task resource resolution handoff state conflict")
+			}
+		} else {
+			var task model.Task
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", resource.SourceTaskID).Error; err != nil {
+				return err
+			}
+			if task.Status != model.TaskStatusRunning || task.LeaseOwner != leaseOwner || task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
+				return errors.New("source task resource lease state conflict")
+			}
 		}
 		updated := tx.Model(&model.Resource{}).
 			Where("id = ? AND user_id = ? AND source_task_id = ? AND status = ? AND write_token = ? AND write_task_lease_token = ?", resource.ID, resource.UserID, resource.SourceTaskID, model.ResourceStatusPending, writeToken, leaseToken).
 			Updates(map[string]any{
 				"status": resource.Status, "e_tag": resource.ETag, "error": resource.Error,
-				"write_token": "", "write_task_lease_token": "", "write_lease_expires_at": nil, "updated_at": now,
+				"write_token": "", "write_task_lease_token": "", "write_lease_expires_at": nil, "write_resolution": "resolved", "updated_at": now,
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -857,9 +870,22 @@ func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, l
 		if updated.RowsAffected != 1 {
 			return errors.New("source task resource write completion conflict")
 		}
+		if resource.Status == model.ResourceStatusFailed && stored.QuotaReserved {
+			usageID := stored.UserID + ":" + stored.QuotaDay
+			if err := tx.Model(&model.UserDailyUploadUsage{}).Where("id = ?", usageID).Updates(map[string]any{
+				"bytes": gorm.Expr("CASE WHEN bytes >= ? THEN bytes - ? ELSE 0 END", stored.Size, stored.Size), "updated_at": now,
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.Resource{}).Where("id = ?", stored.ID).Updates(map[string]any{"quota_reserved": false, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			resource.QuotaReserved = false
+		}
 		resource.WriteToken = ""
 		resource.WriteTaskLeaseToken = ""
 		resource.WriteLeaseExpiresAt = nil
+		resource.WriteResolution = "resolved"
 		resource.UpdatedAt = now
 		return nil
 	})
