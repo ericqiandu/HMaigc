@@ -58,20 +58,20 @@ func main() {
 
 	repo := repository.New(db)
 	svc := service.New(repo, dataDir)
-	if err := runPaymentRuntimeGate(svc, func() error {
+	if err := runStartupRuntimeGate(svc, func() error {
 		return initializeAndServe(sqlDB, svc)
 	}); err != nil {
 		log.Fatal(err)
 	}
 }
 
-type paymentRuntimeValidator interface {
-	ValidatePaymentRuntime() error
+type startupRuntimeValidator interface {
+	ValidateStartupRuntime() error
 }
 
-// runPaymentRuntimeGate 保证持久化支付配置在 worker、readiness 和 listener 之前完成强校验。
-func runPaymentRuntimeGate(validator paymentRuntimeValidator, afterValidation func() error) error {
-	if err := validator.ValidatePaymentRuntime(); err != nil {
+// runStartupRuntimeGate 保证支付配置与 provider 密钥根在 worker、readiness 和 listener 之前完成强校验。
+func runStartupRuntimeGate(validator startupRuntimeValidator, afterValidation func() error) error {
+	if err := validator.ValidateStartupRuntime(); err != nil {
 		return err
 	}
 	return afterValidation()
@@ -223,9 +223,9 @@ func healthHandler(db *sql.DB, svc *service.Service) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "database unavailable"})
 			return
 		}
-		if err := svc.ValidatePaymentRuntime(); err != nil {
-			log.Printf("health dependency=payment_runtime status=unavailable error=%v", err)
-			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "payment runtime unavailable"})
+		if err := svc.ValidateStartupRuntime(); err != nil {
+			log.Printf("health dependency=startup_runtime status=unavailable error=%v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "data": gin.H{"status": "unavailable"}, "msg": "startup runtime unavailable"})
 			return
 		}
 		if err := svc.CheckRuntime(ctx); err != nil {

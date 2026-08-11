@@ -77,6 +77,32 @@ func TestProviderAccountSchemaRejectsWrongNamedIndexWithoutChangingRows(t *testi
 	}
 }
 
+func TestProviderAccountSchemaRejectsMissingPredicateWithoutChangingRows(t *testing.T) {
+	db := openProviderSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	row := model.ProviderEndpointVersion{ID: "endpoint-predicate", ProviderAccountID: "account", BaseURL: "https://predicate.example.com", Status: "pending", Version: 1, CreatedAt: now}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_provider_endpoint_active ON provider_endpoint_versions(provider_account_id)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureProviderIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "idx_provider_endpoint_active") {
+		t.Fatalf("missing provider predicate error = %v", err)
+	}
+	var stored model.ProviderEndpointVersion
+	if err := db.First(&stored, "id = ?", row.ID).Error; err != nil {
+		t.Fatalf("provider row was removed after predicate failure: %v", err)
+	}
+	if stored.BaseURL != row.BaseURL || stored.Status != row.Status {
+		t.Fatalf("provider row was overwritten after predicate failure: %#v", stored)
+	}
+}
+
 func TestProviderAccountSchemaRejectsConflictingHistoricalRowsWithoutDeletion(t *testing.T) {
 	db := openProviderSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {

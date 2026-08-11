@@ -17,6 +17,14 @@ var (
 	ErrProviderBillingFactConflict = errors.New("provider billing fact conflict")
 )
 
+type ProviderCredentialSecret struct {
+	ProviderAccountID    string `gorm:"column:provider_account_id"`
+	ProviderCredentialID string `gorm:"column:provider_credential_id"`
+	CredentialVersionID  string `gorm:"column:credential_version_id"`
+	Version              int64  `gorm:"column:version"`
+	KeyCipher            string `gorm:"column:key_cipher"`
+}
+
 func (r *Repository) CreateProviderAccount(account *model.ProviderAccount) error {
 	return r.db.Create(account).Error
 }
@@ -31,6 +39,18 @@ func (r *Repository) CreateProviderCredential(credential *model.ProviderCredenti
 
 func (r *Repository) CreateProviderCredentialVersion(version *model.ProviderCredentialVersion) error {
 	return r.db.Create(version).Error
+}
+
+// ProviderCredentialSecrets 返回启动校验所需的最小 AAD 与密文事实，调用方不得记录 KeyCipher。
+func (r *Repository) ProviderCredentialSecrets() ([]ProviderCredentialSecret, error) {
+	var secrets []ProviderCredentialSecret
+	err := r.db.Table("provider_credential_versions AS versions").
+		Select("COALESCE(credentials.provider_account_id, '') AS provider_account_id, versions.provider_credential_id, versions.id AS credential_version_id, versions.version, versions.key_cipher").
+		Joins("LEFT JOIN provider_credentials AS credentials ON credentials.id = versions.provider_credential_id").
+		Where("versions.key_cipher <> ''").
+		Order("versions.created_at ASC, versions.id ASC").
+		Scan(&secrets).Error
+	return secrets, err
 }
 
 func (r *Repository) CreateProviderTaskFact(fact *model.ProviderTaskFact) error {

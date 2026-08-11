@@ -128,6 +128,31 @@ func TestPostgresProviderAccountIntegrityRejectsWrongIndexWithoutDeletion(t *tes
 	}
 }
 
+func TestPostgresProviderAccountIntegrityRejectsMissingPredicateWithoutDeletion(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	row := &model.ProviderEndpointVersion{ID: "endpoint-predicate", ProviderAccountID: "account", BaseURL: "https://predicate.example.com", Status: "pending", Version: 1, CreatedAt: now}
+	if err := db.Create(row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_provider_endpoint_active ON provider_endpoint_versions(provider_account_id)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureProviderIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "idx_provider_endpoint_active") {
+		t.Fatalf("missing PostgreSQL provider predicate error = %v", err)
+	}
+	var stored model.ProviderEndpointVersion
+	if err := db.First(&stored, "id = ?", row.ID).Error; err != nil {
+		t.Fatalf("PostgreSQL provider row was removed: %v", err)
+	}
+	if stored.BaseURL != row.BaseURL || stored.Status != row.Status {
+		t.Fatalf("PostgreSQL provider row was overwritten: %#v", stored)
+	}
+}
+
 func TestPostgresChannelModelVariantSupportsFourTiers(t *testing.T) {
 	db := openPostgresProviderSchema(t)
 	now := time.Now().UTC()

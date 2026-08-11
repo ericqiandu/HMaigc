@@ -231,20 +231,20 @@ func TestPaymentHeadersApplyBeforeCORSOptionsShortCircuit(t *testing.T) {
 	}
 }
 
-type paymentRuntimeValidatorStub struct {
+type startupRuntimeValidatorStub struct {
 	events *[]string
 	err    error
 }
 
-func (stub paymentRuntimeValidatorStub) ValidatePaymentRuntime() error {
+func (stub startupRuntimeValidatorStub) ValidateStartupRuntime() error {
 	*stub.events = append(*stub.events, "validate")
 	return stub.err
 }
 
-func TestPaymentRuntimeGateRunsBeforeStartupWork(t *testing.T) {
+func TestProviderSecretRuntimeGateRunsBeforeStartupWork(t *testing.T) {
 	t.Run("validation failure blocks startup", func(t *testing.T) {
 		events := make([]string, 0, 2)
-		err := runPaymentRuntimeGate(paymentRuntimeValidatorStub{events: &events, err: errors.New("invalid runtime")}, func() error {
+		err := runStartupRuntimeGate(startupRuntimeValidatorStub{events: &events, err: errors.New("invalid provider secret runtime")}, func() error {
 			events = append(events, "startup")
 			return nil
 		})
@@ -258,7 +258,7 @@ func TestPaymentRuntimeGateRunsBeforeStartupWork(t *testing.T) {
 
 	t.Run("validation precedes startup", func(t *testing.T) {
 		events := make([]string, 0, 2)
-		err := runPaymentRuntimeGate(paymentRuntimeValidatorStub{events: &events}, func() error {
+		err := runStartupRuntimeGate(startupRuntimeValidatorStub{events: &events}, func() error {
 			events = append(events, "startup")
 			return nil
 		})
