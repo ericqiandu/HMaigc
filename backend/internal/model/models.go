@@ -245,6 +245,7 @@ type ModelChannel struct {
 type ChannelModel struct {
 	ID                       string                  `json:"id" gorm:"primaryKey;size:36"`
 	ChannelID                string                  `json:"channelId" gorm:"size:36;index;uniqueIndex:idx_channel_model_key_active,priority:1,where:deleted_at IS NULL"`
+	ProviderCredentialID     string                  `json:"providerCredentialId" gorm:"not null;default:'';size:36;index"`
 	ModelKey                 string                  `json:"modelKey" gorm:"size:120;uniqueIndex:idx_channel_model_key_active,priority:2,where:deleted_at IS NULL"`
 	DisplayName              string                  `json:"displayName" gorm:"size:160"`
 	MarketingCopy            string                  `json:"marketingCopy" gorm:"size:240"`
@@ -317,13 +318,17 @@ type ChannelVoicePreview struct {
 }
 
 type ChannelModelPriceTier struct {
-	ID                    string    `json:"id" gorm:"primaryKey;size:36"`
-	ChannelModelID        string    `json:"channelModelId" gorm:"size:36;uniqueIndex:idx_channel_model_resolution,priority:1"`
-	Resolution            string    `json:"resolution" gorm:"size:16;uniqueIndex:idx_channel_model_resolution,priority:2"`
-	UnitPriceMicrocredits int64     `json:"unitPriceMicrocredits"`
-	PriceVersion          int64     `json:"priceVersion"`
-	CreatedAt             time.Time `json:"createdAt"`
-	UpdatedAt             time.Time `json:"updatedAt"`
+	ID                             string    `json:"id" gorm:"primaryKey;size:36"`
+	ChannelModelID                 string    `json:"channelModelId" gorm:"size:36;index"`
+	Resolution                     string    `json:"resolution" gorm:"size:16;index"`
+	InputVariant                   string    `json:"inputVariant" gorm:"not null;default:standard;size:40;index"`
+	UnitPriceMicrocredits          int64     `json:"unitPriceMicrocredits"`
+	SupplierReferenceCostMinMicros int64     `json:"supplierReferenceCostMinMicros"`
+	SupplierReferenceCostMaxMicros int64     `json:"supplierReferenceCostMaxMicros"`
+	SupplierReferenceCurrency      string    `json:"supplierReferenceCurrency" gorm:"not null;default:'';size:12"`
+	PriceVersion                   int64     `json:"priceVersion"`
+	CreatedAt                      time.Time `json:"createdAt"`
+	UpdatedAt                      time.Time `json:"updatedAt"`
 }
 
 type ApiCallLog struct {
@@ -413,6 +418,7 @@ type BillingOrder struct {
 	PriceVersion                     int64         `json:"priceVersion"`
 	PriceTierID                      string        `json:"priceTierId,omitempty" gorm:"index;size:36"`
 	PricingResolution                string        `json:"pricingResolution,omitempty" gorm:"size:16"`
+	PricingInputVariant              string        `json:"pricingInputVariant,omitempty" gorm:"not null;default:'';size:40"`
 	UnitPriceMicrocredits            int64         `json:"unitPriceMicrocredits"`
 	MultiplierBasisPoints            int64         `json:"multiplierBasisPoints"`
 	Quantity                         int64         `json:"quantity"`

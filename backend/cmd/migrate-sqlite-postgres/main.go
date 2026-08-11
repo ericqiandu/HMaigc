@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/database"
@@ -14,6 +15,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"gorm.io/gorm/schema"
 )
 
 type tableMigration struct {
@@ -80,6 +82,9 @@ func migrateApplicationTables(source *gorm.DB, target *gorm.DB, copyRows bool) e
 	if err := database.EnsurePaymentIntegritySchema(target); err != nil {
 		return fmt.Errorf("施加支付完整性约束：%w", err)
 	}
+	if err := database.EnsureProviderIntegritySchema(target); err != nil {
+		return fmt.Errorf("施加平台事实完整性约束：%w", err)
+	}
 	if copyRows {
 		log.Printf("全量迁移核对完成：%d 张表，%d 行", len(migrations()), total)
 	} else {
@@ -105,32 +110,36 @@ func publicTableCount(db *gorm.DB) (int64, error) {
 	return count, err
 }
 
-func migrateTable[T any](name string) tableMigration {
+func migrateModel(name string, value any) tableMigration {
 	return tableMigration{
 		name: name,
 		run: func(source *gorm.DB, target *gorm.DB, copyRows bool) (int, error) {
-			primaryKey, err := primaryKeyColumn[T](source)
+			primaryKey, err := primaryKeyColumn(source, value)
 			if err != nil {
 				return 0, err
 			}
-			var sourceRows []T
-			if err := source.Order(primaryKey).Find(&sourceRows).Error; err != nil {
+			modelType := reflect.TypeOf(value)
+			if modelType.Kind() == reflect.Pointer {
+				modelType = modelType.Elem()
+			}
+			sourceRows := reflect.New(reflect.SliceOf(modelType))
+			if err := source.Order(primaryKey).Find(sourceRows.Interface()).Error; err != nil {
 				return 0, err
 			}
-			if copyRows && len(sourceRows) > 0 {
-				if err := target.CreateInBatches(&sourceRows, 100).Error; err != nil {
+			if copyRows && sourceRows.Elem().Len() > 0 {
+				if err := target.CreateInBatches(sourceRows.Interface(), 100).Error; err != nil {
 					return 0, err
 				}
 			}
 
-			var targetRows []T
-			if err := target.Order(primaryKey).Find(&targetRows).Error; err != nil {
+			targetRows := reflect.New(reflect.SliceOf(modelType))
+			if err := target.Order(primaryKey).Find(targetRows.Interface()).Error; err != nil {
 				return 0, err
 			}
-			if !equivalent(reflect.ValueOf(sourceRows), reflect.ValueOf(targetRows)) {
+			if !equivalent(sourceRows.Elem(), targetRows.Elem()) {
 				return 0, errors.New("源数据与目标数据逐字段核对不一致")
 			}
-			return len(sourceRows), nil
+			return sourceRows.Elem().Len(), nil
 		},
 	}
 }
@@ -185,9 +194,9 @@ func normalizeProcessedWebhookFacts(source *gorm.DB, event *model.PaymentWebhook
 	return nil
 }
 
-func primaryKeyColumn[T any](db *gorm.DB) (string, error) {
+func primaryKeyColumn(db *gorm.DB, value any) (string, error) {
 	statement := &gorm.Statement{DB: db}
-	if err := statement.Parse(new(T)); err != nil {
+	if err := statement.Parse(value); err != nil {
 		return "", err
 	}
 	if len(statement.Schema.PrimaryFields) != 1 {
@@ -244,108 +253,32 @@ func equivalent(left reflect.Value, right reflect.Value) bool {
 
 func verifyMigrationCoverage(db *gorm.DB) error {
 	expected := make(map[string]struct{}, len(database.Models()))
-	for _, value := range database.Models() {
-		statement := &gorm.Statement{DB: db}
-		if err := statement.Parse(value); err != nil {
-			return err
-		}
-		expected[statement.Schema.Table] = struct{}{}
-	}
 	for _, migration := range migrations() {
-		if _, exists := expected[migration.name]; !exists {
-			return fmt.Errorf("迁移清单包含未知表 %s", migration.name)
+		if _, exists := expected[migration.name]; exists {
+			return fmt.Errorf("应用模型清单包含重复表 %s", migration.name)
 		}
-		delete(expected, migration.name)
+		expected[migration.name] = struct{}{}
 	}
-	if len(expected) > 0 {
-		missing := make([]string, 0, len(expected))
-		for name := range expected {
-			missing = append(missing, name)
-		}
-		return fmt.Errorf("迁移清单缺少表：%s", strings.Join(missing, ", "))
+	if len(expected) != len(database.Models()) {
+		return fmt.Errorf("应用模型表数量=%d，迁移表数量=%d", len(database.Models()), len(expected))
 	}
 	return nil
 }
 
 func migrations() []tableMigration {
-	return []tableMigration{
-		migrateTable[model.User]("users"),
-		migrateTable[model.AuthSession]("auth_sessions"),
-		migrateTable[model.UserIdentity]("user_identities"),
-		migrateTable[model.OAuthState]("o_auth_states"),
-		migrateTable[model.EmailVerificationCode]("email_verification_codes"),
-		migrateTable[model.ReferralProfile]("referral_profiles"),
-		migrateTable[model.ReferralRelationship]("referral_relationships"),
-		migrateTable[model.ReferralRewardRule]("referral_reward_rules"),
-		migrateTable[model.ReferralReward]("referral_rewards"),
-		migrateTable[model.ModelChannel]("model_channels"),
-		migrateTable[model.ChannelModel]("channel_models"),
-		migrateTable[model.ChannelModelPriceTier]("channel_model_price_tiers"),
-		migrateTable[model.ChannelVoice]("channel_voices"),
-		migrateTable[model.UserVoiceFavorite]("user_voice_favorites"),
-		migrateTable[model.ChannelVoicePreview]("channel_voice_previews"),
-		migrateTable[model.ApiCallLog]("api_call_logs"),
-		migrateTable[model.ModelPricing]("model_pricings"),
-		migrateTable[model.ModelPricingTier]("model_pricing_tiers"),
-		migrateTable[model.CreditAccount]("credit_accounts"),
-		migrateTable[model.CreditLedgerEntry]("credit_ledger_entries"),
-		migrateTable[model.BillingOrder]("billing_orders"),
-		migrateTable[model.SuperResolutionPricingRule]("super_resolution_pricing_rules"),
-		migrateTable[model.MembershipPlan]("membership_plans"),
-		migrateTable[model.Team]("teams"),
-		migrateTable[model.TeamMember]("team_members"),
-		migrateTable[model.TeamInvitation]("team_invitations"),
-		migrateTable[model.TeamAuditEvent]("team_audit_events"),
-		migrateTable[model.TeamCreditAccount]("team_credit_accounts"),
-		migrateTable[model.TeamCreditLedgerEntry]("team_credit_ledger_entries"),
-		migrateTable[model.MembershipOrder]("membership_orders"),
-		migrateTable[model.CreditTopupProduct]("credit_topup_products"),
-		migrateTable[model.CreditTopupOrder]("credit_topup_orders"),
-		migrateTable[model.MembershipSubscription]("membership_subscriptions"),
-		migrateTable[model.InvoiceRequest]("invoice_requests"),
-		migrateTable[model.PaymentCheckoutSession]("payment_checkout_sessions"),
-		migrateTable[model.PaymentTransaction]("payment_transactions"),
-		migratePaymentWebhookEvents(),
-		migrateTable[model.RedeemBatch]("redeem_batches"),
-		migrateTable[model.RedeemCode]("redeem_codes"),
-		migrateTable[model.AdminAuditEvent]("admin_audit_events"),
-		migrateTable[model.UserDailyActivity]("user_daily_activities"),
-		migrateTable[model.SystemSetting]("system_settings"),
-		migrateTable[model.UserOSSSetting]("user_oss_settings"),
-		migrateTable[model.UserDailyUploadUsage]("user_daily_upload_usages"),
-		migrateTable[model.UserSkillState]("user_skill_states"),
-		migrateTable[model.Resource]("resources"),
-		migrateTable[model.StorageMigrationJob]("storage_migration_jobs"),
-		migrateTable[model.StorageMigrationItem]("storage_migration_items"),
-		migrateTable[model.Asset]("assets"),
-		migrateTable[model.ProjectAssetLink]("project_asset_links"),
-		migrateTable[model.ProjectAssetCandidate]("project_asset_candidates"),
-		migrateTable[model.AssetVersion]("asset_versions"),
-		migrateTable[model.AssetRepresentation]("asset_representations"),
-		migrateTable[model.VoiceProfile]("voice_profiles"),
-		migrateTable[model.CharacterVoiceBinding]("character_voice_bindings"),
-		migrateTable[model.Project]("projects"),
-		migrateTable[model.ProjectCollaborator]("project_collaborators"),
-		migrateTable[model.ProjectUnit]("project_units"),
-		migrateTable[model.CanvasUnitLink]("canvas_unit_links"),
-		migrateTable[model.Shot]("shots"),
-		migrateTable[model.ShotAssetReference]("shot_asset_references"),
-		migrateTable[model.WorkflowTemplateVersion]("workflow_template_versions"),
-		migrateTable[model.WorkflowInstance]("workflow_instances"),
-		migrateTable[model.WorkflowStepInstance]("workflow_step_instances"),
-		migrateTable[model.WorkflowStepTask]("workflow_step_tasks"),
-		migrateTable[model.CanvasProject]("canvas_projects"),
-		migrateTable[model.CanvasCollaborator]("canvas_collaborators"),
-		migrateTable[model.CanvasChange]("canvas_changes"),
-		migrateTable[model.CanvasShare]("canvas_shares"),
-		migrateTable[model.StoryboardPromptTemplate]("storyboard_prompt_templates"),
-		migrateTable[model.Announcement]("announcements"),
-		migrateTable[model.UserAnnouncementRead]("user_announcement_reads"),
-		migrateTable[model.Task]("tasks"),
-		migrateTable[model.Session]("sessions"),
-		migrateTable[model.Message]("messages"),
-		migrateTable[model.TaskLog]("task_logs"),
-		migrateTable[model.SessionFile]("session_files"),
-		migrateTable[model.Result]("results"),
+	models := database.Models()
+	result := make([]tableMigration, 0, len(models))
+	cache := &sync.Map{}
+	for _, value := range models {
+		parsed, err := schema.Parse(value, cache, schema.NamingStrategy{})
+		if err != nil {
+			panic(fmt.Sprintf("解析应用模型 %T 失败: %v", value, err))
+		}
+		if _, ok := value.(*model.PaymentWebhookEvent); ok {
+			result = append(result, migratePaymentWebhookEvents())
+			continue
+		}
+		result = append(result, migrateModel(parsed.Table, value))
 	}
+	return result
 }

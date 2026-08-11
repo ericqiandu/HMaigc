@@ -59,11 +59,28 @@
 - `flat`：使用 `channel_models.unit_price_microcredits`。
 - `image_resolution`：必须从 `channel_model_price_tiers` 精确匹配 `1K`、`2K` 或 `4K`。
 
-`channel_model_price_tiers` 以渠道模型和分辨率组成唯一约束，保存档位单价与价格版本。按分辨率计费的模型必须完整配置三个档位，不允许回退到统一价格。
+`channel_model_price_tiers` 以 `channel_model_id + resolution + input_variant` 组成唯一约束，保存档位单价、供应商参考成本区间、参考币种与价格版本。同一模型和分辨率可以保存多个输入规格，但同一输入规格只能有一档；历史两列唯一键硬切到三列唯一键，旧档位明确回填为 `standard`，冲突数据会使迁移失败而不会被删除或挑选。
 
-`billing_orders` 包含 `price_tier_id` 与 `pricing_resolution`，并继续保存 `unit_price_microcredits`、`price_version`、数量和最终金额。订单创建后使用这些快照解释历史账单，后台后续调整价格不会重算旧订单。
+`billing_orders` 包含 `price_tier_id`、`pricing_resolution` 与 `pricing_input_variant`，并继续保存 `unit_price_microcredits`、`price_version`、数量和最终金额。订单创建后使用这些快照解释历史账单，后台后续调整价格不会重算旧订单。
 
 服务启动迁移会把历史空 `price_strategy` 显式更新为 `flat`；新建和编辑模型时必须明确提交价格策略，服务端不会根据模型名称或缺失字段推测策略。
+
+## 平台凭据版本与供应商事实
+
+`provider_accounts` 是供应商接入的持久化根，保存供应商类型、运营名称和启停状态。其下游关系如下：
+
+- `provider_endpoint_versions` 追加保存 Base URL 版本；同一账号只允许一个 `active` 版本，激活以期望旧版本做事务并发校验，旧版本只转为 `retired`，不覆盖 URL；
+- `provider_credentials` 以 `provider_account_id + family` 唯一标识一组逻辑凭据，并保存独立的健康状态、最近检查事实和并发上限；
+- `provider_credential_versions` 追加保存每次换 Key 的密文、指纹、验证/余额事实和启退时间；同一逻辑凭据只允许一个 `active` 版本；
+- `channel_models.provider_credential_id` 将可调用模型显式绑定到逻辑凭据，任务执行时再冻结实际 endpoint 与 credential version，避免换 URL 或换 Key 改写历史任务含义。
+
+`provider_task_facts` 以平台 `task_id` 为唯一任务事实，并冻结关联计费单、账号、endpoint 版本、逻辑凭据、凭据版本、渠道模型、输入规格、输入数量、时长、供应商状态、trace 和资产来源。非空的 `provider_credential_version_id + provider_task_id` 只能出现一次；供应商尚未返回任务号时允许空值，但不能据此宣称上游任务已创建。
+
+`provider_billing_facts` 追加保存供应商账单观察结果。非空的 `provider_credential_version_id + upstream_order_id` 唯一：同一 payload digest 的查询重放返回原事实，不新增也不覆盖；不同 digest 明确冲突并保留已有行。完整性迁移会先核对历史活动版本、任务号、上游订单和价格规格，再创建索引；索引同名但列、唯一性或 predicate 不符时启动失败，禁止信任错误索引。
+
+金额单位必须随字段解释：用户售价与冻结订单金额使用 `microcredits`；供应商参考成本使用货币 `micros`；供应商原始余额和账单金额使用 `amount_subunits` 十进制字符串。`total_tokens` 和余额同样以十进制字符串保存，避免超过 JavaScript 安全整数或数据库固定整数范围后丢失精度；币种必须由同一事实记录的显式字段解释，禁止跨单位直接相加。
+
+供应商 Key 使用独立的 `enc:provider:v1:` AES-GCM envelope，AAD 同时绑定账号 ID、逻辑凭据 ID 和凭据版本。密文字段与指纹不通过 JSON 返回，也不得写入日志。它与 OSS/支付密文只共享数据目录中的 `.settings-key` 文件所有权和 `0600` 权限规则，不复用无 AAD 的旧加密协议。仅在系统不存在任何待解密密文、首次写入供应商 Key 时允许以原子独占方式创建 32 字节 key 文件；一旦数据库已有供应商密文，文件缺失、长度错误、密文篡改、换绑或使用错误 key 都必须使启动验证显式失败，不得创建替代 key 或自动降级。
 
 ## 模型商业定价中心
 

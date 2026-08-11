@@ -356,6 +356,52 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	}
 }
 
+func TestChannelModelVariantMigrationBackfillsLegacyTierAndHardCutsUniqueKey(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE channel_model_price_tiers (
+		id text PRIMARY KEY,
+		channel_model_id text NOT NULL,
+		resolution text NOT NULL,
+		unit_price_microcredits integer NOT NULL,
+		price_version integer NOT NULL,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_channel_model_resolution ON channel_model_price_tiers(channel_model_id, resolution)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO channel_model_price_tiers (id, channel_model_id, resolution, unit_price_microcredits, price_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, "legacy", "model", "1080p", 10, 1, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("migrate legacy channel model variant: %v", err)
+	}
+	var legacy model.ChannelModelPriceTier
+	if err := db.First(&legacy, "id = ?", "legacy").Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacy.InputVariant != "standard" || legacy.SupplierReferenceCurrency != "" || legacy.SupplierReferenceCostMinMicros != 0 || legacy.SupplierReferenceCostMaxMicros != 0 {
+		t.Fatalf("legacy channel model tier = %#v", legacy)
+	}
+	for index, variant := range []string{"first_frame", "last_frame", "reference"} {
+		tier := model.ChannelModelPriceTier{ID: "variant-" + variant, ChannelModelID: "model", Resolution: "1080p", InputVariant: variant, UnitPriceMicrocredits: int64(index + 20), PriceVersion: 2, CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&tier).Error; err != nil {
+			t.Fatalf("create variant %s: %v", variant, err)
+		}
+	}
+	duplicate := model.ChannelModelPriceTier{ID: "duplicate-standard", ChannelModelID: "model", Resolution: "1080p", InputVariant: "standard", UnitPriceMicrocredits: 99, PriceVersion: 2, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&duplicate).Error; err == nil {
+		t.Fatal("duplicate channel model variant was accepted")
+	}
+}
+
 func TestMigrateChannelModelBrandsRemovesLegacyIconColumns(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
