@@ -92,8 +92,8 @@ const personalPlan = {
     invoicingEnabled: false,
     commercialUseEnabled: false,
     topupDiscountBasisPoints: 0,
-    minSeats: 1,
-    maxSeats: 1,
+    minSeats: 0,
+    maxSeats: 0,
     benefitsJson: "[]",
     benefits: [],
     enabled: true,
@@ -188,6 +188,18 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("membership checkout presentation", () => {
+    test("a frozen personal order accepts the backend catalog's non-applicable zero seat bounds", () => {
+        const facts = membershipOrderFactsFromOrder(frozenOrderFromPlan(personalPlan, 1));
+
+        expect(facts).toMatchObject({
+            audience: "personal",
+            orderNumber: "M-plan-standard-year",
+            seats: 1,
+            title: "标准版",
+            totalPriceCents: 119_900,
+        });
+    });
+
     test("an order snapshot rejects either missing immutable identity before checkout can open", () => {
         const frozenOrder = frozenOrderFromPlan(personalPlan, 1);
 

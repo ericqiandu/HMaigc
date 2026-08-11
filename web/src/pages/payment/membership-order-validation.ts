@@ -64,7 +64,6 @@ function validateAudienceAndSeats(input: MembershipOrderValidationInput): void {
     requireSafePositiveInteger(input.seats, "会员席位数");
     if (input.audience === "personal") {
         if (input.seats !== 1) throw new Error("个人会员席位必须为 1");
-        if (input.source === "frozen-order" && (input.seatBounds.minSeats !== 1 || input.seatBounds.maxSeats !== 1)) throw new Error("个人会员冻结席位范围无效");
         return;
     }
     if (input.audience !== "team") throw new Error("会员类型无效");

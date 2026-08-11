@@ -49,8 +49,8 @@ const personalPlan = {
     billingCycle: "month",
     priceCents: 119_900,
     originalPriceCents: 129_900,
-    minSeats: 1,
-    maxSeats: 1,
+    minSeats: 0,
+    maxSeats: 0,
 } satisfies MembershipPlan;
 
 const teams = [
