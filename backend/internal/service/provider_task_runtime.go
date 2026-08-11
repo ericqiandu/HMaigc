@@ -56,8 +56,10 @@ func (s *Service) processFrozenProviderCanvasTask(ctx context.Context, task mode
 		return nil, err
 	}
 	environment := strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT"))
-	if _, err := ValidateKuaiziBaseURL(ctx, runtime.EndpointVersion.BaseURL, environment); err != nil {
-		return nil, fmt.Errorf("冻结筷子服务地址运行时校验失败：%w", err)
+	if runtime.ProviderFact.ProviderStatus != "succeeded" {
+		if _, err := ValidateKuaiziBaseURL(ctx, runtime.EndpointVersion.BaseURL, environment); err != nil {
+			return nil, fmt.Errorf("冻结筷子服务地址运行时校验失败：%w", err)
+		}
 	}
 	client := NewKuaiziSeedance25Client(KuaiziHTTPClient(environment, providerHTTPTimeout), NewProviderSecretCipher(s.dataDir))
 	providerResult, err := s.executeKuaiziSeedance25Task(ctx, runtime, input, client, 5*time.Second)
@@ -182,19 +184,20 @@ func (s *Service) validateKuaiziSeedance25CreationInput(userID string, input can
 			if _, err := kuaiziSeedance25MediaRole(group.kind, media, input); err != nil {
 				return 0, "", err
 			}
-			if strings.HasPrefix(strings.TrimSpace(media.StorageKey), "resource:") {
-				resourceID := strings.TrimPrefix(strings.TrimSpace(media.StorageKey), "resource:")
-				resource, err := s.repo.ResourceForUser(userID, resourceID)
-				if err != nil {
-					return 0, "", BadAuthRequest("Seedance 2.5 参考素材不存在或无权访问")
-				}
-				if resource.Status != "ready" || resource.Provider == "local" {
-					return 0, "", BadAuthRequest("Seedance 2.5 参考素材必须已就绪且可生成公网签名地址")
-				}
-				continue
+			storageKey := strings.TrimSpace(media.StorageKey)
+			if !strings.HasPrefix(storageKey, "resource:") {
+				return 0, "", BadAuthRequest("Seedance 2.5 参考素材必须来自已授权的平台资源")
 			}
-			if _, err := kuaiziSeedance25MediaURL(media); err != nil {
-				return 0, "", err
+			resourceID := strings.TrimSpace(strings.TrimPrefix(storageKey, "resource:"))
+			if resourceID == "" {
+				return 0, "", BadAuthRequest("Seedance 2.5 参考素材资源标识无效")
+			}
+			resource, err := s.repo.ResourceForUser(userID, resourceID)
+			if err != nil {
+				return 0, "", BadAuthRequest("Seedance 2.5 参考素材不存在或无权访问")
+			}
+			if resource.Status != "ready" || resource.Provider == "local" {
+				return 0, "", BadAuthRequest("Seedance 2.5 参考素材必须已就绪且可生成公网签名地址")
 			}
 		}
 	}
@@ -363,8 +366,18 @@ func validateFrozenProviderRuntime(runtime *ProviderTaskRuntime) error {
 }
 
 func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *ProviderTaskRuntime, input canvasGenerationInput, client *KuaiziSeedance25Client, pollInterval time.Duration) (map[string]any, error) {
-	if runtime.ProviderFact.ProviderStatus == "create_uncertain" {
+	switch runtime.ProviderFact.ProviderStatus {
+	case "create_uncertain":
 		return nil, &KuaiziSeedance25CreateUncertainError{Cause: errors.New("stored create uncertainty")}
+	case "create_failed":
+		return nil, &KuaiziSeedance25Error{Stage: "create", Kind: "definitive_rejection", TraceID: runtime.ProviderFact.CreateTraceID, Message: "上游已明确拒绝创建任务"}
+	case "failed":
+		return nil, &KuaiziSeedance25Error{Stage: "poll", Kind: "provider_failed", TraceID: runtime.ProviderFact.LastPollTraceID, Message: "上游任务已失败"}
+	case "succeeded":
+		if err := validateStoredKuaiziSeedance25Success(runtime.ProviderFact); err != nil {
+			return nil, err
+		}
+		return kuaiziSeedance25StoredResult(runtime.ProviderFact), nil
 	}
 	providerTaskID := strings.TrimSpace(runtime.ProviderFact.ProviderTaskID)
 	if providerTaskID == "" {
@@ -430,4 +443,19 @@ func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *Prov
 		"taskId": providerTaskID, "sourceUrl": polled.State.AssetSourceURL, "lastFrameUrl": polled.State.LastFrameURL,
 		"duration": polled.State.ActualDurationSeconds, "totalTokens": polled.State.TotalTokens,
 	}, nil
+}
+
+func validateStoredKuaiziSeedance25Success(fact model.ProviderTaskFact) error {
+	if strings.TrimSpace(fact.ProviderTaskID) == "" || strings.TrimSpace(fact.AssetSourceURL) == "" || strings.TrimSpace(fact.LastFrameURL) == "" ||
+		fact.ActualDurationSeconds < 4 || fact.ActualDurationSeconds > 30 || strings.TrimSpace(fact.TotalTokens) == "" {
+		return &KuaiziSeedance25Error{Stage: "recovery", Kind: "invalid_success_fact", Message: "已成功的上游任务缺少完整冻结事实"}
+	}
+	return nil
+}
+
+func kuaiziSeedance25StoredResult(fact model.ProviderTaskFact) map[string]any {
+	return map[string]any{
+		"taskId": fact.ProviderTaskID, "sourceUrl": fact.AssetSourceURL, "lastFrameUrl": fact.LastFrameURL,
+		"duration": fact.ActualDurationSeconds, "totalTokens": fact.TotalTokens,
+	}
 }

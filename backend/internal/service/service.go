@@ -851,7 +851,9 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	if err != nil {
 		return err
 	}
+	providerTask := false
 	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
+		providerTask = true
 		claimed, claimErr := s.repo.ClaimProviderTaskExecution(task.ID, s.workerID)
 		if claimErr != nil {
 			return claimErr
@@ -865,6 +867,16 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		}
 	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
 		return factErr
+	}
+	if providerTask {
+		finalized, finalizeErr := s.repo.FinalizeProviderTaskRecovery(task.ID, s.workerID)
+		if finalizeErr != nil {
+			return finalizeErr
+		}
+		if finalized {
+			_ = s.log(task.UserID, task.ID, "warn", "已按冻结上游事实恢复为终态", "")
+			return nil
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), taskExecutionTimeoutWithPolicy(task.Type, policy.Task))
 	defer cancel()
@@ -893,14 +905,25 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	task.Stage = "调用生成模型"
 	task.Progress = 35
 	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
-	if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
+	var markBillingErr error
+	if providerTask {
+		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
+		if orderErr != nil {
+			markBillingErr = orderErr
+		} else if order.Status != model.BillingStatusUncertain {
+			markBillingErr = s.MarkBillingRunning(task.BillingOrderID)
+		}
+	} else {
+		markBillingErr = s.MarkBillingRunning(task.BillingOrderID)
+	}
+	if markBillingErr != nil {
 		task.Status = model.TaskStatusFailed
 		task.Stage = "计费准备失败"
-		task.Error = taskFailureMessage(err)
+		task.Error = taskFailureMessage(markBillingErr)
 		task.CompletedAt = ptr(time.Now())
 		_ = s.repo.Save(task)
 		_ = s.RefundBilling(task.BillingOrderID, "计费准备失败，上游请求未发出")
-		return err
+		return markBillingErr
 	}
 	result, canvasOps, err := s.processTask(ctx, *task)
 	providerSucceeded := err == nil

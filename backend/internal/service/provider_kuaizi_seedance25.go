@@ -45,7 +45,7 @@ type kuaiziSeedance25StatusRequest struct {
 }
 
 type kuaiziSeedance25Envelope struct {
-	Code    int             `json:"code"`
+	Code    *int            `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
 	TraceID string          `json:"trace_id"`
@@ -56,13 +56,30 @@ type kuaiziSeedance25Created struct {
 }
 
 type kuaiziSeedance25Status struct {
-	TaskID       string                  `json:"task_id"`
-	Status       string                  `json:"status"`
-	VideoURL     string                  `json:"video_url"`
-	LastFrameURL string                  `json:"last_frame_url"`
-	Duration     int                     `json:"duration"`
-	TotalTokens  kuaiziSeedance25Decimal `json:"total_tokens"`
-	Error        string                  `json:"error"`
+	TaskID        string                  `json:"task_id"`
+	Status        string                  `json:"status"`
+	VideoURL      string                  `json:"video_url"`
+	LastFrameURL  string                  `json:"last_frame_url"`
+	Duration      int                     `json:"duration"`
+	TotalTokens   kuaiziSeedance25Decimal `json:"total_tokens"`
+	TokensPresent bool                    `json:"-"`
+	Error         string                  `json:"error"`
+}
+
+func (status *kuaiziSeedance25Status) UnmarshalJSON(data []byte) error {
+	type statusAlias kuaiziSeedance25Status
+	var decoded statusAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	rawTokens, present := fields["total_tokens"]
+	decoded.TokensPresent = present && string(rawTokens) != "null"
+	*status = kuaiziSeedance25Status(decoded)
+	return nil
 }
 
 type kuaiziSeedance25Decimal string
@@ -273,6 +290,9 @@ func kuaiziSeedance25MediaRole(kind string, item providerMedia, input canvasGene
 }
 
 func kuaiziSeedance25MediaURL(media providerMedia) (string, error) {
+	if !strings.HasPrefix(strings.TrimSpace(media.StorageKey), "resource:") || strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(media.StorageKey), "resource:")) == "" {
+		return "", errors.New("Seedance 2.5 参考素材必须来自已授权的平台资源")
+	}
 	rawURL := strings.TrimSpace(media.URL)
 	if rawURL == "" {
 		return "", errors.New("Seedance 2.5 参考素材缺少 HTTPS URL")
@@ -315,6 +335,9 @@ func classifyKuaiziSeedance25Status(status kuaiziSeedance25Status) (KuaiziSeedan
 		}
 		if status.Duration < 4 || status.Duration > 30 {
 			return KuaiziSeedance25State{}, errors.New("Seedance 2.5 成功状态实际时长无效")
+		}
+		if !status.TokensPresent || string(status.TotalTokens) == "" {
+			return KuaiziSeedance25State{}, errors.New("Seedance 2.5 成功状态缺少完整用量事实")
 		}
 		state.Terminal = true
 		state.Succeeded = true
@@ -421,7 +444,7 @@ func (c *KuaiziSeedance25Client) requestJSON(ctx context.Context, runtime *Provi
 	if err != nil {
 		return "", &KuaiziSeedance25Error{Stage: stage, Kind: "invalid_request", Cause: err}
 	}
-	apiKey, err := c.cipher.Decrypt(runtime.Account.ID, runtime.Credential.ID, runtime.CredentialVersion.Version, runtime.CredentialVersion.KeyCipher)
+	apiKey, err := c.cipher.Decrypt(runtime.Account.ID, runtime.Credential.ID, runtime.CredentialVersion.ID, runtime.CredentialVersion.KeyCipher)
 	if err != nil {
 		return "", &KuaiziSeedance25Error{Stage: stage, Kind: "credential_decrypt", Cause: err}
 	}
@@ -470,15 +493,27 @@ func (c *KuaiziSeedance25Client) requestJSON(ctx context.Context, runtime *Provi
 		}
 		return "", responseErr
 	}
-	traceID := safeKuaiziTraceID(envelope.TraceID, apiKey)
-	safeMessage := safeKuaiziMessage(envelope.Message, apiKey)
+	sensitiveValues := kuaiziRuntimeSensitiveValues(runtime, apiKey)
+	traceID := safeKuaiziTraceID(envelope.TraceID, sensitiveValues...)
+	safeMessage := safeKuaiziMessage(envelope.Message, sensitiveValues...)
+	if envelope.Code == nil {
+		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "invalid_response", TraceID: traceID, Message: "响应缺少整数 code"}
+		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
+		if stage == "create" {
+			return traceID, &KuaiziSeedance25CreateUncertainError{Cause: responseErr}
+		}
+		return traceID, responseErr
+	}
 	if response.StatusCode != http.StatusOK {
 		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "http", Code: strconv.Itoa(response.StatusCode), TraceID: traceID, Message: safeMessage}
 		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
+		if stage == "create" && !kuaiziCreateHTTPDefinitiveRejection(response.StatusCode) {
+			return traceID, &KuaiziSeedance25CreateUncertainError{Cause: responseErr}
+		}
 		return traceID, responseErr
 	}
-	if envelope.Code != 0 {
-		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "business", Code: strconv.Itoa(envelope.Code), TraceID: traceID, Message: safeMessage}
+	if *envelope.Code != 0 {
+		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "business", Code: strconv.Itoa(*envelope.Code), TraceID: traceID, Message: safeMessage}
 		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
 		return traceID, responseErr
 	}
@@ -495,19 +530,52 @@ func (c *KuaiziSeedance25Client) requestJSON(ctx context.Context, runtime *Provi
 		}
 		return traceID, responseErr
 	}
+	sanitizeKuaiziSeedance25Response(target, sensitiveValues)
 	recordProviderRequest(request, startedAt, response.StatusCode, nil, nil)
 	return traceID, nil
 }
 
-func safeKuaiziMessage(value string, apiKey string) string {
-	value = truncateRunes(strings.TrimSpace(value), 500)
+func kuaiziCreateHTTPDefinitiveRejection(statusCode int) bool {
+	switch statusCode {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity:
+		return true
+	default:
+		return false
+	}
+}
+
+func safeKuaiziMessage(value string, sensitiveValues ...string) string {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
-	if apiKey != "" && strings.Contains(value, apiKey) {
-		return "上游错误信息包含敏感凭据，已隐藏"
+	_ = sensitiveValues
+	return "上游返回了受控错误摘要，原始内容已隐藏"
+}
+
+func kuaiziRuntimeSensitiveValues(runtime *ProviderTaskRuntime, apiKey string) []string {
+	values := []string{apiKey, runtime.Task.Prompt}
+	var input struct {
+		Prompt string `json:"prompt"`
 	}
-	return value
+	if json.Unmarshal([]byte(runtime.Task.InputJSON), &input) == nil {
+		values = append(values, input.Prompt)
+	}
+	return values
+}
+
+func sanitizeKuaiziSeedance25Response(target any, sensitiveValues []string) {
+	status, ok := target.(*kuaiziSeedance25Status)
+	if !ok || status == nil {
+		return
+	}
+	status.Error = safeKuaiziMessage(status.Error, sensitiveValues...)
+	switch strings.ToLower(strings.TrimSpace(status.Status)) {
+	case "submitted", "pending", "running", "failed", "succeeded":
+		status.Status = strings.ToLower(strings.TrimSpace(status.Status))
+	default:
+		status.Status = "unknown"
+	}
 }
 
 func validateKuaiziSeedance25RuntimeIdentity(runtime *ProviderTaskRuntime) error {

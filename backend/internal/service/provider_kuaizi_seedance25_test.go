@@ -19,12 +19,12 @@ func TestSeedance25CreatePayloadMatchesKuaiziContract(t *testing.T) {
 	input.Config.VideoGenerateAudio = "false"
 	input.Config.VideoWatermark = "true"
 	input.ReferenceImages = []providerMedia{
-		{ID: "first", URL: "https://cdn.example.com/first.png", Role: "first_frame"},
-		{ID: "last", URL: "https://cdn.example.com/last.png", Role: "last_frame"},
-		{ID: "reference", URL: "https://cdn.example.com/reference.png", Role: "reference_image"},
+		{ID: "first", URL: "https://cdn.example.com/first.png", StorageKey: "resource:first", Role: "first_frame"},
+		{ID: "last", URL: "https://cdn.example.com/last.png", StorageKey: "resource:last", Role: "last_frame"},
+		{ID: "reference", URL: "https://cdn.example.com/reference.png", StorageKey: "resource:reference", Role: "reference_image"},
 	}
-	input.ReferenceVideos = []providerMedia{{URL: "https://cdn.example.com/reference.mp4", Role: "reference_video"}}
-	input.ReferenceAudios = []providerMedia{{URL: "https://cdn.example.com/reference.mp3", Role: "reference_audio"}}
+	input.ReferenceVideos = []providerMedia{{URL: "https://cdn.example.com/reference.mp4", StorageKey: "resource:video", Role: "reference_video"}}
+	input.ReferenceAudios = []providerMedia{{URL: "https://cdn.example.com/reference.mp3", StorageKey: "resource:audio", Role: "reference_audio"}}
 
 	body, err := kuaiziSeedance25Body(input)
 	if err != nil {
@@ -95,6 +95,9 @@ func TestSeedance25CreatePayloadEnforcesStructuralBoundaries(t *testing.T) {
 		{name: "http URL", mutate: func(input *canvasGenerationInput) {
 			input.ReferenceImages = []providerMedia{{URL: "http://cdn.example.com/reference.png", Role: "reference_image"}}
 		}, wantErr: true},
+		{name: "arbitrary public https URL", mutate: func(input *canvasGenerationInput) {
+			input.ReferenceImages = []providerMedia{{URL: "https://cdn.example.com/reference.png", Role: "reference_image"}}
+		}, wantErr: true},
 		{name: "private URL", mutate: func(input *canvasGenerationInput) {
 			input.ReferenceImages = []providerMedia{{URL: "https://127.0.0.1/reference.png", Role: "reference_image"}}
 		}, wantErr: true},
@@ -132,7 +135,7 @@ func TestSeedance25StatusClassificationIsClosedOverKnownStates(t *testing.T) {
 	}
 	succeeded, err := classifyKuaiziSeedance25Status(kuaiziSeedance25Status{
 		TaskID: "provider-task", Status: "succeeded", VideoURL: "https://cdn.example.com/result.mp4",
-		LastFrameURL: "https://cdn.example.com/last.png", Duration: 12, TotalTokens: "12345678901234567890",
+		LastFrameURL: "https://cdn.example.com/last.png", Duration: 12, TotalTokens: "12345678901234567890", TokensPresent: true,
 	})
 	if err != nil || !succeeded.Terminal || !succeeded.Succeeded || succeeded.AssetSourceURL == "" || succeeded.LastFrameURL == "" || succeeded.ActualDurationSeconds != 12 || succeeded.TotalTokens != "12345678901234567890" {
 		t.Fatalf("succeeded = %#v, %v", succeeded, err)
@@ -176,7 +179,7 @@ func TestSeedance25ClientUsesFrozenSecretAndPreservesTraceFacts(t *testing.T) {
 	defer server.Close()
 
 	cipher := NewProviderSecretCipher(t.TempDir())
-	ciphertext, err := cipher.encrypt("account", "credential", 1, "frozen-key-v1", true, ErrProviderSecretKeyMissing)
+	ciphertext, err := cipher.encrypt("account", "credential", "credential-v1", "frozen-key-v1", true, ErrProviderSecretKeyMissing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +210,7 @@ func TestSeedance25ClientClassifiesBusinessFailureAndCreateUncertainty(t *testin
 		}))
 		defer server.Close()
 		client, runtime := seedance25TestClient(t, server)
-		ciphertext, err := client.cipher.Encrypt(runtime.Account.ID, runtime.Credential.ID, runtime.CredentialVersion.Version, secret)
+		ciphertext, err := client.cipher.Encrypt(runtime.Account.ID, runtime.Credential.ID, runtime.CredentialVersion.ID, secret)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -236,6 +239,53 @@ func TestSeedance25ClientClassifiesBusinessFailureAndCreateUncertainty(t *testin
 			t.Fatalf("error = %T %v, want create uncertainty", err, err)
 		}
 	})
+}
+
+func TestSeedance25ClientSanitizesAllProviderControlledErrors(t *testing.T) {
+	const secret = "sentinel-provider-key"
+	const prompt = "sentinel-user-prompt alice@example.test"
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "failed data error", body: `{"code":0,"message":"","data":{"task_id":"provider-task","status":"failed","error":"rejected sentinel-provider-key sentinel-user-prompt alice@example.test"},"trace_id":"trace-safe"}`},
+		{name: "unknown status", body: `{"code":0,"message":"","data":{"task_id":"provider-task","status":"mystery-sentinel-provider-key-sentinel-user-prompt alice@example.test"},"trace_id":"trace-safe"}`},
+		{name: "envelope message and trace", body: `{"code":40001,"message":"sentinel-provider-key sentinel-user-prompt alice@example.test","data":null,"trace_id":"trace-sentinel-provider-key-sentinel-user-prompt"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(writer, test.body)
+			}))
+			defer server.Close()
+			client, runtime := seedance25TestClient(t, server)
+			ciphertext, err := client.cipher.Encrypt(runtime.Account.ID, runtime.Credential.ID, runtime.CredentialVersion.ID, secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime.CredentialVersion.KeyCipher = ciphertext
+			runtime.Task.Prompt = prompt
+			polled, err := client.Status(context.Background(), runtime, "provider-task")
+			observed := ""
+			if err != nil {
+				observed = err.Error()
+			} else if polled.State.Terminal && !polled.State.Succeeded {
+				observed = polled.State.FailureReason
+			} else {
+				t.Fatalf("Status() = %#v, %v; want controlled failure", polled, err)
+			}
+			for _, sentinel := range []string{secret, "sentinel-user-prompt", "alice@example.test"} {
+				if strings.Contains(observed, sentinel) {
+					t.Fatalf("Status() leaked %q: %s", sentinel, observed)
+				}
+			}
+			var providerErr *KuaiziSeedance25Error
+			if errors.As(err, &providerErr) && len([]rune(providerErr.Message)) > 240 {
+				t.Fatalf("sanitized provider message length = %d", len([]rune(providerErr.Message)))
+			}
+		})
+	}
 }
 
 func TestSeedance25ClientRejectsMissingTaskIDAndPollingDeadline(t *testing.T) {
@@ -268,6 +318,77 @@ func TestSeedance25ClientRejectsMissingTaskIDAndPollingDeadline(t *testing.T) {
 	})
 }
 
+func TestSeedance25CreateHTTPFailureUsesExplicitSideEffectClassification(t *testing.T) {
+	for _, statusCode := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(statusCode)
+				_, _ = io.WriteString(writer, `{"code":50000,"message":"gateway failed","data":null,"trace_id":"trace-http"}`)
+			}))
+			defer server.Close()
+			client, runtime := seedance25TestClient(t, server)
+			_, err := client.Create(context.Background(), runtime, seedance25TestInput())
+			var uncertain *KuaiziSeedance25CreateUncertainError
+			if !errors.As(err, &uncertain) {
+				t.Fatalf("Create() error = %T %v, want typed create uncertainty", err, err)
+			}
+		})
+	}
+	for _, statusCode := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(statusCode)
+				_, _ = io.WriteString(writer, `{"code":40001,"message":"rejected","data":null,"trace_id":"trace-rejected"}`)
+			}))
+			defer server.Close()
+			client, runtime := seedance25TestClient(t, server)
+			_, err := client.Create(context.Background(), runtime, seedance25TestInput())
+			var uncertain *KuaiziSeedance25CreateUncertainError
+			if err == nil || errors.As(err, &uncertain) {
+				t.Fatalf("Create() error = %T %v, want definitive rejection", err, err)
+			}
+		})
+	}
+}
+
+func TestSeedance25ResponseRequiresPresentCodeAndCompleteSuccessUsage(t *testing.T) {
+	tests := []struct {
+		name  string
+		stage string
+		body  string
+	}{
+		{name: "create missing code", stage: "create", body: `{"data":{"task_id":"provider-task"},"trace_id":"trace"}`},
+		{name: "create wrong code type", stage: "create", body: `{"code":"0","data":{"task_id":"provider-task"},"trace_id":"trace"}`},
+		{name: "status missing code", stage: "status", body: `{"data":{"task_id":"provider-task","status":"pending"},"trace_id":"trace"}`},
+		{name: "success missing tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8},"trace_id":"trace"}`},
+		{name: "success null tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8,"total_tokens":null},"trace_id":"trace"}`},
+		{name: "success negative tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8,"total_tokens":-1},"trace_id":"trace"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(writer, test.body)
+			}))
+			defer server.Close()
+			client, runtime := seedance25TestClient(t, server)
+			var err error
+			if test.stage == "create" {
+				_, err = client.Create(context.Background(), runtime, seedance25TestInput())
+				var uncertain *KuaiziSeedance25CreateUncertainError
+				if !errors.As(err, &uncertain) {
+					t.Fatalf("Create() error = %T %v, want uncertainty", err, err)
+				}
+			} else {
+				_, err = client.Status(context.Background(), runtime, "provider-task")
+				if err == nil {
+					t.Fatal("Status() error = nil")
+				}
+			}
+		})
+	}
+}
+
 func seedance25TestInput() canvasGenerationInput {
 	return canvasGenerationInput{
 		Mode:   "video",
@@ -279,7 +400,7 @@ func seedance25TestInput() canvasGenerationInput {
 func repeatedSeedance25Media(count int, kind string) []providerMedia {
 	items := make([]providerMedia, count)
 	for index := range items {
-		items[index] = providerMedia{URL: "https://cdn.example.com/reference-" + kind + ".bin"}
+		items[index] = providerMedia{URL: "https://cdn.example.com/reference-" + kind + ".bin", StorageKey: "resource:" + kind + "-fixture"}
 		switch kind {
 		case "image":
 			items[index].Role = "reference_image"
@@ -306,7 +427,7 @@ func seedance25TestRuntime(baseURL string, ciphertext string) *ProviderTaskRunti
 func seedance25TestClient(t *testing.T, server *httptest.Server) (*KuaiziSeedance25Client, *ProviderTaskRuntime) {
 	t.Helper()
 	cipher := NewProviderSecretCipher(t.TempDir())
-	ciphertext, err := cipher.encrypt("account", "credential", 1, "frozen-key-v1", true, ErrProviderSecretKeyMissing)
+	ciphertext, err := cipher.encrypt("account", "credential", "credential-v1", "frozen-key-v1", true, ErrProviderSecretKeyMissing)
 	if err != nil {
 		t.Fatal(err)
 	}

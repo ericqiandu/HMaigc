@@ -76,8 +76,8 @@ func TestProviderCredentialFamilyAndActiveVersionAreUnique(t *testing.T) {
 	if err := repo.CreateProviderCredential(&duplicateFamily); err == nil {
 		t.Fatal("duplicate provider credential family was accepted")
 	}
-	first := &model.ProviderCredentialVersion{ID: "key-1", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v1:first", KeyFingerprint: "fingerprint-1", Status: "pending", Version: 1, CreatedBy: "admin", CreatedAt: now}
-	second := &model.ProviderCredentialVersion{ID: "key-2", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v1:second", KeyFingerprint: "fingerprint-2", Status: "pending", Version: 2, CreatedBy: "admin", CreatedAt: now}
+	first := &model.ProviderCredentialVersion{ID: "key-1", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v2:first", KeyFingerprint: "fingerprint-1", Status: "pending", Version: 1, CreatedBy: "admin", CreatedAt: now}
+	second := &model.ProviderCredentialVersion{ID: "key-2", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v2:second", KeyFingerprint: "fingerprint-2", Status: "pending", Version: 2, CreatedBy: "admin", CreatedAt: now}
 	for _, version := range []*model.ProviderCredentialVersion{first, second} {
 		if err := repo.CreateProviderCredentialVersion(version); err != nil {
 			t.Fatal(err)

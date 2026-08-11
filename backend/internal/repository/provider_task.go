@@ -190,7 +190,7 @@ func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string
 		if err := tx.First(&task, "id = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ?", taskID, model.TaskStatusRunning, leaseOwner, time.Now()).Error; err != nil {
 			return err
 		}
-		if providerExecutionStatus(fact.ProviderStatus) {
+		if providerTaskRecoveryStatus(fact.ProviderStatus) {
 			claimed = true
 			return nil
 		}
@@ -206,7 +206,7 @@ func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string
 		}
 		var active int64
 		if err := tx.Model(&model.ProviderTaskFact{}).
-			Where("provider_credential_id = ? AND task_id <> ? AND provider_status IN ?", credential.ID, taskID, providerExecutionStatuses()).
+			Where("provider_credential_id = ? AND task_id <> ? AND provider_status IN ?", credential.ID, taskID, providerCapacityOccupancyStatuses()).
 			Count(&active).Error; err != nil {
 			return err
 		}
@@ -243,6 +243,65 @@ func (r *Repository) RequeueTaskWaitingForProviderCapacity(taskID string, leaseO
 	return nil
 }
 
+func (r *Repository) FinalizeProviderTaskRecovery(taskID string, leaseOwner string) (bool, error) {
+	finalized := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
+			return err
+		}
+		failureMessage := ""
+		reconciliationStatus := "manual_review"
+		switch fact.ProviderStatus {
+		case "create_uncertain":
+			failureMessage = "上游创建结果不确定，任务已停止并等待人工核对"
+		case "failed":
+			failureMessage = "上游任务已失败，费用等待核对"
+		case "create_failed":
+			failureMessage = "上游已明确拒绝创建任务"
+			reconciliationStatus = "resolved"
+		default:
+			return nil
+		}
+		if fact.ProviderStatus == "create_failed" {
+			if err := refundBillingOrderTx(tx, fact.BillingOrderID, failureMessage); err != nil {
+				return err
+			}
+		} else {
+			order := tx.Model(&model.BillingOrder{}).
+				Where("id = ? AND status IN ?", fact.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).
+				Updates(map[string]any{"status": model.BillingStatusUncertain, "error": failureMessage, "updated_at": time.Now()})
+			if order.Error != nil {
+				return order.Error
+			}
+			if order.RowsAffected != 1 {
+				return errors.New("provider recovery billing state conflict")
+			}
+		}
+		now := time.Now()
+		task := tx.Model(&model.Task{}).
+			Where("id = ? AND status = ? AND lease_owner = ?", taskID, model.TaskStatusRunning, leaseOwner).
+			Updates(map[string]any{
+				"status": model.TaskStatusFailed, "stage": "任务失败", "error": failureMessage, "completed_at": &now,
+				"lease_owner": "", "lease_expires_at": nil, "updated_at": now,
+			})
+		if task.Error != nil {
+			return task.Error
+		}
+		if task.RowsAffected != 1 {
+			return errors.New("provider recovery task state conflict")
+		}
+		if err := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ?", taskID).Updates(map[string]any{
+			"reconciliation_status": reconciliationStatus, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		finalized = true
+		return nil
+	})
+	return finalized, err
+}
+
 func lockProviderExecutionScopeTx(tx *gorm.DB, credentialID string) error {
 	switch tx.Dialector.Name() {
 	case "postgres":
@@ -255,7 +314,7 @@ func lockProviderExecutionScopeTx(tx *gorm.DB, credentialID string) error {
 }
 
 func providerExecutionStatuses() []string {
-	return []string{"execution_claimed", "creating", "submitted", "pending", "running"}
+	return []string{"execution_claimed", "creating", "submitted", "pending", "running", "poll_uncertain"}
 }
 
 func providerExecutionStatus(status string) bool {
@@ -265,4 +324,17 @@ func providerExecutionStatus(status string) bool {
 		}
 	}
 	return false
+}
+
+func providerCapacityOccupancyStatuses() []string {
+	return []string{"execution_claimed", "creating", "submitted", "pending", "running", "poll_uncertain", "create_uncertain"}
+}
+
+func providerTaskRecoveryStatus(status string) bool {
+	switch status {
+	case "execution_claimed", "creating", "submitted", "pending", "running", "poll_uncertain", "succeeded", "failed", "create_failed", "create_uncertain":
+		return true
+	default:
+		return false
+	}
 }

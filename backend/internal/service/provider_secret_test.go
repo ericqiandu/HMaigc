@@ -19,19 +19,19 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestProviderSecretRoundTripUsesVersionedAAD(t *testing.T) {
+func TestProviderSecretRoundTripUsesCredentialVersionIDAAD(t *testing.T) {
 	directory := t.TempDir()
 	cipher := NewProviderSecretCipher(directory)
 	svc, _ := openProviderSecretSQLite(t, directory)
 
-	encrypted, err := svc.EncryptProviderSecret("account-a", "credential-a", 7, "kuaizi-secret")
+	encrypted, err := svc.EncryptProviderSecret("account-a", "credential-a", "credential-version-7", "kuaizi-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(encrypted, "enc:provider:v1:") || strings.Contains(encrypted, "kuaizi-secret") {
+	if !strings.HasPrefix(encrypted, "enc:provider:v2:") || strings.Contains(encrypted, "kuaizi-secret") {
 		t.Fatalf("provider ciphertext envelope = %q", encrypted)
 	}
-	decrypted, err := cipher.Decrypt("account-a", "credential-a", 7, encrypted)
+	decrypted, err := cipher.Decrypt("account-a", "credential-a", "credential-version-7", encrypted)
 	if err != nil || decrypted != "kuaizi-secret" {
 		t.Fatalf("provider secret round trip = %q, err=%v", decrypted, err)
 	}
@@ -57,7 +57,7 @@ func TestProviderSecretRejectsRebindingTamperingAndWrongKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	cipher := NewProviderSecretCipher(directory)
-	encrypted, err := cipher.Encrypt("account-a", "credential-a", 3, "secret")
+	encrypted, err := cipher.Encrypt("account-a", "credential-a", "credential-version-3", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,14 +65,14 @@ func TestProviderSecretRejectsRebindingTamperingAndWrongKey(t *testing.T) {
 	for name, binding := range map[string]struct {
 		accountID    string
 		credentialID string
-		version      int64
+		versionID    string
 	}{
-		"account":    {"account-b", "credential-a", 3},
-		"credential": {"account-a", "credential-b", 3},
-		"version":    {"account-a", "credential-a", 4},
+		"account":            {"account-b", "credential-a", "credential-version-3"},
+		"credential":         {"account-a", "credential-b", "credential-version-3"},
+		"credential version": {"account-a", "credential-a", "credential-version-4"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := cipher.Decrypt(binding.accountID, binding.credentialID, binding.version, encrypted); !errors.Is(err, ErrProviderSecretAuthentication) {
+			if _, err := cipher.Decrypt(binding.accountID, binding.credentialID, binding.versionID, encrypted); !errors.Is(err, ErrProviderSecretAuthentication) {
 				t.Fatalf("rebound decrypt error = %v", err)
 			}
 		})
@@ -84,7 +84,7 @@ func TestProviderSecretRejectsRebindingTamperingAndWrongKey(t *testing.T) {
 	}
 	payload[len(payload)-1] ^= 0x01
 	tampered := providerSecretPrefix + base64.RawStdEncoding.EncodeToString(payload)
-	if _, err := cipher.Decrypt("account-a", "credential-a", 3, tampered); !errors.Is(err, ErrProviderSecretAuthentication) {
+	if _, err := cipher.Decrypt("account-a", "credential-a", "credential-version-3", tampered); !errors.Is(err, ErrProviderSecretAuthentication) {
 		t.Fatalf("tampered decrypt error = %v", err)
 	}
 
@@ -92,23 +92,41 @@ func TestProviderSecretRejectsRebindingTamperingAndWrongKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wrongDirectory, ".settings-key"), []byte(strings.Repeat("x", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewProviderSecretCipher(wrongDirectory).Decrypt("account-a", "credential-a", 3, encrypted); !errors.Is(err, ErrProviderSecretAuthentication) {
+	if _, err := NewProviderSecretCipher(wrongDirectory).Decrypt("account-a", "credential-a", "credential-version-3", encrypted); !errors.Is(err, ErrProviderSecretAuthentication) {
 		t.Fatalf("wrong-key decrypt error = %v", err)
+	}
+}
+
+func TestProviderSecretRejectsCredentialVersionIDRebinding(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, ".settings-key"), []byte(strings.Repeat("k", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cipher := NewProviderSecretCipher(directory)
+	encrypted, err := cipher.Encrypt("account-a", "credential-a", "credential-version-a", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(encrypted, "enc:provider:v2:") {
+		t.Fatalf("ciphertext version = %q", encrypted)
+	}
+	if _, err := cipher.Decrypt("account-a", "credential-a", "credential-version-b", encrypted); !errors.Is(err, ErrProviderSecretAuthentication) {
+		t.Fatalf("credential-version rebound decrypt error = %v", err)
 	}
 }
 
 func TestProviderSecretFailsClosedForMalformedCiphertextAndKey(t *testing.T) {
 	for name, ciphertext := range map[string]string{
-		"invalid base64": "enc:provider:v1:!",
-		"short payload":  "enc:provider:v1:YQ",
-		"wrong version":  "enc:provider:v2:YQ",
+		"invalid base64": "enc:provider:v2:!",
+		"short payload":  "enc:provider:v2:YQ",
+		"wrong version":  "enc:provider:v1:YQ",
 	} {
 		t.Run(name, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, ".settings-key"), []byte(strings.Repeat("k", 32)), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := NewProviderSecretCipher(directory).Decrypt("account", "credential", 1, ciphertext); err == nil {
+			if _, err := NewProviderSecretCipher(directory).Decrypt("account", "credential", "credential-version", ciphertext); err == nil {
 				t.Fatal("malformed provider ciphertext was accepted")
 			}
 		})
@@ -118,7 +136,7 @@ func TestProviderSecretFailsClosedForMalformedCiphertextAndKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, ".settings-key"), []byte("short"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewProviderSecretCipher(directory).Encrypt("account", "credential", 1, "secret"); !errors.Is(err, ErrProviderSecretKeyLength) {
+	if _, err := NewProviderSecretCipher(directory).Encrypt("account", "credential", "credential-version", "secret"); !errors.Is(err, ErrProviderSecretKeyLength) {
 		t.Fatalf("short key encrypt error = %v", err)
 	}
 }
@@ -126,7 +144,7 @@ func TestProviderSecretFailsClosedForMalformedCiphertextAndKey(t *testing.T) {
 func TestProviderSecretDecryptDoesNotCreateMissingSettingsKey(t *testing.T) {
 	directory := t.TempDir()
 	cipher := NewProviderSecretCipher(directory)
-	if _, err := cipher.Decrypt("account", "credential", 1, "enc:provider:v1:YQ"); !errors.Is(err, ErrProviderSecretKeyMissing) {
+	if _, err := cipher.Decrypt("account", "credential", "credential-version", "enc:provider:v2:YQ"); !errors.Is(err, ErrProviderSecretKeyMissing) {
 		t.Fatalf("missing key decrypt error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, ".settings-key")); !errors.Is(err, os.ErrNotExist) {
@@ -136,7 +154,7 @@ func TestProviderSecretDecryptDoesNotCreateMissingSettingsKey(t *testing.T) {
 
 func TestProviderSecretEncryptCannotCreateKeyWithoutDatabaseAuthorization(t *testing.T) {
 	directory := t.TempDir()
-	if _, err := NewProviderSecretCipher(directory).Encrypt("account", "credential", 1, "secret"); !errors.Is(err, ErrProviderSecretKeyCreationNotAuthorized) {
+	if _, err := NewProviderSecretCipher(directory).Encrypt("account", "credential", "credential-version", "secret"); !errors.Is(err, ErrProviderSecretKeyCreationNotAuthorized) {
 		t.Fatalf("untrusted first encrypt error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, ".settings-key")); !errors.Is(err, os.ErrNotExist) {
@@ -148,7 +166,7 @@ func TestProviderSecretRuntimeRejectsMissingKeyWithoutCreatingReplacement(t *tes
 	directory := t.TempDir()
 	svc, repo := openProviderSecretSQLite(t, directory)
 	now := time.Now().UTC()
-	ciphertext, err := svc.EncryptProviderSecret("account", "credential", 1, "secret")
+	ciphertext, err := svc.EncryptProviderSecret("account", "credential", "version-1", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +184,7 @@ func TestProviderSecretRuntimeRejectsMissingKeyWithoutCreatingReplacement(t *tes
 	if err := svc.ValidateStartupRuntime(); !errors.Is(err, ErrProviderSecretKeyMissing) {
 		t.Fatalf("startup runtime missing-key error = %v", err)
 	}
-	if _, err := svc.EncryptProviderSecret("account", "credential", 2, "new-secret"); !errors.Is(err, ErrProviderSecretKeyMissing) {
+	if _, err := svc.EncryptProviderSecret("account", "credential", "version-2", "new-secret"); !errors.Is(err, ErrProviderSecretKeyMissing) {
 		t.Fatalf("provider encrypt after key loss error = %v", err)
 	}
 	if _, err := os.Stat(keyPath); !errors.Is(err, os.ErrNotExist) {
@@ -190,11 +208,11 @@ func TestProviderSecretFirstWriteRejectsOrphanStoredCipherWithoutCreatingKey(t *
 	svc, repo := openProviderSecretSQLite(t, directory)
 	if err := repo.CreateProviderCredentialVersion(&model.ProviderCredentialVersion{
 		ID: "orphan-version", ProviderCredentialID: "missing-credential", Version: 1,
-		Status: "pending", KeyCipher: "enc:provider:v1:orphan", CreatedAt: time.Now().UTC(),
+		Status: "pending", KeyCipher: "enc:provider:v2:orphan", CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.EncryptProviderSecret("new-account", "new-credential", 1, "new-secret"); !errors.Is(err, ErrProviderSecretKeyMissing) {
+	if _, err := svc.EncryptProviderSecret("new-account", "new-credential", "new-version", "new-secret"); !errors.Is(err, ErrProviderSecretKeyMissing) {
 		t.Fatalf("first write with orphan stored cipher error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, ".settings-key")); !errors.Is(err, os.ErrNotExist) {
@@ -214,7 +232,7 @@ func TestProviderSecretRuntimeRejectsWrongOrMalformedKey(t *testing.T) {
 			directory := t.TempDir()
 			svc, repo := openProviderSecretSQLite(t, directory)
 			now := time.Now().UTC()
-			ciphertext, err := svc.EncryptProviderSecret("account", "credential", 1, "secret")
+			ciphertext, err := svc.EncryptProviderSecret("account", "credential", "version", "secret")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -233,11 +251,11 @@ func TestProviderSecretRuntimeValidatesEveryStoredCipherWithDatabaseAAD(t *testi
 	directory := t.TempDir()
 	svc, repo := openProviderSecretSQLite(t, directory)
 	now := time.Now().UTC()
-	first, err := svc.EncryptProviderSecret("account", "credential", 1, "first")
+	first, err := svc.EncryptProviderSecret("account", "credential", "version-1", "first")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.EncryptProviderSecret("account", "credential", 2, "second")
+	second, err := svc.EncryptProviderSecret("account", "credential", "version-2", "second")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +292,7 @@ func TestPostgresProviderCredentialSecretRuntimeRejectsMissingKey(t *testing.T) 
 	repo := repository.New(db)
 	svc := New(repo, directory)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	ciphertext, err := svc.EncryptProviderSecret("pg-account", "pg-credential", 1, "pg-secret")
+	ciphertext, err := svc.EncryptProviderSecret("pg-account", "pg-credential", "pg-version", "pg-secret")
 	if err != nil {
 		t.Fatal(err)
 	}

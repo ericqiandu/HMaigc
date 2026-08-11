@@ -131,7 +131,7 @@ func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.
 		attempt.family = active.credential.Family
 		attempt.version = candidate.Version
 		attempt.fingerprint = active.version.KeyFingerprint
-		key, decryptErr := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, active.credential.ID, active.version.Version, active.version.KeyCipher)
+		key, decryptErr := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, active.credential.ID, active.version.ID, active.version.KeyCipher)
 		if decryptErr != nil {
 			attempt.code = "decrypt_failed"
 			return nil, decryptErr
@@ -230,7 +230,8 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 	if len(versions) > 0 {
 		nextVersion = versions[0].Version + 1
 	}
-	ciphertext, err := s.EncryptProviderSecret(account.ID, credential.ID, nextVersion, key)
+	credentialVersionID := newID()
+	ciphertext, err := s.EncryptProviderSecret(account.ID, credential.ID, credentialVersionID, key)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +239,7 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 	attempt.version = nextVersion
 	attempt.fingerprint = fingerprint
 	version := &model.ProviderCredentialVersion{
-		ID: newID(), ProviderCredentialID: credential.ID, KeyCipher: ciphertext, KeyFingerprint: fingerprint,
+		ID: credentialVersionID, ProviderCredentialID: credential.ID, KeyCipher: ciphertext, KeyFingerprint: fingerprint,
 		Status: "pending", Version: nextVersion, CreatedBy: actor.ID, CreatedAt: now,
 	}
 	audit, err := newAdminAuditEvent(actor, "provider.credential.save", "provider_credential", credential.ID, "保存筷子系列凭据候选", providerAuditMetadata{
@@ -294,7 +295,7 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 	}
 	attempt.version = version.Version
 	attempt.fingerprint = version.KeyFingerprint
-	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, credential.ID, version.Version, version.KeyCipher)
+	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, credential.ID, version.ID, version.KeyCipher)
 	if err != nil {
 		attempt.code = "decrypt_failed"
 		return nil, err

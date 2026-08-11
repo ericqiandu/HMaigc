@@ -708,6 +708,12 @@ func (s *Service) BillingFailureRequiresReview(orderID string, taskID string, er
 	if billingFailureUncertain(err) {
 		return true
 	}
+	if fact, factErr := s.repo.ProviderTaskFact(taskID); factErr == nil {
+		switch fact.ProviderStatus {
+		case "create_uncertain", "poll_uncertain", "failed", "succeeded":
+			return true
+		}
+	}
 	order, orderErr := s.repo.BillingOrder(orderID)
 	if orderErr != nil || order.Status == model.BillingStatusUncertain {
 		return true
