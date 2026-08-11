@@ -66,13 +66,6 @@ func (c *KuaiziClient) Balance(ctx context.Context, baseURL string, apiKey strin
 		return KuaiziBalanceFact{}, newKuaiziVerificationError("network_error", "")
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, kuaiziBalanceResponseLimit+1))
-	if err != nil {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("response_read_error", "")
-	}
-	if len(body) > kuaiziBalanceResponseLimit {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", "")
-	}
 	if response.StatusCode != http.StatusOK {
 		switch response.StatusCode {
 		case http.StatusUnauthorized:
@@ -81,6 +74,13 @@ func (c *KuaiziClient) Balance(ctx context.Context, baseURL string, apiKey strin
 			return KuaiziBalanceFact{}, newKuaiziVerificationError("ip_rejected", "")
 		}
 		return KuaiziBalanceFact{}, newKuaiziVerificationError("upstream_http_"+strconv.Itoa(response.StatusCode), "")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, kuaiziBalanceResponseLimit+1))
+	if err != nil {
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("response_read_error", "")
+	}
+	if len(body) > kuaiziBalanceResponseLimit {
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", "")
 	}
 
 	var envelope struct {

@@ -75,10 +75,14 @@ func TestKuaiziBalanceMapsExplicitFailures(t *testing.T) {
 		timeout    time.Duration
 		wantCode   string
 		wantHealth string
+		secretBody string
 	}{
 		{name: "http non 200", status: http.StatusBadGateway, body: `gateway`, wantCode: "upstream_http_502", wantHealth: "unavailable"},
 		{name: "http invalid key", status: http.StatusUnauthorized, body: `unauthorized`, wantCode: "invalid_key", wantHealth: "invalid"},
 		{name: "http ip rejected", status: http.StatusForbidden, body: `forbidden`, wantCode: "ip_rejected", wantHealth: "blocked"},
+		{name: "oversized http 502", status: http.StatusBadGateway, body: "sentinel-oversized-502" + strings.Repeat("x", kuaiziBalanceResponseLimit), wantCode: "upstream_http_502", wantHealth: "unavailable", secretBody: "sentinel-oversized-502"},
+		{name: "oversized http 401", status: http.StatusUnauthorized, body: "sentinel-oversized-401" + strings.Repeat("x", kuaiziBalanceResponseLimit), wantCode: "invalid_key", wantHealth: "invalid", secretBody: "sentinel-oversized-401"},
+		{name: "oversized http 403", status: http.StatusForbidden, body: "sentinel-oversized-403" + strings.Repeat("x", kuaiziBalanceResponseLimit), wantCode: "ip_rejected", wantHealth: "blocked", secretBody: "sentinel-oversized-403"},
 		{name: "invalid key", status: http.StatusOK, body: `{"code":401,"message":"invalid api key","trace_id":"trace-key"}`, wantCode: "invalid_key", wantHealth: "invalid"},
 		{name: "ip rejected", status: http.StatusOK, body: `{"code":403,"message":"ip rejected","trace_id":"trace-ip"}`, wantCode: "ip_rejected", wantHealth: "blocked"},
 		{name: "other business code", status: http.StatusOK, body: `{"code":9001,"message":"rejected","trace_id":"trace-business"}`, wantCode: "upstream_code_9001", wantHealth: "rejected"},
@@ -87,7 +91,7 @@ func TestKuaiziBalanceMapsExplicitFailures(t *testing.T) {
 		{name: "unknown payload", status: http.StatusOK, body: `{"code":0,"data":{"credits":"1"}}`, wantCode: "invalid_response", wantHealth: "unknown"},
 		{name: "trailing garbage", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}} trailing`, wantCode: "invalid_response", wantHealth: "unknown"},
 		{name: "second json value", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}} {}`, wantCode: "invalid_response", wantHealth: "unknown"},
-		{name: "oversized payload", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}}` + strings.Repeat(" ", (64<<10)+1), wantCode: "invalid_response", wantHealth: "unknown"},
+		{name: "oversized payload", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"},"trace_id":"sentinel-oversized-200"}` + strings.Repeat(" ", kuaiziBalanceResponseLimit), wantCode: "invalid_response", wantHealth: "unknown", secretBody: "sentinel-oversized-200"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -106,6 +110,9 @@ func TestKuaiziBalanceMapsExplicitFailures(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "sentinel-secret") {
 				t.Fatalf("error leaked key: %v", err)
+			}
+			if test.secretBody != "" && strings.Contains(err.Error(), test.secretBody) {
+				t.Fatalf("error leaked oversized upstream body: %v", err)
 			}
 		})
 	}
