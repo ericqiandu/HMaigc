@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
 
@@ -34,7 +35,7 @@ func RegisterProviderAccountRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 		var request service.SaveProviderEndpointRequest
 		if err := c.ShouldBindJSON(&request); err != nil {
-			fail(c, http.StatusBadRequest, errors.New("筷子服务地址请求格式无效"))
+			failProviderAccountParse(c, svc, actor, "provider.endpoint.save", "", err, "筷子服务地址请求格式无效")
 			return
 		}
 		view, err := svc.SaveKuaiziEndpointCandidate(c.Request.Context(), actor, request)
@@ -53,7 +54,7 @@ func RegisterProviderAccountRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 		var request service.SaveProviderCredentialRequest
 		if err := c.ShouldBindJSON(&request); err != nil {
-			fail(c, http.StatusBadRequest, errors.New("筷子凭据请求格式无效"))
+			failProviderAccountParse(c, svc, actor, "provider.credential.save", c.Param("family"), err, "筷子凭据请求格式无效")
 			return
 		}
 		view, err := svc.SaveKuaiziCredentialCandidate(c.Request.Context(), actor, c.Param("family"), request)
@@ -106,4 +107,17 @@ func failProviderAccount(c *gin.Context, err error) {
 		return
 	}
 	failService(c, err)
+}
+
+func failProviderAccountParse(c *gin.Context, svc *service.Service, actor *model.User, action string, family string, parseError error, message string) {
+	code := "invalid_json"
+	var maxBytesError *http.MaxBytesError
+	if errors.As(parseError, &maxBytesError) {
+		code = "body_too_large"
+	}
+	if auditErr := svc.AuditKuaiziProviderRejection(actor, action, family, code); auditErr != nil {
+		failProviderAccount(c, auditErr)
+		return
+	}
+	fail(c, http.StatusBadRequest, errors.New(message))
 }

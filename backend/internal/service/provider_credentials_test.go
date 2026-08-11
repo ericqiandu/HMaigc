@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
@@ -75,6 +77,62 @@ func TestKuaiziCredentialFailedCandidateDoesNotChangeActiveVersion(t *testing.T)
 	}
 	if credential.HealthStatus != "healthy" {
 		t.Fatalf("old active credential health = %q", credential.HealthStatus)
+	}
+}
+
+func TestKuaiziCredentialCandidateViewPreservesVerificationHealthClassification(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        int
+		body          string
+		contentLength int
+		wantStatus    string
+	}{
+		{name: "service unavailable", status: http.StatusServiceUnavailable, body: `maintenance`, wantStatus: "unavailable"},
+		{name: "response read error", status: http.StatusOK, body: `{`, contentLength: 10, wantStatus: "unavailable"},
+		{name: "upstream rejection", status: http.StatusOK, body: `{"code":9001,"trace_id":"trace-rejected"}`, wantStatus: "rejected"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var mu sync.RWMutex
+			status := http.StatusOK
+			body := `{"code":0,"data":{"balance":"100"},"trace_id":"trace-healthy"}`
+			contentLength := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				mu.RLock()
+				defer mu.RUnlock()
+				if contentLength > 0 {
+					writer.Header().Set("Content-Length", strconv.Itoa(contentLength))
+				}
+				writer.WriteHeader(status)
+				_, _ = io.WriteString(writer, body)
+			}))
+			defer server.Close()
+			svc, _ := openProviderCredentialService(t)
+			admin := providerAdmin()
+			activateInitialKuaiziCredential(t, svc, admin, server.URL, "old-healthy-key")
+			if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "new-candidate-key"}); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			status = test.status
+			body = test.body
+			contentLength = test.contentLength
+			mu.Unlock()
+			if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err == nil {
+				t.Fatal("candidate verification succeeded")
+			}
+			view, err := svc.AdminKuaiziProvider(admin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(view.Credentials) != 1 || view.Credentials[0].Candidate == nil {
+				t.Fatalf("candidate view = %#v", view.Credentials)
+			}
+			if got := view.Credentials[0].Candidate.HealthStatus; got != test.wantStatus {
+				t.Fatalf("candidate health = %q, want %q", got, test.wantStatus)
+			}
+		})
 	}
 }
 
@@ -208,6 +266,83 @@ func TestKuaiziEndpointRejectedAttemptFailsExplicitlyWhenAuditCannotPersist(t *t
 	var authError *AuthError
 	if err == nil || errors.As(err, &authError) {
 		t.Fatalf("rejected attempt audit failure = %T %v, want explicit persistence error", err, err)
+	}
+}
+
+func TestKuaiziCredentialActivationConflictCreatesFailureAuditAfterTransactionRollback(t *testing.T) {
+	var activate func() error
+	var once sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		var activationError error
+		once.Do(func() { activationError = activate() })
+		if activationError != nil {
+			t.Errorf("inject activation conflict: %v", activationError)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"balance":"8"},"trace_id":"trace-conflict"}`)
+	}))
+	defer server.Close()
+	svc, db := openProviderCredentialService(t)
+	admin := providerAdmin()
+	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "conflict-key"}); err != nil {
+		t.Fatal(err)
+	}
+	var endpoint model.ProviderEndpointVersion
+	if err := db.First(&endpoint, "status = ?", "pending").Error; err != nil {
+		t.Fatal(err)
+	}
+	var credential model.ProviderCredential
+	if err := db.First(&credential, "family = ?", "seedance").Error; err != nil {
+		t.Fatal(err)
+	}
+	var version model.ProviderCredentialVersion
+	if err := db.First(&version, "provider_credential_id = ? AND status = ?", credential.ID, "pending").Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
+	activate = func() error {
+		now := time.Now().UTC()
+		if err := repo.ActivateProviderEndpointVersion(endpoint.ProviderAccountID, endpoint.ID, "", now); err != nil {
+			return err
+		}
+		return repo.ActivateProviderCredentialVersion(credential.ID, version.ID, "", now)
+	}
+	_, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance")
+	if !errors.Is(err, repository.ErrProviderActivationConflict) {
+		t.Fatalf("verification conflict error = %v", err)
+	}
+	var events []model.AdminAuditEvent
+	if err := db.Order("created_at ASC").Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if strings.Contains(event.MetadataJSON, `"code":"activation_conflict"`) && strings.Contains(event.MetadataJSON, `"result":"failed"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("activation conflict failure audit missing: %#v", events)
+	}
+}
+
+func TestKuaiziCredentialAuthenticatedCanceledSaveCreatesFailureAudit(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.SaveKuaiziCredentialCandidate(ctx, providerAdmin(), "seedance", SaveProviderCredentialRequest{Key: "unused-key"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled save error = %v", err)
+	}
+	var events []model.AdminAuditEvent
+	if err := db.Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || !strings.Contains(events[0].MetadataJSON, `"code":"canceled"`) || !strings.Contains(events[0].MetadataJSON, `"result":"failed"`) {
+		t.Fatalf("canceled save audits = %#v", events)
 	}
 }
 

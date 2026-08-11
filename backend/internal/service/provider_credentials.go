@@ -38,22 +38,35 @@ type providerAuditMetadata struct {
 	TraceID     string `json:"traceId,omitempty"`
 }
 
-func (s *Service) AdminKuaiziProvider(actor *model.User) (*AdminProviderAccountView, error) {
+type providerFailureAudit struct {
+	actor       *model.User
+	action      string
+	family      string
+	version     int64
+	fingerprint string
+	code        string
+	traceID     string
+	audited     bool
+}
+
+func (s *Service) AdminKuaiziProvider(actor *model.User) (view *AdminProviderAccountView, err error) {
 	if err := s.requireProviderAdmin(actor, "provider.read"); err != nil {
 		return nil, err
 	}
+	attempt := providerFailureAudit{actor: actor, action: "provider.read"}
+	defer s.finalizeProviderFailureAudit(&attempt, &err)
 	return s.adminKuaiziProviderView()
 }
 
-func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.User, req SaveProviderEndpointRequest) (*AdminProviderAccountView, error) {
+func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.User, req SaveProviderEndpointRequest) (view *AdminProviderAccountView, err error) {
 	if err := s.requireProviderAdmin(actor, "provider.endpoint.save"); err != nil {
 		return nil, err
 	}
+	attempt := providerFailureAudit{actor: actor, action: "provider.endpoint.save"}
+	defer s.finalizeProviderFailureAudit(&attempt, &err)
 	parsed, err := ValidateKuaiziBaseURL(ctx, req.BaseURL, strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")))
 	if err != nil {
-		if auditErr := s.auditProviderAttempt(actor, "provider.endpoint.save", "", 0, "", "rejected", "invalid_endpoint", ""); auditErr != nil {
-			return nil, auditErr
-		}
+		attempt.code = "invalid_endpoint"
 		return nil, err
 	}
 	now := time.Now().UTC()
@@ -114,19 +127,20 @@ func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.
 	defer client.httpClient.CloseIdleConnections()
 	verificationRecords := make([]repository.ProviderCredentialVerification, 0, len(activeCredentials))
 	for _, active := range activeCredentials {
+		attempt.action = "provider.endpoint.verify"
+		attempt.family = active.credential.Family
+		attempt.version = candidate.Version
+		attempt.fingerprint = active.version.KeyFingerprint
 		key, decryptErr := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, active.credential.ID, active.version.Version, active.version.KeyCipher)
 		if decryptErr != nil {
-			if auditErr := s.auditProviderAttempt(actor, "provider.endpoint.verify", active.credential.Family, candidate.Version, active.version.KeyFingerprint, "failed", "decrypt_failed", ""); auditErr != nil {
-				return nil, auditErr
-			}
+			attempt.code = "decrypt_failed"
 			return nil, decryptErr
 		}
 		fact, verifyErr := client.Balance(ctx, candidate.BaseURL, key)
 		if verifyErr != nil {
 			verificationError := kuaiziVerificationError(verifyErr)
-			if auditErr := s.auditProviderAttempt(actor, "provider.endpoint.verify", active.credential.Family, candidate.Version, active.version.KeyFingerprint, "failed", verificationError.Code, verificationError.TraceID); auditErr != nil {
-				return nil, auditErr
-			}
+			attempt.code = verificationError.Code
+			attempt.traceID = verificationError.TraceID
 			return nil, verifyErr
 		}
 		if auditErr := s.auditProviderAttempt(actor, "provider.endpoint.verify", active.credential.Family, candidate.Version, active.version.KeyFingerprint, "verified", "verified", fact.TraceID); auditErr != nil {
@@ -148,35 +162,39 @@ func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.
 	if err != nil {
 		return nil, err
 	}
+	attempt.action = "provider.endpoint.activate"
+	attempt.family = ""
+	attempt.version = candidate.Version
+	attempt.fingerprint = ""
+	attempt.code = ""
+	attempt.traceID = ""
 	if err := s.repo.ActivateProviderEndpointWithCredentialVerifications(account.ID, candidate.ID, activeEndpointID, verificationRecords, now, activationAudit); err != nil {
 		return nil, err
 	}
 	return s.adminKuaiziProviderView()
 }
 
-func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *model.User, family string, req SaveProviderCredentialRequest) (*AdminProviderAccountView, error) {
+func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *model.User, family string, req SaveProviderCredentialRequest) (view *AdminProviderAccountView, err error) {
 	if err := s.requireProviderAdmin(actor, "provider.credential.save"); err != nil {
 		return nil, err
 	}
+	family = strings.TrimSpace(family)
+	attempt := providerFailureAudit{actor: actor, action: "provider.credential.save", family: family}
+	defer s.finalizeProviderFailureAudit(&attempt, &err)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	family = strings.TrimSpace(family)
 	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
 	if err != nil {
 		return nil, err
 	}
 	if _, ok := registry.Descriptor(kuaiziProviderKind, family); !ok {
-		if auditErr := s.auditProviderAttempt(actor, "provider.credential.save", family, 0, "", "rejected", "unsupported_family", ""); auditErr != nil {
-			return nil, auditErr
-		}
+		attempt.code = "unsupported_family"
 		return nil, BadAuthRequest("筷子凭据系列尚未实现")
 	}
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
-		if auditErr := s.auditProviderAttempt(actor, "provider.credential.save", family, 0, "", "rejected", "missing_key", ""); auditErr != nil {
-			return nil, auditErr
-		}
+		attempt.code = "missing_key"
 		return nil, BadAuthRequest("筷子 API Key 不能为空")
 	}
 	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
@@ -217,6 +235,8 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 		return nil, err
 	}
 	fingerprint := providerKeyFingerprint(key)
+	attempt.version = nextVersion
+	attempt.fingerprint = fingerprint
 	version := &model.ProviderCredentialVersion{
 		ID: newID(), ProviderCredentialID: credential.ID, KeyCipher: ciphertext, KeyFingerprint: fingerprint,
 		Status: "pending", Version: nextVersion, CreatedBy: actor.ID, CreatedAt: now,
@@ -233,19 +253,19 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 	return s.adminKuaiziProviderView()
 }
 
-func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User, family string) (*AdminProviderAccountView, error) {
+func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User, family string) (view *AdminProviderAccountView, err error) {
 	if err := s.requireProviderAdmin(actor, "provider.credential.verify"); err != nil {
 		return nil, err
 	}
 	family = strings.TrimSpace(family)
+	attempt := providerFailureAudit{actor: actor, action: "provider.credential.verify", family: family}
+	defer s.finalizeProviderFailureAudit(&attempt, &err)
 	registry, registryErr := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
 	if registryErr != nil {
 		return nil, registryErr
 	}
 	if _, ok := registry.Descriptor(kuaiziProviderKind, family); !ok {
-		if auditErr := s.auditProviderAttempt(actor, "provider.credential.verify", family, 0, "", "rejected", "unsupported_family", ""); auditErr != nil {
-			return nil, auditErr
-		}
+		attempt.code = "unsupported_family"
 		return nil, BadAuthRequest("筷子凭据系列尚未实现")
 	}
 	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
@@ -272,11 +292,11 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 	if version == nil {
 		return nil, Conflict("没有可验证的筷子凭据候选")
 	}
+	attempt.version = version.Version
+	attempt.fingerprint = version.KeyFingerprint
 	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, credential.ID, version.Version, version.KeyCipher)
 	if err != nil {
-		if auditErr := s.auditProviderAttempt(actor, "provider.credential.verify", family, version.Version, version.KeyFingerprint, "failed", "decrypt_failed", ""); auditErr != nil {
-			return nil, auditErr
-		}
+		attempt.code = "decrypt_failed"
 		return nil, err
 	}
 	checkedAt := time.Now().UTC()
@@ -285,6 +305,8 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 	fact, verifyErr := client.Balance(ctx, endpoint.BaseURL, key)
 	if verifyErr != nil {
 		verificationError := kuaiziVerificationError(verifyErr)
+		attempt.code = verificationError.Code
+		attempt.traceID = verificationError.TraceID
 		record := repository.ProviderCredentialVerification{
 			CredentialID: credential.ID, VersionID: version.ID, HealthStatus: verificationError.HealthStatus,
 			HealthCode: verificationError.Code, HealthMessage: providerHealthMessage(verificationError.HealthStatus), TraceID: verificationError.TraceID, CheckedAt: checkedAt,
@@ -300,6 +322,7 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 		if recordErr := s.repo.RecordProviderCredentialVerification(record, updateActiveHealth, audit); recordErr != nil {
 			return nil, recordErr
 		}
+		attempt.audited = true
 		return nil, verifyErr
 	}
 	healthStatus := "healthy"
@@ -361,6 +384,66 @@ func (s *Service) auditProviderAttempt(actor *model.User, action string, family 
 	})
 }
 
+// AuditKuaiziProviderRejection 供已完成身份认证、但尚未进入 service DTO 的 HTTP 解析拒绝使用。
+func (s *Service) AuditKuaiziProviderRejection(actor *model.User, action string, family string, code string) error {
+	return s.auditProviderAttempt(actor, action, family, 0, "", "rejected", code, "")
+}
+
+func (s *Service) finalizeProviderFailureAudit(attempt *providerFailureAudit, operationError *error) {
+	if attempt == nil || operationError == nil || *operationError == nil || attempt.audited {
+		return
+	}
+	result, code, traceID := providerFailureAuditDetails(*operationError)
+	if attempt.code != "" {
+		code = attempt.code
+	}
+	if attempt.traceID != "" {
+		traceID = attempt.traceID
+	}
+	if auditErr := s.auditProviderAttempt(
+		attempt.actor, attempt.action, attempt.family, attempt.version, attempt.fingerprint, result, code, traceID,
+	); auditErr != nil {
+		// 审计失败优先暴露，禁止用原业务错误掩盖不可追溯事实。
+		*operationError = auditErr
+	}
+}
+
+func providerFailureAuditDetails(err error) (string, string, string) {
+	if errors.Is(err, repository.ErrProviderActivationConflict) {
+		return "failed", "activation_conflict", ""
+	}
+	var verificationError *KuaiziVerificationError
+	if errors.As(err, &verificationError) {
+		result := "failed"
+		if verificationError.HealthStatus == "invalid" || verificationError.HealthStatus == "blocked" || verificationError.HealthStatus == "rejected" {
+			result = "rejected"
+		}
+		return result, verificationError.Code, verificationError.TraceID
+	}
+	var authError *AuthError
+	if errors.As(err, &authError) {
+		code := "request_rejected"
+		switch authError.Status {
+		case 400:
+			code = "bad_request"
+		case 401:
+			code = "unauthorized"
+		case 403:
+			code = "forbidden"
+		case 409:
+			code = "conflict"
+		}
+		return "rejected", code, ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "failed", "timeout", ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "failed", "canceled", ""
+	}
+	return "failed", "service_failure", ""
+}
+
 func deterministicProviderCredentialID(family string) string {
 	sum := sha256.Sum256([]byte(kuaiziProviderKind + "\n" + family))
 	return "pc-" + hex.EncodeToString(sum[:16])
@@ -376,7 +459,7 @@ func kuaiziVerificationError(err error) *KuaiziVerificationError {
 	if errors.As(err, &verificationError) {
 		return verificationError
 	}
-	return newKuaiziVerificationError("unknown", "verification_error", "")
+	return newKuaiziVerificationError("verification_error", "")
 }
 
 func providerHealthMessage(status string) string {

@@ -15,9 +15,9 @@ import (
 const maxOutboundRedirects = 5
 
 var (
-	outboundTransport          = newOutboundTransport(resolveOutboundHost)
-	customRelayTransport       = newOutboundTransport(resolveCustomRelayHost)
-	blockedCustomRelayPrefixes = []netip.Prefix{
+	outboundTransport         = newOutboundTransport(resolveOutboundHost)
+	customRelayTransport      = newOutboundTransport(resolveCustomRelayHost)
+	blockedSpecialUsePrefixes = []netip.Prefix{
 		netip.MustParsePrefix("0.0.0.0/8"),
 		netip.MustParsePrefix("100.64.0.0/10"),
 		netip.MustParsePrefix("192.0.0.0/24"),
@@ -98,6 +98,7 @@ func CustomRelayHTTPClient(timeout time.Duration) *http.Client {
 }
 
 type outboundHostResolver func(context.Context, string) ([]net.IP, error)
+type outboundDialContext func(context.Context, string, string) (net.Conn, error)
 
 // ValidateKuaiziBaseURL 只接受不携带路径或能力信息的 origin，并在保存时验证全部 DNS 事实。
 func ValidateKuaiziBaseURL(ctx context.Context, rawURL string, environment string) (*url.URL, error) {
@@ -133,7 +134,7 @@ func validateKuaiziBaseURLWithResolver(ctx context.Context, rawURL string, envir
 		return parsed, nil
 	}
 	for _, address := range addresses {
-		if blockedOutboundIP(address) {
+		if blockedSpecialUseIP(address) {
 			return nil, BadAuthRequest("筷子服务地址不允许指向本机、内网或链路本地地址")
 		}
 	}
@@ -156,6 +157,10 @@ func defaultOutboundHostResolver(ctx context.Context, host string) ([]net.IP, er
 
 func newKuaiziTransport(environment string, resolver outboundHostResolver) *http.Transport {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	return newKuaiziTransportWithDialer(environment, resolver, dialer.DialContext)
+}
+
+func newKuaiziTransportWithDialer(environment string, resolver outboundHostResolver, dial outboundDialContext) *http.Transport {
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
@@ -167,14 +172,14 @@ func newKuaiziTransport(environment string, resolver outboundHostResolver) *http
 				return nil, err
 			}
 			if environment == "development" && allLoopbackIPs(addresses) {
-				return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+				return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
 			}
 			for _, candidate := range addresses {
-				if blockedOutboundIP(candidate) {
-					return nil, BadAuthRequest("筷子服务连接解析到本机、内网或链路本地地址")
+				if blockedSpecialUseIP(candidate) {
+					return nil, BadAuthRequest("筷子服务连接不允许解析到本机、内网或特殊用途地址")
 				}
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+			return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          20,
@@ -296,6 +301,11 @@ func blockedOutboundIP(ip net.IP) bool {
 }
 
 func blockedCustomRelayIP(ip net.IP) bool {
+	return blockedSpecialUseIP(ip)
+}
+
+// blockedSpecialUseIP 是外部凭据和自定义中转共用的生产出口边界，禁止维护两套 CIDR 列表。
+func blockedSpecialUseIP(ip net.IP) bool {
 	if blockedOutboundIP(ip) {
 		return true
 	}
@@ -304,7 +314,7 @@ func blockedCustomRelayIP(ip net.IP) bool {
 		return true
 	}
 	address = address.Unmap()
-	for _, prefix := range blockedCustomRelayPrefixes {
+	for _, prefix := range blockedSpecialUsePrefixes {
 		if prefix.Contains(address) {
 			return true
 		}

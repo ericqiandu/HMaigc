@@ -85,6 +85,9 @@ func TestKuaiziBalanceMapsExplicitFailures(t *testing.T) {
 		{name: "unsafe business code", status: http.StatusOK, body: `{"code":"sentinel-secret","message":"rejected"}`, wantCode: "invalid_response", wantHealth: "unknown"},
 		{name: "timeout", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}}`, delay: 100 * time.Millisecond, timeout: 10 * time.Millisecond, wantCode: "timeout", wantHealth: "unavailable"},
 		{name: "unknown payload", status: http.StatusOK, body: `{"code":0,"data":{"credits":"1"}}`, wantCode: "invalid_response", wantHealth: "unknown"},
+		{name: "trailing garbage", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}} trailing`, wantCode: "invalid_response", wantHealth: "unknown"},
+		{name: "second json value", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}} {}`, wantCode: "invalid_response", wantHealth: "unknown"},
+		{name: "oversized payload", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}}` + strings.Repeat(" ", (64<<10)+1), wantCode: "invalid_response", wantHealth: "unknown"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

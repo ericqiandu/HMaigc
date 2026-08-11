@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,5 +165,53 @@ func TestKuaiziEndpointRejectsPrivateOrRebindingDNSFacts(t *testing.T) {
 	}
 	if _, err := transport.RoundTrip(request); err == nil {
 		t.Fatal("DNS rebinding target reached transport without rejection")
+	}
+}
+
+func TestKuaiziEndpointRejectsSpecialUseDirectIPs(t *testing.T) {
+	resolver := func(_ context.Context, _ string) ([]net.IP, error) {
+		t.Fatal("literal IP must not use DNS resolver")
+		return nil, nil
+	}
+	for _, address := range []string{"100.64.0.1", "198.18.0.1", "192.0.0.10", "240.0.0.1"} {
+		if _, err := validateKuaiziBaseURLWithResolver(context.Background(), "https://"+address, "production", resolver); err == nil {
+			t.Fatalf("special-use direct IP %s was accepted", address)
+		}
+	}
+}
+
+func TestKuaiziEndpointRejectsSpecialUseInitialDNSFacts(t *testing.T) {
+	for _, address := range []string{"100.64.0.1", "198.18.0.1", "192.0.0.10", "240.0.0.1"} {
+		resolver := func(_ context.Context, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP(address)}, nil
+		}
+		if _, err := validateKuaiziBaseURLWithResolver(context.Background(), "https://api.example.com", "production", resolver); err == nil {
+			t.Fatalf("special-use initial DNS IP %s was accepted", address)
+		}
+	}
+}
+
+func TestKuaiziTransportRejectsSpecialUseDNSRebindingBeforeDial(t *testing.T) {
+	for _, address := range []string{"100.64.0.1", "198.18.0.1", "192.0.0.10", "240.0.0.1"} {
+		dialed := false
+		transport := newKuaiziTransportWithDialer(
+			"production",
+			func(_ context.Context, _ string) ([]net.IP, error) { return []net.IP{net.ParseIP(address)}, nil },
+			func(_ context.Context, _, _ string) (net.Conn, error) {
+				dialed = true
+				return nil, errors.New("unexpected dial")
+			},
+		)
+		request, err := http.NewRequest(http.MethodGet, "https://api.example.com", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = transport.RoundTrip(request)
+		if err == nil || !strings.Contains(err.Error(), "不允许") {
+			t.Fatalf("special-use rebind %s error = %v", address, err)
+		}
+		if dialed {
+			t.Fatalf("special-use rebind %s reached network dial", address)
+		}
 	}
 }

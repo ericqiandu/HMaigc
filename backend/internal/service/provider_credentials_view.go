@@ -180,14 +180,8 @@ func providerCredentialCandidateView(version *model.ProviderCredentialVersion) A
 			if version.LastBalanceSubunits == "0" {
 				status = "insufficient_balance"
 			}
-		case "invalid_key":
-			status = "invalid"
-		case "ip_rejected":
-			status = "blocked"
-		case "timeout", "network_error":
-			status = "unavailable"
 		default:
-			status = "unknown"
+			status = kuaiziHealthStatusForCode(version.LastVerificationCode)
 		}
 	}
 	return AdminProviderCredentialCandidateView{

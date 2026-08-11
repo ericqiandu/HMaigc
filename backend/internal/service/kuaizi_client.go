@@ -13,7 +13,10 @@ import (
 	"strings"
 )
 
-const kuaiziBalancePath = "/ai-open-platform-api/v1/user/balance"
+const (
+	kuaiziBalancePath          = "/ai-open-platform-api/v1/user/balance"
+	kuaiziBalanceResponseLimit = 64 << 10
+)
 
 type KuaiziBalanceFact struct {
 	WalletBalanceSubunits string `json:"walletBalanceSubunits"`
@@ -43,14 +46,14 @@ func NewKuaiziClient(httpClient *http.Client) *KuaiziClient {
 
 func (c *KuaiziClient) Balance(ctx context.Context, baseURL string, apiKey string) (KuaiziBalanceFact, error) {
 	if c == nil || c.httpClient == nil {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unknown", "client_unavailable", "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("client_unavailable", "")
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid", "missing_key", "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("missing_key", "")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+kuaiziBalancePath, bytes.NewBufferString("{}"))
 	if err != nil {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unknown", "invalid_request", "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_request", "")
 	}
 	request.Header.Set("ApiKey", apiKey)
 	request.Header.Set("Accept", "application/json")
@@ -58,23 +61,26 @@ func (c *KuaiziClient) Balance(ctx context.Context, baseURL string, apiKey strin
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return KuaiziBalanceFact{}, newKuaiziVerificationError("unavailable", "timeout", "")
+			return KuaiziBalanceFact{}, newKuaiziVerificationError("timeout", "")
 		}
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unavailable", "network_error", "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("network_error", "")
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	body, err := io.ReadAll(io.LimitReader(response.Body, kuaiziBalanceResponseLimit+1))
 	if err != nil {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unavailable", "response_read_error", "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("response_read_error", "")
+	}
+	if len(body) > kuaiziBalanceResponseLimit {
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", "")
 	}
 	if response.StatusCode != http.StatusOK {
 		switch response.StatusCode {
 		case http.StatusUnauthorized:
-			return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid", "invalid_key", "")
+			return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_key", "")
 		case http.StatusForbidden:
-			return KuaiziBalanceFact{}, newKuaiziVerificationError("blocked", "ip_rejected", "")
+			return KuaiziBalanceFact{}, newKuaiziVerificationError("ip_rejected", "")
 		}
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unavailable", "upstream_http_"+strconv.Itoa(response.StatusCode), "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("upstream_http_"+strconv.Itoa(response.StatusCode), "")
 	}
 
 	var envelope struct {
@@ -85,38 +91,60 @@ func (c *KuaiziClient) Balance(ctx context.Context, baseURL string, apiKey strin
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&envelope); err != nil {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unknown", "invalid_response", "")
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", "")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", "")
 	}
 	traceID := safeKuaiziTraceID(envelope.TraceID, apiKey)
 	upstreamCode, ok := kuaiziScalarString(envelope.Code)
 	if !ok || !validKuaiziUpstreamCode(upstreamCode) {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unknown", "invalid_response", traceID)
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", traceID)
 	}
 	if upstreamCode != "0" {
 		switch upstreamCode {
 		case "401":
-			return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid", "invalid_key", traceID)
+			return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_key", traceID)
 		case "403":
-			return KuaiziBalanceFact{}, newKuaiziVerificationError("blocked", "ip_rejected", traceID)
+			return KuaiziBalanceFact{}, newKuaiziVerificationError("ip_rejected", traceID)
 		default:
-			return KuaiziBalanceFact{}, newKuaiziVerificationError("rejected", "upstream_code_"+upstreamCode, traceID)
+			return KuaiziBalanceFact{}, newKuaiziVerificationError("upstream_code_"+upstreamCode, traceID)
 		}
 	}
 	var data struct {
 		Balance json.RawMessage `json:"balance"`
 	}
 	if len(envelope.Data) == 0 || json.Unmarshal(envelope.Data, &data) != nil {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unknown", "invalid_response", traceID)
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", traceID)
 	}
 	balance, ok := kuaiziScalarString(data.Balance)
 	if !ok || !validNonNegativeDecimalInteger(balance) {
-		return KuaiziBalanceFact{}, newKuaiziVerificationError("unknown", "invalid_response", traceID)
+		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", traceID)
 	}
 	return KuaiziBalanceFact{WalletBalanceSubunits: balance, TraceID: traceID}, nil
 }
 
-func newKuaiziVerificationError(healthStatus string, code string, traceID string) *KuaiziVerificationError {
-	return &KuaiziVerificationError{HealthStatus: healthStatus, Code: code, TraceID: traceID}
+func newKuaiziVerificationError(code string, traceID string) *KuaiziVerificationError {
+	return &KuaiziVerificationError{HealthStatus: kuaiziHealthStatusForCode(code), Code: code, TraceID: traceID}
+}
+
+func kuaiziHealthStatusForCode(code string) string {
+	switch code {
+	case "missing_key", "invalid_key":
+		return "invalid"
+	case "ip_rejected":
+		return "blocked"
+	case "timeout", "network_error", "response_read_error":
+		return "unavailable"
+	}
+	if strings.HasPrefix(code, "upstream_http_") {
+		return "unavailable"
+	}
+	if strings.HasPrefix(code, "upstream_code_") {
+		return "rejected"
+	}
+	return "unknown"
 }
 
 func kuaiziScalarString(raw json.RawMessage) (string, bool) {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,12 +159,69 @@ func TestProviderAccountHandlerMapsVerificationHealthToStatus(t *testing.T) {
 	}
 }
 
+func TestProviderAccountHandlerAuditsAuthenticatedInvalidAndOversizedJSON(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		body     string
+		wantCode string
+	}{
+		{name: "invalid json", body: `{`, wantCode: "invalid_json"},
+		{name: "oversized json", body: `{"baseUrl":"` + strings.Repeat("a", 9<<10) + `"}`, wantCode: "body_too_large"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := openProviderAccountHandlerFixture(t)
+			response := fixture.request(http.MethodPut, "/api/admin/providers/kuaizi", test.body, fixture.adminCookie, "")
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var events []model.AdminAuditEvent
+			if err := fixture.db.Find(&events).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 1 || !strings.Contains(events[0].MetadataJSON, `"code":"`+test.wantCode+`"`) || !strings.Contains(events[0].MetadataJSON, `"result":"rejected"`) {
+				t.Fatalf("parse rejection audits = %#v", events)
+			}
+		})
+	}
+}
+
+func TestProviderAccountHandlerPrioritizesParseAuditPersistenceFailure(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/providers/kuaizi", &closeBeforeRead{
+		reader: strings.NewReader("{"),
+		close:  fixture.closeDB,
+	})
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: service.SessionCookieName, Value: fixture.adminCookie})
+	response := httptest.NewRecorder()
+	fixture.router.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("audit persistence failure status = %d, body = %s", response.Code, response.Body.String())
+	}
+	assertProviderAccountSecurityHeaders(t, response)
+}
+
 type providerAccountHandlerFixture struct {
 	router      *gin.Engine
 	db          *gorm.DB
 	adminCookie string
 	userCookie  string
 	userID      string
+}
+
+type closeBeforeRead struct {
+	reader *strings.Reader
+	close  func()
+	once   sync.Once
+}
+
+func (r *closeBeforeRead) Read(buffer []byte) (int, error) {
+	r.once.Do(r.close)
+	return r.reader.Read(buffer)
+}
+
+func (r *closeBeforeRead) Close() error {
+	return nil
 }
 
 func openProviderAccountHandlerFixture(t *testing.T) *providerAccountHandlerFixture {
