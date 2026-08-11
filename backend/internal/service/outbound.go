@@ -97,6 +97,121 @@ func CustomRelayHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+type outboundHostResolver func(context.Context, string) ([]net.IP, error)
+
+// ValidateKuaiziBaseURL 只接受不携带路径或能力信息的 origin，并在保存时验证全部 DNS 事实。
+func ValidateKuaiziBaseURL(ctx context.Context, rawURL string, environment string) (*url.URL, error) {
+	return validateKuaiziBaseURLWithResolver(ctx, rawURL, environment, defaultOutboundHostResolver)
+}
+
+func validateKuaiziBaseURLWithResolver(ctx context.Context, rawURL string, environment string, resolver outboundHostResolver) (*url.URL, error) {
+	if len(strings.TrimSpace(rawURL)) > 2048 {
+		return nil, BadAuthRequest("筷子服务地址过长")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+		return nil, BadAuthRequest("筷子服务地址无效")
+	}
+	if parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return nil, BadAuthRequest("筷子服务地址必须是无路径、查询或片段的 origin")
+	}
+	environment = strings.TrimSpace(environment)
+	if environment != "production" && environment != "development" {
+		return nil, BadAuthRequest("运行环境未配置，拒绝保存筷子服务地址")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil, BadAuthRequest("筷子服务地址只支持 HTTPS")
+	}
+	addresses, err := resolveKuaiziHost(ctx, parsed.Hostname(), resolver)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme == "http" {
+		if environment != "development" || !allLoopbackIPs(addresses) {
+			return nil, BadAuthRequest("HTTP 筷子服务地址仅允许开发环境 loopback origin")
+		}
+		return parsed, nil
+	}
+	for _, address := range addresses {
+		if blockedOutboundIP(address) {
+			return nil, BadAuthRequest("筷子服务地址不允许指向本机、内网或链路本地地址")
+		}
+	}
+	return parsed, nil
+}
+
+func KuaiziHTTPClient(environment string, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: newKuaiziTransport(environment, defaultOutboundHostResolver),
+		Timeout:   timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("筷子服务请求不允许重定向")
+		},
+	}
+}
+
+func defaultOutboundHostResolver(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
+
+func newKuaiziTransport(environment string, resolver outboundHostResolver) *http.Transport {
+	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			addresses, err := resolveKuaiziHost(ctx, host, resolver)
+			if err != nil {
+				return nil, err
+			}
+			if environment == "development" && allLoopbackIPs(addresses) {
+				return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+			}
+			for _, candidate := range addresses {
+				if blockedOutboundIP(candidate) {
+					return nil, BadAuthRequest("筷子服务连接解析到本机、内网或链路本地地址")
+				}
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+}
+
+func resolveKuaiziHost(ctx context.Context, host string, resolver outboundHostResolver) ([]net.IP, error) {
+	host = normalizeOutboundHost(host)
+	if host == "" {
+		return nil, BadAuthRequest("筷子服务域名无效")
+	}
+	if address := net.ParseIP(host); address != nil {
+		return []net.IP{address}, nil
+	}
+	addresses, err := resolver(ctx, host)
+	if err != nil || len(addresses) == 0 {
+		return nil, BadAuthRequest("筷子服务域名解析失败")
+	}
+	return addresses, nil
+}
+
+func allLoopbackIPs(addresses []net.IP) bool {
+	if len(addresses) == 0 {
+		return false
+	}
+	for _, address := range addresses {
+		if address == nil || !address.IsLoopback() {
+			return false
+		}
+	}
+	return true
+}
+
 func newOutboundTransport(resolveHost func(context.Context, string) ([]net.IP, error)) *http.Transport {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	return &http.Transport{

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -104,5 +105,63 @@ func TestCustomRelayHTTPClientDoesNotFollowRedirects(t *testing.T) {
 	}
 	if redirected {
 		t.Fatal("redirect destination should not receive the request")
+	}
+}
+
+func TestKuaiziEndpointProductionAcceptsOnlyPublicHTTPSOrigin(t *testing.T) {
+	publicResolver := func(_ context.Context, _ string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	if parsed, err := validateKuaiziBaseURLWithResolver(context.Background(), "https://api.example.com:8443", "production", publicResolver); err != nil || parsed.String() != "https://api.example.com:8443" {
+		t.Fatalf("public production origin = %v, %v", parsed, err)
+	}
+	for _, value := range []string{
+		"http://api.example.com", "https://user:pass@api.example.com", "https://api.example.com/", "https://api.example.com/path",
+		"https://api.example.com?query=1", "https://api.example.com#fragment", "https://127.0.0.1", "https://169.254.169.254",
+	} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := validateKuaiziBaseURLWithResolver(context.Background(), value, "production", publicResolver); err == nil {
+				t.Fatalf("unsafe production endpoint %q was accepted", value)
+			}
+		})
+	}
+}
+
+func TestKuaiziEndpointDevelopmentAllowsOnlyLoopbackHTTP(t *testing.T) {
+	resolver := func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "localhost" {
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		}
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	if _, err := validateKuaiziBaseURLWithResolver(context.Background(), "http://localhost:8080", "development", resolver); err != nil {
+		t.Fatalf("development loopback HTTP rejected: %v", err)
+	}
+	if _, err := validateKuaiziBaseURLWithResolver(context.Background(), "http://api.example.com", "development", resolver); err == nil {
+		t.Fatal("development public HTTP endpoint was accepted")
+	}
+}
+
+func TestKuaiziEndpointRejectsPrivateOrRebindingDNSFacts(t *testing.T) {
+	for _, addresses := range [][]net.IP{
+		{net.ParseIP("10.0.0.2")},
+		{net.ParseIP("93.184.216.34"), net.ParseIP("127.0.0.1")},
+		{net.ParseIP("fe80::1")},
+	} {
+		resolver := func(_ context.Context, _ string) ([]net.IP, error) { return addresses, nil }
+		if _, err := validateKuaiziBaseURLWithResolver(context.Background(), "https://api.example.com", "production", resolver); err == nil {
+			t.Fatalf("unsafe DNS facts %#v were accepted", addresses)
+		}
+	}
+
+	transport := newKuaiziTransport("production", func(_ context.Context, _ string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	})
+	request, err := http.NewRequest(http.MethodGet, "https://api.example.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(request); err == nil {
+		t.Fatal("DNS rebinding target reached transport without rejection")
 	}
 }

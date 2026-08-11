@@ -98,6 +98,52 @@ func TestProviderCredentialFamilyAndActiveVersionAreUnique(t *testing.T) {
 	}
 }
 
+func TestProviderEndpointActivationRejectsCredentialRotationAfterValidation(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	repo := New(db)
+	now := time.Now().UTC()
+	account := &model.ProviderAccount{ID: "account-race", ProviderKind: "kuaizi", Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := repo.CreateProviderAccount(account); err != nil {
+		t.Fatal(err)
+	}
+	endpoint1 := &model.ProviderEndpointVersion{ID: "endpoint-race-1", ProviderAccountID: account.ID, BaseURL: "https://api-1.example.com", Status: "pending", Version: 1, CreatedAt: now}
+	endpoint2 := &model.ProviderEndpointVersion{ID: "endpoint-race-2", ProviderAccountID: account.ID, BaseURL: "https://api-2.example.com", Status: "pending", Version: 2, CreatedAt: now}
+	if err := repo.CreateProviderEndpointVersion(endpoint1); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateProviderEndpointVersion(endpoint2); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ActivateProviderEndpointVersion(account.ID, endpoint1.ID, "", now); err != nil {
+		t.Fatal(err)
+	}
+	credential := &model.ProviderCredential{ID: "credential-race", ProviderAccountID: account.ID, Family: "seedance", HealthStatus: "healthy", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := repo.CreateProviderCredential(credential); err != nil {
+		t.Fatal(err)
+	}
+	key1 := &model.ProviderCredentialVersion{ID: "key-race-1", ProviderCredentialID: credential.ID, KeyCipher: "cipher-1", KeyFingerprint: "fingerprint-1", Status: "pending", Version: 1, CreatedAt: now}
+	key2 := &model.ProviderCredentialVersion{ID: "key-race-2", ProviderCredentialID: credential.ID, KeyCipher: "cipher-2", KeyFingerprint: "fingerprint-2", Status: "pending", Version: 2, CreatedAt: now}
+	if err := repo.CreateProviderCredentialVersion(key1); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateProviderCredentialVersion(key2); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ActivateProviderCredentialVersion(credential.ID, key1.ID, "", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ActivateProviderCredentialVersion(credential.ID, key2.ID, key1.ID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	record := ProviderCredentialVerification{CredentialID: credential.ID, VersionID: key1.ID, HealthStatus: "healthy", HealthCode: "verified", Balance: "10", CheckedAt: now, Verified: true}
+	audit := &model.AdminAuditEvent{ID: "audit-race", ActorUserID: "admin", Action: "provider.endpoint.activate", TargetType: "provider_account", TargetID: account.ID, CreatedAt: now}
+	err := repo.ActivateProviderEndpointWithCredentialVerifications(account.ID, endpoint2.ID, endpoint1.ID, []ProviderCredentialVerification{record}, now.Add(2*time.Second), audit)
+	if !errors.Is(err, ErrProviderActivationConflict) {
+		t.Fatalf("credential rotation activation error = %v", err)
+	}
+	assertSingleActiveEndpoint(t, db, account.ID, endpoint1.ID)
+}
+
 func TestProviderTaskFactRejectsDuplicateTaskAndNonemptyProviderTask(t *testing.T) {
 	db := openProviderRepositorySQLite(t)
 	repo := New(db)
