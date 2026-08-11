@@ -53,6 +53,15 @@ async function setMembershipDialogFixtureState(baseURL, state, label) {
     assert.equal(response.status, 200, `${label}: 无法设置会员付款弹窗 fixture 状态`);
 }
 
+async function setMembershipTeamMode(baseURL, mode, label) {
+    const response = await fetch(`${baseURL}/api/__checkout-fixture/membership-team-mode`, {
+        body: JSON.stringify({ mode }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+    });
+    assert.equal(response.status, 200, `${label}: 无法设置团队会员 fixture 模式`);
+}
+
 async function waitForMembershipDialogAnimation() {
     await new Promise((resolve) => setTimeout(resolve, 500));
 }
@@ -223,6 +232,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
 
 async function runMembershipDialogCase(browser, baseURL, theme, viewport, audience) {
     const label = `${viewport.name}/${theme}/membership-${audience}-dialog`;
+    await setMembershipTeamMode(baseURL, audience === "team" ? "new" : "existing", label);
     const page = await browser.newPage();
     const failures = observePageFailures(page);
     try {
@@ -250,6 +260,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
                 assert.equal(await page.$$(".membership-payment-dialog .membership-team-plan-option").then((nodes) => nodes.length), 2, `${label}: 团队付款弹窗未展示两个真实周期套餐`);
                 assert.equal(await page.$$(".membership-payment-dialog .membership-team-plan-option.is-selected").then((nodes) => nodes.length), 1, `${label}: 团队付款弹窗套餐选中态不唯一`);
                 assert.ok(await page.$(".membership-payment-dialog .membership-team-seat-stepper"), `${label}: 团队付款弹窗缺少席位步进器`);
+                await page.type(".membership-payment-dialog .membership-payment-team-name-input", "星河新团队");
                 await page.waitForSelector(".membership-payment-setup-primary", { timeout: 15_000 });
                 await page.click(".membership-payment-setup-primary");
             }

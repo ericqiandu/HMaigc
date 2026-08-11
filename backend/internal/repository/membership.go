@@ -409,7 +409,7 @@ func (r *Repository) GrantMembershipSubscriptionCredits(subscription *model.Memb
 }
 
 func (r *Repository) TeamsForUser(userID string) ([]model.Team, error) {
-	var teams []model.Team
+	teams := make([]model.Team, 0)
 	err := r.db.Raw(`
 		SELECT teams.* FROM teams
 		JOIN team_members ON team_members.team_id = teams.id

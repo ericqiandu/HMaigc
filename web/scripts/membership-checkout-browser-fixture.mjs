@@ -30,6 +30,7 @@ const membershipDialogStates = new Set([
     "membership-personal-active-qr-dialog",
 ]);
 let membershipDialogState = "membership-personal-active-qr-dialog";
+let membershipTeamMode = "existing";
 
 const fixtureUser = {
     id: "gate-user",
@@ -415,6 +416,16 @@ const server = http.createServer(async (request, response) => {
             sendJSON(response, 200, envelope({ state: membershipDialogState }));
             return;
         }
+        if (request.method === "POST" && url.pathname === "/api/__checkout-fixture/membership-team-mode") {
+            const input = await readJSON(request);
+            if (input?.mode !== "existing" && input?.mode !== "new") {
+                sendJSON(response, 400, { code: 400, data: null, msg: "团队会员 fixture 模式无效" });
+                return;
+            }
+            membershipTeamMode = input.mode;
+            sendJSON(response, 200, envelope({ mode: membershipTeamMode }));
+            return;
+        }
         if (request.method === "GET" && url.pathname === "/api/public/site") {
             sendJSON(response, 200, envelope(siteSettings));
             return;
@@ -440,11 +451,20 @@ const server = http.createServer(async (request, response) => {
             return;
         }
         if (request.method === "GET" && url.pathname === "/api/membership") {
-            sendJSON(response, 200, envelope(membershipOverview));
+            sendJSON(response, 200, envelope({ ...membershipOverview, teams: membershipTeamMode === "new" ? [] : [fixtureTeam] }));
             return;
         }
         if (request.method === "GET" && url.pathname === "/api/membership/invoices") {
             sendJSON(response, 200, envelope({ items: [] }));
+            return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/teams") {
+            const input = await readJSON(request);
+            if (membershipTeamMode !== "new" || input?.name !== "星河新团队") {
+                sendJSON(response, 400, { code: 400, data: null, msg: "新团队参数错误" });
+                return;
+            }
+            sendJSON(response, 200, envelope(fixtureTeam));
             return;
         }
         if (request.method === "POST" && url.pathname === "/api/membership/orders") {
