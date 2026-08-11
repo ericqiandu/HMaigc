@@ -13,6 +13,7 @@ export type MembershipPaymentDialogProps = {
     creationError: string;
     onClose: () => void;
     onConfirm: () => void;
+    onPlanChange: (planID: string) => void;
     onRetry: () => void;
     onSeatsChange: (seats: number) => void;
     onTeamIdChange: (teamId: string | undefined) => void;
@@ -21,6 +22,7 @@ export type MembershipPaymentDialogProps = {
     openingCheckout: boolean;
     orderLifecycle: MembershipOrderLifecycle;
     plan: MembershipPlan | null;
+    planOptions: MembershipPlan[];
     seats: number;
     submitting: boolean;
     teamId?: string;
@@ -38,6 +40,7 @@ export function MembershipPaymentDialog({
     creationError,
     onClose,
     onConfirm,
+    onPlanChange,
     onRetry,
     onSeatsChange,
     onTeamIdChange,
@@ -46,6 +49,7 @@ export function MembershipPaymentDialog({
     openingCheckout,
     orderLifecycle,
     plan,
+    planOptions,
     seats,
     submitting,
     teamId,
@@ -56,6 +60,7 @@ export function MembershipPaymentDialog({
     const submitGuardRef = useRef(false);
     const observedWriteRef = useRef(false);
     const writeInFlight = submitting || openingCheckout || checkoutWriting;
+    const teamDialog = plan?.audience === "team" || (orderLifecycle.kind === "frozen-ready" && orderLifecycle.facts.audience === "team");
 
     useEffect(() => {
         if (!open) {
@@ -87,7 +92,7 @@ export function MembershipPaymentDialog({
 
     return (
         <Modal
-            className={`membership-payment-dialog ${checkoutToken ? "is-checkout" : "is-setup"} ${className}`}
+            className={`membership-payment-dialog ${checkoutToken ? "is-checkout" : "is-setup"} ${teamDialog ? "is-team" : "is-personal"} ${className}`}
             closable={!writeInFlight}
             destroyOnHidden
             footer={null}
@@ -96,16 +101,26 @@ export function MembershipPaymentDialog({
             onCancel={requestClose}
             open={open}
             title={null}
-            width={766}
+            width={teamDialog ? 880 : 766}
         >
             <div className="membership-payment-dialog-content">
                 {checkoutToken ? (
-                    <PaymentCheckoutExperience initialMembershipFacts={orderLifecycle.kind === "frozen-ready" ? orderLifecycle.facts : undefined} mode="dialog" onExit={() => onClose()} onWriteStateChange={setCheckoutWriting} token={checkoutToken} />
+                    <PaymentCheckoutExperience
+                        initialMembershipFacts={orderLifecycle.kind === "frozen-ready" ? orderLifecycle.facts : undefined}
+                        membershipPlanOptions={teamDialog ? planOptions : undefined}
+                        mode="dialog"
+                        onExit={() => onClose()}
+                        onWriteStateChange={setCheckoutWriting}
+                        selectedMembershipPlanID={teamDialog ? plan?.id : undefined}
+                        teamSeatBounds={teamDialog && plan ? { maxSeats: plan.maxSeats, minSeats: plan.minSeats } : undefined}
+                        token={checkoutToken}
+                    />
                 ) : (
                     <MembershipPaymentSetup
                         creationError={creationError}
                         onClose={requestClose}
                         onConfirm={requestConfirm}
+                        onPlanChange={onPlanChange}
                         onRetry={onRetry}
                         onSeatsChange={onSeatsChange}
                         onTeamIdChange={onTeamIdChange}
@@ -113,6 +128,7 @@ export function MembershipPaymentDialog({
                         openingCheckout={openingCheckout}
                         orderLifecycle={orderLifecycle}
                         plan={plan}
+                        planOptions={planOptions}
                         seats={seats}
                         submitting={submitting}
                         teamId={teamId}

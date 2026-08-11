@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
 import { createPaymentTransaction, getPaymentCheckout, type PaymentProvider } from "@/services/api/payment";
+import type { MembershipPlan } from "@/services/api/membership";
 
 import { CreditTopupOrderFacts } from "./credit-topup-order-facts";
 import { membershipOrderFactsFromCheckout, type MembershipOrderFactsModel } from "./membership-order-facts-domain";
@@ -36,9 +37,12 @@ export type PaymentCheckoutExitDestination = "/membership" | "/credit-store";
 
 export type PaymentCheckoutExperienceProps = {
     initialMembershipFacts?: MembershipOrderFactsModel;
+    membershipPlanOptions?: MembershipPlan[];
     mode: "page" | "dialog";
     onExit: (destination: PaymentCheckoutExitDestination) => void;
     onWriteStateChange?: (writing: boolean) => void;
+    selectedMembershipPlanID?: string;
+    teamSeatBounds?: { maxSeats: number; minSeats: number };
     token: string;
 };
 
@@ -46,7 +50,7 @@ function errorMessage(reason: unknown, fallback: string): string {
     return reason instanceof Error ? reason.message : fallback;
 }
 
-export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit, onWriteStateChange, token }: PaymentCheckoutExperienceProps): ReactElement {
+export function PaymentCheckoutExperience({ initialMembershipFacts, membershipPlanOptions, mode, onExit, onWriteStateChange, selectedMembershipPlanID, teamSeatBounds, token }: PaymentCheckoutExperienceProps): ReactElement {
     const coordinatorRef = useRef<CheckoutRequestCoordinator | null>(null);
     if (coordinatorRef.current === null) coordinatorRef.current = new CheckoutRequestCoordinator();
 
@@ -71,6 +75,7 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
     const hasToken = hasCheckoutToken(token);
     const waitingForCurrentToken = loadState.token !== token;
     const exitDestination: PaymentCheckoutExitDestination = checkout?.orderType === "credit_topup" ? "/credit-store" : "/membership";
+    const teamVariant = initialMembershipFacts?.audience === "team" || (checkout?.orderType === "membership" && checkout.membershipSummary.audience === "team");
 
     const loadCheckout = useCallback(async (capturedToken: string) => {
         const coordinator = coordinatorRef.current;
@@ -215,7 +220,15 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
         onExit(exitDestination);
     }, [exitDestination, onExit]);
 
-    const knownMembershipOrderFacts = initialMembershipFacts ? <MembershipOrderFacts facts={initialMembershipFacts} /> : null;
+    const membershipFacts = (facts: MembershipOrderFactsModel) => (
+        <MembershipOrderFacts
+            facts={facts}
+            selectedTeamPlanID={selectedMembershipPlanID}
+            teamPlanOptions={facts.audience === "team" ? membershipPlanOptions : undefined}
+            teamSeatControl={facts.audience === "team" && teamSeatBounds ? { ...teamSeatBounds, disabled: true } : undefined}
+        />
+    );
+    const knownMembershipOrderFacts = initialMembershipFacts ? membershipFacts(initialMembershipFacts) : null;
 
     if ((loading || waitingForCurrentToken) && !checkout) {
         return (
@@ -230,6 +243,7 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
                     </div>
                 }
                 summary={knownMembershipOrderFacts ?? <PaymentCheckoutOrderPlaceholder presentation="loading" />}
+                variant={teamVariant ? "team" : "default"}
             />
         );
     }
@@ -242,6 +256,7 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
                 onBack={returnToOrderEntry}
                 payment={<PaymentCheckoutInitialError canRetry={hasToken} message={loadState.initialError} onRetry={retryCheckout} />}
                 summary={knownMembershipOrderFacts ?? <PaymentCheckoutOrderPlaceholder presentation="failed" />}
+                variant={teamVariant ? "team" : "default"}
             />
         );
     }
@@ -268,7 +283,8 @@ export function PaymentCheckoutExperience({ initialMembershipFacts, mode, onExit
                     submitting={submitting}
                 />
             }
-            summary={checkout.orderType === "membership" ? <MembershipOrderFacts facts={membershipOrderFactsFromCheckout(checkout)} /> : <CreditTopupOrderFacts checkout={checkout} />}
+            summary={checkout.orderType === "membership" ? membershipFacts(membershipOrderFactsFromCheckout(checkout)) : <CreditTopupOrderFacts checkout={checkout} />}
+            variant={teamVariant ? "team" : "default"}
         />
     );
 }

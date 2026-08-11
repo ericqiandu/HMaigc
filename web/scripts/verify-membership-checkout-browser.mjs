@@ -139,10 +139,10 @@ async function readFrozenMembershipOwners(page, label) {
     assert.deepEqual(
         owners,
         {
-            facts: "membership-order-facts membership-checkout-summary",
+            facts: "membership-order-facts membership-checkout-summary is-personal",
             order: "payment-checkout-order-surface",
             payment: "payment-checkout-payment-surface",
-            shell: "payment-checkout-shell is-dialog",
+            shell: "payment-checkout-shell is-dialog is-default",
         },
         `${label}: 已知会员订单未保留冻结收银台结构`,
     );
@@ -226,6 +226,10 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
             await waitForMembershipPlanAction(page, planCode, label, failures);
             await page.click(`[data-plan-code="${planCode}"] .membership-storefront-plan-action`);
             if (audience === "team") {
+                await page.waitForSelector(".membership-payment-dialog .membership-team-plan-option", { timeout: 15_000 });
+                assert.equal(await page.$$(".membership-payment-dialog .membership-team-plan-option").then((nodes) => nodes.length), 2, `${label}: 团队付款弹窗未展示两个真实周期套餐`);
+                assert.equal(await page.$$(".membership-payment-dialog .membership-team-plan-option.is-selected").then((nodes) => nodes.length), 1, `${label}: 团队付款弹窗套餐选中态不唯一`);
+                assert.ok(await page.$(".membership-payment-dialog .membership-team-seat-stepper"), `${label}: 团队付款弹窗缺少席位步进器`);
                 await page.waitForSelector(".membership-payment-setup-primary", { timeout: 15_000 });
                 await page.click(".membership-payment-setup-primary");
             }
@@ -249,7 +253,7 @@ async function runMembershipDialogCase(browser, baseURL, theme, viewport, audien
             const bodyText = await page.$eval("body", (node) => node.innerText);
             throw new Error(`${label}: 二维码未生成\n${bodyText}`, { cause: error });
         }
-        const expectedDialogWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+        const expectedDialogWidth = Math.min(audience === "team" ? 880 : 766, viewport.width - (viewport.width <= 767 ? 32 : 48));
         await waitForStableMembershipDialog(page, expectedDialogWidth, label);
         await page.waitForFunction(
             () => {
@@ -475,7 +479,7 @@ async function exerciseScenario(page, scenario, label) {
         requireText(bodyText, ["旗舰创作会员", "按月购买", "32.8 积分/月", "¥1,399", "−¥100", "¥1,299", "到期不自动续费"], label);
     }
     if (scenario === "team") {
-        requireText(bodyText, ["开通团队会员", "旗舰团队会员", "按年购买", "3 席位", "¥7,999/年", "32.8 积分/年/席位", "98.4 积分/年", "¥29,997", "−¥6,000", "¥23,997", "到期不自动续费"], label);
+        requireText(bodyText, ["开通团队版会员「旗舰团队会员」", "12个月", "3 席位", "¥7,999", "/席位", "32.8 积分/年/席位", "98.4 积分/年", "¥29,997", "−¥6,000", "¥23,997", "支付成功后按现有会员顺延"], label);
     }
     if (scenario === "topup" || scenario === "topup-slow") {
         assert.ok(await page.$(".credit-topup-order-facts"), `${label}: 积分充值加载后未切换到独立事实 owner`);

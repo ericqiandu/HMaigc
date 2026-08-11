@@ -87,6 +87,17 @@ const teamPlan = {
     sortOrder: 2,
 };
 
+const teamMonthlyPlan = {
+    ...teamPlan,
+    id: "plan-team-flagship-month",
+    code: "team-flagship-month",
+    billingCycle: "month",
+    priceCents: 68_900,
+    originalPriceCents: 93_900,
+    creditsPerPeriod: 1_500_000_000,
+    sortOrder: 0,
+};
+
 const frozenPersonalPlan = {
     ...personalPlan,
     code: "creator-flagship-month",
@@ -129,7 +140,7 @@ const storefront = {
         membershipNotes: [],
         faqs: [],
     },
-    plans: [personalPlan, teamPlan],
+    plans: [personalPlan, teamMonthlyPlan, teamPlan],
     serverNow: "2026-08-10T08:00:00.000Z",
     updatedAt: "2026-08-10T08:00:00.000Z",
 };
@@ -443,7 +454,7 @@ const server = http.createServer(async (request, response) => {
                 return;
             }
             const input = await readJSON(request);
-            const selectedPlan = input?.planId === personalPlan.id ? personalPlan : input?.planId === teamPlan.id ? teamPlan : null;
+            const selectedPlan = input?.planId === personalPlan.id ? personalPlan : input?.planId === teamMonthlyPlan.id ? teamMonthlyPlan : input?.planId === teamPlan.id ? teamPlan : null;
             const expectedSeats = selectedPlan?.audience === "team" ? 2 : 1;
             const expectedTeamID = selectedPlan?.audience === "team" ? fixtureTeam.id : "";
             if (!selectedPlan || input?.seats !== expectedSeats || input?.teamId !== expectedTeamID) {

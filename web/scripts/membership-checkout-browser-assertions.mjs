@@ -98,6 +98,7 @@ export async function assertCheckoutLayout(page, viewport) {
             documentScrollWidth: document.documentElement.scrollWidth,
             bodyClientWidth: document.body.clientWidth,
             bodyScrollWidth: document.body.scrollWidth,
+            isTeam: shell.classList.contains("is-team"),
             shellClientWidth: shell.clientWidth,
             shellScrollWidth: shell.scrollWidth,
             shellOverflowX: shellStyle.overflowX,
@@ -123,7 +124,7 @@ export async function assertCheckoutLayout(page, viewport) {
     assert.ok(snapshot.shellRect.left >= 0 && snapshot.shellRect.right <= viewport.width + 0.5, `${viewport.name}: shell 超出视口`);
     assert.deepEqual(snapshot.overflowing, [], `${viewport.name}: 子节点超出视口边界`);
 
-    const expectedShellWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+    const expectedShellWidth = Math.min(snapshot.isTeam ? 880 : 766, viewport.width - (viewport.width <= 767 ? 32 : 48));
     assert.ok(Math.abs(snapshot.shellRect.width - expectedShellWidth) <= 1, `${viewport.name}: 收银台宽度应为 ${expectedShellWidth}px，实际 ${snapshot.shellRect.width}px`);
 
     if (viewport.width > 767) {
@@ -131,13 +132,13 @@ export async function assertCheckoutLayout(page, viewport) {
         assert.ok(Math.abs(snapshot.paymentRect.top - snapshot.orderRect.top) <= 1, `${viewport.name}: 双栏顶部必须对齐`);
         assert.equal(snapshot.paymentRadii.topRight, 0, `${viewport.name}: 右侧表面不得在外壳内重复圆角`);
         assert.equal(snapshot.paymentRadii.bottomRight, 0, `${viewport.name}: 右侧表面不得在外壳内重复圆角`);
-        const expectedOrderWidth = snapshot.shellRect.width * (425 / 766);
-        const expectedPaymentWidth = snapshot.shellRect.width * (341 / 766);
-        assert.ok(Math.abs(snapshot.orderRect.width - expectedOrderWidth) <= 2, `${viewport.name}: 左侧订单区未保持 425:341 比例`);
-        assert.ok(Math.abs(snapshot.paymentRect.width - expectedPaymentWidth) <= 2, `${viewport.name}: 右侧支付区未保持 425:341 比例`);
-        if (viewport.width >= 814) {
-            assert.ok(Math.abs(snapshot.orderRect.width - 425) <= 1, `${viewport.name}: 桌面左侧订单区必须为 425px`);
-            assert.ok(Math.abs(snapshot.paymentRect.width - 341) <= 1, `${viewport.name}: 桌面右侧支付区必须为 341px`);
+        const expectedOrderWidth = snapshot.isTeam ? (viewport.width >= 928 ? 560 : snapshot.shellRect.width - 320) : snapshot.shellRect.width * (425 / 766);
+        const expectedPaymentWidth = snapshot.isTeam ? 320 : snapshot.shellRect.width * (341 / 766);
+        assert.ok(Math.abs(snapshot.orderRect.width - expectedOrderWidth) <= 2, `${viewport.name}: 左侧订单区比例不正确`);
+        assert.ok(Math.abs(snapshot.paymentRect.width - expectedPaymentWidth) <= 2, `${viewport.name}: 右侧支付区比例不正确`);
+        if (viewport.width >= (snapshot.isTeam ? 928 : 814)) {
+            assert.ok(Math.abs(snapshot.orderRect.width - (snapshot.isTeam ? 560 : 425)) <= 1, `${viewport.name}: 桌面左侧订单区宽度不正确`);
+            assert.ok(Math.abs(snapshot.paymentRect.width - (snapshot.isTeam ? 320 : 341)) <= 1, `${viewport.name}: 桌面右侧支付区宽度不正确`);
         }
     } else {
         assert.ok(snapshot.paymentRect.top >= snapshot.orderRect.bottom - 1, `${viewport.name}: 手机必须改为上下单列`);
@@ -167,6 +168,10 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
         const closeRect = close.getBoundingClientRect();
         const qrRect = qr.getBoundingClientRect();
         const qrSurfaceRect = qrSurface.getBoundingClientRect();
+        const isTeam = shell.classList.contains("is-team");
+        const teamPlanOptions = Array.from(shell.querySelectorAll(".membership-team-plan-option"));
+        const selectedTeamPlan = shell.querySelector(".membership-team-plan-option.is-selected");
+        const teamSeatStepper = shell.querySelector(".membership-team-seat-stepper");
         const contentStyle = getComputedStyle(content);
         const shellStyle = getComputedStyle(shell);
         const orderStyle = getComputedStyle(order);
@@ -175,8 +180,9 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
             .filter((node) => node instanceof HTMLElement || node instanceof SVGElement)
             .map((node) => {
                 const rect = node.getBoundingClientRect();
-                return { className: node.getAttribute("class") ?? node.tagName, left: rect.left, right: rect.right };
+                return { className: node.getAttribute("class") ?? node.tagName, height: rect.height, left: rect.left, right: rect.right, width: rect.width };
             })
+            .filter((item) => item.width > 0 && item.height > 0)
             .filter((item) => item.left < dialogRect.left - 0.5 || item.right > dialogRect.right + 0.5);
         const verticalCandidates = [content, dialog.closest(".ant-modal-wrap"), document.scrollingElement].filter((node, index, values) => node instanceof HTMLElement && values.indexOf(node) === index);
         let verticalContainer = content;
@@ -211,6 +217,11 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
             paymentRadius: Number.parseFloat(paymentStyle.borderTopRightRadius),
             qr: { height: qrRect.height, width: qrRect.width },
             qrSurface: { height: qrSurfaceRect.height, width: qrSurfaceRect.width },
+            isTeam,
+            selectedTeamPlan: Boolean(selectedTeamPlan),
+            teamPlanOptionCount: teamPlanOptions.length,
+            teamPlanOptionHeights: teamPlanOptions.map((node) => node.getBoundingClientRect().height),
+            teamSeatStepper: teamSeatStepper instanceof HTMLElement ? { height: teamSeatStepper.getBoundingClientRect().height, width: teamSeatStepper.getBoundingClientRect().width } : null,
             shell: { left: shellRect.left, right: shellRect.right, width: shellRect.width },
             shellBorderWidth: Number.parseFloat(shellStyle.borderTopWidth),
             shellOverflowX: shellStyle.overflowX,
@@ -219,7 +230,7 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
         };
     });
 
-    const expectedWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+    const expectedWidth = Math.min(snapshot.isTeam ? 880 : 766, viewport.width - (viewport.width <= 767 ? 32 : 48));
     assert.ok(Math.abs(snapshot.dialog.width - expectedWidth) <= 1, `${label}: 弹窗宽度未对齐参考层级，期望 ${expectedWidth}，实际 ${snapshot.dialog.width}`);
     assert.ok(snapshot.dialog.left >= 0 && snapshot.dialog.right <= viewport.width + 0.5, `${label}: 弹窗超出视口`);
     assert.equal(snapshot.contentBorderWidth, 0, `${label}: Ant 容器不得占用 766px 收银台内容宽度`);
@@ -235,14 +246,32 @@ export async function assertMembershipDialogLayout(page, viewport, label) {
     assert.ok(Math.abs(snapshot.qrSurface.width - 128) <= 1 && Math.abs(snapshot.qrSurface.height - 128) <= 1, `${label}: 二维码白底整体必须保持 128×128，实际 ${snapshot.qrSurface.width}×${snapshot.qrSurface.height}`);
     assert.deepEqual(snapshot.overflowing, [], `${label}: 弹窗子节点存在横向溢出`);
 
+    if (snapshot.isTeam) {
+        assert.ok(snapshot.teamPlanOptionCount >= 2, `${label}: 团队付款弹窗必须展示同档位真实套餐选项`);
+        assert.equal(snapshot.selectedTeamPlan, true, `${label}: 团队付款弹窗缺少唯一选中套餐`);
+        if (viewport.width >= 928) {
+            assert.ok(
+                snapshot.teamPlanOptionHeights.every((height) => Math.abs(height - 92) <= 1),
+                `${label}: 桌面团队套餐卡高度必须为 92px，实际 ${snapshot.teamPlanOptionHeights.join(",")}`,
+            );
+        } else {
+            assert.ok(
+                snapshot.teamPlanOptionHeights.every((height) => height >= 92),
+                `${label}: 响应式团队套餐卡不得低于 92px，实际 ${snapshot.teamPlanOptionHeights.join(",")}`,
+            );
+            assert.ok(Math.max(...snapshot.teamPlanOptionHeights) - Math.min(...snapshot.teamPlanOptionHeights) <= 1, `${label}: 响应式团队套餐卡高度必须对齐`);
+        }
+        assert.ok(snapshot.teamSeatStepper, `${label}: 团队付款弹窗缺少席位步进器`);
+    }
+
     if (viewport.width > 767) {
-        const expectedOrderWidth = snapshot.dialog.width * (425 / 766);
-        const expectedPaymentWidth = snapshot.dialog.width * (341 / 766);
-        assert.ok(Math.abs(snapshot.order.width - expectedOrderWidth) <= 2, `${label}: 左侧订单区未保持 425:341 比例，期望 ${expectedOrderWidth}，实际 ${snapshot.order.width}，弹窗 ${snapshot.dialog.width}`);
-        assert.ok(Math.abs(snapshot.payment.width - expectedPaymentWidth) <= 2, `${label}: 右侧二维码区未保持 425:341 比例，期望 ${expectedPaymentWidth}，实际 ${snapshot.payment.width}，弹窗 ${snapshot.dialog.width}`);
-        if (viewport.width >= 814) {
-            assert.ok(Math.abs(snapshot.order.width - 425) <= 1, `${label}: 桌面左侧订单区必须为 425px`);
-            assert.ok(Math.abs(snapshot.payment.width - 341) <= 1, `${label}: 桌面右侧二维码区必须为 341px`);
+        const expectedOrderWidth = snapshot.isTeam ? (viewport.width >= 928 ? 560 : snapshot.dialog.width - 320) : snapshot.dialog.width * (425 / 766);
+        const expectedPaymentWidth = snapshot.isTeam ? 320 : snapshot.dialog.width * (341 / 766);
+        assert.ok(Math.abs(snapshot.order.width - expectedOrderWidth) <= 2, `${label}: 左侧订单区比例不正确，期望 ${expectedOrderWidth}，实际 ${snapshot.order.width}，弹窗 ${snapshot.dialog.width}`);
+        assert.ok(Math.abs(snapshot.payment.width - expectedPaymentWidth) <= 2, `${label}: 右侧二维码区比例不正确，期望 ${expectedPaymentWidth}，实际 ${snapshot.payment.width}，弹窗 ${snapshot.dialog.width}`);
+        if (viewport.width >= (snapshot.isTeam ? 928 : 814)) {
+            assert.ok(Math.abs(snapshot.order.width - (snapshot.isTeam ? 560 : 425)) <= 1, `${label}: 桌面左侧订单区宽度不正确`);
+            assert.ok(Math.abs(snapshot.payment.width - (snapshot.isTeam ? 320 : 341)) <= 1, `${label}: 桌面右侧二维码区宽度不正确`);
         }
         assert.ok(snapshot.payment.left >= snapshot.order.right - 1, `${label}: 双栏表面发生重叠`);
         assert.ok(Math.abs(snapshot.payment.top - snapshot.order.top) <= 1, `${label}: 双栏顶部未对齐`);
@@ -273,10 +302,11 @@ export async function assertMembershipSetupDialogLayout(page, viewport, label) {
         const shellRect = shell.getBoundingClientRect();
         const orderRect = order.getBoundingClientRect();
         const paymentRect = payment.getBoundingClientRect();
+        const isTeam = shell.classList.contains("is-team");
         const owner = (node) => node.className;
         const descendants = Array.from(dialog.querySelectorAll("*")).map((node) => {
             const rect = node.getBoundingClientRect();
-            return { className: node.getAttribute("class") ?? node.tagName, left: rect.left, right: rect.right };
+            return { className: node.getAttribute("class") ?? node.tagName, height: rect.height, left: rect.left, right: rect.right, width: rect.width };
         });
         const verticalCandidates = [content, dialog.closest(".ant-modal-wrap"), document.scrollingElement].filter((node, index, values) => node instanceof HTMLElement && values.indexOf(node) === index);
         let verticalContainer = content;
@@ -309,37 +339,38 @@ export async function assertMembershipSetupDialogLayout(page, viewport, label) {
                 shell: owner(shell),
             },
             payment: { left: paymentRect.left, right: paymentRect.right, top: paymentRect.top, width: paymentRect.width },
+            isTeam,
             shell: { left: shellRect.left, right: shellRect.right, width: shellRect.width },
         };
     });
 
-    const expectedWidth = Math.min(766, viewport.width - (viewport.width <= 767 ? 32 : 48));
-    assert.ok(Math.abs(snapshot.dialog.width - expectedWidth) <= 1, `${label}: 弹窗宽度未对齐 766px 收银台，期望 ${expectedWidth}，实际 ${snapshot.dialog.width}`);
+    const expectedWidth = Math.min(snapshot.isTeam ? 880 : 766, viewport.width - (viewport.width <= 767 ? 32 : 48));
+    assert.ok(Math.abs(snapshot.dialog.width - expectedWidth) <= 1, `${label}: 弹窗宽度未对齐参考收银台，期望 ${expectedWidth}，实际 ${snapshot.dialog.width}`);
     assert.ok(Math.abs(snapshot.shell.width - expectedWidth) <= 1, `${label}: 创建态 shell 宽度不正确，期望 ${expectedWidth}，实际 ${snapshot.shell.width}`);
     assert.deepEqual(
         snapshot.owners,
         {
-            facts: "membership-order-facts membership-checkout-summary",
+            facts: `membership-order-facts membership-checkout-summary ${snapshot.isTeam ? "is-team" : "is-personal"}`,
             order: "payment-checkout-order-surface",
             payment: "payment-checkout-payment-surface membership-payment-setup-action",
-            shell: "payment-checkout-shell is-dialog membership-payment-setup",
+            shell: `payment-checkout-shell is-dialog membership-payment-setup ${snapshot.isTeam ? "is-team" : "is-personal"}`,
         },
         `${label}: 创建态未使用唯一的左侧事实结构`,
     );
     assert.deepEqual(
-        snapshot.descendants.filter((item) => item.left < snapshot.dialog.left - 0.5 || item.right > snapshot.dialog.right + 0.5),
+        snapshot.descendants.filter((item) => item.width > 0 && item.height > 0 && (item.left < snapshot.dialog.left - 0.5 || item.right > snapshot.dialog.right + 0.5)),
         [],
         `${label}: 创建态子节点出现横向溢出`,
     );
 
     if (viewport.width > 767) {
-        const expectedOrderWidth = snapshot.dialog.width * (425 / 766);
-        const expectedPaymentWidth = snapshot.dialog.width * (341 / 766);
-        assert.ok(Math.abs(snapshot.order.width - expectedOrderWidth) <= 2, `${label}: 左侧订单区未保持 425:341 比例`);
-        assert.ok(Math.abs(snapshot.payment.width - expectedPaymentWidth) <= 2, `${label}: 右侧付款区未保持 425:341 比例`);
-        if (viewport.width >= 814) {
-            assert.ok(Math.abs(snapshot.order.width - 425) <= 1, `${label}: 桌面左侧订单区必须为 425px`);
-            assert.ok(Math.abs(snapshot.payment.width - 341) <= 1, `${label}: 桌面右侧付款区必须为 341px`);
+        const expectedOrderWidth = snapshot.isTeam ? (viewport.width >= 928 ? 560 : snapshot.dialog.width - 320) : snapshot.dialog.width * (425 / 766);
+        const expectedPaymentWidth = snapshot.isTeam ? 320 : snapshot.dialog.width * (341 / 766);
+        assert.ok(Math.abs(snapshot.order.width - expectedOrderWidth) <= 2, `${label}: 左侧订单区比例不正确`);
+        assert.ok(Math.abs(snapshot.payment.width - expectedPaymentWidth) <= 2, `${label}: 右侧付款区比例不正确`);
+        if (viewport.width >= (snapshot.isTeam ? 928 : 814)) {
+            assert.ok(Math.abs(snapshot.order.width - (snapshot.isTeam ? 560 : 425)) <= 1, `${label}: 桌面左侧订单区宽度不正确`);
+            assert.ok(Math.abs(snapshot.payment.width - (snapshot.isTeam ? 320 : 341)) <= 1, `${label}: 桌面右侧付款区宽度不正确`);
         }
         assert.ok(snapshot.payment.left >= snapshot.order.right - 1, `${label}: 双栏表面发生重叠`);
         assert.ok(Math.abs(snapshot.payment.top - snapshot.order.top) <= 1, `${label}: 双栏顶部未对齐`);

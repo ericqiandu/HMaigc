@@ -146,6 +146,10 @@ export default function MembershipPage() {
     );
 
     const plansById = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
+    const paymentPlanOptions = useMemo(() => {
+        if (selection?.plan.audience !== "team") return selection?.plan ? [selection.plan] : [];
+        return plans.filter((plan) => plan.audience === "team" && plan.billingCycle !== "free" && plan.tier === selection.plan.tier).sort((left, right) => left.sortOrder - right.sortOrder);
+    }, [plans, selection]);
 
     const selectAudience = (nextAudience: MembershipAudience) => {
         setAudience(nextAudience);
@@ -414,6 +418,13 @@ export default function MembershipPage() {
                 onConfirm={() => {
                     if (selection) void createOrderAndOpenCheckout(selection);
                 }}
+                onPlanChange={(planID) => {
+                    if (orderLifecycle.kind !== "preorder" || submitting || openingCheckout) return;
+                    const nextPlan = paymentPlanOptions.find((plan) => plan.id === planID);
+                    if (!nextPlan) return;
+                    setCreationError("");
+                    setSelection((current) => (current ? { plan: nextPlan, seats: clampSeats(nextPlan, current.seats) } : current));
+                }}
                 onRetry={retryPaymentDialog}
                 onSeatsChange={(seats) => setSelection((current) => (current ? { ...current, seats: clampSeats(current.plan, seats) } : null))}
                 onTeamIdChange={persistResolvedTeamID}
@@ -422,6 +433,7 @@ export default function MembershipPage() {
                 openingCheckout={openingCheckout}
                 orderLifecycle={orderLifecycle}
                 plan={selection?.plan ?? null}
+                planOptions={paymentPlanOptions}
                 seats={selection?.seats ?? 1}
                 submitting={submitting}
                 teamId={teamId}

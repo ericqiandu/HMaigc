@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { MembershipPaymentSetup } from "../src/pages/membership/membership-payment-setup";
 import { shouldNavigateFromMembershipPage } from "../src/pages/membership/membership-payment-dialog";
+import { MembershipOrderFacts, type MembershipOrderFactsProps } from "../src/pages/payment/membership-order-facts";
 import type { MembershipOrderFactsModel, MembershipOrderLifecycle } from "../src/pages/payment/membership-order-facts-domain";
 import { PaymentCheckoutExperience } from "../src/pages/payment/payment-checkout-experience";
 import type { MembershipPlan, Team } from "../src/services/api/membership";
@@ -38,6 +39,17 @@ const teamPlan = {
     sortOrder: 1,
     createdAt: "2026-08-10T00:00:00.000Z",
     updatedAt: "2026-08-10T00:00:00.000Z",
+} satisfies MembershipPlan;
+
+const teamMonthlyPlan = {
+    ...teamPlan,
+    id: "plan-team-flagship-month",
+    code: "team-flagship-month",
+    billingCycle: "month",
+    priceCents: 68_900,
+    originalPriceCents: 93_900,
+    creditsPerPeriod: 1_500_000_000,
+    sortOrder: 0,
 } satisfies MembershipPlan;
 
 const personalPlan = {
@@ -87,9 +99,11 @@ const handlers = {
     onConfirm: () => undefined,
     onClose: () => undefined,
     onRetry: () => undefined,
+    onPlanChange: () => undefined,
     onSeatsChange: () => undefined,
     onTeamIdChange: () => undefined,
     onTeamNameChange: () => undefined,
+    planOptions: [teamMonthlyPlan, teamPlan],
 };
 
 function locateElementByClassName(node: ReactNode, targetClassName: string): ReactElement<Record<string, unknown>> | null {
@@ -110,15 +124,35 @@ function findElementByClassName(node: ReactNode, targetClassName: string): React
     throw new Error(`找不到渲染控件 ${targetClassName}`);
 }
 
+function findMembershipOrderFacts(node: ReactNode): ReactElement<MembershipOrderFactsProps> {
+    for (const child of Children.toArray(node)) {
+        if (!isValidElement(child)) continue;
+        if (child.type === MembershipOrderFacts) return child as ReactElement<MembershipOrderFactsProps>;
+        const nested = findMembershipOrderFactsOrNull(child.props.children as ReactNode);
+        if (nested) return nested;
+    }
+    throw new Error("找不到团队订单事实组件");
+}
+
+function findMembershipOrderFactsOrNull(node: ReactNode): ReactElement<MembershipOrderFactsProps> | null {
+    for (const child of Children.toArray(node)) {
+        if (!isValidElement(child)) continue;
+        if (child.type === MembershipOrderFacts) return child as ReactElement<MembershipOrderFactsProps>;
+        const nested = findMembershipOrderFactsOrNull(child.props.children as ReactNode);
+        if (nested) return nested;
+    }
+    return null;
+}
+
 describe("membership payment dialog", () => {
-    test("all membership payment dialog states use the approved 766px reference width", () => {
+    test("team payment states use the approved 880px reference width without changing personal checkout width", () => {
         const dialogSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-dialog.tsx"), "utf8");
         const setupSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/membership-payment-setup.tsx"), "utf8");
         const storefrontSource = readFileSync(resolve(import.meta.dir, "../src/pages/membership/index.tsx"), "utf8");
 
         expect(dialogSource).toContain('checkoutToken ? "is-checkout" : "is-setup"');
-        expect(dialogSource).toContain("width={766}");
-        expect(dialogSource).not.toContain("checkoutToken ? 766 : 880");
+        expect(dialogSource).toContain("width={teamDialog ? 880 : 766}");
+        expect(dialogSource).toContain('teamDialog ? "is-team" : "is-personal"');
         expect(setupSource).not.toContain("membership-payment-dialog-heading");
         expect(setupSource).not.toContain("membership-payment-preview");
         expect(setupSource).not.toContain("membership-payment-product");
@@ -186,13 +220,23 @@ describe("membership payment dialog", () => {
             expect(markup).toContain("payment-checkout-order-surface");
             expect(markup).toContain("payment-checkout-payment-surface");
             expect(markup).toContain("membership-order-facts");
-            expect(markup).toContain("membership-order-facts-product");
             expect(markup).toContain("membership-order-facts-details");
         }
+        expect(personalCreationMarkup).toContain("membership-order-facts-product");
+        expect(failureMarkup).toContain("membership-order-facts-product");
+        expect(teamConfirmationMarkup).toContain("membership-team-purchase-configuration");
 
         expect(personalCreationMarkup).toContain("正在创建付款订单");
         expect(teamConfirmationMarkup).toContain("开通团队");
+        expect(teamConfirmationMarkup).toContain("membership-team-plan-options");
+        expect(teamConfirmationMarkup).toContain("membership-team-plan-option is-selected");
+        expect(teamConfirmationMarkup).toContain("1个月");
+        expect(teamConfirmationMarkup).toContain("12个月");
         expect(teamConfirmationMarkup).toContain("席位数量");
+        expect(teamConfirmationMarkup).toContain("支持2–20人");
+        expect(teamConfirmationMarkup).toContain("membership-team-seat-stepper");
+        expect(teamConfirmationMarkup).toContain('aria-label="减少席位"');
+        expect(teamConfirmationMarkup).toContain('aria-label="增加席位"');
         expect(teamConfirmationMarkup).toContain("2 席位");
         expect(teamConfirmationMarkup).toContain("确认配置并生成付款码");
         expect(teamConfirmationMarkup).not.toContain("确认购买");
@@ -210,6 +254,37 @@ describe("membership payment dialog", () => {
         expect(failureMarkup).toContain("−¥100");
         expect(failureMarkup).toContain("¥1,299");
         expect(failureMarkup).not.toContain("豪华版");
+    });
+
+    test("team plan cards and seat stepper update only mutable preorder facts", () => {
+        let selectedPlanID = teamPlan.id;
+        let selectedSeats = 2;
+        const tree = MembershipPaymentSetup({
+            ...handlers,
+            creationError: "",
+            onPlanChange: (planID) => {
+                selectedPlanID = planID;
+            },
+            onSeatsChange: (seats) => {
+                selectedSeats = seats;
+            },
+            orderLifecycle: preorderLifecycle,
+            openingCheckout: false,
+            plan: teamPlan,
+            seats: selectedSeats,
+            submitting: false,
+            teamId: "team-1",
+            teamName: "",
+            teams,
+        });
+
+        const facts = findMembershipOrderFacts(tree).props;
+        if (!facts.onTeamPlanChange || !facts.teamSeatControl) throw new Error("团队套餐与席位控件缺少受控处理器");
+        facts.onTeamPlanChange(teamMonthlyPlan.id);
+        facts.teamSeatControl.onChange(3);
+
+        expect(selectedPlanID).toBe(teamMonthlyPlan.id);
+        expect(selectedSeats).toBe(3);
     });
 
     test("team configuration stays mounted and disabled while order creation or checkout opening writes", () => {
@@ -232,7 +307,8 @@ describe("membership payment dialog", () => {
         for (const markup of [renderWritingTeamSetup(true, false), renderWritingTeamSetup(false, true)]) {
             expect(markup).toContain("membership-payment-team-fields");
             expect(markup).toContain("membership-payment-team-select");
-            expect(markup).toContain("membership-payment-team-seat-input");
+            expect(markup).toContain("membership-team-plan-option");
+            expect(markup).toContain("membership-team-seat-stepper is-locked");
             expect(markup).toContain("确认配置并生成付款码");
             expect(markup).toContain("membership-payment-setup-progress");
             expect(markup).toMatch(/<input[^>]*disabled=""/u);
@@ -269,10 +345,10 @@ describe("membership payment dialog", () => {
 
         const failedTree = renderControlledSetup();
         const nameInput = findElementByClassName(failedTree, "membership-payment-team-name-input");
-        const seatInput = findElementByClassName(failedTree, "membership-payment-team-seat-input");
+        const facts = findMembershipOrderFacts(failedTree).props;
         const onNameChange = nameInput.props.onChange;
-        const onSeatsChange = seatInput.props.onChange;
-        if (typeof onNameChange !== "function" || typeof onSeatsChange !== "function") throw new Error("团队配置控件缺少受控变更处理器");
+        const onSeatsChange = facts.teamSeatControl?.onChange;
+        if (typeof onNameChange !== "function" || !onSeatsChange) throw new Error("团队配置控件缺少受控变更处理器");
         onNameChange({ target: { value: "修正后的星河工作室" } });
         onSeatsChange(4);
 
@@ -286,7 +362,7 @@ describe("membership payment dialog", () => {
         expect(correctedMarkup).toContain("团队名称不符合服务端规则");
         expect(correctedMarkup).toContain("membership-payment-team-fields");
         expect(correctedMarkup).toContain("修正后的星河工作室");
-        expect(correctedMarkup).toContain('value="4"');
+        expect(correctedMarkup).toContain("4 席位");
         expect(correctedMarkup).toContain("使用当前配置重试");
         expect(correctedMarkup).not.toContain('disabled=""');
         expect(retriedInput).toEqual({ seats: 4, teamName: "修正后的星河工作室" });

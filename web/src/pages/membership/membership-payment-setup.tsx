@@ -1,4 +1,4 @@
-import { Button, Input, InputNumber, Select } from "antd";
+import { Button, Input, Select } from "antd";
 import { ArrowRight, LoaderCircle, ShieldCheck } from "lucide-react";
 import type { ReactElement } from "react";
 
@@ -11,6 +11,7 @@ export type MembershipPaymentSetupProps = {
     creationError: string;
     onClose: () => void;
     onConfirm: () => void;
+    onPlanChange: (planID: string) => void;
     onRetry: () => void;
     onSeatsChange: (seats: number) => void;
     onTeamIdChange: (teamId: string | undefined) => void;
@@ -18,6 +19,7 @@ export type MembershipPaymentSetupProps = {
     openingCheckout: boolean;
     orderLifecycle: MembershipOrderLifecycle;
     plan: MembershipPlan | null;
+    planOptions: MembershipPlan[];
     seats: number;
     submitting: boolean;
     teamId?: string;
@@ -29,6 +31,7 @@ export function MembershipPaymentSetup({
     creationError,
     onClose,
     onConfirm,
+    onPlanChange,
     onRetry,
     onSeatsChange,
     onTeamIdChange,
@@ -36,22 +39,44 @@ export function MembershipPaymentSetup({
     openingCheckout,
     orderLifecycle,
     plan,
+    planOptions,
     seats,
     submitting,
     teamId,
     teamName,
     teams,
 }: MembershipPaymentSetupProps): ReactElement {
-    const teamPlan = plan?.audience === "team";
-    const appliedSeats = plan && teamPlan ? Math.min(plan.maxSeats, Math.max(plan.minSeats, seats)) : 1;
+    const isTeamPlan = plan?.audience === "team";
+    const appliedSeats = plan && isTeamPlan ? Math.min(plan.maxSeats, Math.max(plan.minSeats, seats)) : 1;
     const facts = orderLifecycle.kind === "frozen-ready" ? orderLifecycle.facts : orderLifecycle.kind === "preorder" && plan ? membershipOrderFactsFromPlan(plan, appliedSeats) : null;
     const writeInFlight = submitting || openingCheckout;
     const hasVisibleError = orderLifecycle.kind === "frozen-invalid" || creationError.length > 0;
     const editableTeamPlan = orderLifecycle.kind === "preorder" && plan?.audience === "team" ? plan : null;
+    const teamPlan = plan?.audience === "team" ? plan : null;
+    const teamSeatControl = teamPlan
+        ? {
+              disabled: !editableTeamPlan || writeInFlight,
+              maxSeats: teamPlan.maxSeats,
+              minSeats: teamPlan.minSeats,
+              onChange: editableTeamPlan ? onSeatsChange : undefined,
+          }
+        : undefined;
 
     return (
-        <div className="payment-checkout-shell is-dialog membership-payment-setup">
-            <div className="payment-checkout-order-surface">{facts ? <MembershipOrderFacts facts={facts} /> : <MembershipOrderFactsSkeleton />}</div>
+        <div className={`payment-checkout-shell is-dialog membership-payment-setup ${teamPlan ? "is-team" : "is-personal"}`}>
+            <div className="payment-checkout-order-surface">
+                {facts ? (
+                    <MembershipOrderFacts
+                        facts={facts}
+                        onTeamPlanChange={editableTeamPlan && !writeInFlight ? onPlanChange : undefined}
+                        selectedTeamPlanID={teamPlan?.id}
+                        teamPlanOptions={teamPlan ? planOptions : undefined}
+                        teamSeatControl={teamSeatControl}
+                    />
+                ) : (
+                    <MembershipOrderFactsSkeleton />
+                )}
+            </div>
             <aside aria-label="创建付款码" className="payment-checkout-payment-surface membership-payment-setup-action">
                 {orderLifecycle.kind === "frozen-invalid" ? (
                     <div className="membership-payment-setup-error membership-payment-setup-frozen-error" role="alert">
@@ -91,17 +116,6 @@ export function MembershipPaymentSetup({
                                 ) : (
                                     <Input className="membership-payment-team-name-input" disabled={writeInFlight} onChange={(event) => onTeamNameChange(event.target.value)} placeholder="输入新团队名称" value={teamName} />
                                 )}
-                            </label>
-                            <label className="membership-payment-team-field">
-                                <span className="membership-payment-team-field-label">席位数量</span>
-                                <InputNumber
-                                    className="membership-payment-team-seat-input"
-                                    disabled={writeInFlight}
-                                    max={editableTeamPlan.maxSeats}
-                                    min={editableTeamPlan.minSeats}
-                                    onChange={(value) => onSeatsChange(value ?? editableTeamPlan.minSeats)}
-                                    value={appliedSeats}
-                                />
                             </label>
                         </div>
                         <ShieldCheck aria-hidden="true" className="membership-payment-setup-confirmation-icon" />

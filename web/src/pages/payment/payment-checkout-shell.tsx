@@ -7,6 +7,7 @@ type PaymentCheckoutShellProps = {
     onBack: () => void;
     payment: ReactNode;
     summary: ReactNode;
+    variant?: "default" | "team";
 };
 
 type PaymentCheckoutInitialErrorProps = {
@@ -28,9 +29,9 @@ export function PaymentCheckoutInitialError({ canRetry, message, onRetry }: Paym
     );
 }
 
-export function PaymentCheckoutShell({ busy, mode, onBack, payment, summary }: PaymentCheckoutShellProps) {
+export function PaymentCheckoutShell({ busy, mode, onBack, payment, summary, variant = "default" }: PaymentCheckoutShellProps) {
     const checkout = (
-        <section aria-busy={busy} aria-label="订单收银台" className={`payment-checkout-shell is-${mode}`}>
+        <section aria-busy={busy} aria-label="订单收银台" className={`payment-checkout-shell is-${mode} ${variant === "team" ? "is-team" : "is-default"}`}>
             <div className="payment-checkout-order-surface">{summary}</div>
             <aside aria-label="扫码支付" className="payment-checkout-payment-surface">
                 {payment}

@@ -106,10 +106,10 @@ export function PaymentQrPanel({ checkout, checkoutSecondsLeft, onProviderChange
 
             {transaction && !transactionExpired ? (
                 <div className="payment-checkout-qr-content">
+                    <strong className="payment-checkout-qr-provider">请使用{providerLabels[transaction.provider]}扫码支付</strong>
                     <div aria-label={`${providerLabels[transaction.provider]}付款二维码`} className="payment-checkout-qr-code" role="img">
                         <QRCode bgColor="var(--qr-background)" bordered={false} className="payment-checkout-qr-image" color="var(--qr-foreground)" errorLevel="M" marginSize={4} size={112} type="svg" value={transaction.codeUrl} />
                     </div>
-                    <strong className="payment-checkout-qr-provider">请使用{providerLabels[transaction.provider]}扫码支付</strong>
                     <span aria-live="off" className="payment-checkout-countdown" role="timer">
                         <Clock3 aria-hidden="true" className="payment-checkout-countdown-icon" />
                         {formatCountdown(paymentSecondsLeft)} 后付款码失效
