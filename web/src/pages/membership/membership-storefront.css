@@ -18,6 +18,44 @@
     font: inherit;
 }
 
+.membership-storefront-close {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 100;
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    cursor: pointer;
+    transition:
+        color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.membership-storefront-close:hover {
+    background: var(--bg-hover);
+}
+
+.membership-storefront-close:active {
+    color: var(--text-secondary);
+}
+
+.membership-storefront-close-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.membership-storefront-promo-content {
+    padding-right: 64px;
+}
+
 .membership-storefront-audience-tab {
     color: #7d8794;
 }
@@ -114,6 +152,11 @@
 }
 
 @media (max-width: 720px) {
+    .membership-storefront-close {
+        top: 12px;
+        right: 12px;
+    }
+
     .membership-storefront-promo,
     .membership-storefront-pricing,
     .membership-storefront-generation,

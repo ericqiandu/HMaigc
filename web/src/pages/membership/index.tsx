@@ -1,6 +1,6 @@
 import { Alert, Button, Empty, message, Spin } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
-import { Crown, ImageIcon, Video } from "lucide-react";
+import { Crown, ImageIcon, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -28,11 +28,12 @@ import { membershipOrderFactsFromOrder, type MembershipOrderLifecycle } from "..
 import { clampSeats, publicPlanName, topupDiscountLabel } from "./membership-formatters";
 import { MembershipOrderHistory } from "./membership-order-history";
 import { MembershipInvoiceCenter } from "./membership-invoice-center";
-import { MembershipPaymentDialog, shouldNavigateFromMembershipPage } from "./membership-payment-dialog";
+import { MembershipPaymentDialog } from "./membership-payment-dialog";
 import { MembershipStorefrontFAQs } from "./membership-storefront-faq";
 import { MembershipStorefrontGeneration } from "./membership-storefront-generation";
 import { MembershipStorefrontPricing } from "./membership-storefront-pricing";
 import { MembershipStorefrontPromo } from "./membership-storefront-promo";
+import { membershipStorefrontExitIntent, shouldExitMembershipStorefront } from "./membership-storefront-navigation";
 import "./membership.css";
 import "./membership-order.css";
 import "./membership-responsive.css";
@@ -116,13 +117,21 @@ export default function MembershipPage() {
         persistResolvedTeamID(requestedTeamId);
     }, [overview, persistResolvedTeamID, requestedTeamId]);
 
+    const exitMembershipStorefront = useCallback(() => {
+        if (membershipStorefrontExitIntent(window.history.state) === "back") {
+            navigate(-1);
+            return;
+        }
+        navigate("/");
+    }, [navigate]);
+
     useEffect(() => {
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (shouldNavigateFromMembershipPage(event.key, dialogOpen)) navigate(-1);
+            if (shouldExitMembershipStorefront(event.key, dialogOpen)) exitMembershipStorefront();
         };
         window.addEventListener("keydown", closeOnEscape);
         return () => window.removeEventListener("keydown", closeOnEscape);
-    }, [dialogOpen, navigate]);
+    }, [dialogOpen, exitMembershipStorefront]);
 
     const plans = storefront?.plans ?? [];
 
@@ -307,6 +316,11 @@ export default function MembershipPage() {
 
     return (
         <main className="membership-storefront-page min-h-screen bg-[#070b11] font-sans antialiased">
+            {!dialogOpen ? (
+                <button aria-label="关闭会员商城" className="membership-storefront-close" onClick={exitMembershipStorefront} type="button">
+                    <X aria-hidden="true" className="membership-storefront-close-icon" />
+                </button>
+            ) : null}
             {storefront ? <MembershipStorefrontPromo promotion={storefront.presentation.promotion} serverNow={storefront.serverNow} /> : null}
 
             {loadError ? (

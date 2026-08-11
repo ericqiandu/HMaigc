@@ -5,7 +5,6 @@ import { Children, createElement, isValidElement, type ReactElement, type ReactN
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MembershipPaymentSetup } from "../src/pages/membership/membership-payment-setup";
-import { shouldNavigateFromMembershipPage } from "../src/pages/membership/membership-payment-dialog";
 import { MembershipOrderFacts, type MembershipOrderFactsProps } from "../src/pages/payment/membership-order-facts";
 import type { MembershipOrderFactsModel, MembershipOrderLifecycle } from "../src/pages/payment/membership-order-facts-domain";
 import { PaymentCheckoutExperience } from "../src/pages/payment/payment-checkout-experience";
@@ -165,12 +164,6 @@ describe("membership payment dialog", () => {
         expect(storefrontSource).not.toContain("let createdOrder = false");
         expect(storefrontSource).not.toContain("const frozenReady = storeFrozenOrderFacts(order)");
     });
-    test("Escape never navigates away while the payment dialog owns keyboard dismissal", () => {
-        expect(shouldNavigateFromMembershipPage("Escape", true)).toBe(false);
-        expect(shouldNavigateFromMembershipPage("Escape", false)).toBe(true);
-        expect(shouldNavigateFromMembershipPage("Enter", false)).toBe(false);
-    });
-
     test("creation, failure, and team confirmation retain the shared left order facts", () => {
         const personalCreationMarkup = renderToStaticMarkup(
             createElement(MembershipPaymentSetup, {

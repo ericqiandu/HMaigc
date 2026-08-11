@@ -30,10 +30,6 @@ export type MembershipPaymentDialogProps = {
     teams: Team[];
 };
 
-export function shouldNavigateFromMembershipPage(key: string, paymentDialogOpen: boolean): boolean {
-    return key === "Escape" && !paymentDialogOpen;
-}
-
 export function MembershipPaymentDialog({
     checkoutToken,
     className = "",

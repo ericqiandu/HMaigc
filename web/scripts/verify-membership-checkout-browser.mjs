@@ -162,7 +162,27 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
         const navigation = await page.goto(`${baseURL}/membership`, { waitUntil: "domcontentloaded", timeout: 30_000 });
         assert.ok(navigation, `${label}: 会员页导航没有响应`);
         await waitForMembershipPlanAction(page, "creator-flagship-year", label, failures);
+        const storefrontClose = await page.$(".membership-storefront-close");
+        assert.ok(storefrontClose, `${label}: 会员商城缺少页面关闭按钮`);
+        const storefrontCloseFacts = await storefrontClose.evaluate((button) => {
+            const bounds = button.getBoundingClientRect();
+            return {
+                ariaLabel: button.getAttribute("aria-label"),
+                height: bounds.height,
+                width: bounds.width,
+            };
+        });
+        assert.equal(storefrontCloseFacts.ariaLabel, "关闭会员商城", `${label}: 页面关闭按钮缺少准确可访问名称`);
+        assert.ok(storefrontCloseFacts.width >= 44 && storefrontCloseFacts.height >= 44, `${label}: 页面关闭按钮触控热区不足 44px`);
+        if (state === "membership-personal-creating-dialog") {
+            await page.click(".membership-storefront-close");
+            await page.waitForFunction(() => location.pathname === "/", { timeout: 10_000 });
+            const returnNavigation = await page.goto(`${baseURL}/membership`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+            assert.ok(returnNavigation, `${label}: 页面关闭后无法重新进入会员页`);
+            await waitForMembershipPlanAction(page, "creator-flagship-year", label, failures);
+        }
         await page.click('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action');
+        assert.equal(await page.$(".membership-storefront-close"), null, `${label}: 付款弹窗打开时页面关闭按钮仍可操作`);
         if (state === "membership-personal-order-failure-dialog") {
             await page.waitForFunction(() => document.body.innerText.includes("会员订单服务暂时不可用"), { timeout: 15_000 });
             assert.ok(await page.$(".membership-payment-setup-error .membership-payment-setup-primary"), `${label}: 创建失败缺少重试入口`);

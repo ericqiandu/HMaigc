@@ -11,7 +11,6 @@ describe("会员商城交付稿视觉契约", () => {
         const promo = readFileSync(resolve(root, "src/pages/membership/membership-storefront-promo.tsx"), "utf8");
         expect(page).toContain('className="membership-storefront-page min-h-screen bg-[#070b11] font-sans antialiased"');
         expect(page).not.toContain("membership-storefront-page-title");
-        expect(page).not.toContain("membership-storefront-close");
         expect(promo).toContain("membership-storefront-promo");
         expect(pricing).toContain("membership-storefront-audience-tabs mt-10 flex justify-center gap-14");
         expect(pricing).toContain("membership-storefront-cycle-switch mx-auto flex rounded-full");
