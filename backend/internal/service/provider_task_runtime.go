@@ -34,6 +34,8 @@ type ProviderTaskRuntime struct {
 	ChannelModel      model.ChannelModel
 }
 
+var errResolvedProviderObservationHandedOff = errors.New("resolved provider observation handed off")
+
 func (s *Service) finalizeProviderExecutionFailure(task model.Task, cause error) error {
 	fact, err := s.repo.ProviderTaskFact(task.ID)
 	if err != nil {
@@ -96,8 +98,11 @@ func (s *Service) processFrozenProviderCanvasTask(ctx context.Context, task mode
 	if fact.TaskID != task.ID {
 		return nil, errors.New("冻结上游任务事实与执行任务不一致")
 	}
-	if fact.ProviderStatus == "succeeded" {
+	if repository.ResolvedProviderSuccessStatus(fact.ProviderStatus) {
 		return s.processSucceededProviderTask(ctx, task, fact)
+	}
+	if repository.ResolvedProviderObservationStatus(fact.ProviderStatus) {
+		return s.processResolvedProviderObservationTask(ctx, task, fact)
 	}
 	var input canvasGenerationInput
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
@@ -127,6 +132,29 @@ func (s *Service) processFrozenProviderCanvasTask(ctx context.Context, task mode
 	}
 	client := NewKuaiziSeedance25Client(KuaiziHTTPClient(environment, providerHTTPTimeout), NewProviderSecretCipher(s.dataDir))
 	providerResult, err := s.executeKuaiziSeedance25Task(ctx, runtime, input, client, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	providerTaskID, _ := providerResult["taskId"].(string)
+	sourceURL, _ := providerResult["sourceUrl"].(string)
+	lastFrameURL, _ := providerResult["lastFrameUrl"].(string)
+	return s.downloadKuaiziSeedance25Result(ctx, providerTaskID, sourceURL, lastFrameURL, providerResult["duration"], providerResult["totalTokens"])
+}
+
+func (s *Service) processResolvedProviderObservationTask(ctx context.Context, task model.Task, fact model.ProviderTaskFact) (map[string]interface{}, error) {
+	if fact.TaskID != task.ID || fact.ProviderTaskID == "" || fact.ReconciliationStatus != "resolved" {
+		return nil, errors.New("已决上游观察事实不完整")
+	}
+	runtime, err := s.resolveProviderTaskRuntime(task.ID)
+	if err != nil {
+		return nil, err
+	}
+	environment := strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT"))
+	if _, err := ValidateKuaiziBaseURL(ctx, runtime.EndpointVersion.BaseURL, environment); err != nil {
+		return nil, fmt.Errorf("已决筷子观察地址运行时校验失败：%w", err)
+	}
+	client := NewKuaiziSeedance25Client(KuaiziHTTPClient(environment, providerHTTPTimeout), NewProviderSecretCipher(s.dataDir))
+	providerResult, err := s.executeKuaiziSeedance25Task(ctx, runtime, canvasGenerationInput{}, client, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -552,6 +580,10 @@ func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *Prov
 			creation, err := s.repo.SaveProviderTaskCreationForLease(runtime.Task.ID, lease, created.TaskID, created.TraceID)
 			if err != nil {
 				return nil, err
+			}
+			if creation.ResolvedObservation {
+				_ = s.log(runtime.Task.UserID, runtime.Task.ID, "warn", "人工核对后收到迟到上游任务号，已建立持续观察", "")
+				return nil, errResolvedProviderObservationHandedOff
 			}
 			if creation.HandedOff {
 				return nil, errors.New("provider create response handed off to a newer task generation")

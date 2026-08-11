@@ -27,7 +27,8 @@ type ProviderTaskFailureResolution struct {
 }
 
 type ProviderTaskCreationWrite struct {
-	HandedOff bool
+	HandedOff           bool
+	ResolvedObservation bool
 }
 
 type ProviderTaskCancelDecision string
@@ -41,6 +42,8 @@ type ProviderTaskCancelResult struct {
 	Decision ProviderTaskCancelDecision
 	Task     model.Task
 }
+
+var ErrProviderTaskCancelGenerationConflict = errors.New("provider cancellation generation conflict")
 
 type ProviderCreateUncertainDecision string
 
@@ -122,6 +125,14 @@ func (r *Repository) SaveProviderTaskCreationForLease(taskID string, lease Provi
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", fact.BillingOrderID).Error; err != nil {
 				return err
 			}
+			if fact.ReconciliationStatus == "resolved" {
+				if order.Status != model.BillingStatusSettled && order.Status != model.BillingStatusRefunded {
+					return errors.New("resolved provider observation billing state conflict")
+				}
+				if strings.TrimSpace(order.ResolvedBy) == "" {
+					return errors.New("resolved provider observation requires an administrative decision")
+				}
+			}
 		}
 		var task model.Task
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
@@ -129,11 +140,18 @@ func (r *Repository) SaveProviderTaskCreationForLease(taskID string, lease Provi
 		}
 		now := time.Now()
 		currentLease := task.Status == model.TaskStatusRunning && task.LeaseOwner == lease.Owner && task.LeaseToken == lease.Token && task.LeaseExpiresAt != nil && task.LeaseExpiresAt.After(now)
-		write.HandedOff = !currentLease
+		write.ResolvedObservation = fact.ReconciliationStatus == "resolved"
+		if write.ResolvedObservation && task.Status != model.TaskStatusFailed {
+			return errors.New("resolved provider observation task state conflict")
+		}
+		write.HandedOff = !currentLease || write.ResolvedObservation
 		updates := map[string]any{
 			"provider_task_id": providerTaskID, "create_trace_id": strings.TrimSpace(traceID), "updated_at": now,
 		}
-		if fact.ProviderStatus == "creating" {
+		if write.ResolvedObservation {
+			updates["provider_status"] = "resolved_observation_submitted"
+			updates["execution_lease_token"] = ""
+		} else if fact.ProviderStatus == "creating" {
 			updates["provider_status"] = "submitted"
 			updates["execution_lease_token"] = task.LeaseToken
 		}
@@ -144,12 +162,20 @@ func (r *Repository) SaveProviderTaskCreationForLease(taskID string, lease Provi
 		if factUpdate.RowsAffected != 1 {
 			return errors.New("provider task creation fact state conflict")
 		}
-		if err := tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{
-			"provider_request_id": providerTaskID, "poll_stage": "accepted", "updated_at": now,
-		}).Error; err != nil {
+		taskUpdates := map[string]any{"provider_request_id": providerTaskID, "poll_stage": "accepted", "updated_at": now}
+		if write.ResolvedObservation {
+			taskUpdates["status"] = model.TaskStatusQueued
+			taskUpdates["stage"] = "等待核对已决任务的上游观察"
+			taskUpdates["completed_at"] = nil
+			taskUpdates["next_poll_at"] = now.Add(time.Second)
+			taskUpdates["lease_owner"] = ""
+			taskUpdates["lease_token"] = ""
+			taskUpdates["lease_expires_at"] = nil
+		}
+		if err := tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(taskUpdates).Error; err != nil {
 			return err
 		}
-		if fact.BillingOrderID != "" {
+		if fact.BillingOrderID != "" && !write.ResolvedObservation {
 			if err := tx.Model(&model.BillingOrder{}).Where("id = ?", fact.BillingOrderID).Update("provider_request_id", providerTaskID).Error; err != nil {
 				return err
 			}
@@ -166,11 +192,20 @@ func (r *Repository) UpdateProviderTaskPollForLease(taskID string, lease Provide
 		if err != nil {
 			return err
 		}
-		if fact.ProviderTaskID == "" || fact.ReconciliationStatus == "resolved" || !allowedProviderPollTransition(fact.ProviderStatus, providerStatus) {
+		storedStatus := providerStatus
+		if fact.ReconciliationStatus == "resolved" && resolvedProviderObservationActive(fact.ProviderStatus) {
+			storedStatus = resolvedProviderObservationStatus(providerStatus)
+			if storedStatus == "" || !allowedResolvedProviderObservationTransition(fact.ProviderStatus, storedStatus) {
+				return errors.New("resolved provider observation poll fact state conflict")
+			}
+		} else if fact.ReconciliationStatus == "resolved" || !allowedProviderPollTransition(fact.ProviderStatus, providerStatus) {
+			return errors.New("provider task poll fact state conflict")
+		}
+		if fact.ProviderTaskID == "" {
 			return errors.New("provider task poll fact state conflict")
 		}
 		updated := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_status = ?", taskID, fact.ProviderStatus).Updates(map[string]any{
-			"provider_status": providerStatus, "last_poll_trace_id": strings.TrimSpace(traceID), "updated_at": time.Now(),
+			"provider_status": storedStatus, "last_poll_trace_id": strings.TrimSpace(traceID), "updated_at": time.Now(),
 		})
 		if updated.Error != nil {
 			return updated.Error
@@ -188,11 +223,17 @@ func (r *Repository) SaveProviderTaskSuccessForLease(taskID string, lease Provid
 		if err != nil {
 			return err
 		}
-		if fact.ProviderTaskID == "" || fact.ReconciliationStatus == "resolved" || !providerSuccessPredecessor(fact.ProviderStatus) {
+		storedStatus := "succeeded"
+		if fact.ReconciliationStatus == "resolved" && resolvedProviderObservationActive(fact.ProviderStatus) {
+			storedStatus = "resolved_observation_succeeded"
+		} else if fact.ReconciliationStatus == "resolved" || !providerSuccessPredecessor(fact.ProviderStatus) {
+			return errors.New("provider task success fact state conflict")
+		}
+		if fact.ProviderTaskID == "" {
 			return errors.New("provider task success fact state conflict")
 		}
 		updated := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_status = ?", taskID, fact.ProviderStatus).Updates(map[string]any{
-			"provider_status": "succeeded", "last_poll_trace_id": strings.TrimSpace(traceID),
+			"provider_status": storedStatus, "last_poll_trace_id": strings.TrimSpace(traceID),
 			"asset_source_url": strings.TrimSpace(assetSourceURL), "last_frame_url": strings.TrimSpace(lastFrameURL),
 			"actual_duration_seconds": actualDuration, "total_tokens": strings.TrimSpace(totalTokens), "updated_at": time.Now(),
 		})
@@ -247,6 +288,139 @@ func providerSuccessPredecessor(status string) bool {
 	}
 }
 
+func resolvedProviderObservationStatus(providerStatus string) string {
+	switch providerStatus {
+	case "submitted", "pending", "running":
+		return "resolved_observation_" + providerStatus
+	default:
+		return ""
+	}
+}
+
+func resolvedProviderObservationActive(status string) bool {
+	switch status {
+	case "resolved_observation_submitted", "resolved_observation_pending", "resolved_observation_running", "resolved_observation_poll_uncertain":
+		return true
+	default:
+		return false
+	}
+}
+
+func ResolvedProviderObservationStatus(status string) bool {
+	return resolvedProviderObservationActive(status)
+}
+
+func ResolvedProviderSuccessStatus(status string) bool {
+	return status == "succeeded" || status == "resolved_observation_succeeded"
+}
+
+func allowedResolvedProviderObservationTransition(current string, next string) bool {
+	switch next {
+	case "resolved_observation_submitted":
+		return current == "resolved_observation_submitted" || current == "resolved_observation_poll_uncertain"
+	case "resolved_observation_pending":
+		return current == "resolved_observation_submitted" || current == "resolved_observation_pending" || current == "resolved_observation_poll_uncertain"
+	case "resolved_observation_running":
+		return current == "resolved_observation_submitted" || current == "resolved_observation_pending" || current == "resolved_observation_running" || current == "resolved_observation_poll_uncertain"
+	default:
+		return false
+	}
+}
+
+func (r *Repository) FinalizeResolvedProviderObservationFailure(taskID string, lease ProviderTaskLease, traceID string, stage string, taskError string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if fact.ReconciliationStatus != "resolved" || !resolvedProviderObservationActive(fact.ProviderStatus) || fact.ExecutionLeaseToken != lease.Token {
+			return errors.New("resolved provider observation failure fact state conflict")
+		}
+		var order model.BillingOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", fact.BillingOrderID).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusSettled && order.Status != model.BillingStatusRefunded {
+			return errors.New("resolved provider observation failure billing state conflict")
+		}
+		now := time.Now()
+		var task model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.TaskStatusRunning || task.LeaseOwner != lease.Owner || task.LeaseToken != lease.Token || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
+			return errors.New("resolved provider observation failure task lease conflict")
+		}
+		factUpdate := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_status = ?", taskID, fact.ProviderStatus).Updates(map[string]any{
+			"provider_status": "resolved_observation_failed", "last_poll_trace_id": strings.TrimSpace(traceID), "updated_at": now,
+		})
+		if factUpdate.Error != nil {
+			return factUpdate.Error
+		}
+		if factUpdate.RowsAffected != 1 {
+			return errors.New("resolved provider observation failure fact conflict")
+		}
+		updated := tx.Model(&model.Task{}).Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ?", taskID, model.TaskStatusRunning, lease.Owner, lease.Token).Updates(map[string]any{
+			"status": model.TaskStatusFailed, "stage": strings.TrimSpace(stage), "error": strings.TrimSpace(taskError), "completed_at": &now,
+			"lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
+		})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return errors.New("resolved provider observation failure task conflict")
+		}
+		return nil
+	})
+}
+
+func (r *Repository) RequeueResolvedProviderObservation(taskID string, lease ProviderTaskLease, traceID string, reason string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if fact.ReconciliationStatus != "resolved" || !resolvedProviderObservationActive(fact.ProviderStatus) || fact.ExecutionLeaseToken != lease.Token {
+			return errors.New("resolved provider observation requeue fact state conflict")
+		}
+		var order model.BillingOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", fact.BillingOrderID).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusSettled && order.Status != model.BillingStatusRefunded {
+			return errors.New("resolved provider observation requeue billing state conflict")
+		}
+		now := time.Now()
+		var task model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.TaskStatusRunning || task.LeaseOwner != lease.Owner || task.LeaseToken != lease.Token || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
+			return errors.New("resolved provider observation requeue task lease conflict")
+		}
+		factUpdate := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_status = ?", taskID, fact.ProviderStatus).Updates(map[string]any{
+			"provider_status": "resolved_observation_poll_uncertain", "last_poll_trace_id": strings.TrimSpace(traceID), "updated_at": now,
+		})
+		if factUpdate.Error != nil {
+			return factUpdate.Error
+		}
+		if factUpdate.RowsAffected != 1 {
+			return errors.New("resolved provider observation requeue fact conflict")
+		}
+		updated := tx.Model(&model.Task{}).Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ?", taskID, model.TaskStatusRunning, lease.Owner, lease.Token).Updates(map[string]any{
+			"status": model.TaskStatusQueued, "stage": "等待继续观察已决上游任务", "error": strings.TrimSpace(reason), "completed_at": nil,
+			"next_poll_at": now.Add(5 * time.Second), "lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
+		})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return errors.New("resolved provider observation requeue task conflict")
+		}
+		return nil
+	})
+}
+
 func (r *Repository) FinalizeProviderTaskRefund(taskID string, lease ProviderTaskLease, resolution ProviderTaskFailureResolution) error {
 	return r.finalizeProviderTaskFailure(taskID, lease, resolution, func(tx *gorm.DB, fact model.ProviderTaskFact) error {
 		return refundBillingOrderTx(tx, fact.BillingOrderID, resolution.TaskError)
@@ -268,7 +442,7 @@ func (r *Repository) FinalizeProviderTaskUncertain(taskID string, lease Provider
 	})
 }
 
-func (r *Repository) CancelProviderTask(userID string, taskID string, reason string) (ProviderTaskCancelResult, error) {
+func (r *Repository) CancelProviderTask(userID string, taskID string, expectedLeaseToken string, reason string) (ProviderTaskCancelResult, error) {
 	result := ProviderTaskCancelResult{}
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var fact model.ProviderTaskFact
@@ -308,8 +482,16 @@ func (r *Repository) CancelProviderTask(userID string, taskID string, reason str
 		if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning {
 			return errors.New("provider task cannot be cancelled in its current state")
 		}
-		if task.Status == model.TaskStatusRunning && (fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != task.LeaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now)) {
-			return errors.New("provider cancellation generation state conflict")
+		if task.Status == model.TaskStatusRunning && (expectedLeaseToken == "" || task.LeaseToken != expectedLeaseToken) {
+			return ErrProviderTaskCancelGenerationConflict
+		}
+		if task.Status == model.TaskStatusQueued && expectedLeaseToken != task.LeaseToken {
+			return ErrProviderTaskCancelGenerationConflict
+		}
+		if !beforeOutbound {
+			if err := handoffCancelledSourceTaskResourceTx(tx, userID, taskID, now); err != nil {
+				return err
+			}
 		}
 
 		if beforeOutbound {
@@ -361,6 +543,27 @@ func (r *Repository) CancelProviderTask(userID string, taskID string, reason str
 		return tx.First(&result.Task, "id = ?", taskID).Error
 	})
 	return result, err
+}
+
+func handoffCancelledSourceTaskResourceTx(tx *gorm.DB, userID string, taskID string, now time.Time) error {
+	var resource model.Resource
+	query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND source_task_id = ?", userID, taskID).Limit(1).Find(&resource)
+	if query.Error != nil || query.RowsAffected == 0 || resource.Status == model.ResourceStatusReady {
+		return query.Error
+	}
+	if resource.Status != model.ResourceStatusPending && resource.Status != model.ResourceStatusFailed {
+		return errors.New("provider cancellation source resource state is invalid")
+	}
+	updated := tx.Model(&model.Resource{}).Where("id = ? AND status IN ?", resource.ID, []model.ResourceStatus{model.ResourceStatusPending, model.ResourceStatusFailed}).Updates(map[string]any{
+		"write_resolution": "cancel_resolving", "updated_at": now,
+	})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return errors.New("provider cancellation resource handoff conflict")
+	}
+	return nil
 }
 
 func resolveCancelledPendingResourceTx(tx *gorm.DB, userID string, taskID string, reason string, now time.Time) error {
@@ -499,7 +702,7 @@ func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string
 		}
 		var active int64
 		if err := tx.Model(&model.ProviderTaskFact{}).
-			Where("provider_credential_id = ? AND task_id <> ? AND reconciliation_status IN ? AND provider_status IN ?", credential.ID, taskID, []string{"pending", "cancel_requested"}, providerCapacityOccupancyStatuses()).
+			Where("provider_credential_id = ? AND task_id <> ? AND ((reconciliation_status IN ? AND provider_status IN ?) OR provider_status IN ?)", credential.ID, taskID, []string{"pending", "cancel_requested"}, providerCapacityOccupancyStatuses(), resolvedProviderObservationOccupancyStatuses()).
 			Count(&active).Error; err != nil {
 			return err
 		}
@@ -543,7 +746,7 @@ func (r *Repository) RequeueProviderTaskPostprocess(taskID string, lease Provide
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" || fact.ExecutionLeaseToken != lease.Token {
+		if !ResolvedProviderSuccessStatus(fact.ProviderStatus) || fact.ExecutionLeaseToken != lease.Token {
 			return errors.New("provider postprocess fact state conflict")
 		}
 		var order model.BillingOrder
@@ -747,9 +950,10 @@ func (r *Repository) resolveProviderTaskBilling(billingOrderID string, resolutio
 			return errors.New("provider reconciliation source resource state is invalid")
 		}
 		hasSucceededPostprocess := fact.ProviderStatus == "succeeded"
+		adoptResolvedObservation := fact.ProviderStatus == "create_uncertain" && fact.ReconciliationStatus == "manual_review" && strings.TrimSpace(fact.ProviderTaskID) != ""
 		resourceNeedsPostprocess := resourceQuery.RowsAffected == 0 || resource.Status != model.ResourceStatusReady
 		deferTerminalForPostprocess := hasSucceededPostprocess && resourceNeedsPostprocess
-		if task.Status == model.TaskStatusQueued && fact.ReconciliationStatus != "cancel_requested" && !deferTerminalForPostprocess {
+		if task.Status == model.TaskStatusQueued && fact.ReconciliationStatus != "cancel_requested" && !deferTerminalForPostprocess && !adoptResolvedObservation {
 			return errors.New("provider reconciliation task is not running or terminal")
 		}
 		if deferTerminalForPostprocess && resourceQuery.RowsAffected == 1 {
@@ -761,7 +965,18 @@ func (r *Repository) resolveProviderTaskBilling(billingOrderID string, resolutio
 				return errors.New("provider reconciliation resource writer changed before resolution")
 			}
 		}
-		if deferTerminalForPostprocess {
+		if adoptResolvedObservation {
+			taskUpdate := tx.Model(&model.Task{}).Where("id = ? AND status = ?", fact.TaskID, task.Status).Updates(map[string]any{
+				"status": model.TaskStatusQueued, "stage": "等待核对已决任务的上游观察", "error": resolution.TaskError, "completed_at": nil,
+				"next_poll_at": now.Add(time.Second), "lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
+			})
+			if taskUpdate.Error != nil {
+				return taskUpdate.Error
+			}
+			if taskUpdate.RowsAffected != 1 {
+				return errors.New("provider reconciliation resolved observation handoff conflict")
+			}
+		} else if deferTerminalForPostprocess {
 			taskUpdate := tx.Model(&model.Task{}).Where("id = ? AND status = ?", fact.TaskID, task.Status).Updates(map[string]any{
 				"status": model.TaskStatusQueued, "stage": resolution.PostprocessStage, "error": resolution.TaskError, "completed_at": nil,
 				"next_poll_at": now.Add(time.Second), "lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
@@ -784,9 +999,13 @@ func (r *Repository) resolveProviderTaskBilling(billingOrderID string, resolutio
 				return errors.New("provider reconciliation task state conflict")
 			}
 		}
-		factUpdate := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fact.TaskID).Updates(map[string]any{
-			"provider_status": resolution.ResolvedProviderStatus, "reconciliation_status": "resolved", "updated_at": now,
-		})
+		resolvedProviderStatus := resolution.ResolvedProviderStatus
+		factUpdates := map[string]any{"provider_status": resolvedProviderStatus, "reconciliation_status": "resolved", "updated_at": now}
+		if adoptResolvedObservation {
+			factUpdates["provider_status"] = "resolved_observation_submitted"
+			factUpdates["execution_lease_token"] = ""
+		}
+		factUpdate := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fact.TaskID).Updates(factUpdates)
 		if factUpdate.Error != nil {
 			return factUpdate.Error
 		}
@@ -808,7 +1027,7 @@ func (r *Repository) CompleteResolvedProviderPostprocess(taskID string, lease Pr
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus != "resolved" || fact.ExecutionLeaseToken != lease.Token {
+		if !ResolvedProviderSuccessStatus(fact.ProviderStatus) || fact.ReconciliationStatus != "resolved" || fact.ExecutionLeaseToken != lease.Token {
 			return errors.New("resolved provider postprocess fact state conflict")
 		}
 		var order model.BillingOrder
@@ -876,9 +1095,14 @@ func providerCapacityOccupancyStatuses() []string {
 	return []string{"execution_claimed", "creating", "submitted", "pending", "running", "poll_uncertain", "create_uncertain"}
 }
 
+func resolvedProviderObservationOccupancyStatuses() []string {
+	return []string{"resolved_observation_submitted", "resolved_observation_pending", "resolved_observation_running", "resolved_observation_poll_uncertain"}
+}
+
 func providerTaskRecoveryStatus(status string) bool {
 	switch status {
-	case "execution_claimed", "creating", "submitted", "pending", "running", "poll_uncertain", "succeeded", "failed", "create_failed", "create_uncertain":
+	case "execution_claimed", "creating", "submitted", "pending", "running", "poll_uncertain", "succeeded", "failed", "create_failed", "create_uncertain",
+		"resolved_observation_submitted", "resolved_observation_pending", "resolved_observation_running", "resolved_observation_poll_uncertain", "resolved_observation_succeeded":
 		return true
 	default:
 		return false

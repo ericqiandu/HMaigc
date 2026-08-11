@@ -749,7 +749,7 @@ func (r *Repository) ClaimSourceTaskResourceWriteWithQuota(userID string, taskID
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" || fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != leaseToken {
+		if !ResolvedProviderSuccessStatus(fact.ProviderStatus) || fact.ExecutionLeaseToken == "" || fact.ExecutionLeaseToken != leaseToken {
 			return errors.New("source task resource provider fact state conflict")
 		}
 		var task model.Task
@@ -767,6 +767,12 @@ func (r *Repository) ClaimSourceTaskResourceWriteWithQuota(userID string, taskID
 		}
 		if fact.ReconciliationStatus == "resolved" && resource.WriteResolution != "" && resource.WriteResolution != "resolving" && resource.WriteResolution != "resolved" {
 			return errors.New("source task resource resolution handoff state is invalid")
+		}
+		if fact.ReconciliationStatus == "cancel_requested" && resource.WriteResolution != "" && resource.WriteResolution != "cancel_resolving" && resource.WriteResolution != "cancel_resolved" {
+			return errors.New("source task resource cancellation handoff state is invalid")
+		}
+		if fact.ReconciliationStatus == "cancel_requested" && resource.Status == model.ResourceStatusPending && resource.WriteResolution == "cancel_resolving" && resource.WriteToken != "" && resource.WriteToken != writeToken && resource.WriteLeaseExpiresAt != nil && resource.WriteLeaseExpiresAt.After(now) {
+			return errors.New("source task resource cancellation writer is still active")
 		}
 		if resource.WriteToken != "" && resource.WriteToken != writeToken && resource.WriteTaskLeaseToken == leaseToken && resource.WriteLeaseExpiresAt != nil && resource.WriteLeaseExpiresAt.After(now) {
 			return errors.New("source task resource write is already claimed")
@@ -791,6 +797,8 @@ func (r *Repository) ClaimSourceTaskResourceWriteWithQuota(userID string, taskID
 		writeResolution := ""
 		if fact.ReconciliationStatus == "resolved" {
 			writeResolution = "resolving"
+		} else if fact.ReconciliationStatus == "cancel_requested" {
+			writeResolution = "cancel_resolving"
 		}
 		updated := tx.Model(&model.Resource{}).
 			Where("id = ? AND status IN ?", resource.ID, []model.ResourceStatus{model.ResourceStatusPending, model.ResourceStatusFailed}).
@@ -824,17 +832,23 @@ func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, l
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", resource.SourceTaskID).Error; err != nil {
 			return err
 		}
-		if fact.ProviderStatus != "succeeded" {
+		if !ResolvedProviderSuccessStatus(fact.ProviderStatus) {
 			return errors.New("source task resource provider fact state conflict")
 		}
 		var stored model.Resource
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&stored, "id = ? AND user_id = ? AND source_task_id = ?", resource.ID, resource.UserID, resource.SourceTaskID).Error; err != nil {
 			return err
 		}
+		completionResolution := "resolved"
 		if fact.ReconciliationStatus == "resolved" {
 			if stored.WriteResolution != "resolving" {
 				return errors.New("source task resource resolution handoff state conflict")
 			}
+		} else if fact.ReconciliationStatus == "cancel_requested" {
+			if stored.WriteResolution != "cancel_resolving" {
+				return errors.New("source task resource cancellation handoff state conflict")
+			}
+			completionResolution = "cancel_resolved"
 		} else {
 			var task model.Task
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", resource.SourceTaskID).Error; err != nil {
@@ -848,7 +862,7 @@ func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, l
 			Where("id = ? AND user_id = ? AND source_task_id = ? AND status = ? AND write_token = ? AND write_task_lease_token = ?", resource.ID, resource.UserID, resource.SourceTaskID, model.ResourceStatusPending, writeToken, leaseToken).
 			Updates(map[string]any{
 				"status": resource.Status, "e_tag": resource.ETag, "error": resource.Error,
-				"write_token": "", "write_task_lease_token": "", "write_lease_expires_at": nil, "write_resolution": "resolved", "updated_at": now,
+				"write_token": "", "write_task_lease_token": "", "write_lease_expires_at": nil, "write_resolution": completionResolution, "updated_at": now,
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -871,7 +885,7 @@ func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, l
 		resource.WriteToken = ""
 		resource.WriteTaskLeaseToken = ""
 		resource.WriteLeaseExpiresAt = nil
-		resource.WriteResolution = "resolved"
+		resource.WriteResolution = completionResolution
 		resource.UpdatedAt = now
 		return nil
 	})

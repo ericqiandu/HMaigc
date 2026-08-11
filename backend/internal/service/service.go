@@ -562,7 +562,14 @@ func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {
 		return nil, errors.New("completed task cannot be cancelled")
 	}
 	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
-		result, cancelErr := s.repo.CancelProviderTask(userID, task.ID, "用户请求取消上游任务")
+		result, cancelErr := s.repo.CancelProviderTask(userID, task.ID, task.LeaseToken, "用户请求取消上游任务")
+		if errors.Is(cancelErr, repository.ErrProviderTaskCancelGenerationConflict) {
+			current, reloadErr := s.repo.TaskForUser(userID, task.ID)
+			if reloadErr != nil {
+				return nil, errors.Join(cancelErr, reloadErr)
+			}
+			result, cancelErr = s.repo.CancelProviderTask(userID, current.ID, current.LeaseToken, "用户请求取消上游任务")
+		}
 		if cancelErr != nil {
 			return nil, cancelErr
 		}
@@ -970,6 +977,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	}
 	if err != nil {
 		if providerTask {
+			if errors.Is(err, errResolvedProviderObservationHandedOff) {
+				_ = s.log(task.UserID, task.ID, "warn", "迟到上游任务已转入人工决议后的持续观察", "")
+				return nil
+			}
 			var createUncertain *KuaiziSeedance25CreateUncertainError
 			if errors.As(err, &createUncertain) {
 				traceID := ""
@@ -991,7 +1002,27 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			if factErr != nil {
 				return errors.Join(err, factErr)
 			}
-			if fact.ProviderStatus == "succeeded" {
+			if repository.ResolvedProviderObservationStatus(fact.ProviderStatus) {
+				traceID := ""
+				var providerErr *KuaiziSeedance25Error
+				if errors.As(err, &providerErr) {
+					traceID = providerErr.TraceID
+				}
+				lease := repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}
+				if providerErr != nil && providerErr.Stage == "poll" && providerErr.Kind == "provider_failed" {
+					if finalizeErr := s.repo.FinalizeResolvedProviderObservationFailure(task.ID, lease, traceID, providerResolvedTaskStage, providerResolvedTaskError); finalizeErr != nil {
+						return errors.Join(err, finalizeErr)
+					}
+					_ = s.log(task.UserID, task.ID, "warn", "人工核对后的上游观察已记录失败终态", "")
+					return nil
+				}
+				if requeueErr := s.repo.RequeueResolvedProviderObservation(task.ID, lease, traceID, taskFailureMessage(err)); requeueErr != nil {
+					return errors.Join(err, requeueErr)
+				}
+				_ = s.log(task.UserID, task.ID, "warn", "人工核对后的上游观察待继续轮询", "")
+				return err
+			}
+			if repository.ResolvedProviderSuccessStatus(fact.ProviderStatus) {
 				requeueErr := s.repo.RequeueProviderTaskPostprocess(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, taskFailureMessage(err))
 				if requeueErr != nil {
 					return errors.Join(err, requeueErr)
