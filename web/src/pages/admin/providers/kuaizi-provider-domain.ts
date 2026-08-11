@@ -10,9 +10,11 @@ export function credentialSecretRequest(value: string): { key: string } | null {
 }
 
 export function formatKuaiziBalance(value: string): string {
-    if (!/^\d+$/.test(value)) return "尚未验证";
-    const grouped = value.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    return `${grouped} 筷子点数`;
+    if (value === "") return "尚未验证";
+    if (!/^(?:0|[1-9]\d*)$/.test(value)) throw new Error("余额分值必须是规范化非负十进制整数");
+    const padded = value.padStart(3, "0");
+    const integer = padded.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return `${integer}.${padded.slice(-2)} 筷子点数`;
 }
 
 export function providerFamilyViews(account: AdminProviderAccount): ProviderFamilyView[] {

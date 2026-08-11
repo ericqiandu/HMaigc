@@ -11,116 +11,124 @@
 }
 
 @media (max-width: 1279px) {
-        .admin-workspace .kuaizi-provider-facts {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            row-gap: 16px;
-        }
+    .admin-workspace :where(.ant-input:not(textarea), .ant-input-affix-wrapper, .ant-input-number, .ant-picker, .ant-select-single .ant-select-selector) {
+        min-height: 44px !important;
+    }
 
-        .admin-workspace .kuaizi-provider-fact:nth-child(2) {
-            border-right: 0;
-        }
+    .admin-workspace .ant-input-affix-wrapper > .ant-input {
+        min-height: 0 !important;
+    }
 
-        .admin-workspace .kuaizi-provider-family-actions > .ant-btn,
-        .admin-workspace .kuaizi-provider-endpoint-footer > .ant-btn,
-        .kuaizi-provider-modal .kuaizi-provider-editor-actions > .ant-btn,
-        .kuaizi-provider-modal .kuaizi-provider-secret-input {
-            min-height: 44px;
-        }
+    .admin-workspace .kuaizi-provider-facts {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        row-gap: 16px;
+    }
 
-        .admin-workspace .workspace-list-toolbar,
-        .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
-            align-items: stretch;
-            flex-direction: column;
-        }
+    .admin-workspace .kuaizi-provider-fact:nth-child(2) {
+        border-right: 0;
+    }
 
-        .admin-workspace .workspace-list-toolbar-fields {
-            width: 100%;
-            flex: 0 0 auto;
-        }
+    .admin-workspace .kuaizi-provider-family-actions > .ant-btn,
+    .admin-workspace .kuaizi-provider-endpoint-footer > .ant-btn,
+    .kuaizi-provider-modal .kuaizi-provider-editor-actions > .ant-btn,
+    .kuaizi-provider-modal .kuaizi-provider-secret-input {
+        min-height: 44px;
+    }
 
-        .admin-workspace .workspace-list-toolbar-actions {
-            width: 100%;
-            margin-left: 0;
-            align-self: auto;
-            justify-content: flex-start;
-        }
+    .admin-workspace .workspace-list-toolbar,
+    .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
 
-        .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
-            min-height: 44px;
-        }
+    .admin-workspace .workspace-list-toolbar-fields {
+        width: 100%;
+        flex: 0 0 auto;
+    }
 
-        .admin-workspace .app-table-surface {
-            position: relative;
-        }
+    .admin-workspace .workspace-list-toolbar-actions {
+        width: 100%;
+        margin-left: 0;
+        align-self: auto;
+        justify-content: flex-start;
+    }
 
-        .admin-workspace .app-table-surface::after {
-            position: absolute;
-            z-index: 3;
-            top: 44px;
-            right: 0;
-            bottom: 0;
-            width: 18px;
-            background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--workspace-ui-surface) 88%, transparent));
-            content: "";
-            pointer-events: none;
-        }
+    .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+        min-height: 44px;
+    }
+
+    .admin-workspace .app-table-surface {
+        position: relative;
+    }
+
+    .admin-workspace .app-table-surface::after {
+        position: absolute;
+        z-index: 3;
+        top: 44px;
+        right: 0;
+        bottom: 0;
+        width: 18px;
+        background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--workspace-ui-surface) 88%, transparent));
+        content: "";
+        pointer-events: none;
+    }
 }
 
 @media (max-width: 767px) {
-        .admin-membership-mobile-section {
-            display: block;
-        }
+    .admin-membership-mobile-section {
+        display: block;
+    }
 
-        .admin-membership-tabs > .ant-tabs-nav {
-            display: none;
-        }
+    .admin-membership-tabs > .ant-tabs-nav {
+        display: none;
+    }
 
-        .admin-workspace .admin-membership-tabs > .ant-tabs-content-holder {
-            border-top: 0;
-        }
+    .admin-workspace .admin-membership-tabs > .ant-tabs-content-holder {
+        border-top: 0;
+    }
 
-        .admin-workspace .admin-membership-tabs .app-table-surface {
-            margin-top: 0;
-        }
+    .admin-workspace .admin-membership-tabs .app-table-surface {
+        margin-top: 0;
+    }
 }
 
 @media (max-width: 639px) {
-        .admin-workspace .kuaizi-provider-facts {
-            grid-template-columns: minmax(0, 1fr);
-        }
+    .admin-workspace .kuaizi-provider-facts {
+        grid-template-columns: minmax(0, 1fr);
+    }
 
-        .admin-workspace .kuaizi-provider-fact,
-        .admin-workspace .kuaizi-provider-fact:first-child,
-        .admin-workspace .kuaizi-provider-fact:last-child {
-            padding: 0;
-            border-right: 0;
-        }
+    .admin-workspace .kuaizi-provider-fact,
+    .admin-workspace .kuaizi-provider-fact:first-child,
+    .admin-workspace .kuaizi-provider-fact:last-child {
+        padding: 0;
+        border-right: 0;
+    }
 
-        .admin-workspace .kuaizi-provider-endpoint-footer,
-        .admin-workspace .kuaizi-provider-family-actions,
-        .kuaizi-provider-modal .kuaizi-provider-editor-actions {
-            align-items: stretch;
-            flex-direction: column;
-        }
+    .admin-workspace .kuaizi-provider-endpoint-footer,
+    .admin-workspace .kuaizi-provider-family-actions,
+    .kuaizi-provider-modal .kuaizi-provider-editor-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
 
-        .admin-workspace .kuaizi-provider-family-actions > .ant-btn,
-        .admin-workspace .kuaizi-provider-endpoint-footer > .ant-btn,
-        .kuaizi-provider-modal .kuaizi-provider-editor-actions > .ant-btn {
-            width: 100%;
-        }
+    .admin-workspace .kuaizi-provider-family-actions > .ant-btn,
+    .admin-workspace .kuaizi-provider-endpoint-footer > .ant-btn,
+    .kuaizi-provider-modal .kuaizi-provider-editor-actions > .ant-btn {
+        width: 100%;
+    }
 
-        .admin-workspace .workspace-list-toolbar-fields > :where(.app-list-search, .ant-select, .ant-dropdown-trigger) {
-            width: 100% !important;
-        }
+    .admin-workspace .workspace-list-toolbar-fields > :where(.app-list-search, .ant-select, .ant-dropdown-trigger) {
+        width: 100% !important;
+    }
 
-        .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
-            min-height: 44px;
-            flex: 1 1 0;
-            justify-content: center;
-        }
+    .admin-workspace .workspace-list-toolbar-actions > :where(.ant-btn, .ant-dropdown-trigger) {
+        min-height: 44px;
+        flex: 1 1 0;
+        justify-content: center;
+    }
 
-        .admin-workspace .app-table-surface .ant-table-thead > tr > th,
-        .admin-workspace .app-table-surface .ant-table-tbody > tr > td {
-            padding-inline: 12px;
-        }
+    .admin-workspace .app-table-surface .ant-table-thead > tr > th,
+    .admin-workspace .app-table-surface .ant-table-tbody > tr > td {
+        padding-inline: 12px;
+    }
 }

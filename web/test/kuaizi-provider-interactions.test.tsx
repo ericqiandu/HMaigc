@@ -1,0 +1,430 @@
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { Window } from "happy-dom";
+import { readFileSync } from "node:fs";
+import { act, createElement } from "react";
+import type { Root } from "react-dom/client";
+
+import type { AdminProviderAccount } from "../src/services/api/provider-accounts";
+
+type Deferred<T> = {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (reason: Error) => void;
+};
+
+type InjectedProviderApi = {
+    get: () => Promise<AdminProviderAccount>;
+    saveEndpoint: (baseUrl: string) => Promise<AdminProviderAccount>;
+    saveCredential: (family: string, key: string) => Promise<AdminProviderAccount | null>;
+    verifyCredential: (family: string) => Promise<AdminProviderAccount>;
+};
+
+const model = {
+    modelKey: "fixture-video-v1",
+    displayName: "Fixture Video V1",
+    upstreamMode: "fixture-video-v1",
+    capability: "video",
+    resolutions: ["720p"],
+    ratios: ["16:9"],
+    durationMin: 4,
+    durationMax: 15,
+    supportsSmartDuration: true,
+    supportsGeneratedAudio: true,
+    supportsWatermark: true,
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+};
+
+function account(overrides: Partial<AdminProviderAccount> = {}): AdminProviderAccount {
+    return {
+        providerKind: "kuaizi",
+        name: "筷子科技",
+        enabled: true,
+        endpoint: { baseUrl: "https://active.example.com", version: 1, active: true },
+        credentials: [
+            {
+                family: "fixture-family",
+                hasKey: true,
+                keyFingerprint: "sha256:active",
+                version: 1,
+                healthStatus: "healthy",
+                walletBalanceSubunits: "100",
+                verifiedAt: "2026-08-11T08:00:00Z",
+            },
+        ],
+        adapters: [{ providerKind: "kuaizi", family: "fixture-family", models: [model] }],
+        ...overrides,
+    };
+}
+
+function deferred<T>(): Deferred<T> {
+    let resolvePromise: ((value: T) => void) | undefined;
+    let rejectPromise: ((reason: Error) => void) | undefined;
+    const promise = new Promise<T>((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
+    });
+    return {
+        promise,
+        resolve: (value) => resolvePromise?.(value),
+        reject: (reason) => rejectPromise?.(reason),
+    };
+}
+
+function button(label: string): HTMLButtonElement {
+    const normalizedLabel = label.replace(/\s+/g, "");
+    const match = [...document.querySelectorAll("button")].find((element) => element.textContent?.replace(/\s+/g, "").includes(normalizedLabel));
+    if (!(match instanceof HTMLButtonElement)) throw new Error(`未找到按钮：${label}；当前页面：${document.body.textContent}`);
+    return match;
+}
+
+function input(selector: string): HTMLInputElement {
+    const match = document.querySelector(selector);
+    if (!(match instanceof HTMLInputElement)) throw new Error(`未找到输入框：${selector}`);
+    return match;
+}
+
+async function changeInput(element: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!setter) throw new Error("测试 DOM 缺少 input value setter");
+    await act(async () => {
+        setter.call(element, value);
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+}
+
+async function settle() {
+    await act(async () => {
+        await Promise.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+}
+
+let KuaiziProviderPage: (props: { api?: InjectedProviderApi }) => ReturnType<typeof createElement>;
+let createRoot: (container: Element | DocumentFragment) => Root;
+let mountedRoot: Root | null = null;
+
+beforeAll(async () => {
+    const browserWindow = new Window({ url: "http://localhost/admin/providers/kuaizi" });
+    const globals: Record<string, unknown> = {
+        window: browserWindow,
+        document: browserWindow.document,
+        navigator: browserWindow.navigator,
+        localStorage: browserWindow.localStorage,
+        Event: browserWindow.Event,
+        MouseEvent: browserWindow.MouseEvent,
+        KeyboardEvent: browserWindow.KeyboardEvent,
+        HTMLElement: browserWindow.HTMLElement,
+        HTMLAnchorElement: browserWindow.HTMLAnchorElement,
+        HTMLButtonElement: browserWindow.HTMLButtonElement,
+        HTMLInputElement: browserWindow.HTMLInputElement,
+        Element: browserWindow.Element,
+        Node: browserWindow.Node,
+        ShadowRoot: browserWindow.ShadowRoot,
+        SVGElement: browserWindow.SVGElement,
+        Blob: browserWindow.Blob,
+        FileReader: browserWindow.FileReader,
+        XMLHttpRequest: browserWindow.XMLHttpRequest,
+        getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
+        requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
+        cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
+        ResizeObserver: browserWindow.ResizeObserver,
+    };
+    for (const [name, value] of Object.entries(globals)) {
+        Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean; __APP_VERSION__: string }).IS_REACT_ACT_ENVIRONMENT = true;
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean; __APP_VERSION__: string }).__APP_VERSION__ = "test";
+    ({ createRoot } = await import("react-dom/client"));
+    ({ default: KuaiziProviderPage } = await import("../src/pages/admin/providers/kuaizi-provider-page"));
+});
+
+afterEach(async () => {
+    if (mountedRoot) {
+        await act(async () => mountedRoot?.unmount());
+        mountedRoot = null;
+    }
+    document.body.replaceChildren();
+});
+
+async function mount(api: InjectedProviderApi) {
+    const container = document.createElement("div");
+    document.body.append(container);
+    mountedRoot = createRoot(container);
+    await act(async () => mountedRoot?.render(createElement(KuaiziProviderPage, { api })));
+    await settle();
+}
+
+describe("kuaizi provider page mutation controller", () => {
+    test("clears a replacement secret, orders save before verify, locks dismissal, rejects duplicate clicks, and fills the verified result", async () => {
+        const save = deferred<AdminProviderAccount | null>();
+        const verify = deferred<AdminProviderAccount>();
+        const calls: string[] = [];
+        const api: InjectedProviderApi = {
+            get: async () => account(),
+            saveEndpoint: async () => account(),
+            saveCredential: (_family, key) => {
+                calls.push(`save:${key}`);
+                return save.promise;
+            },
+            verifyCredential: () => {
+                calls.push("verify");
+                return verify.promise;
+            },
+        };
+        await mount(api);
+
+        await act(async () => button("更新密钥").click());
+        const secretInput = input('input[type="password"]');
+        await changeInput(secretInput, "sentinel-browser-secret");
+        await act(async () => {
+            button("保存并验证").click();
+            button("保存并验证").click();
+        });
+
+        expect(secretInput.value).toBe("");
+        expect(document.body.textContent).not.toContain("sentinel-browser-secret");
+        expect(calls).toEqual(["save:sentinel-browser-secret"]);
+        expect(button("取消").disabled).toBe(true);
+        expect(document.querySelector(".ant-modal-close")).toBeNull();
+        await act(async () => {
+            document.querySelector<HTMLElement>(".ant-modal-mask")?.click();
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(document.querySelector('input[type="password"]')).not.toBeNull();
+
+        const candidate = account({
+            credentials: [
+                {
+                    ...account().credentials[0]!,
+                    candidate: {
+                        hasKey: true,
+                        keyFingerprint: "sha256:candidate",
+                        version: 2,
+                        healthStatus: "unverified",
+                        walletBalanceSubunits: "",
+                    },
+                },
+            ],
+        });
+        await act(async () => save.resolve(candidate));
+        await settle();
+        expect(calls).toEqual(["save:sentinel-browser-secret", "verify"]);
+
+        const verified = account({
+            credentials: [
+                {
+                    ...account().credentials[0]!,
+                    keyFingerprint: "sha256:verified-v2",
+                    version: 2,
+                    walletBalanceSubunits: "101",
+                },
+            ],
+        });
+        await act(async () => verify.resolve(verified));
+        await settle();
+        expect(document.body.textContent).toContain("sha256:verified-v2");
+        expect(document.body.textContent).toContain("1.01 筷子点数");
+    });
+
+    test("runs first configuration in endpoint, credential, verify order", async () => {
+        const calls: string[] = [];
+        const initial = account({ endpoint: undefined, credentials: [] });
+        const endpointCandidate = account({ endpoint: { baseUrl: "https://first.example.com", version: 1, active: false }, credentials: [] });
+        const credentialCandidate = account({
+            endpoint: endpointCandidate.endpoint,
+            credentials: [
+                {
+                    family: "fixture-family",
+                    hasKey: true,
+                    keyFingerprint: "sha256:first-candidate",
+                    version: 1,
+                    healthStatus: "unverified",
+                    walletBalanceSubunits: "",
+                },
+            ],
+        });
+        const verified = account({ endpoint: { baseUrl: "https://first.example.com", version: 1, active: true } });
+        const api: InjectedProviderApi = {
+            get: async () => initial,
+            saveEndpoint: async (baseUrl) => {
+                calls.push(`endpoint:${baseUrl}`);
+                return endpointCandidate;
+            },
+            saveCredential: async (_family, key) => {
+                calls.push(`credential:${key}`);
+                return credentialCandidate;
+            },
+            verifyCredential: async () => {
+                calls.push("verify");
+                return verified;
+            },
+        };
+        await mount(api);
+
+        await changeInput(input("#kuaizi-provider-base-url"), "https://first.example.com");
+        await act(async () => button("保存服务地址").click());
+        await settle();
+        await act(async () => button("配置密钥").click());
+        await changeInput(input('input[type="password"]'), "sentinel-first-secret");
+        await act(async () => button("保存并验证").click());
+        await settle();
+
+        expect(calls).toEqual(["endpoint:https://first.example.com", "credential:sentinel-first-secret", "verify"]);
+        expect(document.body.textContent).toContain("sha256:active");
+    });
+
+    test("keeps a failed credential candidate and the original code and trace after refetch", async () => {
+        const calls: string[] = [];
+        const refreshed = deferred<AdminProviderAccount>();
+        let getCount = 0;
+        const candidate = account({
+            credentials: [
+                {
+                    ...account().credentials[0]!,
+                    candidate: {
+                        hasKey: true,
+                        keyFingerprint: "sha256:failed-candidate",
+                        version: 2,
+                        healthStatus: "invalid",
+                        walletBalanceSubunits: "",
+                    },
+                },
+            ],
+        });
+        const api: InjectedProviderApi = {
+            get: () => {
+                getCount += 1;
+                calls.push("get");
+                return getCount === 1 ? Promise.resolve(account()) : refreshed.promise;
+            },
+            saveEndpoint: async () => account(),
+            saveCredential: async () => {
+                calls.push("save");
+                return candidate;
+            },
+            verifyCredential: async () => {
+                calls.push("verify");
+                throw new Error("筷子凭据验证失败（code=invalid_key, trace_id=trace-browser）");
+            },
+        };
+        await mount(api);
+
+        await act(async () => button("更新密钥").click());
+        await changeInput(input('input[type="password"]'), "sentinel-failed-secret");
+        await act(async () => button("保存并验证").click());
+        await settle();
+        expect(calls).toEqual(["get", "save", "verify", "get"]);
+
+        await act(async () => refreshed.resolve(candidate));
+        await settle();
+        expect(document.body.textContent).toContain("sha256:failed-candidate");
+        expect(document.body.textContent).toContain("code=invalid_key");
+        expect(document.body.textContent).toContain("trace_id=trace-browser");
+        expect(document.body.textContent).not.toContain("sentinel-failed-secret");
+    });
+
+    test("converges a failed endpoint write, and exposes an uncertain write when refetch also fails", async () => {
+        const draft = "https://candidate.example.com";
+        let getCount = 0;
+        let endpointCalls = 0;
+        const converged = account({ endpointCandidate: { baseUrl: draft, version: 2, active: false } });
+        const api: InjectedProviderApi = {
+            get: async () => {
+                getCount += 1;
+                if (getCount === 1) return account();
+                if (getCount === 2) return converged;
+                throw new Error("候选事实读取失败");
+            },
+            saveEndpoint: async () => {
+                endpointCalls += 1;
+                throw new Error("筷子凭据验证失败（code=timeout, trace_id=trace-endpoint）");
+            },
+            saveCredential: async () => null,
+            verifyCredential: async () => account(),
+        };
+        await mount(api);
+
+        await changeInput(input("#kuaizi-provider-base-url"), draft);
+        await act(async () => button("保存服务地址").click());
+        await settle();
+        expect(document.body.textContent).toContain("code=timeout");
+        expect(document.body.textContent).toContain("候选地址 v2");
+        expect(document.body.textContent).toContain("已同步");
+        await act(async () => button("保存服务地址").click());
+        expect(endpointCalls).toBe(1);
+
+        await changeInput(input("#kuaizi-provider-base-url"), "https://uncertain.example.com");
+        await act(async () => button("保存服务地址").click());
+        await settle();
+        expect(input("#kuaizi-provider-base-url").value).toBe("https://uncertain.example.com");
+        expect(document.body.textContent).toContain("code=timeout");
+        expect(document.body.textContent).toContain("写入结果待同步");
+        expect(document.body.textContent).not.toContain("有未保存变更");
+    });
+
+    test("claims one global mutation synchronously and releases only after its owner finishes", async () => {
+        const verification = deferred<AdminProviderAccount>();
+        let verifyCalls = 0;
+        let endpointCalls = 0;
+        const api: InjectedProviderApi = {
+            get: async () => account(),
+            saveEndpoint: async () => {
+                endpointCalls += 1;
+                return account();
+            },
+            saveCredential: async () => null,
+            verifyCredential: () => {
+                verifyCalls += 1;
+                return verification.promise;
+            },
+        };
+        await mount(api);
+
+        await changeInput(input("#kuaizi-provider-base-url"), "https://dirty.example.com");
+        await act(async () => {
+            button("验证凭据").click();
+            button("验证凭据").click();
+            button("保存服务地址").click();
+        });
+        expect(verifyCalls).toBe(1);
+        expect(endpointCalls).toBe(0);
+        expect(button("保存服务地址").disabled).toBe(true);
+
+        await act(async () => verification.resolve(account()));
+        await settle();
+        expect(button("保存服务地址").disabled).toBe(false);
+    });
+});
+
+describe("kuaizi provider responsive form controls", () => {
+    test("keeps the Base URL touch target at 44px for tablet and mobile viewports", () => {
+        const style = document.createElement("style");
+        style.textContent = readFileSync(new URL("../src/pages/admin/admin-responsive.css", import.meta.url), "utf8");
+        document.head.append(style);
+
+        for (const viewport of [390, 768, 1024]) {
+            (window as unknown as Window).happyDOM.setInnerWidth(viewport);
+            const workspace = document.createElement("div");
+            workspace.className = "admin-workspace";
+            const baseUrlInput = document.createElement("input");
+            baseUrlInput.className = "ant-input kuaizi-provider-base-url";
+            const multilineInput = document.createElement("textarea");
+            multilineInput.className = "ant-input";
+            const outsideInput = document.createElement("input");
+            outsideInput.className = "ant-input";
+            workspace.append(baseUrlInput, multilineInput);
+            document.body.append(workspace, outsideInput);
+
+            expect(getComputedStyle(baseUrlInput).minHeight).toBe("44px");
+            expect(getComputedStyle(multilineInput).minHeight).not.toBe("44px");
+            expect(getComputedStyle(outsideInput).minHeight).not.toBe("44px");
+            workspace.remove();
+            outsideInput.remove();
+        }
+
+        style.remove();
+    });
+});

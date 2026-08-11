@@ -99,6 +99,14 @@ function optionalTimestamp(source: Record<string, unknown>, key: string, label: 
     return value;
 }
 
+function balanceSubunitsField(source: Record<string, unknown>, key: string, label: string): string {
+    const value = stringField(source, key, label);
+    if (value !== "" && !/^(?:0|[1-9]\d*)$/.test(value)) {
+        throw new Error(`${label}.${key} 必须是空字符串或规范化非负十进制整数`);
+    }
+    return value;
+}
+
 function parseHealthStatus(value: unknown): ProviderHealthStatus {
     if (typeof value !== "string" || !healthStatuses.has(value as ProviderHealthStatus)) {
         throw new Error(`不受支持的 healthStatus: ${String(value)}`);
@@ -122,7 +130,7 @@ function parseCredentialCandidate(value: unknown, label: string): AdminProviderC
         keyFingerprint: stringField(source, "keyFingerprint", label),
         version: integerField(source, "version", label),
         healthStatus: parseHealthStatus(source.healthStatus),
-        walletBalanceSubunits: stringField(source, "walletBalanceSubunits", label),
+        walletBalanceSubunits: balanceSubunitsField(source, "walletBalanceSubunits", label),
         verifiedAt: optionalTimestamp(source, "verifiedAt", label),
     };
 }
@@ -215,5 +223,7 @@ export function createProviderAccountsApi(transport: ProviderAccountTransport) {
         verifyCredential: (family: string) => accountRequest({ method: "POST", path: `/admin/providers/kuaizi/credentials/${encodeURIComponent(family)}/verify` }),
     };
 }
+
+export type ProviderAccountsApi = ReturnType<typeof createProviderAccountsApi>;
 
 export const providerAccountsApi = createProviderAccountsApi(axiosTransport);

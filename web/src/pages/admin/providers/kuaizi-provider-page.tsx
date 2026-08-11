@@ -2,7 +2,7 @@ import { Alert, Button, Input, Modal, Tag } from "antd";
 import { KeyRound, ServerCog, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { providerAccountsApi, type AdminProviderAccount, type AdminProviderCredential, type ProviderAdapterDescriptor, type ProviderHealthStatus } from "@/services/api/provider-accounts";
+import { providerAccountsApi, type AdminProviderAccount, type AdminProviderCredential, type ProviderAccountsApi, type ProviderAdapterDescriptor, type ProviderHealthStatus } from "@/services/api/provider-accounts";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, SettingsSectionCard, configuredSecretText } from "../components/admin-ui";
 import { endpointDraftChanged, formatKuaiziBalance, providerFamilyViews } from "./kuaizi-provider-domain";
@@ -14,6 +14,7 @@ type KuaiziProviderPageViewProps = {
     account: AdminProviderAccount;
     endpointDraft: string;
     endpointDirty: boolean;
+    endpointSyncPending: boolean;
     loading: boolean;
     operation: ProviderOperation;
     loadError: Error | null;
@@ -64,7 +65,7 @@ function CredentialFacts({ credential }: { credential?: AdminProviderCredential 
     return (
         <dl className="kuaizi-provider-facts">
             <div className="kuaizi-provider-fact">
-                <dt className="kuaizi-provider-fact-label">当前版本</dt>
+                <dt className="kuaizi-provider-fact-label">{credential.healthStatus === "unverified" ? "待激活版本" : "凭据版本"}</dt>
                 <dd className="kuaizi-provider-fact-value">{credential.version || "—"}</dd>
             </div>
             <div className="kuaizi-provider-fact">
@@ -91,7 +92,7 @@ function CandidateFacts({ candidate }: { candidate: NonNullable<AdminProviderCre
                 {healthTag(candidate.healthStatus)}
             </div>
             <span className="kuaizi-provider-candidate-fingerprint">{candidate.keyFingerprint}</span>
-            <span className="kuaizi-provider-candidate-note">候选凭据保留到验证成功；失败不会覆盖当前活动版本。</span>
+            <span className="kuaizi-provider-candidate-note">候选凭据保留到验证成功；失败不会覆盖当前活动版本，当前活动版本未变。</span>
         </div>
     );
 }
@@ -113,7 +114,7 @@ function ProviderCredentialCard({
     onOpen: () => void;
     onVerify: () => void;
 }) {
-    const effectiveStatus = credential?.candidate?.healthStatus ?? credential?.healthStatus ?? "unverified";
+    const effectiveStatus = credential?.healthStatus ?? "unverified";
     return (
         <SettingsSectionCard
             className="kuaizi-provider-family-card"
@@ -139,7 +140,21 @@ function ProviderCredentialCard({
     );
 }
 
-export function KuaiziProviderPageView({ account, endpointDraft, endpointDirty, loading, operation, loadError, operationErrors, onEndpointChange, onSaveEndpoint, onOpenCredential, onVerifyCredential, onRetry }: KuaiziProviderPageViewProps) {
+export function KuaiziProviderPageView({
+    account,
+    endpointDraft,
+    endpointDirty,
+    endpointSyncPending,
+    loading,
+    operation,
+    loadError,
+    operationErrors,
+    onEndpointChange,
+    onSaveEndpoint,
+    onOpenCredential,
+    onVerifyCredential,
+    onRetry,
+}: KuaiziProviderPageViewProps) {
     const families = providerFamilyViews(account);
     const endpointBusy = operation === "endpoint";
     const endpointStatus = account.endpointCandidate ? { label: "有待验证更新" } : account.endpoint?.active ? { label: "已启用", color: "success" } : account.endpoint ? { label: "待验证" } : { label: "未配置" };
@@ -155,8 +170,8 @@ export function KuaiziProviderPageView({ account, endpointDraft, endpointDirty, 
                     status={endpointStatus}
                     footer={
                         <div className="kuaizi-provider-endpoint-footer">
-                            <span className="kuaizi-provider-sync-state">{endpointDirty ? "有未保存变更" : "已同步"}</span>
-                            <Button className="kuaizi-provider-save-endpoint" type="primary" loading={endpointBusy} disabled={!endpointDirty || loading} onClick={onSaveEndpoint}>
+                            <span className="kuaizi-provider-sync-state">{endpointSyncPending ? "写入结果待同步" : endpointDirty ? "有未保存变更" : "已同步"}</span>
+                            <Button className="kuaizi-provider-save-endpoint" type="primary" loading={endpointBusy} disabled={Boolean(operation) || endpointSyncPending || !endpointDirty || loading} onClick={onSaveEndpoint}>
                                 保存服务地址
                             </Button>
                         </div>
@@ -277,7 +292,7 @@ export function ProviderCredentialEditor({
     );
 }
 
-export default function KuaiziProviderPage() {
+export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?: ProviderAccountsApi } = {}) {
     const [account, setAccount] = useState<AdminProviderAccount | null>(null);
     const [endpointDraft, setEndpointDraft] = useState("");
     const [loading, setLoading] = useState(true);
@@ -285,20 +300,36 @@ export default function KuaiziProviderPage() {
     const [operation, setOperation] = useState<ProviderOperation>(null);
     const [operationErrors, setOperationErrors] = useState<Record<string, Error>>({});
     const [editingFamily, setEditingFamily] = useState<string | null>(null);
+    const [endpointSyncPending, setEndpointSyncPending] = useState(false);
+    const operationOwnerRef = useRef<ProviderOperation>(null);
+
+    const claimOperation = (owner: Exclude<ProviderOperation, null>): boolean => {
+        if (operationOwnerRef.current) return false;
+        operationOwnerRef.current = owner;
+        setOperation(owner);
+        return true;
+    };
+
+    const releaseOperation = (owner: Exclude<ProviderOperation, null>) => {
+        if (operationOwnerRef.current !== owner) return;
+        operationOwnerRef.current = null;
+        setOperation(null);
+    };
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const next = await providerAccountsApi.get();
+            const next = await api.get();
             setAccount(next);
             setEndpointDraft(endpointBaseline(next));
+            setEndpointSyncPending(false);
             setLoadError(null);
         } catch (error) {
             setLoadError(errorValue(error));
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [api]);
 
     useEffect(() => {
         void load();
@@ -309,7 +340,7 @@ export default function KuaiziProviderPage() {
     const editingCredential = account && editingFamily ? credentialForFamily(account, editingFamily) : undefined;
 
     const saveEndpoint = async () => {
-        if (!account || !endpointDirty) return;
+        if (!account || !endpointDirty || endpointSyncPending || operationOwnerRef.current) return;
         let parsed: URL;
         try {
             parsed = new URL(endpointDraft.trim());
@@ -321,11 +352,13 @@ export default function KuaiziProviderPage() {
             setOperationErrors((current) => ({ ...current, endpoint: new Error("Base URL 必须使用 HTTP(S) 协议") }));
             return;
         }
-        setOperation("endpoint");
+        const owner = "endpoint" as const;
+        if (!claimOperation(owner)) return;
         try {
-            const next = await providerAccountsApi.saveEndpoint(endpointDraft);
+            const next = await api.saveEndpoint(endpointDraft);
             setAccount(next);
             setEndpointDraft(endpointBaseline(next));
+            setEndpointSyncPending(false);
             setOperationErrors((current) => {
                 const nextErrors = { ...current };
                 delete nextErrors.endpoint;
@@ -333,14 +366,24 @@ export default function KuaiziProviderPage() {
             });
         } catch (error) {
             setOperationErrors((current) => ({ ...current, endpoint: errorValue(error) }));
+            try {
+                const next = await api.get();
+                setAccount(next);
+                setEndpointDraft(endpointBaseline(next));
+                setEndpointSyncPending(false);
+                setLoadError(null);
+            } catch (syncError) {
+                setEndpointSyncPending(true);
+                setLoadError(new Error(`写入结果待同步：${errorValue(syncError).message}`));
+            }
         } finally {
-            setOperation(null);
+            releaseOperation(owner);
         }
     };
 
     const refreshAfterVerificationFailure = async () => {
         try {
-            const next = await providerAccountsApi.get();
+            const next = await api.get();
             setAccount(next);
             setLoadError(null);
         } catch (error) {
@@ -349,17 +392,18 @@ export default function KuaiziProviderPage() {
     };
 
     const verifyCredential = async (family: string, key = "") => {
-        if (!account) return;
-        setOperation(`credential:${family}`);
+        if (!account || operationOwnerRef.current) return;
+        const owner = `credential:${family}` as const;
+        if (!claimOperation(owner)) return;
         setOperationErrors((current) => {
             const next = { ...current };
             delete next[family];
             return next;
         });
         try {
-            const candidateAccount = await providerAccountsApi.saveCredential(family, key);
+            const candidateAccount = await api.saveCredential(family, key);
             if (candidateAccount) setAccount(candidateAccount);
-            const next = await providerAccountsApi.verifyCredential(family);
+            const next = await api.verifyCredential(family);
             setAccount(next);
             setLoadError(null);
             setEditingFamily(null);
@@ -367,7 +411,7 @@ export default function KuaiziProviderPage() {
             setOperationErrors((current) => ({ ...current, [family]: errorValue(error) }));
             await refreshAfterVerificationFailure();
         } finally {
-            setOperation(null);
+            releaseOperation(owner);
         }
     };
 
@@ -393,6 +437,7 @@ export default function KuaiziProviderPage() {
                 account={account}
                 endpointDraft={endpointDraft}
                 endpointDirty={endpointDirty}
+                endpointSyncPending={endpointSyncPending}
                 loading={loading}
                 operation={operation}
                 loadError={loadError}
@@ -409,7 +454,7 @@ export default function KuaiziProviderPage() {
                 open={Boolean(editingAdapter)}
                 footer={null}
                 closable={!operation}
-                maskClosable={!operation}
+                mask={{ closable: !operation }}
                 keyboard={!operation}
                 onCancel={() => {
                     if (!operation) setEditingFamily(null);

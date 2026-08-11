@@ -58,11 +58,28 @@ function parsedFixture(): AdminProviderAccount {
 }
 
 describe("kuaizi provider API and domain", () => {
-    test("keeps a large decimal balance as a string and labels it as Kuaizi points", () => {
+    test("formats balance subunits with exact string division by one hundred", () => {
         const account = parsedFixture();
 
         expect(account.credentials[0]?.walletBalanceSubunits).toBe("900719925474099312345");
-        expect(formatKuaiziBalance(account.credentials[0]?.walletBalanceSubunits ?? "")).toBe("900,719,925,474,099,312,345 筷子点数");
+        expect(["", "0", "1", "99", "100", "101", account.credentials[0]?.walletBalanceSubunits ?? ""].map(formatKuaiziBalance)).toEqual([
+            "尚未验证",
+            "0.00 筷子点数",
+            "0.01 筷子点数",
+            "0.99 筷子点数",
+            "1.00 筷子点数",
+            "1.01 筷子点数",
+            "9,007,199,254,740,993,123.45 筷子点数",
+        ]);
+    });
+
+    test("rejects non-canonical balance subunits at the DTO boundary", () => {
+        for (const invalid of ["-1", "01", "1.2", "1e2", " 1", "1 "]) {
+            const malformed = structuredClone(accountFixture);
+            malformed.credentials[0]!.walletBalanceSubunits = invalid;
+
+            expect(() => parseAdminProviderAccount(malformed)).toThrow("walletBalanceSubunits 必须是空字符串或规范化非负十进制整数");
+        }
     });
 
     test("treats a blank key as no credential write", async () => {
@@ -138,6 +155,7 @@ describe("kuaizi provider settings components", () => {
                 account,
                 endpointDraft: account.endpoint?.baseUrl ?? "",
                 endpointDirty: false,
+                endpointSyncPending: false,
                 loading: false,
                 operation: null,
                 loadError: null,
@@ -176,5 +194,60 @@ describe("kuaizi provider settings components", () => {
         expect(markup).toContain("trace_id=trace-401");
         expect(markup).not.toContain("replacement-key");
         expect(markup).not.toContain("enc:provider:v1:");
+    });
+
+    test("keeps the active health separate from a failed candidate", () => {
+        const markup = renderToStaticMarkup(
+            createElement(KuaiziProviderPageView, {
+                account: parsedFixture(),
+                endpointDraft: "https://aiopenapi.kuaizi.cn",
+                endpointDirty: false,
+                endpointSyncPending: false,
+                loading: false,
+                operation: null,
+                loadError: null,
+                operationErrors: {},
+                onEndpointChange: () => undefined,
+                onSaveEndpoint: () => undefined,
+                onOpenCredential: () => undefined,
+                onVerifyCredential: () => undefined,
+                onRetry: () => undefined,
+            }),
+        );
+
+        const mainStatusIndex = markup.indexOf("验证健康");
+        const candidateIndex = markup.indexOf("候选版本 9");
+        const candidateStatusIndex = markup.indexOf("密钥无效");
+        expect(mainStatusIndex).toBeGreaterThan(-1);
+        expect(candidateIndex).toBeGreaterThan(mainStatusIndex);
+        expect(candidateStatusIndex).toBeGreaterThan(candidateIndex);
+        expect(markup).toContain("当前活动版本未变");
+
+        const firstConfiguration = parsedFixture();
+        firstConfiguration.credentials[0] = {
+            ...firstConfiguration.credentials[0]!,
+            version: 1,
+            healthStatus: "unverified",
+            verifiedAt: undefined,
+            candidate: undefined,
+        };
+        const firstMarkup = renderToStaticMarkup(
+            createElement(KuaiziProviderPageView, {
+                account: firstConfiguration,
+                endpointDraft: "https://aiopenapi.kuaizi.cn",
+                endpointDirty: false,
+                endpointSyncPending: false,
+                loading: false,
+                operation: null,
+                loadError: null,
+                operationErrors: {},
+                onEndpointChange: () => undefined,
+                onSaveEndpoint: () => undefined,
+                onOpenCredential: () => undefined,
+                onVerifyCredential: () => undefined,
+                onRetry: () => undefined,
+            }),
+        );
+        expect(firstMarkup).toContain("待激活版本");
     });
 });
