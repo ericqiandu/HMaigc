@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"infinite-canvas/backend/internal/testsupport"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func TestProviderTaskFactCreationIsAtomicWithTaskAndReservation(t *testing.T) {
@@ -234,6 +236,7 @@ func TestProviderTaskDefinitiveCreateRejectionReleasesExecutionFact(t *testing.T
 	runtimeFixture := saveProviderRuntimeFixture(t, svc, db)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = io.WriteString(writer, `{"code":4001,"message":"rejected","data":null,"trace_id":"trace-rejected"}`)
 	}))
 	defer server.Close()
@@ -250,21 +253,24 @@ func TestProviderTaskDefinitiveCreateRejectionReleasesExecutionFact(t *testing.T
 	if err := db.First(&fact, "task_id = ?", runtimeFixture.task.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if fact.ProviderStatus != "create_failed" || fact.CreateTraceID != "trace-rejected" {
+	if fact.ProviderStatus != "create_failed" || fact.CreateTraceID != "" {
 		t.Fatalf("definitive rejection fact = %#v", fact)
 	}
 }
 
 func TestProviderTaskCreateHTTP5xxPersistsUncertainAndNeverCreatesTwice(t *testing.T) {
-	for _, statusCode := range []int{http.StatusInternalServerError, http.StatusBadGateway, 524} {
-		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+	for _, response := range []struct {
+		statusCode int
+		body       string
+	}{{http.StatusInternalServerError, `<html>failed</html>`}, {http.StatusBadGateway, ""}, {524, strings.Repeat("x", 4<<20+1)}} {
+		t.Run(http.StatusText(response.statusCode), func(t *testing.T) {
 			svc, db := openProviderCredentialService(t)
 			runtimeFixture := saveProviderRuntimeFixture(t, svc, db)
 			var creates atomic.Int64
 			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				creates.Add(1)
-				writer.WriteHeader(statusCode)
-				_, _ = io.WriteString(writer, `{"code":50000,"message":"gateway failed","data":null,"trace_id":"trace-http"}`)
+				writer.WriteHeader(response.statusCode)
+				_, _ = io.WriteString(writer, response.body)
 			}))
 			defer server.Close()
 			runtime, err := svc.resolveProviderTaskRuntime(runtimeFixture.task.ID)
@@ -411,6 +417,108 @@ func TestProviderFailureSentinelsNeverReachPersistedOrHTTPFacts(t *testing.T) {
 	}
 }
 
+func TestProviderSuccessfulFieldSentinelsNeverReachPersistentOrHTTPFacts(t *testing.T) {
+	const secret = "sentinel-success-runtime-key"
+	const prompt = "sentinel success runtime prompt bob@example.test"
+	for _, sensitiveCreateID := range []bool{true, false} {
+		name := "sensitive_success_urls"
+		if sensitiveCreateID {
+			name = "sensitive_create_id"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CANVAS_ENVIRONMENT", "development")
+			svc, db := openProviderCredentialService(t)
+			fixture := saveProviderRuntimeFixture(t, svc, db)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				if request.URL.Path == kuaiziSeedance25CreatePath {
+					taskID := "provider-safe-id"
+					if sensitiveCreateID {
+						taskID = secret
+					}
+					_, _ = io.WriteString(writer, `{"code":0,"message":"","data":{"task_id":"`+taskID+`"},"trace_id":"trace-create"}`)
+					return
+				}
+				_, _ = io.WriteString(writer, `{"code":0,"message":"","data":{"task_id":"provider-safe-id","status":"succeeded","video_url":"https://cdn.example/result.mp4?token=sentinel-success-runtime-key","last_frame_url":"https://cdn.example/last.png?prompt=sentinel%20success%20runtime%20prompt%20bob%40example.test","duration":8,"total_tokens":"42"},"trace_id":"trace-poll"}`)
+			}))
+			defer server.Close()
+			ciphertext, err := NewProviderSecretCipher(svc.dataDir).Encrypt("account", "credential", "credential-v1", secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.ProviderCredentialVersion{}).Where("id = ?", "credential-v1").Update("key_cipher", ciphertext).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.ProviderEndpointVersion{}).Where("id = ?", "endpoint-v1").Update("base_url", server.URL).Error; err != nil {
+				t.Fatal(err)
+			}
+			input := seedance25TestInput()
+			input.Prompt = prompt
+			encodedInput, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Updates(map[string]any{"prompt": prompt, "input_json": string(encodedInput), "lease_owner": svc.workerID}).Error; err != nil {
+				t.Fatal(err)
+			}
+			task, err := svc.repo.Task(fixture.task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = svc.processClaimedTask(task)
+			storedTask, err := svc.repo.Task(fixture.task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fact, err := svc.repo.ProviderTaskFact(fixture.task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			order, err := svc.repo.BillingOrder(fixture.order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs, err := svc.repo.TaskLogs(fixture.task.UserID, fixture.task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var apiLogs []model.ApiCallLog
+			if err := db.Where("task_id = ?", fixture.task.ID).Find(&apiLogs).Error; err != nil {
+				t.Fatal(err)
+			}
+			surfaces, err := json.Marshal(struct {
+				TaskError       string
+				TaskResult      string
+				ProviderRequest string
+				FactTaskID      string
+				FactSource      string
+				FactLastFrame   string
+				OrderRequest    string
+				TaskLogs        []model.TaskLog
+				APILogs         []model.ApiCallLog
+			}{storedTask.Error, storedTask.ResultJSON, storedTask.ProviderRequestID, fact.ProviderTaskID, fact.AssetSourceURL, fact.LastFrameURL, order.ProviderRequestID, logs, apiLogs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sentinel := range []string{secret, "bob@example.test", "sentinel success runtime prompt"} {
+				if strings.Contains(string(surfaces), sentinel) {
+					t.Fatalf("persistent/HTTP surfaces leaked %q: %s", sentinel, surfaces)
+				}
+			}
+			if storedTask.Status != model.TaskStatusFailed || order.Status != model.BillingStatusUncertain {
+				t.Fatalf("unsafe successful fields task=%s billing=%s fact=%s task_error=%q", storedTask.Status, order.Status, fact.ProviderStatus, storedTask.Error)
+			}
+			if sensitiveCreateID {
+				if fact.ProviderStatus != "create_uncertain" {
+					t.Fatalf("sensitive create ID fact status = %s", fact.ProviderStatus)
+				}
+			} else if fact.ProviderStatus != "poll_uncertain" {
+				t.Fatalf("sensitive success URL fact status = %s", fact.ProviderStatus)
+			}
+		})
+	}
+}
+
 func TestKuaiziModelVisibilityRequiresCompleteRuntimeHealthAndPricing(t *testing.T) {
 	svc, db := openProviderCredentialService(t)
 	runtimeFixture := saveProviderRuntimeFixture(t, svc, db)
@@ -477,7 +585,7 @@ func TestProviderConcurrencyClaimIsWiredBeforeBillingRuns(t *testing.T) {
 func TestKuaiziConcurrencyCapacityRequeueDoesNotBusyClaim(t *testing.T) {
 	svc, db := openProviderCredentialService(t)
 	runtimeFixture := saveProviderRuntimeFixture(t, svc, db)
-	if err := svc.repo.RequeueTaskWaitingForProviderCapacity(runtimeFixture.task.ID, "owner"); err != nil {
+	if err := svc.repo.RequeueTaskWaitingForProviderCapacity(runtimeFixture.task.ID, "owner", runtimeFixture.task.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := svc.repo.ClaimNextTask("next-worker", time.Minute)
@@ -571,6 +679,156 @@ func TestProviderTaskRecoveryLeavesRunningForEveryPersistedFactState(t *testing.
 	}
 }
 
+func TestProviderSucceededRecoveryUsesMinimalFactsAndCompletesAssetAndBilling(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	var downloads atomic.Int64
+	source := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		downloads.Add(1)
+		if request.URL.Path != "/result.mp4" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "video/mp4")
+		_, _ = writer.Write([]byte("safe-video-bytes"))
+	}))
+	defer source.Close()
+	originalOutboundTransport := outboundTransport
+	testOutboundTransport := outboundTransport.Clone()
+	testOutboundTransport.TLSClientConfig = source.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	testOutboundTransport.DialContext = func(ctx context.Context, network string, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, source.Listener.Addr().String())
+	}
+	outboundTransport = testOutboundTransport
+	t.Cleanup(func() { outboundTransport = originalOutboundTransport })
+	sourceURL := strings.Replace(source.URL, "127.0.0.1", "example.com", 1)
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 100, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	brokenInput := `{"mode":"video","prompt":"old prompt","config":{"channelId":"channel","model":"kuaizi-seedance-2.5","videoSeconds":"4","vquality":"720p","size":"16:9"},"referenceImages":[{"storageKey":"resource:deleted-resource","role":"reference_image"}]}`
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Updates(map[string]any{"input_json": brokenInput, "lease_owner": svc.workerID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderEndpointVersion{}).Where("id = ?", "endpoint-v1").Updates(map[string]any{"base_url": "not-a-valid-endpoint", "status": "retired"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderCredentialVersion{}).Where("id = ?", "credential-v1").Updates(map[string]any{"key_cipher": "unusable-cipher", "status": "retired"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-success-recovery", "asset_source_url": sourceURL + "/result.mp4",
+		"last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task, err := svc.repo.Task(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.processClaimedTask(task); err != nil {
+		t.Fatalf("processClaimedTask() error = %v", err)
+	}
+	storedTask, err := svc.repo.Task(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "id = ?", fixture.order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var generatedResources []model.Resource
+	if err := db.Where("user_id = ? AND status = ?", fixture.task.UserID, model.ResourceStatusReady).Find(&generatedResources).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusSucceeded || order.Status != model.BillingStatusSettled || len(generatedResources) != 1 || downloads.Load() != 1 {
+		t.Fatalf("succeeded recovery task=%s order=%s resources=%d downloads=%d error=%s", storedTask.Status, order.Status, len(generatedResources), downloads.Load(), storedTask.Error)
+	}
+	if generatedResources[0].SourceTaskID != fixture.task.ID || !generatedResources[0].QuotaReserved || generatedResources[0].QuotaDay == "" {
+		t.Fatalf("provider result resource idempotency facts source_task_id=%q quota=%t/%q", generatedResources[0].SourceTaskID, generatedResources[0].QuotaReserved, generatedResources[0].QuotaDay)
+	}
+	storedFact, err := svc.repo.ProviderTaskFact(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredResult, err := svc.processSucceededProviderTask(context.Background(), *storedTask, *storedFact)
+	if err != nil {
+		t.Fatalf("repeat succeeded projection error = %v", err)
+	}
+	if _, err := svc.persistKuaiziSeedance25Resource(*storedTask, recoveredResult); err != nil {
+		t.Fatalf("repeat succeeded persistence error = %v", err)
+	}
+	var repeatedResources int64
+	if err := db.Model(&model.Resource{}).Where("source_task_id = ?", fixture.task.ID).Count(&repeatedResources).Error; err != nil {
+		t.Fatal(err)
+	}
+	if repeatedResources != 1 || downloads.Load() != 1 {
+		t.Fatalf("repeat recovery resources=%d downloads=%d, want one idempotent asset/download", repeatedResources, downloads.Load())
+	}
+	quotaBefore, err := svc.repo.DailyUploadBytes(fixture.task.UserID, generatedResources[0].QuotaDay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Resource{}).Where("id = ?", generatedResources[0].ID).Update("status", model.ResourceStatusPending).Error; err != nil {
+		t.Fatal(err)
+	}
+	pendingLease := time.Now().Add(time.Minute)
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Updates(map[string]any{
+		"status": model.TaskStatusRunning, "lease_owner": svc.workerID, "lease_token": "pending-resume-claim", "lease_expires_at": &pendingLease,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Update("reconciliation_status", "pending").Error; err != nil {
+		t.Fatal(err)
+	}
+	pendingTask, err := svc.repo.Task(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingFact, err := svc.repo.ProviderTaskFact(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingResult, err := svc.processSucceededProviderTask(context.Background(), *pendingTask, *pendingFact)
+	if err != nil {
+		t.Fatalf("pending resource recovery projection error = %v", err)
+	}
+	if _, err := svc.persistKuaiziSeedance25Resource(*pendingTask, pendingResult); err != nil {
+		t.Fatalf("pending resource recovery persistence error = %v", err)
+	}
+	quotaAfter, err := svc.repo.DailyUploadBytes(fixture.task.UserID, generatedResources[0].QuotaDay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quotaAfter != quotaBefore || downloads.Load() != 2 {
+		t.Fatalf("pending recovery quota=%d→%d downloads=%d, want idempotent quota and one resume download", quotaBefore, quotaAfter, downloads.Load())
+	}
+	if strings.Contains(storedTask.ResultJSON, sourceURL) || strings.Contains(storedTask.ResultJSON, "sourceUrl") || !strings.Contains(storedTask.ResultJSON, "resource:") {
+		t.Fatalf("result JSON leaked source or missed persisted resource: %s", storedTask.ResultJSON)
+	}
+}
+
+func TestValidateStoredKuaiziSeedance25SuccessPreservesOutputSecurityContract(t *testing.T) {
+	valid := model.ProviderTaskFact{
+		ProviderTaskID: "provider-success", AssetSourceURL: "https://cdn.example/result.mp4",
+		LastFrameURL: "https://cdn.example/last.png", ActualDurationSeconds: 8, TotalTokens: "42",
+	}
+	for _, mutate := range []func(*model.ProviderTaskFact){
+		func(fact *model.ProviderTaskFact) { fact.AssetSourceURL = "http://cdn.example/result.mp4" },
+		func(fact *model.ProviderTaskFact) { fact.LastFrameURL = "https://user@cdn.example/last.png" },
+		func(fact *model.ProviderTaskFact) { fact.TotalTokens = "-1" },
+		func(fact *model.ProviderTaskFact) { fact.TotalTokens = "not-a-number" },
+		func(fact *model.ProviderTaskFact) { fact.TotalTokens = strings.Repeat("9", 81) },
+	} {
+		fact := valid
+		mutate(&fact)
+		if err := validateStoredKuaiziSeedance25Success(fact); err == nil {
+			t.Fatalf("validateStoredKuaiziSeedance25Success(%+v) error = nil", fact)
+		}
+	}
+}
+
 func TestProviderCreateUncertainOccupiesCapacityAfterTaskTerminalization(t *testing.T) {
 	svc, db := openProviderCredentialService(t)
 	fixture := saveProviderRuntimeFixture(t, svc, db)
@@ -589,12 +847,166 @@ func TestProviderCreateUncertainOccupiesCapacityAfterTaskTerminalization(t *test
 	if err := db.Create(&secondFact).Error; err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := svc.repo.ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner)
+	claimed, err := svc.repo.ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if claimed {
 		t.Fatal("reserved task exceeded capacity occupied by create_uncertain fact")
+	}
+}
+
+func TestResolvedProviderFactCannotOccupyCapacityOrAcceptStalePoll(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "running", "provider_task_id": "provider-running", "reconciliation_status": "resolved",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Updates(map[string]any{"status": model.TaskStatusFailed, "lease_owner": ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondTask := providerRuntimeTask("task-after-resolved-running", "user-after-resolved-running", "worker-after-resolved-running")
+	secondTask.BillingOrderID = ""
+	if err := db.Create(&secondTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondFact := providerRuntimeFact(secondTask.ID, "", "reserved")
+	if err := db.Create(&secondFact).Error; err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.repo.ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claimed {
+		t.Fatal("resolved running fact still occupied provider capacity")
+	}
+	if err := svc.repo.UpdateProviderTaskPoll(fixture.task.ID, "succeeded", "stale-trace"); err == nil {
+		t.Fatal("stale poll overwrote a resolved provider fact")
+	}
+	if err := svc.repo.SaveProviderTaskSuccess(fixture.task.ID, "succeeded", "stale-trace", "https://cdn.example/result.mp4", "https://cdn.example/last.png", 8, "42"); err == nil {
+		t.Fatal("stale success overwrote a resolved provider fact")
+	}
+}
+
+func TestResolvedProviderFactRejectsStaleTaskCompletion(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	admin := model.User{ID: "stale-completion-admin", Username: "stale-completion-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	owner := model.User{ID: fixture.task.UserID, Username: "stale-completion-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 100, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", fixture.order.ID).Update("status", model.BillingStatusRunning).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-success", "asset_source_url": "https://cdn.example/result.mp4",
+		"last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "manual review won"}); err != nil {
+		t.Fatal(err)
+	}
+	completed := fixture.task
+	completed.Status = model.TaskStatusSucceeded
+	if err := svc.repo.SaveProviderTaskCompletion(&completed, fixture.task.LeaseOwner, fixture.task.LeaseToken, nil, nil, nil); err == nil {
+		t.Fatal("stale provider completion overwrote admin reconciliation")
+	}
+	storedTask, err := svc.repo.Task(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order, err := svc.repo.BillingOrder(fixture.order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusFailed || storedTask.Stage != "任务已人工核对终结" || storedTask.Error != "上游任务已完成人工核对" || storedTask.LeaseOwner != "" || storedTask.LeaseToken != "" || storedTask.LeaseExpiresAt != nil || order.Status != model.BillingStatusRefunded {
+		t.Fatalf("stale completion task=%s billing=%s", storedTask.Status, order.Status)
+	}
+}
+
+func TestProviderCompletionRequiresCurrentUnexpiredLeaseGeneration(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 100, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Updates(map[string]any{
+		"provider_status": "succeeded", "provider_task_id": "provider-success", "asset_source_url": "https://cdn.example/result.mp4",
+		"last_frame_url": "https://cdn.example/last.png", "actual_duration_seconds": 8, "total_tokens": "42",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	completed := fixture.task
+	completed.Status = model.TaskStatusSucceeded
+	if err := svc.repo.SaveProviderTaskCompletion(&completed, fixture.task.LeaseOwner, "stale-generation", nil, nil, nil); err == nil {
+		t.Fatal("provider completion accepted a stale lease generation")
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("lease_expires_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.SaveProviderTaskCompletion(&completed, fixture.task.LeaseOwner, fixture.task.LeaseToken, nil, nil, nil); err == nil {
+		t.Fatal("provider completion accepted an expired lease")
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", fixture.task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.TaskStatusRunning {
+		t.Fatalf("stale completions changed task status to %s", stored.Status)
+	}
+}
+
+func TestSourceTaskResourceWriteUsesFencedClaim(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Update("provider_status", "succeeded").Error; err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-fenced", UserID: fixture.task.UserID, SourceTaskID: fixture.task.ID,
+		Kind: "video", Status: model.ResourceStatusPending, Provider: "local", ObjectKey: "pending/result.mp4",
+		MimeType: "video/mp4", Size: 4, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-one", "pending/result-write-one.mp4", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-two", "pending/result-write-two.mp4", time.Minute); err == nil {
+		t.Fatal("second writer claimed an unexpired resource write")
+	}
+	newTaskLeaseToken := "new-task-generation"
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("lease_token", newTaskLeaseToken).Error; err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.repo.ClaimSourceTaskResourceWrite(fixture.task.UserID, fixture.task.ID, fixture.task.LeaseOwner, newTaskLeaseToken, "write-two", "pending/result-write-two.mp4", time.Minute)
+	if err != nil {
+		t.Fatalf("new task generation could not resume an unexpired stale resource claim: %v", err)
+	}
+	first.Status = model.ResourceStatusReady
+	if err := svc.repo.CompleteSourceTaskResourceWrite(first, fixture.task.LeaseOwner, fixture.task.LeaseToken, "write-one"); err == nil {
+		t.Fatal("stale resource writer completed after its fencing token was replaced")
+	}
+	second.Status = model.ResourceStatusReady
+	if err := svc.repo.CompleteSourceTaskResourceWrite(second, fixture.task.LeaseOwner, newTaskLeaseToken, "write-two"); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.Resource
+	if err := db.First(&stored, "id = ?", resource.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.ResourceStatusReady || stored.ObjectKey != "pending/result-write-two.mp4" || stored.WriteToken != "" || stored.WriteTaskLeaseToken != "" || stored.WriteLeaseExpiresAt != nil {
+		t.Fatalf("resource claim did not converge: %+v", stored)
 	}
 }
 
@@ -720,7 +1132,7 @@ func TestPostgresKuaiziConcurrencyClaimsOneExecutionAcrossRepositories(t *testin
 			defer workers.Done()
 			ready.Done()
 			<-start
-			results[index], errorsByWorker[index] = repositories[index].ClaimProviderTaskExecution("task-"+string(rune('a'+index)), "owner-task-"+string(rune('a'+index)))
+			results[index], errorsByWorker[index] = repositories[index].ClaimProviderTaskExecution("task-"+string(rune('a'+index)), "owner-task-"+string(rune('a'+index)), "owner-task-"+string(rune('a'+index))+"-claim")
 		}(index)
 	}
 	ready.Wait()
@@ -859,6 +1271,239 @@ func TestPostgresProviderTaskFactInsertFailureRollsBackCommercialFactsAcrossConn
 	}
 }
 
+func TestPostgresProviderBillingRefundRaceIsIdempotentAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(repository.New(db.Session(&gorm.Session{NewDB: true})), t.TempDir())
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 100, ReservedMicrocredits: 8}).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherOrder := providerRuntimeBillingOrder("billing-other-reservation", "task-other-reservation", fixture.task.UserID)
+	if err := db.Create(&otherOrder).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Update("provider_status", "create_failed").Error; err != nil {
+		t.Fatal(err)
+	}
+	blocker := db.Begin()
+	if blocker.Error != nil {
+		t.Fatal(blocker.Error)
+	}
+	var lockedAccount model.CreditAccount
+	if err := blocker.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedAccount, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		_ = blocker.Rollback()
+		t.Fatal(err)
+	}
+	recoveryRepo := repository.New(db.Session(&gorm.Session{NewDB: true}))
+	ordinaryRepo := repository.New(db.Session(&gorm.Session{NewDB: true}))
+	start := make(chan struct{})
+	errorsByPath := make(chan error, 2)
+	go func() {
+		<-start
+		_, err := recoveryRepo.FinalizeProviderTaskRecovery(fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken)
+		errorsByPath <- err
+	}()
+	go func() {
+		<-start
+		errorsByPath <- ordinaryRepo.RefundBillingOrder(fixture.order.ID, "ordinary refund")
+	}()
+	close(start)
+	time.Sleep(150 * time.Millisecond)
+	if err := blocker.Rollback().Error; err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := <-errorsByPath; err != nil {
+			t.Fatalf("concurrent refund error = %v", err)
+		}
+	}
+	var account model.CreditAccount
+	if err := db.First(&account, "user_id = ?", fixture.task.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var refundLedgers int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("billing_order_id = ? AND type = ?", fixture.order.ID, model.CreditLedgerRefund).Count(&refundLedgers).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits != 104 || account.ReservedMicrocredits != 4 || refundLedgers != 1 {
+		t.Fatalf("refund race account=%#v refund_ledgers=%d, want one delta/ledger", account, refundLedgers)
+	}
+}
+
+func TestPostgresProviderReconciliationConvergesAcrossRecoveryAndAdminOrder(t *testing.T) {
+	for _, recoveryFirst := range []bool{true, false} {
+		name := "admin_then_recovery"
+		if recoveryFirst {
+			name = "recovery_then_admin"
+		}
+		t.Run(name, func(t *testing.T) {
+			db := testsupport.OpenPaymentIntegrationPostgres(t)
+			if err := database.MigrateSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			svc := New(repository.New(db.Session(&gorm.Session{NewDB: true})), t.TempDir())
+			fixture := saveProviderRuntimeFixture(t, svc, db)
+			admin := model.User{ID: "reconciliation-admin", Username: "reconciliation-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			owner := model.User{ID: fixture.task.UserID, Username: "reconciliation-owner", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			if err := db.Create(&[]model.User{admin, owner}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 100, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.repo.MarkProviderTaskCreateUncertain(fixture.task.ID, "controlled uncertainty"); err != nil {
+				t.Fatal(err)
+			}
+			recover := func() error {
+				finalized, err := repository.New(db.Session(&gorm.Session{NewDB: true})).FinalizeProviderTaskRecovery(fixture.task.ID, fixture.task.LeaseOwner, fixture.task.LeaseToken)
+				if err == nil && !finalized {
+					return errors.New("provider recovery did not report terminal convergence")
+				}
+				return err
+			}
+			resolve := func() error {
+				_, err := svc.ResolveBillingOrder(&admin, fixture.order.ID, ResolveBillingRequest{Action: "refund", Note: "provider reconciliation"})
+				return err
+			}
+			if recoveryFirst {
+				if err := recover(); err != nil {
+					t.Fatal(err)
+				}
+				if err := resolve(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := resolve(); err != nil {
+					t.Fatal(err)
+				}
+				if err := recover(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var storedTask model.Task
+			var storedFact model.ProviderTaskFact
+			var storedOrder model.BillingOrder
+			if err := db.First(&storedTask, "id = ?", fixture.task.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.First(&storedFact, "task_id = ?", fixture.task.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.First(&storedOrder, "id = ?", fixture.order.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			var ledgers int64
+			if err := db.Model(&model.CreditLedgerEntry{}).Where("billing_order_id = ? AND type = ?", fixture.order.ID, model.CreditLedgerRefund).Count(&ledgers).Error; err != nil {
+				t.Fatal(err)
+			}
+			if storedTask.Status == model.TaskStatusRunning || storedFact.ReconciliationStatus != "resolved" || storedFact.ProviderStatus == "create_uncertain" || storedOrder.Status != model.BillingStatusRefunded || ledgers != 1 {
+				t.Fatalf("reconciliation task=%s fact=%s/%s order=%s ledgers=%d", storedTask.Status, storedFact.ProviderStatus, storedFact.ReconciliationStatus, storedOrder.Status, ledgers)
+			}
+			secondTask := providerRuntimeTask("task-after-reconciliation", "user-after-reconciliation", "worker-after-reconciliation")
+			secondTask.BillingOrderID = ""
+			secondFact := providerRuntimeFact(secondTask.ID, "", "reserved")
+			if err := db.Create(&secondTask).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&secondFact).Error; err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := repository.New(db.Session(&gorm.Session{NewDB: true})).ClaimProviderTaskExecution(secondTask.ID, secondTask.LeaseOwner, secondTask.LeaseToken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !claimed {
+				t.Fatal("resolved create uncertainty still occupies provider capacity")
+			}
+		})
+	}
+}
+
+func TestPostgresProviderLeaseAndResourceFencingAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	first := repository.New(db.Session(&gorm.Session{NewDB: true}))
+	second := repository.New(db.Session(&gorm.Session{NewDB: true}))
+	svc := New(first, t.TempDir())
+	fixture := saveProviderRuntimeFixture(t, svc, db)
+	oldToken := fixture.task.LeaseToken
+	if err := db.Create(&model.CreditAccount{UserID: fixture.task.UserID, AvailableMicrocredits: 100, ReservedMicrocredits: fixture.order.AmountMicrocredits}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fixture.task.ID).Update("provider_status", "succeeded").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("lease_expires_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := second.ClaimNextTask(fixture.task.LeaseOwner, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed == nil || reclaimed.ID != fixture.task.ID || reclaimed.LeaseToken == "" || reclaimed.LeaseToken == oldToken {
+		t.Fatalf("reclaim did not rotate lease generation: %#v", reclaimed)
+	}
+	staleCompletion := fixture.task
+	staleCompletion.Status = model.TaskStatusSucceeded
+	if err := first.SaveProviderTaskCompletion(&staleCompletion, fixture.task.LeaseOwner, oldToken, nil, nil, nil); err == nil {
+		t.Fatal("expired provider worker completed after a same-owner reclaim")
+	}
+	staleOrder, err := first.BillingOrder(fixture.order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staleOrder.Status != model.BillingStatusRunning {
+		t.Fatalf("stale completion changed billing to %s", staleOrder.Status)
+	}
+	resource := model.Resource{
+		ID: "pg-resource-fenced", UserID: fixture.task.UserID, SourceTaskID: fixture.task.ID,
+		Kind: "video", Status: model.ResourceStatusPending, Provider: "local", ObjectKey: "pending/result.mp4",
+		MimeType: "video/mp4", Size: 4, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	claimedFirst, err := first.ClaimSourceTaskResourceWrite(resource.UserID, fixture.task.ID, reclaimed.LeaseOwner, reclaimed.LeaseToken, "pg-write-one", "pending/result-one.mp4", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", fixture.task.ID).Update("lease_expires_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondGeneration, err := second.ClaimNextTask(reclaimed.LeaseOwner, time.Minute)
+	if err != nil || secondGeneration == nil || secondGeneration.LeaseToken == reclaimed.LeaseToken {
+		t.Fatalf("second task generation = %#v, error = %v", secondGeneration, err)
+	}
+	claimedSecond, err := second.ClaimSourceTaskResourceWrite(resource.UserID, fixture.task.ID, secondGeneration.LeaseOwner, secondGeneration.LeaseToken, "pg-write-two", "pending/result-two.mp4", time.Minute)
+	if err != nil {
+		t.Fatalf("new task generation could not fence an unexpired resource claim: %v", err)
+	}
+	claimedFirst.Status = model.ResourceStatusReady
+	if err := first.CompleteSourceTaskResourceWrite(claimedFirst, reclaimed.LeaseOwner, reclaimed.LeaseToken, "pg-write-one"); err == nil {
+		t.Fatal("expired PostgreSQL resource writer completed after a new claim")
+	}
+	claimedSecond.Status = model.ResourceStatusReady
+	if err := second.CompleteSourceTaskResourceWrite(claimedSecond, secondGeneration.LeaseOwner, secondGeneration.LeaseToken, "pg-write-two"); err != nil {
+		t.Fatal(err)
+	}
+	storedTask, err := first.Task(fixture.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedResource, err := first.Resource(resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusRunning || storedTask.LeaseToken != secondGeneration.LeaseToken || storedResource.Status != model.ResourceStatusReady || storedResource.ObjectKey != "pending/result-two.mp4" {
+		t.Fatalf("fencing did not converge task=%#v resource=%#v", storedTask, storedResource)
+	}
+}
+
 type providerRuntimeFixture struct {
 	task         model.Task
 	order        model.BillingOrder
@@ -914,7 +1559,7 @@ func saveProviderRuntimeFixture(t *testing.T, svc *Service, db *gorm.DB) provide
 func providerRuntimeTask(id string, userID string, owner string) model.Task {
 	now := time.Now()
 	lease := now.Add(time.Minute)
-	return model.Task{ID: id, UserID: userID, Type: "canvas_video", Capability: "video", Status: model.TaskStatusRunning, LeaseOwner: owner, LeaseExpiresAt: &lease, BillingOrderID: "billing-runtime", Provider: "system", Model: "kuaizi-seedance-2.5", InputJSON: `{"mode":"video","prompt":"animate","config":{"channelId":"channel","model":"kuaizi-seedance-2.5","videoSeconds":"4","vquality":"720p","size":"16:9"}}`, CreatedAt: now, UpdatedAt: now}
+	return model.Task{ID: id, UserID: userID, Type: "canvas_video", Capability: "video", Status: model.TaskStatusRunning, LeaseOwner: owner, LeaseToken: owner + "-claim", LeaseExpiresAt: &lease, BillingOrderID: "billing-runtime", Provider: "system", Model: "kuaizi-seedance-2.5", InputJSON: `{"mode":"video","prompt":"animate","config":{"channelId":"channel","model":"kuaizi-seedance-2.5","videoSeconds":"4","vquality":"720p","size":"16:9"}}`, CreatedAt: now, UpdatedAt: now}
 }
 
 func providerRuntimeBillingOrder(id string, taskID string, userID string) model.BillingOrder {

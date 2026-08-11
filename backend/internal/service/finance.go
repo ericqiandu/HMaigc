@@ -293,19 +293,51 @@ func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveB
 	if order.Status != model.BillingStatusUncertain && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusReserved {
 		return nil, BadAuthRequest("当前订单不需要人工核对")
 	}
-	switch strings.TrimSpace(req.Action) {
-	case "settle":
-		err = s.SettleBilling(id, order.ProviderRequestID)
-	case "refund":
-		err = s.RefundBilling(id, note)
-	default:
+	action := strings.TrimSpace(req.Action)
+	if action != "settle" && action != "refund" {
 		return nil, BadAuthRequest("请选择结算或退款")
+	}
+	var providerResolved bool
+	const resolvedTaskStage = "任务已人工核对终结"
+	const resolvedTaskError = "上游任务已完成人工核对"
+	providerFact, factErr := s.repo.ProviderTaskFactForBillingOrder(id)
+	if factErr == nil {
+		resolvedProviderStatus := providerFact.ProviderStatus
+		switch providerFact.ProviderStatus {
+		case "create_uncertain":
+			resolvedProviderStatus = "create_uncertain_resolved"
+		case "poll_uncertain":
+			resolvedProviderStatus = "poll_uncertain_resolved"
+		}
+		resolution := repository.ProviderTaskBillingResolution{
+			ExpectedProviderStatus: providerFact.ProviderStatus,
+			ResolvedProviderStatus: resolvedProviderStatus,
+			ActorUserID:            actor.ID, Note: truncateRunes(note, 500),
+			TaskStatus: model.TaskStatusFailed, TaskStage: resolvedTaskStage, TaskError: resolvedTaskError,
+		}
+		if action == "settle" {
+			providerResolved, err = s.repo.SettleProviderTaskBilling(id, resolution)
+		} else {
+			providerResolved, err = s.repo.RefundProviderTaskBilling(id, resolution)
+		}
+	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
+		return nil, factErr
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.RecordBillingResolution(id, actor.ID, truncateRunes(note, 500)); err != nil {
-		return nil, err
+	if !providerResolved {
+		if action == "settle" {
+			err = s.SettleBilling(id, order.ProviderRequestID)
+		} else {
+			err = s.RefundBilling(id, note)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := s.repo.RecordBillingResolution(id, actor.ID, truncateRunes(note, 500)); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.appendAdminAudit(actor, "billing.resolve", "user", order.UserID, "人工核对用户计费订单", map[string]any{"billingOrderId": id, "action": req.Action, "note": truncateRunes(note, 500)}); err != nil {
 		return nil, err

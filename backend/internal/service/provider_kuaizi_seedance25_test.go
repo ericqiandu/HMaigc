@@ -338,7 +338,11 @@ func TestSeedance25CreateHTTPFailureUsesExplicitSideEffectClassification(t *test
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				writer.WriteHeader(statusCode)
-				_, _ = io.WriteString(writer, `{"code":40001,"message":"rejected","data":null,"trace_id":"trace-rejected"}`)
+				body := `<html>request rejected</html>`
+				if statusCode == http.StatusUnprocessableEntity {
+					body = strings.Repeat("x", 4<<20+1)
+				}
+				_, _ = io.WriteString(writer, body)
 			}))
 			defer server.Close()
 			client, runtime := seedance25TestClient(t, server)
@@ -346,6 +350,101 @@ func TestSeedance25CreateHTTPFailureUsesExplicitSideEffectClassification(t *test
 			var uncertain *KuaiziSeedance25CreateUncertainError
 			if err == nil || errors.As(err, &uncertain) {
 				t.Fatalf("Create() error = %T %v, want definitive rejection", err, err)
+			}
+		})
+	}
+}
+
+func TestSeedance25CreateHTTP200RequiresCompleteSuccessToAvoidUncertainty(t *testing.T) {
+	for _, body := range []string{
+		`{"code":40001,"message":"rejected","data":null,"trace_id":"trace-business"}`,
+		`{"code":0,"message":"","data":null,"trace_id":"trace-missing-data"}`,
+	} {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, body)
+		}))
+		client, runtime := seedance25TestClient(t, server)
+		_, err := client.Create(context.Background(), runtime, seedance25TestInput())
+		server.Close()
+		var uncertain *KuaiziSeedance25CreateUncertainError
+		if !errors.As(err, &uncertain) {
+			t.Fatalf("Create() body=%s error = %T %v, want uncertainty", body, err, err)
+		}
+	}
+}
+
+func TestSeedance25CreateHTTP5xxIsUncertainBeforeEnvelopeParsing(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{name: "500 html", statusCode: http.StatusInternalServerError, body: `<html>upstream failed</html>`},
+		{name: "502 empty", statusCode: http.StatusBadGateway},
+		{name: "524 oversized", statusCode: 524, body: strings.Repeat("x", 4<<20+1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(test.statusCode)
+				_, _ = io.WriteString(writer, test.body)
+			}))
+			defer server.Close()
+			client, runtime := seedance25TestClient(t, server)
+			_, err := client.Create(context.Background(), runtime, seedance25TestInput())
+			var uncertain *KuaiziSeedance25CreateUncertainError
+			if !errors.As(err, &uncertain) {
+				t.Fatalf("Create() error = %T %v, want HTTP-first uncertainty", err, err)
+			}
+		})
+	}
+}
+
+func TestSeedance25ClientRejectsSensitiveOrMalformedSuccessfulFields(t *testing.T) {
+	const secret = "sentinel-success-key"
+	const prompt = "sentinel success prompt alice@example.test"
+	tests := []struct {
+		name  string
+		stage string
+		data  string
+	}{
+		{name: "create id reflects key", stage: "create", data: `{"task_id":"sentinel-success-key"}`},
+		{name: "create id reflects prompt", stage: "create", data: `{"task_id":"sentinel success prompt alice@example.test"}`},
+		{name: "create id invalid characters", stage: "create", data: `{"task_id":"provider/task?id=unsafe"}`},
+		{name: "video url reflects key", stage: "status", data: `{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example/result.mp4?token=sentinel-success-key","last_frame_url":"https://cdn.example/last.png","duration":8,"total_tokens":"42"}`},
+		{name: "last frame url reflects encoded prompt", stage: "status", data: `{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example/result.mp4","last_frame_url":"https://cdn.example/last.png?note=sentinel%20success%20prompt%20alice%40example.test","duration":8,"total_tokens":"42"}`},
+		{name: "last frame url reflects double encoded prompt", stage: "status", data: `{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example/result.mp4","last_frame_url":"https://cdn.example/last.png?note=sentinel%2520success%2520prompt%2520alice%2540example.test","duration":8,"total_tokens":"42"}`},
+		{name: "last frame url reflects four-times encoded prompt", stage: "status", data: `{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example/result.mp4","last_frame_url":"https://cdn.example/last.png?note=sentinel%25252520success%25252520prompt%25252520alice%25252540example.test","duration":8,"total_tokens":"42"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(writer, `{"code":0,"message":"","data":`+test.data+`,"trace_id":"trace-safe"}`)
+			}))
+			defer server.Close()
+			client, runtime := seedance25TestClient(t, server)
+			ciphertext, err := client.cipher.Encrypt(runtime.Account.ID, runtime.Credential.ID, runtime.CredentialVersion.ID, secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime.CredentialVersion.KeyCipher = ciphertext
+			runtime.Task.Prompt = prompt
+			if test.stage == "create" {
+				_, err = client.Create(context.Background(), runtime, seedance25TestInput())
+				var uncertain *KuaiziSeedance25CreateUncertainError
+				if !errors.As(err, &uncertain) {
+					t.Fatalf("Create() error = %T %v, want uncertainty", err, err)
+				}
+			} else {
+				_, err = client.Status(context.Background(), runtime, "provider-task")
+				if err == nil {
+					t.Fatal("Status() accepted sensitive successful fields")
+				}
+			}
+			if err != nil && (strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "alice@example.test")) {
+				t.Fatalf("error leaked successful field sentinel: %v", err)
 			}
 		})
 	}
@@ -363,6 +462,7 @@ func TestSeedance25ResponseRequiresPresentCodeAndCompleteSuccessUsage(t *testing
 		{name: "success missing tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8},"trace_id":"trace"}`},
 		{name: "success null tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8,"total_tokens":null},"trace_id":"trace"}`},
 		{name: "success negative tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8,"total_tokens":-1},"trace_id":"trace"}`},
+		{name: "success oversized tokens", stage: "status", body: `{"code":0,"data":{"task_id":"provider-task","status":"succeeded","video_url":"https://cdn.example.com/result.mp4","last_frame_url":"https://cdn.example.com/last.png","duration":8,"total_tokens":"` + strings.Repeat("9", 81) + `"},"trace_id":"trace"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

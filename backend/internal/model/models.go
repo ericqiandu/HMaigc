@@ -386,13 +386,13 @@ type CreditAccount struct {
 type CreditLedgerEntry struct {
 	ID                         string           `json:"id" gorm:"primaryKey;size:36"`
 	UserID                     string           `json:"userId" gorm:"size:36;index;index:idx_credit_ledger_user_created,priority:1"`
-	Type                       CreditLedgerType `json:"type" gorm:"size:32;index"`
+	Type                       CreditLedgerType `json:"type" gorm:"size:32;index;uniqueIndex:idx_credit_ledger_billing_action,priority:2,where:billing_order_id <> ''"`
 	AmountMicrocredits         int64            `json:"amountMicrocredits"`
 	AvailableDeltaMicrocredits int64            `json:"availableDeltaMicrocredits"`
 	ReservedDeltaMicrocredits  int64            `json:"reservedDeltaMicrocredits"`
 	AvailableAfterMicrocredits int64            `json:"availableAfterMicrocredits"`
 	ReservedAfterMicrocredits  int64            `json:"reservedAfterMicrocredits"`
-	BillingOrderID             string           `json:"billingOrderId,omitempty" gorm:"index;size:36"`
+	BillingOrderID             string           `json:"billingOrderId,omitempty" gorm:"index;size:36;uniqueIndex:idx_credit_ledger_billing_action,priority:1,where:billing_order_id <> ''"`
 	RedeemCodeID               string           `json:"redeemCodeId,omitempty" gorm:"index;size:36"`
 	ActorUserID                string           `json:"actorUserId,omitempty" gorm:"index;size:36"`
 	Model                      string           `json:"model,omitempty" gorm:"size:120;index"`
@@ -572,14 +572,20 @@ type UserSkillState struct {
 }
 
 type Resource struct {
-	ID       string         `json:"id" gorm:"primaryKey;size:36"`
-	UserID   string         `json:"userId" gorm:"index;size:36;index:idx_resources_user_created,priority:1"`
-	TeamID   string         `json:"teamId,omitempty" gorm:"index;size:36;index:idx_resources_team_created,priority:1"`
-	Kind     string         `json:"kind" gorm:"index;size:24"`
-	Status   ResourceStatus `json:"status" gorm:"index;size:24"`
-	Provider string         `json:"provider" gorm:"size:24"`
-	Endpoint string         `json:"endpoint"`
-	Bucket   string         `json:"bucket" gorm:"size:160"`
+	ID                  string         `json:"id" gorm:"primaryKey;size:36"`
+	UserID              string         `json:"userId" gorm:"index;size:36;index:idx_resources_user_created,priority:1"`
+	TeamID              string         `json:"teamId,omitempty" gorm:"index;size:36;index:idx_resources_team_created,priority:1"`
+	SourceTaskID        string         `json:"-" gorm:"size:36;uniqueIndex:idx_resources_source_task,where:source_task_id <> ''"`
+	QuotaDay            string         `json:"-" gorm:"size:10"`
+	QuotaReserved       bool           `json:"-"`
+	WriteToken          string         `json:"-" gorm:"size:64;index"`
+	WriteTaskLeaseToken string         `json:"-" gorm:"size:64;index"`
+	WriteLeaseExpiresAt *time.Time     `json:"-" gorm:"index"`
+	Kind                string         `json:"kind" gorm:"index;size:24"`
+	Status              ResourceStatus `json:"status" gorm:"index;size:24"`
+	Provider            string         `json:"provider" gorm:"size:24"`
+	Endpoint            string         `json:"endpoint"`
+	Bucket              string         `json:"bucket" gorm:"size:160"`
 	// 用户 OSS 每次修改都会生成新版本，资源固定引用创建时的版本，避免历史资源因换密钥失效。
 	StorageSettingID string    `json:"-" gorm:"index;size:36"`
 	ObjectKey        string    `json:"objectKey" gorm:"index"`
@@ -907,6 +913,7 @@ type Task struct {
 	PollStage         string     `json:"pollStage,omitempty" gorm:"size:32"`
 	NextPollAt        *time.Time `json:"nextPollAt,omitempty" gorm:"index"`
 	LeaseOwner        string     `json:"-" gorm:"index;size:120"`
+	LeaseToken        string     `json:"-" gorm:"index;size:64"`
 	LeaseExpiresAt    *time.Time `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
 	InputJSON         string     `json:"inputJson" gorm:"type:text"`
 	ResultJSON        string     `json:"resultJson" gorm:"type:text"`

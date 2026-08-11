@@ -854,12 +854,12 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	providerTask := false
 	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
 		providerTask = true
-		claimed, claimErr := s.repo.ClaimProviderTaskExecution(task.ID, s.workerID)
+		claimed, claimErr := s.repo.ClaimProviderTaskExecution(task.ID, s.workerID, task.LeaseToken)
 		if claimErr != nil {
 			return claimErr
 		}
 		if !claimed {
-			if err := s.repo.RequeueTaskWaitingForProviderCapacity(task.ID, s.workerID); err != nil {
+			if err := s.repo.RequeueTaskWaitingForProviderCapacity(task.ID, s.workerID, task.LeaseToken); err != nil {
 				return err
 			}
 			_ = s.log(task.UserID, task.ID, "info", "等待上游凭据并发名额", "")
@@ -869,7 +869,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		return factErr
 	}
 	if providerTask {
-		finalized, finalizeErr := s.repo.FinalizeProviderTaskRecovery(task.ID, s.workerID)
+		finalized, finalizeErr := s.repo.FinalizeProviderTaskRecovery(task.ID, s.workerID, task.LeaseToken)
 		if finalizeErr != nil {
 			return finalizeErr
 		}
@@ -888,7 +888,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		for {
 			select {
 			case <-ticker.C:
-				if err := s.repo.RenewTaskLease(task.ID, s.workerID, 45*time.Second); err != nil {
+				if err := s.repo.RenewTaskLease(task.ID, s.workerID, task.LeaseToken, 45*time.Second); err != nil {
 					leaseLost <- err
 					cancel()
 					return
@@ -904,7 +904,9 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 
 	task.Stage = "调用生成模型"
 	task.Progress = 35
-	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
+	if err := s.repo.UpdateClaimedTaskProgress(task.ID, s.workerID, task.LeaseToken, task.Stage, task.Progress); err != nil {
+		return err
+	}
 	var markBillingErr error
 	if providerTask {
 		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
@@ -921,14 +923,24 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "计费准备失败"
 		task.Error = taskFailureMessage(markBillingErr)
 		task.CompletedAt = ptr(time.Now())
-		_ = s.repo.Save(task)
+		saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
+		if saveErr != nil {
+			return errors.Join(markBillingErr, saveErr)
+		}
+		if !saved {
+			return markBillingErr
+		}
 		_ = s.RefundBilling(task.BillingOrderID, "计费准备失败，上游请求未发出")
 		return markBillingErr
 	}
 	result, canvasOps, err := s.processTask(ctx, *task)
 	providerSucceeded := err == nil
 	if err == nil {
-		result, err = s.persistGeneratedMediaResult(task.UserID, result)
+		if providerTask && task.Model == "kuaizi-seedance-2.5" {
+			result, err = s.persistKuaiziSeedance25Resource(*task, result)
+		} else {
+			result, err = s.persistGeneratedMediaResult(task.UserID, result)
+		}
 	}
 	if err == nil {
 		_, err = s.finalizeCharacterTurnaroundTask(*task, result)
@@ -949,7 +961,13 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			task.Stage = "任务已取消"
 			task.Error = "任务已取消"
 			task.CompletedAt = ptr(time.Now())
-			_ = s.repo.Save(task)
+			saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
+			if saveErr != nil {
+				return saveErr
+			}
+			if !saved {
+				return err
+			}
 			if channelSlotFailedBeforeRequest {
 				_ = s.RefundBilling(task.BillingOrderID, "等待渠道槽位期间取消，上游请求未发出")
 			} else {
@@ -966,7 +984,14 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "任务失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		_ = s.repo.Save(task)
+		saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
+		if saveErr != nil {
+			return errors.Join(err, saveErr)
+		}
+		if !saved {
+			_ = s.log(task.UserID, task.ID, "warn", "任务终态写入被当前租约拒绝", "")
+			return err
+		}
 		if providerSucceeded || (!channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
 			_ = s.MarkBillingUncertain(task.BillingOrderID, task.Error)
 		} else {
@@ -990,17 +1015,32 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	opsJSON, _ := json.Marshal(canvasOps)
 	task.Stage = "持久化生成结果"
 	task.Progress = 90
-	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
-	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
+	if err := s.repo.UpdateClaimedTaskProgress(task.ID, s.workerID, task.LeaseToken, task.Stage, task.Progress); err != nil {
+		return err
+	}
+	var completionErr error
+	if providerTask {
+		completionErr = s.saveProviderTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
+	} else {
+		completionErr = s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
+	}
+	if completionErr != nil {
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务结果保存失败"
-		task.Error = taskFailureMessage(err)
+		task.Error = taskFailureMessage(completionErr)
 		task.CompletedAt = ptr(time.Now())
-		_ = s.repo.Save(task)
+		saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
+		if saveErr != nil {
+			return errors.Join(completionErr, saveErr)
+		}
+		if !saved {
+			_ = s.log(task.UserID, task.ID, "warn", "任务完成冲突未覆盖现有终态", "")
+			return completionErr
+		}
 		_ = s.MarkBillingUncertain(task.BillingOrderID, "上游已成功但任务结果未保存："+task.Error)
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务结果保存失败", task.Error)
-		return err
+		return completionErr
 	}
 	if completedTask, fetchErr := s.repo.Task(task.ID); fetchErr == nil {
 		if registerErr := s.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {
@@ -1008,9 +1048,11 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			_ = s.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
 		}
 	}
-	if err := s.SettleBilling(task.BillingOrderID, ""); err != nil {
-		_ = s.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
-		_ = s.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
+	if !providerTask {
+		if err := s.SettleBilling(task.BillingOrderID, ""); err != nil {
+			_ = s.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
+			_ = s.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
+		}
 	}
 	_ = s.log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
 	return nil

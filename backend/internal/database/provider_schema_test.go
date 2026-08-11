@@ -39,15 +39,44 @@ func TestProviderAccountSchemaCreatesExactIntegrityIndexes(t *testing.T) {
 		"idx_provider_task_fact_provider_task":   `CREATE UNIQUE INDEX idx_provider_task_fact_provider_task ON provider_task_facts(provider_credential_version_id, provider_task_id) WHERE provider_task_id <> ''`,
 		"idx_provider_billing_upstream_order":    `CREATE UNIQUE INDEX idx_provider_billing_upstream_order ON provider_billing_facts(provider_credential_version_id, upstream_order_id) WHERE upstream_order_id <> ''`,
 		"idx_channel_model_resolution_variant":   `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant)`,
+		"idx_resources_source_task":              `CREATE UNIQUE INDEX idx_resources_source_task ON resources(source_task_id) WHERE source_task_id <> ''`,
+		"idx_credit_ledger_billing_action":       `CREATE UNIQUE INDEX idx_credit_ledger_billing_action ON credit_ledger_entries(billing_order_id,type) WHERE billing_order_id <> ''`,
+		"idx_team_credit_ledger_billing_action":  `CREATE UNIQUE INDEX idx_team_credit_ledger_billing_action ON team_credit_ledger_entries(billing_order_id,type) WHERE billing_order_id <> ''`,
 	}
 	for name, expected := range want {
 		var actual string
 		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
 			t.Fatal(err)
 		}
-		if compactSQL(actual) != compactSQL(expected) {
+		if compactSchemaSQL(actual) != compactSchemaSQL(expected) {
 			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
 		}
+	}
+}
+
+func TestProviderRuntimeFencingSchemaMigratesLeaseAndResourceClaims(t *testing.T) {
+	db := openProviderSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		model  any
+		column string
+	}{
+		{model: &model.Task{}, column: "lease_token"},
+		{model: &model.Resource{}, column: "source_task_id"},
+		{model: &model.Resource{}, column: "quota_day"},
+		{model: &model.Resource{}, column: "quota_reserved"},
+		{model: &model.Resource{}, column: "write_token"},
+		{model: &model.Resource{}, column: "write_task_lease_token"},
+		{model: &model.Resource{}, column: "write_lease_expires_at"},
+	} {
+		if !db.Migrator().HasColumn(item.model, item.column) {
+			t.Fatalf("missing provider runtime fencing column %s", item.column)
+		}
+	}
+	if !db.Migrator().HasIndex(&model.Resource{}, "idx_resources_source_task") {
+		t.Fatal("missing unique source-task resource index")
 	}
 }
 
@@ -74,6 +103,23 @@ func TestProviderAccountSchemaRejectsWrongNamedIndexWithoutChangingRows(t *testi
 	}
 	if stored.BaseURL != row.BaseURL || stored.Status != row.Status {
 		t.Fatalf("existing provider row was overwritten: %#v", stored)
+	}
+}
+
+func TestProviderIntegritySchemaRejectsWrongSourceTaskResourceIndex(t *testing.T) {
+	db := openProviderSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`DROP INDEX idx_resources_source_task`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_resources_source_task ON resources(source_task_id)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureProviderIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "idx_resources_source_task") {
+		t.Fatalf("wrong source-task resource index error = %v", err)
 	}
 }
 

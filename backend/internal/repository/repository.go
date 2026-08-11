@@ -1,7 +1,10 @@
 package repository
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -266,7 +269,11 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 	var task model.Task
 	now := time.Now()
 	leaseExpiresAt := now.Add(leaseDuration)
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+	leaseToken, err := newLeaseToken()
+	if err != nil {
+		return nil, err
+	}
+	err = r.db.Transaction(func(tx *gorm.DB) error {
 		query := tx.Where("(status = ? AND (next_poll_at IS NULL OR next_poll_at <= ?)) OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))", model.TaskStatusQueued, now, model.TaskStatusRunning, now).
 			Order("created_at asc").Limit(1)
 		if r.Dialect() == "postgres" {
@@ -292,6 +299,7 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 				"attempts":         gorm.Expr("attempts + ?", 1),
 				"started_at":       gorm.Expr("COALESCE(started_at, ?)", now),
 				"lease_owner":      owner,
+				"lease_token":      leaseToken,
 				"lease_expires_at": leaseExpiresAt,
 				"next_poll_at":     nil,
 				"updated_at":       now,
@@ -311,10 +319,11 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 	return &task, nil
 }
 
-func (r *Repository) RenewTaskLease(id string, owner string, leaseDuration time.Duration) error {
+func (r *Repository) RenewTaskLease(id string, owner string, leaseToken string, leaseDuration time.Duration) error {
+	now := time.Now()
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND status = ? AND lease_owner = ?", id, model.TaskStatusRunning, owner).
-		Updates(map[string]any{"lease_expires_at": time.Now().Add(leaseDuration), "updated_at": time.Now()})
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at > ?", id, model.TaskStatusRunning, owner, leaseToken, now).
+		Updates(map[string]any{"lease_expires_at": now.Add(leaseDuration), "updated_at": now})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -322,6 +331,14 @@ func (r *Repository) RenewTaskLease(id string, owner string, leaseDuration time.
 		return errors.New("任务租约已失效")
 	}
 	return nil
+}
+
+func newLeaseToken() (string, error) {
+	var value [24]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("generate task lease token: %w", err)
+	}
+	return hex.EncodeToString(value[:]), nil
 }
 
 func (r *Repository) UpdateTaskProviderState(id string, providerRequestID string, pollStage string, nextPollAt *time.Time) error {
@@ -338,35 +355,110 @@ func (r *Repository) UpdateTaskProgress(id string, stage string, progress int) e
 	}).Error
 }
 
-func (r *Repository) SaveTaskCompletion(task *model.Task, session *model.Session, message *model.Message, results []model.Result) error {
+func (r *Repository) UpdateClaimedTaskProgress(id string, owner string, leaseToken string, stage string, progress int) error {
+	now := time.Now()
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at > ?", id, model.TaskStatusRunning, owner, leaseToken, now).
+		Updates(map[string]any{"stage": stage, "progress": progress, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("task progress lease state conflict")
+	}
+	return nil
+}
+
+func (r *Repository) SaveClaimedTaskTerminal(task *model.Task, owner string, leaseToken string) (bool, error) {
+	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
+		return false, errors.New("claimed task terminal status is invalid")
+	}
+	now := time.Now()
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at > ?", task.ID, model.TaskStatusRunning, owner, leaseToken, now).
+		Updates(map[string]any{
+			"status": task.Status, "stage": task.Stage, "progress": task.Progress, "error": task.Error,
+			"completed_at": task.CompletedAt, "lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *Repository) SaveTaskCompletion(task *model.Task, leaseOwner string, leaseToken string, session *model.Session, message *model.Message, results []model.Result) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(task).Error; err != nil {
+		var current model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", task.ID).Error; err != nil {
 			return err
 		}
-		if session != nil {
-			if err := tx.Save(session).Error; err != nil {
-				return err
-			}
+		if current.Status != model.TaskStatusRunning || current.LeaseOwner != leaseOwner || current.LeaseToken != leaseToken || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(time.Now()) {
+			return errors.New("task completion lease state conflict")
 		}
-		if message != nil {
-			if err := tx.Create(message).Error; err != nil {
-				return err
-			}
+		return saveTaskCompletionTx(tx, task, session, message, results)
+	})
+}
+
+func (r *Repository) SaveProviderTaskCompletion(task *model.Task, leaseOwner string, leaseToken string, session *model.Session, message *model.Message, results []model.Result) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", task.ID).Error; err != nil {
+			return err
 		}
-		for index := range results {
-			if err := tx.Create(&results[index]).Error; err != nil {
-				return err
-			}
+		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" {
+			return errors.New("provider task completion fact state conflict")
+		}
+		if err := settleBillingOrderTx(tx, fact.BillingOrderID, fact.ProviderTaskID); err != nil {
+			return err
+		}
+		var current model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", task.ID).Error; err != nil {
+			return err
+		}
+		if current.Status != model.TaskStatusRunning || current.LeaseOwner == "" || current.LeaseOwner != leaseOwner || current.LeaseToken == "" || current.LeaseToken != leaseToken || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(time.Now()) {
+			return errors.New("provider task completion lease state conflict")
+		}
+		if err := saveTaskCompletionTx(tx, task, session, message, results); err != nil {
+			return err
+		}
+		factUpdate := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND reconciliation_status <> ?", task.ID, "resolved").Updates(map[string]any{
+			"reconciliation_status": "resolved", "updated_at": time.Now(),
+		})
+		if factUpdate.Error != nil {
+			return factUpdate.Error
+		}
+		if factUpdate.RowsAffected != 1 {
+			return errors.New("provider task completion reconciliation conflict")
 		}
 		return nil
 	})
+}
+
+func saveTaskCompletionTx(tx *gorm.DB, task *model.Task, session *model.Session, message *model.Message, results []model.Result) error {
+	if err := tx.Save(task).Error; err != nil {
+		return err
+	}
+	if session != nil {
+		if err := tx.Save(session).Error; err != nil {
+			return err
+		}
+	}
+	if message != nil {
+		if err := tx.Create(message).Error; err != nil {
+			return err
+		}
+	}
+	for index := range results {
+		if err := tx.Create(&results[index]).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model.TaskStatus, now time.Time) (bool, error) {
 	result := r.db.Model(&model.Task{}).
 		Where("id = ? AND user_id = ? AND status = ?", id, userID, expected).
 		Updates(map[string]any{
-			"status": model.TaskStatusCancelled, "stage": "任务已取消", "completed_at": &now, "updated_at": now,
+			"status": model.TaskStatusCancelled, "stage": "任务已取消", "completed_at": &now,
+			"lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
 		})
 	return result.RowsAffected == 1, result.Error
 }
@@ -596,6 +688,45 @@ func (r *Repository) ReserveDailyUpload(userID string, day string, size int64, l
 	})
 }
 
+func (r *Repository) ReserveResourceDailyUpload(userID string, resourceID string, day string, limit int64) (string, error) {
+	reservedDay := ""
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var resource model.Resource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&resource, "id = ? AND user_id = ?", resourceID, userID).Error; err != nil {
+			return err
+		}
+		if resource.QuotaReserved {
+			reservedDay = resource.QuotaDay
+			return nil
+		}
+		usage := model.UserDailyUploadUsage{ID: userID + ":" + day, UserID: userID, Day: day}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&usage).Error; err != nil {
+			return err
+		}
+		usageUpdate := tx.Model(&model.UserDailyUploadUsage{}).
+			Where("id = ? AND bytes + ? < ?", usage.ID, resource.Size, limit).
+			Updates(map[string]any{"bytes": gorm.Expr("bytes + ?", resource.Size), "updated_at": time.Now()})
+		if usageUpdate.Error != nil {
+			return usageUpdate.Error
+		}
+		if usageUpdate.RowsAffected != 1 {
+			return ErrDailyUploadLimitExceeded
+		}
+		resourceUpdate := tx.Model(&model.Resource{}).Where("id = ? AND quota_reserved = ?", resource.ID, false).Updates(map[string]any{
+			"quota_day": day, "quota_reserved": true, "updated_at": time.Now(),
+		})
+		if resourceUpdate.Error != nil {
+			return resourceUpdate.Error
+		}
+		if resourceUpdate.RowsAffected != 1 {
+			return errors.New("resource upload quota reservation conflict")
+		}
+		reservedDay = day
+		return nil
+	})
+	return reservedDay, err
+}
+
 func (r *Repository) ReleaseDailyUpload(userID string, day string, size int64) error {
 	id := userID + ":" + day
 	return r.db.Model(&model.UserDailyUploadUsage{}).
@@ -636,6 +767,102 @@ func (r *Repository) ResourceForUser(userID string, id string) (*model.Resource,
 		return nil, err
 	}
 	return &resource, nil
+}
+
+func (r *Repository) ResourceForSourceTask(userID string, taskID string) (*model.Resource, error) {
+	var resource model.Resource
+	if err := r.db.First(&resource, "user_id = ? AND source_task_id = ?", userID, taskID).Error; err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
+func (r *Repository) ClaimSourceTaskResourceWrite(userID string, taskID string, leaseOwner string, leaseToken string, writeToken string, objectKey string, leaseDuration time.Duration) (*model.Resource, error) {
+	var resource model.Resource
+	now := time.Now()
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" {
+			return errors.New("source task resource provider fact state conflict")
+		}
+		var task model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.TaskStatusRunning || task.LeaseOwner != leaseOwner || task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
+			return errors.New("source task resource lease state conflict")
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&resource, "user_id = ? AND source_task_id = ?", userID, taskID).Error; err != nil {
+			return err
+		}
+		if resource.Status == model.ResourceStatusReady {
+			return errors.New("source task resource is already ready")
+		}
+		if resource.WriteToken != "" && resource.WriteToken != writeToken && resource.WriteTaskLeaseToken == leaseToken && resource.WriteLeaseExpiresAt != nil && resource.WriteLeaseExpiresAt.After(now) {
+			return errors.New("source task resource write is already claimed")
+		}
+		updated := tx.Model(&model.Resource{}).
+			Where("id = ? AND status IN ?", resource.ID, []model.ResourceStatus{model.ResourceStatusPending, model.ResourceStatusFailed}).
+			Updates(map[string]any{
+				"status": model.ResourceStatusPending, "error": "", "object_key": objectKey,
+				"write_token": writeToken, "write_task_lease_token": leaseToken,
+				"write_lease_expires_at": now.Add(leaseDuration), "updated_at": now,
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return errors.New("source task resource write claim conflict")
+		}
+		return tx.First(&resource, "id = ?", resource.ID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
+func (r *Repository) CompleteSourceTaskResourceWrite(resource *model.Resource, leaseOwner string, leaseToken string, writeToken string) error {
+	if resource.Status != model.ResourceStatusReady && resource.Status != model.ResourceStatusFailed {
+		return errors.New("source task resource completion status is invalid")
+	}
+	now := time.Now()
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", resource.SourceTaskID).Error; err != nil {
+			return err
+		}
+		if fact.ProviderStatus != "succeeded" || fact.ReconciliationStatus == "resolved" {
+			return errors.New("source task resource provider fact state conflict")
+		}
+		var task model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", resource.SourceTaskID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.TaskStatusRunning || task.LeaseOwner != leaseOwner || task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
+			return errors.New("source task resource lease state conflict")
+		}
+		updated := tx.Model(&model.Resource{}).
+			Where("id = ? AND user_id = ? AND source_task_id = ? AND status = ? AND write_token = ? AND write_task_lease_token = ?", resource.ID, resource.UserID, resource.SourceTaskID, model.ResourceStatusPending, writeToken, leaseToken).
+			Updates(map[string]any{
+				"status": resource.Status, "e_tag": resource.ETag, "error": resource.Error,
+				"write_token": "", "write_task_lease_token": "", "write_lease_expires_at": nil, "updated_at": now,
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return errors.New("source task resource write completion conflict")
+		}
+		resource.WriteToken = ""
+		resource.WriteTaskLeaseToken = ""
+		resource.WriteLeaseExpiresAt = nil
+		resource.UpdatedAt = now
+		return nil
+	})
 }
 
 func (r *Repository) ResourceForTeam(teamID string, id string) (*model.Resource, error) {

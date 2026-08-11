@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,9 @@ func (s *Service) processFrozenProviderCanvasTask(ctx context.Context, task mode
 	if fact.TaskID != task.ID {
 		return nil, errors.New("冻结上游任务事实与执行任务不一致")
 	}
+	if fact.ProviderStatus == "succeeded" {
+		return s.processSucceededProviderTask(ctx, task, fact)
+	}
 	var input canvasGenerationInput
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		return nil, fmt.Errorf("冻结上游任务输入解析失败：%w", err)
@@ -68,16 +72,106 @@ func (s *Service) processFrozenProviderCanvasTask(ctx context.Context, task mode
 	}
 	providerTaskID, _ := providerResult["taskId"].(string)
 	sourceURL, _ := providerResult["sourceUrl"].(string)
+	lastFrameURL, _ := providerResult["lastFrameUrl"].(string)
+	return s.downloadKuaiziSeedance25Result(ctx, providerTaskID, sourceURL, lastFrameURL, providerResult["duration"], providerResult["totalTokens"])
+}
+
+func (s *Service) processSucceededProviderTask(ctx context.Context, task model.Task, fact model.ProviderTaskFact) (map[string]interface{}, error) {
+	order, err := s.repo.BillingOrder(fact.BillingOrderID)
+	if err != nil {
+		return nil, err
+	}
+	if fact.TaskID != task.ID || order.ID != task.BillingOrderID || order.TaskID != task.ID {
+		return nil, errors.New("上游成功恢复的任务与计费事实不一致")
+	}
+	if err := validateStoredKuaiziSeedance25Success(fact); err != nil {
+		return nil, err
+	}
+	sensitiveValues := []string{task.Prompt}
+	providerTaskID, err := safeKuaiziSeedance25TaskID(fact.ProviderTaskID, sensitiveValues)
+	if err != nil || containsKuaiziSensitiveURLValue(fact.AssetSourceURL, sensitiveValues) || containsKuaiziSensitiveURLValue(fact.LastFrameURL, sensitiveValues) {
+		return nil, &KuaiziSeedance25Error{Stage: "recovery", Kind: "unsafe_success_fact", Message: "冻结成功事实包含不安全字段"}
+	}
+	if resource, resourceErr := s.repo.ResourceForSourceTask(task.UserID, task.ID); resourceErr == nil {
+		if resource.Status == model.ResourceStatusReady {
+			return kuaiziSeedance25ResourceResult(resource, providerTaskID, fact.LastFrameURL, fact.ActualDurationSeconds, fact.TotalTokens), nil
+		}
+	} else if !errors.Is(resourceErr, gorm.ErrRecordNotFound) {
+		return nil, resourceErr
+	}
+	return s.downloadKuaiziSeedance25Result(ctx, providerTaskID, fact.AssetSourceURL, fact.LastFrameURL, fact.ActualDurationSeconds, fact.TotalTokens)
+}
+
+func (s *Service) downloadKuaiziSeedance25Result(ctx context.Context, providerTaskID string, sourceURL string, lastFrameURL string, duration any, totalTokens any) (map[string]interface{}, error) {
 	data, mimeType, err := getExternalBinary(withProviderRequestKind(ctx, "download"), sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("Seedance 2.5 上游已成功但结果下载失败（任务 %s）：%w", providerTaskID, err)
 	}
 	mimeType = normalizedMediaMimeType(mimeType, data)
 	video := map[string]interface{}{
-		"dataUrl": dataURL(mimeType, data), "mimeType": mimeType, "taskId": providerTaskID, "sourceUrl": sourceURL,
-		"lastFrameUrl": providerResult["lastFrameUrl"], "duration": providerResult["duration"], "totalTokens": providerResult["totalTokens"],
+		"dataUrl": dataURL(mimeType, data), "mimeType": mimeType, "taskId": providerTaskID,
+		"lastFrameUrl": lastFrameURL, "duration": duration, "totalTokens": totalTokens,
 	}
 	return map[string]interface{}{"mode": "video", "video": video}, nil
+}
+
+func (s *Service) persistKuaiziSeedance25Resource(task model.Task, result map[string]interface{}) (map[string]interface{}, error) {
+	if resource, err := s.repo.ResourceForSourceTask(task.UserID, task.ID); err == nil {
+		if resource.Status == model.ResourceStatusReady {
+			fact, factErr := s.repo.ProviderTaskFact(task.ID)
+			if factErr != nil {
+				return nil, factErr
+			}
+			return kuaiziSeedance25ResourceResult(resource, fact.ProviderTaskID, fact.LastFrameURL, fact.ActualDurationSeconds, fact.TotalTokens), nil
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	video, ok := result["video"].(map[string]interface{})
+	if !ok {
+		return nil, errors.New("Seedance 2.5 成功结果缺少视频对象")
+	}
+	raw := inlineMediaValue(video)
+	if raw == "" {
+		return nil, errors.New("Seedance 2.5 成功结果缺少内联视频")
+	}
+	mimeType, data, err := s.decodeDataURL(raw)
+	if err != nil {
+		return nil, err
+	}
+	resource, err := s.prepareSourceTaskResource(task.UserID, task.ID, "video", "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), 0, 0, int64(intValue(video["durationMs"])))
+	if err != nil {
+		return nil, err
+	}
+	if resource.Size != int64(len(data)) || resource.MimeType != mimeType {
+		return nil, errors.New("Seedance 2.5 任务资源幂等事实与下载内容不一致")
+	}
+	if err := s.reservePreparedGeneratedResourceQuota(task.UserID, resource); err != nil {
+		return nil, err
+	}
+	writeToken, err := newResourceWriteToken()
+	if err != nil {
+		return nil, err
+	}
+	resource, err = s.repo.ClaimSourceTaskResourceWrite(task.UserID, task.ID, task.LeaseOwner, task.LeaseToken, writeToken, resourceWriteObjectKey(resource, writeToken), 2*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	resource, err = s.writeClaimedSourceTaskResource(task.UserID, resource, task.LeaseOwner, task.LeaseToken, writeToken, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("Seedance 2.5 生成内容写入资源存储失败：%w", err)
+	}
+	applyGeneratedResource(video, raw, resource)
+	return result, nil
+}
+
+func kuaiziSeedance25ResourceResult(resource *model.Resource, providerTaskID string, lastFrameURL string, duration any, totalTokens any) map[string]interface{} {
+	video := map[string]interface{}{
+		"dataUrl": "", "mimeType": resource.MimeType, "taskId": providerTaskID,
+		"lastFrameUrl": lastFrameURL, "duration": duration, "totalTokens": totalTokens,
+	}
+	applyGeneratedResource(video, "", resource)
+	return map[string]interface{}{"mode": "video", "video": video}
 }
 
 func (s *Service) buildTaskCommercialFacts(userID string, task *model.Task, input map[string]any) (TaskCommercialFacts, map[string]any, error) {
@@ -373,11 +467,6 @@ func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *Prov
 		return nil, &KuaiziSeedance25Error{Stage: "create", Kind: "definitive_rejection", TraceID: runtime.ProviderFact.CreateTraceID, Message: "上游已明确拒绝创建任务"}
 	case "failed":
 		return nil, &KuaiziSeedance25Error{Stage: "poll", Kind: "provider_failed", TraceID: runtime.ProviderFact.LastPollTraceID, Message: "上游任务已失败"}
-	case "succeeded":
-		if err := validateStoredKuaiziSeedance25Success(runtime.ProviderFact); err != nil {
-			return nil, err
-		}
-		return kuaiziSeedance25StoredResult(runtime.ProviderFact), nil
 	}
 	providerTaskID := strings.TrimSpace(runtime.ProviderFact.ProviderTaskID)
 	if providerTaskID == "" {
@@ -447,15 +536,14 @@ func (s *Service) executeKuaiziSeedance25Task(ctx context.Context, runtime *Prov
 
 func validateStoredKuaiziSeedance25Success(fact model.ProviderTaskFact) error {
 	if strings.TrimSpace(fact.ProviderTaskID) == "" || strings.TrimSpace(fact.AssetSourceURL) == "" || strings.TrimSpace(fact.LastFrameURL) == "" ||
-		fact.ActualDurationSeconds < 4 || fact.ActualDurationSeconds > 30 || strings.TrimSpace(fact.TotalTokens) == "" {
+		fact.ActualDurationSeconds < 4 || fact.ActualDurationSeconds > 30 || validateKuaiziSeedance25Decimal(strings.TrimSpace(fact.TotalTokens)) != nil {
 		return &KuaiziSeedance25Error{Stage: "recovery", Kind: "invalid_success_fact", Message: "已成功的上游任务缺少完整冻结事实"}
 	}
-	return nil
-}
-
-func kuaiziSeedance25StoredResult(fact model.ProviderTaskFact) map[string]any {
-	return map[string]any{
-		"taskId": fact.ProviderTaskID, "sourceUrl": fact.AssetSourceURL, "lastFrameUrl": fact.LastFrameURL,
-		"duration": fact.ActualDurationSeconds, "totalTokens": fact.TotalTokens,
+	if _, err := validateKuaiziSeedance25OutputURL(fact.AssetSourceURL, "视频"); err != nil {
+		return &KuaiziSeedance25Error{Stage: "recovery", Kind: "invalid_success_fact", Message: "冻结视频地址不符合安全契约", Cause: err}
 	}
+	if _, err := validateKuaiziSeedance25OutputURL(fact.LastFrameURL, "尾帧"); err != nil {
+		return &KuaiziSeedance25Error{Stage: "recovery", Kind: "invalid_success_fact", Message: "冻结尾帧地址不符合安全契约", Cause: err}
+	}
+	return nil
 }

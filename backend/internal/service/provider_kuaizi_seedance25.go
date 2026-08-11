@@ -101,12 +101,25 @@ func (value *kuaiziSeedance25Decimal) UnmarshalJSON(data []byte) error {
 		*value = ""
 		return nil
 	}
-	for _, character := range text {
+	if err := validateKuaiziSeedance25Decimal(text); err != nil {
+		return err
+	}
+	*value = kuaiziSeedance25Decimal(text)
+	return nil
+}
+
+func validateKuaiziSeedance25Decimal(value string) error {
+	if value == "" {
+		return errors.New("Seedance 2.5 total_tokens 不能为空")
+	}
+	if len(value) > 80 {
+		return errors.New("Seedance 2.5 total_tokens 长度无效")
+	}
+	for _, character := range value {
 		if character < '0' || character > '9' {
 			return errors.New("Seedance 2.5 total_tokens 必须是非负十进制整数")
 		}
 	}
-	*value = kuaiziSeedance25Decimal(text)
 	return nil
 }
 
@@ -352,7 +365,11 @@ func classifyKuaiziSeedance25Status(status kuaiziSeedance25Status) (KuaiziSeedan
 }
 
 func validateKuaiziSeedance25OutputURL(rawURL string, label string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	rawURL = strings.TrimSpace(rawURL)
+	if len(rawURL) == 0 || len(rawURL) > 4_096 {
+		return "", fmt.Errorf("Seedance 2.5 成功状态缺少有效%s HTTPS URL", label)
+	}
+	parsed, err := url.Parse(rawURL)
 	if err != nil || !parsed.IsAbs() || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
 		return "", fmt.Errorf("Seedance 2.5 成功状态缺少有效%s HTTPS URL", label)
 	}
@@ -468,6 +485,18 @@ func (c *KuaiziSeedance25Client) requestJSON(ctx context.Context, runtime *Provi
 		return "", &KuaiziSeedance25Error{Stage: stage, Kind: kind, Cause: err}
 	}
 	defer response.Body.Close()
+	if stage == "create" && response.StatusCode != http.StatusOK {
+		message := "上游创建响应无法证明未产生副作用"
+		if kuaiziCreateHTTPDefinitiveRejection(response.StatusCode) {
+			message = "上游明确拒绝创建请求"
+		}
+		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "http", Code: strconv.Itoa(response.StatusCode), Message: message}
+		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
+		if kuaiziCreateHTTPDefinitiveRejection(response.StatusCode) {
+			return "", responseErr
+		}
+		return "", &KuaiziSeedance25CreateUncertainError{Cause: responseErr}
+	}
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 4<<20+1))
 	if readErr != nil {
 		recordProviderRequest(request, startedAt, response.StatusCode, nil, readErr)
@@ -515,11 +544,17 @@ func (c *KuaiziSeedance25Client) requestJSON(ctx context.Context, runtime *Provi
 	if *envelope.Code != 0 {
 		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "business", Code: strconv.Itoa(*envelope.Code), TraceID: traceID, Message: safeMessage}
 		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
+		if stage == "create" {
+			return traceID, &KuaiziSeedance25CreateUncertainError{Cause: responseErr}
+		}
 		return traceID, responseErr
 	}
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "invalid_response", TraceID: traceID, Message: "响应缺少 data"}
 		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
+		if stage == "create" {
+			return traceID, &KuaiziSeedance25CreateUncertainError{Cause: responseErr}
+		}
 		return traceID, responseErr
 	}
 	if err := json.Unmarshal(envelope.Data, target); err != nil {
@@ -530,7 +565,14 @@ func (c *KuaiziSeedance25Client) requestJSON(ctx context.Context, runtime *Provi
 		}
 		return traceID, responseErr
 	}
-	sanitizeKuaiziSeedance25Response(target, sensitiveValues)
+	if err := sanitizeKuaiziSeedance25Response(target, sensitiveValues); err != nil {
+		responseErr := &KuaiziSeedance25Error{Stage: stage, Kind: "invalid_response", TraceID: traceID, Message: "上游响应包含不安全字段", Cause: err}
+		recordProviderRequest(request, startedAt, response.StatusCode, nil, responseErr)
+		if stage == "create" {
+			return traceID, &KuaiziSeedance25CreateUncertainError{Cause: responseErr}
+		}
+		return traceID, responseErr
+	}
 	recordProviderRequest(request, startedAt, response.StatusCode, nil, nil)
 	return traceID, nil
 }
@@ -564,18 +606,100 @@ func kuaiziRuntimeSensitiveValues(runtime *ProviderTaskRuntime, apiKey string) [
 	return values
 }
 
-func sanitizeKuaiziSeedance25Response(target any, sensitiveValues []string) {
-	status, ok := target.(*kuaiziSeedance25Status)
-	if !ok || status == nil {
-		return
-	}
-	status.Error = safeKuaiziMessage(status.Error, sensitiveValues...)
-	switch strings.ToLower(strings.TrimSpace(status.Status)) {
-	case "submitted", "pending", "running", "failed", "succeeded":
-		status.Status = strings.ToLower(strings.TrimSpace(status.Status))
+func sanitizeKuaiziSeedance25Response(target any, sensitiveValues []string) error {
+	switch value := target.(type) {
+	case *kuaiziSeedance25Created:
+		if value == nil {
+			return errors.New("created response is nil")
+		}
+		taskID, err := safeKuaiziSeedance25TaskID(value.TaskID, sensitiveValues)
+		if err != nil {
+			return err
+		}
+		value.TaskID = taskID
+		return nil
+	case *kuaiziSeedance25Status:
+		if value == nil {
+			return errors.New("status response is nil")
+		}
+		taskID, err := safeKuaiziSeedance25TaskID(value.TaskID, sensitiveValues)
+		if err != nil {
+			return err
+		}
+		value.TaskID = taskID
+		value.Error = safeKuaiziMessage(value.Error, sensitiveValues...)
+		switch strings.ToLower(strings.TrimSpace(value.Status)) {
+		case "submitted", "pending", "running", "failed", "succeeded":
+			value.Status = strings.ToLower(strings.TrimSpace(value.Status))
+		default:
+			value.Status = "unknown"
+		}
+		if containsKuaiziSensitiveURLValue(value.VideoURL, sensitiveValues) || containsKuaiziSensitiveURLValue(value.LastFrameURL, sensitiveValues) {
+			return errors.New("provider output URL reflects sensitive input")
+		}
+		return nil
 	default:
-		status.Status = "unknown"
+		return nil
 	}
+}
+
+func safeKuaiziSeedance25TaskID(value string, sensitiveValues []string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 160 {
+		return "", errors.New("provider task ID length is invalid")
+	}
+	for _, sensitive := range sensitiveValues {
+		if sensitive = strings.TrimSpace(sensitive); sensitive != "" && strings.Contains(value, sensitive) {
+			return "", errors.New("provider task ID reflects sensitive input")
+		}
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("-_.:", character) {
+			continue
+		}
+		return "", errors.New("provider task ID contains invalid characters")
+	}
+	return value, nil
+}
+
+func containsKuaiziSensitiveURLValue(rawURL string, sensitiveValues []string) bool {
+	if strings.TrimSpace(rawURL) == "" {
+		return false
+	}
+	candidates := []string{rawURL}
+	seen := map[string]struct{}{rawURL: {}}
+	frontier := []string{rawURL}
+	// 每轮解码都会严格缩短百分号编码；遍历至稳定，拒绝任意编码深度的敏感反射。
+	for len(frontier) > 0 {
+		next := make([]string, 0, len(frontier)*2)
+		for _, candidate := range frontier {
+			for _, decode := range []func(string) (string, error){url.QueryUnescape, url.PathUnescape} {
+				decoded, err := decode(candidate)
+				if err != nil || decoded == candidate {
+					continue
+				}
+				if _, exists := seen[decoded]; exists {
+					continue
+				}
+				seen[decoded] = struct{}{}
+				candidates = append(candidates, decoded)
+				if len(candidates) > 128 {
+					return true
+				}
+				next = append(next, decoded)
+			}
+		}
+		frontier = next
+	}
+	for _, candidate := range candidates {
+		for _, sensitive := range sensitiveValues {
+			if sensitive = strings.TrimSpace(sensitive); sensitive != "" && strings.Contains(candidate, sensitive) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validateKuaiziSeedance25RuntimeIdentity(runtime *ProviderTaskRuntime) error {

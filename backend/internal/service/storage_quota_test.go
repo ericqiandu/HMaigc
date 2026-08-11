@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -83,7 +84,8 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := model.Session{ID: "session-1", UserID: "user-1", Status: model.SessionStatusActive}
-	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, InputJSON: `{"mode":"text"}`}
+	leaseExpiresAt := time.Now().Add(time.Minute)
+	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, LeaseOwner: "worker", LeaseToken: "claim-token", LeaseExpiresAt: &leaseExpiresAt, InputJSON: `{"mode":"text"}`}
 	if err := db.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}

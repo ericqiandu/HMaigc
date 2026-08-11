@@ -3,8 +3,10 @@ package service
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -198,6 +201,14 @@ func (s *Service) storeResource(userID string, kind string, fileName string, mim
 }
 
 func (s *Service) storeScopedResource(userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
+	return s.storeScopedResourceForTask(userID, teamID, "", kind, fileName, mimeType, size, width, height, durationMs, body)
+}
+
+func (s *Service) storeResourceForSourceTask(userID string, sourceTaskID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
+	return s.storeScopedResourceForTask(userID, "", sourceTaskID, kind, fileName, mimeType, size, width, height, durationMs, body)
+}
+
+func (s *Service) storeScopedResourceForTask(userID string, teamID string, sourceTaskID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
 	now := time.Now()
 	kind = normalizeResourceKind(kind, mimeType)
 	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting(userID)
@@ -210,7 +221,7 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 		scopeKey = "team-" + teamID
 	}
 	objectKey := localObjectKey(scopeKey, kind, fileName, now)
-	resource := model.Resource{ID: newID(), UserID: userID, TeamID: teamID, Kind: kind, Status: model.ResourceStatusPending, Provider: provider, ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, CreatedAt: now, UpdatedAt: now}
+	resource := model.Resource{ID: newID(), UserID: userID, TeamID: teamID, SourceTaskID: sourceTaskID, Kind: kind, Status: model.ResourceStatusPending, Provider: provider, ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, CreatedAt: now, UpdatedAt: now}
 	if useOSS {
 		provider = setting.Provider
 		objectKey = ossObjectKey(setting, scopeKey, kind, fileName, now)
@@ -223,9 +234,54 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 	if err := s.repo.CreateResource(&resource); err != nil {
 		return nil, err
 	}
+	return s.writePreparedResource(userID, &resource, body)
+}
+
+func (s *Service) prepareSourceTaskResource(userID string, sourceTaskID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64) (*model.Resource, error) {
+	if resource, err := s.repo.ResourceForSourceTask(userID, sourceTaskID); err == nil {
+		return resource, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	now := time.Now()
+	kind = normalizeResourceKind(kind, mimeType)
+	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting(userID)
+	if err != nil {
+		return nil, err
+	}
+	objectKey := localObjectKey(userID, kind, fileName, now)
+	resource := model.Resource{
+		ID: newID(), UserID: userID, SourceTaskID: sourceTaskID, Kind: kind, Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height,
+		DurationMs: durationMs, CreatedAt: now, UpdatedAt: now,
+	}
+	if useOSS {
+		resource.Provider = setting.Provider
+		resource.Endpoint = setting.Endpoint
+		resource.Bucket = setting.Bucket
+		resource.StorageSettingID = storageSettingID
+		resource.ObjectKey = ossObjectKey(setting, userID, kind, fileName, now)
+	}
+	if err := s.repo.CreateResource(&resource); err != nil {
+		if existing, lookupErr := s.repo.ResourceForSourceTask(userID, sourceTaskID); lookupErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return &resource, nil
+}
+
+func (s *Service) writePreparedResource(userID string, resource *model.Resource, body io.Reader) (*model.Resource, error) {
+	resource.Status = model.ResourceStatusPending
+	resource.Error = ""
+	resource.UpdatedAt = time.Now()
+	if err := s.repo.SaveResource(resource); err != nil {
+		return nil, err
+	}
 	var etag string
-	if provider == "local" {
-		filePath := filepath.Join(s.dataDir, "resources", filepath.FromSlash(objectKey))
+	var err error
+	if resource.Provider == "local" {
+		filePath := filepath.Join(s.dataDir, "resources", filepath.FromSlash(resource.ObjectKey))
 		if err = os.MkdirAll(filepath.Dir(filePath), 0o750); err == nil {
 			var file *os.File
 			file, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
@@ -238,22 +294,82 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 			}
 		}
 	} else {
-		etag, err = putOSSObject(setting, objectKey, mimeType, size, body)
+		setting, settingErr := s.ossSettingForResource(userID, resource)
+		if settingErr != nil {
+			err = settingErr
+		} else {
+			etag, err = putOSSObject(setting, resource.ObjectKey, resource.MimeType, resource.Size, body)
+		}
 	}
 	resource.UpdatedAt = time.Now()
 	if err != nil {
 		resource.Status = model.ResourceStatusFailed
 		resource.Error = err.Error()
-		_ = s.repo.SaveResource(&resource)
+		_ = s.repo.SaveResource(resource)
 		return nil, err
 	}
 	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
-	if err := s.repo.SaveResource(&resource); err != nil {
+	if err := s.repo.SaveResource(resource); err != nil {
 		return nil, err
 	}
 	s.recordActivity(userID, "resource", 1)
-	return &resource, nil
+	return resource, nil
+}
+
+func (s *Service) writeClaimedSourceTaskResource(userID string, resource *model.Resource, leaseOwner string, leaseToken string, writeToken string, body io.Reader) (*model.Resource, error) {
+	var etag string
+	var err error
+	if resource.Provider == "local" {
+		filePath := filepath.Join(s.dataDir, "resources", filepath.FromSlash(resource.ObjectKey))
+		if err = os.MkdirAll(filepath.Dir(filePath), 0o750); err == nil {
+			var file *os.File
+			file, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+			if err == nil {
+				_, err = io.Copy(file, body)
+				closeErr := file.Close()
+				if err == nil {
+					err = closeErr
+				}
+			}
+		}
+	} else {
+		setting, settingErr := s.ossSettingForResource(userID, resource)
+		if settingErr != nil {
+			err = settingErr
+		} else {
+			etag, err = putOSSObject(setting, resource.ObjectKey, resource.MimeType, resource.Size, body)
+		}
+	}
+	if err != nil {
+		resource.Status = model.ResourceStatusFailed
+		resource.Error = truncateRunes(err.Error(), 2_000)
+		if completionErr := s.repo.CompleteSourceTaskResourceWrite(resource, leaseOwner, leaseToken, writeToken); completionErr != nil {
+			return nil, errors.Join(err, completionErr)
+		}
+		return nil, err
+	}
+	resource.Status = model.ResourceStatusReady
+	resource.ETag = etag
+	resource.Error = ""
+	if err := s.repo.CompleteSourceTaskResourceWrite(resource, leaseOwner, leaseToken, writeToken); err != nil {
+		return nil, err
+	}
+	s.recordActivity(userID, "resource", 1)
+	return resource, nil
+}
+
+func newResourceWriteToken() (string, error) {
+	var value [24]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("生成资源写入令牌失败：%w", err)
+	}
+	return hex.EncodeToString(value[:]), nil
+}
+
+func resourceWriteObjectKey(resource *model.Resource, writeToken string) string {
+	extension := path.Ext(resource.ObjectKey)
+	return path.Join(path.Dir(resource.ObjectKey), resource.ID+"-"+writeToken+extension)
 }
 
 func localObjectKey(userID string, kind string, fileName string, now time.Time) string {
@@ -332,22 +448,7 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 				if enforceQuota {
 					s.commitUserUploadQuota(userID, int64(len(data)))
 				}
-				resourceURL := "/api/resources/" + resource.ID + "/file"
-				for _, key := range []string{"dataUrl", "content", "url", "coverUrl"} {
-					if text, ok := item[key].(string); ok && (text == raw || strings.HasPrefix(text, "blob:")) {
-						item[key] = resourceURL
-					}
-				}
-				if _, ok := item["dataUrl"]; ok {
-					item["dataUrl"] = resourceURL
-				}
-				item["url"] = resourceURL
-				item["storageKey"] = "resource:" + resource.ID
-				item["resourceId"] = resource.ID
-				item["bytes"] = resource.Size
-				item["mimeType"] = resource.MimeType
-				item["width"] = resource.Width
-				item["height"] = resource.Height
+				applyGeneratedResource(item, raw, resource)
 			}
 		}
 		for key, child := range item {
@@ -361,6 +462,25 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 	default:
 		return value, nil
 	}
+}
+
+func applyGeneratedResource(item map[string]interface{}, inlineValue string, resource *model.Resource) {
+	resourceURL := "/api/resources/" + resource.ID + "/file"
+	for _, key := range []string{"dataUrl", "content", "url", "coverUrl"} {
+		if text, ok := item[key].(string); ok && (text == inlineValue || strings.HasPrefix(text, "blob:")) {
+			item[key] = resourceURL
+		}
+	}
+	if _, ok := item["dataUrl"]; ok {
+		item["dataUrl"] = resourceURL
+	}
+	item["url"] = resourceURL
+	item["storageKey"] = "resource:" + resource.ID
+	item["resourceId"] = resource.ID
+	item["bytes"] = resource.Size
+	item["mimeType"] = resource.MimeType
+	item["width"] = resource.Width
+	item["height"] = resource.Height
 }
 
 func inlineMediaValue(item map[string]interface{}) string {

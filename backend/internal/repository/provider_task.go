@@ -20,6 +20,14 @@ func (r *Repository) ProviderTaskFact(taskID string) (*model.ProviderTaskFact, e
 	return &fact, nil
 }
 
+func (r *Repository) ProviderTaskFactForBillingOrder(billingOrderID string) (*model.ProviderTaskFact, error) {
+	var fact model.ProviderTaskFact
+	if err := r.db.First(&fact, "billing_order_id = ?", billingOrderID).Error; err != nil {
+		return nil, err
+	}
+	return &fact, nil
+}
+
 func (r *Repository) ProviderEndpointVersion(id string) (*model.ProviderEndpointVersion, error) {
 	var version model.ProviderEndpointVersion
 	if err := r.db.First(&version, "id = ?", id).Error; err != nil {
@@ -59,7 +67,7 @@ func (r *Repository) SaveProviderTaskCreation(taskID string, providerTaskID stri
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.ProviderTaskFact{}).
-			Where("task_id = ? AND provider_task_id = '' AND provider_status IN ?", taskID, []string{"reserved", "execution_claimed", "creating"}).
+			Where("task_id = ? AND provider_task_id = '' AND reconciliation_status <> ? AND provider_status IN ?", taskID, "resolved", []string{"reserved", "execution_claimed", "creating"}).
 			Updates(map[string]any{"provider_task_id": providerTaskID, "create_trace_id": strings.TrimSpace(traceID), "provider_status": "submitted", "updated_at": time.Now()})
 		if result.Error != nil {
 			return result.Error
@@ -75,7 +83,7 @@ func (r *Repository) SaveProviderTaskCreation(taskID string, providerTaskID stri
 }
 
 func (r *Repository) UpdateProviderTaskPoll(taskID string, providerStatus string, traceID string) error {
-	result := r.db.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_task_id <> ''", taskID).Updates(map[string]any{
+	result := r.db.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_task_id <> '' AND reconciliation_status <> ?", taskID, "resolved").Updates(map[string]any{
 		"provider_status": strings.TrimSpace(providerStatus), "last_poll_trace_id": strings.TrimSpace(traceID), "updated_at": time.Now(),
 	})
 	if result.Error != nil {
@@ -88,7 +96,7 @@ func (r *Repository) UpdateProviderTaskPoll(taskID string, providerStatus string
 }
 
 func (r *Repository) SaveProviderTaskSuccess(taskID string, stateStatus string, traceID string, assetSourceURL string, lastFrameURL string, actualDuration int, totalTokens string) error {
-	result := r.db.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_task_id <> ''", taskID).Updates(map[string]any{
+	result := r.db.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_task_id <> '' AND reconciliation_status <> ?", taskID, "resolved").Updates(map[string]any{
 		"provider_status": stateStatus, "last_poll_trace_id": strings.TrimSpace(traceID),
 		"asset_source_url": strings.TrimSpace(assetSourceURL), "last_frame_url": strings.TrimSpace(lastFrameURL),
 		"actual_duration_seconds": actualDuration, "total_tokens": strings.TrimSpace(totalTokens), "updated_at": time.Now(),
@@ -104,7 +112,7 @@ func (r *Repository) SaveProviderTaskSuccess(taskID string, stateStatus string, 
 
 func (r *Repository) MarkProviderTaskCreateUncertain(taskID string, reason string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		fact := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_task_id = ''", taskID).Updates(map[string]any{
+		fact := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ? AND provider_task_id = '' AND reconciliation_status <> ?", taskID, "resolved").Updates(map[string]any{
 			"provider_status": "create_uncertain", "updated_at": time.Now(),
 		})
 		if fact.Error != nil {
@@ -128,7 +136,7 @@ func (r *Repository) MarkProviderTaskCreateUncertain(taskID string, reason strin
 
 func (r *Repository) MarkProviderTaskCreateFailed(taskID string, traceID string) error {
 	result := r.db.Model(&model.ProviderTaskFact{}).
-		Where("task_id = ? AND provider_task_id = '' AND provider_status IN ?", taskID, []string{"reserved", "execution_claimed", "creating"}).
+		Where("task_id = ? AND provider_task_id = '' AND reconciliation_status <> ? AND provider_status IN ?", taskID, "resolved", []string{"reserved", "execution_claimed", "creating"}).
 		Updates(map[string]any{"provider_status": "create_failed", "create_trace_id": strings.TrimSpace(traceID), "updated_at": time.Now()})
 	if result.Error != nil {
 		return result.Error
@@ -141,7 +149,7 @@ func (r *Repository) MarkProviderTaskCreateFailed(taskID string, traceID string)
 
 func (r *Repository) MarkProviderTaskCreateStarted(taskID string) error {
 	result := r.db.Model(&model.ProviderTaskFact{}).
-		Where("task_id = ? AND provider_task_id = '' AND provider_status IN ?", taskID, []string{"reserved", "execution_claimed"}).
+		Where("task_id = ? AND provider_task_id = '' AND reconciliation_status <> ? AND provider_status IN ?", taskID, "resolved", []string{"reserved", "execution_claimed"}).
 		Updates(map[string]any{"provider_status": "creating", "updated_at": time.Now()})
 	if result.Error != nil {
 		return result.Error
@@ -155,7 +163,7 @@ func (r *Repository) MarkProviderTaskCreateStarted(taskID string) error {
 func (r *Repository) MarkProviderTaskPollUncertain(taskID string, traceID string, reason string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		fact := tx.Model(&model.ProviderTaskFact{}).
-			Where("task_id = ? AND provider_task_id <> '' AND provider_status IN ?", taskID, providerExecutionStatuses()).
+			Where("task_id = ? AND provider_task_id <> '' AND reconciliation_status <> ? AND provider_status IN ?", taskID, "resolved", providerExecutionStatuses()).
 			Updates(map[string]any{"provider_status": "poll_uncertain", "last_poll_trace_id": strings.TrimSpace(traceID), "updated_at": time.Now()})
 		if fact.Error != nil {
 			return fact.Error
@@ -176,7 +184,7 @@ func (r *Repository) MarkProviderTaskPollUncertain(taskID string, traceID string
 	})
 }
 
-func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string) (bool, error) {
+func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string, leaseToken string) (bool, error) {
 	claimed := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var fact model.ProviderTaskFact
@@ -187,7 +195,7 @@ func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string
 			return err
 		}
 		var task model.Task
-		if err := tx.First(&task, "id = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ?", taskID, model.TaskStatusRunning, leaseOwner, time.Now()).Error; err != nil {
+		if err := tx.First(&task, "id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at > ?", taskID, model.TaskStatusRunning, leaseOwner, leaseToken, time.Now()).Error; err != nil {
 			return err
 		}
 		if providerTaskRecoveryStatus(fact.ProviderStatus) {
@@ -206,7 +214,7 @@ func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string
 		}
 		var active int64
 		if err := tx.Model(&model.ProviderTaskFact{}).
-			Where("provider_credential_id = ? AND task_id <> ? AND provider_status IN ?", credential.ID, taskID, providerCapacityOccupancyStatuses()).
+			Where("provider_credential_id = ? AND task_id <> ? AND reconciliation_status <> ? AND provider_status IN ?", credential.ID, taskID, "resolved", providerCapacityOccupancyStatuses()).
 			Count(&active).Error; err != nil {
 			return err
 		}
@@ -226,13 +234,13 @@ func (r *Repository) ClaimProviderTaskExecution(taskID string, leaseOwner string
 	return claimed, err
 }
 
-func (r *Repository) RequeueTaskWaitingForProviderCapacity(taskID string, leaseOwner string) error {
+func (r *Repository) RequeueTaskWaitingForProviderCapacity(taskID string, leaseOwner string, leaseToken string) error {
 	now := time.Now()
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND status = ? AND lease_owner = ?", taskID, model.TaskStatusRunning, leaseOwner).
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at > ?", taskID, model.TaskStatusRunning, leaseOwner, leaseToken, now).
 		Updates(map[string]any{
 			"status": model.TaskStatusQueued, "stage": "等待上游并发名额", "progress": 5,
-			"next_poll_at": now.Add(5 * time.Second), "lease_owner": "", "lease_expires_at": nil, "updated_at": now,
+			"next_poll_at": now.Add(5 * time.Second), "lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
 		})
 	if result.Error != nil {
 		return result.Error
@@ -243,12 +251,16 @@ func (r *Repository) RequeueTaskWaitingForProviderCapacity(taskID string, leaseO
 	return nil
 }
 
-func (r *Repository) FinalizeProviderTaskRecovery(taskID string, leaseOwner string) (bool, error) {
+func (r *Repository) FinalizeProviderTaskRecovery(taskID string, leaseOwner string, leaseToken string) (bool, error) {
 	finalized := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var fact model.ProviderTaskFact
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "task_id = ?", taskID).Error; err != nil {
 			return err
+		}
+		if fact.ReconciliationStatus == "resolved" {
+			finalized = true
+			return nil
 		}
 		failureMessage := ""
 		reconciliationStatus := "manual_review"
@@ -280,10 +292,10 @@ func (r *Repository) FinalizeProviderTaskRecovery(taskID string, leaseOwner stri
 		}
 		now := time.Now()
 		task := tx.Model(&model.Task{}).
-			Where("id = ? AND status = ? AND lease_owner = ?", taskID, model.TaskStatusRunning, leaseOwner).
+			Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at > ?", taskID, model.TaskStatusRunning, leaseOwner, leaseToken, now).
 			Updates(map[string]any{
 				"status": model.TaskStatusFailed, "stage": "任务失败", "error": failureMessage, "completed_at": &now,
-				"lease_owner": "", "lease_expires_at": nil, "updated_at": now,
+				"lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
 			})
 		if task.Error != nil {
 			return task.Error
@@ -300,6 +312,89 @@ func (r *Repository) FinalizeProviderTaskRecovery(taskID string, leaseOwner stri
 		return nil
 	})
 	return finalized, err
+}
+
+type ProviderTaskBillingResolution struct {
+	ExpectedProviderStatus string
+	ResolvedProviderStatus string
+	ActorUserID            string
+	Note                   string
+	TaskStatus             model.TaskStatus
+	TaskStage              string
+	TaskError              string
+}
+
+type providerBillingMutation func(*gorm.DB, model.ProviderTaskFact) error
+
+func (r *Repository) SettleProviderTaskBilling(billingOrderID string, resolution ProviderTaskBillingResolution) (bool, error) {
+	return r.resolveProviderTaskBilling(billingOrderID, resolution, func(tx *gorm.DB, fact model.ProviderTaskFact) error {
+		return settleBillingOrderTx(tx, billingOrderID, fact.ProviderTaskID)
+	})
+}
+
+func (r *Repository) RefundProviderTaskBilling(billingOrderID string, resolution ProviderTaskBillingResolution) (bool, error) {
+	return r.resolveProviderTaskBilling(billingOrderID, resolution, func(tx *gorm.DB, _ model.ProviderTaskFact) error {
+		return refundBillingOrderTx(tx, billingOrderID, resolution.Note)
+	})
+}
+
+func (r *Repository) resolveProviderTaskBilling(billingOrderID string, resolution ProviderTaskBillingResolution, mutateBilling providerBillingMutation) (bool, error) {
+	resolved := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var fact model.ProviderTaskFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&fact, "billing_order_id = ?", billingOrderID).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if fact.ProviderStatus != resolution.ExpectedProviderStatus {
+			return errors.New("provider reconciliation fact changed before resolution")
+		}
+		if err := mutateBilling(tx, fact); err != nil {
+			return err
+		}
+		now := time.Now()
+		orderUpdate := tx.Model(&model.BillingOrder{}).Where("id = ?", billingOrderID).Updates(map[string]any{
+			"resolved_by": resolution.ActorUserID, "resolution_note": resolution.Note, "updated_at": now,
+		})
+		if orderUpdate.Error != nil {
+			return orderUpdate.Error
+		}
+		if orderUpdate.RowsAffected != 1 {
+			return errors.New("provider reconciliation billing order state conflict")
+		}
+		var task model.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", fact.TaskID).Error; err != nil {
+			return err
+		}
+		if task.Status == model.TaskStatusQueued {
+			return errors.New("provider reconciliation task is not running or terminal")
+		}
+		if task.Status == model.TaskStatusRunning {
+			taskUpdate := tx.Model(&model.Task{}).Where("id = ? AND status = ?", fact.TaskID, model.TaskStatusRunning).Updates(map[string]any{
+				"status": resolution.TaskStatus, "stage": resolution.TaskStage, "error": resolution.TaskError, "completed_at": &now,
+				"lease_owner": "", "lease_token": "", "lease_expires_at": nil, "updated_at": now,
+			})
+			if taskUpdate.Error != nil {
+				return taskUpdate.Error
+			}
+			if taskUpdate.RowsAffected != 1 {
+				return errors.New("provider reconciliation task state conflict")
+			}
+		}
+		factUpdate := tx.Model(&model.ProviderTaskFact{}).Where("task_id = ?", fact.TaskID).Updates(map[string]any{
+			"provider_status": resolution.ResolvedProviderStatus, "reconciliation_status": "resolved", "updated_at": now,
+		})
+		if factUpdate.Error != nil {
+			return factUpdate.Error
+		}
+		if factUpdate.RowsAffected != 1 {
+			return errors.New("provider reconciliation fact state conflict")
+		}
+		resolved = true
+		return nil
+	})
+	return resolved, err
 }
 
 func lockProviderExecutionScopeTx(tx *gorm.DB, credentialID string) error {

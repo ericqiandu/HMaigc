@@ -518,60 +518,33 @@ func (r *Repository) MarkBillingUncertain(id string, errorText string) error {
 
 func (r *Repository) SettleBillingOrder(id string, providerRequestID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var order model.BillingOrder
-		if err := tx.First(&order, "id = ?", id).Error; err != nil {
-			return err
-		}
-		if order.Status == model.BillingStatusSettled {
-			return nil
-		}
-		if order.Status == model.BillingStatusRefunded {
-			return errors.New("billing order already refunded")
-		}
-		if order.TeamID != "" {
-			updated := tx.Model(&model.TeamCreditAccount{}).
-				Where("team_id = ? AND reserved_microcredits >= ?", order.TeamID, order.AmountMicrocredits).
-				Updates(map[string]any{"reserved_microcredits": gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits), "version": gorm.Expr("version + 1"), "updated_at": time.Now()})
-			if updated.Error != nil {
-				return updated.Error
-			}
-			if updated.RowsAffected != 1 {
-				return errors.New("team reserved credit balance is inconsistent")
-			}
-			var account model.TeamCreditAccount
-			if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
-				return err
-			}
-			now := time.Now()
-			orderUpdates := map[string]any{"status": model.BillingStatusSettled, "settled_at": &now, "updated_at": now}
-			if providerRequestID != "" {
-				orderUpdates["provider_request_id"] = providerRequestID
-			}
-			if err := tx.Model(&order).Updates(orderUpdates).Error; err != nil {
-				return err
-			}
-			return tx.Create(&model.TeamCreditLedgerEntry{
-				ID: newRepositoryID(), TeamID: order.TeamID, ActorUserID: order.UserID, Type: model.CreditLedgerConsume,
-				AmountMicrocredits: -order.AmountMicrocredits, ReservedDeltaMicrocredits: -order.AmountMicrocredits,
-				AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-				BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, CreatedAt: now,
-			}).Error
-		}
-		updated := tx.Model(&model.CreditAccount{}).
-			Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).
-			Updates(map[string]any{
-				"reserved_microcredits": gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits),
-				"version":               gorm.Expr("version + 1"),
-				"updated_at":            time.Now(),
-			})
+		return settleBillingOrderTx(tx, id, providerRequestID)
+	})
+}
+
+func settleBillingOrderTx(tx *gorm.DB, id string, providerRequestID string) error {
+	var order model.BillingOrder
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
+		return err
+	}
+	if order.Status == model.BillingStatusSettled {
+		return nil
+	}
+	if order.Status == model.BillingStatusRefunded {
+		return errors.New("billing order already refunded")
+	}
+	if order.TeamID != "" {
+		updated := tx.Model(&model.TeamCreditAccount{}).
+			Where("team_id = ? AND reserved_microcredits >= ?", order.TeamID, order.AmountMicrocredits).
+			Updates(map[string]any{"reserved_microcredits": gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits), "version": gorm.Expr("version + 1"), "updated_at": time.Now()})
 		if updated.Error != nil {
 			return updated.Error
 		}
 		if updated.RowsAffected != 1 {
-			return errors.New("reserved credit balance is inconsistent")
+			return errors.New("team reserved credit balance is inconsistent")
 		}
-		var account model.CreditAccount
-		if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
+		var account model.TeamCreditAccount
+		if err := tx.First(&account, "team_id = ?", order.TeamID).Error; err != nil {
 			return err
 		}
 		now := time.Now()
@@ -582,20 +555,51 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 		if err := tx.Model(&order).Updates(orderUpdates).Error; err != nil {
 			return err
 		}
-		return tx.Create(&model.CreditLedgerEntry{
-			ID:                         newRepositoryID(),
-			UserID:                     order.UserID,
-			Type:                       model.CreditLedgerConsume,
-			AmountMicrocredits:         -order.AmountMicrocredits,
-			ReservedDeltaMicrocredits:  -order.AmountMicrocredits,
-			AvailableAfterMicrocredits: account.AvailableMicrocredits,
-			ReservedAfterMicrocredits:  account.ReservedMicrocredits,
-			BillingOrderID:             order.ID,
-			Model:                      order.Model,
-			ChannelID:                  order.ChannelID,
-			Scene:                      order.Scene,
+		return tx.Create(&model.TeamCreditLedgerEntry{
+			ID: newRepositoryID(), TeamID: order.TeamID, ActorUserID: order.UserID, Type: model.CreditLedgerConsume,
+			AmountMicrocredits: -order.AmountMicrocredits, ReservedDeltaMicrocredits: -order.AmountMicrocredits,
+			AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
+			BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, CreatedAt: now,
 		}).Error
-	})
+	}
+	updated := tx.Model(&model.CreditAccount{}).
+		Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).
+		Updates(map[string]any{
+			"reserved_microcredits": gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits),
+			"version":               gorm.Expr("version + 1"),
+			"updated_at":            time.Now(),
+		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return errors.New("reserved credit balance is inconsistent")
+	}
+	var account model.CreditAccount
+	if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
+		return err
+	}
+	now := time.Now()
+	orderUpdates := map[string]any{"status": model.BillingStatusSettled, "settled_at": &now, "updated_at": now}
+	if providerRequestID != "" {
+		orderUpdates["provider_request_id"] = providerRequestID
+	}
+	if err := tx.Model(&order).Updates(orderUpdates).Error; err != nil {
+		return err
+	}
+	return tx.Create(&model.CreditLedgerEntry{
+		ID:                         newRepositoryID(),
+		UserID:                     order.UserID,
+		Type:                       model.CreditLedgerConsume,
+		AmountMicrocredits:         -order.AmountMicrocredits,
+		ReservedDeltaMicrocredits:  -order.AmountMicrocredits,
+		AvailableAfterMicrocredits: account.AvailableMicrocredits,
+		ReservedAfterMicrocredits:  account.ReservedMicrocredits,
+		BillingOrderID:             order.ID,
+		Model:                      order.Model,
+		ChannelID:                  order.ChannelID,
+		Scene:                      order.Scene,
+	}).Error
 }
 
 func (r *Repository) RefundBillingOrder(id string, errorText string) error {
@@ -606,7 +610,7 @@ func (r *Repository) RefundBillingOrder(id string, errorText string) error {
 
 func refundBillingOrderTx(tx *gorm.DB, id string, errorText string) error {
 	var order model.BillingOrder
-	if err := tx.First(&order, "id = ?", id).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
 		return err
 	}
 	if order.Status == model.BillingStatusRefunded {

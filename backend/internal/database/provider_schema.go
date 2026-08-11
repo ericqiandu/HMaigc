@@ -170,6 +170,18 @@ var providerIntegrityIndexes = []providerIntegrityIndex{
 		name: "idx_channel_model_resolution_variant", table: "channel_model_price_tiers", columns: "channel_model_id,resolution,input_variant",
 		createSQL: `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant)`,
 	},
+	{
+		name: "idx_resources_source_task", table: "resources", columns: "source_task_id", predicate: "source_task_id <> ''",
+		createSQL: `CREATE UNIQUE INDEX idx_resources_source_task ON resources(source_task_id) WHERE source_task_id <> ''`,
+	},
+	{
+		name: "idx_credit_ledger_billing_action", table: "credit_ledger_entries", columns: "billing_order_id,type", predicate: "billing_order_id <> ''",
+		createSQL: `CREATE UNIQUE INDEX idx_credit_ledger_billing_action ON credit_ledger_entries(billing_order_id,type) WHERE billing_order_id <> ''`,
+	},
+	{
+		name: "idx_team_credit_ledger_billing_action", table: "team_credit_ledger_entries", columns: "billing_order_id,type", predicate: "billing_order_id <> ''",
+		createSQL: `CREATE UNIQUE INDEX idx_team_credit_ledger_billing_action ON team_credit_ledger_entries(billing_order_id,type) WHERE billing_order_id <> ''`,
+	},
 }
 
 // EnsureProviderIntegritySchema 在创建索引前验证索引定义和历史事实，绝不挑选、覆盖或删除冲突行。
@@ -251,8 +263,8 @@ func canonicalProviderPredicate(value string) string {
 	canonical = strings.ReplaceAll(canonical, " ", "")
 	canonical = strings.ReplaceAll(canonical, "\n", "")
 	canonical = strings.ReplaceAll(canonical, "\t", "")
-	canonical = strings.TrimPrefix(canonical, "(")
-	canonical = strings.TrimSuffix(canonical, ")")
+	canonical = strings.ReplaceAll(canonical, "(", "")
+	canonical = strings.ReplaceAll(canonical, ")", "")
 	return canonical
 }
 
@@ -275,6 +287,9 @@ func rejectProviderIntegrityConflicts(db *gorm.DB) error {
 		{&model.ProviderTaskFact{}, "provider_credential_version_id AS first_value, provider_task_id AS second_value, COUNT(*) AS count", "provider_task_id <> ''", "provider_credential_version_id, provider_task_id", "上游任务"},
 		{&model.ProviderBillingFact{}, "provider_credential_version_id AS first_value, upstream_order_id AS second_value, COUNT(*) AS count", "upstream_order_id <> ''", "provider_credential_version_id, upstream_order_id", "上游账单"},
 		{&model.ChannelModelPriceTier{}, "channel_model_id AS first_value, resolution || ':' || input_variant AS second_value, COUNT(*) AS count", "", "channel_model_id, resolution, input_variant", "模型价格规格"},
+		{&model.Resource{}, "source_task_id AS first_value, '' AS second_value, COUNT(*) AS count", "source_task_id <> ''", "source_task_id", "任务来源资源"},
+		{&model.CreditLedgerEntry{}, "billing_order_id AS first_value, type AS second_value, COUNT(*) AS count", "billing_order_id <> ''", "billing_order_id, type", "个人订单账本动作"},
+		{&model.TeamCreditLedgerEntry{}, "billing_order_id AS first_value, type AS second_value, COUNT(*) AS count", "billing_order_id <> ''", "billing_order_id, type", "团队订单账本动作"},
 	}
 	for _, check := range checks {
 		var conflict duplicate
