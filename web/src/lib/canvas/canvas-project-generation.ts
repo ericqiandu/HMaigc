@@ -367,7 +367,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 
 export function supportsVideoReferenceAudio(config: AiConfig) {
     const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
-    return interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine" || interfaceType === "minimax-video" || isSeedanceVideoConfig(config);
+    return interfaceType === "ai-open-platform-video-volcengine" || interfaceType === "minimax-video" || isSeedanceVideoConfig(config);
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

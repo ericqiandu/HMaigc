@@ -69,7 +69,6 @@ const (
 	ChannelInterfaceAPIMartImage          ChannelInterfaceType = "apimart-image"
 	ChannelInterfaceNewAPIVideo           ChannelInterfaceType = "newapi"
 	ChannelInterfaceXAIVideo              ChannelInterfaceType = "xai-video"
-	ChannelInterfaceAIOpenVideo           ChannelInterfaceType = "ai-open-platform-video"
 	ChannelInterfaceAIOpenVideoVolcengine ChannelInterfaceType = "ai-open-platform-video-volcengine"
 	ChannelInterfaceMiniMaxSpeech         ChannelInterfaceType = "minimax-speech"
 	ChannelInterfaceMiniMaxVideo          ChannelInterfaceType = "minimax-video"

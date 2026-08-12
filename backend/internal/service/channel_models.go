@@ -467,7 +467,7 @@ func capabilityForChannel(channel model.ModelChannel) string {
 	switch channel.InterfaceType {
 	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceAPIMartImage:
 		return "image"
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return "video"
 	case model.ChannelInterfaceMiniMaxSpeech:
 		return "audio"

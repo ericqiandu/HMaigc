@@ -27,7 +27,7 @@ func TestKuaiziBalanceSendsExactContractAndPreservesLargeBalance(t *testing.T) {
 			t.Fatalf("body = %q, want {}", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"code":0,"data":{"balance":9007199254740993123456789},"trace_id":"trace-large"}`)
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"wallet_balance":9007199254740993123456789},"trace_id":"trace-large"}`)
 	}))
 	defer server.Close()
 
@@ -42,7 +42,7 @@ func TestKuaiziBalanceSendsExactContractAndPreservesLargeBalance(t *testing.T) {
 }
 
 func TestKuaiziBalanceAcceptsZeroAsVerifiedFact(t *testing.T) {
-	fixture, closeServer := kuaiziBalanceTestClient(t, http.StatusOK, `{"code":0,"data":{"balance":"0"},"trace_id":"trace-zero"}`, 0)
+	fixture, closeServer := kuaiziBalanceTestClient(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"0"},"trace_id":"trace-zero"}`, 0)
 	defer closeServer()
 	fact, err := fixture.client.Balance(context.Background(), fixture.baseURL, "key")
 	if err != nil {
@@ -55,7 +55,7 @@ func TestKuaiziBalanceAcceptsZeroAsVerifiedFact(t *testing.T) {
 
 func TestKuaiziBalanceRedactsKeyIfUpstreamEchoesItAsTraceID(t *testing.T) {
 	const key = "sentinel-echoed-key"
-	fixture, closeServer := kuaiziBalanceTestClient(t, http.StatusOK, `{"code":0,"data":{"balance":"1"},"trace_id":"sentinel-echoed-key"}`, 0)
+	fixture, closeServer := kuaiziBalanceTestClient(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"1"},"trace_id":"sentinel-echoed-key"}`, 0)
 	defer closeServer()
 	fact, err := fixture.client.Balance(context.Background(), fixture.baseURL, key)
 	if err != nil {
@@ -87,11 +87,11 @@ func TestKuaiziBalanceMapsExplicitFailures(t *testing.T) {
 		{name: "ip rejected", status: http.StatusOK, body: `{"code":403,"message":"ip rejected","trace_id":"trace-ip"}`, wantCode: "ip_rejected", wantHealth: "blocked"},
 		{name: "other business code", status: http.StatusOK, body: `{"code":9001,"message":"rejected","trace_id":"trace-business"}`, wantCode: "upstream_code_9001", wantHealth: "rejected"},
 		{name: "unsafe business code", status: http.StatusOK, body: `{"code":"sentinel-secret","message":"rejected"}`, wantCode: "invalid_response", wantHealth: "unknown"},
-		{name: "timeout", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}}`, delay: 100 * time.Millisecond, timeout: 10 * time.Millisecond, wantCode: "timeout", wantHealth: "unavailable"},
+		{name: "timeout", status: http.StatusOK, body: `{"code":0,"data":{"wallet_balance":"1"}}`, delay: 100 * time.Millisecond, timeout: 10 * time.Millisecond, wantCode: "timeout", wantHealth: "unavailable"},
 		{name: "unknown payload", status: http.StatusOK, body: `{"code":0,"data":{"credits":"1"}}`, wantCode: "invalid_response", wantHealth: "unknown"},
-		{name: "trailing garbage", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}} trailing`, wantCode: "invalid_response", wantHealth: "unknown"},
-		{name: "second json value", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"}} {}`, wantCode: "invalid_response", wantHealth: "unknown"},
-		{name: "oversized payload", status: http.StatusOK, body: `{"code":0,"data":{"balance":"1"},"trace_id":"sentinel-oversized-200"}` + strings.Repeat(" ", kuaiziBalanceResponseLimit), wantCode: "invalid_response", wantHealth: "unknown", secretBody: "sentinel-oversized-200"},
+		{name: "trailing garbage", status: http.StatusOK, body: `{"code":0,"data":{"wallet_balance":"1"}} trailing`, wantCode: "invalid_response", wantHealth: "unknown"},
+		{name: "second json value", status: http.StatusOK, body: `{"code":0,"data":{"wallet_balance":"1"}} {}`, wantCode: "invalid_response", wantHealth: "unknown"},
+		{name: "oversized payload", status: http.StatusOK, body: `{"code":0,"data":{"wallet_balance":"1"},"trace_id":"sentinel-oversized-200"}` + strings.Repeat(" ", kuaiziBalanceResponseLimit), wantCode: "invalid_response", wantHealth: "unknown", secretBody: "sentinel-oversized-200"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

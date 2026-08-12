@@ -23,7 +23,7 @@ import (
 )
 
 func TestKuaiziCredentialFirstVerificationActivatesEndpointAndKeyAtomically(t *testing.T) {
-	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"balance":"123456"},"trace_id":"trace-first"}`)
+	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"123456"},"trace_id":"trace-first"}`)
 	defer server.Close()
 	svc, db := openProviderCredentialService(t)
 	admin := providerAdmin()
@@ -119,7 +119,7 @@ func TestKuaiziCredentialViewSeparatesLifecycleRoleFromHealthStatus(t *testing.T
 		})
 
 		t.Run(test.name+" active", func(t *testing.T) {
-			server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"balance":"100"},"trace_id":"trace-active-role"}`)
+			server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"100"},"trace_id":"trace-active-role"}`)
 			defer server.Close()
 			svc, db := openProviderCredentialService(t)
 			admin := providerAdmin()
@@ -190,7 +190,7 @@ func TestKuaiziCredentialCandidateViewPreservesVerificationHealthClassification(
 		t.Run(test.name, func(t *testing.T) {
 			var mu sync.RWMutex
 			status := http.StatusOK
-			body := `{"code":0,"data":{"balance":"100"},"trace_id":"trace-healthy"}`
+			body := `{"code":0,"data":{"wallet_balance":"100"},"trace_id":"trace-healthy"}`
 			contentLength := 0
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				mu.RLock()
@@ -231,7 +231,7 @@ func TestKuaiziCredentialCandidateViewPreservesVerificationHealthClassification(
 }
 
 func TestKuaiziCredentialZeroBalanceActivatesAsInsufficientBalance(t *testing.T) {
-	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"balance":"0"},"trace_id":"trace-zero"}`)
+	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"0"},"trace_id":"trace-zero"}`)
 	defer server.Close()
 	svc, db := openProviderCredentialService(t)
 	admin := providerAdmin()
@@ -276,7 +276,7 @@ func TestKuaiziEndpointTemporaryFailurePreservesOldHealthyEndpointAndKey(t *test
 }
 
 func TestKuaiziCredentialConcurrentVerificationKeepsSingleActiveVersion(t *testing.T) {
-	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"balance":"9"},"trace_id":"trace-race"}`)
+	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"9"},"trace_id":"trace-race"}`)
 	defer server.Close()
 	svc, db := openProviderCredentialService(t)
 	admin := providerAdmin()
@@ -315,7 +315,7 @@ func TestKuaiziCredentialConcurrentVerificationKeepsSingleActiveVersion(t *testi
 }
 
 func TestKuaiziCredentialSupersedesOlderPendingCandidate(t *testing.T) {
-	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"balance":"12"},"trace_id":"trace-latest"}`)
+	server := newKuaiziBalanceServer(t, http.StatusOK, `{"code":0,"data":{"wallet_balance":"12"},"trace_id":"trace-latest"}`)
 	defer server.Close()
 	svc, db := openProviderCredentialService(t)
 	admin := providerAdmin()
@@ -373,7 +373,7 @@ func TestKuaiziCredentialActivationConflictCreatesFailureAuditAfterTransactionRo
 			t.Errorf("inject activation conflict: %v", activationError)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"code":0,"data":{"balance":"8"},"trace_id":"trace-conflict"}`)
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"wallet_balance":"8"},"trace_id":"trace-conflict"}`)
 	}))
 	defer server.Close()
 	svc, db := openProviderCredentialService(t)
@@ -487,7 +487,7 @@ type switchableKuaiziBalanceServer struct {
 
 func newSwitchableKuaiziBalanceServer(t *testing.T) *switchableKuaiziBalanceServer {
 	t.Helper()
-	fixture := &switchableKuaiziBalanceServer{status: http.StatusOK, body: `{"code":0,"data":{"balance":"100"},"trace_id":"trace-healthy"}`}
+	fixture := &switchableKuaiziBalanceServer{status: http.StatusOK, body: `{"code":0,"data":{"wallet_balance":"100"},"trace_id":"trace-healthy"}`}
 	fixture.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		fixture.mu.RLock()
 		defer fixture.mu.RUnlock()

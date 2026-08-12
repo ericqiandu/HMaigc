@@ -202,8 +202,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	if resumedProviderRequestID(ctx) == "" {
-		requirePublicMedia := input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo) ||
-			input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine) ||
+		requirePublicMedia := input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceMiniMaxVideo) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceKlingVideo)
 		if err := s.hydrateGenerationMedia(userID, &input, requirePublicMedia); err != nil {
@@ -633,9 +632,6 @@ func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]
 	if input.Config.InterfaceType == string(model.ChannelInterfaceMiniMaxVideo) {
 		return runMiniMaxH3VideoTask(ctx, input)
 	}
-	if input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideo) {
-		return runAIOpenPlatformVideoTask(ctx, input)
-	}
 	if input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine) {
 		return runAIOpenPlatformVolcengineVideoTask(ctx, input)
 	}
@@ -775,7 +771,7 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 	allowed := map[string]map[string]bool{
 		"text":  {"chat-completion": true, "openai-response": true},
 		"image": {"openai-image": true, "apimart-image": true},
-		"video": {"newapi": true, "xai-video": true, "ai-open-platform-video": true, "ai-open-platform-video-volcengine": true, "minimax-video": true, "kling-video": true},
+		"video": {"newapi": true, "xai-video": true, "ai-open-platform-video-volcengine": true, "minimax-video": true, "kling-video": true},
 		"audio": {"minimax-speech": true},
 	}
 	if allowed[mode] != nil && !allowed[mode][interfaceType] {

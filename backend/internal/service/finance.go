@@ -673,7 +673,7 @@ func (s *Service) BillingFailureRequiresReview(orderID string, taskID string, er
 	if billingFailureUncertain(err) {
 		return true
 	}
-	var createError *KuaiziSeedance25CreateError
+	var createError *KuaiziCompatibleCreateError
 	if errors.As(err, &createError) {
 		return true
 	}

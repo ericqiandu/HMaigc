@@ -2,7 +2,7 @@ import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/sto
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-export const SEEDANCE_REFERENCE_LIMITS = {
+const seedance20ReferenceLimits = {
     images: 9,
     videos: 3,
     audios: 3,
@@ -11,6 +11,10 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     audioMaxBytes: 15 * 1024 * 1024,
 };
 
+const seedance25ReferenceLimits = { ...seedance20ReferenceLimits, images: 30, videos: 10, audios: 10 };
+
+export const SEEDANCE_REFERENCE_LIMITS = seedance20ReferenceLimits;
+
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480P" },
     { value: "720p", label: "720P" },
@@ -18,7 +22,7 @@ export const seedanceResolutionOptions = [
     { value: "4k", label: "4K" },
 ] as const;
 
-export type SeedanceModelMode = "fast" | "pro" | "mini" | "unknown";
+export type SeedanceModelMode = "fast" | "pro" | "mini" | "seedance2.5" | "unknown";
 
 const seedanceBaseResolutionOptions = seedanceResolutionOptions.filter((option) => option.value === "480p" || option.value === "720p");
 
@@ -33,6 +37,7 @@ export const seedanceRatioOptions = [
 ] as const;
 
 export const seedanceDurationOptions = Array.from({ length: 12 }, (_, index) => index + 4);
+export const seedance25DurationOptions = Array.from({ length: 27 }, (_, index) => index + 4);
 
 const seedancePixels = {
     "480p": {
@@ -86,6 +91,7 @@ export function isSeedanceFastModel(model: string) {
 export function seedanceModelMode(model: string): SeedanceModelMode {
     const value = model.trim().toLowerCase();
     if (!isSeedanceVideoModel(value)) return "unknown";
+    if (value === "doubao-seedance-2-5-260628") return "seedance2.5";
     const tokens = value.replaceAll("_", "-").replaceAll(" ", "-").split("-").filter(Boolean);
     if (tokens.includes("fast")) return "fast";
     if (tokens.includes("mini")) return "mini";
@@ -96,7 +102,11 @@ export function seedanceModelMode(model: string): SeedanceModelMode {
 
 export function seedanceResolutionOptionsForModel(model: string) {
     const mode = seedanceModelMode(model);
-    return mode === "fast" || mode === "mini" ? seedanceBaseResolutionOptions : seedanceResolutionOptions;
+    return mode === "seedance2.5" ? seedanceBaseResolutionOptions : mode === "fast" || mode === "mini" ? seedanceResolutionOptions.filter((option) => option.value !== "4k") : seedanceResolutionOptions;
+}
+
+export function seedanceReferenceLimitsForModel(model: string) {
+    return seedanceModelMode(model) === "seedance2.5" ? seedance25ReferenceLimits : seedance20ReferenceLimits;
 }
 
 export function isArkPlanBaseUrl(baseUrl: string) {
@@ -110,7 +120,9 @@ export function normalizeSeedanceResolution(value: string, model = "") {
 }
 
 export function normalizeResolutionToken(value: string) {
-    const normalizedValue = String(value || "").trim().toLowerCase();
+    const normalizedValue = String(value || "")
+        .trim()
+        .toLowerCase();
     if (normalizedValue === "low") return "480p";
     if (normalizedValue === "auto" || normalizedValue === "high" || normalizedValue === "medium") return "720p";
     if (normalizedValue === "4k") return "4k";
@@ -118,9 +130,10 @@ export function normalizeResolutionToken(value: string) {
     return `${resolution}p`;
 }
 
-export function normalizeSeedanceDuration(value: string) {
+export function normalizeSeedanceDuration(value: string, model = "") {
     const duration = Math.round(Number(value));
-    return Math.max(4, Math.min(15, Number.isFinite(duration) ? duration : 6));
+    const maximum = seedanceModelMode(model) === "seedance2.5" ? 30 : 15;
+    return Math.max(4, Math.min(maximum, Number.isFinite(duration) ? duration : 6));
 }
 
 export function normalizeSeedanceRatio(value: string) {

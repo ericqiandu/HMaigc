@@ -102,23 +102,32 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 	return []ProviderAdapterDescriptor{{
 		ProviderKind: "kuaizi",
 		Family:       "seedance",
-		Models: []ProviderModelSpec{{
-			ModelKey:               "kuaizi-seedance-2.5",
-			DisplayName:            "Seedance 2.5",
-			UpstreamMode:           "seedance2.5",
-			Capability:             "video",
-			Resolutions:            []string{"480p", "720p"},
-			Ratios:                 []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"},
-			DurationMin:            4,
-			DurationMax:            30,
-			SupportsSmartDuration:  true,
-			SupportsGeneratedAudio: true,
-			SupportsWatermark:      true,
-			MaxImages:              30,
-			MaxVideos:              10,
-			MaxAudios:              10,
-		}},
+		Models: []ProviderModelSpec{
+			seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3),
+			seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3),
+			seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3),
+			seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10),
+		},
 	}}
+}
+
+func seedanceProviderModel(modelKey string, displayName string, resolutions []string, durationMax int, maxImages int, maxVideos int, maxAudios int) ProviderModelSpec {
+	return ProviderModelSpec{
+		ModelKey: modelKey, DisplayName: displayName, UpstreamMode: modelKey, Capability: "video",
+		Resolutions: resolutions, Ratios: []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"},
+		DurationMin: 4, DurationMax: durationMax, SupportsSmartDuration: true,
+		SupportsGeneratedAudio: true, SupportsWatermark: true,
+		MaxImages: maxImages, MaxVideos: maxVideos, MaxAudios: maxAudios,
+	}
+}
+
+func kuaiziSeedanceModelSpec(modelKey string) (ProviderModelSpec, bool) {
+	for _, candidate := range kuaiziProviderAdapterDescriptors()[0].Models {
+		if candidate.ModelKey == strings.TrimSpace(modelKey) {
+			return candidate, true
+		}
+	}
+	return ProviderModelSpec{}, false
 }
 
 func validateProviderRegistryRuntime(descriptors []ProviderAdapterDescriptor) error {

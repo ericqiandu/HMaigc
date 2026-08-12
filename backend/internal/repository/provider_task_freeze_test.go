@@ -82,7 +82,7 @@ func seedProviderRuntime(t *testing.T, db *gorm.DB, now time.Time, health string
 		&model.ProviderEndpointVersion{ID: "endpoint-v1", ProviderAccountID: "account", BaseURL: "https://example.com", Status: "active", Version: 1, CreatedAt: now},
 		&model.ProviderCredential{ID: "credential", ProviderAccountID: "account", Family: "seedance", HealthStatus: health, Enabled: true, CreatedAt: now, UpdatedAt: now},
 		&model.ProviderCredentialVersion{ID: "key-v1", ProviderCredentialID: "credential", KeyCipher: "cipher", KeyFingerprint: "fingerprint", Status: "active", Version: 1, CreatedAt: now},
-		&model.ChannelModel{ID: "channel-model", ChannelID: "channel", ProviderCredentialID: "credential", ModelKey: "kuaizi-seedance-2.5", Capability: "video", Enabled: true, CreatedAt: now, UpdatedAt: now},
+		&model.ChannelModel{ID: "channel-model", ChannelID: "channel", ProviderCredentialID: "credential", ModelKey: "doubao-seedance-2-5-260628", Capability: "video", Enabled: true, CreatedAt: now, UpdatedAt: now},
 	}
 	for _, row := range rows {
 		if err := db.Create(row).Error; err != nil {

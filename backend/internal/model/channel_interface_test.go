@@ -23,7 +23,6 @@ func TestModelChannelInterfaceTypeColumnFitsSupportedValues(t *testing.T) {
 		ChannelInterfaceAPIMartImage,
 		ChannelInterfaceNewAPIVideo,
 		ChannelInterfaceXAIVideo,
-		ChannelInterfaceAIOpenVideo,
 		ChannelInterfaceAIOpenVideoVolcengine,
 		ChannelInterfaceMiniMaxSpeech,
 		ChannelInterfaceMiniMaxVideo,

@@ -61,7 +61,7 @@ func TestProviderAccountHandlerNeverReturnsOrAuditsCredentialSecret(t *testing.T
 	fixture := openProviderAccountHandlerFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"code":0,"data":{"balance":"42"},"trace_id":"handler-trace"}`)
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"wallet_balance":"42"},"trace_id":"handler-trace"}`)
 	}))
 	defer server.Close()
 

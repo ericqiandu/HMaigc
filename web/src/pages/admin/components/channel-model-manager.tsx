@@ -89,7 +89,17 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const startCreate = () => {
         setEditing(null);
         setEditorDirty(false);
-        form.setFieldsValue({ modelKey: "", displayName: "", marketingCopy: "", promotionBadge: "", estimatedDurationMinutes: undefined, brandKey: "generic", accessPolicy: "authenticated", capability: capabilityFromInterface(channel?.interfaceType), enabled: true });
+        form.setFieldsValue({
+            modelKey: "",
+            displayName: "",
+            marketingCopy: "",
+            promotionBadge: "",
+            estimatedDurationMinutes: undefined,
+            brandKey: "generic",
+            accessPolicy: "authenticated",
+            capability: capabilityFromInterface(channel?.interfaceType),
+            enabled: true,
+        });
         setEditorOpen(true);
     };
 
@@ -501,7 +511,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
 function capabilityFromInterface(value?: ModelChannel["interfaceType"]): ChannelModel["capability"] {
     if (value === "openai-image" || value === "apimart-image") return "image";
-    if (value === "newapi" || value === "xai-video" || value === "ai-open-platform-video" || value === "ai-open-platform-video-volcengine" || value === "minimax-video") return "video";
+    if (value === "newapi" || value === "xai-video" || value === "ai-open-platform-video-volcengine" || value === "minimax-video") return "video";
     if (value === "minimax-speech") return "audio";
     return "text";
 }

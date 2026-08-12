@@ -39,7 +39,6 @@ const interfaceTypeOptions = [
             { label: "NewAPI 视频", value: "newapi" },
             { label: "xAI / Sub2API 视频", value: "xai-video" },
             { label: "AI 开放平台视频（火山兼容）", value: "ai-open-platform-video-volcengine" },
-            { label: "AI 开放平台视频（原生）", value: "ai-open-platform-video" },
         ],
     },
     { label: "音频", options: [{ label: "MiniMax Speech", value: "minimax-speech" }] },
@@ -511,7 +510,7 @@ function normalizeStatus(value: string | null): "all" | "enabled" | "disabled" {
     return value === "enabled" || value === "disabled" ? value : "all";
 }
 function normalizeInterface(value: string | null): "all" | ChannelInterfaceType {
-    return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "xai-video", "ai-open-platform-video", "ai-open-platform-video-volcengine", "minimax-speech", "minimax-video", "kling-video"].includes(value || "")
+    return ["chat-completion", "openai-response", "openai-image", "apimart-image", "newapi", "xai-video", "ai-open-platform-video-volcengine", "minimax-speech", "minimax-video", "kling-video"].includes(value || "")
         ? (value as ChannelInterfaceType)
         : "all";
 }
@@ -526,7 +525,6 @@ function interfaceTypeLabel(value?: ChannelInterfaceType) {
                 newapi: "NewAPI 视频",
                 "xai-video": "xAI / Sub2API 视频",
                 "ai-open-platform-video-volcengine": "AI 开放平台视频（火山兼容）",
-                "ai-open-platform-video": "AI 开放平台视频（原生）",
                 "minimax-speech": "MiniMax Speech",
                 "minimax-video": "MiniMax H3 视频",
                 "kling-video": "快手可灵视频",

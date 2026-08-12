@@ -113,12 +113,12 @@ func (c *KuaiziClient) Balance(ctx context.Context, baseURL string, apiKey strin
 		}
 	}
 	var data struct {
-		Balance json.RawMessage `json:"balance"`
+		WalletBalance json.RawMessage `json:"wallet_balance"`
 	}
 	if len(envelope.Data) == 0 || json.Unmarshal(envelope.Data, &data) != nil {
 		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", traceID)
 	}
-	balance, ok := kuaiziScalarString(data.Balance)
+	balance, ok := kuaiziScalarString(data.WalletBalance)
 	if !ok || !validNonNegativeDecimalInteger(balance) {
 		return KuaiziBalanceFact{}, newKuaiziVerificationError("invalid_response", traceID)
 	}

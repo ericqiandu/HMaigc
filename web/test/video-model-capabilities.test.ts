@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { normalizeVideoConfigForModel, resolveVideoModelCapabilities } from "../src/lib/video-model-capabilities";
+import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "../src/lib/video-model-capabilities";
 import { validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 
@@ -20,7 +20,7 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         ...defaultConfig,
         model,
         videoModel: model,
-        channels: [{ id: "seedance", name: "Seedance", baseUrl: "https://aiopenapi.kuaizi.cn", apiKey: "configured", apiFormat: "openai", interfaceType: "ai-open-platform-video", models: [model], scope: "system", enabled: true }],
+        channels: [{ id: "seedance", name: "Seedance", baseUrl: "https://aiopenapi.kuaizi.cn", apiKey: "configured", apiFormat: "openai", interfaceType: "ai-open-platform-video-volcengine", models: [model], scope: "system", enabled: true }],
         ...overrides,
     };
 }
@@ -74,21 +74,21 @@ describe("Seedance 2.0 分辨率能力", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).outputCounts).toEqual([1, 2, 4]);
     });
 
-    test("Fast 仅开放 480P 与 720P", () => {
-        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
+    test("Fast 开放 480P、720P 与 1080P", () => {
+        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
     });
 
-    test("Mini 仅开放 480P 与 720P", () => {
-        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
+    test("Mini 开放 480P、720P 与 1080P", () => {
+        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
     });
 
     test("Pro 开放 480P、720P、1080P 与 4K", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p", "4k"]);
     });
 
-    test("旧节点切换到 Fast 或 Mini 后不会保留不支持的高分辨率", () => {
+    test("旧节点切换到 Fast 或 Mini 后只移除不支持的 4K", () => {
         expect(normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-fast-260128", { vquality: "4k" }), "text").vquality).toBe("720p");
-        expect(normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-mini-260615", { vquality: "1080p" }), "text").vquality).toBe("720p");
+        expect(normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-mini-260615", { vquality: "1080p" }), "text").vquality).toBe("1080p");
     });
 
     test("Pro 的 4K 参数在执行前保持不变", () => {
@@ -98,5 +98,22 @@ describe("Seedance 2.0 分辨率能力", () => {
     test("Seedance 接受 4 至 15 秒内的自定义整数", () => {
         const normalized = normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-260128", { videoSeconds: "7" }), "text");
         expect(normalized.videoSeconds).toBe("7");
+    });
+
+    test("Seedance 2.5 只开放 480P/720P、最长 30 秒且关闭兼容接口不支持的超分", () => {
+        const config = seedanceConfig("doubao-seedance-2-5-260628", { videoSeconds: "30", vquality: "1080p", videoSuperResolutionEnabled: "true" });
+        const capabilities = resolveVideoModelCapabilities(config);
+        expect(capabilities.resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
+        expect(capabilities.customDurationRange).toEqual({ min: 4, max: 30 });
+        expect(capabilities.supportsSuperResolution).toBe(false);
+        const normalized = normalizeVideoConfigForModel(config, "first_last_frame");
+        expect(normalized).toMatchObject({ videoSeconds: "30", vquality: "720p", size: "adaptive", videoSuperResolutionEnabled: "false" });
+    });
+
+    test("只有 2.5 首尾帧强制自适应比例，2.0 保留兼容接口支持的画幅", () => {
+        const seedance20 = resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128"));
+        const seedance25 = resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-5-260628"));
+        expect(videoRatiosForMode(seedance20, "first_last_frame").map((option) => option.value)).toContain("16:9");
+        expect(videoRatiosForMode(seedance25, "first_last_frame").map((option) => option.value)).toEqual(["adaptive"]);
     });
 });

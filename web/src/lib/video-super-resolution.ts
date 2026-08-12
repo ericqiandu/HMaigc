@@ -1,4 +1,4 @@
-import { resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
+import type { AiConfig } from "@/stores/use-config-store";
 
 export const VIDEO_SUPER_RESOLUTION_SCENES = [
     { value: "aigc", label: "AIGC" },
@@ -14,10 +14,8 @@ export const VIDEO_SUPER_RESOLUTION_VERSIONS = [
 
 const resolutionRank: Record<string, number> = { "480p": 1, "720p": 2, "1080p": 3, "2k": 4, "4k": 5 };
 
-export function supportsVideoSuperResolution(config: AiConfig) {
-    const selectedModel = config.videoModel || config.model;
-    if (!selectedModel.trim()) return false;
-    return resolveModelChannel(config, selectedModel).interfaceType === "ai-open-platform-video";
+export function supportsVideoSuperResolution(_config: AiConfig) {
+    return false;
 }
 
 export function videoSuperResolutionTargets(baseResolution: string) {

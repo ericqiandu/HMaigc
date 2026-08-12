@@ -169,7 +169,7 @@ func interfaceAllowsProxyPath(interfaceType model.ChannelInterfaceType, requestP
 		return requestPath == "/responses"
 	case model.ChannelInterfaceOpenAIImage:
 		return requestPath == "/images/generations" || requestPath == "/images/edits"
-	case model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxSpeech, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
+	case model.ChannelInterfaceAPIMartImage, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxSpeech, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return false
 	default:
 		return true
@@ -186,7 +186,7 @@ func proxyBillingCapability(interfaceType model.ChannelInterfaceType, requestPat
 		return "audio"
 	}
 	switch interfaceType {
-	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
+	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceAIOpenVideoVolcengine, model.ChannelInterfaceMiniMaxVideo, model.ChannelInterfaceKlingVideo:
 		return "video"
 	default:
 		// Gemini 的模型能力由后台模型目录确定，不能由通用 generateContent 路径猜测。
@@ -275,9 +275,13 @@ func proxyBillingUsage(contentType string, body []byte, capability string) servi
 					usage.SuperResolutionResolution = strings.TrimSpace(string(value))
 				}
 			case "super_resolution_version":
-				if capability == "video" { usage.SuperResolutionVersion = strings.TrimSpace(string(value)) }
+				if capability == "video" {
+					usage.SuperResolutionVersion = strings.TrimSpace(string(value))
+				}
 			case "super_resolution_fps":
-				if capability == "video" { usage.SuperResolutionFPS = int(requestPositiveInteger(string(value))) }
+				if capability == "video" {
+					usage.SuperResolutionFPS = int(requestPositiveInteger(string(value)))
+				}
 			case "quality":
 				if capability == "image" && usage.Resolution == "" {
 					usage.Resolution = strings.TrimSpace(string(value))

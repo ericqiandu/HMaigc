@@ -8,7 +8,7 @@ import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-ge
 import type { ModelBrandKey } from "@/lib/model-brands";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "xai-video" | "ai-open-platform-video" | "ai-open-platform-video-volcengine" | "minimax-speech" | "minimax-video" | "kling-video";
+export type ChannelInterfaceType = "chat-completion" | "openai-response" | "openai-image" | "apimart-image" | "newapi" | "xai-video" | "ai-open-platform-video-volcengine" | "minimax-speech" | "minimax-video" | "kling-video";
 
 export type ChannelVoice = {
     id: string;
@@ -487,15 +487,14 @@ export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfa
     if (interfaceType === "minimax-speech") return "https://api.minimaxi.com/v1";
     if (interfaceType === "minimax-video") return "https://api.minimaxi.com";
     if (interfaceType === "kling-video") return "https://api.klingai.com";
-    if (interfaceType === "newapi" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine") return "";
+    if (interfaceType === "newapi" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video-volcengine") return "";
     return OPENAI_BASE_URL;
 }
 
 function capabilityForChannelInterface(interfaceType?: ChannelInterfaceType): ModelCapability | undefined {
     if (interfaceType === "chat-completion" || interfaceType === "openai-response") return "text";
     if (interfaceType === "openai-image" || interfaceType === "apimart-image") return "image";
-    if (interfaceType === "newapi" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video" || interfaceType === "ai-open-platform-video-volcengine" || interfaceType === "minimax-video" || interfaceType === "kling-video")
-        return "video";
+    if (interfaceType === "newapi" || interfaceType === "xai-video" || interfaceType === "ai-open-platform-video-volcengine" || interfaceType === "minimax-video" || interfaceType === "kling-video") return "video";
     if (interfaceType === "minimax-speech") return "audio";
     return undefined;
 }
@@ -511,7 +510,6 @@ function normalizeChannelInterfaceType(value: unknown): ChannelInterfaceType | u
         value === "apimart-image" ||
         value === "newapi" ||
         value === "xai-video" ||
-        value === "ai-open-platform-video" ||
         value === "ai-open-platform-video-volcengine" ||
         value === "minimax-speech" ||
         value === "minimax-video" ||

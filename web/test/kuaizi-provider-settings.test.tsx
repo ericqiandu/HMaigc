@@ -9,7 +9,7 @@ import { credentialSecretRequest, formatKuaiziBalance, providerFamilyViews } fro
 const { KuaiziProviderPageView, ProviderCredentialEditor } = await import("../src/pages/admin/providers/kuaizi-provider-page");
 
 const seedanceModel = {
-    modelKey: "kuaizi-seedance-2.5",
+    modelKey: "doubao-seedance-2-5-260628",
     displayName: "Seedance 2.5",
     upstreamMode: "seedance-2.5",
     capability: "video",
