@@ -46,20 +46,17 @@ function account(overrides: Partial<AdminProviderAccount> = {}): AdminProviderAc
         name: "筷子科技",
         enabled: true,
         endpoint: { baseUrl: "https://active.example.com", version: 1, active: true },
-        credentials: [
-            {
-                family: "fixture-family",
-                active: {
-                    hasKey: true,
-                    keyFingerprint: "sha256:active",
-                    version: 1,
-                    healthStatus: "healthy",
-                    walletBalanceSubunits: "100",
-                    verifiedAt: "2026-08-11T08:00:00Z",
-                },
-                candidate: null,
+        credential: {
+            active: {
+                hasKey: true,
+                keyFingerprint: "sha256:active",
+                version: 1,
+                healthStatus: "healthy",
+                walletBalanceSubunits: "100",
+                verifiedAt: "2026-08-11T08:00:00Z",
             },
-        ],
+            candidate: null,
+        },
         adapters: [{ providerKind: "kuaizi", family: "fixture-family", models: [model] }],
         ...overrides,
     };
@@ -169,19 +166,16 @@ describe("kuaizi provider page mutation controller", () => {
     test("opens an explicitly role-tagged first failed candidate without presenting it as active", async () => {
         const firstFailedCandidate = parseAdminProviderAccount({
             ...account(),
-            credentials: [
-                {
-                    family: "fixture-family",
-                    active: null,
-                    candidate: {
-                        hasKey: true,
-                        keyFingerprint: "sha256:first-failed-candidate",
-                        version: 1,
-                        healthStatus: "blocked",
-                        walletBalanceSubunits: "",
-                    },
+            credential: {
+                active: null,
+                candidate: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:first-failed-candidate",
+                    version: 1,
+                    healthStatus: "blocked",
+                    walletBalanceSubunits: "",
                 },
-            ],
+            },
         });
         const api: InjectedProviderApi = {
             get: async () => firstFailedCandidate,
@@ -206,7 +200,7 @@ describe("kuaizi provider page mutation controller", () => {
         const api: InjectedProviderApi = {
             get: async () => account(),
             saveEndpoint: async () => account(),
-            saveCredential: (_family, key) => {
+            saveCredential: (key) => {
                 calls.push(`save:${key}`);
                 return save.promise;
             },
@@ -237,36 +231,32 @@ describe("kuaizi provider page mutation controller", () => {
         expect(document.querySelector('input[type="password"]')).not.toBeNull();
 
         const candidate = account({
-            credentials: [
-                {
-                    ...account().credentials[0]!,
-                    candidate: {
-                        hasKey: true,
-                        keyFingerprint: "sha256:candidate",
-                        version: 2,
-                        healthStatus: "unverified",
-                        walletBalanceSubunits: "",
-                    },
+            credential: {
+                ...account().credential!,
+                candidate: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:candidate",
+                    version: 2,
+                    healthStatus: "unverified",
+                    walletBalanceSubunits: "",
                 },
-            ],
+            },
         });
         await act(async () => save.resolve(candidate));
         await settle();
         expect(calls).toEqual(["save:sentinel-browser-secret", "verify"]);
 
         const verified = account({
-            credentials: [
-                {
-                    ...account().credentials[0]!,
-                    active: {
-                        ...account().credentials[0]!.active!,
-                        keyFingerprint: "sha256:verified-v2",
-                        version: 2,
-                        walletBalanceSubunits: "101",
-                    },
-                    candidate: null,
+            credential: {
+                ...account().credential!,
+                active: {
+                    ...account().credential!.active!,
+                    keyFingerprint: "sha256:verified-v2",
+                    version: 2,
+                    walletBalanceSubunits: "101",
                 },
-            ],
+                candidate: null,
+            },
         });
         await act(async () => verify.resolve(verified));
         await settle();
@@ -276,23 +266,20 @@ describe("kuaizi provider page mutation controller", () => {
 
     test("runs first configuration in endpoint, credential, verify order", async () => {
         const calls: string[] = [];
-        const initial = account({ endpoint: undefined, credentials: [] });
-        const endpointCandidate = account({ endpoint: { baseUrl: "https://first.example.com", version: 1, active: false }, credentials: [] });
+        const initial = account({ endpoint: undefined, credential: null });
+        const endpointCandidate = account({ endpoint: { baseUrl: "https://first.example.com", version: 1, active: false }, credential: null });
         const credentialCandidate = account({
             endpoint: endpointCandidate.endpoint,
-            credentials: [
-                {
-                    family: "fixture-family",
-                    active: null,
-                    candidate: {
-                        hasKey: true,
-                        keyFingerprint: "sha256:first-candidate",
-                        version: 1,
-                        healthStatus: "unverified",
-                        walletBalanceSubunits: "",
-                    },
+            credential: {
+                active: null,
+                candidate: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:first-candidate",
+                    version: 1,
+                    healthStatus: "unverified",
+                    walletBalanceSubunits: "",
                 },
-            ],
+            },
         });
         const verified = account({ endpoint: { baseUrl: "https://first.example.com", version: 1, active: true } });
         const api: InjectedProviderApi = {
@@ -301,7 +288,7 @@ describe("kuaizi provider page mutation controller", () => {
                 calls.push(`endpoint:${baseUrl}`);
                 return endpointCandidate;
             },
-            saveCredential: async (_family, key) => {
+            saveCredential: async (key) => {
                 calls.push(`credential:${key}`);
                 return credentialCandidate;
             },
@@ -329,18 +316,16 @@ describe("kuaizi provider page mutation controller", () => {
         const refreshed = deferred<AdminProviderAccount>();
         let getCount = 0;
         const candidate = account({
-            credentials: [
-                {
-                    ...account().credentials[0]!,
-                    candidate: {
-                        hasKey: true,
-                        keyFingerprint: "sha256:failed-candidate",
-                        version: 2,
-                        healthStatus: "invalid",
-                        walletBalanceSubunits: "",
-                    },
+            credential: {
+                ...account().credential!,
+                candidate: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:failed-candidate",
+                    version: 2,
+                    healthStatus: "invalid",
+                    walletBalanceSubunits: "",
                 },
-            ],
+            },
         });
         const api: InjectedProviderApi = {
             get: () => {
@@ -381,18 +366,16 @@ describe("kuaizi provider page mutation controller", () => {
         let verifyCalls = 0;
         let endpointCalls = 0;
         const serverCandidate = account({
-            credentials: [
-                {
-                    ...account().credentials[0]!,
-                    candidate: {
-                        hasKey: true,
-                        keyFingerprint: "sha256:committed-candidate",
-                        version: 2,
-                        healthStatus: "unverified",
-                        walletBalanceSubunits: "",
-                    },
+            credential: {
+                ...account().credential!,
+                candidate: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:committed-candidate",
+                    version: 2,
+                    healthStatus: "unverified",
+                    walletBalanceSubunits: "",
                 },
-            ],
+            },
         });
         const api: InjectedProviderApi = {
             get: () => {
@@ -423,7 +406,7 @@ describe("kuaizi provider page mutation controller", () => {
 
         expect(document.body.textContent).toContain("code=candidate_response_lost");
         expect(document.body.textContent).toContain("trace_id=trace-candidate-commit");
-        expect(document.body.textContent).toContain("写入结果待同步（fixture-family 凭据）");
+        expect(document.body.textContent).toContain("写入结果待同步（账号凭据）");
         expect(document.body.textContent).toContain("凭据候选事实读取失败");
         const secretInput = input('input[type="password"]');
         secretInput.disabled = false;
@@ -453,18 +436,16 @@ describe("kuaizi provider page mutation controller", () => {
         let verifyCalls = 0;
         let endpointCalls = 0;
         const serverActive = account({
-            credentials: [
-                {
-                    ...account().credentials[0]!,
-                    active: {
-                        ...account().credentials[0]!.active!,
-                        keyFingerprint: "sha256:activated-after-response-loss",
-                        version: 2,
-                        walletBalanceSubunits: "250",
-                    },
-                    candidate: null,
+            credential: {
+                ...account().credential!,
+                active: {
+                    ...account().credential!.active!,
+                    keyFingerprint: "sha256:activated-after-response-loss",
+                    version: 2,
+                    walletBalanceSubunits: "250",
                 },
-            ],
+                candidate: null,
+            },
         });
         const api: InjectedProviderApi = {
             get: () => {
@@ -489,7 +470,7 @@ describe("kuaizi provider page mutation controller", () => {
         await settle();
         expect(document.body.textContent).toContain("code=activation_response_lost");
         expect(document.body.textContent).toContain("trace_id=trace-active-commit");
-        expect(document.body.textContent).toContain("写入结果待同步（fixture-family 凭据）");
+        expect(document.body.textContent).toContain("写入结果待同步（账号凭据）");
         expect(document.body.textContent).toContain("活动凭据事实读取失败");
 
         const baseUrl = input("#kuaizi-provider-base-url");

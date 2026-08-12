@@ -351,9 +351,12 @@ func (s *Service) resolveTextTaskProviderConfig(task model.Task, config provider
 	if err != nil {
 		return providerConfig{}, err
 	}
-	family, spec, managed := kuaiziProviderFamilyForModel(resolved.Model)
+	_, spec, managed := kuaiziProviderFamilyForModel(resolved.Model)
 	if !managed || spec.Capability != "text" {
 		return resolved, nil
+	}
+	if strings.TrimSpace(task.Model) != resolved.Model {
+		return providerConfig{}, errors.New("筷子 Agent 任务模型与冻结任务事实不一致")
 	}
 	if task.ProviderAccountID == "" || task.ProviderEndpointVersionID == "" || task.ProviderCredentialVersionID == "" {
 		return providerConfig{}, errors.New("筷子 Agent 任务缺少冻结运行配置")
@@ -362,13 +365,9 @@ func (s *Service) resolveTextTaskProviderConfig(task model.Task, config provider
 	if err != nil {
 		return providerConfig{}, errors.New("读取筷子 Agent 冻结运行配置失败")
 	}
-	credential, err := s.repo.ProviderCredentialByFamily(runtime.ProviderAccountID, family)
-	if err != nil || credential.ID != runtime.ProviderCredentialID {
-		return providerConfig{}, errors.New("筷子 Agent 任务的冻结凭据与模型系列不匹配")
-	}
 	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(runtime.ProviderAccountID, runtime.ProviderCredentialID, runtime.CredentialVersion, runtime.KeyCipher)
 	if err != nil {
-		return providerConfig{}, errors.New("解密筷子 Agent 冻结系列 Key 失败")
+		return providerConfig{}, errors.New("解密筷子 Agent 冻结账号 Key 失败")
 	}
 	resolved.BaseURL = kuaiziChatCompletionsBaseURL(runtime.BaseURL)
 	resolved.APIKey = key

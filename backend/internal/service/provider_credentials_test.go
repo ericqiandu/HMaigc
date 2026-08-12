@@ -31,14 +31,14 @@ func TestKuaiziCredentialFirstVerificationActivatesEndpointAndKeyAtomically(t *t
 	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "sentinel-first-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "sentinel-first-key"}); err != nil {
 		t.Fatal(err)
 	}
-	view, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance")
+	view, err := svc.VerifyKuaiziCredential(context.Background(), admin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Endpoint == nil || !view.Endpoint.Active || len(view.Credentials) != 1 || view.Credentials[0].Active == nil || !view.Credentials[0].Active.HasKey || view.Credentials[0].Active.HealthStatus != "healthy" || view.Credentials[0].Active.WalletBalanceSubunits != "123456" || view.Credentials[0].Candidate != nil {
+	if view.Endpoint == nil || !view.Endpoint.Active || view.Credential == nil || view.Credential.Active == nil || !view.Credential.Active.HasKey || view.Credential.Active.HealthStatus != "healthy" || view.Credential.Active.WalletBalanceSubunits != "123456" || view.Credential.Candidate != nil {
 		t.Fatalf("verified provider view = %#v", view)
 	}
 	assertProviderActiveCounts(t, db, 1, 1)
@@ -62,17 +62,17 @@ func TestKuaiziCredentialFailedCandidateDoesNotChangeActiveVersion(t *testing.T)
 	oldVersionID := activeCredentialVersionID(t, db)
 
 	server.set(http.StatusOK, `{"code":401,"message":"invalid","trace_id":"trace-invalid"}`)
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "new-invalid-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "new-invalid-key"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err == nil {
+	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin); err == nil {
 		t.Fatal("invalid candidate verification succeeded")
 	}
 	if got := activeCredentialVersionID(t, db); got != oldVersionID {
 		t.Fatalf("active credential changed from %s to %s", oldVersionID, got)
 	}
 	var credential model.ProviderCredential
-	if err := db.First(&credential, "family = ?", "seedance").Error; err != nil {
+	if err := db.First(&credential, "family = ?", kuaiziAccountCredentialFamily).Error; err != nil {
 		t.Fatal(err)
 	}
 	if credential.HealthStatus != "healthy" {
@@ -98,10 +98,10 @@ func TestKuaiziCredentialViewSeparatesLifecycleRoleFromHealthStatus(t *testing.T
 			if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "first-candidate-key"}); err != nil {
+			if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "first-candidate-key"}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err == nil {
+			if _, err := svc.VerifyKuaiziCredential(context.Background(), admin); err == nil {
 				t.Fatal("first candidate verification succeeded")
 			}
 			view, err := svc.AdminKuaiziProvider(admin)
@@ -124,7 +124,7 @@ func TestKuaiziCredentialViewSeparatesLifecycleRoleFromHealthStatus(t *testing.T
 			svc, db := openProviderCredentialService(t)
 			admin := providerAdmin()
 			activateInitialKuaiziCredential(t, svc, admin, server.URL, "active-role-key")
-			if err := db.Model(&model.ProviderCredential{}).Where("family = ?", "seedance").Update("health_status", test.wantHealth).Error; err != nil {
+			if err := db.Model(&model.ProviderCredential{}).Where("family = ?", kuaiziAccountCredentialFamily).Update("health_status", test.wantHealth).Error; err != nil {
 				t.Fatal(err)
 			}
 			view, err := svc.AdminKuaiziProvider(admin)
@@ -150,15 +150,15 @@ func providerCredentialLifecycleJSON(t *testing.T, view *AdminProviderAccountVie
 		t.Fatal(err)
 	}
 	var payload struct {
-		Credentials []map[string]json.RawMessage `json:"credentials"`
+		Credential map[string]json.RawMessage `json:"credential"`
 	}
 	if err := json.Unmarshal(serialized, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Credentials) != 1 {
-		t.Fatalf("credentials = %s", serialized)
+	if payload.Credential == nil {
+		t.Fatalf("credential = %s", serialized)
 	}
-	return payload.Credentials[0]
+	return payload.Credential
 }
 
 func providerCredentialRoleJSON(t *testing.T, credential map[string]json.RawMessage, role string) AdminProviderCredentialVersionView {
@@ -205,7 +205,7 @@ func TestKuaiziCredentialCandidateViewPreservesVerificationHealthClassification(
 			svc, _ := openProviderCredentialService(t)
 			admin := providerAdmin()
 			activateInitialKuaiziCredential(t, svc, admin, server.URL, "old-healthy-key")
-			if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "new-candidate-key"}); err != nil {
+			if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "new-candidate-key"}); err != nil {
 				t.Fatal(err)
 			}
 			mu.Lock()
@@ -213,17 +213,17 @@ func TestKuaiziCredentialCandidateViewPreservesVerificationHealthClassification(
 			body = test.body
 			contentLength = test.contentLength
 			mu.Unlock()
-			if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err == nil {
+			if _, err := svc.VerifyKuaiziCredential(context.Background(), admin); err == nil {
 				t.Fatal("candidate verification succeeded")
 			}
 			view, err := svc.AdminKuaiziProvider(admin)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(view.Credentials) != 1 || view.Credentials[0].Candidate == nil {
-				t.Fatalf("candidate view = %#v", view.Credentials)
+			if view.Credential == nil || view.Credential.Candidate == nil {
+				t.Fatalf("candidate view = %#v", view.Credential)
 			}
-			if got := view.Credentials[0].Candidate.HealthStatus; got != test.wantStatus {
+			if got := view.Credential.Candidate.HealthStatus; got != test.wantStatus {
 				t.Fatalf("candidate health = %q, want %q", got, test.wantStatus)
 			}
 		})
@@ -238,15 +238,15 @@ func TestKuaiziCredentialZeroBalanceActivatesAsInsufficientBalance(t *testing.T)
 	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "zero-balance-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "zero-balance-key"}); err != nil {
 		t.Fatal(err)
 	}
-	view, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance")
+	view, err := svc.VerifyKuaiziCredential(context.Background(), admin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Credentials[0].Active == nil || view.Credentials[0].Active.HealthStatus != "insufficient_balance" || view.Credentials[0].Active.WalletBalanceSubunits != "0" || view.Credentials[0].Candidate != nil {
-		t.Fatalf("zero-balance view = %#v", view.Credentials[0])
+	if view.Credential == nil || view.Credential.Active == nil || view.Credential.Active.HealthStatus != "insufficient_balance" || view.Credential.Active.WalletBalanceSubunits != "0" || view.Credential.Candidate != nil {
+		t.Fatalf("zero-balance view = %#v", view.Credential)
 	}
 	assertProviderActiveCounts(t, db, 1, 1)
 }
@@ -267,7 +267,7 @@ func TestKuaiziEndpointTemporaryFailurePreservesOldHealthyEndpointAndKey(t *test
 		t.Fatalf("active endpoint changed from %s to %s", oldEndpointID, got)
 	}
 	var credential model.ProviderCredential
-	if err := db.First(&credential, "family = ?", "seedance").Error; err != nil {
+	if err := db.First(&credential, "family = ?", kuaiziAccountCredentialFamily).Error; err != nil {
 		t.Fatal(err)
 	}
 	if credential.HealthStatus != "healthy" {
@@ -283,7 +283,7 @@ func TestKuaiziCredentialConcurrentVerificationKeepsSingleActiveVersion(t *testi
 	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "race-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "race-key"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +295,7 @@ func TestKuaiziCredentialConcurrentVerificationKeepsSingleActiveVersion(t *testi
 		go func(index int) {
 			defer wait.Done()
 			<-start
-			_, errorsByCall[index] = svc.VerifyKuaiziCredential(context.Background(), admin, "seedance")
+			_, errorsByCall[index] = svc.VerifyKuaiziCredential(context.Background(), admin)
 		}(index)
 	}
 	close(start)
@@ -322,17 +322,17 @@ func TestKuaiziCredentialSupersedesOlderPendingCandidate(t *testing.T) {
 	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "older-pending-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "older-pending-key"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "latest-pending-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "latest-pending-key"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err != nil {
+	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin); err != nil {
 		t.Fatal(err)
 	}
 	latestActiveID := activeCredentialVersionID(t, db)
-	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err != nil {
+	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin); err != nil {
 		t.Fatal(err)
 	}
 	if got := activeCredentialVersionID(t, db); got != latestActiveID {
@@ -381,7 +381,7 @@ func TestKuaiziCredentialActivationConflictCreatesFailureAuditAfterTransactionRo
 	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: server.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: "conflict-key"}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: "conflict-key"}); err != nil {
 		t.Fatal(err)
 	}
 	var endpoint model.ProviderEndpointVersion
@@ -389,7 +389,7 @@ func TestKuaiziCredentialActivationConflictCreatesFailureAuditAfterTransactionRo
 		t.Fatal(err)
 	}
 	var credential model.ProviderCredential
-	if err := db.First(&credential, "family = ?", "seedance").Error; err != nil {
+	if err := db.First(&credential, "family = ?", kuaiziAccountCredentialFamily).Error; err != nil {
 		t.Fatal(err)
 	}
 	var version model.ProviderCredentialVersion
@@ -404,7 +404,7 @@ func TestKuaiziCredentialActivationConflictCreatesFailureAuditAfterTransactionRo
 		}
 		return repo.ActivateProviderCredentialVersion(credential.ID, version.ID, "", now)
 	}
-	_, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance")
+	_, err := svc.VerifyKuaiziCredential(context.Background(), admin)
 	if !errors.Is(err, repository.ErrProviderActivationConflict) {
 		t.Fatalf("verification conflict error = %v", err)
 	}
@@ -427,7 +427,7 @@ func TestKuaiziCredentialAuthenticatedCanceledSaveCreatesFailureAudit(t *testing
 	svc, db := openProviderCredentialService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := svc.SaveKuaiziCredentialCandidate(ctx, providerAdmin(), "seedance", SaveProviderCredentialRequest{Key: "unused-key"})
+	_, err := svc.SaveKuaiziCredentialCandidate(ctx, providerAdmin(), SaveProviderCredentialRequest{Key: "unused-key"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled save error = %v", err)
 	}
@@ -446,7 +446,7 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 	now := time.Now()
 	account := model.ProviderAccount{ID: "kuaizi-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	endpoint := model.ProviderEndpointVersion{ID: "kuaizi-endpoint", ProviderAccountID: account.ID, BaseURL: "https://aiopenapi.kuaizi.cn", Status: "active", Version: 1, CreatedAt: now}
-	credential := model.ProviderCredential{ID: "seedance-credential", ProviderAccountID: account.ID, Family: "seedance", Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
+	credential := model.ProviderCredential{ID: "account-credential", ProviderAccountID: account.ID, Family: kuaiziAccountCredentialFamily, Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
 	version := model.ProviderCredentialVersion{ID: "seedance-version", ProviderCredentialID: credential.ID, KeyCipher: "cipher", KeyFingerprint: "fingerprint", Status: "active", Version: 1, CreatedAt: now}
 	channel := model.ModelChannel{ID: "kuaizi-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "筷子兼容接口", BaseURL: endpoint.BaseURL, InterfaceType: model.ChannelInterfaceAIOpenVideoVolcengine, CreatedAt: now, UpdatedAt: now}
 	existing := model.ChannelModel{ID: "existing-fast", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-0-fast-260128", DisplayName: "旧名称", BrandKey: model.InferModelBrandKey("doubao-seedance-2-0-fast-260128"), AccessPolicy: model.ModelAccessAuthenticated, Capability: "video", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 1_000_000, PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now}
@@ -500,7 +500,7 @@ func TestPublishKuaiziTextFamilyCreatesManagedChatChannelAndResolvesEncryptedKey
 	now := time.Now().UTC()
 	account := model.ProviderAccount{ID: "kuaizi-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	endpoint := model.ProviderEndpointVersion{ID: "kuaizi-endpoint", ProviderAccountID: account.ID, BaseURL: "https://aiopenapi.kuaizi.cn/", Status: "active", Version: 1, CreatedAt: now}
-	credential := model.ProviderCredential{ID: "gpt-credential", ProviderAccountID: account.ID, Family: "gpt", Enabled: true, HealthStatus: "healthy", ConcurrencyLimit: 3, CreatedAt: now, UpdatedAt: now}
+	credential := model.ProviderCredential{ID: "account-credential", ProviderAccountID: account.ID, Family: kuaiziAccountCredentialFamily, Enabled: true, HealthStatus: "healthy", ConcurrencyLimit: 3, CreatedAt: now, UpdatedAt: now}
 	for _, item := range []any{&account, &endpoint, &credential} {
 		if err := db.Create(item).Error; err != nil {
 			t.Fatal(err)
@@ -563,7 +563,7 @@ func TestKuaiziAgentTextTaskUsesFrozenSeriesKeyAndApiKeyHeader(t *testing.T) {
 	now := time.Now().UTC()
 	account := model.ProviderAccount{ID: "text-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	endpoint := model.ProviderEndpointVersion{ID: "text-endpoint", ProviderAccountID: account.ID, BaseURL: server.URL, Status: "active", Version: 1, CreatedAt: now}
-	credential := model.ProviderCredential{ID: "text-credential", ProviderAccountID: account.ID, Family: "gpt", Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
+	credential := model.ProviderCredential{ID: "account-credential", ProviderAccountID: account.ID, Family: kuaiziAccountCredentialFamily, Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
 	channel := model.ModelChannel{ID: "managed", Scope: model.ChannelScopeSystem, Enabled: true, Name: "GPT Agent", BaseURL: kuaiziChatCompletionsBaseURL(server.URL), APIFormat: "openai", InterfaceType: model.ChannelInterfaceChatCompletion, ModelsJSON: `["gpt-5.5"]`, CreatedAt: now, UpdatedAt: now}
 	for _, row := range []any{&account, &endpoint, &credential, &channel} {
 		if err := db.Create(row).Error; err != nil {
@@ -664,10 +664,10 @@ func activateInitialKuaiziCredential(t *testing.T, svc *Service, admin *model.Us
 	if _, err := svc.SaveKuaiziEndpointCandidate(context.Background(), admin, SaveProviderEndpointRequest{BaseURL: baseURL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, "seedance", SaveProviderCredentialRequest{Key: key}); err != nil {
+	if _, err := svc.SaveKuaiziCredentialCandidate(context.Background(), admin, SaveProviderCredentialRequest{Key: key}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin, "seedance"); err != nil {
+	if _, err := svc.VerifyKuaiziCredential(context.Background(), admin); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,8 +1,7 @@
-import { providerCredentialSecretRequest, type AdminProviderAccount, type AdminProviderCredential, type ProviderAdapterDescriptor } from "@/services/api/provider-accounts";
+import { providerCredentialSecretRequest, type AdminProviderAccount, type ProviderAdapterDescriptor } from "@/services/api/provider-accounts";
 
 export type ProviderFamilyView = {
     adapter: ProviderAdapterDescriptor;
-    credential?: AdminProviderCredential;
 };
 
 export function credentialSecretRequest(value: string): { key: string } | null {
@@ -18,8 +17,7 @@ export function formatKuaiziBalance(value: string): string {
 }
 
 export function providerFamilyViews(account: AdminProviderAccount): ProviderFamilyView[] {
-    const credentials = new Map(account.credentials.map((credential) => [credential.family, credential]));
-    return account.adapters.map((adapter) => ({ adapter, credential: credentials.get(adapter.family) }));
+    return account.adapters.map((adapter) => ({ adapter }));
 }
 
 export function endpointDraftChanged(account: AdminProviderAccount, value: string): boolean {

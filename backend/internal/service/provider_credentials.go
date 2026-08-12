@@ -55,9 +55,9 @@ func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKe
 	if err != nil || !account.Enabled {
 		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技账号不可用")
 	}
-	credential, err := s.repo.ProviderCredentialByFamily(account.ID, family)
+	credential, err := s.repo.ProviderCredentialByFamily(account.ID, kuaiziAccountCredentialFamily)
 	if err != nil || credential.ID != item.ProviderCredentialID || !credential.Enabled || credential.HealthStatus != "healthy" {
-		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 系列凭据不可用")
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技账号凭据不可用")
 	}
 	endpointVersions, err := s.repo.ProviderEndpointVersions(account.ID)
 	if err != nil {
@@ -73,11 +73,11 @@ func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKe
 	}
 	version := activeCredentialVersion(credentialVersions)
 	if version == nil {
-		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 系列凭据没有活动版本")
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技账号凭据没有活动版本")
 	}
 	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, credential.ID, version.Version, version.KeyCipher)
 	if err != nil {
-		return SystemProxyRuntime{}, ServiceUnavailable("解密筷子 Agent 系列 Key 失败")
+		return SystemProxyRuntime{}, ServiceUnavailable("解密筷子科技账号 Key 失败")
 	}
 	return SystemProxyRuntime{BaseURL: kuaiziChatCompletionsBaseURL(endpoint.BaseURL), HeaderName: "ApiKey", APIKey: key}, nil
 }
@@ -170,6 +170,9 @@ func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.
 		version    model.ProviderCredentialVersion
 	}, 0, len(credentials))
 	for _, credential := range credentials {
+		if !credential.Enabled {
+			continue
+		}
 		credentialVersions, versionsErr := s.repo.ProviderCredentialVersions(credential.ID)
 		if versionsErr != nil {
 			return nil, versionsErr
@@ -235,23 +238,14 @@ func (s *Service) SaveKuaiziEndpointCandidate(ctx context.Context, actor *model.
 	return s.adminKuaiziProviderView()
 }
 
-func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *model.User, family string, req SaveProviderCredentialRequest) (view *AdminProviderAccountView, err error) {
+func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *model.User, req SaveProviderCredentialRequest) (view *AdminProviderAccountView, err error) {
 	if err := s.requireProviderAdmin(actor, "provider.credential.save"); err != nil {
 		return nil, err
 	}
-	family = strings.TrimSpace(family)
-	attempt := providerFailureAudit{actor: actor, action: "provider.credential.save", family: family}
+	attempt := providerFailureAudit{actor: actor, action: "provider.credential.save"}
 	defer s.finalizeProviderFailureAudit(&attempt, &err)
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := registry.Descriptor(kuaiziProviderKind, family); !ok {
-		attempt.code = "unsupported_family"
-		return nil, BadAuthRequest("筷子凭据系列尚未实现")
 	}
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
@@ -273,13 +267,13 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 		return nil, Conflict("请先保存筷子服务地址")
 	}
 	now := time.Now().UTC()
-	credential, credentialErr := s.repo.ProviderCredentialByFamily(account.ID, family)
+	credential, credentialErr := s.repo.ProviderCredentialByFamily(account.ID, kuaiziAccountCredentialFamily)
 	if credentialErr != nil && !errors.Is(credentialErr, gorm.ErrRecordNotFound) {
 		return nil, credentialErr
 	}
 	if credential == nil {
 		credential = &model.ProviderCredential{
-			ID: deterministicProviderCredentialID(family), ProviderAccountID: account.ID, Family: family,
+			ID: deterministicProviderCredentialID(kuaiziAccountCredentialFamily), ProviderAccountID: account.ID, Family: kuaiziAccountCredentialFamily,
 			HealthStatus: "unverified", Enabled: true, ConcurrencyLimit: 1, CreatedAt: now, UpdatedAt: now,
 		}
 	}
@@ -302,8 +296,8 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 		ID: newID(), ProviderCredentialID: credential.ID, KeyCipher: ciphertext, KeyFingerprint: fingerprint,
 		Status: "pending", Version: nextVersion, CreatedBy: actor.ID, CreatedAt: now,
 	}
-	audit, err := newAdminAuditEvent(actor, "provider.credential.save", "provider_credential", credential.ID, "保存筷子系列凭据候选", providerAuditMetadata{
-		Provider: kuaiziProviderKind, Family: family, Version: nextVersion, Fingerprint: fingerprint, Result: "candidate_saved",
+	audit, err := newAdminAuditEvent(actor, "provider.credential.save", "provider_credential", credential.ID, "保存筷子账号凭据候选", providerAuditMetadata{
+		Provider: kuaiziProviderKind, Version: nextVersion, Fingerprint: fingerprint, Result: "candidate_saved",
 	})
 	if err != nil {
 		return nil, err
@@ -314,21 +308,12 @@ func (s *Service) SaveKuaiziCredentialCandidate(ctx context.Context, actor *mode
 	return s.adminKuaiziProviderView()
 }
 
-func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User, family string) (view *AdminProviderAccountView, err error) {
+func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User) (view *AdminProviderAccountView, err error) {
 	if err := s.requireProviderAdmin(actor, "provider.credential.verify"); err != nil {
 		return nil, err
 	}
-	family = strings.TrimSpace(family)
-	attempt := providerFailureAudit{actor: actor, action: "provider.credential.verify", family: family}
+	attempt := providerFailureAudit{actor: actor, action: "provider.credential.verify"}
 	defer s.finalizeProviderFailureAudit(&attempt, &err)
-	registry, registryErr := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
-	if registryErr != nil {
-		return nil, registryErr
-	}
-	if _, ok := registry.Descriptor(kuaiziProviderKind, family); !ok {
-		attempt.code = "unsupported_family"
-		return nil, BadAuthRequest("筷子凭据系列尚未实现")
-	}
 	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
 	if err != nil {
 		return nil, err
@@ -341,7 +326,7 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 	if endpoint == nil {
 		return nil, Conflict("没有可验证的筷子服务地址")
 	}
-	credential, err := s.repo.ProviderCredentialByFamily(account.ID, family)
+	credential, err := s.repo.ProviderCredentialByFamily(account.ID, kuaiziAccountCredentialFamily)
 	if err != nil {
 		return nil, err
 	}
@@ -372,8 +357,8 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 			CredentialID: credential.ID, VersionID: version.ID, HealthStatus: verificationError.HealthStatus,
 			HealthCode: verificationError.Code, HealthMessage: providerHealthMessage(verificationError.HealthStatus), TraceID: verificationError.TraceID, CheckedAt: checkedAt,
 		}
-		audit, auditErr := newAdminAuditEvent(actor, "provider.credential.verify", "provider_credential", credential.ID, "验证筷子系列凭据失败", providerAuditMetadata{
-			Provider: kuaiziProviderKind, Family: family, Version: version.Version, Fingerprint: version.KeyFingerprint,
+		audit, auditErr := newAdminAuditEvent(actor, "provider.credential.verify", "provider_credential", credential.ID, "验证筷子账号凭据失败", providerAuditMetadata{
+			Provider: kuaiziProviderKind, Version: version.Version, Fingerprint: version.KeyFingerprint,
 			Result: "failed", Code: verificationError.Code, TraceID: verificationError.TraceID,
 		})
 		if auditErr != nil {
@@ -394,8 +379,8 @@ func (s *Service) VerifyKuaiziCredential(ctx context.Context, actor *model.User,
 		CredentialID: credential.ID, VersionID: version.ID, HealthStatus: healthStatus, HealthCode: "verified",
 		HealthMessage: providerHealthMessage(healthStatus), Balance: fact.WalletBalanceSubunits, TraceID: fact.TraceID, CheckedAt: checkedAt, Verified: true,
 	}
-	audit, err := newAdminAuditEvent(actor, "provider.credential.verify", "provider_credential", credential.ID, "验证并激活筷子系列凭据", providerAuditMetadata{
-		Provider: kuaiziProviderKind, Family: family, Version: version.Version, Fingerprint: version.KeyFingerprint,
+	audit, err := newAdminAuditEvent(actor, "provider.credential.verify", "provider_credential", credential.ID, "验证并激活筷子账号凭据", providerAuditMetadata{
+		Provider: kuaiziProviderKind, Version: version.Version, Fingerprint: version.KeyFingerprint,
 		Result: "activated", Code: "verified", TraceID: fact.TraceID,
 	})
 	if err != nil {

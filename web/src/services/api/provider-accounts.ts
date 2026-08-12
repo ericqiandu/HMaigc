@@ -46,7 +46,6 @@ export type AdminProviderCredentialVersion = {
 };
 
 export type AdminProviderCredential = {
-    family: string;
     active: AdminProviderCredentialVersion | null;
     candidate: AdminProviderCredentialVersion | null;
 };
@@ -57,7 +56,7 @@ export type AdminProviderAccount = {
     enabled: boolean;
     endpoint?: AdminProviderEndpoint;
     endpointCandidate?: AdminProviderEndpoint;
-    credentials: AdminProviderCredential[];
+    credential: AdminProviderCredential | null;
     adapters: ProviderAdapterDescriptor[];
 };
 
@@ -145,12 +144,11 @@ function parseCredentialVersion(value: unknown, label: string): AdminProviderCre
     };
 }
 
-function parseCredential(value: unknown, index: number): AdminProviderCredential {
-    const label = `credentials[${index}]`;
+function parseCredential(value: unknown): AdminProviderCredential {
+    const label = "credential";
     const source = record(value, label);
     if (!("active" in source) || !("candidate" in source)) throw new Error(`${label} 必须显式提供 active 与 candidate 生命周期角色`);
     return {
-        family: stringField(source, "family", label),
         active: source.active === null ? null : parseCredentialVersion(source.active, `${label}.active`),
         candidate: source.candidate === null ? null : parseCredentialVersion(source.candidate, `${label}.candidate`),
     };
@@ -198,7 +196,7 @@ function parseAdapter(value: unknown, index: number): ProviderAdapterDescriptor 
 
 export function parseAdminProviderAccount(value: unknown): AdminProviderAccount {
     const source = record(value, "providerAccount");
-    if (!Array.isArray(source.credentials)) throw new Error("providerAccount.credentials 必须是数组");
+    if (!("credential" in source)) throw new Error("providerAccount.credential 必须显式提供");
     if (!Array.isArray(source.adapters)) throw new Error("providerAccount.adapters 必须是数组");
     return {
         providerKind: stringField(source, "providerKind", "providerAccount"),
@@ -206,7 +204,7 @@ export function parseAdminProviderAccount(value: unknown): AdminProviderAccount 
         enabled: booleanField(source, "enabled", "providerAccount"),
         endpoint: source.endpoint === undefined ? undefined : parseEndpoint(source.endpoint, "providerAccount.endpoint"),
         endpointCandidate: source.endpointCandidate === undefined ? undefined : parseEndpoint(source.endpointCandidate, "providerAccount.endpointCandidate"),
-        credentials: source.credentials.map(parseCredential),
+        credential: source.credential === null ? null : parseCredential(source.credential),
         adapters: source.adapters.map(parseAdapter),
     };
 }
@@ -234,12 +232,12 @@ export function createProviderAccountsApi(transport: ProviderAccountTransport) {
     return {
         get: () => accountRequest({ method: "GET", path: "/admin/providers/kuaizi" }),
         saveEndpoint: (baseUrl: string) => accountRequest({ method: "PUT", path: "/admin/providers/kuaizi", data: { baseUrl: baseUrl.trim() } }),
-        saveCredential: (family: string, key: string): Promise<AdminProviderAccount | null> => {
+        saveCredential: (key: string): Promise<AdminProviderAccount | null> => {
             const data = providerCredentialSecretRequest(key);
             if (!data) return Promise.resolve(null);
-            return accountRequest({ method: "PUT", path: `/admin/providers/kuaizi/credentials/${encodeURIComponent(family)}`, data });
+            return accountRequest({ method: "PUT", path: "/admin/providers/kuaizi/credential", data });
         },
-        verifyCredential: (family: string) => accountRequest({ method: "POST", path: `/admin/providers/kuaizi/credentials/${encodeURIComponent(family)}/verify` }),
+        verifyCredential: () => accountRequest({ method: "POST", path: "/admin/providers/kuaizi/credential/verify" }),
         publishModels: (family: string) => accountRequest({ method: "POST", path: `/admin/providers/kuaizi/models/${encodeURIComponent(family)}/publish` }),
     };
 }

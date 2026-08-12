@@ -70,22 +70,22 @@ func TestProviderAccountHandlerNeverReturnsOrAuditsCredentialSecret(t *testing.T
 		t.Fatalf("endpoint status = %d, body = %s", endpointResponse.Code, endpointResponse.Body.String())
 	}
 	const secret = "sentinel-handler-secret"
-	credentialResponse := fixture.request(http.MethodPut, "/api/admin/providers/kuaizi/credentials/seedance", `{"key":"`+secret+`"}`, fixture.adminCookie, "ApiKey "+secret)
+	credentialResponse := fixture.request(http.MethodPut, "/api/admin/providers/kuaizi/credential", `{"key":"`+secret+`"}`, fixture.adminCookie, "ApiKey "+secret)
 	if credentialResponse.Code != http.StatusOK {
 		t.Fatalf("credential status = %d, body = %s", credentialResponse.Code, credentialResponse.Body.String())
 	}
 	var credentialEnvelope struct {
 		Data struct {
-			Credentials []map[string]json.RawMessage `json:"credentials"`
+			Credential map[string]json.RawMessage `json:"credential"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(credentialResponse.Body.Bytes(), &credentialEnvelope); err != nil {
 		t.Fatal(err)
 	}
-	if len(credentialEnvelope.Data.Credentials) != 1 {
+	if credentialEnvelope.Data.Credential == nil {
 		t.Fatalf("credential response = %s", credentialResponse.Body.String())
 	}
-	credentialJSON := credentialEnvelope.Data.Credentials[0]
+	credentialJSON := credentialEnvelope.Data.Credential
 	if string(credentialJSON["active"]) != "null" || string(credentialJSON["candidate"]) == "" || string(credentialJSON["candidate"]) == "null" {
 		t.Fatalf("credential lifecycle roles are not explicit: %s", credentialResponse.Body.String())
 	}
@@ -94,7 +94,7 @@ func TestProviderAccountHandlerNeverReturnsOrAuditsCredentialSecret(t *testing.T
 			t.Fatalf("credential response kept retired flattened field %q: %s", retiredField, credentialResponse.Body.String())
 		}
 	}
-	verifyResponse := fixture.request(http.MethodPost, "/api/admin/providers/kuaizi/credentials/seedance/verify", "", fixture.adminCookie, "ApiKey "+secret)
+	verifyResponse := fixture.request(http.MethodPost, "/api/admin/providers/kuaizi/credential/verify", "", fixture.adminCookie, "ApiKey "+secret)
 	if verifyResponse.Code != http.StatusOK {
 		t.Fatalf("verify status = %d, body = %s", verifyResponse.Code, verifyResponse.Body.String())
 	}

@@ -45,7 +45,7 @@ func RegisterProviderAccountRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
-	providers.PUT("/credentials/:family", func(c *gin.Context) {
+	providers.PUT("/credential", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -54,23 +54,23 @@ func RegisterProviderAccountRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 		var request service.SaveProviderCredentialRequest
 		if err := c.ShouldBindJSON(&request); err != nil {
-			failProviderAccountParse(c, svc, actor, "provider.credential.save", c.Param("family"), err, "筷子凭据请求格式无效")
+			failProviderAccountParse(c, svc, actor, "provider.credential.save", "", err, "筷子凭据请求格式无效")
 			return
 		}
-		view, err := svc.SaveKuaiziCredentialCandidate(c.Request.Context(), actor, c.Param("family"), request)
+		view, err := svc.SaveKuaiziCredentialCandidate(c.Request.Context(), actor, request)
 		if err != nil {
 			failProviderAccount(c, err)
 			return
 		}
 		ok(c, view)
 	})
-	providers.POST("/credentials/:family/verify", func(c *gin.Context) {
+	providers.POST("/credential/verify", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		view, err := svc.VerifyKuaiziCredential(c.Request.Context(), actor, c.Param("family"))
+		view, err := svc.VerifyKuaiziCredential(c.Request.Context(), actor)
 		if err != nil {
 			failProviderAccount(c, err)
 			return

@@ -40,27 +40,24 @@ const accountFixture = {
     enabled: true,
     endpoint: { baseUrl: "https://aiopenapi.kuaizi.cn", version: 3, active: true },
     endpointCandidate: { baseUrl: "https://candidate.kuaizi.example", version: 4, active: false },
-    credentials: [
-        {
-            family: "seedance",
-            active: {
-                hasKey: true,
-                keyFingerprint: "sha256:seedance-fingerprint",
-                version: 8,
-                healthStatus: "healthy",
-                walletBalanceSubunits: "900719925474099312345",
-                verifiedAt: "2026-08-11T08:00:00Z",
-            },
-            candidate: {
-                hasKey: true,
-                keyFingerprint: "sha256:candidate-fingerprint",
-                version: 9,
-                healthStatus: "invalid",
-                walletBalanceSubunits: "",
-                verifiedAt: "2026-08-11T08:01:00Z",
-            },
+    credential: {
+        active: {
+            hasKey: true,
+            keyFingerprint: "sha256:seedance-fingerprint",
+            version: 8,
+            healthStatus: "healthy",
+            walletBalanceSubunits: "900719925474099312345",
+            verifiedAt: "2026-08-11T08:00:00Z",
         },
-    ],
+        candidate: {
+            hasKey: true,
+            keyFingerprint: "sha256:candidate-fingerprint",
+            version: 9,
+            healthStatus: "invalid",
+            walletBalanceSubunits: "",
+            verifiedAt: "2026-08-11T08:01:00Z",
+        },
+    },
     adapters: [{ providerKind: "kuaizi", family: "seedance", models: [seedanceModel] }],
 };
 
@@ -79,24 +76,21 @@ describe("kuaizi provider API and domain", () => {
         };
         const explicit = parseAdminProviderAccount({
             ...accountFixture,
-            credentials: [{ family: "seedance", active: null, candidate: version }],
+            credential: { active: null, candidate: version },
         });
 
-        expect(explicit.credentials[0]?.active).toBeNull();
-        expect(explicit.credentials[0]?.candidate?.healthStatus).toBe("invalid");
+        expect(explicit.credential?.active).toBeNull();
+        expect(explicit.credential?.candidate?.healthStatus).toBe("invalid");
         expect(() =>
             parseAdminProviderAccount({
                 ...accountFixture,
-                credentials: [
-                    {
-                        family: "seedance",
-                        hasKey: true,
-                        keyFingerprint: "sha256:retired-flat-shape",
-                        version: 1,
-                        healthStatus: "healthy",
-                        walletBalanceSubunits: "100",
-                    },
-                ],
+                credential: {
+                    hasKey: true,
+                    keyFingerprint: "sha256:retired-flat-shape",
+                    version: 1,
+                    healthStatus: "healthy",
+                    walletBalanceSubunits: "100",
+                },
             }),
         ).toThrow("必须显式提供 active 与 candidate 生命周期角色");
     });
@@ -104,8 +98,8 @@ describe("kuaizi provider API and domain", () => {
     test("formats balance subunits with exact string division by one hundred", () => {
         const account = parsedFixture();
 
-        expect(account.credentials[0]?.active?.walletBalanceSubunits).toBe("900719925474099312345");
-        expect(["", "0", "1", "99", "100", "101", account.credentials[0]?.active?.walletBalanceSubunits ?? ""].map(formatKuaiziBalance)).toEqual([
+        expect(account.credential?.active?.walletBalanceSubunits).toBe("900719925474099312345");
+        expect(["", "0", "1", "99", "100", "101", account.credential?.active?.walletBalanceSubunits ?? ""].map(formatKuaiziBalance)).toEqual([
             "尚未验证",
             "0.00 筷子点数",
             "0.01 筷子点数",
@@ -119,7 +113,7 @@ describe("kuaizi provider API and domain", () => {
     test("rejects non-canonical balance subunits at the DTO boundary", () => {
         for (const invalid of ["-1", "01", "1.2", "1e2", " 1", "1 "]) {
             const malformed = structuredClone(accountFixture);
-            malformed.credentials[0]!.active!.walletBalanceSubunits = invalid;
+            malformed.credential!.active!.walletBalanceSubunits = invalid;
 
             expect(() => parseAdminProviderAccount(malformed)).toThrow("walletBalanceSubunits 必须是空字符串或规范化非负十进制整数");
         }
@@ -134,11 +128,11 @@ describe("kuaizi provider API and domain", () => {
         const api = createProviderAccountsApi(transport);
 
         expect(credentialSecretRequest("   ")).toBeNull();
-        expect(await api.saveCredential("seedance", "   ")).toBeNull();
+        expect(await api.saveCredential("   ")).toBeNull();
         expect(requests).toEqual([]);
     });
 
-    test("writes a replacement key only to the family credential endpoint", async () => {
+    test("writes a replacement key only to the account credential endpoint", async () => {
         const requests: Parameters<ProviderAccountTransport>[0][] = [];
         const transport: ProviderAccountTransport = async (request) => {
             requests.push(request);
@@ -146,12 +140,12 @@ describe("kuaizi provider API and domain", () => {
         };
         const api = createProviderAccountsApi(transport);
 
-        await api.saveCredential("seedance/video", "  replacement-key  ");
+        await api.saveCredential("  replacement-key  ");
 
         expect(requests).toEqual([
             {
                 method: "PUT",
-                path: "/admin/providers/kuaizi/credentials/seedance%2Fvideo",
+                path: "/admin/providers/kuaizi/credential",
                 data: { key: "replacement-key" },
             },
         ]);
@@ -167,20 +161,20 @@ describe("kuaizi provider API and domain", () => {
 
         await api.get();
         await api.saveEndpoint(" https://aiopenapi.kuaizi.cn ");
-        await api.verifyCredential("seedance/video");
+        await api.verifyCredential();
         await api.publishModels("seedance/video");
 
         expect(requests).toEqual([
             { method: "GET", path: "/admin/providers/kuaizi" },
             { method: "PUT", path: "/admin/providers/kuaizi", data: { baseUrl: "https://aiopenapi.kuaizi.cn" } },
-            { method: "POST", path: "/admin/providers/kuaizi/credentials/seedance%2Fvideo/verify" },
+            { method: "POST", path: "/admin/providers/kuaizi/credential/verify" },
             { method: "POST", path: "/admin/providers/kuaizi/models/seedance%2Fvideo/publish" },
         ]);
     });
 
     test("rejects an unknown backend health status instead of mapping it", () => {
         const malformed = structuredClone(accountFixture);
-        malformed.credentials[0]!.active!.healthStatus = "future_status";
+        malformed.credential!.active!.healthStatus = "future_status";
 
         expect(() => parseAdminProviderAccount(malformed)).toThrow("不受支持的 healthStatus: future_status");
     });
@@ -198,9 +192,9 @@ describe("kuaizi provider settings components", () => {
             };
             const candidateAccount = parseAdminProviderAccount({
                 ...accountFixture,
-                credentials: [{ family: "seedance", active: null, candidate: version }],
+                credential: { active: null, candidate: version },
             });
-            expect(providerFamilyViews(candidateAccount)[0]?.credential?.active).toBeNull();
+            expect(candidateAccount.credential?.active).toBeNull();
             const candidateMarkup = renderToStaticMarkup(
                 createElement(KuaiziProviderPageView, {
                     account: candidateAccount,
@@ -227,7 +221,7 @@ describe("kuaizi provider settings components", () => {
 
             const activeAccount = parseAdminProviderAccount({
                 ...accountFixture,
-                credentials: [{ family: "seedance", active: version, candidate: null }],
+                credential: { active: version, candidate: null },
             });
             const activeMarkup = renderToStaticMarkup(
                 createElement(KuaiziProviderPageView, {
@@ -289,7 +283,7 @@ describe("kuaizi provider settings components", () => {
         const markup = renderToStaticMarkup(
             createElement(ProviderCredentialEditor, {
                 adapter: parsedFixture().adapters[0]!,
-                credential: parsedFixture().credentials[0]!,
+                credential: parsedFixture().credential,
                 open: true,
                 verifying: true,
                 error: new Error("筷子凭据验证失败（code=invalid_key, trace_id=trace-401）"),

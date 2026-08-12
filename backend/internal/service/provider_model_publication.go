@@ -29,12 +29,12 @@ func (s *Service) PublishKuaiziFamilyModels(actor *model.User, family string) (*
 	if !account.Enabled {
 		return nil, BadAuthRequest("筷子科技账号未启用")
 	}
-	credential, err := s.repo.ProviderCredentialByFamily(account.ID, descriptor.Family)
+	credential, err := s.repo.ProviderCredentialByFamily(account.ID, kuaiziAccountCredentialFamily)
 	if err != nil {
 		return nil, err
 	}
 	if !credential.Enabled || credential.HealthStatus != "healthy" {
-		return nil, BadAuthRequest("模型系列凭据尚未验证健康")
+		return nil, BadAuthRequest("筷子科技账号凭据尚未验证健康")
 	}
 	versions, err := s.repo.ProviderEndpointVersions(account.ID)
 	if err != nil {
@@ -63,7 +63,7 @@ func (s *Service) PublishKuaiziFamilyModels(actor *model.User, family string) (*
 	if err != nil {
 		return nil, err
 	}
-	audit, err := newAdminAuditEvent(actor, "provider.models.publish", "provider_credential", credential.ID, "发布筷子科技模型并绑定系列凭据", map[string]any{"family": descriptor.Family, "channelId": channel.ID, "models": modelKeys})
+	audit, err := newAdminAuditEvent(actor, "provider.models.publish", "provider_credential", credential.ID, "发布筷子科技模型并绑定账号凭据", map[string]any{"family": descriptor.Family, "channelId": channel.ID, "models": modelKeys})
 	if err != nil {
 		return nil, err
 	}

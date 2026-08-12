@@ -44,6 +44,14 @@ type ProviderCredentialVerification struct {
 	Verified      bool
 }
 
+type KuaiziAccountCredentialMigration struct {
+	AccountID                  string
+	SharedCredential           model.ProviderCredential
+	SharedVersion              model.ProviderCredentialVersion
+	LegacyCredentialVersionIDs map[string]string
+	Audit                      model.AdminAuditEvent
+}
+
 func (r *Repository) ProviderAccountByKind(providerKind string) (*model.ProviderAccount, error) {
 	var account model.ProviderAccount
 	if err := r.db.First(&account, "provider_kind = ?", providerKind).Error; err != nil {
@@ -76,6 +84,58 @@ func (r *Repository) ProviderCredentialVersions(credentialID string) ([]model.Pr
 	var versions []model.ProviderCredentialVersion
 	err := r.db.Where("provider_credential_id = ?", credentialID).Order("version DESC").Find(&versions).Error
 	return versions, err
+}
+
+// MigrateKuaiziAccountCredential 在同一事务内创建账号凭据、重绑模型并停用旧系列凭据。
+// 旧版本不得删除或改写，已冻结任务仍按原 credential/version ID 读取。
+func (r *Repository) MigrateKuaiziAccountCredential(input KuaiziAccountCredentialMigration) error {
+	legacyIDs := make([]string, 0, len(input.LegacyCredentialVersionIDs))
+	for credentialID := range input.LegacyCredentialVersionIDs {
+		legacyIDs = append(legacyIDs, credentialID)
+	}
+	sort.Strings(legacyIDs)
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var account model.ProviderAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, "id = ?", input.AccountID).Error; err != nil {
+			return err
+		}
+		var existing int64
+		if err := tx.Model(&model.ProviderCredential{}).Where("id = ? OR (provider_account_id = ? AND family = ?)", input.SharedCredential.ID, input.AccountID, input.SharedCredential.Family).Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing != 0 {
+			return fmt.Errorf("%w: shared credential already exists", ErrProviderActivationConflict)
+		}
+		for _, credentialID := range legacyIDs {
+			var credential model.ProviderCredential
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credential, "id = ? AND provider_account_id = ? AND enabled = ?", credentialID, input.AccountID, true).Error; err != nil {
+				return err
+			}
+			var version model.ProviderCredentialVersion
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&version, "id = ? AND provider_credential_id = ? AND status = ?", input.LegacyCredentialVersionIDs[credentialID], credentialID, "active").Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(&input.SharedCredential).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&input.SharedVersion).Error; err != nil {
+			return err
+		}
+		if len(legacyIDs) > 0 {
+			if err := tx.Model(&model.ChannelModel{}).Where("provider_credential_id IN ?", legacyIDs).Update("provider_credential_id", input.SharedCredential.ID).Error; err != nil {
+				return err
+			}
+			result := tx.Model(&model.ProviderCredential{}).Where("id IN ? AND enabled = ?", legacyIDs, true).Updates(map[string]any{"enabled": false, "updated_at": input.SharedCredential.UpdatedAt})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != int64(len(legacyIDs)) {
+				return ErrProviderActivationConflict
+			}
+		}
+		return tx.Create(&input.Audit).Error
+	})
 }
 
 func (r *Repository) FrozenProviderRuntime(task model.Task) (*FrozenProviderRuntime, error) {

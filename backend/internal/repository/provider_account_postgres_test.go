@@ -80,6 +80,60 @@ func TestPostgresProviderCredentialConcurrentVersionActivationHasOneWinner(t *te
 	}
 }
 
+func TestPostgresKuaiziAccountCredentialMigrationCommitsOneSharedFact(t *testing.T) {
+	db := openPostgresProviderSchema(t)
+	repo := New(db)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	account := model.ProviderAccount{ID: "kuaizi-account", ProviderKind: "kuaizi", Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	channel := model.ModelChannel{ID: "kuaizi-channel", Scope: model.ChannelScopeSystem, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	legacy := []model.ProviderCredential{
+		{ID: "credential-gpt", ProviderAccountID: account.ID, Family: "gpt", Enabled: true, CreatedAt: now, UpdatedAt: now},
+		{ID: "credential-seedance", ProviderAccountID: account.ID, Family: "seedance", Enabled: true, CreatedAt: now, UpdatedAt: now},
+	}
+	versions := []model.ProviderCredentialVersion{
+		{ID: "version-gpt", ProviderCredentialID: legacy[0].ID, KeyCipher: "frozen-gpt", Status: "active", Version: 1, CreatedAt: now},
+		{ID: "version-seedance", ProviderCredentialID: legacy[1].ID, KeyCipher: "frozen-seedance", Status: "active", Version: 1, CreatedAt: now},
+	}
+	for _, row := range []any{&account, &channel, &legacy[0], &legacy[1], &versions[0], &versions[1]} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	models := []model.ChannelModel{
+		{ID: "model-gpt", ChannelID: channel.ID, ProviderCredentialID: legacy[0].ID, ModelKey: "gpt-5.5", Capability: "text", CreatedAt: now, UpdatedAt: now},
+		{ID: "model-seedance", ChannelID: channel.ID, ProviderCredentialID: legacy[1].ID, ModelKey: "doubao-seedance-2-5-260628", Capability: "video", CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&models).Error; err != nil {
+		t.Fatal(err)
+	}
+	activatedAt := now
+	shared := model.ProviderCredential{ID: "credential-account", ProviderAccountID: account.ID, Family: "account", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	sharedVersion := model.ProviderCredentialVersion{ID: "version-account", ProviderCredentialID: shared.ID, KeyCipher: "shared", Status: "active", Version: 1, ActivatedAt: &activatedAt, CreatedAt: now}
+	audit := model.AdminAuditEvent{ID: "audit-account-migration", ActorUserID: "system-migration", Action: "provider.credential.migrate_account", TargetType: "provider_account", TargetID: account.ID, Summary: "账号凭据迁移", MetadataJSON: `{}`, CreatedAt: now}
+	if err := repo.MigrateKuaiziAccountCredential(KuaiziAccountCredentialMigration{
+		AccountID: account.ID, SharedCredential: shared, SharedVersion: sharedVersion,
+		LegacyCredentialVersionIDs: map[string]string{legacy[0].ID: versions[0].ID, legacy[1].ID: versions[1].ID}, Audit: audit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var rebound int64
+	if err := db.Model(&model.ChannelModel{}).Where("provider_credential_id = ?", shared.ID).Count(&rebound).Error; err != nil || rebound != 2 {
+		t.Fatalf("rebound models = %d, err=%v", rebound, err)
+	}
+	var enabledLegacy int64
+	if err := db.Model(&model.ProviderCredential{}).Where("id IN ? AND enabled = ?", []string{legacy[0].ID, legacy[1].ID}, true).Count(&enabledLegacy).Error; err != nil || enabledLegacy != 0 {
+		t.Fatalf("enabled legacy = %d, err=%v", enabledLegacy, err)
+	}
+	var frozenVersions int64
+	if err := db.Model(&model.ProviderCredentialVersion{}).Where("id IN ?", []string{versions[0].ID, versions[1].ID}).Count(&frozenVersions).Error; err != nil || frozenVersions != 2 {
+		t.Fatalf("frozen legacy versions = %d, err=%v", frozenVersions, err)
+	}
+	var audits int64
+	if err := db.Model(&model.AdminAuditEvent{}).Where("id = ?", audit.ID).Count(&audits).Error; err != nil || audits != 1 {
+		t.Fatalf("migration audit count = %d, err=%v", audits, err)
+	}
+}
+
 func TestPostgresProviderAccountIntegrityRejectsWrongIndexWithoutDeletion(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {

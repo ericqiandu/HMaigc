@@ -66,11 +66,15 @@ func main() {
 }
 
 type startupRuntimeValidator interface {
+	MigrateKuaiziAccountCredential() error
 	ValidateStartupRuntime() error
 }
 
 // runStartupRuntimeGate 保证支付配置与 provider 密钥根在 worker、readiness 和 listener 之前完成强校验。
 func runStartupRuntimeGate(validator startupRuntimeValidator, afterValidation func() error) error {
+	if err := validator.MigrateKuaiziAccountCredential(); err != nil {
+		return err
+	}
 	if err := validator.ValidateStartupRuntime(); err != nil {
 		return err
 	}

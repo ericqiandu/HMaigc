@@ -232,8 +232,14 @@ func TestPaymentHeadersApplyBeforeCORSOptionsShortCircuit(t *testing.T) {
 }
 
 type startupRuntimeValidatorStub struct {
-	events *[]string
-	err    error
+	events     *[]string
+	migrateErr error
+	err        error
+}
+
+func (stub startupRuntimeValidatorStub) MigrateKuaiziAccountCredential() error {
+	*stub.events = append(*stub.events, "migrate")
+	return stub.migrateErr
 }
 
 func (stub startupRuntimeValidatorStub) ValidateStartupRuntime() error {
@@ -251,8 +257,8 @@ func TestProviderSecretRuntimeGateRunsBeforeStartupWork(t *testing.T) {
 		if err == nil {
 			t.Fatal("runtime gate succeeded, want validation error")
 		}
-		if got := strings.Join(events, ","); got != "validate" {
-			t.Fatalf("startup events = %q, want validation only", got)
+		if got := strings.Join(events, ","); got != "migrate,validate" {
+			t.Fatalf("startup events = %q, want migration and validation only", got)
 		}
 	})
 
@@ -265,8 +271,19 @@ func TestProviderSecretRuntimeGateRunsBeforeStartupWork(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runtime gate failed: %v", err)
 		}
-		if got := strings.Join(events, ","); got != "validate,startup" {
-			t.Fatalf("startup events = %q, want validate,startup", got)
+		if got := strings.Join(events, ","); got != "migrate,validate,startup" {
+			t.Fatalf("startup events = %q, want migrate,validate,startup", got)
+		}
+	})
+
+	t.Run("migration failure blocks validation and startup", func(t *testing.T) {
+		events := make([]string, 0, 3)
+		err := runStartupRuntimeGate(startupRuntimeValidatorStub{events: &events, migrateErr: errors.New("credential mismatch")}, func() error {
+			events = append(events, "startup")
+			return nil
+		})
+		if err == nil || strings.Join(events, ",") != "migrate" {
+			t.Fatalf("migration gate err=%v events=%v", err, events)
 		}
 	})
 }

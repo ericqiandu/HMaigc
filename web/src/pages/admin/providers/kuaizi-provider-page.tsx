@@ -1,6 +1,6 @@
 import { Alert, Button, Input, Modal, Tag } from "antd";
 import { KeyRound, ServerCog, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { providerAccountsApi, type AdminProviderAccount, type AdminProviderCredential, type AdminProviderCredentialVersion, type ProviderAccountsApi, type ProviderAdapterDescriptor, type ProviderHealthStatus } from "@/services/api/provider-accounts";
 import { AdminPageFrame } from "../components/admin-shell";
@@ -20,8 +20,8 @@ type KuaiziProviderPageViewProps = {
     operationErrors: Record<string, Error>;
     onEndpointChange: (value: string) => void;
     onSaveEndpoint: () => void;
-    onOpenCredential: (family: string) => void;
-    onVerifyCredential: (family: string) => void;
+    onOpenCredential: () => void;
+    onVerifyCredential: () => void;
     onPublishModels: (family: string) => void;
     onRetry: () => void;
 };
@@ -43,10 +43,6 @@ function errorValue(value: unknown): Error {
 
 function endpointBaseline(account: AdminProviderAccount): string {
     return account.endpointCandidate?.baseUrl ?? account.endpoint?.baseUrl ?? "";
-}
-
-function credentialForFamily(account: AdminProviderAccount, family: string): AdminProviderCredential | undefined {
-    return account.credentials.find((credential) => credential.family === family);
 }
 
 function healthTag(status: ProviderHealthStatus) {
@@ -97,48 +93,55 @@ function CandidateFacts({ candidate, hasActive }: { candidate: AdminProviderCred
     );
 }
 
-function ProviderCredentialCard({
-    adapter,
-    credential,
-    busy,
-    locked,
-    error,
-    onOpen,
-    onVerify,
-    onPublish,
-}: {
-    adapter: ProviderAdapterDescriptor;
-    credential?: AdminProviderCredential;
-    busy: boolean;
-    locked: boolean;
-    error?: Error;
-    onOpen: () => void;
-    onVerify: () => void;
-    onPublish: () => void;
-}) {
-    const active = credential?.active;
-    const candidate = credential?.candidate;
+function ProviderModelFamilyCard({ adapter, credentialHealthy, busy, locked, error, onPublish }: { adapter: ProviderAdapterDescriptor; credentialHealthy: boolean; busy: boolean; locked: boolean; error?: Error; onPublish: () => void }) {
     const publishedCount = adapter.models.filter((item) => item.published).length;
     return (
         <SettingsSectionCard
             className="kuaizi-provider-family-card"
-            icon={<KeyRound className="size-5" aria-hidden="true" />}
+            icon={<ServerCog className="size-5" aria-hidden="true" />}
             title={adapter.family}
             description={adapter.models.map((model) => model.displayName).join("、") || "后端尚未登记模型"}
+            status={
+                <Tag className="kuaizi-provider-health-tag" variant="filled">
+                    已登记
+                </Tag>
+            }
+            footer={
+                <div className="kuaizi-provider-family-actions">
+                    <Button className="kuaizi-provider-secondary-action" loading={busy} disabled={locked || !credentialHealthy} onClick={onPublish}>
+                        {publishedCount === adapter.models.length ? "同步模型" : "发布模型"}
+                    </Button>
+                </div>
+            }
+        >
+            <p className="kuaizi-provider-publication-state">
+                已发布 {publishedCount}/{adapter.models.length}；未定价模型不会向用户开放。
+            </p>
+            {error ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="最近一次操作失败" description={error.message} /> : null}
+        </SettingsSectionCard>
+    );
+}
+
+function AccountCredentialCard({ account, busy, locked, error, onOpen, onVerify }: { account: AdminProviderAccount; busy: boolean; locked: boolean; error?: Error; onOpen: () => void; onVerify: () => void }) {
+    const active = account.credential?.active;
+    const candidate = account.credential?.candidate;
+    return (
+        <SettingsSectionCard
+            className="kuaizi-provider-account-credential-card"
+            icon={<KeyRound className="size-5" aria-hidden="true" />}
+            title="账号统一凭据"
+            description="所有筷子科技图片、视频与 Agent 模型共同使用这一枚 write-only Key。"
             status={
                 active ? (
                     healthTag(active.healthStatus)
                 ) : (
                     <Tag className="kuaizi-provider-health-tag" variant="filled">
-                        尚未激活
+                        未配置
                     </Tag>
                 )
             }
             footer={
                 <div className="kuaizi-provider-family-actions">
-                    <Button className="kuaizi-provider-secondary-action" loading={busy} disabled={locked || active?.healthStatus !== "healthy"} onClick={onPublish}>
-                        {publishedCount === adapter.models.length ? "同步模型" : "发布模型"}
-                    </Button>
                     <Button className="kuaizi-provider-secondary-action" disabled={locked} onClick={onOpen}>
                         {active?.hasKey || candidate?.hasKey ? "更新密钥" : "配置密钥"}
                     </Button>
@@ -149,9 +152,6 @@ function ProviderCredentialCard({
             }
         >
             <CredentialFacts active={active} />
-            <p className="kuaizi-provider-publication-state">
-                已发布 {publishedCount}/{adapter.models.length}；未定价模型不会向用户开放。
-            </p>
             {candidate ? <CandidateFacts candidate={candidate} hasActive={Boolean(active)} /> : null}
             {error ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="最近一次操作失败" description={error.message} /> : null}
         </SettingsSectionCard>
@@ -178,7 +178,7 @@ export function KuaiziProviderPageView({
     const endpointBusy = operation === "endpoint";
     const endpointStatus = account.endpointCandidate ? { label: "有待验证更新" } : account.endpoint?.active ? { label: "已启用", color: "success" } : account.endpoint ? { label: "待验证" } : { label: "未配置" };
     return (
-        <AdminPageFrame title="筷子科技" description="统一维护服务地址与各模型系列的 write-only 凭据；只有验证成功的候选配置会生效。">
+        <AdminPageFrame title="筷子科技" description="统一维护一套服务地址与账号 Key；各模型系列只负责能力与发布。">
             <div className="kuaizi-provider-page-content">
                 {loadError ? <AdminContentError title="筷子科技配置刷新失败" description={loadError.message} onRetry={onRetry} /> : null}
                 <SettingsSectionCard
@@ -216,27 +216,27 @@ export function KuaiziProviderPageView({
                     ) : null}
                 </SettingsSectionCard>
 
+                <AccountCredentialCard account={account} busy={operation === "credential"} locked={Boolean(operation)} error={operationErrors.credential} onOpen={onOpenCredential} onVerify={onVerifyCredential} />
+
                 <section className="kuaizi-provider-families" aria-labelledby="kuaizi-provider-families-title">
                     <div className="kuaizi-provider-section-heading">
                         <div className="kuaizi-provider-section-copy">
                             <h2 id="kuaizi-provider-families-title" className="kuaizi-provider-section-title">
-                                模型系列凭据
+                                模型系列
                             </h2>
                             <p className="kuaizi-provider-section-description">系列目录完全来自后端 adapter registry，不在前端维护模型家族枚举。</p>
                         </div>
                         <span className="kuaizi-provider-family-count">{families.length} 个系列</span>
                     </div>
                     <div className="kuaizi-provider-family-list">
-                        {families.map(({ adapter, credential }) => (
-                            <ProviderCredentialCard
+                        {families.map(({ adapter }) => (
+                            <ProviderModelFamilyCard
                                 key={`${adapter.providerKind}:${adapter.family}`}
                                 adapter={adapter}
-                                credential={credential}
-                                busy={operation === `credential:${adapter.family}`}
+                                credentialHealthy={account.credential?.active?.healthStatus === "healthy"}
+                                busy={operation === `models:${adapter.family}`}
                                 locked={Boolean(operation)}
                                 error={operationErrors[adapter.family]}
-                                onOpen={() => onOpenCredential(adapter.family)}
-                                onVerify={() => onVerifyCredential(adapter.family)}
                                 onPublish={() => onPublishModels(adapter.family)}
                             />
                         ))}
@@ -248,7 +248,6 @@ export function KuaiziProviderPageView({
 }
 
 export function ProviderCredentialEditor({
-    adapter,
     credential,
     open,
     verifying,
@@ -256,8 +255,7 @@ export function ProviderCredentialEditor({
     onCancel,
     onSubmit,
 }: {
-    adapter: ProviderAdapterDescriptor;
-    credential?: AdminProviderCredential;
+    credential: AdminProviderCredential | null;
     open: boolean;
     verifying: boolean;
     error?: Error;
@@ -281,17 +279,17 @@ export function ProviderCredentialEditor({
             <div className="kuaizi-provider-editor-heading">
                 <ShieldCheck className="kuaizi-provider-editor-icon size-5" aria-hidden="true" />
                 <div className="kuaizi-provider-editor-copy">
-                    <h3 className="kuaizi-provider-editor-title">{adapter.family} 凭据</h3>
+                    <h3 className="kuaizi-provider-editor-title">筷子科技账号凭据</h3>
                     <p className="kuaizi-provider-editor-description">{configuredSecretText}。浏览器不会从服务端读取或回显任何已保存密钥。</p>
                 </div>
             </div>
             {credential?.candidate ? <CandidateFacts candidate={credential.candidate} hasActive={Boolean(credential.active)} /> : null}
-            <label className="kuaizi-provider-field-label" htmlFor={`kuaizi-provider-secret-${adapter.family}`}>
+            <label className="kuaizi-provider-field-label" htmlFor="kuaizi-provider-secret">
                 新 Key
             </label>
             <input
                 ref={inputRef}
-                id={`kuaizi-provider-secret-${adapter.family}`}
+                id="kuaizi-provider-secret"
                 className="kuaizi-provider-secret-input"
                 type="password"
                 autoComplete="new-password"
@@ -319,7 +317,7 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
     const [loadError, setLoadError] = useState<Error | null>(null);
     const [operation, setOperation] = useState<KuaiziProviderOperation>(null);
     const [operationErrors, setOperationErrors] = useState<Record<string, Error>>({});
-    const [editingFamily, setEditingFamily] = useState<string | null>(null);
+    const [credentialEditorOpen, setCredentialEditorOpen] = useState(false);
     const operationOwnerRef = useRef<KuaiziProviderOperation>(null);
     const endpointSyncPending = isKuaiziAwaitingSync(operation) && operation.scope === "endpoint";
 
@@ -375,9 +373,6 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
     }, [load]);
 
     const endpointDirty = account ? endpointDraftChanged(account, endpointDraft) : false;
-    const editingAdapter = useMemo(() => account?.adapters.find((adapter) => adapter.family === editingFamily), [account, editingFamily]);
-    const editingCredential = account && editingFamily ? credentialForFamily(account, editingFamily) : undefined;
-
     const saveEndpoint = async () => {
         if (!account || !endpointDirty || operationOwnerRef.current) return;
         let parsed: URL;
@@ -418,25 +413,25 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
         }
     };
 
-    const verifyCredential = async (family: string, key = "") => {
+    const verifyCredential = async (key = "") => {
         if (!account || operationOwnerRef.current) return;
-        const owner = `credential:${family}` as const;
+        const owner = "credential" as const;
         if (!claimOperation(owner)) return;
         setOperationErrors((current) => {
             const next = { ...current };
-            delete next[family];
+            delete next.credential;
             return next;
         });
         try {
-            const candidateAccount = await api.saveCredential(family, key);
+            const candidateAccount = await api.saveCredential(key);
             if (candidateAccount) setAccount(candidateAccount);
-            const next = await api.verifyCredential(family);
+            const next = await api.verifyCredential();
             setAccount(next);
             setLoadError(null);
-            setEditingFamily(null);
+            setCredentialEditorOpen(false);
         } catch (error) {
             const mutationError = errorValue(error);
-            setOperationErrors((current) => ({ ...current, [family]: mutationError }));
+            setOperationErrors((current) => ({ ...current, credential: mutationError }));
             try {
                 const next = await api.get();
                 setAccount(next);
@@ -505,37 +500,27 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
                     if (!operationOwnerRef.current) setEndpointDraft(value);
                 }}
                 onSaveEndpoint={() => void saveEndpoint()}
-                onOpenCredential={(family) => {
-                    if (!operationOwnerRef.current) setEditingFamily(family);
+                onOpenCredential={() => {
+                    if (!operationOwnerRef.current) setCredentialEditorOpen(true);
                 }}
-                onVerifyCredential={(family) => void verifyCredential(family)}
+                onVerifyCredential={() => void verifyCredential()}
                 onPublishModels={(family) => void publishModels(family)}
                 onRetry={() => void load()}
             />
             <Modal
                 rootClassName="admin-operation-modal workspace-ui-scope kuaizi-provider-modal"
-                title="配置系列凭据"
-                open={Boolean(editingAdapter)}
+                title="配置账号凭据"
+                open={credentialEditorOpen}
                 footer={null}
                 closable={!operation}
                 mask={{ closable: !operation }}
                 keyboard={!operation}
                 onCancel={() => {
-                    if (!operation) setEditingFamily(null);
+                    if (!operation) setCredentialEditorOpen(false);
                 }}
                 destroyOnHidden
             >
-                {editingAdapter ? (
-                    <ProviderCredentialEditor
-                        adapter={editingAdapter}
-                        credential={editingCredential}
-                        open
-                        verifying={Boolean(operation)}
-                        error={operationErrors[editingAdapter.family]}
-                        onCancel={() => setEditingFamily(null)}
-                        onSubmit={(key) => verifyCredential(editingAdapter.family, key)}
-                    />
-                ) : null}
+                {credentialEditorOpen ? <ProviderCredentialEditor credential={account.credential} open verifying={Boolean(operation)} error={operationErrors.credential} onCancel={() => setCredentialEditorOpen(false)} onSubmit={verifyCredential} /> : null}
             </Modal>
         </>
     );

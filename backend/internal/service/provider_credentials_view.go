@@ -25,19 +25,18 @@ type AdminProviderCredentialVersionView struct {
 }
 
 type AdminProviderCredentialView struct {
-	Family    string                              `json:"family"`
 	Active    *AdminProviderCredentialVersionView `json:"active"`
 	Candidate *AdminProviderCredentialVersionView `json:"candidate"`
 }
 
 type AdminProviderAccountView struct {
-	ProviderKind      string                        `json:"providerKind"`
-	Name              string                        `json:"name"`
-	Enabled           bool                          `json:"enabled"`
-	Endpoint          *AdminProviderEndpointView    `json:"endpoint,omitempty"`
-	EndpointCandidate *AdminProviderEndpointView    `json:"endpointCandidate,omitempty"`
-	Credentials       []AdminProviderCredentialView `json:"credentials"`
-	Adapters          []ProviderAdapterDescriptor   `json:"adapters"`
+	ProviderKind      string                       `json:"providerKind"`
+	Name              string                       `json:"name"`
+	Enabled           bool                         `json:"enabled"`
+	Endpoint          *AdminProviderEndpointView   `json:"endpoint,omitempty"`
+	EndpointCandidate *AdminProviderEndpointView   `json:"endpointCandidate,omitempty"`
+	Credential        *AdminProviderCredentialView `json:"credential"`
+	Adapters          []ProviderAdapterDescriptor  `json:"adapters"`
 }
 
 func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
@@ -45,7 +44,7 @@ func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
 	if err != nil {
 		return nil, err
 	}
-	view := &AdminProviderAccountView{ProviderKind: kuaiziProviderKind, Name: "筷子科技", Credentials: []AdminProviderCredentialView{}, Adapters: registry.Descriptors()}
+	view := &AdminProviderAccountView{ProviderKind: kuaiziProviderKind, Name: "筷子科技", Adapters: registry.Descriptors()}
 	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return view, nil
@@ -80,7 +79,10 @@ func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
 		if versionsErr != nil {
 			return nil, versionsErr
 		}
-		credentialView := AdminProviderCredentialView{Family: credential.Family}
+		if credential.Family != kuaiziAccountCredentialFamily {
+			continue
+		}
+		credentialView := AdminProviderCredentialView{}
 		active := activeCredentialVersion(versions)
 		if active != nil {
 			activeView := providerCredentialVersionView(active, credential.HealthStatus)
@@ -90,7 +92,7 @@ func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
 			candidate := providerCredentialCandidateView(pending)
 			credentialView.Candidate = &candidate
 		}
-		view.Credentials = append(view.Credentials, credentialView)
+		view.Credential = &credentialView
 	}
 	published, err := s.repo.ChannelModelsByProviderCredentials(credentialIDs)
 	if err != nil {
