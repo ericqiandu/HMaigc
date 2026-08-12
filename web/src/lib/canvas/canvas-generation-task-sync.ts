@@ -17,6 +17,8 @@ type BackendGenerationResult = {
     text?: string;
 };
 
+export type BackendGeneratedVideo = NonNullable<BackendGenerationResult["video"]>;
+
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 
@@ -58,6 +60,19 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined };
 }
 
+export async function storeBackendGeneratedVideo(video: BackendGeneratedVideo): Promise<UploadedFile> {
+    if (!video.storageKey) return storeGeneratedVideo({ url: video.dataUrl, mimeType: video.mimeType || "video/mp4" });
+    return {
+        url: await resolveMediaUrl(video.storageKey, video.dataUrl),
+        storageKey: video.storageKey,
+        width: video.width,
+        height: video.height,
+        durationMs: video.durationMs,
+        bytes: video.bytes || 0,
+        mimeType: video.mimeType || "video/mp4",
+    };
+}
+
 export function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
     return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined };
 }
@@ -97,9 +112,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
 
     if (mode === "video") {
         if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-        const video = result.video.storageKey
-            ? { url: await resolveMediaUrl(result.video.storageKey, result.video.dataUrl), storageKey: result.video.storageKey, width: result.video.width, height: result.video.height, durationMs: result.video.durationMs, bytes: result.video.bytes || 0, mimeType: result.video.mimeType || "video/mp4" }
-            : await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+        const video = await storeBackendGeneratedVideo(result.video);
         const videoSize = fitNodeSize(video.width || node.width || VIDEO_NODE_MAX_WIDTH, video.height || node.height || VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
         return {
             ...node,

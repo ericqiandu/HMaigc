@@ -17,6 +17,7 @@ import {
     storyboardRowsFromTask,
 } from "@/lib/canvas/canvas-project-domain";
 import { buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
+import { updateStoryboardRowsAndLinkedVideos } from "@/lib/canvas/canvas-storyboard-video-sync";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { createGenerationTask, waitForGenerationTask } from "@/services/api/task-center";
 import { modelOptionName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -70,17 +71,7 @@ export function useCanvasStoryboard({
     }), [modal]);
 
     const updateScriptRows = useCallback((nodeId: string, updater: (rows: StoryboardRow[]) => StoryboardRow[]) => {
-        setNodes((current) => current.map((node) => node.id === nodeId ? {
-            ...node,
-            metadata: {
-                ...node.metadata,
-                storyboard: {
-                    rows: updater(node.metadata?.storyboard?.rows || []),
-                    visibleColumns: node.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "plotDescription", "dialogue"],
-                    referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [],
-                },
-            },
-        } : node));
+        setNodes((current) => updateStoryboardRowsAndLinkedVideos(current, nodeId, updater));
     }, [setNodes]);
 
     const replaceScriptRows = useCallback((nodeId: string, rows: StoryboardRow[]) => {

@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { audioMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
+import { audioMetadata, storeBackendGeneratedVideo, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { nextCanvasVersionLabel } from "@/lib/canvas/canvas-layout";
 import { buildAudioGenerationMetadata, buildVideoGenerationMetadata, generationReferenceUrls, runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
@@ -9,7 +9,6 @@ import { selectVideoGenerationContext } from "@/lib/canvas/canvas-video-generati
 import { runVideoOutputBatch } from "@/lib/canvas/video-output-batch";
 import { generationFailureMetadata } from "@/lib/generation-error";
 import { storeGeneratedAudio } from "@/services/api/audio";
-import { storeGeneratedVideo } from "@/services/api/video";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
@@ -133,7 +132,7 @@ export async function executeVideoGeneration({
             try {
                 const result = await runBackendCanvasGenerationTask({ projectId, nodeId: targetId, mode: "video", prompt: effectivePrompt, config: { ...generationConfig, count: "1" }, referenceImages: selectedGenerationContext.referenceImages, referenceVideos: selectedGenerationContext.referenceVideos, referenceAudios: selectedGenerationContext.referenceAudios, signal: controller.signal, metadata: { sourceNodeId: nodeId, batchRootId: count > 1 ? videoId : undefined, resolvedCharacterVersions: selectedGenerationContext.resolvedCharacterVersions, resolvedCharacterVoices: selectedGenerationContext.resolvedCharacterVoices, ...videoGenerationMetadata }, onTaskCreated: (task) => bindGenerationTask(targetId, task) });
                 if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-                const video = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+                const video = await storeBackendGeneratedVideo(result.video);
                 const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                 setNodes((current) => {
                     return current.map((node) => {
