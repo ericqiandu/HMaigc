@@ -870,8 +870,9 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "计费准备失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		_ = s.repo.Save(task)
-		_ = s.RefundBilling(task.BillingOrderID, "计费准备失败，上游请求未发出")
+		if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
+			return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+		}
 		return err
 	}
 	result, canvasOps, err := s.processTask(ctx, *task)
@@ -915,11 +916,13 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "任务失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		_ = s.repo.Save(task)
+		action := repository.FailedTaskBillingRefund
 		if providerSucceeded || (!channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
-			_ = s.MarkBillingUncertain(task.BillingOrderID, task.Error)
-		} else {
-			_ = s.RefundBilling(task.BillingOrderID, task.Error)
+			action = repository.FailedTaskBillingUncertain
+		}
+		if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, action, task.Error); finalizeErr != nil {
+			_ = s.log(task.UserID, task.ID, "error", "任务与计费终态提交失败", taskFailureMessage(finalizeErr))
+			return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
 		}
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务处理失败", task.Error)
@@ -945,8 +948,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "任务结果保存失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		_ = s.repo.Save(task)
-		_ = s.MarkBillingUncertain(task.BillingOrderID, "上游已成功但任务结果未保存："+task.Error)
+		if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingUncertain, "上游已成功但任务结果未保存："+task.Error); finalizeErr != nil {
+			_ = s.log(task.UserID, task.ID, "error", "任务结果与计费终态提交失败", taskFailureMessage(finalizeErr))
+			return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+		}
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务结果保存失败", task.Error)
 		return err
