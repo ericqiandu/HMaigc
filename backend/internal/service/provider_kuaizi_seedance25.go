@@ -2,12 +2,20 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
+)
+
+const (
+	kuaiziSeedance25CreatePath    = "/ai-open-platform-api/v1/lz/video/task/create"
+	kuaiziSeedance25StatusPath    = "/ai-open-platform-api/v1/lz/video/task/status"
+	kuaiziSeedance25ResponseLimit = 256 << 10
 )
 
 type kuaiziSeedance25Media struct {
@@ -69,6 +77,96 @@ type KuaiziSeedance25State struct {
 	TotalTokens  string
 	Error        string
 	TraceID      string
+}
+
+type KuaiziSeedance25Client struct {
+	httpClient *http.Client
+}
+
+func NewKuaiziSeedance25Client(httpClient *http.Client) *KuaiziSeedance25Client {
+	return &KuaiziSeedance25Client{httpClient: httpClient}
+}
+
+func (client *KuaiziSeedance25Client) Create(ctx context.Context, baseURL string, apiKey string, request kuaiziSeedance25Request) (KuaiziSeedance25Created, error) {
+	payload, err := client.post(ctx, baseURL, apiKey, kuaiziSeedance25CreatePath, request)
+	if err != nil {
+		return KuaiziSeedance25Created{}, err
+	}
+	created, err := parseKuaiziSeedance25Create(payload)
+	if err != nil {
+		return KuaiziSeedance25Created{}, err
+	}
+	if containsKuaiziSeedance25Secret(created.TaskID, apiKey) {
+		return KuaiziSeedance25Created{}, errors.New("筷子 Seedance 2.5 返回了不安全的任务 ID")
+	}
+	if containsKuaiziSeedance25Secret(created.TraceID, apiKey) {
+		created.TraceID = ""
+	}
+	return created, nil
+}
+
+func (client *KuaiziSeedance25Client) Status(ctx context.Context, baseURL string, apiKey string, taskID string) (KuaiziSeedance25State, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return KuaiziSeedance25State{}, errors.New("筷子 Seedance 2.5 查询缺少任务 ID")
+	}
+	payload, err := client.post(ctx, baseURL, apiKey, kuaiziSeedance25StatusPath, map[string]string{"task_id": taskID})
+	if err != nil {
+		return KuaiziSeedance25State{}, err
+	}
+	state, err := parseKuaiziSeedance25Status(payload)
+	if err != nil {
+		return KuaiziSeedance25State{}, err
+	}
+	if containsKuaiziSeedance25Secret(state.TaskID, apiKey) {
+		return KuaiziSeedance25State{}, errors.New("筷子 Seedance 2.5 返回了不安全的任务 ID")
+	}
+	if containsKuaiziSeedance25Secret(state.TraceID, apiKey) {
+		state.TraceID = ""
+	}
+	return state, nil
+}
+
+func containsKuaiziSeedance25Secret(value string, apiKey string) bool {
+	return apiKey != "" && strings.Contains(value, apiKey)
+}
+
+func (client *KuaiziSeedance25Client) post(ctx context.Context, baseURL string, apiKey string, path string, body any) ([]byte, error) {
+	if client == nil || client.httpClient == nil {
+		return nil, errors.New("筷子 Seedance 2.5 HTTP 客户端不可用")
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	apiKey = strings.TrimSpace(apiKey)
+	if baseURL == "" || apiKey == "" {
+		return nil, errors.New("筷子 Seedance 2.5 缺少服务地址或系列 Key")
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, errors.New("筷子 Seedance 2.5 请求编码失败")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, errors.New("筷子 Seedance 2.5 请求地址无效")
+	}
+	request.Header.Set("ApiKey", apiKey)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return nil, errors.New("筷子 Seedance 2.5 请求失败")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("筷子 Seedance 2.5 HTTP 状态异常：%d", response.StatusCode)
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, kuaiziSeedance25ResponseLimit+1))
+	if err != nil {
+		return nil, errors.New("筷子 Seedance 2.5 响应读取失败")
+	}
+	if len(responseBody) > kuaiziSeedance25ResponseLimit {
+		return nil, errors.New("筷子 Seedance 2.5 响应超过大小限制")
+	}
+	return responseBody, nil
 }
 
 func newKuaiziSeedance25Request(input canvasGenerationInput) (kuaiziSeedance25Request, error) {

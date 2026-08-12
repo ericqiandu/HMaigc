@@ -1,7 +1,11 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -141,5 +145,96 @@ func TestKuaiziSeedance25RequestJSONDoesNotContainRuntimeSecrets(t *testing.T) {
 	}
 	if strings.Contains(string(payload), "secret.example.com") || strings.Contains(string(payload), "secret-key") {
 		t.Fatalf("request leaked runtime secret: %s", payload)
+	}
+}
+
+func TestKuaiziSeedance25ClientCreatesAndQueriesWithPublishedHTTPContract(t *testing.T) {
+	t.Helper()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodPost || request.Header.Get("ApiKey") != "family-key" || request.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("request = method:%s headers:%v", request.Method, request.Header)
+		}
+		payload, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		switch request.URL.Path {
+		case kuaiziSeedance25CreatePath:
+			if !strings.Contains(string(payload), `"mode":"seedance2.5"`) || strings.Contains(string(payload), "family-key") {
+				t.Errorf("create payload = %s", payload)
+			}
+			_, _ = response.Write([]byte(`{"code":0,"data":{"task_id":"upstream-task"},"trace_id":"create-trace"}`))
+		case kuaiziSeedance25StatusPath:
+			if string(payload) != `{"task_id":"upstream-task"}` {
+				t.Errorf("status payload = %s", payload)
+			}
+			_, _ = response.Write([]byte(`{"code":0,"data":{"task_id":"upstream-task","status":"running"},"trace_id":"poll-trace"}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client := NewKuaiziSeedance25Client(server.Client())
+	created, err := client.Create(context.Background(), server.URL, "family-key", kuaiziSeedance25Request{Mode: "seedance2.5", Resolution: "720p", Ratio: "16:9", Duration: 5})
+	if err != nil || created.TaskID != "upstream-task" || created.TraceID != "create-trace" {
+		t.Fatalf("created = %#v, error = %v", created, err)
+	}
+	state, err := client.Status(context.Background(), server.URL, "family-key", created.TaskID)
+	if err != nil || state.Status != "running" || state.TraceID != "poll-trace" {
+		t.Fatalf("state = %#v, error = %v", state, err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func TestKuaiziSeedance25ClientFailsClosedWithoutLeakingSecrets(t *testing.T) {
+	const secret = "sentinel-family-key"
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "http failure", status: http.StatusBadGateway, body: `upstream echoed ` + secret},
+		{name: "oversized success", status: http.StatusOK, body: strings.Repeat("x", kuaiziSeedance25ResponseLimit+1)},
+		{name: "invalid success", status: http.StatusOK, body: `{"code":0,"data":null} ` + secret},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(test.status)
+				_, _ = response.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			client := NewKuaiziSeedance25Client(server.Client())
+			_, err := client.Status(context.Background(), server.URL, secret, "task")
+			if err == nil {
+				t.Fatal("invalid upstream response was accepted")
+			}
+			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), test.body) {
+				t.Fatalf("error leaked upstream data: %v", err)
+			}
+		})
+	}
+}
+
+func TestKuaiziSeedance25ClientRejectsSecretReflectedIdentifiers(t *testing.T) {
+	const secret = "sentinel-family-key"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"code":0,"data":{"task_id":"sentinel-family-key"},"trace_id":"sentinel-family-key"}`))
+	}))
+	defer server.Close()
+
+	client := NewKuaiziSeedance25Client(server.Client())
+	_, err := client.Create(context.Background(), server.URL, secret, kuaiziSeedance25Request{Mode: "seedance2.5"})
+	if err == nil {
+		t.Fatal("secret-reflecting task id was accepted")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error leaked secret: %v", err)
 	}
 }
