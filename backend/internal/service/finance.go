@@ -673,6 +673,13 @@ func (s *Service) BillingFailureRequiresReview(orderID string, taskID string, er
 	if billingFailureUncertain(err) {
 		return true
 	}
+	var createError *KuaiziSeedance25CreateError
+	if errors.As(err, &createError) {
+		return true
+	}
+	if task, taskErr := s.repo.Task(taskID); taskErr == nil && strings.TrimSpace(task.ProviderRequestID) != "" {
+		return true
+	}
 	order, orderErr := s.repo.BillingOrder(orderID)
 	if orderErr != nil || order.Status == model.BillingStatusUncertain {
 		return true

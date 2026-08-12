@@ -18,6 +18,18 @@ const (
 	kuaiziSeedance25ResponseLimit = 256 << 10
 )
 
+type KuaiziSeedance25CreateError struct {
+	err error
+}
+
+func (failure *KuaiziSeedance25CreateError) Error() string {
+	return failure.err.Error()
+}
+
+func (failure *KuaiziSeedance25CreateError) Unwrap() error {
+	return failure.err
+}
+
 type kuaiziSeedance25Media struct {
 	URL  string `json:"url"`
 	Role string `json:"role"`
@@ -90,11 +102,11 @@ func NewKuaiziSeedance25Client(httpClient *http.Client) *KuaiziSeedance25Client 
 func (client *KuaiziSeedance25Client) Create(ctx context.Context, baseURL string, apiKey string, request kuaiziSeedance25Request) (KuaiziSeedance25Created, error) {
 	payload, err := client.post(ctx, baseURL, apiKey, kuaiziSeedance25CreatePath, request)
 	if err != nil {
-		return KuaiziSeedance25Created{}, err
+		return KuaiziSeedance25Created{}, &KuaiziSeedance25CreateError{err: err}
 	}
 	created, err := parseKuaiziSeedance25Create(payload)
 	if err != nil {
-		return KuaiziSeedance25Created{}, err
+		return KuaiziSeedance25Created{}, &KuaiziSeedance25CreateError{err: err}
 	}
 	if containsKuaiziSeedance25Secret(created.TaskID, apiKey) {
 		return KuaiziSeedance25Created{}, errors.New("筷子 Seedance 2.5 返回了不安全的任务 ID")

@@ -24,6 +24,14 @@ type ProviderCredentialSecret struct {
 	KeyCipher            string `json:"-" gorm:"column:key_cipher"`
 }
 
+type FrozenProviderRuntime struct {
+	ProviderAccountID    string
+	ProviderCredentialID string
+	BaseURL              string
+	CredentialVersion    int64
+	KeyCipher            string `json:"-"`
+}
+
 type ProviderCredentialVerification struct {
 	CredentialID  string
 	VersionID     string
@@ -68,6 +76,21 @@ func (r *Repository) ProviderCredentialVersions(credentialID string) ([]model.Pr
 	var versions []model.ProviderCredentialVersion
 	err := r.db.Where("provider_credential_id = ?", credentialID).Order("version DESC").Find(&versions).Error
 	return versions, err
+}
+
+func (r *Repository) FrozenProviderRuntime(task model.Task) (*FrozenProviderRuntime, error) {
+	var runtime FrozenProviderRuntime
+	err := r.db.Table("provider_accounts AS accounts").
+		Select("accounts.id AS provider_account_id, credentials.id AS provider_credential_id, endpoints.base_url, versions.version AS credential_version, versions.key_cipher").
+		Joins("JOIN provider_endpoint_versions AS endpoints ON endpoints.id = ? AND endpoints.provider_account_id = accounts.id", task.ProviderEndpointVersionID).
+		Joins("JOIN provider_credential_versions AS versions ON versions.id = ?", task.ProviderCredentialVersionID).
+		Joins("JOIN provider_credentials AS credentials ON credentials.id = versions.provider_credential_id AND credentials.provider_account_id = accounts.id").
+		Where("accounts.id = ?", task.ProviderAccountID).
+		Take(&runtime).Error
+	if err != nil {
+		return nil, err
+	}
+	return &runtime, nil
 }
 
 // SaveProviderEndpointCandidate 将首次账号建档、候选版本与管理员审计作为一个事实提交。

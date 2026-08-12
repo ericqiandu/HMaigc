@@ -1003,6 +1003,10 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	}
 	task.InputJSON = decryptedInput
 	ctx = withProviderAnalytics(ctx, s, task)
+	if task.Model == "kuaizi-seedance-2.5" {
+		result, err := s.processKuaiziSeedance25Task(ctx, task)
+		return result, nil, err
+	}
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
