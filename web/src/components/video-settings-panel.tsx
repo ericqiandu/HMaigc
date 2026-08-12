@@ -52,14 +52,25 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
 
                 <SettingGroup title="视频时长" color={theme.node.muted}>
-                    <VideoDurationInput
-                        duration={duration}
-                        durationOptions={durationOptions}
-                        customDurationRange={capabilities.customDurationRange}
-                        theme={theme}
-                        onCommit={(value) => onConfigChange("videoSeconds", String(value))}
-                    />
+                    <VideoDurationInput duration={duration} durationOptions={durationOptions} customDurationRange={capabilities.customDurationRange} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
+
+                {capabilities.referenceLimits ? (
+                    <SettingGroup title="参考素材" color={theme.node.muted}>
+                        <div className="canvas-video-reference-limits text-[11px] leading-5" style={{ color: theme.node.muted }}>
+                            最多 {capabilities.referenceLimits.images} 图 + {capabilities.referenceLimits.videos} 视频 + {capabilities.referenceLimits.audios} 音频
+                            <span className="canvas-video-reference-duration-limits block">
+                                视频累计不超过 {capabilities.referenceLimits.totalVideoDurationSeconds} 秒 · 音频累计不超过 {capabilities.referenceLimits.totalAudioDurationSeconds} 秒
+                            </span>
+                        </div>
+                    </SettingGroup>
+                ) : null}
+
+                {capabilities.supportedTools.includes("web_search") ? (
+                    <SettingGroup title="联网搜索" color={theme.node.muted}>
+                        <UnsupportedSetting reason="接口支持；独立计费尚未配置，暂不开放" />
+                    </SettingGroup>
+                ) : null}
 
                 <SettingGroup title="生成音频" color={theme.node.muted}>
                     {capabilities.supportsGeneratedAudio ? (
@@ -158,41 +169,42 @@ function VideoDurationInput({ duration, durationOptions, customDurationRange, th
                     }}
                 />
                 <div className="canvas-video-duration-value relative flex h-7 w-[62px] shrink-0 items-center">
-                <input
-                    id={inputId}
-                    className="canvas-video-duration-input h-7 w-full rounded-md border-0 px-2 pr-5 text-center text-[12px] font-semibold tabular-nums outline-none transition focus-visible:ring-1 focus-visible:ring-current/25"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    value={draft}
-                    aria-label="视频时长"
-                    aria-invalid={Boolean(error)}
-                    aria-describedby={error ? errorId : undefined}
-                    style={{ background: theme.node.fill, boxShadow: error ? "inset 0 0 0 1px #ef4444" : "none", color: theme.node.text }}
-                    onChange={(event) => {
-                        const nextDraft = event.target.value.trim();
-                        if (nextDraft === "" || /^\d+$/.test(nextDraft)) {
-                            setDraft(nextDraft);
-                            setError("");
-                        }
-                    }}
-                    onBlur={commitDraft}
-                    onKeyDown={handleKeyDown}
-                />
-                    <span className="canvas-video-duration-unit pointer-events-none absolute right-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>s</span>
+                    <input
+                        id={inputId}
+                        className="canvas-video-duration-input h-7 w-full rounded-md border-0 px-2 pr-5 text-center text-[12px] font-semibold tabular-nums outline-none transition focus-visible:ring-1 focus-visible:ring-current/25"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={draft}
+                        aria-label="视频时长"
+                        aria-invalid={Boolean(error)}
+                        aria-describedby={error ? errorId : undefined}
+                        style={{ background: theme.node.fill, boxShadow: error ? "inset 0 0 0 1px #ef4444" : "none", color: theme.node.text }}
+                        onChange={(event) => {
+                            const nextDraft = event.target.value.trim();
+                            if (nextDraft === "" || /^\d+$/.test(nextDraft)) {
+                                setDraft(nextDraft);
+                                setError("");
+                            }
+                        }}
+                        onBlur={commitDraft}
+                        onKeyDown={handleKeyDown}
+                    />
+                    <span className="canvas-video-duration-unit pointer-events-none absolute right-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>
+                        s
+                    </span>
                 </div>
             </div>
             {error ? (
-                <div id={errorId} className="canvas-video-duration-error text-[11px] leading-4 text-red-500" role="alert">{error}</div>
+                <div id={errorId} className="canvas-video-duration-error text-[11px] leading-4 text-red-500" role="alert">
+                    {error}
+                </div>
             ) : null}
         </div>
     );
 }
 
-type VideoDurationValidation = Readonly<
-    | { valid: true; value: number }
-    | { valid: false; message: string }
->;
+type VideoDurationValidation = Readonly<{ valid: true; value: number } | { valid: false; message: string }>;
 
 export function validateVideoDuration(value: string, durationOptions: readonly number[], customDurationRange?: Readonly<{ min: number; max: number }>): VideoDurationValidation {
     if (!/^\d+$/.test(value.trim())) return { valid: false, message: "请输入整数秒数" };

@@ -182,13 +182,19 @@ func validateKuaiziCompatibleVideoInput(input canvasGenerationInput, spec Provid
 	if len(input.ReferenceImages) > spec.MaxImages || len(input.ReferenceVideos) > spec.MaxVideos || len(input.ReferenceAudios) > spec.MaxAudios {
 		return "", "", 0, fmt.Errorf("%s 参考素材上限为 %d 图 / %d 视频 / %d 音频", spec.DisplayName, spec.MaxImages, spec.MaxVideos, spec.MaxAudios)
 	}
-	if spec.ModelKey != "doubao-seedance-2-5-260628" && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages)+len(input.ReferenceVideos) == 0 {
+	if err := validateKuaiziReferenceDurations(input.ReferenceVideos, spec.MaxVideoDurationSeconds, spec.DisplayName+" 参考视频"); err != nil {
+		return "", "", 0, err
+	}
+	if err := validateKuaiziReferenceDurations(input.ReferenceAudios, spec.MaxAudioDurationSeconds, spec.DisplayName+" 参考音频"); err != nil {
+		return "", "", 0, err
+	}
+	if !spec.SupportsAudioOnly && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages)+len(input.ReferenceVideos) == 0 {
 		return "", "", 0, errors.New("Seedance 2.0 参考音频必须同时连接参考图片或参考视频")
 	}
-	if spec.ModelKey == "doubao-seedance-2-5-260628" && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages)+len(input.ReferenceVideos) == 0 && seedancePromptText(input) == "" {
+	if spec.SupportsAudioOnly && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages)+len(input.ReferenceVideos) == 0 && seedancePromptText(input) == "" {
 		return "", "", 0, errors.New("Seedance 2.5 纯音频参考必须同时提供提示词")
 	}
-	if spec.ModelKey == "doubao-seedance-2-5-260628" && ratio != "adaptive" {
+	if spec.RequiresAdaptiveFrames && ratio != "adaptive" {
 		for _, image := range input.ReferenceImages {
 			role := seedanceImageRole(input, image)
 			if role == "first_frame" || role == "last_frame" {
@@ -197,6 +203,23 @@ func validateKuaiziCompatibleVideoInput(input canvasGenerationInput, spec Provid
 		}
 	}
 	return ratio, resolution, duration, nil
+}
+
+func validateKuaiziReferenceDurations(items []providerMedia, maximumSeconds int, label string) error {
+	var totalMilliseconds int64
+	for index, item := range items {
+		if item.DurationMs <= 0 {
+			continue
+		}
+		if item.DurationMs < 2_000 || item.DurationMs > int64(maximumSeconds)*1_000 {
+			return fmt.Errorf("%s %d 时长必须为 2–%d 秒", label, index+1, maximumSeconds)
+		}
+		totalMilliseconds += item.DurationMs
+	}
+	if totalMilliseconds > int64(maximumSeconds)*1_000 {
+		return fmt.Errorf("%s总时长不能超过 %d 秒", label, maximumSeconds)
+	}
+	return nil
 }
 
 func kuaiziCompatibleVideoRatio(value string) (string, error) {

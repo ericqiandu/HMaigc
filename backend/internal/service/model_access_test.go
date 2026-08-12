@@ -129,6 +129,24 @@ func TestPublicChannelMarksMemberModelAccessibility(t *testing.T) {
 	}
 }
 
+func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
+	channel := model.ModelChannel{ID: "channel-seedance", Scope: model.ChannelScopeSystem, Enabled: true}
+	item := model.ChannelModel{
+		ID: "seedance-25", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "video", BillingMode: "per_second",
+		PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
+	}
+
+	catalog := publicChannel(channel, false, []model.ChannelModel{item}, false)
+	if len(catalog.ModelCosts) != 1 || catalog.ModelCosts[0].ProviderCapabilities == nil {
+		t.Fatalf("provider capabilities missing: %#v", catalog.ModelCosts)
+	}
+	capabilities := catalog.ModelCosts[0].ProviderCapabilities
+	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
+		t.Fatalf("provider capabilities = %#v", capabilities)
+	}
+}
+
 func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

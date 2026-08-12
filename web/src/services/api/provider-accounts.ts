@@ -14,9 +14,14 @@ export type ProviderModelSpec = {
     supportsSmartDuration: boolean;
     supportsGeneratedAudio: boolean;
     supportsWatermark: boolean;
+    supportsAudioOnly: boolean;
+    requiresAdaptiveFrames: boolean;
     maxImages: number;
     maxVideos: number;
     maxAudios: number;
+    maxVideoDurationSeconds: number;
+    maxAudioDurationSeconds: number;
+    tools: string[];
     published: boolean;
     channelModelId: string;
     enabled: boolean;
@@ -165,9 +170,14 @@ function parseModel(value: unknown, label: string): ProviderModelSpec {
         supportsSmartDuration: booleanField(source, "supportsSmartDuration", label),
         supportsGeneratedAudio: booleanField(source, "supportsGeneratedAudio", label),
         supportsWatermark: booleanField(source, "supportsWatermark", label),
+        supportsAudioOnly: booleanField(source, "supportsAudioOnly", label),
+        requiresAdaptiveFrames: booleanField(source, "requiresAdaptiveFrames", label),
         maxImages: integerField(source, "maxImages", label),
         maxVideos: integerField(source, "maxVideos", label),
         maxAudios: integerField(source, "maxAudios", label),
+        maxVideoDurationSeconds: integerField(source, "maxVideoDurationSeconds", label),
+        maxAudioDurationSeconds: integerField(source, "maxAudioDurationSeconds", label),
+        tools: stringArrayField(source, "tools", label),
         published: booleanField(source, "published", label),
         channelModelId: stringField(source, "channelModelId", label),
         enabled: booleanField(source, "enabled", label),

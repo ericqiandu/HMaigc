@@ -12,24 +12,29 @@ type ProviderAdapterDescriptor struct {
 }
 
 type ProviderModelSpec struct {
-	ModelKey               string   `json:"modelKey"`
-	DisplayName            string   `json:"displayName"`
-	UpstreamMode           string   `json:"upstreamMode"`
-	Capability             string   `json:"capability"`
-	Resolutions            []string `json:"resolutions"`
-	Ratios                 []string `json:"ratios"`
-	DurationMin            int      `json:"durationMin"`
-	DurationMax            int      `json:"durationMax"`
-	SupportsSmartDuration  bool     `json:"supportsSmartDuration"`
-	SupportsGeneratedAudio bool     `json:"supportsGeneratedAudio"`
-	SupportsWatermark      bool     `json:"supportsWatermark"`
-	MaxImages              int      `json:"maxImages"`
-	MaxVideos              int      `json:"maxVideos"`
-	MaxAudios              int      `json:"maxAudios"`
-	Published              bool     `json:"published"`
-	ChannelModelID         string   `json:"channelModelId"`
-	Enabled                bool     `json:"enabled"`
-	PriceConfigured        bool     `json:"priceConfigured"`
+	ModelKey                string   `json:"modelKey"`
+	DisplayName             string   `json:"displayName"`
+	UpstreamMode            string   `json:"upstreamMode"`
+	Capability              string   `json:"capability"`
+	Resolutions             []string `json:"resolutions"`
+	Ratios                  []string `json:"ratios"`
+	DurationMin             int      `json:"durationMin"`
+	DurationMax             int      `json:"durationMax"`
+	SupportsSmartDuration   bool     `json:"supportsSmartDuration"`
+	SupportsGeneratedAudio  bool     `json:"supportsGeneratedAudio"`
+	SupportsWatermark       bool     `json:"supportsWatermark"`
+	SupportsAudioOnly       bool     `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames  bool     `json:"requiresAdaptiveFrames"`
+	MaxImages               int      `json:"maxImages"`
+	MaxVideos               int      `json:"maxVideos"`
+	MaxAudios               int      `json:"maxAudios"`
+	MaxVideoDurationSeconds int      `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds int      `json:"maxAudioDurationSeconds"`
+	Tools                   []string `json:"tools"`
+	Published               bool     `json:"published"`
+	ChannelModelID          string   `json:"channelModelId"`
+	Enabled                 bool     `json:"enabled"`
+	PriceConfigured         bool     `json:"priceConfigured"`
 }
 
 type ProviderRegistry struct {
@@ -98,6 +103,7 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 		result.Models[index] = model
 		result.Models[index].Resolutions = append([]string(nil), model.Resolutions...)
 		result.Models[index].Ratios = append([]string(nil), model.Ratios...)
+		result.Models[index].Tools = append([]string(nil), model.Tools...)
 	}
 	return result
 }
@@ -107,21 +113,24 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 		ProviderKind: "kuaizi",
 		Family:       "seedance",
 		Models: []ProviderModelSpec{
-			seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3),
-			seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3),
-			seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3),
-			seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10),
+			seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
+			seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3, false, []string{"web_search"}),
+			seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
+			seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10, true, nil),
 		},
 	}}
 }
 
-func seedanceProviderModel(modelKey string, displayName string, resolutions []string, durationMax int, maxImages int, maxVideos int, maxAudios int) ProviderModelSpec {
+func seedanceProviderModel(modelKey string, displayName string, resolutions []string, durationMax int, maxImages int, maxVideos int, maxAudios int, supportsAudioOnly bool, tools []string) ProviderModelSpec {
 	return ProviderModelSpec{
 		ModelKey: modelKey, DisplayName: displayName, UpstreamMode: modelKey, Capability: "video",
 		Resolutions: resolutions, Ratios: []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"},
 		DurationMin: 4, DurationMax: durationMax, SupportsSmartDuration: true,
 		SupportsGeneratedAudio: true, SupportsWatermark: true,
+		SupportsAudioOnly: supportsAudioOnly, RequiresAdaptiveFrames: supportsAudioOnly,
 		MaxImages: maxImages, MaxVideos: maxVideos, MaxAudios: maxAudios,
+		MaxVideoDurationSeconds: durationMax, MaxAudioDurationSeconds: durationMax,
+		Tools: tools,
 	}
 }
 

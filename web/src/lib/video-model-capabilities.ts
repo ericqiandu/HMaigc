@@ -1,8 +1,8 @@
 import { isMiniMaxH3VideoConfig, miniMaxH3DurationOptions, miniMaxH3ResolutionOptions, normalizeMiniMaxH3Duration, normalizeMiniMaxH3Resolution } from "@/lib/minimax-h3-video";
 import { isKlingVideoConfig, klingDurationOptions, klingRatioOptions, klingResolutionOptions, normalizeKlingDuration, normalizeKlingResolution } from "@/lib/kling-video";
-import { isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedance25DurationOptions, seedanceDurationOptions, seedanceModelMode, seedanceResolutionOptionsForModel } from "@/lib/seedance-video";
+import { isSeedanceVideoConfig, normalizeResolutionToken, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { normalizeVideoDuration, normalizeVideoResolution, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
-import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelRequestConfig, type AiConfig, type VideoProviderCapabilities } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
 
 export type VideoParameterOption = Readonly<{ value: string; label: string }>;
@@ -17,6 +17,8 @@ export type VideoModelCapabilities = Readonly<{
     supportedGenerationModes: readonly CanvasVideoGenerationMode[];
     supportsGeneratedAudio: boolean;
     supportsSuperResolution: boolean;
+    referenceLimits?: Readonly<{ images: number; videos: number; audios: number; totalVideoDurationSeconds: number; totalAudioDurationSeconds: number }>;
+    supportedTools: readonly string[];
     requiresAdaptiveFrameRatio?: boolean;
     unsupportedReasons: Readonly<Partial<Record<"generatedAudio" | "superResolution", string>>>;
 }>;
@@ -47,6 +49,7 @@ const miniMaxH3Capabilities: VideoModelCapabilities = {
     supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
     supportsGeneratedAudio: false,
     supportsSuperResolution: false,
+    supportedTools: [],
     unsupportedReasons: {
         generatedAudio: "MiniMax H3 接口不提供同步生成音频参数",
         superResolution: "MiniMax H3 使用模型原生 768P / 2K 输出，不支持独立超分任务",
@@ -62,6 +65,7 @@ const klingCapabilities: VideoModelCapabilities = {
     supportedGenerationModes: ["text", "image", "first_last_frame"],
     supportsGeneratedAudio: false,
     supportsSuperResolution: false,
+    supportedTools: [],
     unsupportedReasons: {
         generatedAudio: "当前可灵视频接口不支持同步生成音频",
         superResolution: "可灵视频使用模型原生输出，不支持独立超分任务",
@@ -73,18 +77,26 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
     if (isMiniMaxH3VideoConfig(config)) return miniMaxH3Capabilities;
     const model = modelOptionName(config.model || config.videoModel);
     if (isSeedanceVideoConfig(config)) {
-        const isSeedance25 = seedanceModelMode(model) === "seedance2.5";
+        const providerCapabilities = resolveSeedanceProviderCapabilities(config, model);
         return {
             id: "seedance",
-            resolutions: seedanceResolutionOptionsForModel(model),
-            ratios: standardRatioOptions,
-            durations: isSeedance25 ? seedance25DurationOptions : seedanceDurationOptions,
-            customDurationRange: { min: 4, max: isSeedance25 ? 30 : 15 },
+            resolutions: providerCapabilities.resolutions.map((value) => ({ value, label: value.toUpperCase() })),
+            ratios: providerCapabilities.ratios.map((value) => ({ value, label: value === "adaptive" ? "Auto" : value })),
+            durations: Array.from({ length: providerCapabilities.durationMax - providerCapabilities.durationMin + 1 }, (_, index) => providerCapabilities.durationMin + index),
+            customDurationRange: { min: providerCapabilities.durationMin, max: providerCapabilities.durationMax },
             outputCounts: [1, 2, 4],
             supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
-            supportsGeneratedAudio: true,
+            supportsGeneratedAudio: providerCapabilities.supportsGeneratedAudio,
             supportsSuperResolution: false,
-            requiresAdaptiveFrameRatio: isSeedance25,
+            referenceLimits: {
+                images: providerCapabilities.maxImages,
+                videos: providerCapabilities.maxVideos,
+                audios: providerCapabilities.maxAudios,
+                totalVideoDurationSeconds: providerCapabilities.maxVideoDurationSeconds,
+                totalAudioDurationSeconds: providerCapabilities.maxAudioDurationSeconds,
+            },
+            supportedTools: providerCapabilities.tools,
+            requiresAdaptiveFrameRatio: providerCapabilities.requiresAdaptiveFrames,
             unsupportedReasons: { superResolution: "筷子兼容接口不支持独立超分参数" },
         };
     }
@@ -97,20 +109,30 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
         supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
         supportsGeneratedAudio: true,
         supportsSuperResolution: true,
+        supportedTools: [],
         unsupportedReasons: {},
     };
 }
 
+export function resolveSeedanceProviderCapabilities(config: AiConfig, model: string): VideoProviderCapabilities {
+    const resolved = resolveModelRequestConfig(config, config.model || config.videoModel);
+    const channel = config.channels.find((candidate) => candidate.id === resolved.channelId);
+    const capabilities = channel?.modelCosts?.find((candidate) => candidate.model === model)?.providerCapabilities;
+    if (!capabilities || capabilities.modelKey !== model || capabilities.capability !== "video") {
+        throw new Error(`模型 ${model} 缺少后台发布的视频能力契约`);
+    }
+    return capabilities;
+}
+
 export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: CanvasVideoGenerationMode): AiConfig {
     const capabilities = resolveVideoModelCapabilities(config);
-    const model = modelOptionName(config.model || config.videoModel);
     const normalizedResolution =
         capabilities.id === "kling"
             ? normalizeKlingResolution(config.vquality)
             : capabilities.id === "minimax-h3"
               ? normalizeMiniMaxH3Resolution(config.vquality)
               : capabilities.id === "seedance"
-                ? normalizeSeedanceResolution(config.vquality, model)
+                ? normalizeSeedanceCapabilityResolution(config.vquality, capabilities)
                 : `${normalizeVideoResolution(config.vquality)}p`;
     const normalizedDuration =
         capabilities.id === "kling"
@@ -118,9 +140,9 @@ export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: 
             : capabilities.id === "minimax-h3"
               ? normalizeMiniMaxH3Duration(config.videoSeconds)
               : capabilities.id === "seedance"
-                ? normalizeSeedanceDuration(config.videoSeconds, model)
+                ? normalizeSeedanceCapabilityDuration(config.videoSeconds, capabilities)
                 : Number(normalizeVideoDuration(config.videoSeconds));
-    const normalizedRatio = normalizeSeedanceRatio(config.size);
+    const normalizedRatio = capabilities.id === "seedance" ? normalizeSeedanceCapabilityRatio(config.size, capabilities) : normalizeSeedanceRatio(config.size);
     const ratioOptions = videoRatiosForMode(capabilities, generationMode);
     const supportedRatio = ratioOptions.some((option) => option.value === normalizedRatio) ? normalizedRatio : ratioOptions[0].value;
     const requestedCount = Math.max(1, Math.floor(Math.abs(Number(config.count)) || 1));
@@ -135,6 +157,33 @@ export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: 
         videoSuperResolutionEnabled: capabilities.supportsSuperResolution ? config.videoSuperResolutionEnabled : "false",
         videoSuperResolutionFps: capabilities.supportsSuperResolution ? config.videoSuperResolutionFps : "",
     };
+}
+
+function normalizeSeedanceCapabilityResolution(value: string, capabilities: VideoModelCapabilities) {
+    const normalized = normalizeResolutionToken(value);
+    if (capabilities.resolutions.some((option) => option.value === normalized)) return normalized;
+    return capabilities.resolutions.find((option) => option.value === "720p")?.value || capabilities.resolutions[0].value;
+}
+
+function normalizeSeedanceCapabilityDuration(value: string, capabilities: VideoModelCapabilities) {
+    const requested = Math.round(Number(value));
+    const range = capabilities.customDurationRange;
+    if (!range) throw new Error("Seedance 模型缺少生成时长能力契约");
+    return Math.max(range.min, Math.min(range.max, Number.isFinite(requested) ? requested : range.min));
+}
+
+function normalizeSeedanceCapabilityRatio(value: string, capabilities: VideoModelCapabilities) {
+    const requested = value === "auto" ? "adaptive" : value;
+    if (capabilities.ratios.some((option) => option.value === requested)) return requested;
+    const dimensions = requested.match(/^(\d+)x(\d+)$/);
+    if (!dimensions) return capabilities.ratios[0].value;
+    const requestedRatio = Number(dimensions[1]) / Number(dimensions[2]);
+    const numericOptions = capabilities.ratios.flatMap((option) => {
+        const parts = option.value.match(/^(\d+):(\d+)$/);
+        return parts ? [{ value: option.value, ratio: Number(parts[1]) / Number(parts[2]) }] : [];
+    });
+    if (!numericOptions.length || !Number.isFinite(requestedRatio)) return capabilities.ratios[0].value;
+    return numericOptions.reduce((nearest, option) => (Math.abs(option.ratio - requestedRatio) < Math.abs(nearest.ratio - requestedRatio) ? option : nearest)).value;
 }
 
 export function videoRatiosForMode(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {

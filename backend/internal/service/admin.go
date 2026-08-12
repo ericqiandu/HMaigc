@@ -136,6 +136,29 @@ type PublicChannelModelPrice struct {
 	PriceStrategy            string                        `json:"priceStrategy"`
 	UnitPriceMicrocredits    int64                         `json:"unitPriceMicrocredits"`
 	PriceTiers               []PublicChannelModelPriceTier `json:"priceTiers"`
+	ProviderCapabilities     *PublicProviderCapabilities   `json:"providerCapabilities,omitempty"`
+}
+
+type PublicProviderCapabilities struct {
+	ModelKey                string   `json:"modelKey"`
+	DisplayName             string   `json:"displayName"`
+	UpstreamMode            string   `json:"upstreamMode"`
+	Capability              string   `json:"capability"`
+	Resolutions             []string `json:"resolutions"`
+	Ratios                  []string `json:"ratios"`
+	DurationMin             int      `json:"durationMin"`
+	DurationMax             int      `json:"durationMax"`
+	SupportsSmartDuration   bool     `json:"supportsSmartDuration"`
+	SupportsGeneratedAudio  bool     `json:"supportsGeneratedAudio"`
+	SupportsWatermark       bool     `json:"supportsWatermark"`
+	SupportsAudioOnly       bool     `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames  bool     `json:"requiresAdaptiveFrames"`
+	MaxImages               int      `json:"maxImages"`
+	MaxVideos               int      `json:"maxVideos"`
+	MaxAudios               int      `json:"maxAudios"`
+	MaxVideoDurationSeconds int      `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds int      `json:"maxAudioDurationSeconds"`
+	Tools                   []string `json:"tools"`
 }
 
 type PublicChannelModelPriceTier struct {
@@ -716,6 +739,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				Capability:  item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
+				ProviderCapabilities: publicProviderModelCapabilities(item.ModelKey),
 			})
 		}
 	}
@@ -752,6 +776,25 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		HasAPIKey:        strings.TrimSpace(channel.APIKey) != "",
 		CreatedAt:        channel.CreatedAt,
 		UpdatedAt:        channel.UpdatedAt,
+	}
+}
+
+func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilities {
+	capabilities, ok := kuaiziSeedanceModelSpec(modelKey)
+	if !ok {
+		return nil
+	}
+	return &PublicProviderCapabilities{
+		ModelKey: capabilities.ModelKey, DisplayName: capabilities.DisplayName,
+		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
+		Resolutions: append([]string(nil), capabilities.Resolutions...), Ratios: append([]string(nil), capabilities.Ratios...),
+		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
+		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
+		SupportsWatermark: capabilities.SupportsWatermark, SupportsAudioOnly: capabilities.SupportsAudioOnly,
+		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
+		MaxImages:              capabilities.MaxImages, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
+		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
+		Tools: append([]string(nil), capabilities.Tools...),
 	}
 }
 

@@ -57,8 +57,31 @@ export type ModelChannel = {
             resolution: string;
             unitPriceMicrocredits: number;
         }>;
+        providerCapabilities?: VideoProviderCapabilities;
     }>;
     voices?: ChannelVoice[];
+};
+
+export type VideoProviderCapabilities = {
+    modelKey: string;
+    displayName: string;
+    upstreamMode: string;
+    capability: string;
+    resolutions: string[];
+    ratios: string[];
+    durationMin: number;
+    durationMax: number;
+    supportsSmartDuration: boolean;
+    supportsGeneratedAudio: boolean;
+    supportsWatermark: boolean;
+    supportsAudioOnly: boolean;
+    requiresAdaptiveFrames: boolean;
+    maxImages: number;
+    maxVideos: number;
+    maxAudios: number;
+    maxVideoDurationSeconds: number;
+    maxAudioDurationSeconds: number;
+    tools: string[];
 };
 
 export type AiConfig = {

@@ -344,6 +344,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err := validateVideoGenerationModeInput(normalizedInput); err != nil {
 		return nil, err
 	}
+	if err := validateProviderModelCapabilitiesInput(normalizedInput); err != nil {
+		return nil, err
+	}
 	if err := s.validateAudioTaskInput(userID, normalizedInput); err != nil {
 		return nil, err
 	}
@@ -1212,6 +1215,35 @@ func validateVideoGenerationModeInput(input map[string]any) error {
 		}
 	default:
 		return BadAuthRequest("不支持的视频生成模式")
+	}
+	return nil
+}
+
+func validateProviderModelCapabilitiesInput(input map[string]any) error {
+	if strings.TrimSpace(stringField(input, "mode")) != "video" {
+		return nil
+	}
+	config, _ := input["config"].(map[string]any)
+	if _, exists := input["tools"]; exists {
+		return BadAuthRequest("联网搜索尚未开放，不能提交工具参数")
+	}
+	if _, exists := config["tools"]; exists {
+		return BadAuthRequest("联网搜索尚未开放，不能提交工具参数")
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return BadAuthRequest("视频任务输入格式无效")
+	}
+	var generationInput canvasGenerationInput
+	if err := json.Unmarshal(encoded, &generationInput); err != nil {
+		return BadAuthRequest("视频任务输入格式无效")
+	}
+	capabilities, ok := kuaiziSeedanceModelSpec(generationInput.Config.Model)
+	if !ok {
+		return nil
+	}
+	if _, _, _, err := validateKuaiziCompatibleVideoInput(generationInput, capabilities); err != nil {
+		return BadAuthRequest(err.Error())
 	}
 	return nil
 }
