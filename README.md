@@ -33,11 +33,11 @@ bun run dev
 
 也可以直接启动本地 Docker 环境：
 
-```bash
-docker compose up -d --build --wait
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/local-compose.ps1
 ```
 
-默认访问地址为 `http://localhost:3000`。本地业务数据位于 `.local/data`，不得提交到 Git。
+默认访问地址为 `http://localhost:3000`。本地业务数据只允许位于 Git 主项目的 `.local/data`，不得提交到 Git。脚本会从 Git 公共目录解析主项目根；从 worktree 直接执行 `docker compose` 且未显式设置 `CANVAS_DATA_PATH` 会拒绝启动，防止误建第二份数据库。
 
 ### MiniMax Speech 配置
 

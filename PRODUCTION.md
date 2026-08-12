@@ -5,7 +5,7 @@
 ## 1. 上线前检查
 
 ```bash
-docker compose config -q
+CANVAS_DATA_PATH=/absolute/path/to/local-data docker compose config -q
 docker compose --env-file .env.production -f docker-compose.production.yml config -q
 docker compose --env-file .env.production -f deploy/docker-compose.ops.yml config -q
 cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./...
