@@ -22,7 +22,7 @@ import {
     supportsVideoReferenceAudio,
 } from "@/lib/canvas/canvas-project-generation";
 import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
-import { selectVideoGenerationContext } from "@/lib/canvas/canvas-video-generation-mode";
+import { selectVideoGenerationContext, shouldRestoreStoredVideoReferenceImages } from "@/lib/canvas/canvas-video-generation-mode";
 import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/generation-error";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
@@ -123,7 +123,8 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                 return;
             }
             const retryImages = retryReferenceImages || [];
-            const storedVideoImages = node.type === CanvasNodeType.Video && !context?.referenceImages.length ? await resolveStoredReferenceImages(node.metadata?.references) : [];
+            const restoreStoredVideoImages = node.type === CanvasNodeType.Video && shouldRestoreStoredVideoReferenceImages(node.metadata, context?.referenceImages.length || 0);
+            const storedVideoImages = restoreStoredVideoImages ? await resolveStoredReferenceImages(node.metadata?.references) : [];
             if (storedVideoImages === null) {
                 markMissingReferences(node.id, setNodes);
                 message.error("参考图片已丢失，无法继续重试");

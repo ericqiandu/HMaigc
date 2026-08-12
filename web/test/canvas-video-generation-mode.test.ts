@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { selectVideoGenerationContext, videoModeMetadataPatch } from "../src/lib/canvas/canvas-video-generation-mode";
+import { selectVideoGenerationContext, shouldRestoreStoredVideoReferenceImages, videoModeMetadataPatch } from "../src/lib/canvas/canvas-video-generation-mode";
 
 const image = (id: string) => ({ id, name: `${id}.png`, type: "image/png", dataUrl: `https://cdn.example.com/${id}.png` });
 const video = { id: "video-1", name: "reference.mp4", type: "video/mp4", url: "https://cdn.example.com/reference.mp4" };
@@ -54,5 +54,11 @@ describe("video generation mode contract", () => {
     test("missing required references fail explicitly", () => {
         expect(() => selectVideoGenerationContext({ videoGenerationMode: "image_reference" }, { ...context, referenceImages: [], imageCount: 0 })).toThrow("图片参考模式需要至少一张已连接的参考图片");
         expect(() => videoModeMetadataPatch({ mode: "first_last_frame", frameNodeIds: ["image-1"], counts: { image: 1, video: 0, audio: 0 } })).toThrow("首尾帧模式需要两张不同的参考图片");
+    });
+
+    test("omni reference retry never reclassifies stored video URLs as images", () => {
+        expect(shouldRestoreStoredVideoReferenceImages({ videoGenerationMode: "omni_reference" }, 0)).toBe(false);
+        expect(shouldRestoreStoredVideoReferenceImages({ videoGenerationMode: "image_reference" }, 0)).toBe(true);
+        expect(shouldRestoreStoredVideoReferenceImages({ videoGenerationMode: "image_reference" }, 1)).toBe(false);
     });
 });

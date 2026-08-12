@@ -75,3 +75,9 @@ export function selectVideoGenerationContext<T extends VideoGenerationReferenceC
     if (!context.referenceImages.length && !context.referenceVideos.length && !context.referenceAudios.length) throw new Error("全能参考模式需要至少一个图片、视频或音频素材");
     return context;
 }
+
+export function shouldRestoreStoredVideoReferenceImages(metadata: CanvasNodeMetadata | undefined, currentImageCount: number) {
+    if (currentImageCount > 0) return false;
+    const mode = resolveVideoGenerationMode(metadata);
+    return mode === "image" || mode === "first_last_frame" || mode === "image_reference";
+}
