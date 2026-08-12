@@ -129,6 +129,7 @@ func initializeAndServe(sqlDB *sql.DB, svc *service.Service) error {
 	handler.RegisterAdminOperationsRoutes(api, svc)
 	handler.RegisterAdminStorageMigrationRoutes(api, svc)
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
+	handler.RegisterAgentModelSettingRoutes(api, svc)
 	handler.RegisterProviderAccountRoutes(api, svc)
 	handler.RegisterAnnouncementRoutes(api, svc)
 	handler.RegisterFinanceRoutes(api, svc)

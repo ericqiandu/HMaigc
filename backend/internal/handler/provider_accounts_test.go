@@ -268,7 +268,11 @@ func openProviderAccountHandlerFixture(t *testing.T) *providerAccountHandlerFixt
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterProviderAccountRoutes(router.Group("/api"), service.New(repository.New(db), t.TempDir()))
+	svc := service.New(repository.New(db), t.TempDir())
+	api := router.Group("/api")
+	RegisterProviderAccountRoutes(api, svc)
+	RegisterAgentModelSettingRoutes(api, svc)
+	RegisterAuthRoutes(api, svc)
 	fixture := &providerAccountHandlerFixture{router: router, db: db, adminCookie: adminCookie, userCookie: userCookie, userID: user.ID}
 	t.Cleanup(fixture.closeDB)
 	return fixture

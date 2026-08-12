@@ -552,6 +552,18 @@ func (r *Repository) SaveSystemSetting(setting *model.SystemSetting) error {
 	return r.db.Save(setting).Error
 }
 
+func (r *Repository) SaveSystemSettingWithAudit(setting *model.SystemSetting, audit *model.AdminAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(setting).Error; err != nil {
+			return err
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
+	})
+}
+
 func (r *Repository) DeleteSystemSetting(key string) error {
 	return r.db.Delete(&model.SystemSetting{}, "key = ?", key).Error
 }

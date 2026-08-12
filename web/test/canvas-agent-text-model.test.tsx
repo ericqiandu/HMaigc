@@ -7,7 +7,7 @@ import { defaultConfig, encodeChannelModel, type AiConfig, type ModelChannel } f
 
 let CanvasAgentModelMenu: (typeof import("../src/components/canvas/canvas-agent-model-menu"))["CanvasAgentModelMenu"];
 let CanvasAgentSelectionSummary: (typeof import("../src/components/canvas/canvas-agent-selection-summary"))["CanvasAgentSelectionSummary"];
-let removeLastCanvasAgentSelection: (typeof import("../src/components/canvas/canvas-agent-selection-summary"))["removeLastCanvasAgentSelection"];
+let resolveAgentDefaultRequestConfig: (typeof import("../src/components/canvas/canvas-agent-default-model"))["resolveAgentDefaultRequestConfig"];
 
 beforeAll(async () => {
     const browserWindow = new Window({ url: "http://localhost/canvas/test" });
@@ -22,113 +22,69 @@ beforeAll(async () => {
         SVGElement: browserWindow.SVGElement,
         getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
     };
-    for (const [name, value] of Object.entries(globals)) {
-        Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-    }
+    for (const [name, value] of Object.entries(globals)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
     ({ CanvasAgentModelMenu } = await import("../src/components/canvas/canvas-agent-model-menu"));
-    ({ CanvasAgentSelectionSummary, removeLastCanvasAgentSelection } = await import("../src/components/canvas/canvas-agent-selection-summary"));
+    ({ CanvasAgentSelectionSummary } = await import("../src/components/canvas/canvas-agent-selection-summary"));
+    ({ resolveAgentDefaultRequestConfig } = await import("../src/components/canvas/canvas-agent-default-model"));
 });
 
-const textChannels: ModelChannel[] = [
-    {
-        id: "kuaizi-chat-gpt",
-        name: "筷子 GPT Agent",
-        baseUrl: "/api/ai/system/kuaizi-chat-gpt",
-        apiKey: "system",
-        apiFormat: "openai",
-        interfaceType: "chat-completion",
-        models: ["gpt-5.5"],
-        scope: "system",
-        enabled: true,
-        modelCosts: [
-            {
-                model: "gpt-5.5",
-                displayName: "GPT 5.5",
-                marketingCopy: "支持图片理解与 Agent 工具调用",
-                promotionBadge: "",
-                estimatedDurationSeconds: 0,
-                brandKey: "openai",
-                accessPolicy: "authenticated",
-                accessible: true,
-                capability: "text",
-                billingMode: "fixed_request",
-                priceStrategy: "flat",
-                unitPriceMicrocredits: 10,
-                priceTiers: [],
-            },
-        ],
-    },
-    {
-        id: "kuaizi-chat-deepseek",
-        name: "筷子 DeepSeek Agent",
-        baseUrl: "/api/ai/system/kuaizi-chat-deepseek",
-        apiKey: "system",
-        apiFormat: "openai",
-        interfaceType: "chat-completion",
-        models: ["deepseek-v4-pro"],
-        scope: "system",
-        enabled: true,
-        modelCosts: [
-            {
-                model: "deepseek-v4-pro",
-                displayName: "DeepSeek V4 Pro",
-                marketingCopy: "纯文本 Agent 模型，不支持图片输入",
-                promotionBadge: "",
-                estimatedDurationSeconds: 0,
-                brandKey: "deepseek",
-                accessPolicy: "authenticated",
-                accessible: true,
-                capability: "text",
-                billingMode: "fixed_request",
-                priceStrategy: "flat",
-                unitPriceMicrocredits: 8,
-                priceTiers: [],
-            },
-        ],
-    },
-];
+const textChannel: ModelChannel = {
+    id: "kuaizi-chat-gpt",
+    name: "筷子 GPT Agent",
+    baseUrl: "/api/ai/system/kuaizi-chat-gpt",
+    apiKey: "system",
+    apiFormat: "openai",
+    interfaceType: "chat-completion",
+    models: ["gpt-5.5"],
+    scope: "system",
+    enabled: true,
+    modelCosts: [
+        {
+            model: "gpt-5.5",
+            displayName: "GPT 5.5",
+            marketingCopy: "支持图片理解与 Agent 工具调用",
+            promotionBadge: "",
+            estimatedDurationSeconds: 0,
+            brandKey: "openai",
+            accessPolicy: "authenticated",
+            accessible: true,
+            capability: "text",
+            billingMode: "fixed_request",
+            priceStrategy: "flat",
+            unitPriceMicrocredits: 10,
+            priceTiers: [],
+        },
+    ],
+};
+const agentDefaultModel = encodeChannelModel(textChannel.id, "gpt-5.5");
+const config: AiConfig = { ...defaultConfig, channels: [textChannel], models: [agentDefaultModel], textModels: [agentDefaultModel], textModel: "legacy-local-selection" };
 
-const gptValue = encodeChannelModel("kuaizi-chat-gpt", "gpt-5.5");
-const deepseekValue = encodeChannelModel("kuaizi-chat-deepseek", "deepseek-v4-pro");
-const config: AiConfig = { ...defaultConfig, channels: textChannels, models: [gptValue, deepseekValue], textModels: [gptValue, deepseekValue] };
-
-describe("canvas Agent text model selection", () => {
-    test("renders the dynamic GPT and DeepSeek choices only when Agent selection is enabled", () => {
-        const markup = renderToStaticMarkup(
-            createElement(CanvasAgentModelMenu, {
-                config,
-                value: { image: "", video: "" },
-                agentModel: gptValue,
-                showAgentModels: true,
-                onChange: () => undefined,
-                onAgentModelChange: () => undefined,
-            }),
-        );
-        expect(markup).toContain("Agent");
-        expect(markup).toContain("GPT 5.5");
-        expect(markup).toContain("DeepSeek V4 Pro");
-        expect(markup).toContain("支持图片理解与 Agent 工具调用");
-        expect(markup).toContain("纯文本 Agent 模型，不支持图片输入");
+describe("canvas Agent default model", () => {
+    test("model picker contains only image and video capabilities", () => {
+        const markup = renderToStaticMarkup(createElement(CanvasAgentModelMenu, { config, value: { image: "", video: "" }, onChange: () => undefined }));
+        expect(markup).not.toContain("Agent");
+        expect(markup).toContain("图片");
+        expect(markup).toContain("视频");
     });
 
-    test("shows and removes the Agent model independently from generation models", () => {
+    test("selection summary never displays an Agent text model", () => {
         const markup = renderToStaticMarkup(
             createElement(CanvasAgentSelectionSummary, {
                 config,
                 models: { image: "", video: "" },
-                agentModel: deepseekValue,
                 selectedSkills: [],
                 onModelsChange: () => undefined,
-                onAgentModelChange: () => undefined,
                 onSkillsChange: () => undefined,
             }),
         );
-        expect(markup).toContain("DeepSeek V4 Pro");
-        expect(markup).toContain("移除 Agent 模型 DeepSeek V4 Pro");
-        expect(removeLastCanvasAgentSelection({ models: { image: "", video: "" }, agentModel: deepseekValue, selectedSkills: [] })).toEqual({
-            models: { image: "", video: "" },
-            agentModel: "",
-            selectedSkills: [],
-        });
+        expect(markup).toBe("");
+    });
+
+    test("request uses only the backend Agent default and rejects missing configuration", () => {
+        const resolved = resolveAgentDefaultRequestConfig(config, agentDefaultModel);
+        expect(resolved.model).toBe("gpt-5.5");
+        expect(resolved.baseUrl).toBe(textChannel.baseUrl);
+        expect(() => resolveAgentDefaultRequestConfig(config, "")).toThrow("管理员尚未配置可用的 Agent 模型");
+        expect(() => resolveAgentDefaultRequestConfig(config, "legacy-local-selection")).toThrow("管理员尚未配置可用的 Agent 模型");
     });
 });

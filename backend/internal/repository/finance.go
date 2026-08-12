@@ -90,6 +90,14 @@ func (r *Repository) ChannelModelByID(channelID string, id string) (*model.Chann
 	return &item, nil
 }
 
+func (r *Repository) ChannelModelByRecordID(id string) (*model.ChannelModel, error) {
+	var item model.ChannelModel
+	if err := r.db.Preload("PriceTiers", func(db *gorm.DB) *gorm.DB { return db.Order("resolution asc") }).First(&item, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (r *Repository) ChannelModelByKey(channelID string, modelKey string) (*model.ChannelModel, error) {
 	var item model.ChannelModel
 	if err := r.db.Preload("PriceTiers", func(db *gorm.DB) *gorm.DB { return db.Order("resolution asc") }).First(&item, "channel_id = ? AND model_key = ? AND enabled = ?", channelID, modelKey, true).Error; err != nil {

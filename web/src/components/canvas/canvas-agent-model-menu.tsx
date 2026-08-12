@@ -6,27 +6,13 @@ import { cn } from "@/lib/utils";
 import { modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import type { CanvasAgentGenerationModels } from "@/types/canvas";
 
-type AgentGenerationCapability = Extract<ModelCapability, "image" | "video" | "text">;
+type AgentGenerationCapability = Extract<ModelCapability, "image" | "video">;
 
-export function CanvasAgentModelMenu({
-    config,
-    value,
-    agentModel,
-    showAgentModels = false,
-    onChange,
-    onAgentModelChange,
-}: {
-    config: AiConfig;
-    value: CanvasAgentGenerationModels;
-    agentModel?: string;
-    showAgentModels?: boolean;
-    onChange: (value: CanvasAgentGenerationModels) => void;
-    onAgentModelChange?: (value: string) => void;
-}) {
-    const [capability, setCapability] = useState<AgentGenerationCapability>(showAgentModels ? "text" : "image");
+export function CanvasAgentModelMenu({ config, value, onChange }: { config: AiConfig; value: CanvasAgentGenerationModels; onChange: (value: CanvasAgentGenerationModels) => void }) {
+    const [capability, setCapability] = useState<AgentGenerationCapability>("image");
     const models = useMemo(() => selectableModelsByCapability(config, capability), [capability, config]);
-    const capabilities: AgentGenerationCapability[] = showAgentModels ? ["text", "image", "video"] : ["image", "video"];
-    const capabilityLabel = capability === "text" ? "Agent" : capability === "image" ? "图片" : "视频";
+    const capabilities: AgentGenerationCapability[] = ["image", "video"];
+    const capabilityLabel = capability === "image" ? "图片" : "视频";
 
     return (
         <section className="canvas-overlay-panel canvas-agent-picker canvas-agent-model-menu" aria-label="选择模型">
@@ -36,7 +22,7 @@ export function CanvasAgentModelMenu({
             <div className="canvas-agent-picker-segments" role="radiogroup" aria-label="模型类型">
                 {capabilities.map((item) => (
                     <button key={item} type="button" role="radio" aria-checked={capability === item} className={cn("canvas-agent-picker-segment", capability === item && "canvas-agent-picker-segment--active")} onClick={() => setCapability(item)}>
-                        {item === "text" ? "Agent" : item === "image" ? "图片" : "视频"}
+                        {item === "image" ? "图片" : "视频"}
                     </button>
                 ))}
             </div>
@@ -44,16 +30,10 @@ export function CanvasAgentModelMenu({
             <div className="canvas-agent-model-list thin-scrollbar">
                 {models.length ? (
                     models.map((model) => {
-                        const selected = capability === "text" ? agentModel === model : value[capability] === model;
+                        const selected = value[capability] === model;
                         const presentation = modelPresentation(config, model);
                         return (
-                            <button
-                                key={model}
-                                type="button"
-                                className={cn("canvas-agent-model-row", selected && "canvas-agent-model-row--selected")}
-                                aria-pressed={selected}
-                                onClick={() => (capability === "text" ? onAgentModelChange?.(model) : onChange({ ...value, [capability]: model }))}
-                            >
+                            <button key={model} type="button" className={cn("canvas-agent-model-row", selected && "canvas-agent-model-row--selected")} aria-pressed={selected} onClick={() => onChange({ ...value, [capability]: model })}>
                                 <span className="canvas-agent-model-icon">
                                     <ModelIcon config={config} model={model} />
                                 </span>

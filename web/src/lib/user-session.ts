@@ -13,10 +13,7 @@ export async function applyUserSession(payload: AuthSessionPayload) {
         resetRemoteUserDataSync();
         await flushCanvasStorePersistence();
         setActiveUserScope(payload.user?.id);
-        const [persistedCanvas, persistedAssets] = await Promise.all([
-            localForageStorage.getItem(CANVAS_STORE_KEY),
-            localForageStorage.getItem(ASSET_STORE_KEY),
-        ]);
+        const [persistedCanvas, persistedAssets] = await Promise.all([localForageStorage.getItem(CANVAS_STORE_KEY), localForageStorage.getItem(ASSET_STORE_KEY)]);
         const persistedConfig = scopedLocalStorage.getItem(CONFIG_STORE_KEY);
         useUserStore.getState().setUser(payload.user);
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
@@ -35,8 +32,9 @@ export async function applyUserSession(payload: AuthSessionPayload) {
                 audioModels: undefined,
             };
             useConfigStore.getState().replaceConfig(normalizeConfigSnapshot({ config: initialSystemConfig }).config);
+            useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
         } else {
-            useConfigStore.getState().mergeSystemChannels(payload.systemChannels || []);
+            useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
         }
         installRemoteUserDataAutoSync();
         if (payload.user?.id) await syncRemoteUserData(payload.user.id);
@@ -49,5 +47,5 @@ export async function applyUserSession(payload: AuthSessionPayload) {
 export async function refreshSystemChannels() {
     // 系统模型由后端统一维护，后台变更后只刷新这一层，避免重跑整套用户数据同步。
     const payload = await getSystemChannels();
-    useConfigStore.getState().mergeSystemChannels(payload.channels || []);
+    useConfigStore.getState().mergeSystemChannels(payload.channels || [], payload.agentDefaultModel);
 }

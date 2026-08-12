@@ -16,31 +16,15 @@ type CanvasAgentComposerControlsProps = {
     config: AiConfig;
     disabled?: boolean;
     models: CanvasAgentGenerationModels;
-    agentModel?: string;
-    showAgentModels?: boolean;
     selectedSkills: CanvasAgentSkillSelection[];
     executionMode: CanvasAgentExecutionMode;
     placement?: ComponentProps<typeof Popover>["placement"];
     onModelsChange: (models: CanvasAgentGenerationModels) => void;
-    onAgentModelChange?: (model: string) => void;
     onSkillsChange: (skills: CanvasAgentSkillSelection[]) => void;
     onExecutionModeChange: (mode: CanvasAgentExecutionMode) => void;
 };
 
-export function CanvasAgentComposerControls({
-    config,
-    disabled,
-    models,
-    agentModel,
-    showAgentModels,
-    selectedSkills,
-    executionMode,
-    placement = "top",
-    onModelsChange,
-    onAgentModelChange,
-    onSkillsChange,
-    onExecutionModeChange,
-}: CanvasAgentComposerControlsProps) {
+export function CanvasAgentComposerControls({ config, disabled, models, selectedSkills, executionMode, placement = "top", onModelsChange, onSkillsChange, onExecutionModeChange }: CanvasAgentComposerControlsProps) {
     const [activePopover, setActivePopover] = useState<AgentComposerPopover | null>(null);
 
     return (
@@ -52,7 +36,7 @@ export function CanvasAgentComposerControls({
                 open={activePopover === "models"}
                 disabled={disabled}
                 onOpenChange={(open) => setActivePopover(open ? "models" : null)}
-                content={<CanvasAgentModelMenu config={config} value={models} agentModel={agentModel} showAgentModels={showAgentModels} onChange={onModelsChange} onAgentModelChange={onAgentModelChange} />}
+                content={<CanvasAgentModelMenu config={config} value={models} onChange={onModelsChange} />}
             />
             <ComposerPopover
                 label="Skills"

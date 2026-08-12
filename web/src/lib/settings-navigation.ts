@@ -23,5 +23,5 @@ function navigateWithinWorkspace(to: string) {
 
 /** 生成流程只报告当前能力缺失，不在用户操作中隐式切换到管理后台。 */
 export function handleMissingSystemModel() {
-    message.error("系统暂未配置当前功能所需的可用模型，请联系管理员完成模型、定价和权限配置");
+    message.error("管理员尚未配置可用的 Agent 模型");
 }

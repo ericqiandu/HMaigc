@@ -3,7 +3,7 @@ import { Bot, BookOpenText, Focus, History, PanelRightClose, Plus, RotateCcw, Sh
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
-import { normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
@@ -35,6 +35,7 @@ import { previewCanvasAgentOps, summarizeCanvasAgentOps, type CanvasAgentOp, typ
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary, removeLastCanvasAgentSelection } from "./canvas-agent-selection-summary";
+import { resolveAgentDefaultRequestConfig } from "./canvas-agent-default-model";
 import { waitForCanvasGeneration } from "@/lib/canvas/canvas-agent-generation-wait";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
@@ -269,10 +270,9 @@ export function CanvasAssistantPanel({
     const user = useUserStore((state) => state.user);
     const effectiveConfig = useEffectiveConfig();
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
+    const agentDefaultModel = useConfigStore((state) => state.agentDefaultModel);
     const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
     const [agentModels, setAgentModels] = useState<CanvasAgentGenerationModels>({ image: "", video: "" });
-    const [agentTextModel, setAgentTextModel] = useState("");
     const [selectedSkills, setSelectedSkills] = useState<CanvasAgentSkillSelection[]>([]);
     const [width, setWidth] = useState(() => Math.min(420, Math.max(320, window.innerWidth)));
     const [view, setView] = useState<OnlineAgentTab>("chat");
@@ -503,7 +503,7 @@ export function CanvasAssistantPanel({
     };
 
     const runCinematicSession = async (sessionId: string, text: string, current: CanvasAgentSnapshot, config: AiConfig, executionMode: CanvasAgentExecutionMode, launchRequestId?: string, onCreated?: (backendSessionId: string) => void) => {
-        const requestConfig = resolveModelRequestConfig(config, config.textModel || config.model);
+        const requestConfig = resolveAgentDefaultRequestConfig(config, agentDefaultModel);
         const controller = new AbortController();
         const requestKey = `creating:${nanoid()}`;
         let backendSessionId = "";
@@ -578,8 +578,10 @@ export function CanvasAssistantPanel({
     };
 
     const sendMessage = async (text: string, history: CanvasAssistantMessage[], savedReferences?: CanvasAssistantReference[]) => {
-        const requestConfig = resolveModelRequestConfig(effectiveConfig, agentTextModel || effectiveConfig.textModel || effectiveConfig.model);
-        if (!isAiConfigReady(requestConfig, requestConfig.model)) {
+        let requestConfig: AiConfig & { model: string; channelId: string };
+        try {
+            requestConfig = resolveAgentDefaultRequestConfig(effectiveConfig, agentDefaultModel);
+        } catch {
             handleMissingSystemModel();
             return;
         }
@@ -600,7 +602,7 @@ export function CanvasAssistantPanel({
     };
 
     const runOnlineAgentStep = async (sessionId: string, assistantId: string, history: CanvasAssistantMessage[], userMessage: CanvasAssistantMessage, loop: OnlineLoopContext) => {
-        const requestConfig = resolveModelRequestConfig(effectiveConfig, agentTextModel || effectiveConfig.textModel || effectiveConfig.model);
+        const requestConfig = resolveAgentDefaultRequestConfig(effectiveConfig, agentDefaultModel);
         try {
             setIsRunning(true);
             const messages = await buildToolAgentMessages(snapshotRef.current, history, userMessage, agentModels, selectedSkills);
@@ -655,7 +657,7 @@ export function CanvasAssistantPanel({
             upsertMessage(sessionId, { id: assistantId, role: "assistant", text: toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。" });
             return;
         }
-        const requestConfig = resolveModelRequestConfig(effectiveConfig, agentTextModel || effectiveConfig.textModel || effectiveConfig.model);
+        const requestConfig = resolveAgentDefaultRequestConfig(effectiveConfig, agentDefaultModel);
         let streamed = "";
         const next = await requestToolResponse({ ...requestConfig, systemPrompt: "" }, nextMessages, ONLINE_AGENT_TOOLS, "auto", (text) => {
             streamed = text;
@@ -859,12 +861,14 @@ export function CanvasAssistantPanel({
         const requestedSkills = options?.skills || selectedSkills;
         const requestedConfig = {
             ...effectiveConfig,
-            textModel: agentTextModel || effectiveConfig.textModel,
+            textModel: agentDefaultModel,
             imageModel: requestedModels.image || effectiveConfig.imageModel,
             videoModel: requestedModels.video || effectiveConfig.videoModel,
         };
-        const requestConfig = resolveModelRequestConfig(requestedConfig, requestedConfig.textModel || requestedConfig.model);
-        if (!isAiConfigReady(requestConfig, requestConfig.model)) {
+        let requestConfig: AiConfig & { model: string; channelId: string };
+        try {
+            requestConfig = resolveAgentDefaultRequestConfig(requestedConfig, agentDefaultModel);
+        } catch {
             handleMissingSystemModel();
             if (options?.launchRequestId) {
                 const session = activeSession || createSession();
@@ -1098,25 +1102,13 @@ export function CanvasAssistantPanel({
                         onSubmit={cinematicEntryActive ? () => submitCinematicProject(prompt) : submit}
                         onAddFiles={addImagesToCanvas}
                         onDeleteBackwardAtStart={() => {
-                            const next = removeLastCanvasAgentSelection({ models: agentModels, agentModel: agentTextModel, selectedSkills });
+                            const next = removeLastCanvasAgentSelection({ models: agentModels, selectedSkills });
                             if (!next) return false;
                             setAgentModels(next.models);
-                            setAgentTextModel(next.agentModel || "");
                             setSelectedSkills(next.selectedSkills);
                             return true;
                         }}
-                        selectionSummary={
-                            <CanvasAgentSelectionSummary
-                                config={effectiveConfig}
-                                models={agentModels}
-                                agentModel={agentTextModel}
-                                selectedSkills={selectedSkills}
-                                disabled={agentBusy}
-                                onModelsChange={setAgentModels}
-                                onAgentModelChange={setAgentTextModel}
-                                onSkillsChange={setSelectedSkills}
-                            />
-                        }
+                        selectionSummary={<CanvasAgentSelectionSummary config={effectiveConfig} models={agentModels} selectedSkills={selectedSkills} disabled={agentBusy} onModelsChange={setAgentModels} onSkillsChange={setSelectedSkills} />}
                         left={
                             <div className="canvas-agent-composer-extra-controls">
                                 {cinematicEntryActive ? (
@@ -1128,12 +1120,9 @@ export function CanvasAssistantPanel({
                                     config={effectiveConfig}
                                     disabled={agentBusy}
                                     models={agentModels}
-                                    agentModel={agentTextModel}
-                                    showAgentModels
                                     selectedSkills={selectedSkills}
                                     executionMode={executionMode}
                                     onModelsChange={setAgentModels}
-                                    onAgentModelChange={setAgentTextModel}
                                     onSkillsChange={setSelectedSkills}
                                     onExecutionModeChange={setExecutionMode}
                                 />

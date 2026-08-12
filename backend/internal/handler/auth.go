@@ -126,7 +126,12 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"user": publicUser, "systemChannels": channels, "runtimeLimits": limits})
+		agentDefaultModel, err := svc.PublicAgentDefaultModel()
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"user": publicUser, "systemChannels": channels, "runtimeLimits": limits, "agentDefaultModel": agentDefaultModel})
 	})
 	r.GET("/channels/system", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
@@ -139,7 +144,12 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"channels": channels})
+		agentDefaultModel, err := svc.PublicAgentDefaultModel()
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"channels": channels, "agentDefaultModel": agentDefaultModel})
 	})
 }
 

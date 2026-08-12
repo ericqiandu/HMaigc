@@ -75,6 +75,6 @@
 
 - [ ] Back up the canonical local data directory metadata and verify the compose bind before rebuilding.
 - [ ] Rebuild the local backend/web through `scripts/local-compose.ps1`; confirm startup migration completes and both services are healthy.
-- [ ] In the administrator UI, verify one shared Kuaizi Key, select DeepSeek as the default Agent model, and save.
-- [ ] In the canvas, verify the selector is absent, DeepSeek is used, and missing/disabled configuration fails explicitly without choosing another model.
+- [ ] In the administrator UI, verify one shared Kuaizi Key, select the intended configured text model as the default Agent model, and save.
+- [ ] In the canvas, verify the selector is absent, the selected model is used, and missing/disabled configuration fails explicitly without choosing another model.
 - [ ] Confirm wallet and audit facts, clean transient test containers, and report the two commits without pushing.

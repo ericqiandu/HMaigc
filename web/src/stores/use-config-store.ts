@@ -180,9 +180,10 @@ export const defaultConfig: AiConfig = {
 
 type ConfigStore = {
     config: AiConfig;
+    agentDefaultModel: string;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     replaceConfig: (config: AiConfig) => void;
-    mergeSystemChannels: (channels: ModelChannel[]) => void;
+    mergeSystemChannels: (channels: ModelChannel[], agentDefaultModel?: { channelId: string; modelKey: string } | null) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
 };
 
@@ -275,6 +276,7 @@ export const useConfigStore = create<ConfigStore>()(
     persist(
         (set) => ({
             config: defaultConfig,
+            agentDefaultModel: "",
             updateConfig: (key, value) =>
                 set((state) => ({
                     config: {
@@ -283,7 +285,7 @@ export const useConfigStore = create<ConfigStore>()(
                     },
                 })),
             replaceConfig: (config) => set({ config }),
-            mergeSystemChannels: (channels) =>
+            mergeSystemChannels: (channels, agentDefaultModel) =>
                 set((state) => {
                     const systemChannels = channels.map((channel, index) =>
                         createModelChannel({
@@ -294,7 +296,9 @@ export const useConfigStore = create<ConfigStore>()(
                             apiKey: channel.apiKey || "system",
                         }),
                     );
-                    return normalizeConfigSnapshot({ config: { ...state.config, channels: systemChannels } });
+                    const normalized = normalizeConfigSnapshot({ config: { ...state.config, channels: systemChannels } });
+                    const requestedDefault = agentDefaultModel ? encodeChannelModel(agentDefaultModel.channelId, agentDefaultModel.modelKey) : "";
+                    return { ...normalized, agentDefaultModel: normalized.config.models.includes(requestedDefault) ? requestedDefault : "" };
                 }),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
         }),

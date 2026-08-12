@@ -5,12 +5,16 @@ import { CircleDollarSign, Pencil, Search, Settings2, TriangleAlert } from "luci
 import { useEffect, useMemo, useState } from "react";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
+import { refreshSystemChannels } from "@/lib/user-session";
 import {
     createAdminModelPricing,
     getAdminModelPricingOperationsSetting,
+    getAdminAgentDefaultModelSetting,
     listAdminModelPricings,
     updateAdminModelPricing,
     updateAdminModelPricingOperationsSetting,
+    updateAdminAgentDefaultModelSetting,
+    type AgentDefaultModelSetting,
     type ModelPricing,
     type ModelPricingInput,
     type ModelPricingOperationsSetting,
@@ -19,6 +23,7 @@ import { listAdminChannelModels, updateAdminChannelModel, type ChannelModel } fr
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
+import { agentDefaultModelOptions } from "./agent-model-options";
 import { imagePricingSpecifications, specificationsForModel, specificationsForStrategy, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
@@ -50,6 +55,9 @@ export default function ModelPricingPage() {
     const { references } = useAdminContext();
     const [models, setModels] = useState<CommercialModel[]>([]);
     const [setting, setSetting] = useState<ModelPricingOperationsSetting>(emptySetting);
+    const [agentSetting, setAgentSetting] = useState<AgentDefaultModelSetting | null>(null);
+    const [agentModelId, setAgentModelId] = useState("");
+    const [savingAgentModel, setSavingAgentModel] = useState(false);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const [saving, setSaving] = useState(false);
@@ -67,7 +75,12 @@ export default function ModelPricingPage() {
     const reload = async () => {
         setLoading(true);
         try {
-            const [pricingResult, settingResult, ...channelResults] = await Promise.all([listAdminModelPricings(), getAdminModelPricingOperationsSetting(), ...references.channels.map((channel) => listAdminChannelModels(channel.id))]);
+            const [pricingResult, settingResult, agentSettingResult, ...channelResults] = await Promise.all([
+                listAdminModelPricings(),
+                getAdminModelPricingOperationsSetting(),
+                getAdminAgentDefaultModelSetting(),
+                ...references.channels.map((channel) => listAdminChannelModels(channel.id)),
+            ]);
             const pricingByModel = new Map(pricingResult.pricings.map((item) => [pricingScopeKey(item.channelId, item.model, item.capability), item]));
             const nextModels = channelResults.flatMap((result, index) => {
                 const channel = references.channels[index];
@@ -79,6 +92,8 @@ export default function ModelPricingPage() {
             });
             setModels(nextModels);
             setSetting(settingResult.setting);
+            setAgentSetting(agentSettingResult.setting);
+            setAgentModelId(agentSettingResult.setting.configured ? agentSettingResult.setting.channelModelId : "");
             setLoadError("");
         } catch (error) {
             setLoadError(error instanceof Error ? error.message : "读取模型商业定价失败");
@@ -144,16 +159,43 @@ export default function ModelPricingPage() {
         }
     };
 
+    const agentModelOptions = useMemo(() => agentDefaultModelOptions(models), [models]);
+
+    const saveAgentModel = async () => {
+        if (!agentModelId) {
+            message.error("请选择已启用、已完成定价的系统文本模型");
+            return;
+        }
+        setSavingAgentModel(true);
+        try {
+            const result = await updateAdminAgentDefaultModelSetting(agentModelId);
+            setAgentSetting(result.setting);
+            setAgentModelId(result.setting.channelModelId);
+            try {
+                await refreshSystemChannels();
+                message.success("全站 Agent 模型已更新");
+            } catch {
+                message.warning("全站 Agent 模型已保存，但当前页面同步失败，请刷新后继续");
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存 Agent 模型失败");
+        } finally {
+            setSavingAgentModel(false);
+        }
+    };
+
     const savePricing = async () => {
         if (!editing) return;
         const values = await pricingForm.validateFields();
         const currency = values.currency.trim().toUpperCase();
         const specifications = specificationsForModel({ modelKey: editing.modelKey, priceStrategy: values.priceStrategy });
-        const incompleteSpecification = specifications.filter((specification) => specification.group === "base").find((specification) => {
-            const supplierCost = values.tierCosts?.[specification.key];
-            const userCredits = values.tierCredits?.[specification.key];
-            return userCredits !== undefined && (supplierCost === undefined || supplierCost <= 0 || userCredits <= 0);
-        });
+        const incompleteSpecification = specifications
+            .filter((specification) => specification.group === "base")
+            .find((specification) => {
+                const supplierCost = values.tierCosts?.[specification.key];
+                const userCredits = values.tierCredits?.[specification.key];
+                return userCredits !== undefined && (supplierCost === undefined || supplierCost <= 0 || userCredits <= 0);
+            });
         if (incompleteSpecification) {
             message.error(`${incompleteSpecification.label} 的供应商成本和用户积分必须同时配置且大于 0`);
             return;
@@ -303,6 +345,27 @@ export default function ModelPricingPage() {
                     <AdminContentError title="模型商业定价刷新失败" description={loadError} onRetry={() => void reload()} />
                 </div>
             ) : null}
+            <section className="model-pricing-agent-setting mb-5 bg-foreground/[0.035] px-4 py-4" aria-labelledby="model-pricing-agent-setting-title">
+                <div className="model-pricing-agent-setting-copy mb-3">
+                    <h2 id="model-pricing-agent-setting-title" className="model-pricing-agent-setting-title text-sm font-semibold">
+                        Agent 模型配置
+                    </h2>
+                    <p className="model-pricing-agent-setting-description mt-1 text-xs leading-5 text-foreground/48">画布 Agent 全站使用这里指定的唯一文本模型，用户端不提供切换入口；模型失效时会明确停用，不自动降级。</p>
+                </div>
+                <div className="model-pricing-agent-setting-controls flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <Select
+                        aria-label="全站 Agent 默认模型"
+                        className="model-pricing-agent-model-select min-w-0 flex-1"
+                        value={agentModelId || undefined}
+                        placeholder="选择已启用并完成定价的文本模型"
+                        options={agentModelOptions}
+                        onChange={setAgentModelId}
+                    />
+                    <Button className="model-pricing-agent-model-save" type="primary" loading={savingAgentModel} disabled={!agentModelId || agentModelId === agentSetting?.channelModelId} onClick={() => void saveAgentModel()}>
+                        保存 Agent 模型
+                    </Button>
+                </div>
+            </section>
             <section className="model-pricing-metrics mb-5 grid grid-cols-2 lg:grid-cols-4" aria-label="模型商业定价概览">
                 <Metric label="全部模型" value={models.length} detail="已接入系统目录" />
                 <Metric label="定价完整" value={configuredCount} detail="成本、售价与利润可核算" />
@@ -505,7 +568,14 @@ function PricingDrawer({
                         />
                     </Form.Item>
                 </div>
-                {strategy === "image_resolution" || strategy === "video_resolution" ? <ResolutionPricingFields strategy={strategy} billingMode={billingMode} modelKey={model?.modelKey || ""} /> : <><FlatPricingFields capability={capability} /><SupplierOnlyPricingFields modelKey={model?.modelKey || ""} strategy={strategy} /></>}
+                {strategy === "image_resolution" || strategy === "video_resolution" ? (
+                    <ResolutionPricingFields strategy={strategy} billingMode={billingMode} modelKey={model?.modelKey || ""} />
+                ) : (
+                    <>
+                        <FlatPricingFields capability={capability} />
+                        <SupplierOnlyPricingFields modelKey={model?.modelKey || ""} strategy={strategy} />
+                    </>
+                )}
             </Form>
         </Drawer>
     );
@@ -583,14 +653,18 @@ function PricingSpecificationGroup({ title, specifications, unit, required, supp
                         <MoneyField name={["tierCosts", specification.key]} label={`供应商成本 / ${specification.unit || unit}`} required={required} />
                         {specification.note ? <p className="model-pricing-specification-note -mt-4 text-[11px] leading-4 text-foreground/42">{specification.note}</p> : null}
                     </div>
-                    {supplierOnly ? <div className="model-pricing-supplier-only-label pt-8 text-xs text-foreground/42">供应商成本项，不直接设置用户售价</div> : <Form.Item
-                        className="model-pricing-field"
-                        name={["tierCredits", specification.key]}
-                        label={`用户积分 / ${unit}`}
-                        rules={required ? [{ required: true, type: "number", min: 0.000001, message: "必须大于 0" }] : [{ type: "number", min: 0.000001, message: "必须大于 0" }]}
-                    >
-                        <InputNumber className="model-pricing-number-input w-full" min={0.000001} precision={6} placeholder="未配置" />
-                    </Form.Item>}
+                    {supplierOnly ? (
+                        <div className="model-pricing-supplier-only-label pt-8 text-xs text-foreground/42">供应商成本项，不直接设置用户售价</div>
+                    ) : (
+                        <Form.Item
+                            className="model-pricing-field"
+                            name={["tierCredits", specification.key]}
+                            label={`用户积分 / ${unit}`}
+                            rules={required ? [{ required: true, type: "number", min: 0.000001, message: "必须大于 0" }] : [{ type: "number", min: 0.000001, message: "必须大于 0" }]}
+                        >
+                            <InputNumber className="model-pricing-number-input w-full" min={0.000001} precision={6} placeholder="未配置" />
+                        </Form.Item>
+                    )}
                 </div>
             ))}
         </section>
@@ -706,7 +780,8 @@ function formatMargin(model: CommercialModel, setting: ModelPricingOperationsSet
 function formatCost(model: CommercialModel) {
     const pricing = model.pricing;
     if (!pricing) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
-    if (model.priceStrategy !== "flat" || pricing.tiers.length > 0) return <span className="model-pricing-cost text-xs">{pricing.tiers.map((tier) => `${tierLabel(tier.specification)} ${money(tierCost(pricing, tier.specification), pricing.currency)}`).join(" · ")}</span>;
+    if (model.priceStrategy !== "flat" || pricing.tiers.length > 0)
+        return <span className="model-pricing-cost text-xs">{pricing.tiers.map((tier) => `${tierLabel(tier.specification)} ${money(tierCost(pricing, tier.specification), pricing.currency)}`).join(" · ")}</span>;
     const value = comparableCost(model);
     return value === null ? (
         <span className="model-pricing-unavailable text-xs text-foreground/40">缺少可比成本</span>

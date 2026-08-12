@@ -29,7 +29,19 @@ export type AdminUser = LocalUser & {
 export type AuthSessionPayload = {
     user: LocalUser | null;
     systemChannels?: ModelChannel[];
+    agentDefaultModel?: AgentDefaultModelReference | null;
     runtimeLimits?: RuntimeLimits;
+};
+
+export type AgentDefaultModelReference = {
+    channelModelId: string;
+    channelId: string;
+    modelKey: string;
+};
+
+export type AgentDefaultModelSetting = AgentDefaultModelReference & {
+    configured: boolean;
+    displayName: string;
 };
 
 export type RuntimeLimits = {
@@ -96,8 +108,15 @@ export type AdminUserDetail = {
     account: { userId: string; availableMicrocredits: number; reservedMicrocredits: number; version: number };
     counts: { ledgerEntries: number; tasks: number; apiCalls: number; auditEvents: number };
     storageUsage: {
-        assetCount: number; assetBytes: number; canvasCount: number; canvasBytes: number;
-        sessionCount: number; sessionBytes: number; taskCount: number; taskBytes: number; apiCallCount: number;
+        assetCount: number;
+        assetBytes: number;
+        canvasCount: number;
+        canvasBytes: number;
+        sessionCount: number;
+        sessionBytes: number;
+        taskCount: number;
+        taskBytes: number;
+        apiCallCount: number;
     };
     storedFileBytes: number;
     dailyUploadBytes: number;
@@ -380,7 +399,7 @@ export function getAuthSession() {
 }
 
 export function getSystemChannels() {
-    return request<{ channels: ModelChannel[] }>(api.get("/channels/system"));
+    return request<{ channels: ModelChannel[]; agentDefaultModel?: AgentDefaultModelReference | null }>(api.get("/channels/system"));
 }
 
 export function login(input: { username: string; password: string }) {
@@ -533,6 +552,14 @@ export function getAdminModelPricingOperationsSetting() {
 
 export function updateAdminModelPricingOperationsSetting(input: Omit<ModelPricingOperationsSetting, "configured">) {
     return request<{ setting: ModelPricingOperationsSetting }>(api.patch("/admin/model-pricing-settings", input));
+}
+
+export function getAdminAgentDefaultModelSetting() {
+    return request<{ setting: AgentDefaultModelSetting }>(api.get("/admin/settings/agent-model"));
+}
+
+export function updateAdminAgentDefaultModelSetting(channelModelId: string) {
+    return request<{ setting: AgentDefaultModelSetting }>(api.put("/admin/settings/agent-model", { channelModelId }));
 }
 
 export function deleteAdminModelPricing(id: string) {
