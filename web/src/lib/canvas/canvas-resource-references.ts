@@ -24,6 +24,10 @@ export function canvasResourceMentionToken(reference: CanvasResourceReference) {
     return `@[node:${reference.nodeId}]`;
 }
 
+export function selectVideoReferenceCandidates(references: CanvasResourceReference[], targetNodeId: string) {
+    return references.filter((reference) => reference.nodeId !== targetNodeId && Boolean(reference.previewUrl) && (reference.kind === "image" || reference.kind === "video" || reference.kind === "audio"));
+}
+
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null) {
     const contextNodes = contextNodeId ? getMentionResourceNodes(contextNodeId, nodes, connections) : [];
     const globalReferences = labelResourceNodes(nodes.filter(isResourceNode), false);
@@ -81,7 +85,14 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 title: node.title || label,
                 previewUrl: node.metadata?.workflowKind === "character" ? node.metadata.characterCoverUrl : node.metadata?.content,
                 storageKey: node.metadata?.storageKey,
-                text: node.metadata?.workflowKind === "character" ? node.metadata.characterPrompt : node.type === CanvasNodeType.Text ? node.metadata?.content || node.metadata?.prompt : node.type === CanvasNodeType.Skill ? skillResourceText(node) : undefined,
+                text:
+                    node.metadata?.workflowKind === "character"
+                        ? node.metadata.characterPrompt
+                        : node.type === CanvasNodeType.Text
+                          ? node.metadata?.content || node.metadata?.prompt
+                          : node.type === CanvasNodeType.Skill
+                            ? skillResourceText(node)
+                            : undefined,
                 active,
                 sourceType: node.type,
             },

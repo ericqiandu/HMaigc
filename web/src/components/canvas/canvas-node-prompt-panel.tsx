@@ -20,7 +20,7 @@ import { CanvasVideoSuperResolutionPopover } from "./canvas-video-super-resoluti
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
-import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { canvasResourceMentionToken, selectVideoReferenceCandidates, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-composer.css";
 import "./canvas-video-composer.css";
 import "./canvas-media-composer.css";
@@ -98,16 +98,19 @@ export function CanvasNodePromptPanel({
         [mentionReferences],
     );
     const activeVideoImageNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)), [mentionReferences]);
-    const availableVideoImageReferences = useMemo(
-        () => availableReferences.filter((item) => item.kind === "image" && item.nodeId !== node.id && Boolean(item.previewUrl)).map((item) => ({ ...item, active: activeVideoImageNodeIds.has(item.nodeId) })),
-        [activeVideoImageNodeIds, availableReferences, node.id],
+    const activeVideoReferenceNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && (item.kind === "image" || item.kind === "video" || item.kind === "audio")).map((item) => item.nodeId)), [mentionReferences]);
+    const availableVideoReferences = useMemo(
+        () => selectVideoReferenceCandidates(availableReferences, node.id).map((item) => ({ ...item, active: activeVideoReferenceNodeIds.has(item.nodeId) })),
+        [activeVideoReferenceNodeIds, availableReferences, node.id],
     );
-    const videoFrameOptions = availableVideoImageReferences.map((item) => ({
-        nodeId: item.nodeId,
-        label: item.label,
-        title: item.title,
-        previewUrl: item.previewUrl,
-    }));
+    const videoFrameOptions = availableVideoReferences
+        .filter((item) => item.kind === "image")
+        .map((item) => ({
+            nodeId: item.nodeId,
+            label: item.label,
+            title: item.title,
+            previewUrl: item.previewUrl,
+        }));
     const activeVideoFrameNodeIds = useMemo(
         () => new Set([node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId].filter((value): value is string => Boolean(value))),
         [node.metadata?.videoEndFrameNodeId, node.metadata?.videoStartFrameNodeId],
@@ -212,7 +215,7 @@ export function CanvasNodePromptPanel({
                 </>
             ) : mode === "video" ? (
                 <>
-                    <ReferenceConnectPicker label="+参考" references={availableVideoImageReferences} theme={theme} targetNodeId={node.id} onConnect={onReferenceConnect} />
+                    <ReferenceConnectPicker label="+参考" references={availableVideoReferences} theme={theme} targetNodeId={node.id} onConnect={onReferenceConnect} />
                     <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : isAudioMode ? (
