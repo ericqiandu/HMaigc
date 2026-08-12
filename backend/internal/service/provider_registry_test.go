@@ -11,8 +11,8 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	descriptors := registry.Descriptors()
-	if len(descriptors) != 2 {
-		t.Fatalf("descriptor count = %d, want 2", len(descriptors))
+	if len(descriptors) != 4 {
+		t.Fatalf("descriptor count = %d, want 4", len(descriptors))
 	}
 	seedance, ok := registry.Descriptor("kuaizi", "seedance")
 	if !ok {
@@ -31,6 +31,20 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	}
 	if strings.Join(model.Resolutions, ",") != "1K,2K,4K" || len(model.Ratios) != 13 {
 		t.Fatalf("GPT Image 2 output capabilities = %#v", model)
+	}
+	gpt, ok := registry.Descriptor("kuaizi", "gpt")
+	if !ok || len(gpt.Models) != 1 {
+		t.Fatalf("kuaizi/gpt descriptor = %#v, exists=%v", gpt, ok)
+	}
+	if got := gpt.Models[0]; got.ModelKey != "gpt-5.5" || got.DisplayName != "GPT 5.5" || got.UpstreamMode != "gpt-5.5" || got.Capability != "text" || got.MarketingCopy != "支持图片理解与 Agent 工具调用" {
+		t.Fatalf("GPT Agent model = %#v", got)
+	}
+	deepseek, ok := registry.Descriptor("kuaizi", "deepseek")
+	if !ok || len(deepseek.Models) != 1 {
+		t.Fatalf("kuaizi/deepseek descriptor = %#v, exists=%v", deepseek, ok)
+	}
+	if got := deepseek.Models[0]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
+		t.Fatalf("DeepSeek Agent model = %#v", got)
 	}
 }
 

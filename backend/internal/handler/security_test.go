@@ -8,7 +8,19 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/service"
 )
+
+func TestApplySystemProxyAuthenticationUsesManagedKuaiziApiKeyWithoutBearer(t *testing.T) {
+	request, err := http.NewRequest(http.MethodPost, "https://aiopenapi.kuaizi.cn/ai-open-platform-api/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applySystemProxyAuthentication(request, service.SystemProxyRuntime{HeaderName: "ApiKey", APIKey: "sentinel-key"})
+	if request.Header.Get("ApiKey") != "sentinel-key" || request.Header.Get("Authorization") != "" {
+		t.Fatalf("proxy authentication headers = %#v", request.Header)
+	}
+}
 
 func TestAuthorizeSystemProxyAllowsConfiguredGenerationModel(t *testing.T) {
 	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["gpt-image-1"]`}

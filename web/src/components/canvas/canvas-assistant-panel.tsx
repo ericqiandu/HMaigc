@@ -272,6 +272,7 @@ export function CanvasAssistantPanel({
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
     const [agentModels, setAgentModels] = useState<CanvasAgentGenerationModels>({ image: "", video: "" });
+    const [agentTextModel, setAgentTextModel] = useState("");
     const [selectedSkills, setSelectedSkills] = useState<CanvasAgentSkillSelection[]>([]);
     const [width, setWidth] = useState(() => Math.min(420, Math.max(320, window.innerWidth)));
     const [view, setView] = useState<OnlineAgentTab>("chat");
@@ -577,7 +578,7 @@ export function CanvasAssistantPanel({
     };
 
     const sendMessage = async (text: string, history: CanvasAssistantMessage[], savedReferences?: CanvasAssistantReference[]) => {
-        const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
+        const requestConfig = resolveModelRequestConfig(effectiveConfig, agentTextModel || effectiveConfig.textModel || effectiveConfig.model);
         if (!isAiConfigReady(requestConfig, requestConfig.model)) {
             handleMissingSystemModel();
             return;
@@ -599,7 +600,7 @@ export function CanvasAssistantPanel({
     };
 
     const runOnlineAgentStep = async (sessionId: string, assistantId: string, history: CanvasAssistantMessage[], userMessage: CanvasAssistantMessage, loop: OnlineLoopContext) => {
-        const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
+        const requestConfig = resolveModelRequestConfig(effectiveConfig, agentTextModel || effectiveConfig.textModel || effectiveConfig.model);
         try {
             setIsRunning(true);
             const messages = await buildToolAgentMessages(snapshotRef.current, history, userMessage, agentModels, selectedSkills);
@@ -654,7 +655,7 @@ export function CanvasAssistantPanel({
             upsertMessage(sessionId, { id: assistantId, role: "assistant", text: toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。" });
             return;
         }
-        const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
+        const requestConfig = resolveModelRequestConfig(effectiveConfig, agentTextModel || effectiveConfig.textModel || effectiveConfig.model);
         let streamed = "";
         const next = await requestToolResponse({ ...requestConfig, systemPrompt: "" }, nextMessages, ONLINE_AGENT_TOOLS, "auto", (text) => {
             streamed = text;
@@ -858,10 +859,11 @@ export function CanvasAssistantPanel({
         const requestedSkills = options?.skills || selectedSkills;
         const requestedConfig = {
             ...effectiveConfig,
+            textModel: agentTextModel || effectiveConfig.textModel,
             imageModel: requestedModels.image || effectiveConfig.imageModel,
             videoModel: requestedModels.video || effectiveConfig.videoModel,
         };
-        const requestConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
+        const requestConfig = resolveModelRequestConfig(requestedConfig, requestedConfig.textModel || requestedConfig.model);
         if (!isAiConfigReady(requestConfig, requestConfig.model)) {
             handleMissingSystemModel();
             if (options?.launchRequestId) {
@@ -1096,9 +1098,10 @@ export function CanvasAssistantPanel({
                         onSubmit={cinematicEntryActive ? () => submitCinematicProject(prompt) : submit}
                         onAddFiles={addImagesToCanvas}
                         onDeleteBackwardAtStart={() => {
-                            const next = removeLastCanvasAgentSelection({ models: agentModels, selectedSkills });
+                            const next = removeLastCanvasAgentSelection({ models: agentModels, agentModel: agentTextModel, selectedSkills });
                             if (!next) return false;
                             setAgentModels(next.models);
+                            setAgentTextModel(next.agentModel || "");
                             setSelectedSkills(next.selectedSkills);
                             return true;
                         }}
@@ -1106,9 +1109,11 @@ export function CanvasAssistantPanel({
                             <CanvasAgentSelectionSummary
                                 config={effectiveConfig}
                                 models={agentModels}
+                                agentModel={agentTextModel}
                                 selectedSkills={selectedSkills}
                                 disabled={agentBusy}
                                 onModelsChange={setAgentModels}
+                                onAgentModelChange={setAgentTextModel}
                                 onSkillsChange={setSelectedSkills}
                             />
                         }
@@ -1123,9 +1128,12 @@ export function CanvasAssistantPanel({
                                     config={effectiveConfig}
                                     disabled={agentBusy}
                                     models={agentModels}
+                                    agentModel={agentTextModel}
+                                    showAgentModels
                                     selectedSkills={selectedSkills}
                                     executionMode={executionMode}
                                     onModelsChange={setAgentModels}
+                                    onAgentModelChange={setAgentTextModel}
                                     onSkillsChange={setSelectedSkills}
                                     onExecutionModeChange={setExecutionMode}
                                 />

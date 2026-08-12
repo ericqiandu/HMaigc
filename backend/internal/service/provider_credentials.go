@@ -28,6 +28,67 @@ type SaveProviderCredentialRequest struct {
 	Key string `json:"key"`
 }
 
+// SystemProxyRuntime 只在一次受控上游请求的内存边界内存在，不进入 DTO、日志或数据库。
+type SystemProxyRuntime struct {
+	BaseURL    string
+	HeaderName string
+	APIKey     string
+}
+
+func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKey string) (SystemProxyRuntime, error) {
+	if channel == nil {
+		return SystemProxyRuntime{}, ServiceUnavailable("系统渠道不存在")
+	}
+	modelKey = strings.TrimPrefix(strings.TrimSpace(modelKey), "models/")
+	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
+	if !isKuaiziChatChannelID(channel.ID) {
+		return SystemProxyRuntime{BaseURL: channel.BaseURL, HeaderName: systemProxyHeaderName(channel.APIFormat), APIKey: channel.APIKey}, nil
+	}
+	if !managed || spec.Capability != "text" || channel.ID != deterministicKuaiziChatChannelID(family) {
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 渠道与模型系列不匹配")
+	}
+	item, err := s.repo.ChannelModelByKey(channel.ID, modelKey)
+	if err != nil || item.ProviderCredentialID == "" {
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 模型尚未发布或启用")
+	}
+	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
+	if err != nil || !account.Enabled {
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技账号不可用")
+	}
+	credential, err := s.repo.ProviderCredentialByFamily(account.ID, family)
+	if err != nil || credential.ID != item.ProviderCredentialID || !credential.Enabled || credential.HealthStatus != "healthy" {
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 系列凭据不可用")
+	}
+	endpointVersions, err := s.repo.ProviderEndpointVersions(account.ID)
+	if err != nil {
+		return SystemProxyRuntime{}, err
+	}
+	endpoint := activeEndpointVersion(endpointVersions)
+	if endpoint == nil {
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技服务地址不可用")
+	}
+	credentialVersions, err := s.repo.ProviderCredentialVersions(credential.ID)
+	if err != nil {
+		return SystemProxyRuntime{}, err
+	}
+	version := activeCredentialVersion(credentialVersions)
+	if version == nil {
+		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 系列凭据没有活动版本")
+	}
+	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, credential.ID, version.Version, version.KeyCipher)
+	if err != nil {
+		return SystemProxyRuntime{}, ServiceUnavailable("解密筷子 Agent 系列 Key 失败")
+	}
+	return SystemProxyRuntime{BaseURL: kuaiziChatCompletionsBaseURL(endpoint.BaseURL), HeaderName: "ApiKey", APIKey: key}, nil
+}
+
+func systemProxyHeaderName(apiFormat string) string {
+	if apiFormat == "gemini" {
+		return "x-goog-api-key"
+	}
+	return "Authorization"
+}
+
 type providerAuditMetadata struct {
 	Provider    string `json:"provider"`
 	Family      string `json:"family,omitempty"`

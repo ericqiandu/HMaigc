@@ -45,6 +45,11 @@ func (s *Service) processKuaiziCompatibleTask(ctx context.Context, task model.Ta
 	case "image":
 		input.Mode = "image"
 		return runKuaiziGPTImage2Task(ctx, input)
+	case "text":
+		input.Mode = "text"
+		input.Config.InterfaceType = string(model.ChannelInterfaceChatCompletion)
+		input.Config.BaseURL = kuaiziChatCompletionsBaseURL(runtime.BaseURL)
+		return runKuaiziChatCompletionsTask(ctx, input)
 	default:
 		return nil, fmt.Errorf("筷子科技模型能力未实现：%s", spec.Capability)
 	}

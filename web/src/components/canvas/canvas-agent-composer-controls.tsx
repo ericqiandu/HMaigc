@@ -3,11 +3,7 @@ import { Button, Popover } from "antd";
 import { Box, Cpu, Hand, Sparkles } from "lucide-react";
 
 import type { AiConfig } from "@/stores/use-config-store";
-import type {
-    CanvasAgentExecutionMode,
-    CanvasAgentGenerationModels,
-    CanvasAgentSkillSelection,
-} from "@/types/canvas";
+import type { CanvasAgentExecutionMode, CanvasAgentGenerationModels, CanvasAgentSkillSelection } from "@/types/canvas";
 import { CanvasAgentModeMenu } from "./canvas-agent-mode-menu";
 import { CanvasAgentModelMenu } from "./canvas-agent-model-menu";
 import { CanvasAgentSkillMenu } from "./canvas-agent-skill-menu";
@@ -20,10 +16,13 @@ type CanvasAgentComposerControlsProps = {
     config: AiConfig;
     disabled?: boolean;
     models: CanvasAgentGenerationModels;
+    agentModel?: string;
+    showAgentModels?: boolean;
     selectedSkills: CanvasAgentSkillSelection[];
     executionMode: CanvasAgentExecutionMode;
     placement?: ComponentProps<typeof Popover>["placement"];
     onModelsChange: (models: CanvasAgentGenerationModels) => void;
+    onAgentModelChange?: (model: string) => void;
     onSkillsChange: (skills: CanvasAgentSkillSelection[]) => void;
     onExecutionModeChange: (mode: CanvasAgentExecutionMode) => void;
 };
@@ -32,10 +31,13 @@ export function CanvasAgentComposerControls({
     config,
     disabled,
     models,
+    agentModel,
+    showAgentModels,
     selectedSkills,
     executionMode,
     placement = "top",
     onModelsChange,
+    onAgentModelChange,
     onSkillsChange,
     onExecutionModeChange,
 }: CanvasAgentComposerControlsProps) {
@@ -50,7 +52,7 @@ export function CanvasAgentComposerControls({
                 open={activePopover === "models"}
                 disabled={disabled}
                 onOpenChange={(open) => setActivePopover(open ? "models" : null)}
-                content={<CanvasAgentModelMenu config={config} value={models} onChange={onModelsChange} />}
+                content={<CanvasAgentModelMenu config={config} value={models} agentModel={agentModel} showAgentModels={showAgentModels} onChange={onModelsChange} onAgentModelChange={onAgentModelChange} />}
             />
             <ComposerPopover
                 label="Skills"
@@ -63,9 +65,7 @@ export function CanvasAgentComposerControls({
             />
             <ComposerPopover
                 label="生成模式"
-                icon={executionMode === "guided"
-                    ? <Hand className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />
-                    : <Cpu className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />}
+                icon={executionMode === "guided" ? <Hand className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} /> : <Cpu className="canvas-agent-composer-picker-glyph" strokeWidth={1.8} />}
                 placement={placement}
                 open={activePopover === "mode"}
                 disabled={disabled}
@@ -103,23 +103,8 @@ function ComposerPopover({
 }) {
     return (
         <CanvasAgentTooltip title={label}>
-            <Popover
-                arrow={false}
-                trigger="click"
-                placement={placement}
-                open={open}
-                onOpenChange={onOpenChange}
-                content={content}
-                rootClassName="canvas-overlay-popover canvas-agent-composer-popover"
-            >
-                <Button
-                    type="text"
-                    className={`canvas-agent-composer-tool canvas-agent-composer-picker-trigger ${open ? "canvas-agent-composer-picker-trigger--active" : ""}`}
-                    disabled={disabled}
-                    icon={icon}
-                    aria-label={label}
-                    aria-expanded={open}
-                />
+            <Popover arrow={false} trigger="click" placement={placement} open={open} onOpenChange={onOpenChange} content={content} rootClassName="canvas-overlay-popover canvas-agent-composer-popover">
+                <Button type="text" className={`canvas-agent-composer-tool canvas-agent-composer-picker-trigger ${open ? "canvas-agent-composer-picker-trigger--active" : ""}`} disabled={disabled} icon={icon} aria-label={label} aria-expanded={open} />
             </Popover>
         </CanvasAgentTooltip>
     );

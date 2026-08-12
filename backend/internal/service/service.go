@@ -1011,15 +1011,15 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	}
 	task.InputJSON = decryptedInput
 	ctx = withProviderAnalytics(ctx, s, task)
-	if _, ok := kuaiziProviderModelSpec(task.Model); ok {
-		result, err := s.processKuaiziCompatibleTask(ctx, task)
-		return result, nil, err
-	}
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)
+	}
+	if _, ok := kuaiziProviderModelSpec(task.Model); ok {
+		result, err := s.processKuaiziCompatibleTask(ctx, task)
+		return result, nil, err
 	}
 	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
 		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.Type, task.Prompt, task.InputJSON)
@@ -1042,7 +1042,7 @@ func (s *Service) processAgentStoryboardTask(ctx context.Context, task model.Tas
 	if !providerConfigReady(input.Config) {
 		return nil, nil, errors.New("当前功能必须使用后台配置的文本模型")
 	}
-	config, err := s.resolveProviderConfig(input.Config)
+	config, err := s.resolveTextTaskProviderConfig(task, input.Config)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1072,7 +1072,7 @@ func (s *Service) processStoryboardRowsTask(ctx context.Context, task model.Task
 	if len(assets) == 0 {
 		assets = extractStoryboardAssets(input.CanvasSnapshot)
 	}
-	config, err := s.resolveProviderConfig(input.Config)
+	config, err := s.resolveTextTaskProviderConfig(task, input.Config)
 	if err != nil {
 		return nil, nil, err
 	}

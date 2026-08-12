@@ -168,7 +168,38 @@ func (r *Repository) CreateMissingChannelModels(items []model.ChannelModel) (int
 }
 
 func (r *Repository) PublishProviderChannelModels(channelID string, credentialID string, items []model.ChannelModel, modelsJSON string, audit *model.AdminAuditEvent) error {
+	return r.PublishProviderManagedChannelModels(nil, channelID, credentialID, items, modelsJSON, audit)
+}
+
+// PublishProviderManagedChannelModels 将 provider owner 的系统渠道和模型绑定作为一个事实提交。
+// channel=nil 时只允许更新已经存在的渠道，供原有视频兼容渠道继续使用。
+func (r *Repository) PublishProviderManagedChannelModels(channel *model.ModelChannel, channelID string, credentialID string, items []model.ChannelModel, modelsJSON string, audit *model.AdminAuditEvent) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if channel != nil {
+			var stored model.ModelChannel
+			err := tx.First(&stored, "id = ?", channel.ID).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if err := tx.Create(channel).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			} else {
+				if stored.Scope != model.ChannelScopeSystem || stored.InterfaceType != channel.InterfaceType {
+					return fmt.Errorf("provider managed channel identity conflict: %s", channel.ID)
+				}
+				stored.Enabled = true
+				stored.Name = channel.Name
+				stored.BaseURL = channel.BaseURL
+				stored.APIFormat = channel.APIFormat
+				stored.ConcurrencyLimit = channel.ConcurrencyLimit
+				stored.ModelsJSON = channel.ModelsJSON
+				stored.UpdatedAt = channel.UpdatedAt
+				if err := tx.Save(&stored).Error; err != nil {
+					return err
+				}
+			}
+		}
 		for index := range items {
 			item := &items[index]
 			var existing model.ChannelModel
@@ -176,6 +207,7 @@ func (r *Repository) PublishProviderChannelModels(channelID string, credentialID
 			if err == nil {
 				existing.ProviderCredentialID = credentialID
 				existing.DisplayName = item.DisplayName
+				existing.MarketingCopy = item.MarketingCopy
 				existing.Capability = item.Capability
 				if !existing.PriceConfigured {
 					existing.Enabled = false

@@ -597,12 +597,17 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 		return
 	}
 	modelName := proxyRequestModel(c.GetHeader("Content-Type"), body)
+	runtime, err := svc.ResolveSystemProxyRuntime(channel, modelName)
+	if err != nil {
+		failService(c, err)
+		return
+	}
 	billingOrderID := ""
 	query := c.Request.URL.Query()
 	for _, key := range []string{"key", "api_key", "access_token", "token"} {
 		query.Del(key)
 	}
-	target := strings.TrimRight(channel.BaseURL, "/") + path
+	target := strings.TrimRight(runtime.BaseURL, "/") + path
 	if encodedQuery := query.Encode(); encodedQuery != "" {
 		target += "?" + encodedQuery
 	}
@@ -647,11 +652,7 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	if accept := c.GetHeader("Accept"); accept != "" {
 		upstreamReq.Header.Set("Accept", accept)
 	}
-	if channel.APIFormat == "gemini" {
-		upstreamReq.Header.Set("x-goog-api-key", channel.APIKey)
-	} else {
-		upstreamReq.Header.Set("Authorization", "Bearer "+channel.APIKey)
-	}
+	applySystemProxyAuthentication(upstreamReq, runtime)
 
 	status := model.ApiCallStatusSucceeded
 	statusCode := 0
@@ -702,6 +703,14 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+}
+
+func applySystemProxyAuthentication(request *http.Request, runtime service.SystemProxyRuntime) {
+	if runtime.HeaderName == "Authorization" {
+		request.Header.Set(runtime.HeaderName, "Bearer "+runtime.APIKey)
+		return
+	}
+	request.Header.Set(runtime.HeaderName, runtime.APIKey)
 }
 
 func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID string, method string, path string, target string, body []byte, status model.ApiCallStatus, statusCode int, duration time.Duration, errorText string, concurrencyLimit int) model.ApiCallLog {

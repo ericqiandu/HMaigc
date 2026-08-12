@@ -3,29 +3,30 @@ import { Check, Plus } from "lucide-react";
 
 import { ModelIcon } from "@/components/model-picker";
 import { cn } from "@/lib/utils";
-import {
-    modelDisplayName,
-    modelOptionName,
-    resolveModelChannel,
-    selectableModelsByCapability,
-    type AiConfig,
-    type ModelCapability,
-} from "@/stores/use-config-store";
+import { modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import type { CanvasAgentGenerationModels } from "@/types/canvas";
 
-type AgentGenerationCapability = Extract<ModelCapability, "image" | "video">;
+type AgentGenerationCapability = Extract<ModelCapability, "image" | "video" | "text">;
 
 export function CanvasAgentModelMenu({
     config,
     value,
+    agentModel,
+    showAgentModels = false,
     onChange,
+    onAgentModelChange,
 }: {
     config: AiConfig;
     value: CanvasAgentGenerationModels;
+    agentModel?: string;
+    showAgentModels?: boolean;
     onChange: (value: CanvasAgentGenerationModels) => void;
+    onAgentModelChange?: (value: string) => void;
 }) {
-    const [capability, setCapability] = useState<AgentGenerationCapability>("image");
+    const [capability, setCapability] = useState<AgentGenerationCapability>(showAgentModels ? "text" : "image");
     const models = useMemo(() => selectableModelsByCapability(config, capability), [capability, config]);
+    const capabilities: AgentGenerationCapability[] = showAgentModels ? ["text", "image", "video"] : ["image", "video"];
+    const capabilityLabel = capability === "text" ? "Agent" : capability === "image" ? "图片" : "视频";
 
     return (
         <section className="canvas-overlay-panel canvas-agent-picker canvas-agent-model-menu" aria-label="选择模型">
@@ -33,24 +34,17 @@ export function CanvasAgentModelMenu({
                 <h3 className="canvas-agent-picker-title">选择模型</h3>
             </header>
             <div className="canvas-agent-picker-segments" role="radiogroup" aria-label="模型类型">
-                {(["image", "video"] as const).map((item) => (
-                    <button
-                        key={item}
-                        type="button"
-                        role="radio"
-                        aria-checked={capability === item}
-                        className={cn("canvas-agent-picker-segment", capability === item && "canvas-agent-picker-segment--active")}
-                        onClick={() => setCapability(item)}
-                    >
-                        {item === "image" ? "图片" : "视频"}
+                {capabilities.map((item) => (
+                    <button key={item} type="button" role="radio" aria-checked={capability === item} className={cn("canvas-agent-picker-segment", capability === item && "canvas-agent-picker-segment--active")} onClick={() => setCapability(item)}>
+                        {item === "text" ? "Agent" : item === "image" ? "图片" : "视频"}
                     </button>
                 ))}
             </div>
-            <div className="canvas-agent-picker-section-label">{capability === "image" ? "图片" : "视频"}</div>
+            <div className="canvas-agent-picker-section-label">{capabilityLabel}</div>
             <div className="canvas-agent-model-list thin-scrollbar">
                 {models.length ? (
                     models.map((model) => {
-                        const selected = value[capability] === model;
+                        const selected = capability === "text" ? agentModel === model : value[capability] === model;
                         const presentation = modelPresentation(config, model);
                         return (
                             <button
@@ -58,7 +52,7 @@ export function CanvasAgentModelMenu({
                                 type="button"
                                 className={cn("canvas-agent-model-row", selected && "canvas-agent-model-row--selected")}
                                 aria-pressed={selected}
-                                onClick={() => onChange({ ...value, [capability]: model })}
+                                onClick={() => (capability === "text" ? onAgentModelChange?.(model) : onChange({ ...value, [capability]: model }))}
                             >
                                 <span className="canvas-agent-model-icon">
                                     <ModelIcon config={config} model={model} />
@@ -78,7 +72,7 @@ export function CanvasAgentModelMenu({
                     })
                 ) : (
                     <div className="canvas-agent-picker-empty" role="status">
-                        当前没有可用的{capability === "image" ? "图片" : "视频"}模型，请联系管理员配置。
+                        当前没有可用的{capabilityLabel}模型，请联系管理员配置并完成定价。
                     </div>
                 )}
             </div>

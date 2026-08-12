@@ -14,6 +14,7 @@ type ProviderAdapterDescriptor struct {
 type ProviderModelSpec struct {
 	ModelKey                string   `json:"modelKey"`
 	DisplayName             string   `json:"displayName"`
+	MarketingCopy           string   `json:"marketingCopy"`
 	UpstreamMode            string   `json:"upstreamMode"`
 	Capability              string   `json:"capability"`
 	Resolutions             []string `json:"resolutions"`
@@ -129,6 +130,22 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 				Ratios:      []string{"1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"},
 			}},
 		},
+		{
+			ProviderKind: "kuaizi",
+			Family:       "gpt",
+			Models: []ProviderModelSpec{{
+				ModelKey: "gpt-5.5", DisplayName: "GPT 5.5", MarketingCopy: "支持图片理解与 Agent 工具调用",
+				UpstreamMode: "gpt-5.5", Capability: "text",
+			}},
+		},
+		{
+			ProviderKind: "kuaizi",
+			Family:       "deepseek",
+			Models: []ProviderModelSpec{{
+				ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
+				UpstreamMode: "deepseek-v4-pro", Capability: "text",
+			}},
+		},
 	}
 }
 
@@ -159,6 +176,17 @@ func kuaiziProviderModelSpec(modelKey string) (ProviderModelSpec, bool) {
 		}
 	}
 	return ProviderModelSpec{}, false
+}
+
+func kuaiziProviderFamilyForModel(modelKey string) (string, ProviderModelSpec, bool) {
+	for _, descriptor := range kuaiziProviderAdapterDescriptors() {
+		for _, candidate := range descriptor.Models {
+			if candidate.ModelKey == strings.TrimSpace(modelKey) {
+				return descriptor.Family, candidate, true
+			}
+		}
+	}
+	return "", ProviderModelSpec{}, false
 }
 
 func validateProviderRegistryRuntime(descriptors []ProviderAdapterDescriptor) error {

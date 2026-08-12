@@ -346,6 +346,36 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	return config, nil
 }
 
+func (s *Service) resolveTextTaskProviderConfig(task model.Task, config providerConfig) (providerConfig, error) {
+	resolved, err := s.resolveProviderConfig(config)
+	if err != nil {
+		return providerConfig{}, err
+	}
+	family, spec, managed := kuaiziProviderFamilyForModel(resolved.Model)
+	if !managed || spec.Capability != "text" {
+		return resolved, nil
+	}
+	if task.ProviderAccountID == "" || task.ProviderEndpointVersionID == "" || task.ProviderCredentialVersionID == "" {
+		return providerConfig{}, errors.New("筷子 Agent 任务缺少冻结运行配置")
+	}
+	runtime, err := s.repo.FrozenProviderRuntime(task)
+	if err != nil {
+		return providerConfig{}, errors.New("读取筷子 Agent 冻结运行配置失败")
+	}
+	credential, err := s.repo.ProviderCredentialByFamily(runtime.ProviderAccountID, family)
+	if err != nil || credential.ID != runtime.ProviderCredentialID {
+		return providerConfig{}, errors.New("筷子 Agent 任务的冻结凭据与模型系列不匹配")
+	}
+	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(runtime.ProviderAccountID, runtime.ProviderCredentialID, runtime.CredentialVersion, runtime.KeyCipher)
+	if err != nil {
+		return providerConfig{}, errors.New("解密筷子 Agent 冻结系列 Key 失败")
+	}
+	resolved.BaseURL = kuaiziChatCompletionsBaseURL(runtime.BaseURL)
+	resolved.APIKey = key
+	resolved.InterfaceType = string(model.ChannelInterfaceChatCompletion)
+	return resolved, nil
+}
+
 func stringInSlice(value string, values []string) bool {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "models/")
 	for _, candidate := range values {
@@ -448,6 +478,9 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 }
 
 func runTextTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if spec, ok := kuaiziProviderModelSpec(input.Config.Model); ok && spec.Capability == "text" {
+		return runKuaiziChatCompletionsTask(ctx, input)
+	}
 	switch input.Config.InterfaceType {
 	case "chat-completion":
 		return runChatCompletionsTextTask(ctx, input)
@@ -516,6 +549,37 @@ func runChatCompletionsTextTask(ctx context.Context, input canvasGenerationInput
 	messages = append(messages, map[string]interface{}{"role": "user", "content": userContent})
 	body := map[string]interface{}{"model": input.Config.Model, "messages": messages}
 	if err := postJSON(ctx, input.Config, "/chat/completions", body, &payload); err != nil {
+		return nil, err
+	}
+	text := extractChatCompletionText(payload)
+	if text == "" {
+		return nil, errors.New("文本接口没有返回内容")
+	}
+	return map[string]interface{}{"mode": "text", "text": text}, nil
+}
+
+func runKuaiziChatCompletionsTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	var payload map[string]interface{}
+	messages := []map[string]interface{}{}
+	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
+		messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
+	}
+	userContent, err := textChatContent(input)
+	if err != nil {
+		return nil, err
+	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": userContent})
+	data, err := json.Marshal(map[string]interface{}{"model": input.Config.Model, "messages": messages})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("ApiKey", input.Config.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	if err := doJSON(req, &payload); err != nil {
 		return nil, err
 	}
 	text := extractChatCompletionText(payload)

@@ -461,7 +461,7 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Adapters) != 2 || len(view.Adapters[0].Models) != 4 {
+	if len(view.Adapters) != 4 || len(view.Adapters[0].Models) != 4 {
 		t.Fatalf("adapters = %#v", view.Adapters)
 	}
 	var models []model.ChannelModel
@@ -491,6 +491,107 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 		if !spec.Published || spec.ChannelModelID == "" {
 			t.Fatalf("publication facts missing = %#v", spec)
 		}
+	}
+}
+
+func TestPublishKuaiziTextFamilyCreatesManagedChatChannelAndResolvesEncryptedKey(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	admin := providerAdmin()
+	now := time.Now().UTC()
+	account := model.ProviderAccount{ID: "kuaizi-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	endpoint := model.ProviderEndpointVersion{ID: "kuaizi-endpoint", ProviderAccountID: account.ID, BaseURL: "https://aiopenapi.kuaizi.cn/", Status: "active", Version: 1, CreatedAt: now}
+	credential := model.ProviderCredential{ID: "gpt-credential", ProviderAccountID: account.ID, Family: "gpt", Enabled: true, HealthStatus: "healthy", ConcurrencyLimit: 3, CreatedAt: now, UpdatedAt: now}
+	for _, item := range []any{&account, &endpoint, &credential} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	ciphertext, err := svc.EncryptProviderSecret(account.ID, credential.ID, 1, "sentinel-gpt-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := model.ProviderCredentialVersion{ID: "gpt-version", ProviderCredentialID: credential.ID, KeyCipher: ciphertext, KeyFingerprint: "fingerprint", Status: "active", Version: 1, CreatedAt: now}
+	if err := db.Create(&version).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.PublishKuaiziFamilyModels(admin, "gpt"); err != nil {
+		t.Fatal(err)
+	}
+	channelID := deterministicKuaiziChatChannelID("gpt")
+	var channel model.ModelChannel
+	if err := db.First(&channel, "id = ?", channelID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if channel.Scope != model.ChannelScopeSystem || !channel.Enabled || channel.APIFormat != "openai" || channel.InterfaceType != model.ChannelInterfaceChatCompletion || channel.BaseURL != "https://aiopenapi.kuaizi.cn/ai-open-platform-api/v1" || channel.APIKey != "" || channel.ConcurrencyLimit != 3 {
+		t.Fatalf("managed chat channel = %#v", channel)
+	}
+	var item model.ChannelModel
+	if err := db.First(&item, "channel_id = ? AND model_key = ?", channel.ID, "gpt-5.5").Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.ProviderCredentialID != credential.ID || item.Capability != "text" || item.MarketingCopy != "支持图片理解与 Agent 工具调用" || item.Enabled || item.PriceConfigured {
+		t.Fatalf("managed chat model = %#v", item)
+	}
+	if err := db.Model(&item).Updates(map[string]any{"enabled": true, "price_configured": true, "unit_price_microcredits": 100}).Error; err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := svc.ResolveSystemProxyRuntime(&channel, "gpt-5.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.BaseURL != channel.BaseURL || runtime.HeaderName != "ApiKey" || runtime.APIKey != "sentinel-gpt-key" {
+		t.Fatalf("managed chat runtime = %#v", runtime)
+	}
+	if _, err := svc.ResolveSystemProxyRuntime(&channel, "deepseek-v4-pro"); err == nil {
+		t.Fatal("cross-family model resolved with the GPT credential")
+	}
+}
+
+func TestKuaiziAgentTextTaskUsesFrozenSeriesKeyAndApiKeyHeader(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/ai-open-platform-api/v1/chat/completions" || request.Header.Get("ApiKey") != "frozen-gpt-key" || request.Header.Get("Authorization") != "" {
+			t.Fatalf("request = %s, headers = %#v", request.URL.Path, request.Header)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"content":"{\"title\":\"测试分镜\",\"logline\":\"测试故事\",\"styleGuide\":\"电影风格\",\"characters\":[],\"locations\":[],\"shots\":[{\"title\":\"镜头一\",\"description\":\"开场\",\"durationSeconds\":5,\"dialogue\":\"\",\"shotSize\":\"全景\",\"emotion\":\"平静\",\"lightingAndAtmosphere\":\"晨光\",\"audioEffects\":\"环境声\",\"visualPrompt\":\"晨光中的城市\",\"videoPrompt\":\"镜头缓慢推进\",\"camera\":\"全景\",\"motion\":\"缓慢推进\",\"timeBeats\":\"0-5秒\",\"negativePrompt\":\"\",\"assetTags\":[]}]}"}}]}`))
+	}))
+	defer server.Close()
+	svc, db := openProviderCredentialService(t)
+	now := time.Now().UTC()
+	account := model.ProviderAccount{ID: "text-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	endpoint := model.ProviderEndpointVersion{ID: "text-endpoint", ProviderAccountID: account.ID, BaseURL: server.URL, Status: "active", Version: 1, CreatedAt: now}
+	credential := model.ProviderCredential{ID: "text-credential", ProviderAccountID: account.ID, Family: "gpt", Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
+	channel := model.ModelChannel{ID: "managed", Scope: model.ChannelScopeSystem, Enabled: true, Name: "GPT Agent", BaseURL: kuaiziChatCompletionsBaseURL(server.URL), APIFormat: "openai", InterfaceType: model.ChannelInterfaceChatCompletion, ModelsJSON: `["gpt-5.5"]`, CreatedAt: now, UpdatedAt: now}
+	for _, row := range []any{&account, &endpoint, &credential, &channel} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	ciphertext, err := svc.EncryptProviderSecret(account.ID, credential.ID, 1, "frozen-gpt-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := model.ProviderCredentialVersion{ID: "text-version", ProviderCredentialID: credential.ID, KeyCipher: ciphertext, Status: "active", Version: 1, CreatedAt: now}
+	if err := db.Create(&version).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "text-task", UserID: "user", Type: "agent_storyboard", Model: "gpt-5.5", Prompt: "test", InputJSON: `{"config":{"channelId":"managed","model":"gpt-5.5"}}`, ProviderAccountID: account.ID, ProviderEndpointVersionID: endpoint.ID, ProviderCredentialVersionID: version.ID}
+	channel.ModelsJSON = `["gpt-5.5","deepseek-v4-pro"]`
+	if err := db.Save(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.resolveTextTaskProviderConfig(task, providerConfig{ChannelID: channel.ID, Model: "deepseek-v4-pro"}); err == nil {
+		t.Fatal("DeepSeek task accepted a frozen GPT series credential")
+	}
+	result, ops, err := svc.processTask(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["title"] != "测试分镜" || len(ops) == 0 {
+		t.Fatalf("Agent task result = %#v, ops = %#v", result, ops)
 	}
 }
 
