@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,41 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	}
 	if got := deepseek.Models[0]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
 		t.Fatalf("DeepSeek Agent model = %#v", got)
+	}
+}
+
+func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
+	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(registry.Descriptors())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var descriptors []struct {
+		Models []struct {
+			ModelKey    string          `json:"modelKey"`
+			Resolutions json.RawMessage `json:"resolutions"`
+			Ratios      json.RawMessage `json:"ratios"`
+			Tools       json.RawMessage `json:"tools"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(payload, &descriptors); err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range descriptors {
+		for _, model := range descriptor.Models {
+			for field, value := range map[string]json.RawMessage{
+				"resolutions": model.Resolutions,
+				"ratios":      model.Ratios,
+				"tools":       model.Tools,
+			} {
+				if string(value) == "null" {
+					t.Fatalf("model %s field %s encoded as null, want []", model.ModelKey, field)
+				}
+			}
+		}
 	}
 }
 

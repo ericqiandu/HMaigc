@@ -102,8 +102,8 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 	result.Models = make([]ProviderModelSpec, len(source.Models))
 	for index, model := range source.Models {
 		result.Models[index] = model
-		result.Models[index].Resolutions = append([]string(nil), model.Resolutions...)
-		result.Models[index].Ratios = append([]string(nil), model.Ratios...)
+		result.Models[index].Resolutions = append([]string{}, model.Resolutions...)
+		result.Models[index].Ratios = append([]string{}, model.Ratios...)
 		result.Models[index].Tools = append([]string{}, model.Tools...)
 	}
 	return result
