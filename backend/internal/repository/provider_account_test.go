@@ -144,66 +144,6 @@ func TestProviderEndpointActivationRejectsCredentialRotationAfterValidation(t *t
 	assertSingleActiveEndpoint(t, db, account.ID, endpoint1.ID)
 }
 
-func TestProviderTaskFactRejectsDuplicateTaskAndNonemptyProviderTask(t *testing.T) {
-	db := openProviderRepositorySQLite(t)
-	repo := New(db)
-	now := time.Now().UTC()
-	first := providerTaskFactFixture("task-1", "provider-task", now)
-	if err := repo.CreateProviderTaskFact(first); err != nil {
-		t.Fatal(err)
-	}
-	duplicateTask := providerTaskFactFixture(first.TaskID, "other-provider-task", now)
-	if err := repo.CreateProviderTaskFact(duplicateTask); err == nil {
-		t.Fatal("duplicate task fact was accepted")
-	}
-	duplicateProviderTask := providerTaskFactFixture("task-2", first.ProviderTaskID, now)
-	if err := repo.CreateProviderTaskFact(duplicateProviderTask); err == nil {
-		t.Fatal("duplicate nonempty provider task was accepted")
-	}
-	for _, taskID := range []string{"empty-provider-task-1", "empty-provider-task-2"} {
-		fact := providerTaskFactFixture(taskID, "", now)
-		if err := repo.CreateProviderTaskFact(fact); err != nil {
-			t.Fatalf("empty provider task id %s: %v", taskID, err)
-		}
-	}
-}
-
-func TestProviderBillingFactIsIdempotentOnlyForMatchingDigest(t *testing.T) {
-	db := openProviderRepositorySQLite(t)
-	repo := New(db)
-	now := time.Now().UTC()
-	fact := &model.ProviderBillingFact{
-		ID: "billing-1", ProviderTaskFactID: "task-1", ProviderCredentialVersionID: "key-1",
-		UpstreamOrderID: "upstream-1", ProviderTaskID: "provider-task-1", AmountSubunits: "1250000",
-		BillingStatus: "billed", ProviderTaskStatus: "succeeded", TaskDurationSeconds: 10,
-		TotalTokens: "9007199254740993", Description: "seedance 2.5", QueryTraceID: "trace-1",
-		PayloadDigest: strings.Repeat("a", 64), BilledAt: now, ObservedAt: now,
-	}
-	stored, created, err := repo.RecordProviderBillingFact(fact)
-	if err != nil || !created || stored.ID != fact.ID {
-		t.Fatalf("create billing fact = stored:%#v created:%v err:%v", stored, created, err)
-	}
-	replay := *fact
-	replay.ID = "billing-replay"
-	stored, created, err = repo.RecordProviderBillingFact(&replay)
-	if err != nil || created || stored.ID != fact.ID {
-		t.Fatalf("replay billing fact = stored:%#v created:%v err:%v", stored, created, err)
-	}
-	conflict := replay
-	conflict.ID = "billing-conflict"
-	conflict.PayloadDigest = strings.Repeat("b", 64)
-	if _, _, err := repo.RecordProviderBillingFact(&conflict); !errors.Is(err, ErrProviderBillingFactConflict) {
-		t.Fatalf("conflicting billing fact error = %v", err)
-	}
-	var facts []model.ProviderBillingFact
-	if err := db.Find(&facts).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(facts) != 1 || facts[0].PayloadDigest != fact.PayloadDigest {
-		t.Fatalf("billing facts changed after conflict: %#v", facts)
-	}
-}
-
 func openProviderRepositorySQLite(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
@@ -217,18 +157,6 @@ func openProviderRepositorySQLite(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	return db
-}
-
-func providerTaskFactFixture(taskID string, providerTaskID string, now time.Time) *model.ProviderTaskFact {
-	return &model.ProviderTaskFact{
-		TaskID: taskID, BillingOrderID: "order-" + taskID, ProviderAccountID: "account",
-		ProviderEndpointVersionID: "endpoint-1", ProviderCredentialID: "credential",
-		ProviderCredentialVersionID: "key-1", ChannelModelID: "channel-model", ProviderTaskID: providerTaskID,
-		CreateTraceID: "trace-create", RequestedDurationSeconds: 10, ActualDurationSeconds: 10,
-		Resolution: "1080p", InputVariant: "standard", ProviderStatus: "succeeded",
-		InputImageCount: 1, TotalTokens: "9007199254740993", ReconciliationStatus: "pending",
-		CreatedAt: now, UpdatedAt: now,
-	}
 }
 
 func assertSingleActiveEndpoint(t *testing.T, db *gorm.DB, accountID string, expectedID string) {

@@ -34,8 +34,6 @@ func Models() []any {
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
 		&model.BillingOrder{},
-		&model.ProviderTaskFact{},
-		&model.ProviderBillingFact{},
 		&model.SuperResolutionPricingRule{},
 		&model.MembershipPlan{},
 		&model.Team{},

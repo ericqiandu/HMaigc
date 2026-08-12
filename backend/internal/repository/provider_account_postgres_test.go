@@ -80,32 +80,6 @@ func TestPostgresProviderCredentialConcurrentVersionActivationHasOneWinner(t *te
 	}
 }
 
-func TestPostgresProviderTaskFactAndProviderBillingFactIntegrity(t *testing.T) {
-	db := openPostgresProviderSchema(t)
-	repo := New(db)
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	first := providerTaskFactFixture("task-a", "provider-task", now)
-	if err := repo.CreateProviderTaskFact(first); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CreateProviderTaskFact(providerTaskFactFixture("task-b", first.ProviderTaskID, now)); err == nil {
-		t.Fatal("duplicate provider task fact was accepted")
-	}
-	billing := &model.ProviderBillingFact{ID: "billing", ProviderTaskFactID: first.TaskID, ProviderCredentialVersionID: first.ProviderCredentialVersionID, UpstreamOrderID: "upstream", ProviderTaskID: first.ProviderTaskID, AmountSubunits: "1", BillingStatus: "billed", ProviderTaskStatus: "succeeded", PayloadDigest: strings.Repeat("a", 64), BilledAt: now, ObservedAt: now}
-	if _, created, err := repo.RecordProviderBillingFact(billing); err != nil || !created {
-		t.Fatalf("create billing fact = created:%v err:%v", created, err)
-	}
-	replay := *billing
-	replay.ID = "replay"
-	if stored, created, err := repo.RecordProviderBillingFact(&replay); err != nil || created || stored.ID != billing.ID {
-		t.Fatalf("replay billing fact = stored:%#v created:%v err:%v", stored, created, err)
-	}
-	replay.PayloadDigest = strings.Repeat("b", 64)
-	if _, _, err := repo.RecordProviderBillingFact(&replay); !errors.Is(err, ErrProviderBillingFactConflict) {
-		t.Fatalf("billing conflict error = %v", err)
-	}
-}
-
 func TestPostgresProviderAccountIntegrityRejectsWrongIndexWithoutDeletion(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {

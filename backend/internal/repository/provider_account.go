@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -14,8 +13,7 @@ import (
 )
 
 var (
-	ErrProviderActivationConflict  = errors.New("provider activation conflict")
-	ErrProviderBillingFactConflict = errors.New("provider billing fact conflict")
+	ErrProviderActivationConflict = errors.New("provider activation conflict")
 )
 
 type ProviderCredentialSecret struct {
@@ -365,10 +363,6 @@ func (r *Repository) ProviderCredentialSecrets() ([]ProviderCredentialSecret, er
 	return secrets, err
 }
 
-func (r *Repository) CreateProviderTaskFact(fact *model.ProviderTaskFact) error {
-	return r.db.Create(fact).Error
-}
-
 // ActivateProviderEndpointVersion 以期望活动版本做乐观并发门禁，竞争轮换只有一个调用可以提交。
 func (r *Repository) ActivateProviderEndpointVersion(accountID string, versionID string, expectedActiveID string, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
@@ -389,46 +383,6 @@ func (r *Repository) ActivateProviderCredentialVersion(credentialID string, vers
 	})
 }
 
-// RecordProviderBillingFact 只把完全相同 digest 视为上游重放；冲突事实保持原样并显式报错。
-func (r *Repository) RecordProviderBillingFact(candidate *model.ProviderBillingFact) (*model.ProviderBillingFact, bool, error) {
-	if candidate == nil {
-		return nil, false, errors.New("provider billing fact is required")
-	}
-	if strings.TrimSpace(candidate.PayloadDigest) == "" {
-		return nil, false, errors.New("provider billing payload digest is required")
-	}
-	stored := model.ProviderBillingFact{}
-	created := false
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if candidate.UpstreamOrderID != "" {
-			if err := lockProviderScopeTx(tx, "billing", candidate.ProviderCredentialVersionID+"\n"+candidate.UpstreamOrderID); err != nil {
-				return err
-			}
-			lookup := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&stored,
-				"provider_credential_version_id = ? AND upstream_order_id = ?", candidate.ProviderCredentialVersionID, candidate.UpstreamOrderID)
-			if lookup.Error == nil {
-				if stored.PayloadDigest != candidate.PayloadDigest {
-					return fmt.Errorf("%w: credential_version=%s upstream_order=%s", ErrProviderBillingFactConflict, candidate.ProviderCredentialVersionID, candidate.UpstreamOrderID)
-				}
-				return nil
-			}
-			if !errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
-				return lookup.Error
-			}
-		}
-		if err := tx.Create(candidate).Error; err != nil {
-			return err
-		}
-		stored = *candidate
-		created = true
-		return nil
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	return &stored, created, nil
-}
-
 func lockProviderScopeTx(tx *gorm.DB, scope string, id string) error {
 	lockKey := scope + "\n" + id
 	switch tx.Dialector.Name() {
@@ -440,8 +394,6 @@ func lockProviderScopeTx(tx *gorm.DB, scope string, id string) error {
 			return tx.Exec("UPDATE provider_accounts SET updated_at = updated_at WHERE id = ?", id).Error
 		case "credential":
 			return tx.Exec("UPDATE provider_credentials SET updated_at = updated_at WHERE id = ?", id).Error
-		case "billing":
-			return tx.Exec("UPDATE provider_billing_facts SET observed_at = observed_at WHERE 1 = 0").Error
 		default:
 			return fmt.Errorf("unsupported provider lock scope %s", scope)
 		}

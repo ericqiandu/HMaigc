@@ -34,33 +34,6 @@ var providerRequiredStringFields = []schemaField{
 	{table: "provider_credential_versions", column: "last_verification_trace_id"},
 	{table: "provider_credential_versions", column: "last_balance_subunits"},
 	{table: "provider_credential_versions", column: "created_by"},
-	{table: "provider_task_facts", column: "billing_order_id"},
-	{table: "provider_task_facts", column: "provider_account_id"},
-	{table: "provider_task_facts", column: "provider_endpoint_version_id"},
-	{table: "provider_task_facts", column: "provider_credential_id"},
-	{table: "provider_task_facts", column: "provider_credential_version_id"},
-	{table: "provider_task_facts", column: "channel_model_id"},
-	{table: "provider_task_facts", column: "provider_task_id"},
-	{table: "provider_task_facts", column: "create_trace_id"},
-	{table: "provider_task_facts", column: "last_poll_trace_id"},
-	{table: "provider_task_facts", column: "resolution"},
-	{table: "provider_task_facts", column: "input_variant"},
-	{table: "provider_task_facts", column: "provider_status"},
-	{table: "provider_task_facts", column: "asset_source_url"},
-	{table: "provider_task_facts", column: "last_frame_url"},
-	{table: "provider_task_facts", column: "total_tokens"},
-	{table: "provider_task_facts", column: "reconciliation_status"},
-	{table: "provider_billing_facts", column: "provider_task_fact_id"},
-	{table: "provider_billing_facts", column: "provider_credential_version_id"},
-	{table: "provider_billing_facts", column: "upstream_order_id"},
-	{table: "provider_billing_facts", column: "provider_task_id"},
-	{table: "provider_billing_facts", column: "amount_subunits"},
-	{table: "provider_billing_facts", column: "billing_status"},
-	{table: "provider_billing_facts", column: "provider_task_status"},
-	{table: "provider_billing_facts", column: "total_tokens"},
-	{table: "provider_billing_facts", column: "description"},
-	{table: "provider_billing_facts", column: "query_trace_id"},
-	{table: "provider_billing_facts", column: "payload_digest"},
 }
 
 func prepareLegacyProviderSchema(db *gorm.DB) error {
@@ -157,14 +130,6 @@ var providerIntegrityIndexes = []providerIntegrityIndex{
 	{
 		name: "idx_provider_credential_version_active", table: "provider_credential_versions", columns: "provider_credential_id", predicate: "status = 'active'",
 		createSQL: `CREATE UNIQUE INDEX idx_provider_credential_version_active ON provider_credential_versions(provider_credential_id) WHERE status = 'active'`,
-	},
-	{
-		name: "idx_provider_task_fact_provider_task", table: "provider_task_facts", columns: "provider_credential_version_id,provider_task_id", predicate: "provider_task_id <> ''",
-		createSQL: `CREATE UNIQUE INDEX idx_provider_task_fact_provider_task ON provider_task_facts(provider_credential_version_id, provider_task_id) WHERE provider_task_id <> ''`,
-	},
-	{
-		name: "idx_provider_billing_upstream_order", table: "provider_billing_facts", columns: "provider_credential_version_id,upstream_order_id", predicate: "upstream_order_id <> ''",
-		createSQL: `CREATE UNIQUE INDEX idx_provider_billing_upstream_order ON provider_billing_facts(provider_credential_version_id, upstream_order_id) WHERE upstream_order_id <> ''`,
 	},
 	{
 		name: "idx_channel_model_resolution_variant", table: "channel_model_price_tiers", columns: "channel_model_id,resolution,input_variant",
@@ -272,8 +237,6 @@ func rejectProviderIntegrityConflicts(db *gorm.DB) error {
 		{&model.ProviderEndpointVersion{}, "provider_account_id AS first_value, '' AS second_value, COUNT(*) AS count", "status = 'active'", "provider_account_id", "账号活动 endpoint"},
 		{&model.ProviderCredential{}, "provider_account_id AS first_value, family AS second_value, COUNT(*) AS count", "", "provider_account_id, family", "账号凭据系列"},
 		{&model.ProviderCredentialVersion{}, "provider_credential_id AS first_value, '' AS second_value, COUNT(*) AS count", "status = 'active'", "provider_credential_id", "活动凭据版本"},
-		{&model.ProviderTaskFact{}, "provider_credential_version_id AS first_value, provider_task_id AS second_value, COUNT(*) AS count", "provider_task_id <> ''", "provider_credential_version_id, provider_task_id", "上游任务"},
-		{&model.ProviderBillingFact{}, "provider_credential_version_id AS first_value, upstream_order_id AS second_value, COUNT(*) AS count", "upstream_order_id <> ''", "provider_credential_version_id, upstream_order_id", "上游账单"},
 		{&model.ChannelModelPriceTier{}, "channel_model_id AS first_value, resolution || ':' || input_variant AS second_value, COUNT(*) AS count", "", "channel_model_id, resolution, input_variant", "模型价格规格"},
 	}
 	for _, check := range checks {
