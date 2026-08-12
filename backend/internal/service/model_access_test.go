@@ -145,6 +145,13 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
 		t.Fatalf("provider capabilities = %#v", capabilities)
 	}
+	encoded, err := json.Marshal(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"tools":null`) || !strings.Contains(string(encoded), `"tools":[]`) {
+		t.Fatalf("unsupported tools must serialize as an empty array: %s", encoded)
+	}
 }
 
 func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.T) {

@@ -103,7 +103,7 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 		result.Models[index] = model
 		result.Models[index].Resolutions = append([]string(nil), model.Resolutions...)
 		result.Models[index].Ratios = append([]string(nil), model.Ratios...)
-		result.Models[index].Tools = append([]string(nil), model.Tools...)
+		result.Models[index].Tools = append([]string{}, model.Tools...)
 	}
 	return result
 }
@@ -130,7 +130,7 @@ func seedanceProviderModel(modelKey string, displayName string, resolutions []st
 		SupportsAudioOnly: supportsAudioOnly, RequiresAdaptiveFrames: supportsAudioOnly,
 		MaxImages: maxImages, MaxVideos: maxVideos, MaxAudios: maxAudios,
 		MaxVideoDurationSeconds: durationMax, MaxAudioDurationSeconds: durationMax,
-		Tools: tools,
+		Tools: append([]string{}, tools...),
 	}
 }
 

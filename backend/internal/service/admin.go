@@ -794,7 +794,7 @@ func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilitie
 		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
 		MaxImages:              capabilities.MaxImages, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
-		Tools: append([]string(nil), capabilities.Tools...),
+		Tools: append([]string{}, capabilities.Tools...),
 	}
 }
 
