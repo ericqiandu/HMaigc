@@ -402,6 +402,30 @@ func TestChannelModelVariantMigrationBackfillsLegacyTierAndHardCutsUniqueKey(t *
 	}
 }
 
+func TestLegacyChannelModelResolutionIndexAcceptsSQLiteQuotedEquivalent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE channel_model_price_tiers (
+		id text PRIMARY KEY,
+		channel_model_id text NOT NULL,
+		resolution text NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX `idx_channel_model_resolution` ON `channel_model_price_tiers`(`channel_model_id`,`resolution`)").Error; err != nil {
+		t.Fatal(err)
+	}
+	exists, exact, definition, err := legacyChannelModelResolutionIndex(db, "idx_channel_model_resolution")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || !exact {
+		t.Fatalf("quoted equivalent index rejected: exists=%t exact=%t definition=%s", exists, exact, definition)
+	}
+}
+
 func TestMigrateChannelModelBrandsRemovesLegacyIconColumns(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

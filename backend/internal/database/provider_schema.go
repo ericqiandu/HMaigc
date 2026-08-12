@@ -89,8 +89,27 @@ func legacyChannelModelResolutionIndex(db *gorm.DB, name string) (bool, bool, st
 	} else if err != nil {
 		return false, false, "", err
 	}
-	expected := `CREATE UNIQUE INDEX idx_channel_model_resolution ON channel_model_price_tiers(channel_model_id, resolution)`
-	return true, compactSchemaSQL(definition) == compactSchemaSQL(expected), definition, nil
+	var columns []struct {
+		Name string `gorm:"column:name"`
+	}
+	if result := db.Raw("PRAGMA index_info(" + quoteSQLiteIdentifier(name) + ")").Scan(&columns); result.Error != nil {
+		return true, false, definition, result.Error
+	}
+	var owner string
+	if result := db.Raw("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&owner); result.Error != nil {
+		return true, false, definition, result.Error
+	}
+	names := make([]string, 0, len(columns))
+	for _, column := range columns {
+		names = append(names, column.Name)
+	}
+	normalized := strings.ToLower(strings.TrimSpace(definition))
+	exact := owner == "channel_model_price_tiers" && strings.Join(names, ",") == "channel_model_id,resolution" && strings.Contains(normalized, "create unique index") && !strings.Contains(normalized, " where ")
+	return true, exact, definition, nil
+}
+
+func quoteSQLiteIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func backfillProviderDefaults(db *gorm.DB) error {
