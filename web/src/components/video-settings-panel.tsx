@@ -87,12 +87,6 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     )}
                 </SettingGroup>
 
-                {!capabilities.supportsSuperResolution ? (
-                    <SettingGroup title="视频超分" color={theme.node.muted}>
-                        <UnsupportedSetting reason={capabilities.unsupportedReasons.superResolution || "当前模型不支持独立超分"} />
-                    </SettingGroup>
-                ) : null}
-
                 <SettingGroup title="生成数量" color={theme.node.muted}>
                     <div className="canvas-video-count-grid grid gap-2">
                         {capabilities.outputCounts.map((value) => (

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "../src/lib/video-model-capabilities";
-import { validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
+import { VideoSettingsPanel, validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
+import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 import { seedanceReferenceError } from "../src/lib/seedance-video";
 
@@ -117,6 +120,22 @@ describe("视频时长输入", () => {
     test("离散时长模型只接受渠道支持的秒数", () => {
         expect(validateVideoDuration("5", [5, 10])).toEqual({ valid: true, value: 5 });
         expect(validateVideoDuration("7", [5, 10])).toEqual({ valid: false, message: "当前模型仅支持 5 / 10 秒" });
+    });
+});
+
+describe("画布视频设置", () => {
+    test("不再展示独立视频超分功能", () => {
+        const markup = renderToStaticMarkup(
+            createElement(VideoSettingsPanel, {
+                config: seedanceConfig("doubao-seedance-2-5-260628"),
+                onConfigChange: () => undefined,
+                theme: canvasThemes.dark,
+                showTitle: false,
+            }),
+        );
+
+        expect(markup).not.toContain("视频超分");
+        expect(markup).not.toContain("独立超分");
     });
 });
 
