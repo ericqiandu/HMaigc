@@ -7,7 +7,7 @@ import { normalizeModelOptionValue, resolveModelRequestConfig, selectableModelsB
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
-import { imageToDataUrl } from "@/services/image-storage";
+import { resolveCanvasAgentImageInput } from "@/lib/canvas/canvas-agent-image-reference";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -1791,7 +1791,7 @@ async function buildToolAgentMessages(snapshot: CanvasAgentSnapshot, history: Ca
             content: [
                 ...refs.flatMap((item) => (item.text ? [{ type: "text" as const, text: `选中节点 ${item.title}：${item.text}` }] : [])),
                 { type: "text", text: `当前画布：${JSON.stringify(compactSnapshot(snapshot))}\n\n${requestText}` },
-                ...(await Promise.all(refs.filter((item) => item.dataUrl).map(async (item) => ({ type: "image_url" as const, image_url: { url: await imageToDataUrl(item) } })))),
+                ...(await Promise.all(refs.filter((item) => item.dataUrl).map(async (item) => ({ type: "image_url" as const, image_url: { url: await resolveCanvasAgentImageInput(item) } })))),
             ],
         },
     ];
