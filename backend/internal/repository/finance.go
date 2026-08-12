@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -234,11 +235,45 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		if err := enforceActiveTaskLimit(tx, task.UserID, policy); err != nil {
 			return err
 		}
+		if err := freezeProviderTaskRuntimeTx(tx, task, order.ChannelModelID); err != nil {
+			return err
+		}
 		if err := reserveBillingOrder(tx, order); err != nil {
 			return err
 		}
 		return tx.Create(task).Error
 	})
+}
+
+type providerTaskRuntime struct {
+	ProviderAccountID           string `gorm:"column:provider_account_id"`
+	ProviderEndpointVersionID   string `gorm:"column:provider_endpoint_version_id"`
+	ProviderCredentialVersionID string `gorm:"column:provider_credential_version_id"`
+}
+
+func freezeProviderTaskRuntimeTx(tx *gorm.DB, task *model.Task, channelModelID string) error {
+	var channelModel model.ChannelModel
+	if err := tx.Select("provider_credential_id").First(&channelModel, "id = ?", channelModelID).Error; err != nil {
+		return err
+	}
+	if channelModel.ProviderCredentialID == "" {
+		return nil
+	}
+	var runtime providerTaskRuntime
+	err := tx.Table("provider_credentials AS credentials").
+		Select("credentials.provider_account_id, endpoints.id AS provider_endpoint_version_id, versions.id AS provider_credential_version_id").
+		Joins("JOIN provider_accounts AS accounts ON accounts.id = credentials.provider_account_id AND accounts.enabled = ?", true).
+		Joins("JOIN provider_endpoint_versions AS endpoints ON endpoints.provider_account_id = accounts.id AND endpoints.status = ?", "active").
+		Joins("JOIN provider_credential_versions AS versions ON versions.provider_credential_id = credentials.id AND versions.status = ?", "active").
+		Where("credentials.id = ? AND credentials.enabled = ? AND credentials.health_status = ?", channelModel.ProviderCredentialID, true, "healthy").
+		Take(&runtime).Error
+	if err != nil {
+		return fmt.Errorf("provider runtime is unavailable: %w", err)
+	}
+	task.ProviderAccountID = runtime.ProviderAccountID
+	task.ProviderEndpointVersionID = runtime.ProviderEndpointVersionID
+	task.ProviderCredentialVersionID = runtime.ProviderCredentialVersionID
+	return nil
 }
 
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, policy ActiveTaskPolicy) error {
