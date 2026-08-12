@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { convergeGenerationTaskCancellation, mergeGenerationTaskSnapshot } from "../src/lib/canvas/canvas-generation-task-state";
+import { convergeGenerationTaskCancellation, mergeGenerationTaskSnapshot, retryBoundGenerationTask } from "../src/lib/canvas/canvas-generation-task-state";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -70,6 +70,21 @@ describe("canvas generation task state", () => {
         });
 
         await expect(operation).rejects.toBe(cancelError);
+    });
+
+    test("retries the bound backend task instead of creating another provider task", async () => {
+        const calls: string[] = [];
+        const retried = task({ status: "queued", stage: "等待队列调度", updatedAt: "2026-08-12T11:16:54Z" });
+
+        const result = await retryBoundGenerationTask(node({ taskStatus: "failed" }), {
+            retry: async (taskId) => {
+                calls.push(taskId);
+                return retried;
+            },
+        });
+
+        expect(calls).toEqual(["task-1"]);
+        expect(result).toBe(retried);
     });
 });
 

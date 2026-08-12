@@ -179,7 +179,7 @@ func applyKuaiziGPTImage2Size(payload map[string]interface{}, value string) erro
 	return nil
 }
 
-func requestKuaiziGPTImage2JSON(ctx context.Context, config providerConfig, path string, payload interface{}, target interface{}) error {
+func requestKuaiziGPTImage2JSON(ctx context.Context, config providerConfig, path string, payload interface{}, target *map[string]interface{}) error {
 	apiKey := strings.TrimSpace(config.APIKey)
 	if apiKey == "" {
 		return errors.New("GPT Image 2 API Key 不能为空")
@@ -199,18 +199,11 @@ func requestKuaiziGPTImage2JSON(ctx context.Context, config providerConfig, path
 	request.Header.Set("ApiKey", apiKey)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
-	if err := doJSON(request, target); err != nil {
+	responseBody, mimeType, err := doBinary(request)
+	if err != nil {
 		var httpErr providerHTTPError
 		if errors.As(err, &httpErr) {
 			return kuaiziCompatibleHTTPError{statusCode: httpErr.StatusCode}
-		}
-		if response, ok := target.(*map[string]interface{}); ok {
-			if businessCode := int(firstInt64(*response, "code")); businessCode != 0 {
-				if businessCode < 100 || businessCode > 599 {
-					businessCode = http.StatusInternalServerError
-				}
-				return kuaiziCompatibleHTTPError{statusCode: businessCode}
-			}
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
@@ -220,6 +213,33 @@ func requestKuaiziGPTImage2JSON(ctx context.Context, config providerConfig, path
 		}
 		return errors.New("GPT Image 2 上游请求失败")
 	}
+	if !strings.Contains(mimeType, "json") && !json.Valid(responseBody) {
+		return errors.New("GPT Image 2 上游返回了非 JSON 内容")
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return errors.New("GPT Image 2 上游响应格式无效")
+	}
+	if path == kuaiziGPTImage2CreatePath {
+		businessCode := int(firstInt64(response, "code"))
+		if _, hasBusinessCode := response["code"]; hasBusinessCode && businessCode != http.StatusOK {
+			if businessCode < 100 || businessCode > 599 {
+				businessCode = http.StatusInternalServerError
+			}
+			return kuaiziCompatibleHTTPError{statusCode: businessCode}
+		}
+		responseData, ok := response["data"].(map[string]interface{})
+		if !ok {
+			return errors.New("GPT Image 2 创建响应缺少 data 对象")
+		}
+		*target = responseData
+		return nil
+	}
+	responseData, ok := response["data"].(map[string]interface{})
+	if !ok {
+		return errors.New("GPT Image 2 状态响应缺少 data 对象")
+	}
+	*target = responseData
 	return nil
 }
 

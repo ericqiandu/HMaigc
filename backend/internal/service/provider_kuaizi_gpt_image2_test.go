@@ -55,13 +55,13 @@ func TestKuaiziGPTImage2SubmitsDocumentedPayloadAndDownloadsResult(t *testing.T)
 				t.Fatal(err)
 			}
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(`{"task_id":"kz-cgt-image-1"}`))
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"kz-cgt-image-1"}}`))
 		case "/ai-open-platform-api/v1/chatgpt/image/task/status":
 			if err := json.NewDecoder(request.Body).Decode(&statusBody); err != nil {
 				t.Fatal(err)
 			}
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(`{"task_id":"kz-cgt-image-1","status":"succeeded","image_url":"` + server.URL + `/result.png"}`))
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"kz-cgt-image-1","status":"succeeded","image_url":"` + server.URL + `/result.png"}}`))
 		case "/result.png":
 			writer.Header().Set("Content-Type", "image/png")
 			_, _ = writer.Write([]byte("png-bytes"))
@@ -172,9 +172,9 @@ func TestProcessTaskUsesFrozenKuaiziGPTImage2Credential(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/ai-open-platform-api/v1/chatgpt/image/task/create":
-			_, _ = writer.Write([]byte(`{"task_id":"kz-cgt-frozen-image"}`))
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"kz-cgt-frozen-image"}}`))
 		case "/ai-open-platform-api/v1/chatgpt/image/task/status":
-			_, _ = writer.Write([]byte(`{"task_id":"kz-cgt-frozen-image","status":"succeeded","image_url":"` + server.URL + `/result.png"}`))
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"kz-cgt-frozen-image","status":"succeeded","image_url":"` + server.URL + `/result.png"}}`))
 		case "/result.png":
 			writer.Header().Set("Content-Type", "image/png")
 			_, _ = writer.Write([]byte("image"))

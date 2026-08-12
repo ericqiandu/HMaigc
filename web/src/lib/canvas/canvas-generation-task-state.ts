@@ -8,6 +8,10 @@ type GenerationTaskCancellationApi = {
     query: (taskId: string) => Promise<GenerationTask>;
 };
 
+type GenerationTaskRetryApi = {
+    retry: (taskId: string) => Promise<GenerationTask>;
+};
+
 const terminalTaskStatuses = new Set<TaskStatus>(["succeeded", "failed", "cancelled"]);
 
 export function isTerminalGenerationTask(task: Pick<GenerationTask, "status">) {
@@ -50,6 +54,12 @@ export async function convergeGenerationTaskCancellation(taskId: string, api: Ge
         if (isTerminalGenerationTask(latest)) return latest;
         throw cancelError;
     }
+}
+
+export function retryBoundGenerationTask(node: CanvasNodeData, api: GenerationTaskRetryApi): Promise<GenerationTask> {
+    const taskId = node.metadata?.taskId?.trim();
+    if (!taskId) throw new Error("失败节点没有可续查的后端任务");
+    return api.retry(taskId);
 }
 
 function isOlderTaskSnapshot(incomingUpdatedAt: string | undefined, currentUpdatedAt: string | undefined) {

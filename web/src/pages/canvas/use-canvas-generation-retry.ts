@@ -4,7 +4,8 @@ import { App } from "antd";
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { audioMetadata, imageMetadata, storeBackendGeneratedVideo, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
+import { applyGenerationTaskResultToNodes, audioMetadata, imageMetadata, storeBackendGeneratedVideo, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
+import { retryBoundGenerationTask } from "@/lib/canvas/canvas-generation-task-state";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { buildEmotionImageArtifacts, compositeEmotionImage, emotionGenerationSize } from "@/lib/canvas/canvas-emotion";
 import {
@@ -27,7 +28,7 @@ import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/gener
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
 import type { UpdreamSkill } from "@/services/api/skills";
-import type { GenerationTask } from "@/services/api/task-center";
+import { retryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
@@ -61,6 +62,34 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
             const retryMode = retryModeForNode(node.type);
             if (!retryMode) {
                 message.warning("当前节点不能使用通用生成重试");
+                return;
+            }
+            const boundTaskPrompt = node.metadata?.composerContent || node.metadata?.prompt || "";
+            if (node.metadata?.taskId) {
+                if (unchangedModeratedPrompt(node.metadata, boundTaskPrompt)) {
+                    message.warning("该提示词未通过内容审核，请先修改提示词再重新生成");
+                    return;
+                }
+                setRunningNodeId(node.id);
+                setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } } : item)));
+                const controller = startGenerationRequest(node.id, node.id, node.id);
+                try {
+                    const queued = await retryBoundGenerationTask(node, { retry: retryGenerationTask });
+                    bindGenerationTask(node.id, queued);
+                    const completed = await waitForGenerationTask(queued.id, { signal: controller.signal, initialTask: queued, onTaskUpdate: (task) => bindGenerationTask(node.id, task) });
+                    const applied = await applyGenerationTaskResultToNodes(nodesRef.current, completed, node.id);
+                    const appliedNode = applied.node;
+                    if (!applied.updated || !appliedNode) throw new Error("画布中找不到对应任务节点");
+                    setNodes((current) => current.map((item) => (item.id === applied.nodeId ? appliedNode : item)));
+                } catch (error) {
+                    if (isGenerationCanceled(error)) return;
+                    const failure = generationFailureMetadata(error, boundTaskPrompt);
+                    message.error(failure.errorDetails);
+                    setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
+                } finally {
+                    finishGenerationRequest(node.id, controller);
+                    setRunningNodeId(null);
+                }
                 return;
             }
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
