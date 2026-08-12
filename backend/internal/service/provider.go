@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,7 @@ type providerHTTPError struct {
 }
 
 type providerAnalyticsKey struct{}
+type kuaiziRequestKey struct{}
 
 type providerAnalyticsContext struct {
 	Service                    *Service
@@ -159,6 +161,10 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 	}
 	metadata.RequestKind = requestKind
 	return context.WithValue(ctx, providerAnalyticsKey{}, metadata)
+}
+
+func withKuaiziRequest(ctx context.Context) context.Context {
+	return context.WithValue(ctx, kuaiziRequestKey{}, struct{}{})
 }
 
 func (e providerHTTPError) Error() string {
@@ -1088,6 +1094,9 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 		return nil, "", err
 	}
 	client := OutboundHTTPClient(requestTimeout)
+	if _, strictKuaiziRequest := req.Context().Value(kuaiziRequestKey{}).(struct{}); strictKuaiziRequest {
+		client = KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), requestTimeout)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if runtimeService != nil {
@@ -1155,6 +1164,12 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 				status = model.ApiCallStatusFailed
 				errorText = fmt.Sprintf("MiniMax 接口错误（%s）：%s", code, defaultString(message, "请求失败"))
 			}
+			if _, isKuaizi := req.Context().Value(kuaiziRequestKey{}).(struct{}); isKuaizi {
+				if code := firstInt64(payload, "code"); code != 0 {
+					status = model.ApiCallStatusFailed
+					errorText = fmt.Sprintf("筷子科技接口错误（%d）", code)
+				}
+			}
 		}
 	}
 	requestKind := providerRequestKind(req.Method, req.URL.Path)
@@ -1164,7 +1179,7 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 	log := model.ApiCallLog{
 		UserID: metadata.UserID, ChannelID: metadata.ChannelID, TaskID: metadata.TaskID, BillingOrderID: metadata.BillingOrderID,
 		Source: defaultString(metadata.Source, "backend-task"), Capability: metadata.Capability, Operation: metadata.Operation,
-		RequestKind: requestKind, Billable: req.Method == http.MethodPost,
+		RequestKind: requestKind, Billable: req.Method == http.MethodPost && requestKind != "poll",
 		APIFormat: "openai", Method: req.Method, Path: req.URL.Path, Model: metadata.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
 		PricingSpecification: metadata.PricingSpecification, InputCharacterCount: metadata.InputCharacterCount, InputImageCount: metadata.InputImageCount,

@@ -23,7 +23,7 @@ func InferModelBrandKey(modelKey string) string {
 		brand   string
 		markers []string
 	}{
-		{brand: "openai", markers: []string{"gpt-", "sora-", "dall-e"}},
+		{brand: "openai", markers: []string{"gpt-", "gpt_", "sora-", "dall-e"}},
 		{brand: "google", markers: []string{"gemini-", "veo-", "imagen-"}},
 		{brand: "anthropic", markers: []string{"claude-"}},
 		{brand: "deepseek", markers: []string{"deepseek-"}},

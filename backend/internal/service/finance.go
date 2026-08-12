@@ -583,7 +583,7 @@ func billingUsage(capability string, config map[string]any) BillingUsage {
 	usage := BillingUsage{Quantity: 1}
 	if capability == "image" {
 		usage.Quantity = positiveInteger(config["count"])
-		usage.Resolution = firstNonEmpty(strings.TrimSpace(fmt.Sprint(config["resolution"])), strings.TrimSpace(fmt.Sprint(config["quality"])))
+		usage.Resolution = imagePricingResolutionFromConfig(config)
 		return usage
 	}
 	if capability == "video" {
@@ -595,6 +595,30 @@ func billingUsage(capability string, config map[string]any) BillingUsage {
 		usage.SuperResolutionFPS = int(positiveInteger(config["videoSuperResolutionFps"]))
 	}
 	return usage
+}
+
+func imagePricingResolutionFromConfig(config map[string]any) string {
+	if resolution := normalizeImagePricingResolution(strings.TrimSpace(fmt.Sprint(config["resolution"]))); resolution != "" {
+		return resolution
+	}
+	size := strings.ToLower(strings.TrimSpace(fmt.Sprint(config["size"])))
+	parts := strings.Split(size, "x")
+	if len(parts) == 2 {
+		width, widthErr := strconv.Atoi(parts[0])
+		height, heightErr := strconv.Atoi(parts[1])
+		if widthErr == nil && heightErr == nil && width > 0 && height > 0 {
+			longest := max(width, height)
+			switch {
+			case longest >= 2800:
+				return "4K"
+			case longest >= 1900:
+				return "2K"
+			default:
+				return "1K"
+			}
+		}
+	}
+	return normalizeImagePricingResolution(strings.TrimSpace(fmt.Sprint(config["quality"])))
 }
 
 func positiveInteger(value any) int64 {

@@ -19,19 +19,33 @@ func (s *Service) processKuaiziCompatibleTask(ctx context.Context, task model.Ta
 		input.Prompt = task.Prompt
 	}
 	input.Config.Model = task.Model
-	input.Config.InterfaceType = "ai-open-platform-video-volcengine"
-	if err := s.hydrateGenerationMedia(task.UserID, &input, true); err != nil {
-		return nil, err
+	if resumedProviderRequestID(ctx) == "" {
+		if err := s.hydrateGenerationMedia(task.UserID, &input, true); err != nil {
+			return nil, err
+		}
 	}
 	runtime, err := s.repo.FrozenProviderRuntime(task)
 	if err != nil {
-		return nil, errors.New("读取筷子 Seedance 冻结运行配置失败")
+		return nil, errors.New("读取筷子科技冻结运行配置失败")
 	}
 	apiKey, err := NewProviderSecretCipher(s.dataDir).Decrypt(runtime.ProviderAccountID, runtime.ProviderCredentialID, runtime.CredentialVersion, runtime.KeyCipher)
 	if err != nil {
-		return nil, errors.New("解密筷子 Seedance 冻结系列 Key 失败")
+		return nil, errors.New("解密筷子科技冻结系列 Key 失败")
 	}
 	input.Config.BaseURL = runtime.BaseURL
 	input.Config.APIKey = apiKey
-	return runAIOpenPlatformVolcengineVideoTask(ctx, input)
+	spec, ok := kuaiziProviderModelSpec(task.Model)
+	if !ok {
+		return nil, fmt.Errorf("筷子科技模型未登记：%s", task.Model)
+	}
+	switch spec.Capability {
+	case "video":
+		input.Config.InterfaceType = "ai-open-platform-video-volcengine"
+		return runAIOpenPlatformVolcengineVideoTask(ctx, input)
+	case "image":
+		input.Mode = "image"
+		return runKuaiziGPTImage2Task(ctx, input)
+	default:
+		return nil, fmt.Errorf("筷子科技模型能力未实现：%s", spec.Capability)
+	}
 }

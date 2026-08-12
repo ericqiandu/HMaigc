@@ -11,8 +11,8 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	descriptors := registry.Descriptors()
-	if len(descriptors) != 1 {
-		t.Fatalf("descriptor count = %d, want 1", len(descriptors))
+	if len(descriptors) != 2 {
+		t.Fatalf("descriptor count = %d, want 2", len(descriptors))
 	}
 	seedance, ok := registry.Descriptor("kuaizi", "seedance")
 	if !ok {
@@ -20,6 +20,17 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	}
 	if seedance.ProviderKind != "kuaizi" || seedance.Family != "seedance" {
 		t.Fatalf("seedance descriptor = %#v", seedance)
+	}
+	image, ok := registry.Descriptor("kuaizi", "gpt-image2")
+	if !ok || len(image.Models) != 1 {
+		t.Fatalf("kuaizi/gpt-image2 descriptor = %#v, exists=%v", image, ok)
+	}
+	model := image.Models[0]
+	if model.ModelKey != "kz_gpt_image2" || model.DisplayName != "GPT Image 2" || model.UpstreamMode != "kz_gpt_image2" || model.Capability != "image" {
+		t.Fatalf("GPT Image 2 identity = %#v", model)
+	}
+	if strings.Join(model.Resolutions, ",") != "1K,2K,4K" || len(model.Ratios) != 13 {
+		t.Fatalf("GPT Image 2 output capabilities = %#v", model)
 	}
 }
 

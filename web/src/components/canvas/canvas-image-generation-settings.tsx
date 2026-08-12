@@ -67,7 +67,7 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
                 </div>
             </SettingsSection>
 
-            {showCount ? (
+            {showCount && imageModelSupportsBatch(config.model) ? (
                 <SettingsSection label="生成数量">
                     <div className={cn("canvas-image-count-grid grid gap-2", counts.length === 4 ? "grid-cols-4" : "grid-cols-3")}>
                         {counts.map((option) => (
@@ -132,7 +132,7 @@ export function imageCanvasResolutionLabel(size?: string): ImageResolution {
     const dimensions = parseDimensions(size);
     if (!dimensions) return "1K";
     const longest = Math.max(dimensions.width, dimensions.height);
-    if (longest >= 3000) return "4K";
+    if (longest >= 2800) return "4K";
     if (longest >= 1900) return "2K";
     return "1K";
 }
@@ -157,17 +157,36 @@ function parseDimensions(size?: string) {
     return width > 0 && height > 0 ? { width, height } : null;
 }
 
-function buildImageDimensions(ratio: string, resolution: ImageResolution) {
+export function buildImageDimensions(ratio: string, resolution: ImageResolution) {
     const [widthRatio, heightRatio] = ratio.split(":").map(Number);
     const square = widthRatio === heightRatio;
     const landscape = widthRatio > heightRatio;
     const longestEdge = resolution === "4K" ? 3840 : resolution === "2K" ? 2048 : square ? 1024 : 1824;
     const shortestEdge = alignDimension((longestEdge * Math.min(widthRatio, heightRatio)) / Math.max(widthRatio, heightRatio));
-    const width = square ? longestEdge : landscape ? longestEdge : shortestEdge;
-    const height = square ? longestEdge : landscape ? shortestEdge : longestEdge;
+    let width = square ? longestEdge : landscape ? longestEdge : shortestEdge;
+    let height = square ? longestEdge : landscape ? shortestEdge : longestEdge;
+    const maxPixels = 8_294_400;
+    if (width * height > maxPixels) {
+        const scale = Math.sqrt(maxPixels / (width * height));
+        width = floorDimension(width * scale);
+        height = floorDimension(height * scale);
+    }
     return `${width}x${height}`;
 }
 
 function alignDimension(value: number) {
-    return Math.max(64, Math.round(value / 8) * 8);
+    return Math.max(64, Math.round(value / 16) * 16);
+}
+
+function floorDimension(value: number) {
+    return Math.max(64, Math.floor(value / 16) * 16);
+}
+
+export function imageModelSupportsBatch(model?: string) {
+    const modelName = (model || "").split("::").at(-1);
+    return modelName !== "kz_gpt_image2";
+}
+
+export function imageModelMetadataPatch(model: string) {
+    return imageModelSupportsBatch(model) ? { model } : { model, count: 1 };
 }

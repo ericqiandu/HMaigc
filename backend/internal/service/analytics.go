@@ -1001,7 +1001,9 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 	if log.Status == model.ApiCallStatusFailed {
 		errorCode, errorMessage := providerFailureDetails(payload)
 		log.ErrorCode = errorCode
-		if errorMessage != "" {
+		if log.Model == kuaiziGPTImage2Model {
+			log.Error = "GPT Image 2 上游请求失败，请按错误码和任务 ID 核对"
+		} else if errorMessage != "" {
 			log.Error = errorMessage
 		}
 	}

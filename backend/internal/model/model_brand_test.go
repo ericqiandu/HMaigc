@@ -4,7 +4,7 @@ import "testing"
 
 func TestInferModelBrandKey(t *testing.T) {
 	tests := map[string]string{
-		"gpt-image-2": "openai", "gemini-2.5-flash": "google", "MiniMax-Hailuo-02": "minimax",
+		"gpt-image-2": "openai", "kz_gpt_image2": "openai", "gemini-2.5-flash": "google", "MiniMax-Hailuo-02": "minimax",
 		"seedance-2.0-fast": "seedance", "kling-v3": "kling", "unknown-provider-model": "generic",
 	}
 	for modelKey, expected := range tests {

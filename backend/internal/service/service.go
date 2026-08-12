@@ -1011,7 +1011,7 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	}
 	task.InputJSON = decryptedInput
 	ctx = withProviderAnalytics(ctx, s, task)
-	if _, ok := kuaiziSeedanceModelSpec(task.Model); ok {
+	if _, ok := kuaiziProviderModelSpec(task.Model); ok {
 		result, err := s.processKuaiziCompatibleTask(ctx, task)
 		return result, nil, err
 	}

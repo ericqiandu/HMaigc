@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
-import { CanvasImageGenerationSettings, imageCanvasAspectLabel, imageCanvasQualityLabel, imageCanvasResolutionLabel } from "@/components/canvas/canvas-image-generation-settings";
+import { CanvasImageGenerationSettings, imageCanvasAspectLabel, imageCanvasQualityLabel, imageCanvasResolutionLabel, imageModelSupportsBatch } from "@/components/canvas/canvas-image-generation-settings";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -31,7 +31,8 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const transparentLabel = config.transparentBackground === "true" ? " · 透明" : "";
     const settingsSummary = `${imageCanvasAspectLabel(config.size)} · ${imageCanvasQualityLabel(quality)} · ${imageCanvasResolutionLabel(config.size)}`;
-    const summary = showCount ? `${settingsSummary} · ${count}张${transparentLabel}` : `${settingsSummary}${transparentLabel}`;
+    const effectiveShowCount = showCount && imageModelSupportsBatch(config.model);
+    const summary = effectiveShowCount ? `${settingsSummary} · ${count}张${transparentLabel}` : `${settingsSummary}${transparentLabel}`;
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -60,7 +61,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} showCount={showCount} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} showCount={effectiveShowCount} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>

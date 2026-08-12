@@ -461,7 +461,7 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Adapters) != 1 || len(view.Adapters[0].Models) != 4 {
+	if len(view.Adapters) != 2 || len(view.Adapters[0].Models) != 4 {
 		t.Fatalf("adapters = %#v", view.Adapters)
 	}
 	var models []model.ChannelModel

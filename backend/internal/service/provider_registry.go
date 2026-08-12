@@ -109,16 +109,27 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 }
 
 func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
-	return []ProviderAdapterDescriptor{{
-		ProviderKind: "kuaizi",
-		Family:       "seedance",
-		Models: []ProviderModelSpec{
-			seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
-			seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3, false, []string{"web_search"}),
-			seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
-			seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10, true, nil),
+	return []ProviderAdapterDescriptor{
+		{
+			ProviderKind: "kuaizi",
+			Family:       "seedance",
+			Models: []ProviderModelSpec{
+				seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
+				seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3, false, []string{"web_search"}),
+				seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
+				seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10, true, nil),
+			},
 		},
-	}}
+		{
+			ProviderKind: "kuaizi",
+			Family:       "gpt-image2",
+			Models: []ProviderModelSpec{{
+				ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2", UpstreamMode: "kz_gpt_image2", Capability: "image",
+				Resolutions: []string{"1K", "2K", "4K"},
+				Ratios:      []string{"1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"},
+			}},
+		},
+	}
 }
 
 func seedanceProviderModel(modelKey string, displayName string, resolutions []string, durationMax int, maxImages int, maxVideos int, maxAudios int, supportsAudioOnly bool, tools []string) ProviderModelSpec {
@@ -135,9 +146,16 @@ func seedanceProviderModel(modelKey string, displayName string, resolutions []st
 }
 
 func kuaiziSeedanceModelSpec(modelKey string) (ProviderModelSpec, bool) {
-	for _, candidate := range kuaiziProviderAdapterDescriptors()[0].Models {
-		if candidate.ModelKey == strings.TrimSpace(modelKey) {
-			return candidate, true
+	candidate, ok := kuaiziProviderModelSpec(modelKey)
+	return candidate, ok && candidate.Capability == "video"
+}
+
+func kuaiziProviderModelSpec(modelKey string) (ProviderModelSpec, bool) {
+	for _, descriptor := range kuaiziProviderAdapterDescriptors() {
+		for _, candidate := range descriptor.Models {
+			if candidate.ModelKey == strings.TrimSpace(modelKey) {
+				return candidate, true
+			}
 		}
 	}
 	return ProviderModelSpec{}, false
