@@ -387,7 +387,7 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
 }
 
 export function isGenerationCanceled(error: unknown) {
-    return error instanceof Error && (error.message === "请求已取消" || error.name === "AbortError");
+    return error instanceof Error && (error.message === "请求已取消" || error.message === "任务已取消" || error.name === "AbortError");
 }
 
 export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {

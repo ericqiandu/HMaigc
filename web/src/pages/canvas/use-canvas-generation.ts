@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
 import { applyGenerationTaskResultToNodes, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
+import { convergeGenerationTaskCancellation, mergeGenerationTaskSnapshot } from "@/lib/canvas/canvas-generation-task-state";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { cancelGenerationTask, listGenerationTasks, listTaskLogs, queryGenerationTask, waitForGenerationTask, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -79,6 +80,12 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         });
     }, [modal, stopGenerationByRunningId]);
 
+    const applyGenerationTaskResult = useCallback(async (nodeId: string, task: GenerationTask) => {
+        const applied = await applyGenerationTaskResultToNodes(nodesRef.current, task, nodeId);
+        if (!applied.updated || !applied.node) throw new Error("画布中找不到对应任务节点");
+        setNodes((current) => current.map((node) => node.id === applied.nodeId ? applied.node! : node));
+    }, [nodesRef, setNodes]);
+
     const cancelNodeTask = useCallback((node: CanvasNodeData) => {
         const taskId = node.metadata?.taskId;
         if (!taskId) {
@@ -92,13 +99,19 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             cancelText: "继续生成",
             okButtonProps: { danger: true },
             onOk: async () => {
-                generationRequestsRef.current.get(node.id)?.controller.abort();
-                const task = await cancelGenerationTask(taskId);
-                setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, ...generationTaskMetadata(task), status: NODE_STATUS_ERROR, errorDetails: "任务已取消" } } : item));
-                message.success("任务已取消");
+                const task = await convergeGenerationTaskCancellation(taskId, { cancel: cancelGenerationTask, query: queryGenerationTask });
+                if (task.status === "succeeded") {
+                    await applyGenerationTaskResult(node.id, task);
+                    message.info("任务已完成，生成结果已保留");
+                    return;
+                }
+                setNodes((current) => current.map((item) => item.id === node.id ? mergeGenerationTaskSnapshot(item, task) : item));
+                if (task.status === "cancelled") message.success("任务已取消");
+                else if (task.status === "failed") message.info("任务已结束，已同步最新状态");
+                else message.info("取消请求已提交，任务状态正在核对");
             },
         });
-    }, [confirmStopGeneration, message, modal, setNodes]);
+    }, [applyGenerationTaskResult, confirmStopGeneration, message, modal, setNodes]);
 
     const openNodeTaskDetails = useCallback(async (node: CanvasNodeData) => {
         const taskId = node.metadata?.taskId;
@@ -128,23 +141,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     }, [message]);
 
     const bindGenerationTask = useCallback((targetNodeId: string, task: GenerationTask) => {
-        setNodes((current) => current.map((node) => {
-            if (node.id !== targetNodeId) return node;
-            const failed = task.status === "failed" || task.status === "cancelled";
-            const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content);
-            const failure = failed
-                ? generationFailureMetadata(task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败"), node.metadata?.composerContent || node.metadata?.prompt || task.prompt || "")
-                : undefined;
-            return {
-                ...node,
-                metadata: {
-                    ...node.metadata,
-                    ...generationTaskMetadata(task),
-                    status: failed ? NODE_STATUS_ERROR : hasCompletedContent ? NODE_STATUS_SUCCESS : NODE_STATUS_LOADING,
-                    ...(failure || { errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined }),
-                },
-            };
-        }));
+        setNodes((current) => current.map((node) => node.id === targetNodeId ? mergeGenerationTaskSnapshot(node, task) : node));
     }, [setNodes]);
 
     const saveGeneratedAsset = useCallback(async (node: CanvasNodeData, taskId: string) => {
@@ -152,12 +149,6 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
         if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
     }, [domainProjectId, projectId, queryClient, setNodes]);
-
-    const applyGenerationTaskResult = useCallback(async (nodeId: string, task: GenerationTask) => {
-        const applied = await applyGenerationTaskResultToNodes(nodesRef.current, task, nodeId);
-        if (!applied.updated || !applied.node) throw new Error("画布中找不到对应任务节点");
-        setNodes((current) => current.map((node) => node.id === applied.nodeId ? applied.node! : node));
-    }, [nodesRef, setNodes]);
 
     const recoverInterruptedGenerationTasks = useCallback(async () => {
         const recoveryNodes = nodesRef.current.filter((node) => node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && node.metadata.status !== NODE_STATUS_SUCCESS));

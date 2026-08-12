@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { resetInterruptedGeneration } from "../src/lib/canvas/canvas-project-generation";
+import { isGenerationCanceled, resetInterruptedGeneration } from "../src/lib/canvas/canvas-project-generation";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 describe("resetInterruptedGeneration", () => {
@@ -20,6 +20,12 @@ describe("resetInterruptedGeneration", () => {
 
         expect(normalized.width).toBe(480);
         expect(normalized.height).toBe(300);
+    });
+});
+
+describe("isGenerationCanceled", () => {
+    test("treats the backend terminal cancellation fact as a normal cancellation", () => {
+        expect(isGenerationCanceled(new Error("任务已取消"))).toBe(true);
     });
 });
 
