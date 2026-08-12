@@ -74,7 +74,7 @@ func validateStructuredReplacementQuotaWithPolicy(usage repository.UserStorageUs
 	return validateStructuredStorageQuotaWithPolicy(usage, kind, false, deltaBytes, policy)
 }
 
-func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, providerFact *model.ProviderTaskFact, runtimePolicy RuntimePolicySetting, activeTaskPolicy repository.ActiveTaskPolicy) error {
+func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, runtimePolicy RuntimePolicySetting, activeTaskPolicy repository.ActiveTaskPolicy) error {
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	usage, err := s.repo.UserStorageUsage(task.UserID)
@@ -86,40 +86,13 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 		return err
 	}
 	if billingOrder != nil {
-		return s.repo.CreateTaskWithCreditReservation(task, billingOrder, providerFact, activeTaskPolicy)
+		return s.repo.CreateTaskWithCreditReservation(task, billingOrder, activeTaskPolicy)
 	}
 	return s.repo.CreateTaskWithActiveLimit(task, activeTaskPolicy)
 }
 
 // 任务完成会同时扩张任务历史和 Agent 会话数据，必须在同一临界区核算并原子写入。
 func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
-	return s.saveTaskCompletionWithinStorageQuotaMode(task, resultJSON, opsJSON, hasCanvasOps, false)
-}
-
-func (s *Service) saveProviderTaskCompletionWithinStorageQuota(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
-	return s.saveTaskCompletionWithinStorageQuotaMode(task, resultJSON, opsJSON, hasCanvasOps, true)
-}
-
-func (s *Service) saveResolvedProviderPostprocessWithinStorageQuota(task *model.Task, resultJSON []byte, status model.TaskStatus, stage string, taskError string) error {
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return err
-	}
-	s.storageMu.Lock()
-	defer s.storageMu.Unlock()
-	usage, err := s.repo.UserStorageUsage(task.UserID)
-	if err != nil {
-		return err
-	}
-	publicInputJSON := publicTaskInputJSON(task.InputJSON)
-	taskDelta := int64(len(resultJSON) + len(publicInputJSON) - len(task.ResultJSON) - len(task.InputJSON))
-	if err := validateTaskDataGrowthQuotaWithPolicy(usage, taskDelta, policy.Resource); err != nil {
-		return err
-	}
-	return s.repo.CompleteResolvedProviderPostprocess(task.ID, repository.ProviderTaskLease{Owner: task.LeaseOwner, Token: task.LeaseToken}, status, stage, taskError, publicInputJSON, string(resultJSON))
-}
-
-func (s *Service) saveTaskCompletionWithinStorageQuotaMode(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool, providerTask bool) error {
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err
@@ -175,19 +148,8 @@ func (s *Service) saveTaskCompletionWithinStorageQuotaMode(task *model.Task, res
 	completed.ResultJSON = string(resultJSON)
 	completed.InputJSON = publicInputJSON
 	completed.CompletedAt = ptr(time.Now())
-	leaseOwner := completed.LeaseOwner
-	leaseToken := completed.LeaseToken
-	completed.LeaseOwner = ""
-	completed.LeaseToken = ""
-	completed.LeaseExpiresAt = nil
-	var saveErr error
-	if providerTask {
-		saveErr = s.repo.SaveProviderTaskCompletion(&completed, leaseOwner, leaseToken, session, message, results)
-	} else {
-		saveErr = s.repo.SaveTaskCompletion(&completed, leaseOwner, leaseToken, session, message, results)
-	}
-	if saveErr != nil {
-		return saveErr
+	if err := s.repo.SaveTaskCompletion(&completed, session, message, results); err != nil {
+		return err
 	}
 	*task = completed
 	return nil

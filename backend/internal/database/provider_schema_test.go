@@ -37,71 +37,17 @@ func TestProviderAccountSchemaCreatesExactIntegrityIndexes(t *testing.T) {
 		"idx_provider_credential_account_family": `CREATE UNIQUE INDEX idx_provider_credential_account_family ON provider_credentials(provider_account_id, family)`,
 		"idx_provider_credential_version_active": `CREATE UNIQUE INDEX idx_provider_credential_version_active ON provider_credential_versions(provider_credential_id) WHERE status = 'active'`,
 		"idx_provider_task_fact_provider_task":   `CREATE UNIQUE INDEX idx_provider_task_fact_provider_task ON provider_task_facts(provider_credential_version_id, provider_task_id) WHERE provider_task_id <> ''`,
-		"idx_provider_task_fact_billing_order":   `CREATE UNIQUE INDEX idx_provider_task_fact_billing_order ON provider_task_facts(billing_order_id) WHERE billing_order_id <> ''`,
 		"idx_provider_billing_upstream_order":    `CREATE UNIQUE INDEX idx_provider_billing_upstream_order ON provider_billing_facts(provider_credential_version_id, upstream_order_id) WHERE upstream_order_id <> ''`,
 		"idx_channel_model_resolution_variant":   `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant)`,
-		"idx_resources_source_task":              `CREATE UNIQUE INDEX idx_resources_source_task ON resources(source_task_id) WHERE source_task_id <> ''`,
-		"idx_credit_ledger_billing_action":       `CREATE UNIQUE INDEX idx_credit_ledger_billing_action ON credit_ledger_entries(billing_order_id,type) WHERE billing_order_id <> ''`,
-		"idx_team_credit_ledger_billing_action":  `CREATE UNIQUE INDEX idx_team_credit_ledger_billing_action ON team_credit_ledger_entries(billing_order_id,type) WHERE billing_order_id <> ''`,
 	}
 	for name, expected := range want {
 		var actual string
 		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
 			t.Fatal(err)
 		}
-		if compactSchemaSQL(actual) != compactSchemaSQL(expected) {
+		if compactSQL(actual) != compactSQL(expected) {
 			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
 		}
-	}
-}
-
-func TestProviderAccountSchemaRejectsDuplicateProviderFactsForBillingOrder(t *testing.T) {
-	db := openProviderSchemaSQLite(t)
-	if err := MigrateBaseSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`DROP INDEX idx_provider_task_fact_billing_order`).Error; err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	for _, taskID := range []string{"task-one", "task-two"} {
-		fact := model.ProviderTaskFact{TaskID: taskID, BillingOrderID: "billing-duplicate", ProviderStatus: "reserved", ReconciliationStatus: "pending", CreatedAt: now, UpdatedAt: now}
-		if err := db.Create(&fact).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	err := EnsureProviderIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "计费订单上游任务") {
-		t.Fatalf("duplicate billing provider facts error = %v", err)
-	}
-}
-
-func TestProviderRuntimeFencingSchemaMigratesLeaseAndResourceClaims(t *testing.T) {
-	db := openProviderSchemaSQLite(t)
-	if err := MigrateBaseSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range []struct {
-		model  any
-		column string
-	}{
-		{model: &model.Task{}, column: "lease_token"},
-		{model: &model.ProviderTaskFact{}, column: "execution_lease_token"},
-		{model: &model.ProviderTaskFact{}, column: "create_lease_token"},
-		{model: &model.Resource{}, column: "source_task_id"},
-		{model: &model.Resource{}, column: "quota_day"},
-		{model: &model.Resource{}, column: "quota_reserved"},
-		{model: &model.Resource{}, column: "write_token"},
-		{model: &model.Resource{}, column: "write_task_lease_token"},
-		{model: &model.Resource{}, column: "write_lease_expires_at"},
-		{model: &model.Resource{}, column: "write_resolution"},
-	} {
-		if !db.Migrator().HasColumn(item.model, item.column) {
-			t.Fatalf("missing provider runtime fencing column %s", item.column)
-		}
-	}
-	if !db.Migrator().HasIndex(&model.Resource{}, "idx_resources_source_task") {
-		t.Fatal("missing unique source-task resource index")
 	}
 }
 
@@ -128,23 +74,6 @@ func TestProviderAccountSchemaRejectsWrongNamedIndexWithoutChangingRows(t *testi
 	}
 	if stored.BaseURL != row.BaseURL || stored.Status != row.Status {
 		t.Fatalf("existing provider row was overwritten: %#v", stored)
-	}
-}
-
-func TestProviderIntegritySchemaRejectsWrongSourceTaskResourceIndex(t *testing.T) {
-	db := openProviderSchemaSQLite(t)
-	if err := MigrateBaseSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`DROP INDEX idx_resources_source_task`).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`CREATE UNIQUE INDEX idx_resources_source_task ON resources(source_task_id)`).Error; err != nil {
-		t.Fatal(err)
-	}
-	err := EnsureProviderIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "idx_resources_source_task") {
-		t.Fatalf("wrong source-task resource index error = %v", err)
 	}
 }
 

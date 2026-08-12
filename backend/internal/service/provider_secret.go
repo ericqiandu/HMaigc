@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-const providerSecretPrefix = "enc:provider:v2:"
+const providerSecretPrefix = "enc:provider:v1:"
 
 var (
 	ErrProviderSecretAuthentication           = errors.New("provider secret authentication failed")
@@ -32,12 +32,12 @@ func NewProviderSecretCipher(dataDir string) *ProviderSecretCipher {
 	return &ProviderSecretCipher{dataDir: dataDir}
 }
 
-func (c *ProviderSecretCipher) Encrypt(accountID string, credentialID string, credentialVersionID string, plaintext string) (string, error) {
-	return c.encrypt(accountID, credentialID, credentialVersionID, plaintext, false, ErrProviderSecretKeyCreationNotAuthorized)
+func (c *ProviderSecretCipher) Encrypt(accountID string, credentialID string, version int64, plaintext string) (string, error) {
+	return c.encrypt(accountID, credentialID, version, plaintext, false, ErrProviderSecretKeyCreationNotAuthorized)
 }
 
-func (c *ProviderSecretCipher) encrypt(accountID string, credentialID string, credentialVersionID string, plaintext string, allowKeyCreation bool, missingError error) (string, error) {
-	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(credentialID) == "" || strings.TrimSpace(credentialVersionID) == "" {
+func (c *ProviderSecretCipher) encrypt(accountID string, credentialID string, version int64, plaintext string, allowKeyCreation bool, missingError error) (string, error) {
+	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(credentialID) == "" || version <= 0 {
 		return "", errors.New("provider secret AAD identity is invalid")
 	}
 	if plaintext == "" {
@@ -55,18 +55,18 @@ func (c *ProviderSecretCipher) encrypt(accountID string, credentialID string, cr
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-	sealed := gcm.Seal(nil, nonce, []byte(plaintext), providerSecretAAD(accountID, credentialID, credentialVersionID))
+	sealed := gcm.Seal(nil, nonce, []byte(plaintext), providerSecretAAD(accountID, credentialID, version))
 	payload := append(nonce, sealed...)
 	return providerSecretPrefix + base64.RawStdEncoding.EncodeToString(payload), nil
 }
 
 // EncryptProviderSecret 只有在数据库确认不存在任何 provider 密文时，才授权首次原子创建密钥根。
-func (s *Service) EncryptProviderSecret(accountID string, credentialID string, credentialVersionID string, plaintext string) (string, error) {
+func (s *Service) EncryptProviderSecret(accountID string, credentialID string, version int64, plaintext string) (string, error) {
 	secrets, err := s.repo.ProviderCredentialSecrets()
 	if err != nil {
 		return "", fmt.Errorf("query provider credential secrets before encryption: %w", err)
 	}
-	return NewProviderSecretCipher(s.dataDir).encrypt(accountID, credentialID, credentialVersionID, plaintext, len(secrets) == 0, ErrProviderSecretKeyMissing)
+	return NewProviderSecretCipher(s.dataDir).encrypt(accountID, credentialID, version, plaintext, len(secrets) == 0, ErrProviderSecretKeyMissing)
 }
 
 // ValidateProviderSecretRuntime 在 worker、readiness 和 listener 前验证同一密钥根及每条密文的数据库 AAD。
@@ -83,7 +83,7 @@ func (s *Service) ValidateProviderSecretRuntime() error {
 		return fmt.Errorf("validate provider secret key root: %w", err)
 	}
 	for _, secret := range secrets {
-		plaintext, decryptErr := cipher.Decrypt(secret.ProviderAccountID, secret.ProviderCredentialID, secret.CredentialVersionID, secret.KeyCipher)
+		plaintext, decryptErr := cipher.Decrypt(secret.ProviderAccountID, secret.ProviderCredentialID, secret.Version, secret.KeyCipher)
 		if decryptErr != nil {
 			return fmt.Errorf("validate provider credential version %s: %w", secret.CredentialVersionID, decryptErr)
 		}
@@ -104,8 +104,8 @@ func (s *Service) ValidateStartupRuntime() error {
 	return s.ValidateProviderSecretRuntime()
 }
 
-func (c *ProviderSecretCipher) Decrypt(accountID string, credentialID string, credentialVersionID string, ciphertext string) (string, error) {
-	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(credentialID) == "" || strings.TrimSpace(credentialVersionID) == "" {
+func (c *ProviderSecretCipher) Decrypt(accountID string, credentialID string, version int64, ciphertext string) (string, error) {
+	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(credentialID) == "" || version <= 0 {
 		return "", errors.New("provider secret AAD identity is invalid")
 	}
 	if !strings.HasPrefix(ciphertext, providerSecretPrefix) {
@@ -127,7 +127,7 @@ func (c *ProviderSecretCipher) Decrypt(accountID string, credentialID string, cr
 	if len(payload) < gcm.NonceSize()+gcm.Overhead() {
 		return "", errors.New("provider secret ciphertext length is invalid")
 	}
-	plaintext, err := gcm.Open(nil, payload[:gcm.NonceSize()], payload[gcm.NonceSize():], providerSecretAAD(accountID, credentialID, credentialVersionID))
+	plaintext, err := gcm.Open(nil, payload[:gcm.NonceSize()], payload[gcm.NonceSize():], providerSecretAAD(accountID, credentialID, version))
 	if err != nil {
 		return "", ErrProviderSecretAuthentication
 	}
@@ -142,12 +142,12 @@ func providerGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func providerSecretAAD(accountID string, credentialID string, credentialVersionID string) []byte {
+func providerSecretAAD(accountID string, credentialID string, version int64) []byte {
 	var buffer bytes.Buffer
-	writeProviderAADString(&buffer, "provider:v2")
+	writeProviderAADString(&buffer, "provider:v1")
 	writeProviderAADString(&buffer, accountID)
 	writeProviderAADString(&buffer, credentialID)
-	writeProviderAADString(&buffer, credentialVersionID)
+	_ = binary.Write(&buffer, binary.BigEndian, version)
 	return buffer.Bytes()
 }
 

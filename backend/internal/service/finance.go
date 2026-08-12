@@ -17,12 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	CreditScale                      int64 = 1_000_000
-	providerResolvedTaskStage              = "任务已人工核对终结"
-	providerResolvedTaskError              = "上游任务已完成人工核对"
-	providerResolvedPostprocessStage       = "等待保存已生成资产后完成核对"
-)
+const CreditScale int64 = 1_000_000
 
 type WalletSummary struct {
 	Account model.CreditAccount       `json:"account"`
@@ -298,52 +293,19 @@ func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveB
 	if order.Status != model.BillingStatusUncertain && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusReserved {
 		return nil, BadAuthRequest("当前订单不需要人工核对")
 	}
-	action := strings.TrimSpace(req.Action)
-	if action != "settle" && action != "refund" {
+	switch strings.TrimSpace(req.Action) {
+	case "settle":
+		err = s.SettleBilling(id, order.ProviderRequestID)
+	case "refund":
+		err = s.RefundBilling(id, note)
+	default:
 		return nil, BadAuthRequest("请选择结算或退款")
-	}
-	var providerResolved bool
-	providerFact, factErr := s.repo.ProviderTaskFactForBillingOrder(id)
-	if factErr == nil {
-		resolvedProviderStatus := providerFact.ProviderStatus
-		switch providerFact.ProviderStatus {
-		case "create_uncertain":
-			resolvedProviderStatus = "create_uncertain_resolved"
-		case "poll_uncertain":
-			resolvedProviderStatus = "poll_uncertain_resolved"
-		}
-		resolution := repository.ProviderTaskBillingResolution{
-			ExpectedProviderStatus: providerFact.ProviderStatus, ExpectedReconciliationStatus: providerFact.ReconciliationStatus,
-			ExpectedBillingStatus: order.Status, ResolvedProviderStatus: resolvedProviderStatus,
-			ActorUserID: actor.ID, Note: truncateRunes(note, 500),
-			TaskStatus: model.TaskStatusFailed, TaskStage: providerResolvedTaskStage, TaskError: providerResolvedTaskError, PostprocessStage: providerResolvedPostprocessStage,
-		}
-		if action == "settle" {
-			providerResolved, err = s.repo.SettleProviderTaskBilling(id, resolution)
-		} else {
-			providerResolved, err = s.repo.RefundProviderTaskBilling(id, resolution)
-		}
-	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
-		return nil, factErr
 	}
 	if err != nil {
 		return nil, err
 	}
-	if factErr == nil && !providerResolved {
-		return nil, errors.New("上游任务计费事实已被并发处理")
-	}
-	if !providerResolved {
-		if action == "settle" {
-			err = s.SettleBilling(id, order.ProviderRequestID)
-		} else {
-			err = s.RefundBilling(id, note)
-		}
-		if err != nil {
-			return nil, err
-		}
-		if err := s.repo.RecordBillingResolution(id, actor.ID, truncateRunes(note, 500)); err != nil {
-			return nil, err
-		}
+	if err := s.repo.RecordBillingResolution(id, actor.ID, truncateRunes(note, 500)); err != nil {
+		return nil, err
 	}
 	if err := s.appendAdminAudit(actor, "billing.resolve", "user", order.UserID, "人工核对用户计费订单", map[string]any{"billingOrderId": id, "action": req.Action, "note": truncateRunes(note, 500)}); err != nil {
 		return nil, err
@@ -414,15 +376,12 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 		return nil, BadAuthRequest("任务能力类型无效，无法计费")
 	}
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
-	usage := billingUsage(capability, config)
-	usage.InputVariant = taskPricingInputVariant(input)
-	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, usage)
+	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingUsage(capability, config))
 }
 
 type BillingUsage struct {
 	Quantity                  int64
 	Resolution                string
-	InputVariant              string
 	SuperResolutionEnabled    bool
 	SuperResolutionResolution string
 	SuperResolutionVersion    string
@@ -485,7 +444,6 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 	unitPrice := item.UnitPriceMicrocredits
 	priceTierID := ""
 	pricingResolution := ""
-	pricingInputVariant := ""
 	switch item.PriceStrategy {
 	case "flat":
 		if unitPrice <= 0 {
@@ -517,17 +475,15 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		if pricingResolution == "" {
 			return nil, BadAuthRequest("视频分辨率无效，无法匹配积分价格")
 		}
-		pricingInputVariant = firstNonEmpty(strings.TrimSpace(usage.InputVariant), "standard")
 		for _, tier := range item.PriceTiers {
-			tierInputVariant := firstNonEmpty(strings.TrimSpace(tier.InputVariant), "standard")
-			if tier.Resolution == pricingResolution && tierInputVariant == pricingInputVariant {
+			if tier.Resolution == pricingResolution {
 				unitPrice = tier.UnitPriceMicrocredits
 				priceTierID = tier.ID
 				break
 			}
 		}
 		if priceTierID == "" || unitPrice <= 0 {
-			return nil, BadAuthRequest("当前模型未配置规格 " + pricingResolution + "/" + pricingInputVariant + " 的积分价格")
+			return nil, BadAuthRequest("当前模型未配置规格 " + pricingResolution + " 的积分价格")
 		}
 	default:
 		return nil, BadAuthRequest("当前模型尚未配置有效的价格策略")
@@ -589,31 +545,13 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
-		PriceTierID: priceTierID, PricingResolution: pricingResolution, PricingInputVariant: pricingInputVariant,
+		PriceTierID: priceTierID, PricingResolution: pricingResolution,
 		UnitPriceMicrocredits: unitPrice, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
 		EnhancementPricingRuleID: enhancementRuleID, EnhancementUnitPriceMicrocredits: enhancementUnitPrice,
 		EnhancementAmountMicrocredits: enhancementAmount, EnhancementSupplierCostMinMicros: enhancementSupplierMin,
 		EnhancementSupplierCostMaxMicros: enhancementSupplierMax, EnhancementPricingSnapshotJSON: enhancementSnapshot,
 		Status: model.BillingStatusReserved,
 	}, nil
-}
-
-func taskPricingInputVariant(input map[string]any) string {
-	value, exists := input["referenceVideos"]
-	if !exists || value == nil {
-		return "standard"
-	}
-	switch videos := value.(type) {
-	case []any:
-		if len(videos) > 0 {
-			return "reference_video"
-		}
-	case []providerMedia:
-		if len(videos) > 0 {
-			return "reference_video"
-		}
-	}
-	return "standard"
 }
 
 func (s *Service) requireAccessibleChannelModel(userID string, channelID string, modelKey string) (*model.ChannelModel, error) {
@@ -623,13 +561,6 @@ func (s *Service) requireAccessibleChannelModel(userID string, channelID string,
 	}
 	if err != nil {
 		return nil, err
-	}
-	available, err := s.kuaiziSeedance25ModelAvailable(*item)
-	if err != nil {
-		return nil, err
-	}
-	if !available {
-		return nil, BadAuthRequest("当前系统渠道模型的上游运行事实不可用")
 	}
 	switch item.AccessPolicy {
 	case model.ModelAccessAuthenticated:
@@ -656,11 +587,7 @@ func billingUsage(capability string, config map[string]any) BillingUsage {
 		return usage
 	}
 	if capability == "video" {
-		if strings.TrimSpace(fmt.Sprint(config["videoSeconds"])) == "-1" {
-			usage.Quantity = 30
-		} else {
-			usage.Quantity = positiveInteger(config["videoSeconds"])
-		}
+		usage.Quantity = positiveInteger(config["videoSeconds"])
 		usage.Resolution = strings.TrimSpace(fmt.Sprint(config["vquality"]))
 		usage.SuperResolutionEnabled = strings.EqualFold(strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionEnabled"])), "true")
 		usage.SuperResolutionResolution = strings.TrimSpace(fmt.Sprint(config["videoSuperResolutionResolution"]))
@@ -745,12 +672,6 @@ func (s *Service) BillingFailureRequiresReview(orderID string, taskID string, er
 	}
 	if billingFailureUncertain(err) {
 		return true
-	}
-	if fact, factErr := s.repo.ProviderTaskFact(taskID); factErr == nil {
-		switch fact.ProviderStatus {
-		case "create_uncertain", "poll_uncertain", "failed", "succeeded":
-			return true
-		}
 	}
 	order, orderErr := s.repo.BillingOrder(orderID)
 	if orderErr != nil || order.Status == model.BillingStatusUncertain {

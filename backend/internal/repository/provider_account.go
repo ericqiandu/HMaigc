@@ -46,14 +46,6 @@ func (r *Repository) ProviderAccountByKind(providerKind string) (*model.Provider
 	return &account, nil
 }
 
-func (r *Repository) ProviderAccount(id string) (*model.ProviderAccount, error) {
-	var account model.ProviderAccount
-	if err := r.db.First(&account, "id = ?", id).Error; err != nil {
-		return nil, err
-	}
-	return &account, nil
-}
-
 func (r *Repository) ProviderEndpointVersions(accountID string) ([]model.ProviderEndpointVersion, error) {
 	var versions []model.ProviderEndpointVersion
 	err := r.db.Where("provider_account_id = ?", accountID).Order("version DESC").Find(&versions).Error

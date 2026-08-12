@@ -29,9 +29,6 @@ go() {
 		"CANVAS_REQUIRE_INTEGRATION_TESTS=$CANVAS_REQUIRE_INTEGRATION_TESTS" \
 		"DATABASE_URL=$DATABASE_URL" \
 		"REDIS_URL=$REDIS_URL" >"$PAYMENT_RUNNER_CAPTURE/environment"
-	if [[ " $* " == *' -list '* ]]; then
-		printf '%s\n' "${PAYMENT_RUNNER_LIST_OUTPUT:-TestPaymentIntegrity}"
-	fi
 }
 
 export -f docker go
@@ -95,43 +92,5 @@ for arguments in '--all --run TestPayment' '--run TestPayment --all'; do
 		exit 1
 	fi
 done
-
-zero_capture="$test_root/zero-match"
-mkdir -p "$zero_capture"
-set +e
-PAYMENT_RUNNER_CAPTURE="$zero_capture" PAYMENT_RUNNER_LIST_OUTPUT="NO_MATCH" bash "$runner" --run '^TestDefinitelyMissing$' \
-	>"$zero_capture/stdout" 2>"$zero_capture/stderr"
-status=$?
-set -e
-if [[ "$status" -ne 1 ]]; then
-	printf 'zero-match run exited %d, want 1\n' "$status" >&2
-	exit 1
-fi
-if ! grep -Fq 'matched zero tests' "$zero_capture/stderr"; then
-	printf '%s\n' 'zero-match run did not report the missing required tests' >&2
-	exit 1
-fi
-
-required_capture="$test_root/required-match"
-mkdir -p "$required_capture"
-PAYMENT_RUNNER_CAPTURE="$required_capture" PAYMENT_RUNNER_LIST_OUTPUT=$'TestRequiredOne\nTestRequiredTwo' \
-	bash "$runner" --run '^TestRequired' --require TestRequiredOne --require TestRequiredTwo
-
-missing_required_capture="$test_root/required-missing"
-mkdir -p "$missing_required_capture"
-set +e
-PAYMENT_RUNNER_CAPTURE="$missing_required_capture" PAYMENT_RUNNER_LIST_OUTPUT='TestRequiredOne' \
-	bash "$runner" --run '^TestRequired' --require TestRequiredOne --require TestRequiredTwo \
-	>"$missing_required_capture/stdout" 2>"$missing_required_capture/stderr"
-status=$?
-set -e
-if [[ "$status" -ne 1 ]]; then
-	printf 'missing required test exited %d, want 1\n' "$status" >&2
-	exit 1
-fi
-if ! grep -Fq 'required integration test was not matched: TestRequiredTwo' "$missing_required_capture/stderr"; then
-	printf '%s\n' 'missing required test was not reported exactly' >&2
-	exit 1
-fi
 
 printf '%s\n' 'payment integration runner contract test passed'

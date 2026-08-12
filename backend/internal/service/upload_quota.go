@@ -6,7 +6,6 @@ import (
 	"log"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -33,31 +32,6 @@ func (s *Service) reserveGeneratedResourceQuota(userID string, size int64) (stri
 		return "", err
 	}
 	return s.reserveUserStoredFileQuota(userID, size, megabytes(policy.Resource.GeneratedFileMB)+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("单个生成文件不能超过 %dMB", policy.Resource.GeneratedFileMB))
-}
-
-func (s *Service) claimPreparedGeneratedResourceWrite(userID string, task model.Task, resource *model.Resource, writeToken string, objectKey string, leaseDuration time.Duration) (*model.Resource, error) {
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return nil, err
-	}
-	if resource == nil || resource.Size <= 0 || resource.Size >= megabytes(policy.Resource.GeneratedFileMB)+1 {
-		return nil, BadAuthRequest(fmt.Sprintf("单个生成文件不能超过 %dMB", policy.Resource.GeneratedFileMB))
-	}
-	day := time.Now().UTC().Format("2006-01-02")
-	s.storageMu.Lock()
-	defer s.storageMu.Unlock()
-	storedBytes, err := s.repo.UserStoredFileBytes(userID)
-	if err != nil {
-		return nil, err
-	}
-	if storedBytes+s.pendingStorage[userID] >= gigabytes(policy.Resource.StoredFileGB) {
-		return nil, BadAuthRequest(fmt.Sprintf("账号资源和会话附件已达到 %s 上限，请联系管理员清理历史文件", formatStorageLimit(gigabytes(policy.Resource.StoredFileGB))))
-	}
-	claimed, err := s.repo.ClaimSourceTaskResourceWriteWithQuota(userID, task.ID, task.LeaseOwner, task.LeaseToken, writeToken, objectKey, leaseDuration, day, megabytes(policy.Resource.DailyUploadMB))
-	if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
-		return nil, BadAuthRequest(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(megabytes(policy.Resource.DailyUploadMB))))
-	}
-	return claimed, err
 }
 
 func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string) (string, error) {

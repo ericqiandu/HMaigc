@@ -143,13 +143,13 @@ type TeamCreditLedgerEntry struct {
 	ID                         string           `json:"id" gorm:"primaryKey;size:36"`
 	TeamID                     string           `json:"teamId" gorm:"index:idx_team_credit_ledger_created,priority:1;size:36"`
 	ActorUserID                string           `json:"actorUserId" gorm:"index:idx_team_credit_actor_created,priority:1;size:36"`
-	Type                       CreditLedgerType `json:"type" gorm:"size:32;index;uniqueIndex:idx_team_credit_ledger_billing_action,priority:2,where:billing_order_id <> ''"`
+	Type                       CreditLedgerType `json:"type" gorm:"size:32;index"`
 	AmountMicrocredits         int64            `json:"amountMicrocredits"`
 	AvailableDeltaMicrocredits int64            `json:"availableDeltaMicrocredits"`
 	ReservedDeltaMicrocredits  int64            `json:"reservedDeltaMicrocredits"`
 	AvailableAfterMicrocredits int64            `json:"availableAfterMicrocredits"`
 	ReservedAfterMicrocredits  int64            `json:"reservedAfterMicrocredits"`
-	BillingOrderID             string           `json:"billingOrderId,omitempty" gorm:"index;size:36;uniqueIndex:idx_team_credit_ledger_billing_action,priority:1,where:billing_order_id <> ''"`
+	BillingOrderID             string           `json:"billingOrderId,omitempty" gorm:"index;size:36"`
 	Model                      string           `json:"model,omitempty" gorm:"size:120;index"`
 	ChannelID                  string           `json:"channelId,omitempty" gorm:"size:36;index"`
 	Scene                      string           `json:"scene,omitempty" gorm:"size:80;index"`

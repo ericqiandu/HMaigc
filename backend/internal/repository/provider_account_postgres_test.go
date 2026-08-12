@@ -58,9 +58,9 @@ func TestPostgresProviderCredentialConcurrentVersionActivationHasOneWinner(t *te
 		t.Fatal(err)
 	}
 	versions := []*model.ProviderCredentialVersion{
-		{ID: "key-old", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v2:old", KeyFingerprint: "old", Status: "pending", Version: 1, CreatedAt: now},
-		{ID: "key-a", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v2:a", KeyFingerprint: "a", Status: "pending", Version: 2, CreatedAt: now},
-		{ID: "key-b", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v2:b", KeyFingerprint: "b", Status: "pending", Version: 3, CreatedAt: now},
+		{ID: "key-old", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v1:old", KeyFingerprint: "old", Status: "pending", Version: 1, CreatedAt: now},
+		{ID: "key-a", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v1:a", KeyFingerprint: "a", Status: "pending", Version: 2, CreatedAt: now},
+		{ID: "key-b", ProviderCredentialID: credential.ID, KeyCipher: "enc:provider:v1:b", KeyFingerprint: "b", Status: "pending", Version: 3, CreatedAt: now},
 	}
 	for _, version := range versions {
 		if err := repo.CreateProviderCredentialVersion(version); err != nil {

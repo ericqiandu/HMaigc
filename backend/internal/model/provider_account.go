@@ -57,15 +57,13 @@ type ProviderCredentialVersion struct {
 
 type ProviderTaskFact struct {
 	TaskID                      string    `json:"taskId" gorm:"primaryKey;size:36"`
-	BillingOrderID              string    `json:"billingOrderId" gorm:"not null;default:'';size:36;index;uniqueIndex:idx_provider_task_fact_billing_order,where:billing_order_id <> ''"`
+	BillingOrderID              string    `json:"billingOrderId" gorm:"not null;default:'';size:36;index"`
 	ProviderAccountID           string    `json:"providerAccountId" gorm:"not null;default:'';size:36;index"`
 	ProviderEndpointVersionID   string    `json:"providerEndpointVersionId" gorm:"not null;default:'';size:36;index"`
 	ProviderCredentialID        string    `json:"providerCredentialId" gorm:"not null;default:'';size:36;index"`
 	ProviderCredentialVersionID string    `json:"providerCredentialVersionId" gorm:"not null;default:'';size:36;index"`
 	ChannelModelID              string    `json:"channelModelId" gorm:"not null;default:'';size:36;index"`
 	ProviderTaskID              string    `json:"providerTaskId" gorm:"not null;default:'';size:160;index"`
-	ExecutionLeaseToken         string    `json:"-" gorm:"not null;default:'';size:64;index"`
-	CreateLeaseToken            string    `json:"-" gorm:"not null;default:'';size:64;index"`
 	CreateTraceID               string    `json:"createTraceId" gorm:"not null;default:'';size:160"`
 	LastPollTraceID             string    `json:"lastPollTraceId" gorm:"not null;default:'';size:160"`
 	RequestedDurationSeconds    int       `json:"requestedDurationSeconds"`

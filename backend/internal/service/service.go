@@ -38,7 +38,7 @@ type Service struct {
 	characterTaskMu      sync.Mutex
 	siteSettingMu        sync.Mutex
 	voicePreviewGroup    singleflight.Group
-	activeCancels        map[string]map[string]context.CancelFunc
+	activeCancels        map[string]context.CancelFunc
 	pendingStorage       map[string]int64
 	pendingTeamStorage   map[string]int64
 	coordinator          *runtimeCoordinator
@@ -171,7 +171,7 @@ type agentStoryboardShot struct {
 
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
-	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
+	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
 }
 
 func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
@@ -363,25 +363,19 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
-	commercialFacts, persistedInput, err := s.buildTaskCommercialFacts(userID, &task, normalizedInput)
+	billingOrder, err := s.taskBillingOrder(userID, &task, normalizedInput)
 	if err != nil {
 		return nil, err
 	}
-	billingOrder := commercialFacts.BillingOrder
-	if commercialFacts.ProviderFact == nil {
-		if err := s.protectTaskSecrets(persistedInput); err != nil {
-			return nil, err
-		}
-	}
-	inputJSON, err := json.Marshal(persistedInput)
-	if err != nil {
+	if err := s.protectTaskSecrets(normalizedInput); err != nil {
 		return nil, err
 	}
+	inputJSON, _ := json.Marshal(normalizedInput)
 	task.InputJSON = string(inputJSON)
 	task.BillingOrderID = billingOrder.ID
 	task.Provider = "system"
 	task.Model = billingOrder.Model
-	err = s.createTaskWithinStorageQuota(&task, billingOrder, commercialFacts.ProviderFact, policy, activeTaskPolicy)
+	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, activeTaskPolicy)
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
 	}
@@ -476,16 +470,6 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("only failed or cancelled tasks can be retried")
 	}
-	providerFact, providerFactErr := s.repo.ProviderTaskFact(task.ID)
-	if providerFactErr == nil {
-		if providerFact.ProviderStatus == "create_uncertain" {
-			return nil, BadAuthRequest("上游创建结果不确定，禁止重新创建；请先完成供应商核对")
-		}
-		return nil, BadAuthRequest("冻结上游任务不允许通过手工重试创建新任务")
-	}
-	if !errors.Is(providerFactErr, gorm.ErrRecordNotFound) {
-		return nil, providerFactErr
-	}
 	if isContentModerationFailure(task.Error) {
 		return nil, BadAuthRequest(contentModerationRetryMessage)
 	}
@@ -560,32 +544,6 @@ func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {
 	}
 	if task.Status == model.TaskStatusSucceeded {
 		return nil, errors.New("completed task cannot be cancelled")
-	}
-	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
-		result, cancelErr := s.repo.CancelProviderTask(userID, task.ID, task.LeaseToken, "用户请求取消上游任务")
-		if errors.Is(cancelErr, repository.ErrProviderTaskCancelGenerationConflict) {
-			current, reloadErr := s.repo.TaskForUser(userID, task.ID)
-			if reloadErr != nil {
-				return nil, errors.Join(cancelErr, reloadErr)
-			}
-			result, cancelErr = s.repo.CancelProviderTask(userID, current.ID, current.LeaseToken, "用户请求取消上游任务")
-		}
-		if cancelErr != nil {
-			return nil, cancelErr
-		}
-		s.cancelActiveTask(task.ID)
-		if result.Task.SessionID != "" && result.Decision == repository.ProviderTaskCancelledBeforeOutbound {
-			_ = s.markSessionFailed(result.Task, "会话任务已取消。")
-		}
-		message := "上游任务取消请求已进入核对队列"
-		if result.Decision == repository.ProviderTaskCancelledBeforeOutbound {
-			message = "任务已取消"
-		}
-		_ = s.log(userID, task.ID, "warn", message, "")
-		output := taskForOutput(result.Task)
-		return output, nil
-	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
-		return nil, factErr
 	}
 	now := time.Now()
 	if task.Status == model.TaskStatusQueued {
@@ -877,23 +835,6 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	if err != nil {
 		return err
 	}
-	providerTask := false
-	if _, factErr := s.repo.ProviderTaskFact(task.ID); factErr == nil {
-		providerTask = true
-		claimed, claimErr := s.repo.ClaimProviderTaskExecution(task.ID, s.workerID, task.LeaseToken)
-		if claimErr != nil {
-			return claimErr
-		}
-		if !claimed {
-			if err := s.repo.RequeueTaskWaitingForProviderCapacity(task.ID, s.workerID, task.LeaseToken); err != nil {
-				return err
-			}
-			_ = s.log(task.UserID, task.ID, "info", "等待上游凭据并发名额", "")
-			return nil
-		}
-	} else if !errors.Is(factErr, gorm.ErrRecordNotFound) {
-		return factErr
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), taskExecutionTimeoutWithPolicy(task.Type, policy.Task))
 	defer cancel()
 	leaseDone := make(chan struct{})
@@ -904,7 +845,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		for {
 			select {
 			case <-ticker.C:
-				if err := s.repo.RenewTaskLease(task.ID, s.workerID, task.LeaseToken, 45*time.Second); err != nil {
+				if err := s.repo.RenewTaskLease(task.ID, s.workerID, 45*time.Second); err != nil {
 					leaseLost <- err
 					cancel()
 					return
@@ -915,129 +856,30 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		}
 	}()
 	defer close(leaseDone)
-	s.registerActiveTask(task.ID, task.LeaseToken, cancel)
-	defer s.unregisterActiveTask(task.ID, task.LeaseToken)
+	s.registerActiveTask(task.ID, cancel)
+	defer s.unregisterActiveTask(task.ID)
 
 	task.Stage = "调用生成模型"
 	task.Progress = 35
-	if err := s.repo.UpdateClaimedTaskProgress(task.ID, s.workerID, task.LeaseToken, task.Stage, task.Progress); err != nil {
-		return err
-	}
-	var markBillingErr error
-	if providerTask {
-		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
-		if orderErr != nil {
-			markBillingErr = orderErr
-		} else if order.Status == model.BillingStatusSettled || order.Status == model.BillingStatusRefunded {
-			fact, factErr := s.repo.ProviderTaskFact(task.ID)
-			if factErr != nil {
-				markBillingErr = factErr
-			} else if fact.ReconciliationStatus != "resolved" {
-				markBillingErr = errors.New("terminal provider billing requires resolved reconciliation")
-			}
-		} else if order.Status != model.BillingStatusUncertain {
-			markBillingErr = s.MarkBillingRunning(task.BillingOrderID)
-		}
-	} else {
-		markBillingErr = s.MarkBillingRunning(task.BillingOrderID)
-	}
-	if markBillingErr != nil {
-		if providerTask {
-			finalizeErr := s.finalizeProviderExecutionFailure(*task, markBillingErr)
-			if finalizeErr != nil {
-				return errors.Join(markBillingErr, finalizeErr)
-			}
-			return markBillingErr
-		}
+	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
+	if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
 		task.Status = model.TaskStatusFailed
 		task.Stage = "计费准备失败"
-		task.Error = taskFailureMessage(markBillingErr)
+		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
-		if saveErr != nil {
-			return errors.Join(markBillingErr, saveErr)
-		}
-		if !saved {
-			return markBillingErr
-		}
+		_ = s.repo.Save(task)
 		_ = s.RefundBilling(task.BillingOrderID, "计费准备失败，上游请求未发出")
-		return markBillingErr
+		return err
 	}
 	result, canvasOps, err := s.processTask(ctx, *task)
 	providerSucceeded := err == nil
 	if err == nil {
-		if providerTask && task.Model == "kuaizi-seedance-2.5" {
-			result, err = s.persistKuaiziSeedance25Resource(*task, result)
-		} else {
-			result, err = s.persistGeneratedMediaResult(task.UserID, result)
-		}
+		result, err = s.persistGeneratedMediaResult(task.UserID, result)
 	}
 	if err == nil {
 		_, err = s.finalizeCharacterTurnaroundTask(*task, result)
 	}
 	if err != nil {
-		if providerTask {
-			if errors.Is(err, errResolvedProviderObservationHandedOff) {
-				_ = s.log(task.UserID, task.ID, "warn", "迟到上游任务已转入人工决议后的持续观察", "")
-				return nil
-			}
-			var createUncertain *KuaiziSeedance25CreateUncertainError
-			if errors.As(err, &createUncertain) {
-				traceID := ""
-				var providerErr *KuaiziSeedance25Error
-				if errors.As(err, &providerErr) {
-					traceID = providerErr.TraceID
-				}
-				decision, decisionErr := s.repo.DecideProviderCreateUncertain(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, traceID, taskFailureMessage(err))
-				if decisionErr != nil {
-					return errors.Join(err, decisionErr)
-				}
-				if decision == repository.ProviderCreateUncertainManualReview {
-					_ = s.markSessionFailed(*task, taskFailureMessage(err))
-					_ = s.log(task.UserID, task.ID, "error", "上游创建结果已原子进入核对", "")
-				}
-				return err
-			}
-			fact, factErr := s.repo.ProviderTaskFact(task.ID)
-			if factErr != nil {
-				return errors.Join(err, factErr)
-			}
-			if repository.ResolvedProviderObservationStatus(fact.ProviderStatus) {
-				traceID := ""
-				var providerErr *KuaiziSeedance25Error
-				if errors.As(err, &providerErr) {
-					traceID = providerErr.TraceID
-				}
-				lease := repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}
-				if providerErr != nil && providerErr.Stage == "poll" && providerErr.Kind == "provider_failed" {
-					if finalizeErr := s.repo.FinalizeResolvedProviderObservationFailure(task.ID, lease, traceID, providerResolvedTaskStage, providerResolvedTaskError); finalizeErr != nil {
-						return errors.Join(err, finalizeErr)
-					}
-					_ = s.log(task.UserID, task.ID, "warn", "人工核对后的上游观察已记录失败终态", "")
-					return nil
-				}
-				if requeueErr := s.repo.RequeueResolvedProviderObservation(task.ID, lease, traceID, taskFailureMessage(err)); requeueErr != nil {
-					return errors.Join(err, requeueErr)
-				}
-				_ = s.log(task.UserID, task.ID, "warn", "人工核对后的上游观察待继续轮询", "")
-				return err
-			}
-			if repository.ResolvedProviderSuccessStatus(fact.ProviderStatus) {
-				requeueErr := s.repo.RequeueProviderTaskPostprocess(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, taskFailureMessage(err))
-				if requeueErr != nil {
-					return errors.Join(err, requeueErr)
-				}
-				_ = s.log(task.UserID, task.ID, "warn", "上游成功结果后处理待重试", "")
-				return err
-			}
-			finalizeErr := s.finalizeProviderExecutionFailure(*task, err)
-			if finalizeErr != nil {
-				return errors.Join(err, finalizeErr)
-			}
-			_ = s.markSessionFailed(*task, taskFailureMessage(err))
-			_ = s.log(task.UserID, task.ID, "error", "上游任务已原子收口", "")
-			return err
-		}
 		channelSlotFailedBeforeRequest := false
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
@@ -1053,13 +895,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			task.Stage = "任务已取消"
 			task.Error = "任务已取消"
 			task.CompletedAt = ptr(time.Now())
-			saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
-			if saveErr != nil {
-				return saveErr
-			}
-			if !saved {
-				return err
-			}
+			_ = s.repo.Save(task)
 			if channelSlotFailedBeforeRequest {
 				_ = s.RefundBilling(task.BillingOrderID, "等待渠道槽位期间取消，上游请求未发出")
 			} else {
@@ -1076,14 +912,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "任务失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
-		if saveErr != nil {
-			return errors.Join(err, saveErr)
-		}
-		if !saved {
-			_ = s.log(task.UserID, task.ID, "warn", "任务终态写入被当前租约拒绝", "")
-			return err
-		}
+		_ = s.repo.Save(task)
 		if providerSucceeded || (!channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
 			_ = s.MarkBillingUncertain(task.BillingOrderID, task.Error)
 		} else {
@@ -1107,53 +936,17 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	opsJSON, _ := json.Marshal(canvasOps)
 	task.Stage = "持久化生成结果"
 	task.Progress = 90
-	if err := s.repo.UpdateClaimedTaskProgress(task.ID, s.workerID, task.LeaseToken, task.Stage, task.Progress); err != nil {
-		return err
-	}
-	var completionErr error
-	resolvedPostprocess := false
-	if providerTask {
-		fact, factErr := s.repo.ProviderTaskFact(task.ID)
-		if factErr != nil {
-			completionErr = factErr
-		} else if fact.ReconciliationStatus == "resolved" {
-			resolvedPostprocess = true
-			completionErr = s.saveResolvedProviderPostprocessWithinStorageQuota(task, resultJSON, model.TaskStatusFailed, providerResolvedTaskStage, providerResolvedTaskError)
-		} else {
-			completionErr = s.saveProviderTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
-		}
-	} else {
-		completionErr = s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0)
-	}
-	if completionErr != nil {
-		if providerTask {
-			requeueErr := s.repo.RequeueProviderTaskPostprocess(task.ID, repository.ProviderTaskLease{Owner: s.workerID, Token: task.LeaseToken}, taskFailureMessage(completionErr))
-			if requeueErr != nil {
-				return errors.Join(completionErr, requeueErr)
-			}
-			_ = s.log(task.UserID, task.ID, "warn", "上游成功结果保存待重试", "")
-			return completionErr
-		}
+	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
+	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务结果保存失败"
-		task.Error = taskFailureMessage(completionErr)
+		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		saved, saveErr := s.repo.SaveClaimedTaskTerminal(task, s.workerID, task.LeaseToken)
-		if saveErr != nil {
-			return errors.Join(completionErr, saveErr)
-		}
-		if !saved {
-			_ = s.log(task.UserID, task.ID, "warn", "任务完成冲突未覆盖现有终态", "")
-			return completionErr
-		}
+		_ = s.repo.Save(task)
 		_ = s.MarkBillingUncertain(task.BillingOrderID, "上游已成功但任务结果未保存："+task.Error)
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务结果保存失败", task.Error)
-		return completionErr
-	}
-	if resolvedPostprocess {
-		_ = s.log(task.UserID, task.ID, "info", "已保存人工核对任务的上游成功资产", "")
-		return nil
+		return err
 	}
 	if completedTask, fetchErr := s.repo.Task(task.ID); fetchErr == nil {
 		if registerErr := s.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {
@@ -1161,11 +954,9 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			_ = s.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
 		}
 	}
-	if !providerTask {
-		if err := s.SettleBilling(task.BillingOrderID, ""); err != nil {
-			_ = s.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
-			_ = s.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
-		}
+	if err := s.SettleBilling(task.BillingOrderID, ""); err != nil {
+		_ = s.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
+		_ = s.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
 	}
 	_ = s.log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
 	return nil
@@ -1206,21 +997,21 @@ func taskTimeoutMessage(taskType string) string {
 }
 
 func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]interface{}, []map[string]interface{}, error) {
-	ctx = withProviderAnalytics(ctx, s, task)
-	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
-		result, err := s.processCanvasGenerationTask(ctx, task)
-		return result, nil, err
-	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
 	if err != nil {
 		return nil, nil, err
 	}
 	task.InputJSON = decryptedInput
+	ctx = withProviderAnalytics(ctx, s, task)
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)
+	}
+	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
+		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.Type, task.Prompt, task.InputJSON)
+		return result, nil, err
 	}
 	return nil, nil, fmt.Errorf("不支持的任务类型：%s", task.Type)
 }
@@ -1822,34 +1613,23 @@ func truncateTaskLogPayload(payload string) string {
 	return payload[:end] + fmt.Sprintf("\n...（日志内容已截断，原始长度 %d 字符）", len(payload))
 }
 
-func (s *Service) registerActiveTask(id string, leaseToken string, cancel context.CancelFunc) {
+func (s *Service) registerActiveTask(id string, cancel context.CancelFunc) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
-	if s.activeCancels[id] == nil {
-		s.activeCancels[id] = make(map[string]context.CancelFunc)
-	}
-	s.activeCancels[id][leaseToken] = cancel
+	s.activeCancels[id] = cancel
 }
 
-func (s *Service) unregisterActiveTask(id string, leaseToken string) {
+func (s *Service) unregisterActiveTask(id string) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
-	active := s.activeCancels[id]
-	delete(active, leaseToken)
-	if len(active) == 0 {
-		delete(s.activeCancels, id)
-	}
+	delete(s.activeCancels, id)
 }
 
 func (s *Service) cancelActiveTask(id string) {
 	s.cancelMu.Lock()
-	active := s.activeCancels[id]
-	cancels := make([]context.CancelFunc, 0, len(active))
-	for _, cancel := range active {
-		cancels = append(cancels, cancel)
-	}
+	cancel := s.activeCancels[id]
 	s.cancelMu.Unlock()
-	for _, cancel := range cancels {
+	if cancel != nil {
 		cancel()
 	}
 }

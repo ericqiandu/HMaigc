@@ -12,15 +12,11 @@ import (
 	"time"
 )
 
-const (
-	maxOutboundRedirects       = 5
-	maxExternalBinaryURLLength = 4096
-)
+const maxOutboundRedirects = 5
 
 var (
 	outboundTransport         = newOutboundTransport(resolveOutboundHost)
 	customRelayTransport      = newOutboundTransport(resolveCustomRelayHost)
-	externalBinaryTransport   = newExternalBinaryTransport(defaultOutboundHostResolver)
 	blockedSpecialUsePrefixes = []netip.Prefix{
 		netip.MustParsePrefix("0.0.0.0/8"),
 		netip.MustParsePrefix("100.64.0.0/10"),
@@ -101,40 +97,6 @@ func CustomRelayHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-func ExternalBinaryHTTPClient(timeout time.Duration) *http.Client {
-	return newExternalBinaryHTTPClient(timeout, defaultOutboundHostResolver, externalBinaryTransport)
-}
-
-func newExternalBinaryHTTPClientWithDialer(timeout time.Duration, resolver outboundHostResolver, dial outboundDialContext) *http.Client {
-	return newExternalBinaryHTTPClient(timeout, resolver, newExternalBinaryTransportWithDialer(resolver, dial))
-}
-
-func newExternalBinaryHTTPClient(timeout time.Duration, resolver outboundHostResolver, transport *http.Transport) *http.Client {
-	return &http.Client{
-		Transport: &externalBinaryRoundTripper{transport: transport, resolver: resolver},
-		Timeout:   timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxOutboundRedirects {
-				return errors.New("外部产物重定向次数过多")
-			}
-			_, err := validateExternalBinaryURLWithResolver(req.Context(), req.URL.String(), resolver)
-			return err
-		},
-	}
-}
-
-type externalBinaryRoundTripper struct {
-	transport *http.Transport
-	resolver  outboundHostResolver
-}
-
-func (roundTripper *externalBinaryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if _, err := validateExternalBinaryURLWithResolver(req.Context(), req.URL.String(), roundTripper.resolver); err != nil {
-		return nil, err
-	}
-	return roundTripper.transport.RoundTrip(req)
-}
-
 type outboundHostResolver func(context.Context, string) ([]net.IP, error)
 type outboundDialContext func(context.Context, string, string) (net.Conn, error)
 
@@ -191,76 +153,6 @@ func KuaiziHTTPClient(environment string, timeout time.Duration) *http.Client {
 
 func defaultOutboundHostResolver(ctx context.Context, host string) ([]net.IP, error) {
 	return net.DefaultResolver.LookupIP(ctx, "ip", host)
-}
-
-func validateExternalBinaryURLWithResolver(ctx context.Context, rawURL string, resolver outboundHostResolver) (*url.URL, error) {
-	if len(rawURL) > maxExternalBinaryURLLength {
-		return nil, BadAuthRequest("外部产物地址过长")
-	}
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
-		return nil, BadAuthRequest("外部产物地址无效")
-	}
-	if parsed.Scheme != "https" {
-		return nil, BadAuthRequest("外部产物地址只支持 HTTPS")
-	}
-	if parsed.User != nil {
-		return nil, BadAuthRequest("外部产物地址不允许包含认证信息")
-	}
-	if _, err := resolveExternalBinaryHost(ctx, parsed.Hostname(), resolver); err != nil {
-		return nil, err
-	}
-	return parsed, nil
-}
-
-func newExternalBinaryTransport(resolver outboundHostResolver) *http.Transport {
-	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
-	return newExternalBinaryTransportWithDialer(resolver, dialer.DialContext)
-}
-
-func newExternalBinaryTransportWithDialer(resolver outboundHostResolver, dial outboundDialContext) *http.Transport {
-	return &http.Transport{
-		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			addresses, err := resolveExternalBinaryHost(ctx, host, resolver)
-			if err != nil {
-				return nil, err
-			}
-			return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
-		},
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   20,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ExpectContinueTimeout: time.Second,
-	}
-}
-
-func resolveExternalBinaryHost(ctx context.Context, host string, resolver outboundHostResolver) ([]net.IP, error) {
-	host = normalizeOutboundHost(host)
-	if host == "" {
-		return nil, BadAuthRequest("外部产物域名无效")
-	}
-	var addresses []net.IP
-	if address := net.ParseIP(host); address != nil {
-		addresses = []net.IP{address}
-	} else {
-		var err error
-		addresses, err = resolver(ctx, host)
-		if err != nil || len(addresses) == 0 {
-			return nil, BadAuthRequest("外部产物域名解析失败")
-		}
-	}
-	for _, address := range addresses {
-		if blockedSpecialUseIP(address) {
-			return nil, BadAuthRequest("外部产物连接不允许解析到本机、内网或特殊用途地址")
-		}
-	}
-	return addresses, nil
 }
 
 func newKuaiziTransport(environment string, resolver outboundHostResolver) *http.Transport {

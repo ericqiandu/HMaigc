@@ -183,15 +183,10 @@ func validKuaiziUpstreamCode(value string) bool {
 	return true
 }
 
-func safeKuaiziTraceID(value string, sensitiveValues ...string) string {
+func safeKuaiziTraceID(value string, apiKey string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 160 {
+	if value == "" || len(value) > 160 || strings.Contains(value, apiKey) {
 		return ""
-	}
-	for _, sensitive := range sensitiveValues {
-		if sensitive = strings.TrimSpace(sensitive); sensitive != "" && strings.Contains(value, sensitive) {
-			return ""
-		}
 	}
 	for _, character := range value {
 		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
