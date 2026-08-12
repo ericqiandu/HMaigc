@@ -17,6 +17,10 @@ export type ProviderModelSpec = {
     maxImages: number;
     maxVideos: number;
     maxAudios: number;
+    published: boolean;
+    channelModelId: string;
+    enabled: boolean;
+    priceConfigured: boolean;
 };
 
 export type ProviderAdapterDescriptor = {
@@ -164,6 +168,10 @@ function parseModel(value: unknown, label: string): ProviderModelSpec {
         maxImages: integerField(source, "maxImages", label),
         maxVideos: integerField(source, "maxVideos", label),
         maxAudios: integerField(source, "maxAudios", label),
+        published: booleanField(source, "published", label),
+        channelModelId: stringField(source, "channelModelId", label),
+        enabled: booleanField(source, "enabled", label),
+        priceConfigured: booleanField(source, "priceConfigured", label),
     };
 }
 
@@ -222,6 +230,7 @@ export function createProviderAccountsApi(transport: ProviderAccountTransport) {
             return accountRequest({ method: "PUT", path: `/admin/providers/kuaizi/credentials/${encodeURIComponent(family)}`, data });
         },
         verifyCredential: (family: string) => accountRequest({ method: "POST", path: `/admin/providers/kuaizi/credentials/${encodeURIComponent(family)}/verify` }),
+        publishModels: (family: string) => accountRequest({ method: "POST", path: `/admin/providers/kuaizi/models/${encodeURIComponent(family)}/publish` }),
     };
 }
 

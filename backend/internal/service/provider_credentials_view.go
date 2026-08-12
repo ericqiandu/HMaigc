@@ -73,7 +73,9 @@ func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
 	if err != nil {
 		return nil, err
 	}
+	credentialIDs := make([]string, 0, len(credentials))
 	for _, credential := range credentials {
+		credentialIDs = append(credentialIDs, credential.ID)
 		versions, versionsErr := s.repo.ProviderCredentialVersions(credential.ID)
 		if versionsErr != nil {
 			return nil, versionsErr
@@ -89,6 +91,27 @@ func (s *Service) adminKuaiziProviderView() (*AdminProviderAccountView, error) {
 			credentialView.Candidate = &candidate
 		}
 		view.Credentials = append(view.Credentials, credentialView)
+	}
+	published, err := s.repo.ChannelModelsByProviderCredentials(credentialIDs)
+	if err != nil {
+		return nil, err
+	}
+	publishedByKey := make(map[string]model.ChannelModel, len(published))
+	for _, item := range published {
+		publishedByKey[item.ModelKey] = item
+	}
+	for adapterIndex := range view.Adapters {
+		for modelIndex := range view.Adapters[adapterIndex].Models {
+			item, ok := publishedByKey[view.Adapters[adapterIndex].Models[modelIndex].ModelKey]
+			if !ok {
+				continue
+			}
+			spec := &view.Adapters[adapterIndex].Models[modelIndex]
+			spec.Published = true
+			spec.ChannelModelID = item.ID
+			spec.Enabled = item.Enabled
+			spec.PriceConfigured = item.PriceConfigured
+		}
 	}
 	return view, nil
 }

@@ -22,6 +22,7 @@ type KuaiziProviderPageViewProps = {
     onSaveEndpoint: () => void;
     onOpenCredential: (family: string) => void;
     onVerifyCredential: (family: string) => void;
+    onPublishModels: (family: string) => void;
     onRetry: () => void;
 };
 
@@ -104,6 +105,7 @@ function ProviderCredentialCard({
     error,
     onOpen,
     onVerify,
+    onPublish,
 }: {
     adapter: ProviderAdapterDescriptor;
     credential?: AdminProviderCredential;
@@ -112,9 +114,11 @@ function ProviderCredentialCard({
     error?: Error;
     onOpen: () => void;
     onVerify: () => void;
+    onPublish: () => void;
 }) {
     const active = credential?.active;
     const candidate = credential?.candidate;
+    const publishedCount = adapter.models.filter((item) => item.published).length;
     return (
         <SettingsSectionCard
             className="kuaizi-provider-family-card"
@@ -132,6 +136,9 @@ function ProviderCredentialCard({
             }
             footer={
                 <div className="kuaizi-provider-family-actions">
+                    <Button className="kuaizi-provider-secondary-action" loading={busy} disabled={locked || active?.healthStatus !== "healthy"} onClick={onPublish}>
+                        {publishedCount === adapter.models.length ? "同步模型" : "发布模型"}
+                    </Button>
                     <Button className="kuaizi-provider-secondary-action" disabled={locked} onClick={onOpen}>
                         {active?.hasKey || candidate?.hasKey ? "更新密钥" : "配置密钥"}
                     </Button>
@@ -142,6 +149,9 @@ function ProviderCredentialCard({
             }
         >
             <CredentialFacts active={active} />
+            <p className="kuaizi-provider-publication-state">
+                已发布 {publishedCount}/{adapter.models.length}；未定价模型不会向用户开放。
+            </p>
             {candidate ? <CandidateFacts candidate={candidate} hasActive={Boolean(active)} /> : null}
             {error ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="最近一次操作失败" description={error.message} /> : null}
         </SettingsSectionCard>
@@ -161,6 +171,7 @@ export function KuaiziProviderPageView({
     onSaveEndpoint,
     onOpenCredential,
     onVerifyCredential,
+    onPublishModels,
     onRetry,
 }: KuaiziProviderPageViewProps) {
     const families = providerFamilyViews(account);
@@ -226,6 +237,7 @@ export function KuaiziProviderPageView({
                                 error={operationErrors[adapter.family]}
                                 onOpen={() => onOpenCredential(adapter.family)}
                                 onVerify={() => onVerifyCredential(adapter.family)}
+                                onPublish={() => onPublishModels(adapter.family)}
                             />
                         ))}
                     </div>
@@ -438,6 +450,30 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
         }
     };
 
+    const publishModels = async (family: string) => {
+        if (!account || operationOwnerRef.current) return;
+        const owner = `models:${family}` as const;
+        if (!claimOperation(owner)) return;
+        try {
+            const next = await api.publishModels(family);
+            setAccount(next);
+            setLoadError(null);
+        } catch (error) {
+            const mutationError = errorValue(error);
+            setOperationErrors((current) => ({ ...current, [family]: mutationError }));
+            try {
+                const next = await api.get();
+                setAccount(next);
+                setEndpointDraft(endpointBaseline(next));
+                setLoadError(null);
+            } catch (syncError) {
+                awaitFactSync(owner, mutationError, errorValue(syncError));
+            }
+        } finally {
+            releaseOperation(owner);
+        }
+    };
+
     if (loading && !account) {
         return (
             <AdminPageFrame title="筷子科技" description="正在读取供应商配置。">
@@ -473,6 +509,7 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
                     if (!operationOwnerRef.current) setEditingFamily(family);
                 }}
                 onVerifyCredential={(family) => void verifyCredential(family)}
+                onPublishModels={(family) => void publishModels(family)}
                 onRetry={() => void load()}
             />
             <Modal

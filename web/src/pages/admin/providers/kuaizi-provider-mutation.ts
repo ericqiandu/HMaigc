@@ -1,4 +1,4 @@
-export type KuaiziMutationScope = "endpoint" | `credential:${string}`;
+export type KuaiziMutationScope = "endpoint" | `credential:${string}` | `models:${string}`;
 
 export type KuaiziAwaitingSyncOperation = {
     phase: "awaiting-sync";
@@ -18,6 +18,6 @@ export function createKuaiziAwaitingSync(scope: KuaiziMutationScope, mutationErr
 }
 
 export function kuaiziAwaitingSyncError(operation: KuaiziAwaitingSyncOperation): Error {
-    const scope = operation.scope === "endpoint" ? "服务地址" : `${operation.scope.slice("credential:".length)} 凭据`;
+    const scope = operation.scope === "endpoint" ? "服务地址" : operation.scope.startsWith("models:") ? `${operation.scope.slice("models:".length)} 模型目录` : `${operation.scope.slice("credential:".length)} 凭据`;
     return new Error(`写入结果待同步（${scope}）：${operation.syncError.message}`);
 }

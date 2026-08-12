@@ -167,6 +167,56 @@ func (r *Repository) CreateMissingChannelModels(items []model.ChannelModel) (int
 	return result.RowsAffected, result.Error
 }
 
+func (r *Repository) PublishProviderChannelModels(channelID string, credentialID string, items []model.ChannelModel, modelsJSON string, audit *model.AdminAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for index := range items {
+			item := &items[index]
+			var existing model.ChannelModel
+			err := tx.First(&existing, "channel_id = ? AND model_key = ?", channelID, item.ModelKey).Error
+			if err == nil {
+				existing.ProviderCredentialID = credentialID
+				existing.DisplayName = item.DisplayName
+				existing.Capability = item.Capability
+				if !existing.PriceConfigured {
+					existing.Enabled = false
+				}
+				if err := tx.Omit("PriceTiers").Save(&existing).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			item.ProviderCredentialID = credentialID
+			item.Enabled = false
+			if err := tx.Create(item).Error; err != nil {
+				return err
+			}
+		}
+		result := tx.Model(&model.ModelChannel{}).Where("id = ? AND scope = ?", channelID, model.ChannelScopeSystem).Updates(map[string]any{"models_json": modelsJSON, "updated_at": time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if audit != nil {
+			return tx.Create(audit).Error
+		}
+		return nil
+	})
+}
+
+func (r *Repository) ChannelModelsByProviderCredentials(credentialIDs []string) ([]model.ChannelModel, error) {
+	if len(credentialIDs) == 0 {
+		return []model.ChannelModel{}, nil
+	}
+	var items []model.ChannelModel
+	err := r.db.Where("provider_credential_id IN ?", credentialIDs).Find(&items).Error
+	return items, err
+}
+
 func (r *Repository) CreditAccount(userID string) (*model.CreditAccount, error) {
 	account := model.CreditAccount{UserID: userID}
 	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {

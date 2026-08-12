@@ -23,6 +23,10 @@ const seedanceModel = {
     maxImages: 9,
     maxVideos: 3,
     maxAudios: 3,
+    published: false,
+    channelModelId: "",
+    enabled: false,
+    priceConfigured: false,
 };
 
 const accountFixture = {
@@ -159,11 +163,13 @@ describe("kuaizi provider API and domain", () => {
         await api.get();
         await api.saveEndpoint(" https://aiopenapi.kuaizi.cn ");
         await api.verifyCredential("seedance/video");
+        await api.publishModels("seedance/video");
 
         expect(requests).toEqual([
             { method: "GET", path: "/admin/providers/kuaizi" },
             { method: "PUT", path: "/admin/providers/kuaizi", data: { baseUrl: "https://aiopenapi.kuaizi.cn" } },
             { method: "POST", path: "/admin/providers/kuaizi/credentials/seedance%2Fvideo/verify" },
+            { method: "POST", path: "/admin/providers/kuaizi/models/seedance%2Fvideo/publish" },
         ]);
     });
 
@@ -204,6 +210,7 @@ describe("kuaizi provider settings components", () => {
                     onSaveEndpoint: () => undefined,
                     onOpenCredential: () => undefined,
                     onVerifyCredential: () => undefined,
+                    onPublishModels: () => undefined,
                     onRetry: () => undefined,
                 }),
             );
@@ -231,6 +238,7 @@ describe("kuaizi provider settings components", () => {
                     onSaveEndpoint: () => undefined,
                     onOpenCredential: () => undefined,
                     onVerifyCredential: () => undefined,
+                    onPublishModels: () => undefined,
                     onRetry: () => undefined,
                 }),
             );
@@ -262,6 +270,7 @@ describe("kuaizi provider settings components", () => {
                 onSaveEndpoint: () => undefined,
                 onOpenCredential: () => undefined,
                 onVerifyCredential: () => undefined,
+                onPublishModels: () => undefined,
                 onRetry: () => undefined,
             }),
         );
@@ -309,6 +318,7 @@ describe("kuaizi provider settings components", () => {
                 onSaveEndpoint: () => undefined,
                 onOpenCredential: () => undefined,
                 onVerifyCredential: () => undefined,
+                onPublishModels: () => undefined,
                 onRetry: () => undefined,
             }),
         );

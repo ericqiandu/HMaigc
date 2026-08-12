@@ -26,6 +26,10 @@ type ProviderModelSpec struct {
 	MaxImages              int      `json:"maxImages"`
 	MaxVideos              int      `json:"maxVideos"`
 	MaxAudios              int      `json:"maxAudios"`
+	Published              bool     `json:"published"`
+	ChannelModelID         string   `json:"channelModelId"`
+	Enabled                bool     `json:"enabled"`
+	PriceConfigured        bool     `json:"priceConfigured"`
 }
 
 type ProviderRegistry struct {

@@ -77,6 +77,19 @@ func RegisterProviderAccountRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+	providers.POST("/models/:family/publish", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		view, err := svc.PublishKuaiziFamilyModels(actor, c.Param("family"))
+		if err != nil {
+			failProviderAccount(c, err)
+			return
+		}
+		ok(c, view)
+	})
 }
 
 func providerAccountSecurityHeaders() gin.HandlerFunc {

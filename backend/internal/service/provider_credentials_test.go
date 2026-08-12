@@ -440,6 +440,60 @@ func TestKuaiziCredentialAuthenticatedCanceledSaveCreatesFailureAudit(t *testing
 	}
 }
 
+func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDisabled(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	admin := providerAdmin()
+	now := time.Now()
+	account := model.ProviderAccount{ID: "kuaizi-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	endpoint := model.ProviderEndpointVersion{ID: "kuaizi-endpoint", ProviderAccountID: account.ID, BaseURL: "https://aiopenapi.kuaizi.cn", Status: "active", Version: 1, CreatedAt: now}
+	credential := model.ProviderCredential{ID: "seedance-credential", ProviderAccountID: account.ID, Family: "seedance", Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
+	version := model.ProviderCredentialVersion{ID: "seedance-version", ProviderCredentialID: credential.ID, KeyCipher: "cipher", KeyFingerprint: "fingerprint", Status: "active", Version: 1, CreatedAt: now}
+	channel := model.ModelChannel{ID: "kuaizi-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "筷子兼容接口", BaseURL: endpoint.BaseURL, InterfaceType: model.ChannelInterfaceAIOpenVideoVolcengine, CreatedAt: now, UpdatedAt: now}
+	existing := model.ChannelModel{ID: "existing-fast", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-0-fast-260128", DisplayName: "旧名称", BrandKey: model.InferModelBrandKey("doubao-seedance-2-0-fast-260128"), AccessPolicy: model.ModelAccessAuthenticated, Capability: "video", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 1_000_000, PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now}
+	disabledPriced := model.ChannelModel{ID: "existing-pro", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-0-260128", DisplayName: "旧 Pro", BrandKey: model.InferModelBrandKey("doubao-seedance-2-0-260128"), AccessPolicy: model.ModelAccessAuthenticated, Capability: "video", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 2_000_000, PriceConfigured: true, Enabled: false, PriceVersion: 2, CreatedAt: now, UpdatedAt: now}
+	for _, item := range []any{&account, &endpoint, &credential, &version, &channel, &existing, &disabledPriced} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	view, err := svc.PublishKuaiziFamilyModels(admin, "seedance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Adapters) != 1 || len(view.Adapters[0].Models) != 4 {
+		t.Fatalf("adapters = %#v", view.Adapters)
+	}
+	var models []model.ChannelModel
+	if err := db.Where("channel_id = ?", channel.ID).Order("model_key").Find(&models).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 4 {
+		t.Fatalf("model count = %d, want 4", len(models))
+	}
+	for _, item := range models {
+		if item.ProviderCredentialID != credential.ID {
+			t.Fatalf("%s credential = %q", item.ModelKey, item.ProviderCredentialID)
+		}
+		if item.ModelKey == existing.ModelKey {
+			if !item.Enabled || !item.PriceConfigured || item.UnitPriceMicrocredits != 1_000_000 {
+				t.Fatalf("priced model changed = %#v", item)
+			}
+		} else if item.ModelKey == disabledPriced.ModelKey {
+			if item.Enabled || !item.PriceConfigured || item.UnitPriceMicrocredits != 2_000_000 {
+				t.Fatalf("disabled priced model changed = %#v", item)
+			}
+		} else if item.Enabled || item.PriceConfigured {
+			t.Fatalf("unpriced model published as available = %#v", item)
+		}
+	}
+	for _, spec := range view.Adapters[0].Models {
+		if !spec.Published || spec.ChannelModelID == "" {
+			t.Fatalf("publication facts missing = %#v", spec)
+		}
+	}
+}
+
 func openProviderCredentialService(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")

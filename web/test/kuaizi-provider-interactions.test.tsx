@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
-import { parseAdminProviderAccount, type AdminProviderAccount } from "../src/services/api/provider-accounts";
+import { parseAdminProviderAccount, type AdminProviderAccount, type ProviderAccountsApi } from "../src/services/api/provider-accounts";
 
 type Deferred<T> = {
     promise: Promise<T>;
@@ -12,12 +12,7 @@ type Deferred<T> = {
     reject: (reason: Error) => void;
 };
 
-type InjectedProviderApi = {
-    get: () => Promise<AdminProviderAccount>;
-    saveEndpoint: (baseUrl: string) => Promise<AdminProviderAccount>;
-    saveCredential: (family: string, key: string) => Promise<AdminProviderAccount | null>;
-    verifyCredential: (family: string) => Promise<AdminProviderAccount>;
-};
+type InjectedProviderApi = Omit<ProviderAccountsApi, "publishModels"> & { publishModels?: ProviderAccountsApi["publishModels"] };
 
 const model = {
     modelKey: "fixture-video-v1",
@@ -34,6 +29,10 @@ const model = {
     maxImages: 9,
     maxVideos: 3,
     maxAudios: 3,
+    published: false,
+    channelModelId: "",
+    enabled: false,
+    priceConfigured: false,
 };
 
 function account(overrides: Partial<AdminProviderAccount> = {}): AdminProviderAccount {
@@ -156,7 +155,8 @@ async function mount(api: InjectedProviderApi) {
     const container = document.createElement("div");
     document.body.append(container);
     mountedRoot = createRoot(container);
-    await act(async () => mountedRoot?.render(createElement(KuaiziProviderPage, { api })));
+    const completeApi: ProviderAccountsApi = { ...api, publishModels: api.publishModels ?? (async () => account()) };
+    await act(async () => mountedRoot?.render(createElement(KuaiziProviderPage, { api: completeApi })));
     await settle();
 }
 
