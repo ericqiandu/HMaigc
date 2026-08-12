@@ -33,13 +33,13 @@ func TestProviderRegistryPublishesSeedance25StructuralCapabilities(t *testing.T)
 		t.Fatalf("seedance models = %#v", descriptor.Models)
 	}
 	model := descriptor.Models[0]
-	if model.ModelKey != "kuaizi-seedance-2.5" || model.DisplayName != "Seedance 2.5" || model.UpstreamMode == "" || model.Capability != "video" {
+	if model.ModelKey != "kuaizi-seedance-2.5" || model.DisplayName != "Seedance 2.5" || model.UpstreamMode != "seedance2.5" || model.Capability != "video" {
 		t.Fatalf("seedance 2.5 identity = %#v", model)
 	}
-	if model.DurationMin <= 0 || model.DurationMax < model.DurationMin || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || !model.SupportsWatermark {
+	if model.DurationMin != 4 || model.DurationMax != 30 || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || !model.SupportsWatermark {
 		t.Fatalf("seedance 2.5 duration/features = %#v", model)
 	}
-	if len(model.Resolutions) == 0 || len(model.Ratios) == 0 || model.MaxImages <= 0 || model.MaxVideos <= 0 || model.MaxAudios <= 0 {
+	if strings.Join(model.Resolutions, ",") != "480p,720p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
 		t.Fatalf("seedance 2.5 media constraints = %#v", model)
 	}
 }
