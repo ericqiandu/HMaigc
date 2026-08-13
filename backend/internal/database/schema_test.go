@@ -12,6 +12,66 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestWatermarkPolicySchemaCreatesTablesTaskFactsAndExactIndexes(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []any{
+		&model.PolicyPublicationHead{},
+		&model.PolicyPublication{},
+		&model.UserWatermarkPreference{},
+		&model.UserPolicyConsent{},
+		&model.UserWatermarkPreferenceEvent{},
+	} {
+		if !db.Migrator().HasTable(table) {
+			t.Fatalf("missing watermark table for %T", table)
+		}
+	}
+	for _, column := range []string{"watermark_capability", "watermark_directive", "watermark_parameter_applied", "watermark_parameter_value", "watermark_policy_publication_id", "watermark_policy_version"} {
+		if !db.Migrator().HasColumn(&model.Task{}, column) {
+			t.Fatalf("tasks.%s was not migrated", column)
+		}
+	}
+	expectedIndexes := map[string]string{
+		"idx_policy_publication_version":                    `CREATE UNIQUE INDEX idx_policy_publication_version ON policy_publications(kind, version)`,
+		"idx_user_policy_consent":                           `CREATE UNIQUE INDEX idx_user_policy_consent ON user_policy_consents(user_id, policy_publication_id)`,
+		"idx_user_watermark_preference_events_user_created": `CREATE INDEX idx_user_watermark_preference_events_user_created ON user_watermark_preference_events(user_id, created_at)`,
+	}
+	for name, expected := range expectedIndexes {
+		var actual string
+		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
+			t.Fatal(err)
+		}
+		if canonicalWatermarkIndexSQL(actual) != canonicalWatermarkIndexSQL(expected) {
+			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
+		}
+	}
+}
+
+func TestWatermarkPolicyIntegrityRejectsWrongExistingIndexDefinition(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`DROP INDEX idx_user_policy_consent`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_user_policy_consent ON user_policy_consents(user_id)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = EnsureWatermarkPolicyIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "idx_user_policy_consent") {
+		t.Fatalf("wrong watermark index error = %v", err)
+	}
+}
+
 func TestPaymentIntegritySchemaUpgradesLegacyNullsAndCreatesExactIndexes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -216,7 +276,8 @@ func assertSQLiteNotNullEmptyDefault(t *testing.T, db *gorm.DB, table string, co
 }
 
 func compactSQL(value string) string {
-	return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(value, "\"", "")), " "))
+	value = strings.ReplaceAll(strings.ReplaceAll(value, "\"", ""), "`", "")
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
 }
 
 func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {

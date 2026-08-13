@@ -53,6 +53,11 @@ func Models() []any {
 		&model.RedeemBatch{},
 		&model.RedeemCode{},
 		&model.AdminAuditEvent{},
+		&model.PolicyPublicationHead{},
+		&model.PolicyPublication{},
+		&model.UserWatermarkPreference{},
+		&model.UserPolicyConsent{},
+		&model.UserWatermarkPreferenceEvent{},
 		&model.UserDailyActivity{},
 		&model.SystemSetting{},
 		&model.UserOSSSetting{},
@@ -168,6 +173,9 @@ func MigrateSchema(db *gorm.DB) error {
 		if err := EnsurePaymentIntegritySchema(tx); err != nil {
 			return err
 		}
-		return EnsureProviderIntegritySchema(tx)
+		if err := EnsureProviderIntegritySchema(tx); err != nil {
+			return err
+		}
+		return EnsureWatermarkPolicyIntegritySchema(tx)
 	})
 }
