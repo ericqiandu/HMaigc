@@ -2231,6 +2231,159 @@
         letter-spacing: 0;
     }
 
+    .canvas-node-state {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        padding: 20px;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 8px;
+        text-align: center;
+    }
+
+    .canvas-node-state-icon {
+        display: grid;
+        width: 40px;
+        height: 40px;
+        place-items: center;
+        border-radius: 8px;
+    }
+
+    .canvas-node-state-title {
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 18px;
+    }
+
+    .canvas-node-state-detail,
+    .canvas-node-state-description {
+        max-width: 240px;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 16px;
+    }
+
+    .canvas-node-state-progress {
+        display: block;
+        width: min(210px, 100%);
+        height: 4px;
+        overflow: hidden;
+        border-radius: 2px;
+    }
+
+    .canvas-node-state-progress-value {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        transition: width 160ms ease;
+    }
+
+    .canvas-node-state-meta {
+        max-width: 100%;
+        overflow: hidden;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
+        line-height: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .canvas-node-state-actions {
+        display: flex;
+        margin-top: 2px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .canvas-node-action {
+        display: inline-flex;
+        min-width: 32px;
+        height: 32px;
+        padding: 0 10px;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--workspace-surface);
+        color: inherit;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 16px;
+        cursor: pointer;
+        transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+
+    .canvas-node-action-danger {
+        color: var(--destructive, #fb7185);
+    }
+
+    .canvas-node-action:hover:not(:disabled) {
+        transform: translateY(-1px);
+        background: var(--bg-hover);
+    }
+
+    .canvas-node-action:focus-visible {
+        outline: 2px solid var(--workspace-accent, #8290f0);
+        outline-offset: 2px;
+    }
+
+    .canvas-node-action:disabled {
+        cursor: not-allowed;
+        opacity: 0.48;
+    }
+
+    .canvas-node-action-icon {
+        display: grid;
+        width: 14px;
+        height: 14px;
+        place-items: center;
+    }
+
+    .canvas-node-action-icon > svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .canvas-node-deferred-load {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        padding: 20px;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 8px;
+        border: 0;
+        background: #000;
+        color: rgb(255 255 255 / 76%);
+        font: inherit;
+        cursor: pointer;
+        transition: color 140ms ease;
+    }
+
+    .canvas-node-deferred-load .canvas-node-state-icon {
+        background: rgb(255 255 255 / 10%);
+    }
+
+    .canvas-node-deferred-load:hover:not(:disabled) {
+        color: #fff;
+    }
+
+    .canvas-node-deferred-load:focus-visible {
+        outline: 2px solid var(--workspace-accent, #8290f0);
+        outline-offset: -4px;
+    }
+
+    .canvas-node-deferred-load:disabled {
+        cursor: wait;
+    }
+
     .canvas-image-generation-settings {
         font-size: var(--canvas-node-text-body-size);
         font-weight: 500;
