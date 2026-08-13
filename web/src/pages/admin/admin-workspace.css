@@ -2434,7 +2434,8 @@
     }
 
     .admin-workspace .admin-users-list-toolbar {
-        padding: 12px;
+        background: transparent;
+        padding: 0;
     }
 
     .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-fields {
@@ -2447,9 +2448,11 @@
         flex: 1 1 420px;
     }
 
-    .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-actions {
-        width: auto;
-        margin-left: auto;
+    .admin-workspace .admin-users-content-actions {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 12px;
     }
 
     .admin-workspace .admin-users-result-count {
@@ -2458,23 +2461,13 @@
         line-height: 20px;
     }
 
-    .admin-workspace .admin-users-list-toolbar + .admin-users-selection-region + .app-table-surface .ant-table-thead > tr > th,
-    .admin-workspace .admin-users-list-toolbar + .admin-users-selection-region + .app-table-surface .ant-table-tbody > tr > td {
-        padding-block: 14px;
+    .admin-workspace .admin-content-section-body > .admin-users-table-surface {
+        border-radius: 0 !important;
     }
 
-    @media (max-width: 1279px) and (min-width: 768px) {
-        .admin-workspace .admin-users-list-toolbar {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            align-items: center;
-        }
-
-        .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-actions {
-            width: auto;
-            margin-left: 0;
-            justify-content: flex-end;
-        }
+    .admin-workspace .admin-users-table-surface .ant-table-thead > tr > th,
+    .admin-workspace .admin-users-table-surface .ant-table-tbody > tr > td {
+        padding-block: 14px;
     }
 
     .admin-workspace .admin-users-refresh-error .admin-content-error,
@@ -2495,29 +2488,6 @@
     }
 
     @media (max-width: 767px) {
-        .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-fields {
-            flex-wrap: wrap;
-        }
-
-        .admin-workspace .admin-users-list-toolbar .app-list-search {
-            width: 100%;
-            min-width: 0;
-            flex-basis: 100%;
-        }
-
-        .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-actions,
-        .admin-workspace .admin-users-toolbar-trailing {
-            width: 100%;
-        }
-
-        .admin-workspace .admin-users-toolbar-trailing {
-            justify-content: space-between;
-        }
-
-        .admin-workspace .admin-users-selection-region .admin-batch-bar {
-            top: 8px;
-        }
-
         .admin-user-detail-drawer .admin-user-summary-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
@@ -2529,23 +2499,6 @@
 
         .admin-user-detail-drawer .ant-tabs-nav-wrap::-webkit-scrollbar {
             display: none;
-        }
-    }
-
-    @media (max-width: 639px) {
-        .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-fields {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .admin-workspace .admin-users-list-toolbar .app-list-search {
-            grid-column: 1 / -1;
-        }
-
-        .admin-workspace .admin-users-list-toolbar .admin-users-filter-button {
-            width: 100% !important;
-            min-width: 0;
-            justify-content: space-between;
         }
     }
 

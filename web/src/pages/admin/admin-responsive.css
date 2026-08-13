@@ -90,6 +90,21 @@
         min-height: 44px;
     }
 
+    .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-fields {
+        flex-wrap: wrap;
+    }
+
+    .admin-workspace .admin-users-list-toolbar .app-list-search {
+        width: 100%;
+        min-width: 0;
+        flex-basis: 100%;
+    }
+
+    .admin-workspace .admin-users-content-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
     .admin-workspace .app-table-surface {
         position: relative;
     }
@@ -222,6 +237,30 @@
 
     .admin-workspace .admin-content-section-body {
         padding: 12px 16px 16px;
+    }
+
+    .admin-workspace .admin-users-content-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .admin-workspace .admin-users-column-button {
+        min-height: 44px;
+    }
+
+    .admin-workspace .admin-users-list-toolbar .workspace-list-toolbar-fields {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-workspace .admin-users-list-toolbar .app-list-search {
+        grid-column: auto;
+    }
+
+    .admin-workspace .admin-users-list-toolbar .admin-users-filter-button {
+        width: 100% !important;
+        min-width: 0;
+        justify-content: space-between;
     }
 
     .admin-workspace .admin-analytics-chart {

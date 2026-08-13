@@ -69,15 +69,58 @@ describe("admin users layout", () => {
         expect(dataLayout?.querySelector(".app-data-table")?.textContent).toContain("测试用户");
         expect(dataLayout?.querySelector(".app-pagination-bar")).not.toBeNull();
     });
+
+    test("uses title actions and one-column mobile filters without the retired toolbar trailing layout", async () => {
+        const workspaceStyles = await Bun.file(new URL("../src/pages/admin/admin-workspace.css", import.meta.url)).text();
+        const responsiveStyles = await Bun.file(new URL("../src/pages/admin/admin-responsive.css", import.meta.url)).text();
+        const allStyles = `${workspaceStyles}\n${responsiveStyles}`;
+
+        expect(workspaceStyles).toContain(".admin-users-content-actions");
+        expect(workspaceStyles).toContain(".admin-content-section-body > .admin-users-table-surface");
+        expect(workspaceStyles).toContain("border-radius: 0");
+        expect(responsiveStyles).toContain(".admin-users-content-actions");
+        expect(responsiveStyles).toContain(".admin-users-list-toolbar .workspace-list-toolbar-fields");
+        expect(responsiveStyles).toContain("grid-template-columns: minmax(0, 1fr)");
+        expect(allStyles).not.toContain("admin-users-toolbar-trailing");
+        expect(allStyles).not.toContain("admin-users-list-toolbar + .admin-users-selection-region");
+    });
+
+    test("keeps the first-load failure explicit and retryable", async () => {
+        listUsers = async () => {
+            throw new Error("用户接口暂时不可用");
+        };
+
+        await renderUsers();
+
+        const alert = document.querySelector('.admin-users-load-error [role="alert"]');
+        expect(alert?.textContent).toContain("用户列表加载失败");
+        expect(alert?.textContent).toContain("用户接口暂时不可用");
+        expect(alert?.textContent).toContain("重试");
+        expect(document.querySelector(".app-data-table")).toBeNull();
+    });
+
+    test("keeps URL filters in the request and explains an empty filtered result", async () => {
+        let requestedRole = "";
+        listUsers = async (params) => {
+            requestedRole = params.role ?? "";
+            return { users: [], total: 0, page: 1, limit: 20 };
+        };
+
+        await renderUsers("/?role=admin");
+
+        expect(requestedRole).toBe("admin");
+        expect(document.querySelector(".admin-table-empty")?.textContent).toContain("没有符合筛选条件的数据");
+        expect(document.querySelector(".admin-table-empty")?.textContent).toContain("调整搜索词或筛选条件后再试");
+    });
 });
 
-async function renderUsers() {
+async function renderUsers(initialEntry = "/") {
     const host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
 
     await act(async () => {
-        root?.render(createElement(ConfigProvider, null, createElement(App, null, createElement(MemoryRouter, null, createElement(UsersPanel, { api })))));
+        root?.render(createElement(ConfigProvider, null, createElement(App, null, createElement(MemoryRouter, { initialEntries: [initialEntry] }, createElement(UsersPanel, { api })))));
     });
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 }

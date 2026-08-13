@@ -44,9 +44,20 @@ const analyticsFixture: AdminAnalytics = {
 let analyticsRequest: () => Promise<AdminAnalytics> = async () => analyticsFixture;
 
 mock.module("@/services/api/auth", () => ({
+    bulkDisableAdminUsers: async () => ({ disabledCount: 0, users: [] }),
+    deleteAdminUser: async () => ({ ok: true }),
     exportAdminAnalytics: async () => new Blob(["ok"]),
+    getAdminUserDetail: async () => {
+        throw new Error("admin user detail is outside this analytics test");
+    },
     getAdminAnalytics: () => analyticsRequest(),
+    listAdminUserAuditEvents: async () => ({ events: [], limit: 20, page: 1, total: 0 }),
+    listAdminUserLedger: async () => ({ entries: [], limit: 20, page: 1, total: 0 }),
+    listAdminUserTasks: async () => ({ limit: 20, page: 1, tasks: [], total: 0 }),
     listAdminUsers: async () => ({ limit: 50, page: 1, total: 0, users: [] }),
+    updateAdminUser: async () => {
+        throw new Error("admin user update is outside this analytics test");
+    },
 }));
 
 const { default: AnalyticsPanel } = await import("../src/pages/admin/components/analytics-panel");
