@@ -59,22 +59,30 @@
 .points-market-close {
     position: absolute;
     right: 32px;
-    display: grid;
-    width: 40px;
-    height: 40px;
-    place-items: center;
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     border: 0;
-    border-radius: 50%;
-    background: transparent;
-    color: #8b95a5;
-    font: inherit;
-    font-size: 25px;
+    border-radius: 8px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
-    transition: 0.2s ease;
+    transition:
+        color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .points-market-close:hover {
-    background: #1d2530;
-    color: #fff;
+    background: var(--bg-hover);
+}
+.points-market-close:active {
+    color: var(--text-secondary);
+}
+.points-market-close-icon {
+    width: 20px;
+    height: 20px;
 }
 .points-market-main {
     min-height: calc(100vh - 72px);

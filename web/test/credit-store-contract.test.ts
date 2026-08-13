@@ -13,6 +13,18 @@ describe("积分商城生产契约", () => {
         expect(membership).not.toContain('onOpenWallet={() => (user ? navigate("/wallet")');
     });
 
+    test("会员开通页与积分超市关闭后都替换历史并返回首页", () => {
+        const membership = readFileSync(resolve(root, "src/pages/membership/index.tsx"), "utf8");
+        const creditStore = readFileSync(resolve(root, "src/pages/credit-store/index.tsx"), "utf8");
+        const styles = readFileSync(resolve(root, "src/pages/credit-store/credit-store.css"), "utf8");
+        expect(membership).toContain("navigate(STOREFRONT_EXIT_DESTINATION, { replace: true })");
+        expect(creditStore).toContain("navigate(STOREFRONT_EXIT_DESTINATION, { replace: true })");
+        expect(creditStore).toContain('aria-label="关闭积分超市并返回首页"');
+        expect(creditStore).not.toContain('navigate("/membership")');
+        expect(styles).toContain(".points-market-close-icon");
+        expect(styles).toMatch(/\.points-market-close \{[\s\S]*width: 44px;[\s\S]*height: 44px;[\s\S]*border-radius: 8px;/);
+    });
+
     test("商品来自后端且购买使用幂等订单与真实收银台", () => {
         const page = readFileSync(resolve(root, "src/pages/credit-store/index.tsx"), "utf8");
         const api = readFileSync(resolve(root, "src/services/api/credit-store.ts"), "utf8");

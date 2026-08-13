@@ -1,8 +1,10 @@
 import { Alert, message, Spin } from "antd";
+import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { createCreditTopupCheckout, createCreditTopupOrder, getCreditStorefront, type CreditTopupProduct } from "@/services/api/credit-store";
+import { STOREFRONT_EXIT_DESTINATION, shouldExitStorefront } from "@/lib/storefront-navigation";
 
 import bannerImage from "./assets/banner-surprise.jpg";
 import { GeneralCard, SurpriseCard } from "./credit-store-cards";
@@ -59,6 +61,13 @@ export default function CreditStorePage() {
         return () => window.clearInterval(timer);
     }, []);
     useEffect(() => {
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (shouldExitStorefront(event.key, false)) navigate(STOREFRONT_EXIT_DESTINATION, { replace: true });
+        };
+        window.addEventListener("keydown", closeOnEscape);
+        return () => window.removeEventListener("keydown", closeOnEscape);
+    }, [navigate]);
+    useEffect(() => {
         const page = pageRef.current;
         if (!page) return;
         const updateActiveSection = () => {
@@ -114,8 +123,8 @@ export default function CreditStorePage() {
                         </button>
                     ))}
                 </nav>
-                <button aria-label="返回会员页" className="points-market-close" onClick={() => navigate("/membership")} title="返回会员页" type="button">
-                    ×
+                <button aria-label="关闭积分超市并返回首页" className="points-market-close" onClick={() => navigate(STOREFRONT_EXIT_DESTINATION, { replace: true })} title="返回首页" type="button">
+                    <X aria-hidden="true" className="points-market-close-icon" />
                 </button>
             </header>
             <main className="points-market-main">

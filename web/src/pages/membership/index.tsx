@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { membershipQueryKey } from "@/hooks/use-membership-action";
+import { STOREFRONT_EXIT_DESTINATION, shouldExitStorefront } from "@/lib/storefront-navigation";
 import {
     cancelMembershipOrder,
     createMembershipOrder,
@@ -33,7 +34,6 @@ import { MembershipStorefrontFAQs } from "./membership-storefront-faq";
 import { MembershipStorefrontGeneration } from "./membership-storefront-generation";
 import { MembershipStorefrontPricing } from "./membership-storefront-pricing";
 import { MembershipStorefrontPromo } from "./membership-storefront-promo";
-import { membershipStorefrontExitIntent, shouldExitMembershipStorefront } from "./membership-storefront-navigation";
 import "./membership.css";
 import "./membership-order.css";
 import "./membership-responsive.css";
@@ -118,16 +118,12 @@ export default function MembershipPage() {
     }, [overview, persistResolvedTeamID, requestedTeamId]);
 
     const exitMembershipStorefront = useCallback(() => {
-        if (membershipStorefrontExitIntent(window.history.state) === "back") {
-            navigate(-1);
-            return;
-        }
-        navigate("/");
+        navigate(STOREFRONT_EXIT_DESTINATION, { replace: true });
     }, [navigate]);
 
     useEffect(() => {
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (shouldExitMembershipStorefront(event.key, dialogOpen)) exitMembershipStorefront();
+            if (shouldExitStorefront(event.key, dialogOpen)) exitMembershipStorefront();
         };
         window.addEventListener("keydown", closeOnEscape);
         return () => window.removeEventListener("keydown", closeOnEscape);
@@ -317,7 +313,7 @@ export default function MembershipPage() {
     return (
         <main className="membership-storefront-page min-h-screen bg-[#070b11] font-sans antialiased">
             {!dialogOpen ? (
-                <button aria-label="关闭会员商城" className="membership-storefront-close" onClick={exitMembershipStorefront} type="button">
+                <button aria-label="关闭会员商城并返回首页" className="membership-storefront-close" onClick={exitMembershipStorefront} title="返回首页" type="button">
                     <X aria-hidden="true" className="membership-storefront-close-icon" />
                 </button>
             ) : null}
