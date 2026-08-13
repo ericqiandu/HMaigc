@@ -1,7 +1,9 @@
 package service
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -36,9 +38,6 @@ func TestValidateTaskStorageQuotaRejectsHistoryGrowth(t *testing.T) {
 	}
 	if err := validateTaskStorageQuotaWithPolicy(repository.UserStorageUsage{TaskBytes: gigabytes(policy.TaskDataGB)}, 1, policy); err == nil {
 		t.Fatal("validateTaskStorageQuota() byte error = nil")
-	}
-	if err := validateAPICallLogQuotaWithPolicy(repository.UserStorageUsage{APICallCount: policy.APICallLogCount}, 0, policy); err == nil {
-		t.Fatal("validateAPICallLogQuota() count error = nil")
 	}
 }
 
@@ -83,7 +82,7 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := model.Session{ID: "session-1", UserID: "user-1", Status: model.SessionStatusActive}
-	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, InputJSON: `{"mode":"text"}`}
+	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", InputJSON: `{"mode":"text"}`}
 	if err := db.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +90,7 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := &Service{repo: repository.New(db)}
-	if err := svc.saveTaskCompletionWithinStorageQuota(&task, []byte(`{"ok":true}`), []byte(`[{"op":"add"}]`), true); err != nil {
+	if err := svc.saveTaskCompletion(&task, []byte(`{"ok":true}`), []byte(`[{"op":"add"}]`), true); err != nil {
 		t.Fatal(err)
 	}
 	var messageCount int64
@@ -104,5 +103,100 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 	}
 	if task.Status != model.TaskStatusSucceeded || messageCount != 1 || resultCount != 2 {
 		t.Fatalf("completion = status:%s messages:%d results:%d", task.Status, messageCount, resultCount)
+	}
+}
+
+func TestSaveTaskCompletionRejectsStaleWorkerAfterCancellation(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.Result{}); err != nil {
+		t.Fatal(err)
+	}
+	stored := model.Task{ID: "task-stale", UserID: "user", Status: model.TaskStatusCancelled, LeaseOwner: "", InputJSON: `{}`}
+	if err := db.Create(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	stale := stored
+	stale.Status = model.TaskStatusRunning
+	stale.LeaseOwner = "stale-worker"
+	svc := &Service{repo: repository.New(db)}
+	err = svc.saveTaskCompletion(&stale, []byte(`{"ok":true}`), nil, false)
+	if !errors.Is(err, repository.ErrTaskCompletionStateConflict) {
+		t.Fatalf("stale completion error = %v", err)
+	}
+	latest, err := svc.repo.Task(stored.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Status != model.TaskStatusCancelled || latest.ResultJSON != "" {
+		t.Fatalf("stale worker overwrote cancelled task = %#v", latest)
+	}
+}
+
+func TestSaveCancelledTaskResultKeepsCancelledStatusAndPersistsAssetFact(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.Task{}, &model.Result{}, &model.Asset{}, &model.CanvasProject{}, &model.Session{}, &model.Message{}, &model.TaskLog{}, &model.ApiCallLog{}, &model.BillingOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled, BillingOrderID: "billing", InputJSON: `{"mode":"video","secret":"removed"}`}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.BillingOrder{ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID, Status: model.BillingStatusRunning}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	resultJSON := []byte(`{"videoUrl":"https://cdn.example/result.mp4"}`)
+	if err := svc.saveCancelledTaskResult(&task, resultJSON, "费用待核对"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result model.Result
+	if err := db.First(&result, "task_id = ? AND kind = ?", task.ID, "generation_result").Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.TaskStatusCancelled || stored.ResultJSON != string(resultJSON) || result.Payload != string(resultJSON) {
+		t.Fatalf("cancelled result = task:%#v result:%#v", stored, result)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != model.BillingStatusUncertain || order.Error != "费用待核对" {
+		t.Fatalf("cancelled billing = %#v", order)
+	}
+}
+
+func TestCancelledProviderTaskRemainsClaimableForResultReconciliation(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Minute)
+	task := model.Task{ID: "cancel-reconcile", UserID: "user", Status: model.TaskStatusCancelled, ProviderRequestID: "provider-task", PollStage: "cancel_reconcile", NextPollAt: &past}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
+	claimed, err := repo.ClaimNextTask("reconcile-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != task.ID || claimed.Status != model.TaskStatusCancelled || claimed.LeaseOwner != "reconcile-worker" {
+		t.Fatalf("cancel reconciliation claim = %#v", claimed)
+	}
+	if err := repo.RenewTaskLease(task.ID, "reconcile-worker", time.Minute); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -57,7 +57,7 @@ func runAIOpenPlatformVolcengineVideoTask(ctx context.Context, input canvasGener
 		}
 		var created map[string]interface{}
 		if err := requestAIOpenPlatformVolcengineJSON(
-			withProviderRequestKind(ctx, "create"),
+			withProviderAsyncCreate(withProviderRequestKind(ctx, "create")),
 			input.Config,
 			http.MethodPost,
 			aiOpenPlatformVolcengineCreatePath,
@@ -209,7 +209,7 @@ func validateKuaiziReferenceDurations(items []providerMedia, maximumSeconds int,
 	var totalMilliseconds int64
 	for index, item := range items {
 		if item.DurationMs <= 0 {
-			continue
+			return fmt.Errorf("%s %d 缺少可验证时长，请重新上传素材", label, index+1)
 		}
 		if item.DurationMs < 2_000 || item.DurationMs > int64(maximumSeconds)*1_000 {
 			return fmt.Errorf("%s %d 时长必须为 2–%d 秒", label, index+1, maximumSeconds)

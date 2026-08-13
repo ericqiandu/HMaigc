@@ -135,6 +135,12 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 		ID: "seedance-25", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "video", BillingMode: "per_second",
 		PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
+		PriceTiers: []model.ChannelModelPriceTier{
+			{Resolution: "480P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "480P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
+			{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
+		},
 	}
 
 	catalog := publicChannel(channel, false, []model.ChannelModel{item}, false)
@@ -151,6 +157,38 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), `"tools":null`) || !strings.Contains(string(encoded), `"tools":[]`) {
 		t.Fatalf("unsupported tools must serialize as an empty array: %s", encoded)
+	}
+}
+
+func TestPublicSystemChannelDoesNotPublishIncompleteManagedVideoPricing(t *testing.T) {
+	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true}
+	item := model.ChannelModel{
+		ID: "seedance-25", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-5-260628", Enabled: true, PriceConfigured: true,
+		Capability: "video", BillingMode: "per_second", PriceStrategy: "video_resolution",
+		PriceTiers: []model.ChannelModelPriceTier{{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1}},
+	}
+
+	public := publicChannel(channel, false, []model.ChannelModel{item}, false)
+	if len(public.Models) != 0 || len(public.ModelCosts) != 0 {
+		t.Fatalf("incomplete managed pricing leaked to public catalog: %#v", public)
+	}
+	admin := publicChannel(channel, true, []model.ChannelModel{item}, true)
+	if len(admin.Models) != 1 || len(admin.ModelCosts) != 1 {
+		t.Fatalf("admin lost incomplete pricing configuration: %#v", admin)
+	}
+}
+
+func TestPublicSystemChannelDoesNotPublishEnabledUnpricedModel(t *testing.T) {
+	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true, ModelsJSON: `["unpriced"]`}
+	item := model.ChannelModel{ID: "unpriced", ChannelID: channel.ID, ModelKey: "unpriced", Enabled: true, PriceConfigured: false}
+
+	public := publicChannel(channel, false, []model.ChannelModel{item}, false)
+	if len(public.Models) != 0 || len(public.ModelCosts) != 0 {
+		t.Fatalf("unpriced system model leaked to public catalog: %#v", public)
+	}
+	admin := publicChannel(channel, true, []model.ChannelModel{item}, true)
+	if len(admin.Models) != 1 || admin.Models[0] != item.ModelKey {
+		t.Fatalf("admin catalog lost unpriced model: %#v", admin.Models)
 	}
 }
 

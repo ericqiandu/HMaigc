@@ -121,10 +121,12 @@ type providerAnalyticsContext struct {
 	RequestKind                string
 	ProviderRequestID          string
 	ConcurrencyLimit           int
+	LeaseOwner                 string
+	AsyncCreate                bool
 }
 
 func withProviderAnalytics(ctx context.Context, service *Service, task model.Task) context.Context {
-	metadata := providerAnalyticsContext{Service: service, UserID: task.UserID, TaskID: task.ID, BillingOrderID: task.BillingOrderID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID}
+	metadata := providerAnalyticsContext{Service: service, UserID: task.UserID, TaskID: task.ID, BillingOrderID: task.BillingOrderID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID, LeaseOwner: task.LeaseOwner}
 	var input canvasGenerationInput
 	if json.Unmarshal([]byte(task.InputJSON), &input) == nil {
 		metadata.ChannelID = firstNonEmpty(input.Config.ChannelID, systemChannelIDFromBaseURL(input.Config.BaseURL))
@@ -160,6 +162,15 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 		return ctx
 	}
 	metadata.RequestKind = requestKind
+	return context.WithValue(ctx, providerAnalyticsKey{}, metadata)
+}
+
+func withProviderAsyncCreate(ctx context.Context) context.Context {
+	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+	if !ok {
+		return ctx
+	}
+	metadata.AsyncCreate = true
 	return context.WithValue(ctx, providerAnalyticsKey{}, metadata)
 }
 
@@ -246,8 +257,8 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requirePublicURL bool) error {
 	if !strings.HasPrefix(media.StorageKey, "resource:") {
-		if requirePublicURL && strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
-			return errors.New("当前生成渠道的参考素材不能使用内嵌数据，请先上传到 OSS 或提供公网素材地址")
+		if requirePublicURL {
+			return errors.New("当前生成渠道的参考素材必须使用本人已上传的 OSS 资源")
 		}
 		return nil
 	}
@@ -277,6 +288,7 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requ
 		media.URL = signedURL
 		media.DataURL = ""
 		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
+		media.DurationMs = resource.DurationMs
 		return nil
 	}
 	if strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
@@ -302,6 +314,7 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requ
 	mimeType := normalizedMediaMimeType(firstNonEmpty(media.MimeType, resource.MimeType), data)
 	media.DataURL = dataURL(mimeType, data)
 	media.MimeType = mimeType
+	media.DurationMs = resource.DurationMs
 	return nil
 }
 
@@ -572,7 +585,7 @@ func runKuaiziChatCompletionsTask(ctx context.Context, input canvasGenerationInp
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(withKuaiziRequest(ctx), http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -1143,18 +1156,23 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 			slotID = "custom:" + strings.ToLower(req.URL.Host)
 		}
 		var concurrencyLimit int
-		release, concurrencyLimit, err = metadata.Service.AcquireChannelSlot(req.Context(), channelID, slotID, requestTimeout+time.Minute)
+		release, concurrencyLimit, err = metadata.Service.AcquireChannelSlot(req.Context(), channelID, metadata.Model, slotID, requestTimeout+time.Minute)
 		metadata.ConcurrencyLimit = concurrencyLimit
 		req = req.WithContext(context.WithValue(req.Context(), providerAnalyticsKey{}, metadata))
 		if err != nil {
-			recordProviderRequest(req, startedAt, 0, nil, err)
+			_ = recordProviderRequest(req, startedAt, 0, nil, err)
 			return nil, "", err
 		}
 		defer release()
 	}
 	if _, err := ValidateOutboundURL(req.URL.String()); err != nil {
-		recordProviderRequest(req, startedAt, 0, nil, err)
+		_ = recordProviderRequest(req, startedAt, 0, nil, err)
 		return nil, "", err
+	}
+	if metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok && metadata.AsyncCreate && metadata.Service != nil {
+		if err := metadata.Service.repo.BeginProviderCreate(metadata.TaskID, metadata.LeaseOwner); err != nil {
+			return nil, "", &KuaiziCompatibleCreateError{err: fmt.Errorf("提交供应商创建边界失败：%w", err)}
+		}
 	}
 	client := OutboundHTTPClient(requestTimeout)
 	if _, strictKuaiziRequest := req.Context().Value(kuaiziRequestKey{}).(struct{}); strictKuaiziRequest {
@@ -1165,24 +1183,20 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 		if runtimeService != nil {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
 		}
-		recordProviderRequest(req, startedAt, 0, nil, err)
-		return nil, "", err
+		return nil, "", joinProviderRecordError(err, recordProviderRequest(req, startedAt, 0, nil, err))
 	}
 	defer resp.Body.Close()
 	if resp.ContentLength > responseLimit {
 		err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
-		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
-		return nil, "", err
+		return nil, "", joinProviderRecordError(err, recordProviderRequest(req, startedAt, resp.StatusCode, nil, err))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
 	if err != nil {
-		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
-		return nil, "", err
+		return nil, "", joinProviderRecordError(err, recordProviderRequest(req, startedAt, resp.StatusCode, nil, err))
 	}
 	if int64(len(data)) > responseLimit {
 		err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
-		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
-		return nil, "", err
+		return nil, "", joinProviderRecordError(err, recordProviderRequest(req, startedAt, resp.StatusCode, nil, err))
 	}
 	mimeType := resp.Header.Get("Content-Type")
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1190,10 +1204,15 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
 		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data)}
-		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
-		return nil, "", httpErr
+		return nil, "", joinProviderRecordError(httpErr, recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr))
 	}
-	recordProviderRequest(req, startedAt, resp.StatusCode, data, nil)
+	if err := recordProviderRequest(req, startedAt, resp.StatusCode, data, nil); err != nil {
+		metadata, _ := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+		if metadata.AsyncCreate {
+			return nil, "", &KuaiziCompatibleCreateError{err: fmt.Errorf("提交供应商响应事实失败：%w", err)}
+		}
+		return nil, "", fmt.Errorf("提交供应商响应事实失败：%w", err)
+	}
 	if runtimeService != nil {
 		_ = runtimeService.RecordChannelResult(req.Context(), channelID, false)
 	}
@@ -1207,10 +1226,10 @@ func providerPollingDeadline(ctx context.Context) time.Time {
 	return time.Now().Add(videoPollTimeout)
 }
 
-func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode int, responseBody []byte, requestErr error) {
+func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode int, responseBody []byte, requestErr error) error {
 	metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
 	if !ok || metadata.Service == nil {
-		return
+		return nil
 	}
 	status := model.ApiCallStatusSucceeded
 	errorText := ""
@@ -1266,11 +1285,20 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		}
 	}
 	metadata.Service.EnrichAPICallLog(&log, responseBody)
-	if err := metadata.Service.LogAPICall(log); err != nil {
+	if err := metadata.Service.logProviderCall(log, metadata.LeaseOwner, metadata.AsyncCreate); err != nil {
 		if !channelSlotFailure {
 			_ = metadata.Service.MarkBillingUncertain(metadata.BillingOrderID, "上游调用日志写入失败，费用状态待核对")
 		}
+		return err
 	}
+	return nil
+}
+
+func joinProviderRecordError(requestErr error, recordErr error) error {
+	if recordErr == nil {
+		return requestErr
+	}
+	return errors.Join(requestErr, fmt.Errorf("提交供应商调用事实失败：%w", recordErr))
 }
 
 func miniMaxBusinessError(payload map[string]interface{}) (string, string) {

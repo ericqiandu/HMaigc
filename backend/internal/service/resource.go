@@ -80,7 +80,7 @@ func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
 	return signedOSSObjectURL(setting, resource.ObjectKey, time.Now().Add(directResourceURLTTL))
 }
 
-func (s *Service) UploadResource(userID string, header *multipart.FileHeader, kind string, width int, height int, durationMs int64) (*model.Resource, error) {
+func (s *Service) UploadResource(userID string, header *multipart.FileHeader, kind string, width int, height int) (*model.Resource, error) {
 	if header == nil {
 		return nil, BadAuthRequest("请选择要上传的文件")
 	}
@@ -97,7 +97,8 @@ func (s *Service) UploadResource(userID string, header *multipart.FileHeader, ki
 
 	mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
 	mimeType = detectUploadedMimeType(file, header.Filename, mimeType)
-	resource, err := s.storeResource(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file)
+	kind = normalizeResourceKind(kind, mimeType)
+	resource, err := s.storeResource(userID, kind, header.Filename, mimeType, header.Size, width, height, file)
 	if err != nil {
 		s.releaseUserUploadQuota(userID, day, header.Size)
 	} else {
@@ -123,7 +124,7 @@ func detectUploadedMimeType(file multipart.File, fileName string, declared strin
 	return "application/octet-stream"
 }
 
-func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, width int, height int, durationMs int64) (*model.Resource, error) {
+func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, width int, height int) (*model.Resource, error) {
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
@@ -140,11 +141,12 @@ func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, w
 		}
 	}
 	size := int64(len(payload.data))
+	media := bytes.NewReader(payload.data)
 	day, err := s.reserveUserUploadQuota(userID, size)
 	if err != nil {
 		return nil, err
 	}
-	resource, err := s.storeResource(userID, kind, payload.fileName, payload.mimeType, size, width, height, durationMs, bytes.NewReader(payload.data))
+	resource, err := s.storeResource(userID, kind, payload.fileName, payload.mimeType, size, width, height, media)
 	if err != nil {
 		s.releaseUserUploadQuota(userID, day, size)
 	} else {
@@ -193,13 +195,17 @@ func (s *Service) OpenResourceRange(userID string, id string, rangeHeader string
 	return &ResourceStream{Resource: resource, Body: stream.body, StatusCode: stream.statusCode, ContentLength: stream.contentLength, ContentRange: stream.contentRange, AcceptRanges: stream.acceptRanges}, nil
 }
 
-func (s *Service) storeResource(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
-	return s.storeScopedResource(userID, "", kind, fileName, mimeType, size, width, height, durationMs, body)
+func (s *Service) storeResource(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker) (*model.Resource, error) {
+	return s.storeScopedResource(userID, "", kind, fileName, mimeType, size, width, height, body)
 }
 
-func (s *Service) storeScopedResource(userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
+func (s *Service) storeScopedResource(userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker) (*model.Resource, error) {
 	now := time.Now()
 	kind = normalizeResourceKind(kind, mimeType)
+	durationMs, err := s.authoritativeMediaDuration(kind, body)
+	if err != nil {
+		return nil, err
+	}
 	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting(userID)
 	if err != nil {
 		return nil, err
@@ -262,14 +268,14 @@ func localObjectKey(userID string, kind string, fileName string, now time.Time) 
 }
 
 func (s *Service) persistGeneratedMediaResult(userID string, result map[string]interface{}) (map[string]interface{}, error) {
-	return s.persistGeneratedMediaResultMode(userID, result, false, true)
+	return s.persistGeneratedMediaResultMode(userID, result, false)
 }
 
 func (s *Service) persistLegacyGeneratedMediaResult(userID string, result map[string]interface{}) (map[string]interface{}, error) {
-	return s.persistGeneratedMediaResultMode(userID, result, true, false)
+	return s.persistGeneratedMediaResultMode(userID, result, true)
 }
 
-func (s *Service) persistGeneratedMediaResultMode(userID string, result map[string]interface{}, skipInvalidDataURL bool, enforceQuota bool) (map[string]interface{}, error) {
+func (s *Service) persistGeneratedMediaResultMode(userID string, result map[string]interface{}, skipInvalidDataURL bool) (map[string]interface{}, error) {
 	if result == nil {
 		return map[string]interface{}{}, nil
 	}
@@ -281,7 +287,7 @@ func (s *Service) persistGeneratedMediaResultMode(userID string, result map[stri
 	if err := json.Unmarshal(encoded, &normalized); err != nil {
 		return nil, err
 	}
-	value, err := s.persistGeneratedMediaValueMode(userID, normalized, skipInvalidDataURL, enforceQuota)
+	value, err := s.persistGeneratedMediaValueMode(userID, normalized, skipInvalidDataURL)
 	if err != nil {
 		return nil, err
 	}
@@ -289,14 +295,14 @@ func (s *Service) persistGeneratedMediaResultMode(userID string, result map[stri
 }
 
 func (s *Service) persistGeneratedMediaValue(userID string, value interface{}) (interface{}, error) {
-	return s.persistGeneratedMediaValueMode(userID, value, false, true)
+	return s.persistGeneratedMediaValueMode(userID, value, false)
 }
 
-func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{}, skipInvalidDataURL bool, enforceQuota bool) (interface{}, error) {
+func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{}, skipInvalidDataURL bool) (interface{}, error) {
 	switch item := value.(type) {
 	case []interface{}:
 		for index, child := range item {
-			stored, err := s.persistGeneratedMediaValueMode(userID, child, skipInvalidDataURL, enforceQuota)
+			stored, err := s.persistGeneratedMediaValueMode(userID, child, skipInvalidDataURL)
 			if err != nil {
 				return nil, err
 			}
@@ -315,22 +321,9 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 				if kind == "image" && (width <= 0 || height <= 0) {
 					width, height = imageDimensions(data)
 				}
-				quotaDay := ""
-				if enforceQuota {
-					quotaDay, err = s.reserveGeneratedResourceQuota(userID, int64(len(data)))
-					if err != nil {
-						return nil, err
-					}
-				}
-				resource, err := s.storeResource(userID, kind, "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), width, height, int64(intValue(item["durationMs"])), bytes.NewReader(data))
+				resource, err := s.storeResource(userID, kind, "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), width, height, bytes.NewReader(data))
 				if err != nil {
-					if enforceQuota {
-						s.releaseUserUploadQuota(userID, quotaDay, int64(len(data)))
-					}
 					return nil, fmt.Errorf("生成内容写入资源存储失败：%w", err)
-				}
-				if enforceQuota {
-					s.commitUserUploadQuota(userID, int64(len(data)))
 				}
 				resourceURL := "/api/resources/" + resource.ID + "/file"
 				for _, key := range []string{"dataUrl", "content", "url", "coverUrl"} {
@@ -351,7 +344,7 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 			}
 		}
 		for key, child := range item {
-			stored, err := s.persistGeneratedMediaValueMode(userID, child, skipInvalidDataURL, enforceQuota)
+			stored, err := s.persistGeneratedMediaValueMode(userID, child, skipInvalidDataURL)
 			if err != nil {
 				return nil, err
 			}

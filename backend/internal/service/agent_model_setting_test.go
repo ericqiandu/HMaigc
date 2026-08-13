@@ -15,7 +15,7 @@ func TestAgentDefaultModelSettingValidatesCatalogAndInvalidatesWithoutFallback(t
 	admin := providerAdmin()
 	now := time.Now().UTC()
 	channel := model.ModelChannel{ID: "agent-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Agent", CreatedAt: now, UpdatedAt: now}
-	textModel := model.ChannelModel{ID: "agent-text", ChannelID: channel.ID, ModelKey: "gpt-5.5", DisplayName: "GPT 5.5", AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	textModel := model.ChannelModel{ID: "agent-text", ChannelID: channel.ID, ModelKey: "custom-agent", DisplayName: "Custom Agent", AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
 	imageModel := model.ChannelModel{ID: "agent-image", ChannelID: channel.ID, ModelKey: "image-2.0", DisplayName: "Image 2.0", AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
 	for _, row := range []any{&channel, &textModel, &imageModel} {
 		if err := db.Create(row).Error; err != nil {
@@ -108,5 +108,34 @@ func TestAgentDefaultModelSettingRejectsCorruptStoredValue(t *testing.T) {
 	}
 	if _, err := svc.repo.SystemSetting("missing"); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("missing setting error = %v", err)
+	}
+}
+
+func TestPublicAgentDefaultModelRejectsManagedCredentialThatBecameUnhealthy(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	admin := providerAdmin()
+	now := time.Now().UTC()
+	account := model.ProviderAccount{ID: "agent-account", ProviderKind: kuaiziProviderKind, Name: "筷子", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	endpoint := model.ProviderEndpointVersion{ID: "agent-endpoint", ProviderAccountID: account.ID, BaseURL: "https://aiopenapi.kuaizi.cn", Status: "active", Version: 1, CreatedAt: now}
+	credential := model.ProviderCredential{ID: "agent-credential", ProviderAccountID: account.ID, Family: kuaiziAccountCredentialFamily, Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
+	version := model.ProviderCredentialVersion{ID: "agent-version", ProviderCredentialID: credential.ID, KeyCipher: "encrypted", Status: "active", Version: 1, CreatedAt: now}
+	channel := model.ModelChannel{ID: deterministicKuaiziChatChannelID("gpt"), Scope: model.ChannelScopeSystem, Enabled: true, Name: "GPT", InterfaceType: model.ChannelInterfaceChatCompletion, CreatedAt: now, UpdatedAt: now}
+	item := model.ChannelModel{ID: "agent-managed", ChannelID: channel.ID, ModelKey: "gpt-5.5", ProviderCredentialID: credential.ID, Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated, CreatedAt: now, UpdatedAt: now}
+	for _, row := range []any{&account, &endpoint, &credential, &version, &channel, &item} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.UpdateAgentDefaultModelSetting(admin, UpdateAgentDefaultModelRequest{ChannelModelID: item.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if selected, err := svc.PublicAgentDefaultModel(); err != nil || selected == nil {
+		t.Fatalf("healthy Agent default = %#v, %v", selected, err)
+	}
+	if err := db.Model(&model.ProviderCredential{}).Where("id = ?", credential.ID).Update("health_status", "unavailable").Error; err != nil {
+		t.Fatal(err)
+	}
+	if selected, err := svc.PublicAgentDefaultModel(); err != nil || selected != nil {
+		t.Fatalf("unhealthy Agent default leaked = %#v, %v", selected, err)
 	}
 }

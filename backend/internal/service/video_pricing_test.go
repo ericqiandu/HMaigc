@@ -38,9 +38,9 @@ func TestBuildChannelModelPriceTiersAcceptsOnlyVideoGenerationResolutions(t *tes
 		PriceVersion:    3,
 	}
 	requests := []ChannelModelPriceTierRequest{
-		{Resolution: "480P", UnitPriceMicrocredits: 1_000_000},
-		{Resolution: "768P", UnitPriceMicrocredits: 1_500_000},
-		{Resolution: "1080P", UnitPriceMicrocredits: 2_000_000},
+		{Resolution: "480P", InputVariant: "standard", UnitPriceMicrocredits: 1_000_000},
+		{Resolution: "768P", InputVariant: "standard", UnitPriceMicrocredits: 1_500_000},
+		{Resolution: "1080P", InputVariant: "standard", UnitPriceMicrocredits: 2_000_000},
 	}
 
 	tiers, err := buildChannelModelPriceTiers(item, requests)
@@ -57,6 +57,28 @@ func TestBuildChannelModelPriceTiersAcceptsOnlyVideoGenerationResolutions(t *tes
 		if tier.UnitPriceMicrocredits != requests[index].UnitPriceMicrocredits {
 			t.Fatalf("tier %d price = %d, want %d", index, tier.UnitPriceMicrocredits, requests[index].UnitPriceMicrocredits)
 		}
+		if tier.InputVariant != requests[index].InputVariant {
+			t.Fatalf("tier %d input variant = %q, want %q", index, tier.InputVariant, requests[index].InputVariant)
+		}
+	}
+}
+
+func TestBuildSeedancePriceTiersRequiresResolutionAndReferenceVariant(t *testing.T) {
+	item := &model.ChannelModel{
+		ID: "seedance-25", ModelKey: "doubao-seedance-2-5-260628",
+		PriceStrategy: "video_resolution", PriceConfigured: true, PriceVersion: 2,
+	}
+	requests := []ChannelModelPriceTierRequest{
+		{Resolution: "480P", InputVariant: "standard", UnitPriceMicrocredits: 670_000},
+		{Resolution: "480P", InputVariant: "reference_video", UnitPriceMicrocredits: 720_000},
+		{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1_510_000},
+		{Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1_630_000},
+	}
+	if _, err := buildChannelModelPriceTiers(item, requests); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildChannelModelPriceTiers(item, requests[:3]); err == nil {
+		t.Fatal("incomplete Seedance four-tier price was accepted")
 	}
 }
 

@@ -16,6 +16,7 @@ export type ModelCreditCost = {
     unitPriceMicrocredits: number;
     priceTiers: Array<{
         resolution: string;
+        inputVariant?: "standard" | "reference_video";
         unitPriceMicrocredits: number;
     }>;
 };
@@ -65,13 +66,14 @@ function videoPricingResolution(resolution: string | undefined) {
     return normalized;
 }
 
-export function requestCreditCost(options: { channelMode: string; modelCosts?: ModelCreditCost[]; model: string; count?: string | number; seconds?: string | number; quality?: string; resolution?: string }) {
+export function requestCreditCost(options: { channelMode: string; modelCosts?: ModelCreditCost[]; model: string; count?: string | number; seconds?: string | number; quality?: string; resolution?: string; referenceVideoCount?: number }) {
     if (options.channelMode !== "remote") return null;
     const cost = modelCreditCost(options.modelCosts, options.model);
     if (!cost) return null;
     if (cost.priceStrategy !== "flat" && !Array.isArray(cost.priceTiers)) return null;
     const pricingResolution = cost.priceStrategy === "image_resolution" ? imagePricingResolution(options.resolution || options.quality) : videoPricingResolution(options.resolution);
-    const unitPriceMicrocredits = cost.priceStrategy === "flat" ? cost.unitPriceMicrocredits : cost.priceTiers.find((tier) => tier.resolution === pricingResolution)?.unitPriceMicrocredits;
+    const inputVariant = Number(options.referenceVideoCount) > 0 ? "reference_video" : "standard";
+    const unitPriceMicrocredits = cost.priceStrategy === "flat" ? cost.unitPriceMicrocredits : cost.priceTiers.find((tier) => tier.resolution === pricingResolution && (tier.inputVariant || "standard") === inputVariant)?.unitPriceMicrocredits;
     if (!Number.isFinite(unitPriceMicrocredits) || Number(unitPriceMicrocredits) <= 0) return null;
     const count = Math.max(1, Math.floor(Math.abs(Number(options.count)) || 1));
     const quantity = cost.billingMode === "per_second" ? Math.max(1, Math.floor(Math.abs(Number(options.seconds)) || 1)) * count : count;

@@ -328,7 +328,6 @@ async function uploadLocalStorageKey(storageKey: string, payload: Record<string,
     const resource = await uploadResourceFile(blob, kind, {
         width: numberValue(payload.naturalWidth) || numberValue(payload.width),
         height: numberValue(payload.naturalHeight) || numberValue(payload.height),
-        durationMs: numberValue(payload.durationMs),
     });
     return resourceStorageKey(resource.id);
 }

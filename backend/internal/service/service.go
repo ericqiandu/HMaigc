@@ -45,6 +45,7 @@ type Service struct {
 	runtimeErr           error
 	workerID             string
 	operationsClient     opsprotocol.Client
+	mediaDurationProbe   mediaDurationProbe
 }
 
 const taskWorkerConcurrency = 3
@@ -473,6 +474,13 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("only failed or cancelled tasks can be retried")
 	}
+	hasUncertainBilling, err := s.repo.TaskHasUncertainBilling(userID, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if hasUncertainBilling {
+		return nil, BadAuthRequest("该任务的上游费用状态仍待核对，不能重新生成，请先由管理员完成计费核对")
+	}
 	if isContentModerationFailure(task.Error) {
 		return nil, BadAuthRequest(contentModerationRetryMessage)
 	}
@@ -570,7 +578,6 @@ func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {
 		}
 	}
 	if task.Status == model.TaskStatusRunning {
-		s.cancelActiveTask(task.ID)
 		cancelled, err := s.repo.CancelTaskIfStatus(userID, task.ID, model.TaskStatusRunning, now)
 		if err != nil {
 			return nil, err
@@ -862,18 +869,23 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	s.registerActiveTask(task.ID, cancel)
 	defer s.unregisterActiveTask(task.ID)
 
-	task.Stage = "调用生成模型"
-	task.Progress = 35
-	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
-	if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
-		task.Status = model.TaskStatusFailed
-		task.Stage = "计费准备失败"
-		task.Error = taskFailureMessage(err)
-		task.CompletedAt = ptr(time.Now())
-		if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
-			return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+	reconcilingCancellation := task.Status == model.TaskStatusCancelled
+	if !reconcilingCancellation {
+		task.Stage = "调用生成模型"
+		task.Progress = 35
+		_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
+	}
+	if !reconcilingCancellation {
+		if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
+			task.Status = model.TaskStatusFailed
+			task.Stage = "计费准备失败"
+			task.Error = taskFailureMessage(err)
+			task.CompletedAt = ptr(time.Now())
+			if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
+				return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+			}
+			return err
 		}
-		return err
 	}
 	result, canvasOps, err := s.processTask(ctx, *task)
 	providerSucceeded := err == nil
@@ -884,6 +896,15 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		_, err = s.finalizeCharacterTurnaroundTask(*task, result)
 	}
 	if err != nil {
+		if latest, latestErr := s.repo.Task(task.ID); latestErr == nil && latest.Status == model.TaskStatusCancelled && strings.TrimSpace(latest.ProviderRequestID) != "" {
+			next := time.Now().Add(time.Minute)
+			if scheduleErr := s.repo.ScheduleCancelledTaskReconciliation(task.ID, task.LeaseOwner, next); scheduleErr != nil {
+				return errors.Join(err, scheduleErr)
+			}
+			_ = s.MarkBillingUncertain(task.BillingOrderID, "已取消任务的上游结果仍在核对")
+			_ = s.log(task.UserID, task.ID, "warn", "已取消任务的上游结果核对将在稍后继续", taskFailureMessage(err))
+			return nil
+		}
 		channelSlotFailedBeforeRequest := false
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
@@ -933,9 +954,18 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		return err
 	}
 	if latest.Status == model.TaskStatusCancelled {
-		_ = s.MarkBillingUncertain(task.BillingOrderID, "上游已返回结果，但任务被取消")
+		resultJSON, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			billingErr := s.MarkBillingUncertain(task.BillingOrderID, "上游已返回结果，但取消任务的结果无法编码")
+			return errors.Join(marshalErr, billingErr)
+		}
+		const billingError = "上游已返回结果，取消任务的资产已保留，费用待核对"
+		if saveErr := s.saveCancelledTaskResult(latest, resultJSON, billingError); saveErr != nil {
+			billingErr := s.MarkBillingUncertain(task.BillingOrderID, "上游已返回结果，但取消任务的结果未能保存："+taskFailureMessage(saveErr))
+			return errors.Join(saveErr, billingErr)
+		}
 		_ = s.markSessionFailed(*latest, "会话任务已取消。")
-		_ = s.log(task.UserID, task.ID, "warn", "任务已取消，丢弃生成结果", "")
+		_ = s.log(task.UserID, task.ID, "warn", "任务已取消，上游已生成的资产已保留", "")
 		return nil
 	}
 	resultJSON, _ := json.Marshal(result)
@@ -943,7 +973,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	task.Stage = "持久化生成结果"
 	task.Progress = 90
 	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
-	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
+	if err := s.saveTaskCompletion(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务结果保存失败"
 		task.Error = taskFailureMessage(err)

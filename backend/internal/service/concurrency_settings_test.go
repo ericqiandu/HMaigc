@@ -23,7 +23,7 @@ func TestRuntimeConcurrencySettingPersistsAndChannelOverrideWins(t *testing.T) {
 	if sqlDB, err := db.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}
-	if err := db.AutoMigrate(&model.SystemSetting{}, &model.AdminAuditEvent{}, &model.ModelChannel{}); err != nil {
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.AdminAuditEvent{}, &model.ModelChannel{}, &model.ChannelModel{}, &model.ProviderCredential{}); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(repository.New(db), t.TempDir())
@@ -43,7 +43,7 @@ func TestRuntimeConcurrencySettingPersistsAndChannelOverrideWins(t *testing.T) {
 	if err := db.Create(&channel).Error; err != nil {
 		t.Fatal(err)
 	}
-	release, limit, err := svc.AcquireChannelSlot(context.Background(), channel.ID, "", time.Minute)
+	release, limit, err := svc.AcquireChannelSlot(context.Background(), channel.ID, "", "", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,12 +55,48 @@ func TestRuntimeConcurrencySettingPersistsAndChannelOverrideWins(t *testing.T) {
 	if err := db.Model(&channel).Update("concurrency_limit", 9).Error; err != nil {
 		t.Fatal(err)
 	}
-	release, limit, err = svc.AcquireChannelSlot(context.Background(), channel.ID, "", time.Minute)
+	release, limit, err = svc.AcquireChannelSlot(context.Background(), channel.ID, "", "", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	release()
 	if limit != 9 {
 		t.Fatalf("overridden channel limit = %d, want 9", limit)
+	}
+}
+
+func TestSharedProviderCredentialUsesOneConcurrencyScopeAcrossChannels(t *testing.T) {
+	t.Setenv("REDIS_URL", "")
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.ProviderCredential{}); err != nil {
+		t.Fatal(err)
+	}
+	credential := model.ProviderCredential{ID: "shared", ProviderAccountID: kuaiziAccountID, Family: "account", Enabled: true, ConcurrencyLimit: 1}
+	channels := []model.ModelChannel{
+		{ID: "video", Scope: model.ChannelScopeSystem, Enabled: true, ConcurrencyLimit: 9},
+		{ID: "agent", Scope: model.ChannelScopeSystem, Enabled: true, ConcurrencyLimit: 9},
+	}
+	models := []model.ChannelModel{
+		{ID: "video-model", ChannelID: channels[0].ID, ProviderCredentialID: credential.ID, ModelKey: "seedance", Enabled: true},
+		{ID: "agent-model", ChannelID: channels[1].ID, ProviderCredentialID: credential.ID, ModelKey: "gpt", Enabled: true},
+	}
+	for _, row := range []any{&credential, &channels, &models} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := New(repository.New(db), t.TempDir())
+	release, limit, err := svc.AcquireChannelSlot(context.Background(), channels[0].ID, models[0].ModelKey, "", time.Minute)
+	if err != nil || limit != 1 {
+		t.Fatalf("first shared slot = limit %d, error %v", limit, err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, _, err := svc.AcquireChannelSlot(ctx, channels[1].ID, models[1].ModelKey, "", time.Minute); err == nil {
+		t.Fatal("second channel bypassed shared credential concurrency")
 	}
 }

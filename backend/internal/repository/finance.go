@@ -389,6 +389,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 		updates := map[string]any{
 			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "result_json": "",
 			"capability": policy.Capability, "started_at": nil, "completed_at": nil, "updated_at": time.Now(),
+			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil,
 		}
 		if order != nil {
 			updates["billing_order_id"] = order.ID
@@ -551,6 +552,14 @@ func (r *Repository) BillingOrdersByTaskIDs(userID string, taskIDs []string) (ma
 		}
 	}
 	return result, nil
+}
+
+func (r *Repository) TaskHasUncertainBilling(userID string, taskID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.BillingOrder{}).
+		Where("user_id = ? AND task_id = ? AND status = ?", userID, taskID, model.BillingStatusUncertain).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func (r *Repository) AdminBillingOrders(status string, keyword string, limit int, offset int) ([]model.BillingOrder, int64, error) {

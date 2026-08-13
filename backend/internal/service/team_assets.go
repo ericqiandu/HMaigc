@@ -24,7 +24,7 @@ func (s *Service) TeamResources(userID string, teamID string, limit int) ([]mode
 	return resources, err
 }
 
-func (s *Service) UploadTeamResource(userID string, teamID string, header *multipart.FileHeader, kind string, width int, height int, durationMs int64) (*model.Resource, error) {
+func (s *Service) UploadTeamResource(userID string, teamID string, header *multipart.FileHeader, kind string, width int, height int) (*model.Resource, error) {
 	if header == nil {
 		return nil, BadAuthRequest("请选择要上传的文件")
 	}
@@ -53,7 +53,8 @@ func (s *Service) UploadTeamResource(userID string, teamID string, header *multi
 	}
 	defer file.Close()
 	mimeType := detectUploadedMimeType(file, header.Filename, header.Header.Get("Content-Type"))
-	resource, err := s.storeScopedResource(userID, teamID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file)
+	kind = normalizeResourceKind(kind, mimeType)
+	resource, err := s.storeScopedResource(userID, teamID, kind, header.Filename, mimeType, header.Size, width, height, file)
 	if err != nil {
 		s.releaseTeamResourceQuota(userID, teamID, day, header.Size)
 		return nil, err

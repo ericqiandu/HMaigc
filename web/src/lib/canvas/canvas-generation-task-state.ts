@@ -18,6 +18,10 @@ export function isTerminalGenerationTask(task: Pick<GenerationTask, "status">) {
     return terminalTaskStatuses.has(task.status);
 }
 
+export function hasUsableGenerationTaskResult(task: Pick<GenerationTask, "resultJson">) {
+    return Boolean(task.resultJson?.trim());
+}
+
 export function mergeGenerationTaskSnapshot(node: CanvasNodeData, task: GenerationTask): CanvasNodeData {
     const currentTaskId = node.metadata?.taskId;
     const currentTaskStatus = node.metadata?.taskStatus;
@@ -27,8 +31,9 @@ export function mergeGenerationTaskSnapshot(node: CanvasNodeData, task: Generati
     if (sameTask && currentIsTerminal && !incomingIsTerminal && !isNewerTaskSnapshot(task.updatedAt || task.updated_at, node.metadata?.taskUpdatedAt)) return node;
     if (sameTask && currentIsTerminal === incomingIsTerminal && isOlderTaskSnapshot(task.updatedAt || task.updated_at, node.metadata?.taskUpdatedAt)) return node;
 
-    const failed = task.status === "failed" || task.status === "cancelled";
-    const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content);
+    const cancelledWithResult = task.status === "cancelled" && hasUsableGenerationTaskResult(task);
+    const failed = task.status === "failed" || (task.status === "cancelled" && !cancelledWithResult);
+    const hasCompletedContent = (task.status === "succeeded" || cancelledWithResult) && Boolean(node.metadata?.content);
     const failure = failed ? generationFailureMetadata(task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败"), node.metadata?.composerContent || node.metadata?.prompt || task.prompt || "") : undefined;
     return {
         ...node,

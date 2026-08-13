@@ -30,7 +30,7 @@ func runKuaiziGPTImage2Task(ctx context.Context, input canvasGenerationInput) (m
 			return nil, err
 		}
 		var created map[string]interface{}
-		if err := requestKuaiziGPTImage2JSON(withProviderRequestKind(ctx, "create"), input.Config, kuaiziGPTImage2CreatePath, payload, &created); err != nil {
+		if err := requestKuaiziGPTImage2JSON(withProviderAsyncCreate(withProviderRequestKind(ctx, "create")), input.Config, kuaiziGPTImage2CreatePath, payload, &created); err != nil {
 			if compatibleCreateDefinitelyRejected(err) {
 				return nil, err
 			}

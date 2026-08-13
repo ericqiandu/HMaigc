@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -40,6 +41,15 @@ func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKe
 		return SystemProxyRuntime{}, ServiceUnavailable("系统渠道不存在")
 	}
 	modelKey = strings.TrimPrefix(strings.TrimSpace(modelKey), "models/")
+	if channel.InterfaceType == model.ChannelInterfaceChatCompletion {
+		selected, err := s.PublicAgentDefaultModel()
+		if err != nil {
+			return SystemProxyRuntime{}, err
+		}
+		if selected == nil || selected.ChannelID != channel.ID || selected.ModelKey != modelKey {
+			return SystemProxyRuntime{}, ServiceUnavailable("Agent 请求只能使用管理员配置且当前健康的全站默认模型")
+		}
+	}
 	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
 	if !isKuaiziChatChannelID(channel.ID) {
 		return SystemProxyRuntime{BaseURL: channel.BaseURL, HeaderName: systemProxyHeaderName(channel.APIFormat), APIKey: channel.APIKey}, nil
@@ -48,15 +58,24 @@ func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKe
 		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 渠道与模型系列不匹配")
 	}
 	item, err := s.repo.ChannelModelByKey(channel.ID, modelKey)
-	if err != nil || item.ProviderCredentialID == "" {
+	if err != nil {
+		return SystemProxyRuntime{}, fmt.Errorf("读取筷子 Agent 模型配置失败：%w", err)
+	}
+	if item.ProviderCredentialID == "" {
 		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 模型尚未发布或启用")
 	}
 	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
-	if err != nil || !account.Enabled {
+	if err != nil {
+		return SystemProxyRuntime{}, fmt.Errorf("读取筷子科技账号失败：%w", err)
+	}
+	if !account.Enabled {
 		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技账号不可用")
 	}
 	credential, err := s.repo.ProviderCredentialByFamily(account.ID, kuaiziAccountCredentialFamily)
-	if err != nil || credential.ID != item.ProviderCredentialID || !credential.Enabled || credential.HealthStatus != "healthy" {
+	if err != nil {
+		return SystemProxyRuntime{}, fmt.Errorf("读取筷子科技账号凭据失败：%w", err)
+	}
+	if credential.ID != item.ProviderCredentialID || !credential.Enabled || credential.HealthStatus != "healthy" {
 		return SystemProxyRuntime{}, ServiceUnavailable("筷子科技账号凭据不可用")
 	}
 	endpointVersions, err := s.repo.ProviderEndpointVersions(account.ID)

@@ -75,21 +75,20 @@ export function isResourceUrl(url?: string) {
     return path.startsWith(`${base}/resources/`) && path.endsWith("/file");
 }
 
-export async function uploadResourceFile(file: Blob, kind: "image" | "video" | "audio" | "file", meta?: { width?: number; height?: number; durationMs?: number; fileName?: string }) {
+export async function uploadResourceFile(file: Blob, kind: "image" | "video" | "audio" | "file", meta?: { width?: number; height?: number; fileName?: string }) {
     const formData = new FormData();
     const name = meta?.fileName || (file instanceof File ? file.name : `${kind}.${extensionFromMime(file.type, kind)}`);
     formData.append("kind", kind);
     formData.append("file", file, name);
     if (meta?.width) formData.append("width", String(Math.round(meta.width)));
     if (meta?.height) formData.append("height", String(Math.round(meta.height)));
-    if (meta?.durationMs) formData.append("durationMs", String(Math.round(meta.durationMs)));
     const data = await request<{ resource: RemoteResource }>(api.post("/resources", formData));
     resourceCache.set(resourceCacheKey(data.resource.id), data.resource);
     return data.resource;
 }
 
-export async function importResourceFromUrl(url: string, kind: "image" | "video" | "audio" | "file", meta?: { width?: number; height?: number; durationMs?: number }) {
-    const data = await request<{ resource: RemoteResource }>(api.post("/resources/import", { url, kind, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs }));
+export async function importResourceFromUrl(url: string, kind: "image" | "video" | "audio" | "file", meta?: { width?: number; height?: number }) {
+    const data = await request<{ resource: RemoteResource }>(api.post("/resources/import", { url, kind, width: meta?.width, height: meta?.height }));
     resourceCache.set(resourceCacheKey(data.resource.id), data.resource);
     return data.resource;
 }

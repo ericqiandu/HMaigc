@@ -1,7 +1,11 @@
 package service
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -92,7 +96,7 @@ func TestHydratePublicUpstreamResourceUsesSignedOSSURL(t *testing.T) {
 	resource := model.Resource{
 		ID: "resource-1", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
 		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
-		ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png",
+		ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png", DurationMs: 12_345,
 	}
 	if err := svc.repo.CreateResource(&resource); err != nil {
 		t.Fatal(err)
@@ -104,8 +108,19 @@ func TestHydratePublicUpstreamResourceUsesSignedOSSURL(t *testing.T) {
 	if !strings.HasPrefix(media.URL, "https://private-bucket.oss-cn-test.aliyuncs.com/") || media.DataURL != "" || !strings.Contains(media.URL, "Signature=") {
 		t.Fatalf("media = %#v", media)
 	}
+	if media.DurationMs != resource.DurationMs {
+		t.Fatalf("media duration = %d, want authoritative %d", media.DurationMs, resource.DurationMs)
+	}
 	if err := svc.hydrateProviderMedia("other-user", &providerMedia{StorageKey: "resource:resource-1"}, true); err == nil {
 		t.Fatal("hydrateProviderMedia() allowed another user's resource")
+	}
+}
+
+func TestHydratePublicUpstreamResourceRejectsUnownedDirectURL(t *testing.T) {
+	svc := newResourceTestService(t)
+	err := svc.hydrateProviderMedia("user-1", &providerMedia{URL: "https://example.com/unowned.mp4", DurationMs: 5_000}, true)
+	if err == nil || !strings.Contains(err.Error(), "本人已上传") {
+		t.Fatalf("hydrateProviderMedia() error = %v", err)
 	}
 }
 
@@ -210,7 +225,7 @@ func TestGeneratedMediaRejectsInvalidDataURL(t *testing.T) {
 	}
 }
 
-func TestPersistGeneratedMediaAppliesStoredFileQuota(t *testing.T) {
+func TestPersistGeneratedMediaPreservesProviderSuccessBeyondStoredFileQuota(t *testing.T) {
 	svc := newResourceTestService(t)
 	if err := svc.repo.Create(&model.Resource{
 		ID:     "existing",
@@ -221,10 +236,49 @@ func TestPersistGeneratedMediaAppliesStoredFileQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := svc.persistGeneratedMediaResult("user-1", map[string]interface{}{
+	result, err := svc.persistGeneratedMediaResult("user-1", map[string]interface{}{
 		"image": map[string]interface{}{"dataUrl": "data:image/png;base64,YQ=="},
 	})
-	if err == nil || !strings.Contains(err.Error(), "2GB 上限") {
+	if err != nil {
 		t.Fatalf("persistGeneratedMediaResult() error = %v", err)
+	}
+	image, _ := result["image"].(map[string]interface{})
+	if !strings.HasPrefix(fmt.Sprint(image["storageKey"]), "resource:") {
+		t.Fatalf("generated image was not persisted: %#v", image)
+	}
+}
+
+func TestAuthoritativeMediaDurationUsesServerProbe(t *testing.T) {
+	svc := &Service{mediaDurationProbe: func(_ context.Context, body io.Reader) (int64, error) {
+		data, err := io.ReadAll(body)
+		if err != nil {
+			return 0, err
+		}
+		if string(data) != "server-owned-media" {
+			t.Fatalf("probe body = %q", data)
+		}
+		return 61_234, nil
+	}}
+	body := bytes.NewReader([]byte("server-owned-media"))
+	durationMs, err := svc.authoritativeMediaDuration("video", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if durationMs != 61_234 {
+		t.Fatalf("duration = %d", durationMs)
+	}
+	remaining, _ := io.ReadAll(body)
+	if string(remaining) != "server-owned-media" {
+		t.Fatalf("body was not rewound: %q", remaining)
+	}
+}
+
+func TestParseMediaDurationMilliseconds(t *testing.T) {
+	durationMs, err := parseMediaDurationMilliseconds("15.001\n")
+	if err != nil || durationMs != 15_001 {
+		t.Fatalf("parseMediaDurationMilliseconds() = %d, %v", durationMs, err)
+	}
+	if _, err := parseMediaDurationMilliseconds("unknown"); err == nil {
+		t.Fatal("invalid ffprobe duration was accepted")
 	}
 }

@@ -215,3 +215,33 @@ func TestKuaiziTransportRejectsSpecialUseDNSRebindingBeforeDial(t *testing.T) {
 		}
 	}
 }
+
+func TestKuaiziHTTPClientRejectsRedirectBeforeForwardingAPIKey(t *testing.T) {
+	redirected := false
+	destination := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		redirected = true
+		if request.Header.Get("ApiKey") != "" {
+			t.Fatal("ApiKey reached redirect destination")
+		}
+	}))
+	defer destination.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	client := KuaiziHTTPClient("production", time.Second)
+	client.Transport = source.Client().Transport
+	request, err := http.NewRequest(http.MethodPost, source.URL, strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("ApiKey", "secret")
+	if _, err := client.Do(request); err == nil {
+		t.Fatal("KuaiziHTTPClient followed redirect")
+	}
+	if redirected {
+		t.Fatal("redirect destination received request")
+	}
+}

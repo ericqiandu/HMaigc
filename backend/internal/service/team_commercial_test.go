@@ -180,7 +180,7 @@ func TestTeamSharedAssetIsStoredInTeamScopeAndIsolatedFromNonMembers(t *testing.
 		t.Fatal(err)
 	}
 	header := multipartFileHeader(t, "reference.txt", "team reference")
-	resource, err := svc.UploadTeamResource(owner.ID, team.ID, header, "reference", 0, 0, 0)
+	resource, err := svc.UploadTeamResource(owner.ID, team.ID, header, "reference", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

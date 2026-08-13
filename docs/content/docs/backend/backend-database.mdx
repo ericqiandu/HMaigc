@@ -74,9 +74,9 @@
 - `provider_credential_versions` 追加保存每次换 Key 的密文、指纹、验证/余额事实和启退时间；同一逻辑凭据只允许一个 `active` 版本；
 - `channel_models.provider_credential_id` 将可调用模型显式绑定到逻辑凭据，任务执行时再冻结实际 endpoint 与 credential version，避免换 URL 或换 Key 改写历史任务含义。
 
-`provider_task_facts` 以平台 `task_id` 为唯一任务事实，并冻结关联计费单、账号、endpoint 版本、逻辑凭据、凭据版本、渠道模型、输入规格、输入数量、时长、供应商状态、trace 和资产来源。非空的 `provider_credential_version_id + provider_task_id` 只能出现一次；供应商尚未返回任务号时允许空值，但不能据此宣称上游任务已创建。
+筷子账号硬切为一个共享逻辑凭据，全部筷子模型的 `channel_models.provider_credential_id` 指向同一记录；凭据并发上限也以该 ID 为跨渠道共享作用域，不能把视频、图片和 Agent 渠道分别跑满。旧的按系列凭据只用于一次性启动迁移：Key 不一致时迁移显式失败，禁止挑选其中一个或静默覆盖。
 
-`provider_billing_facts` 追加保存供应商账单观察结果。非空的 `provider_credential_version_id + upstream_order_id` 唯一：同一 payload digest 的查询重放返回原事实，不新增也不覆盖；不同 digest 明确冲突并保留已有行。完整性迁移会先核对历史活动版本、任务号、上游订单和价格规格，再创建索引；索引同名但列、唯一性或 predicate 不符时启动失败，禁止信任错误索引。
+任务的供应商事实不再维护平行状态表：`tasks` 保存请求标识、轮询阶段、终态与结果，`billing_orders` 保存渠道、模型、冻结价格档位、供应商请求号和费用核对状态。创建请求在是否已被上游接受无法确认时，账单必须进入 `uncertain`；该任务在管理员完成核对前禁止重新生成，避免重复创建并再次产生供应商费用。取消与上游成功并发时，成功结果和生成记录继续持久化，任务保持取消，账单进入待核对。
 
 金额单位必须随字段解释：用户售价与冻结订单金额使用 `microcredits`；供应商参考成本使用货币 `micros`；供应商原始余额和账单金额使用 `amount_subunits` 十进制字符串。`total_tokens` 和余额同样以十进制字符串保存，避免超过 JavaScript 安全整数或数据库固定整数范围后丢失精度；币种必须由同一事实记录的显式字段解释，禁止跨单位直接相加。
 

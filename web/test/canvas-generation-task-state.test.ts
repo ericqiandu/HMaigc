@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { convergeGenerationTaskCancellation, mergeGenerationTaskSnapshot, retryBoundGenerationTask } from "../src/lib/canvas/canvas-generation-task-state";
+import { convergeGenerationTaskCancellation, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot, retryBoundGenerationTask } from "../src/lib/canvas/canvas-generation-task-state";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -45,6 +45,15 @@ describe("canvas generation task state", () => {
             taskProgress: 35,
             errorDetails: "参考素材需要公网可访问地址",
         });
+    });
+
+    test("treats a cancelled task with a persisted provider result as usable content", () => {
+        const resultTask = task({ status: "cancelled", resultJson: `{"video":{"url":"/api/resources/result/file"}}` });
+        const result = mergeGenerationTaskSnapshot(node({ content: { videoUrl: "/api/resources/result/file" } }), resultTask);
+
+        expect(hasUsableGenerationTaskResult(resultTask)).toBe(true);
+        expect(result.metadata).toMatchObject({ status: "success", taskStatus: "cancelled" });
+        expect(result.metadata?.errorDetails).toBeUndefined();
     });
 
     test("reads and returns a terminal server fact when cancellation reports a conflict", async () => {

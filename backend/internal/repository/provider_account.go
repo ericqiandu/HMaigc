@@ -52,6 +52,32 @@ type KuaiziAccountCredentialMigration struct {
 	Audit                      model.AdminAuditEvent
 }
 
+// HealthyProviderCredentialIDs 批量返回当前具备可调用账号、endpoint、凭据和 active Key 的模型凭据。
+func (r *Repository) HealthyProviderCredentialIDs(ids []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	type credentialRow struct {
+		ID string `gorm:"column:id"`
+	}
+	var rows []credentialRow
+	err := r.db.Table("provider_credentials AS credentials").
+		Select("DISTINCT credentials.id").
+		Joins("JOIN provider_accounts AS accounts ON accounts.id = credentials.provider_account_id AND accounts.enabled = ?", true).
+		Joins("JOIN provider_endpoint_versions AS endpoints ON endpoints.provider_account_id = accounts.id AND endpoints.status = ?", "active").
+		Joins("JOIN provider_credential_versions AS versions ON versions.provider_credential_id = credentials.id AND versions.status = ? AND versions.key_cipher <> ''", "active").
+		Where("credentials.id IN ? AND credentials.enabled = ? AND credentials.health_status = ?", ids, true, "healthy").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.ID] = true
+	}
+	return result, nil
+}
+
 func (r *Repository) ProviderAccountByKind(providerKind string) (*model.ProviderAccount, error) {
 	var account model.ProviderAccount
 	if err := r.db.First(&account, "provider_kind = ?", providerKind).Error; err != nil {
@@ -75,6 +101,14 @@ func (r *Repository) ProviderCredentials(accountID string) ([]model.ProviderCred
 func (r *Repository) ProviderCredentialByFamily(accountID string, family string) (*model.ProviderCredential, error) {
 	var credential model.ProviderCredential
 	if err := r.db.First(&credential, "provider_account_id = ? AND family = ?", accountID, family).Error; err != nil {
+		return nil, err
+	}
+	return &credential, nil
+}
+
+func (r *Repository) ProviderCredential(id string) (*model.ProviderCredential, error) {
+	var credential model.ProviderCredential
+	if err := r.db.First(&credential, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &credential, nil

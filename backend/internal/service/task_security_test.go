@@ -17,6 +17,7 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
+		&model.ModelChannel{},
 		&model.ChannelModel{},
 		&model.ChannelModelPriceTier{},
 		&model.SystemSetting{},
@@ -29,8 +30,15 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	channelModel := model.ChannelModel{
 		ID: "model-1", ChannelID: "channel-1", ModelKey: "text-model", Capability: "text",
 		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+		AccessPolicy: model.ModelAccessAuthenticated,
+	}
+	if err := db.Create(&model.ModelChannel{ID: "channel-1", Scope: model.ChannelScopeSystem, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Create(&channelModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: agentDefaultModelSettingKey, ValueJSON: `{"channelModelId":"model-1"}`}).Error; err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{repo: repository.New(db)}
@@ -47,6 +55,95 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	}
 	if order == nil || order.ChannelID != "channel-1" || order.AmountMicrocredits != 100_000 {
 		t.Fatalf("taskBillingOrder() = %#v", order)
+	}
+}
+
+func TestTaskBillingOrderRejectsAgentModelOutsideAdministratorDefault(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true}
+	models := []model.ChannelModel{
+		{ID: "default", ChannelID: channel.ID, ModelKey: "gpt", Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated},
+		{ID: "other", ChannelID: channel.ID, ModelKey: "deepseek", Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated},
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: agentDefaultModelSettingKey, ValueJSON: `{"channelModelId":"default"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	_, err = svc.taskBillingOrder("user", &model.Task{ID: "task", Type: "agent_storyboard"}, map[string]any{
+		"mode": "text", "config": map[string]any{"channelId": channel.ID, "model": "deepseek"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "全站默认模型") {
+		t.Fatalf("non-default Agent model error = %v", err)
+	}
+}
+
+func TestSystemProxyRejectsTextModelOutsideAdministratorDefault(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := model.ModelChannel{ID: "legacy-text", Scope: model.ChannelScopeSystem, Enabled: true, InterfaceType: model.ChannelInterfaceChatCompletion, BaseURL: "https://example.com/v1", APIKey: "secret"}
+	models := []model.ChannelModel{
+		{ID: "default", ChannelID: channel.ID, ModelKey: "default-model", Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated},
+		{ID: "other", ChannelID: channel.ID, ModelKey: "other-model", Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated},
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: agentDefaultModelSettingKey, ValueJSON: `{"channelModelId":"default"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	if _, err := svc.ResolveSystemProxyRuntime(&channel, "other-model"); err == nil || !strings.Contains(err.Error(), "全站默认模型") {
+		t.Fatalf("non-default system proxy error = %v", err)
+	}
+	runtime, err := svc.ResolveSystemProxyRuntime(&channel, "default-model")
+	if err != nil || runtime.APIKey != channel.APIKey {
+		t.Fatalf("default system proxy runtime = %#v, %v", runtime, err)
+	}
+}
+
+func TestRetryTaskRejectsUncertainBillingBeforeAnotherProviderRequest(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "task", UserID: "user", Status: model.TaskStatusFailed, BillingOrderID: "bill", InputJSON: `{}`}
+	orders := []model.BillingOrder{
+		{ID: "bill", UserID: "user", TaskID: task.ID, IdempotencyKey: "uncertain", Status: model.BillingStatusUncertain},
+		{ID: "bill-newer", UserID: "user", TaskID: task.ID, IdempotencyKey: "settled", Status: model.BillingStatusSettled},
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&orders).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	_, err = svc.RetryTask("user", task.ID)
+	if err == nil || !strings.Contains(err.Error(), "费用状态仍待核对") {
+		t.Fatalf("RetryTask() error = %v", err)
 	}
 }
 
@@ -205,6 +302,69 @@ func TestNewBillingOrderAddsSuperResolutionPriceAndFreezesSnapshot(t *testing.T)
 		order.EnhancementSupplierCostMaxMicros != rule.SupplierCostMaxMicros ||
 		!strings.Contains(order.EnhancementPricingSnapshotJSON, rule.ID) {
 		t.Fatalf("enhancement cost snapshot = %#v", order)
+	}
+}
+
+func TestTaskBillingOrderSelectsReferenceVideoPriceAndFreezesVariant(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
+		t.Fatal(err)
+	}
+	item := model.ChannelModel{
+		ID: "seedance", ChannelID: "channel", ModelKey: "doubao-seedance-2-5-260628", Capability: "video",
+		BillingMode: "per_second", PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
+		PriceTiers: []model.ChannelModelPriceTier{
+			{ID: "standard", Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1_510_000},
+			{ID: "reference", Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1_630_000},
+		},
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	order, err := svc.taskBillingOrder("user", &model.Task{ID: "task", Type: "canvas_video"}, map[string]any{
+		"mode":            "video",
+		"config":          map[string]any{"channelId": "channel", "model": item.ModelKey, "videoSeconds": "5", "vquality": "720p"},
+		"referenceVideos": []any{map[string]any{"storageKey": "resource:video"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.PriceTierID != "reference" || order.PricingInputVariant != "reference_video" || order.AmountMicrocredits != 8_150_000 {
+		t.Fatalf("reference video billing order = %#v", order)
+	}
+}
+
+func TestTaskBillingOrderDoesNotApplySeedanceReferenceTierToOtherVideoModels(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
+		t.Fatal(err)
+	}
+	item := model.ChannelModel{ID: "minimax", ChannelID: "channel", ModelKey: "MiniMax-Hailuo-2.3", Capability: "video", BillingMode: "per_second", PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
+		PriceTiers: []model.ChannelModelPriceTier{
+			{ID: "standard", Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1_000_000},
+			{ID: "reference", Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 9_000_000},
+		},
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	order, err := svc.taskBillingOrder("user", &model.Task{ID: "task", Type: "canvas_video"}, map[string]any{
+		"mode": "video", "config": map[string]any{"channelId": "channel", "model": item.ModelKey, "videoSeconds": "5", "vquality": "720p"},
+		"referenceVideos": []any{map[string]any{"storageKey": "resource:video"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.PriceTierID != "standard" || order.PricingInputVariant != "standard" || order.AmountMicrocredits != 5_000_000 {
+		t.Fatalf("non-Seedance billing order = %#v", order)
 	}
 }
 

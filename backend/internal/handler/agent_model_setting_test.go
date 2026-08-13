@@ -13,7 +13,7 @@ func TestAgentDefaultModelRoutesRequireAdminAndPublishValidatedReference(t *test
 	fixture := openProviderAccountHandlerFixture(t)
 	now := time.Now().UTC()
 	channel := model.ModelChannel{ID: "agent-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Agent", CreatedAt: now, UpdatedAt: now}
-	item := model.ChannelModel{ID: "agent-text", ChannelID: channel.ID, ModelKey: "gpt-5.5", DisplayName: "GPT 5.5", AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	item := model.ChannelModel{ID: "agent-text", ChannelID: channel.ID, ModelKey: "custom-agent", DisplayName: "Custom Agent", AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
 	if err := fixture.db.Create(&channel).Error; err != nil {
 		t.Fatal(err)
 	}

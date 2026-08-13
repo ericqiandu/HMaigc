@@ -58,6 +58,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
         seconds: mode === "video" ? effectiveVideoConfig?.videoSeconds : 1,
         quality: config.quality,
         resolution: mode === "video" ? effectiveVideoConfig?.vquality : config.size,
+        referenceVideoCount: mode === "video" ? inputSummary.videoCount : 0,
     });
     const hasPrice = credits !== null;
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };

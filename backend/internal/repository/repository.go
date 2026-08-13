@@ -267,7 +267,11 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 	now := time.Now()
 	leaseExpiresAt := now.Add(leaseDuration)
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		query := tx.Where("status = ? OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))", model.TaskStatusQueued, model.TaskStatusRunning, now).
+		query := tx.Where(`
+			status = ?
+			OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+			OR (status = ? AND provider_request_id <> '' AND result_json = '' AND poll_stage IN ? AND (next_poll_at IS NULL OR next_poll_at <= ?) AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+		`, model.TaskStatusQueued, model.TaskStatusRunning, now, model.TaskStatusCancelled, []string{"accepted", "cancel_reconcile"}, now, now).
 			Order("created_at asc").Limit(1)
 		if r.Dialect() == "postgres" {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
@@ -282,11 +286,15 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 		}
 		claim := tx.Model(&model.Task{}).Where("id = ?", task.ID)
 		if r.Dialect() != "postgres" {
-			claim = claim.Where("status = ? OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))", model.TaskStatusQueued, model.TaskStatusRunning, now)
+			claim = claim.Where(`
+				status = ?
+				OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+				OR (status = ? AND provider_request_id <> '' AND result_json = '' AND poll_stage IN ? AND (next_poll_at IS NULL OR next_poll_at <= ?) AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+			`, model.TaskStatusQueued, model.TaskStatusRunning, now, model.TaskStatusCancelled, []string{"accepted", "cancel_reconcile"}, now, now)
 		}
 		updated := claim.
 			Updates(map[string]any{
-				"status":           model.TaskStatusRunning,
+				"status":           gorm.Expr("CASE WHEN status = ? THEN status ELSE ? END", model.TaskStatusCancelled, model.TaskStatusRunning),
 				"stage":            "后端接管任务",
 				"progress":         15,
 				"attempts":         gorm.Expr("attempts + ?", 1),
@@ -312,13 +320,29 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 
 func (r *Repository) RenewTaskLease(id string, owner string, leaseDuration time.Duration) error {
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND status = ? AND lease_owner = ?", id, model.TaskStatusRunning, owner).
+		Where("id = ? AND status IN ? AND lease_owner = ?", id, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusCancelled}, owner).
 		Updates(map[string]any{"lease_expires_at": time.Now().Add(leaseDuration), "updated_at": time.Now()})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
 		return errors.New("任务租约已失效")
+	}
+	return nil
+}
+
+func (r *Repository) ScheduleCancelledTaskReconciliation(id string, owner string, next time.Time) error {
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND status = ? AND lease_owner = ? AND provider_request_id <> ''", id, model.TaskStatusCancelled, owner).
+		Updates(map[string]any{
+			"poll_stage": "cancel_reconcile", "next_poll_at": next,
+			"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("取消任务核对租约已失效")
 	}
 	return nil
 }
@@ -339,8 +363,18 @@ func (r *Repository) UpdateTaskProgress(id string, stage string, progress int) e
 
 func (r *Repository) SaveTaskCompletion(task *model.Task, session *model.Session, message *model.Message, results []model.Result) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(task).Error; err != nil {
-			return err
+		updated := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ?", task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner).
+			Updates(map[string]any{
+				"status": task.Status, "stage": task.Stage, "progress": task.Progress,
+				"result_json": task.ResultJSON, "input_json": task.InputJSON, "completed_at": task.CompletedAt,
+				"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrTaskCompletionStateConflict
 		}
 		if session != nil {
 			if err := tx.Save(session).Error; err != nil {
@@ -356,6 +390,56 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, session *model.Session
 			if err := tx.Create(&results[index]).Error; err != nil {
 				return err
 			}
+		}
+		return nil
+	})
+}
+
+func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Result, billingError string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		updated := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ?", task.ID, task.UserID, model.TaskStatusCancelled).
+			Updates(map[string]any{
+				"stage": "任务已取消（已保留生成结果）", "progress": 100,
+				"result_json": task.ResultJSON, "input_json": task.InputJSON,
+				"poll_stage": "cancel_reconciled", "next_poll_at": nil,
+				"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return errors.New("取消任务状态已变化，不能保存上游结果")
+		}
+		var existing model.Result
+		err := tx.Where("task_id = ? AND kind = ?", result.TaskID, result.Kind).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := tx.Create(&result).Error; err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else if err := tx.Model(&existing).Updates(map[string]any{"payload": result.Payload, "url": result.URL}).Error; err != nil {
+			return err
+		}
+		if task.BillingOrderID == "" {
+			return nil
+		}
+		billingUpdate := tx.Model(&model.BillingOrder{}).
+			Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
+			Updates(map[string]any{"status": model.BillingStatusUncertain, "error": billingError, "updated_at": time.Now()})
+		if billingUpdate.Error != nil {
+			return billingUpdate.Error
+		}
+		if billingUpdate.RowsAffected == 1 {
+			return nil
+		}
+		var order model.BillingOrder
+		if err := tx.Select("status").First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusUncertain {
+			return ErrBillingStateConflict
 		}
 		return nil
 	})

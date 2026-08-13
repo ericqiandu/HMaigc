@@ -145,6 +145,7 @@ type PublicProviderCapabilities struct {
 	UpstreamMode            string   `json:"upstreamMode"`
 	Capability              string   `json:"capability"`
 	Resolutions             []string `json:"resolutions"`
+	InputVariants           []string `json:"inputVariants"`
 	Ratios                  []string `json:"ratios"`
 	DurationMin             int      `json:"durationMin"`
 	DurationMax             int      `json:"durationMax"`
@@ -163,6 +164,7 @@ type PublicProviderCapabilities struct {
 
 type PublicChannelModelPriceTier struct {
 	Resolution            string `json:"resolution"`
+	InputVariant          string `json:"inputVariant"`
 	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
 }
 
@@ -413,6 +415,10 @@ func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, 
 		if itemErr != nil {
 			return nil, itemErr
 		}
+		items, itemErr = s.publiclyCallableChannelModels(items)
+		if itemErr != nil {
+			return nil, itemErr
+		}
 		voices, voiceErr := s.repo.ChannelVoicesForUser(channel.ID, user.ID, false)
 		if voiceErr != nil {
 			return nil, voiceErr
@@ -431,6 +437,28 @@ func (s *Service) PublicSystemChannels(user *model.User) ([]PublicModelChannel, 
 			return nil, err
 		}
 		result = append(result, public)
+	}
+	return result, nil
+}
+
+func (s *Service) publiclyCallableChannelModels(items []model.ChannelModel) ([]model.ChannelModel, error) {
+	credentialIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.ProviderCredentialID != "" {
+			credentialIDs = append(credentialIDs, item.ProviderCredentialID)
+		}
+	}
+	healthy, err := s.repo.HealthyProviderCredentialIDs(credentialIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.ChannelModel, 0, len(items))
+	for _, item := range items {
+		_, _, managed := kuaiziProviderFamilyForModel(item.ModelKey)
+		if managed && (item.ProviderCredentialID == "" || !healthy[item.ProviderCredentialID]) {
+			continue
+		}
+		result = append(result, item)
 	}
 	return result, nil
 }
@@ -583,41 +611,18 @@ func (s *Service) LogAPICall(log model.ApiCallLog) error {
 		log.CreatedAt = time.Now()
 	}
 	s.estimateCallCost(&log)
-	if log.BillingOrderID != "" && log.ProviderRequestID != "" {
-		if err := s.repo.UpdateBillingProviderRequestID(log.BillingOrderID, log.ProviderRequestID); err != nil {
-			return err
-		}
+	return s.repo.SaveProviderCall(&log, "", false)
+}
+
+func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, asyncCreate bool) error {
+	if log.ID == "" {
+		log.ID = newID()
 	}
-	if log.TaskID != "" {
-		stage := log.RequestKind
-		var nextPollAt *time.Time
-		if stage == "create" && log.Status == model.ApiCallStatusSucceeded && log.ProviderRequestID != "" {
-			stage = "accepted"
-			next := time.Now().Add(2 * time.Second)
-			nextPollAt = &next
-		} else if stage == "poll" {
-			next := time.Now().Add(5 * time.Second)
-			nextPollAt = &next
-		}
-		if err := s.repo.UpdateTaskProviderState(log.TaskID, log.ProviderRequestID, stage, nextPollAt); err != nil {
-			return err
-		}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = time.Now()
 	}
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return err
-	}
-	s.storageMu.Lock()
-	defer s.storageMu.Unlock()
-	usage, err := s.repo.UserStorageUsage(log.UserID)
-	if err != nil {
-		return err
-	}
-	incomingBytes := int64(len(log.Path) + len(log.Model) + len(log.ProviderRequestID) + len(log.ErrorCode) + len(log.Error) + len(log.UpstreamURL))
-	if err := validateAPICallLogQuotaWithPolicy(usage, incomingBytes, policy.Resource); err != nil {
-		return err
-	}
-	return s.repo.Create(&log)
+	s.estimateCallCost(&log)
+	return s.repo.SaveProviderCall(&log, leaseOwner, asyncCreate)
 }
 
 func (s *Service) APICallLogs(actor *model.User, limit int) ([]model.ApiCallLog, error) {
@@ -726,11 +731,15 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		if !item.Enabled {
 			continue
 		}
+		pricingReady := channelModelPricingReady(item)
+		if !admin && !pricingReady {
+			continue
+		}
 		models = append(models, item.ModelKey)
-		if item.Enabled && item.PriceConfigured {
+		if item.Enabled && (admin && item.PriceConfigured || pricingReady) {
 			tiers := make([]PublicChannelModelPriceTier, 0, len(item.PriceTiers))
 			for _, tier := range item.PriceTiers {
-				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
+				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, InputVariant: tier.InputVariant, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
 				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
@@ -743,7 +752,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 			})
 		}
 	}
-	if len(models) == 0 {
+	if admin && len(models) == 0 {
 		_ = json.Unmarshal([]byte(channel.ModelsJSON), &models)
 	}
 	apiKey := ""
@@ -779,6 +788,35 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 	}
 }
 
+func channelModelPricingReady(item model.ChannelModel) bool {
+	if !item.PriceConfigured {
+		return false
+	}
+	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
+	if !managed || spec.Capability != "video" {
+		return true
+	}
+	configured := make(map[string]bool, len(item.PriceTiers))
+	for _, tier := range item.PriceTiers {
+		if tier.UnitPriceMicrocredits <= 0 {
+			return false
+		}
+		variant := strings.ToLower(strings.TrimSpace(tier.InputVariant))
+		if variant == "" {
+			variant = "standard"
+		}
+		configured[channelModelPriceTierKey(tier.Resolution, variant)] = true
+	}
+	for _, resolution := range spec.Resolutions {
+		for _, variant := range []string{"standard", "reference_video"} {
+			if !configured[channelModelPriceTierKey(resolution, variant)] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilities {
 	capabilities, ok := kuaiziSeedanceModelSpec(modelKey)
 	if !ok {
@@ -787,7 +825,7 @@ func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilitie
 	return &PublicProviderCapabilities{
 		ModelKey: capabilities.ModelKey, DisplayName: capabilities.DisplayName,
 		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
-		Resolutions: append([]string(nil), capabilities.Resolutions...), Ratios: append([]string(nil), capabilities.Ratios...),
+		Resolutions: append([]string(nil), capabilities.Resolutions...), InputVariants: []string{"standard", "reference_video"}, Ratios: append([]string(nil), capabilities.Ratios...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
 		SupportsWatermark: capabilities.SupportsWatermark, SupportsAudioOnly: capabilities.SupportsAudioOnly,

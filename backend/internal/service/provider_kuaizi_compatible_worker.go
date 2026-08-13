@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -26,11 +25,11 @@ func (s *Service) processKuaiziCompatibleTask(ctx context.Context, task model.Ta
 	}
 	runtime, err := s.repo.FrozenProviderRuntime(task)
 	if err != nil {
-		return nil, errors.New("读取筷子科技冻结运行配置失败")
+		return nil, fmt.Errorf("读取筷子科技冻结运行配置失败：%w", err)
 	}
 	apiKey, err := NewProviderSecretCipher(s.dataDir).Decrypt(runtime.ProviderAccountID, runtime.ProviderCredentialID, runtime.CredentialVersion, runtime.KeyCipher)
 	if err != nil {
-		return nil, errors.New("解密筷子科技冻结系列 Key 失败")
+		return nil, fmt.Errorf("解密筷子科技冻结系列 Key 失败：%w", err)
 	}
 	input.Config.BaseURL = runtime.BaseURL
 	input.Config.APIKey = apiKey

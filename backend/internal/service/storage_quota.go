@@ -50,13 +50,6 @@ func validateTaskDataGrowthQuotaWithPolicy(usage repository.UserStorageUsage, in
 	return nil
 }
 
-func validateAPICallLogQuotaWithPolicy(usage repository.UserStorageUsage, incomingBytes int64, policy RuntimeResourcePolicy) error {
-	if usage.APICallCount >= policy.APICallLogCount {
-		return BadAuthRequest(fmt.Sprintf("账号上游请求日志已达到 %d 条上限，请联系管理员归档", policy.APICallLogCount))
-	}
-	return validateTaskDataGrowthQuotaWithPolicy(usage, incomingBytes, policy)
-}
-
 func validateStructuredReplacementQuotaWithPolicy(usage repository.UserStorageUsage, kind string, count int, bytes int64, policy RuntimeResourcePolicy) error {
 	deltaBytes := bytes
 	switch kind {
@@ -91,33 +84,21 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 	return s.repo.CreateTaskWithActiveLimit(task, activeTaskPolicy)
 }
 
-// 任务完成会同时扩张任务历史和 Agent 会话数据，必须在同一临界区核算并原子写入。
-func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return err
-	}
-	s.storageMu.Lock()
-	defer s.storageMu.Unlock()
-
-	usage, err := s.repo.UserStorageUsage(task.UserID)
-	if err != nil {
-		return err
-	}
+// saveTaskCompletion 在供应商已产出后无条件提交结果事实。
+// 存储配额只允许在任务创建/上传前拦截，不能在已经产生供应商成本后丢弃资产。
+func (s *Service) saveTaskCompletion(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
 	publicInputJSON := publicTaskInputJSON(task.InputJSON)
-	taskDelta := int64(len(resultJSON) + len(publicInputJSON) - len(task.ResultJSON) - len(task.InputJSON))
 
 	var session *model.Session
 	var message *model.Message
 	results := make([]model.Result, 0, 2)
-	structuredDelta := int64(0)
 	if task.SessionID != "" {
+		var err error
 		session, err = s.repo.SessionForUser(task.UserID, task.SessionID)
 		if err != nil {
 			return err
 		}
 		if hasCanvasOps {
-			structuredDelta += int64(len(opsJSON) - len(session.CanvasOpsJSON))
 			session.CanvasOpsJSON = string(opsJSON)
 		}
 		session.Status = model.SessionStatusCompleted
@@ -125,22 +106,11 @@ func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJ
 			ID: newID(), UserID: task.UserID, SessionID: task.SessionID, Role: "assistant",
 			Content: "已生成影视级工作流分镜和画布回写操作。", Payload: string(resultJSON),
 		}
-		structuredDelta += int64(len(message.Content) + len(message.Payload))
 		results = append(results, model.Result{ID: newID(), UserID: task.UserID, TaskID: task.ID, SessionID: task.SessionID, Kind: "generation_result", Payload: string(resultJSON)})
 	}
 	if hasCanvasOps {
 		results = append(results, model.Result{ID: newID(), UserID: task.UserID, TaskID: task.ID, SessionID: task.SessionID, Kind: "canvas_ops", Payload: string(opsJSON)})
 	}
-	for index := range results {
-		taskDelta += int64(len(results[index].URL) + len(results[index].Payload))
-	}
-	if err := validateTaskDataGrowthQuotaWithPolicy(usage, taskDelta, policy.Resource); err != nil {
-		return err
-	}
-	if err := validateStructuredStorageQuotaWithPolicy(usage, "session", false, structuredDelta, policy.Resource); err != nil {
-		return err
-	}
-
 	completed := *task
 	completed.Status = model.TaskStatusSucceeded
 	completed.Stage = "任务完成"
@@ -152,5 +122,23 @@ func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJ
 		return err
 	}
 	*task = completed
+	return nil
+}
+
+func (s *Service) saveCancelledTaskResult(task *model.Task, resultJSON []byte, billingError string) error {
+	publicInputJSON := publicTaskInputJSON(task.InputJSON)
+	result := model.Result{
+		ID: newID(), UserID: task.UserID, TaskID: task.ID, SessionID: task.SessionID,
+		Kind: "generation_result", Payload: string(resultJSON),
+	}
+	stored := *task
+	stored.Stage = "任务已取消（已保留生成结果）"
+	stored.Progress = 100
+	stored.ResultJSON = string(resultJSON)
+	stored.InputJSON = publicInputJSON
+	if err := s.repo.SaveCancelledTaskResult(&stored, result, billingError); err != nil {
+		return err
+	}
+	*task = stored
 	return nil
 }

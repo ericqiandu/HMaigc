@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -627,7 +628,7 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 		return
 	}
 	// 同步代理与后台任务必须共享渠道槽位，否则两条入口会共同超过供应商并发上限。
-	releaseChannel, concurrencyLimit, err := svc.AcquireChannelSlot(c.Request.Context(), channel.ID, "", 36*time.Minute)
+	releaseChannel, concurrencyLimit, err := svc.AcquireChannelSlot(c.Request.Context(), channel.ID, modelName, "", 36*time.Minute)
 	if err != nil {
 		log := apiCallLog(user, channel, billingOrderID, c.Request.Method, path, target, body, model.ApiCallStatusFailed, 0, time.Since(startedAt), err.Error(), concurrencyLimit)
 		log.ErrorCode, log.Error = service.ChannelSlotFailureDetails(err)
@@ -667,7 +668,11 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	status := model.ApiCallStatusSucceeded
 	statusCode := 0
 	errorText := ""
-	resp, err := service.OutboundHTTPClient(35 * time.Minute).Do(upstreamReq)
+	client := service.OutboundHTTPClient(35 * time.Minute)
+	if runtime.HeaderName == "ApiKey" {
+		client = service.KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), 35*time.Minute)
+	}
+	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		status = model.ApiCallStatusFailed
 		errorText = err.Error()

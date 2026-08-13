@@ -99,7 +99,7 @@ async function mediaToBackendReference(media: ReferenceVideo | ReferenceAudio) {
     if (!blob) throw new Error("参考媒体尚未保存，请重新上传后再生成");
     try {
         const kind: "video" | "audio" | "file" = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
-        const resource = await uploadResourceFile(blob, kind, { fileName: media.name, width: "width" in media ? media.width : undefined, height: "height" in media ? media.height : undefined, durationMs: media.durationMs });
+        const resource = await uploadResourceFile(blob, kind, { fileName: media.name, width: "width" in media ? media.width : undefined, height: "height" in media ? media.height : undefined });
         return { ...media, url: resource.publicUrl || `/api/resources/${resource.id}/file`, storageKey: resourceStorageKey(resource.id), dataUrl: "", type: resource.mimeType || media.type || blob.type };
     } catch (error) {
         throw new Error(error instanceof Error ? `参考媒体上传失败：${error.message}` : "参考媒体上传失败");

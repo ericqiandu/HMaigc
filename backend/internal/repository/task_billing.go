@@ -14,6 +14,8 @@ import (
 
 type FailedTaskBillingAction string
 
+var ErrTaskCompletionStateConflict = errors.New("task completion state conflict")
+
 const (
 	FailedTaskBillingRefund    FailedTaskBillingAction = "refund"
 	FailedTaskBillingUncertain FailedTaskBillingAction = "uncertain"

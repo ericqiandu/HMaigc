@@ -4,6 +4,8 @@ export type PricingSpecification = {
     key: string;
     label: string;
     group: "base" | "supplier-only";
+    resolution?: string;
+    inputVariant?: "standard" | "reference_video";
     unit?: "秒" | "张" | "万字符";
     note?: string;
 };
@@ -32,9 +34,7 @@ export const miniMaxH3SupplierSpecifications: PricingSpecification[] = [
     { key: "REGENERATE_INPUT_VIDEO_768P", label: "视频再生输入视频 · 768P", group: "supplier-only", unit: "秒", note: "按输入视频时长计费" },
 ];
 
-export const miniMaxSpeechSupplierSpecifications: PricingSpecification[] = [
-    { key: "TEN_THOUSAND_CHARACTERS", label: "语音合成字符", group: "supplier-only", unit: "万字符", note: "同步与异步长文本使用相同供应商单价" },
-];
+export const miniMaxSpeechSupplierSpecifications: PricingSpecification[] = [{ key: "TEN_THOUSAND_CHARACTERS", label: "语音合成字符", group: "supplier-only", unit: "万字符", note: "同步与异步长文本使用相同供应商单价" }];
 
 export function specificationsForStrategy(strategy: ChannelModel["priceStrategy"]): PricingSpecification[] {
     if (strategy === "image_resolution") return imagePricingSpecifications;
@@ -42,9 +42,21 @@ export function specificationsForStrategy(strategy: ChannelModel["priceStrategy"
     return [];
 }
 
-export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "priceStrategy">): PricingSpecification[] {
+export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "priceStrategy" | "providerCapabilities">): PricingSpecification[] {
     const base = specificationsForStrategy(model.priceStrategy);
     const modelKey = model.modelKey.trim().toLowerCase();
+    const capabilities = model.providerCapabilities;
+    if (model.priceStrategy === "video_resolution" && capabilities && capabilities.inputVariants.length > 0) {
+        return capabilities.resolutions.flatMap((resolution) =>
+            capabilities.inputVariants.map((inputVariant) => ({
+                key: `${resolution}::${inputVariant}`,
+                label: `${resolution} · ${inputVariant === "reference_video" ? "参考视频" : "普通生成"}`,
+                group: "base" as const,
+                resolution,
+                inputVariant,
+            })),
+        );
+    }
     if (modelKey === "minimax-h3") return [...base, ...miniMaxH3SupplierSpecifications];
     if (modelKey === "speech-2.8-hd" || modelKey === "speech-2.8-turbo") return [...base, ...miniMaxSpeechSupplierSpecifications];
     return base;

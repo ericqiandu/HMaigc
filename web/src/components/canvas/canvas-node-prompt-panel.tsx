@@ -80,6 +80,7 @@ export function CanvasNodePromptPanel({
     const effectiveVideoConfig = isVideoMode ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
+    const activeVideoReferenceCount = mentionReferences.filter((item) => item.active && item.kind === "video").length;
     const credits = requestCreditCost({
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
         modelCosts: priceChannel.modelCosts,
@@ -88,6 +89,7 @@ export function CanvasNodePromptPanel({
         seconds: mode === "video" ? effectiveVideoConfig?.videoSeconds : 1,
         quality: config.quality,
         resolution: mode === "video" ? effectiveVideoConfig?.vquality : config.size,
+        referenceVideoCount: isVideoMode ? activeVideoReferenceCount : 0,
     });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoReferenceCounts = useMemo(

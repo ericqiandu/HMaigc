@@ -78,7 +78,7 @@ export type SessionFile = {
     sessionId: string;
     fileName: string;
     mimeType: string;
-	size: number;
+    size: number;
     createdAt: string;
 };
 
@@ -221,7 +221,7 @@ export async function waitForGenerationTask(id: string, options?: { signal?: Abo
             await delay(intervalMs, options?.signal);
             continue;
         }
-        if (task.status === "succeeded") {
+        if (task.status === "succeeded" || (task.status === "cancelled" && Boolean(task.resultJson?.trim()))) {
             window.dispatchEvent(new CustomEvent("wallet:updated"));
             return task;
         }

@@ -536,6 +536,9 @@ func TestPublishKuaiziTextFamilyCreatesManagedChatChannelAndResolvesEncryptedKey
 	if err := db.Model(&item).Updates(map[string]any{"enabled": true, "price_configured": true, "unit_price_microcredits": 100}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc.UpdateAgentDefaultModelSetting(admin, UpdateAgentDefaultModelRequest{ChannelModelID: item.ID}); err != nil {
+		t.Fatal(err)
+	}
 	runtime, err := svc.ResolveSystemProxyRuntime(&channel, "gpt-5.5")
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type localRateEntry struct {
@@ -228,7 +229,7 @@ func effectiveChannelConcurrencyLimit(configured int) int {
 	return configured
 }
 
-func (s *Service) AcquireChannelSlot(ctx context.Context, channelID string, fallbackScope string, ttl time.Duration) (func(), int, error) {
+func (s *Service) AcquireChannelSlot(ctx context.Context, channelID string, modelKey string, fallbackScope string, ttl time.Duration) (func(), int, error) {
 	setting, err := s.runtimeConcurrencySetting()
 	limit := defaultChannelConcurrencyLimit()
 	if err != nil {
@@ -246,6 +247,23 @@ func (s *Service) AcquireChannelSlot(ctx context.Context, channelID string, fall
 				return nil, limit, channelSlotError{scope: scope, limit: limit, err: errors.New("渠道并发配置超出 1-999 范围")}
 			}
 			limit = channel.ConcurrencyLimit
+		}
+		if strings.TrimSpace(modelKey) != "" {
+			item, modelErr := s.repo.ChannelModelByKey(scope, strings.TrimPrefix(strings.TrimSpace(modelKey), "models/"))
+			if modelErr != nil && !errors.Is(modelErr, gorm.ErrRecordNotFound) {
+				return nil, limit, channelSlotError{scope: scope, limit: limit, err: fmt.Errorf("读取模型凭据并发配置失败：%w", modelErr)}
+			}
+			if modelErr == nil && item.ProviderCredentialID != "" {
+				credential, credentialErr := s.repo.ProviderCredential(item.ProviderCredentialID)
+				if credentialErr != nil {
+					return nil, limit, channelSlotError{scope: scope, limit: limit, err: fmt.Errorf("读取账号凭据并发配置失败：%w", credentialErr)}
+				}
+				if credential.ConcurrencyLimit <= 0 || credential.ConcurrencyLimit > maxChannelConcurrencyLimit {
+					return nil, limit, channelSlotError{scope: scope, limit: limit, err: errors.New("账号凭据并发配置超出 1-999 范围")}
+				}
+				limit = credential.ConcurrencyLimit
+				scope = "credential:" + credential.ID
+			}
 		}
 	} else {
 		scope = strings.TrimSpace(fallbackScope)

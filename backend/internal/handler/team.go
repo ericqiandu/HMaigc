@@ -209,8 +209,7 @@ func RegisterTeamRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		width, _ := strconv.Atoi(c.PostForm("width"))
 		height, _ := strconv.Atoi(c.PostForm("height"))
-		durationMs, _ := strconv.ParseInt(c.PostForm("durationMs"), 10, 64)
-		resource, err := svc.UploadTeamResource(user.ID, c.Param("id"), file, c.PostForm("kind"), width, height, durationMs)
+		resource, err := svc.UploadTeamResource(user.ID, c.Param("id"), file, c.PostForm("kind"), width, height)
 		if err != nil {
 			failService(c, err)
 			return

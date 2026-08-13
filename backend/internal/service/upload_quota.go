@@ -26,14 +26,6 @@ func (s *Service) reserveSessionUploadQuota(userID string, size int64) (string, 
 	return s.reserveUserStoredFileQuota(userID, size, megabytes(policy.Resource.SessionUploadMB)+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("会话文件不能超过 %dMB", policy.Resource.SessionUploadMB))
 }
 
-func (s *Service) reserveGeneratedResourceQuota(userID string, size int64) (string, error) {
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return "", err
-	}
-	return s.reserveUserStoredFileQuota(userID, size, megabytes(policy.Resource.GeneratedFileMB)+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("单个生成文件不能超过 %dMB", policy.Resource.GeneratedFileMB))
-}
-
 func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string) (string, error) {
 	if size <= 0 {
 		return "", BadAuthRequest("上传文件不能为空")

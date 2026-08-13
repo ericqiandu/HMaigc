@@ -83,6 +83,17 @@ func (s *Service) PublicAgentDefaultModel() (*PublicAgentDefaultModel, error) {
 	if !setting.Configured {
 		return nil, nil
 	}
+	item, err := s.repo.ChannelModelByRecordID(setting.ChannelModelID)
+	if err != nil {
+		return nil, err
+	}
+	callable, err := s.publiclyCallableChannelModels([]model.ChannelModel{*item})
+	if err != nil {
+		return nil, err
+	}
+	if len(callable) != 1 {
+		return nil, nil
+	}
 	return &PublicAgentDefaultModel{ChannelModelID: setting.ChannelModelID, ChannelID: setting.ChannelID, ModelKey: setting.ModelKey}, nil
 }
 

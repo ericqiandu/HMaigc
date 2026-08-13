@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go 
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates tzdata wget \
+RUN apk add --no-cache ca-certificates ffmpeg tzdata wget \
     && addgroup -S -g 101 app \
     && adduser -S -u 100 -G app app
 

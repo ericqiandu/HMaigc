@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,7 +56,7 @@ func TestProcessTaskUsesFrozenKuaiziCompatibleRuntimeForSeedance20And25(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			task := model.Task{ID: "task", UserID: "user", Type: "canvas_video", Model: modelKey, Status: model.TaskStatusRunning, InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1"}
+			task := model.Task{ID: "task", UserID: "user", Type: "canvas_video", Model: modelKey, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1"}
 			if err := repo.Create(&task); err != nil {
 				t.Fatal(err)
 			}
@@ -81,6 +82,45 @@ func TestProcessTaskUsesFrozenKuaiziCompatibleRuntimeForSeedance20And25(t *testi
 				t.Fatalf("calls = create:%d status:%d", createCalls, statusCalls)
 			}
 		})
+	}
+}
+
+func TestKuaiziAsyncCreateFencePreventsSecondPostAfterWorkerCrash(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	createCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == aiOpenPlatformVolcengineCreatePath {
+			createCalls++
+		}
+		http.Error(response, "unexpected upstream call", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	svc, repo := openProviderSecretSQLite(t, t.TempDir())
+	seedFrozenKuaiziTaskRuntime(t, svc, repo, server.URL, "frozen-key")
+	inputJSON, err := json.Marshal(canvasGenerationInput{Mode: "video", Prompt: "生成视频", Config: providerConfig{Model: "doubao-seedance-2-5-260628", VQuality: "720p", Size: "16:9", VideoSeconds: "5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "crashed-task", UserID: "user", Type: "canvas_video", Model: "doubao-seedance-2-5-260628", Status: model.TaskStatusRunning, LeaseOwner: "worker-2", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1"}
+	if err := repo.Create(&task); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.BeginProviderCreate(task.ID, task.LeaseOwner); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = svc.processTask(context.Background(), *stored)
+	var uncertain *KuaiziCompatibleCreateError
+	if !errors.As(err, &uncertain) {
+		t.Fatalf("processTask() error = %T %v, want KuaiziCompatibleCreateError", err, err)
+	}
+	if createCalls != 0 {
+		t.Fatalf("upstream create calls = %d, want 0", createCalls)
 	}
 }
 

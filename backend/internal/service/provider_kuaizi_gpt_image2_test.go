@@ -190,7 +190,7 @@ func TestProcessTaskUsesFrozenKuaiziGPTImage2Credential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "image-task", UserID: "user", Type: "canvas_image", Model: "kz_gpt_image2", Status: model.TaskStatusRunning, InputJSON: string(inputJSON), ProviderAccountID: "image-account", ProviderEndpointVersionID: "image-endpoint-v1", ProviderCredentialVersionID: "image-key-v1"}
+	task := model.Task{ID: "image-task", UserID: "user", Type: "canvas_image", Model: "kz_gpt_image2", Status: model.TaskStatusRunning, LeaseOwner: "image-worker", InputJSON: string(inputJSON), ProviderAccountID: "image-account", ProviderEndpointVersionID: "image-endpoint-v1", ProviderCredentialVersionID: "image-key-v1"}
 	if err := repo.Create(&task); err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { agentDefaultModelOptions } from "./agent-model-options";
-import { imagePricingSpecifications, specificationsForModel, specificationsForStrategy, type PricingSpecification } from "./pricing-specifications";
+import { imagePricingSpecifications, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
 type PricingFormValues = {
@@ -124,7 +124,7 @@ export default function ModelPricingPage() {
             perMedia: optionalMoney(pricing?.perMediaMicros),
             perVideoSecond: optionalMoney(pricing?.perVideoSecondMicros),
             tierCosts: Object.fromEntries(pricing?.tiers.map((tier) => [tier.specification, fromMicro(tier.supplierCostMicros)]) || []),
-            tierCredits: Object.fromEntries(model.priceTiers.map((tier) => [tier.resolution, fromMicro(tier.unitPriceMicrocredits)])),
+            tierCredits: Object.fromEntries(model.priceTiers.map((tier) => [pricingTierKey(tier.resolution, tier.inputVariant), fromMicro(tier.unitPriceMicrocredits)])),
         });
         setPricingDirty(false);
     };
@@ -188,7 +188,7 @@ export default function ModelPricingPage() {
         if (!editing) return;
         const values = await pricingForm.validateFields();
         const currency = values.currency.trim().toUpperCase();
-        const specifications = specificationsForModel({ modelKey: editing.modelKey, priceStrategy: values.priceStrategy });
+        const specifications = specificationsForModel({ ...editing, priceStrategy: values.priceStrategy });
         const incompleteSpecification = specifications
             .filter((specification) => specification.group === "base")
             .find((specification) => {
@@ -249,7 +249,8 @@ export default function ModelPricingPage() {
             priceStrategy: values.priceStrategy,
             unitPriceMicrocredits: values.priceStrategy === "flat" ? toMicro(values.unitCredits) : 0,
             priceTiers: baseSaleTierInputs.map(({ specification, userCredits }) => ({
-                resolution: specification.key,
+                resolution: specification.resolution || specification.key,
+                inputVariant: specification.inputVariant || "standard",
                 unitPriceMicrocredits: toMicro(userCredits as number),
             })),
             priceConfigured: values.priceStrategy === "flat" ? Boolean(values.unitCredits && values.unitCredits > 0) : baseSaleTierInputs.length > 0,
@@ -569,7 +570,7 @@ function PricingDrawer({
                     </Form.Item>
                 </div>
                 {strategy === "image_resolution" || strategy === "video_resolution" ? (
-                    <ResolutionPricingFields strategy={strategy} billingMode={billingMode} modelKey={model?.modelKey || ""} />
+                    <ResolutionPricingFields strategy={strategy} billingMode={billingMode} model={model} />
                 ) : (
                     <>
                         <FlatPricingFields capability={capability} />
@@ -615,8 +616,8 @@ function FlatPricingFields({ capability }: { capability?: ChannelModel["capabili
     );
 }
 
-function ResolutionPricingFields({ strategy, billingMode, modelKey }: { strategy: ChannelModel["priceStrategy"]; billingMode: ChannelModel["billingMode"]; modelKey: string }) {
-    const specifications = specificationsForModel({ modelKey, priceStrategy: strategy });
+function ResolutionPricingFields({ strategy, billingMode, model }: { strategy: ChannelModel["priceStrategy"]; billingMode: ChannelModel["billingMode"]; model: CommercialModel | null }) {
+    const specifications = model ? specificationsForModel({ ...model, priceStrategy: strategy }) : [];
     const baseSpecifications = specifications.filter((item) => item.group === "base");
     const supplierOnlySpecifications = specifications.filter((item) => item.group === "supplier-only");
     const unit = strategy === "image_resolution" ? "张" : billingMode === "per_second" ? "秒" : "次";
@@ -737,7 +738,7 @@ function capabilityLabel(value: ChannelModel["capability"]) {
 }
 
 function commercialStatus(model: CommercialModel, setting: ModelPricingOperationsSetting): "configured" | "warning" | "incomplete" {
-    const margins = model.priceStrategy === "flat" ? [marginPercent(model, setting)] : model.priceTiers.map((tier) => marginPercent(model, setting, tier.resolution));
+    const margins = model.priceStrategy === "flat" ? [marginPercent(model, setting)] : model.priceTiers.map((tier) => marginPercent(model, setting, pricingTierKey(tier.resolution, tier.inputVariant)));
     if (margins.length === 0 || margins.some((margin) => margin === null)) return "incomplete";
     return margins.some((margin) => Number(margin) * 10_000 < setting.targetMarginBasisPoints) ? "warning" : "configured";
 }
@@ -745,7 +746,7 @@ function commercialStatus(model: CommercialModel, setting: ModelPricingOperation
 function marginPercent(model: CommercialModel, setting: ModelPricingOperationsSetting, resolution?: string) {
     if (!setting.configured || !model.priceConfigured || !model.pricing) return null;
     const cost = comparableCost(model, resolution);
-    const credits = model.priceStrategy !== "flat" ? model.priceTiers.find((tier) => tier.resolution === resolution)?.unitPriceMicrocredits : model.unitPriceMicrocredits;
+    const credits = model.priceStrategy !== "flat" ? model.priceTiers.find((tier) => pricingTierKey(tier.resolution, tier.inputVariant) === resolution)?.unitPriceMicrocredits : model.unitPriceMicrocredits;
     if (cost === null || !credits || credits <= 0) return null;
     const revenue = (credits * setting.creditRevenueMicros) / 1_000_000;
     return revenue > 0 ? (revenue - cost) / revenue : null;
@@ -767,7 +768,7 @@ function comparableCost(model: CommercialModel, resolution?: string) {
 
 function formatMargin(model: CommercialModel, setting: ModelPricingOperationsSetting) {
     if (model.priceStrategy !== "flat") {
-        const specifications = specificationsForStrategy(model.priceStrategy).filter((specification) => model.priceTiers.some((tier) => tier.resolution === specification.key));
+        const specifications = specificationsForModel(model).filter((specification) => model.priceTiers.some((tier) => pricingTierKey(tier.resolution, tier.inputVariant) === specification.key));
         if (specifications.length === 0) return <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
         const values = specifications.map((specification) => marginPercent(model, setting, specification.key));
         if (values.some((value) => value === null)) return <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
@@ -794,7 +795,8 @@ function formatCost(model: CommercialModel) {
 
 function formatCustomerPrice(model: CommercialModel) {
     if (!model.priceConfigured) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
-    if (model.priceStrategy !== "flat") return <span className="model-pricing-price text-xs">{model.priceTiers.map((tier) => `${tierLabel(tier.resolution)} ${fromMicro(tier.unitPriceMicrocredits)} 积分`).join(" · ")}</span>;
+    if (model.priceStrategy !== "flat")
+        return <span className="model-pricing-price text-xs">{model.priceTiers.map((tier) => `${tierLabel(pricingTierKey(tier.resolution, tier.inputVariant))} ${fromMicro(tier.unitPriceMicrocredits)} 积分`).join(" · ")}</span>;
     return (
         <span className="model-pricing-price text-xs">
             {fromMicro(model.unitPriceMicrocredits)} 积分 / {model.billingMode === "per_second" ? "秒" : "次"}
@@ -816,5 +818,13 @@ function tierLabel(value: string) {
         TEN_THOUSAND_CHARACTERS: "语音合成·万字符",
         VOICE_DESIGN_OR_CLONE: "音色设计/克隆·个",
     };
+    if (value.includes("::")) {
+        const [resolution, variant] = value.split("::");
+        return `${resolution}·${variant === "reference_video" ? "参考视频" : "普通生成"}`;
+    }
     return labels[value] || value;
+}
+
+function pricingTierKey(resolution: string, inputVariant?: string) {
+    return `${resolution}::${inputVariant || "standard"}`;
 }

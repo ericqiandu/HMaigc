@@ -55,6 +55,7 @@ export type ModelChannel = {
         unitPriceMicrocredits: number;
         priceTiers: Array<{
             resolution: string;
+            inputVariant: "standard" | "reference_video";
             unitPriceMicrocredits: number;
         }>;
         providerCapabilities?: VideoProviderCapabilities;
@@ -68,6 +69,7 @@ export type VideoProviderCapabilities = {
     upstreamMode: string;
     capability: string;
     resolutions: string[];
+    inputVariants: Array<"standard" | "reference_video">;
     ratios: string[];
     durationMin: number;
     durationMax: number;

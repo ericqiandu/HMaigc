@@ -267,7 +267,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     const unit = item.capability === "image" ? "张" : item.billingMode === "per_second" ? "秒" : "次";
                     return (
                         <span className="text-xs text-foreground/70">
-                            {item.priceTiers.map((tier) => `${tier.resolution} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}
+                            {item.priceTiers.map((tier) => `${tier.resolution} ${tier.inputVariant === "reference_video" ? "参考视频" : "普通生成"} ${formatCredits(tier.unitPriceMicrocredits)}`).join(" · ")} 积分/{unit}
                         </span>
                     );
                 }

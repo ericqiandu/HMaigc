@@ -12,7 +12,7 @@ func TestBillingUsageUsesImageDimensionsInsteadOfQualityForResolutionTier(t *tes
 		{size: "2864x2864", want: "4K"},
 	}
 	for _, test := range tests {
-		usage := billingUsage("image", map[string]any{"count": 1, "size": test.size, "quality": "low"})
+		usage := billingUsage("image", "image-model", map[string]any{"count": 1, "size": test.size, "quality": "low"})
 		if usage.Resolution != test.want {
 			t.Fatalf("size %s resolution = %q, want %q", test.size, usage.Resolution, test.want)
 		}
