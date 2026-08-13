@@ -272,6 +272,7 @@ func openProviderAccountHandlerFixture(t *testing.T) *providerAccountHandlerFixt
 	api := router.Group("/api")
 	RegisterProviderAccountRoutes(api, svc)
 	RegisterAgentModelSettingRoutes(api, svc)
+	RegisterWatermarkPolicyRoutes(api, svc)
 	RegisterAuthRoutes(api, svc)
 	fixture := &providerAccountHandlerFixture{router: router, db: db, adminCookie: adminCookie, userCookie: userCookie, userID: user.ID}
 	t.Cleanup(fixture.closeDB)
