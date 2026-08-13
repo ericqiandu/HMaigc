@@ -19,7 +19,7 @@ func TestFreezeProviderTaskRuntimeUsesActiveVersions(t *testing.T) {
 	task := &model.Task{ID: "task", UserID: "user", Capability: "video", Status: model.TaskStatusQueued}
 	order := &model.BillingOrder{ID: "order", UserID: "user", TaskID: task.ID, ChannelModelID: "channel-model", AmountMicrocredits: 10, Status: model.BillingStatusReserved}
 
-	if err := New(db).CreateTaskWithCreditReservation(task, order, ActiveTaskPolicy{Unlimited: true}); err != nil {
+	if err := New(db).CreateTaskWithCreditReservation(task, order, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled); err != nil {
 		t.Fatal(err)
 	}
 	var stored model.Task
@@ -53,7 +53,7 @@ func TestFreezeProviderTaskRuntimeRejectsUnhealthyCredential(t *testing.T) {
 	task := &model.Task{ID: "task", UserID: "user", Capability: "video", Status: model.TaskStatusQueued}
 	order := &model.BillingOrder{ID: "order", UserID: "user", TaskID: task.ID, ChannelModelID: "channel-model", AmountMicrocredits: 10, Status: model.BillingStatusReserved}
 
-	if err := New(db).CreateTaskWithCreditReservation(task, order, ActiveTaskPolicy{Unlimited: true}); err == nil {
+	if err := New(db).CreateTaskWithCreditReservation(task, order, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled); err == nil {
 		t.Fatal("unhealthy credential was accepted")
 	}
 	if task.ProviderAccountID != "" || task.ProviderEndpointVersionID != "" || task.ProviderCredentialVersionID != "" {
@@ -72,6 +72,97 @@ func TestFreezeProviderTaskRuntimeRejectsUnhealthyCredential(t *testing.T) {
 	}
 	if taskCount != 0 || orderCount != 0 || account.AvailableMicrocredits != 100 || account.ReservedMicrocredits != 0 {
 		t.Fatalf("failed freeze left persistent facts: tasks=%d orders=%d account=%#v", taskCount, orderCount, account)
+	}
+}
+
+func TestFreezeTaskWatermarkUsesCurrentAccountFactInsideCreateTransaction(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	repo := New(db)
+	now := time.Now().UTC()
+	publishAndEnableWatermark(t, repo, "user-1", "publication-1", now)
+	task := &model.Task{ID: "task-watermark", UserID: "user-1", Capability: "video", Status: model.TaskStatusQueued}
+
+	if err := repo.CreateTaskWithActiveLimit(task, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled); err != nil {
+		t.Fatal(err)
+	}
+	if task.WatermarkCapability != model.WatermarkCapabilityControlled || task.WatermarkDirective != model.WatermarkDirectiveWithoutWatermark {
+		t.Fatalf("frozen watermark identity = %#v", task)
+	}
+	if !task.WatermarkParameterApplied || task.WatermarkParameterValue == nil || *task.WatermarkParameterValue {
+		t.Fatalf("frozen watermark parameter = applied %v value %v", task.WatermarkParameterApplied, task.WatermarkParameterValue)
+	}
+	if task.WatermarkPolicyPublicationID != "publication-1" || task.WatermarkPolicyVersion != 1 {
+		t.Fatalf("frozen publication = %q v%d", task.WatermarkPolicyPublicationID, task.WatermarkPolicyVersion)
+	}
+}
+
+func TestUserRetryRecomputesWatermarkWhileWorkerClaimKeepsSnapshot(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	repo := New(db)
+	now := time.Now().UTC()
+	publishAndEnableWatermark(t, repo, "user-1", "publication-1", now)
+	task := &model.Task{ID: "task-retry-watermark", UserID: "user-1", Capability: "video", Status: model.TaskStatusQueued, CreatedAt: now, UpdatedAt: now}
+	if err := repo.CreateTaskWithActiveLimit(task, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "failed"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event := &model.UserWatermarkPreferenceEvent{ID: "disable-event"}
+	if _, _, err := repo.SaveWatermarkPreference("user-1", false, "", event, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, err := repo.RetryTaskWithBilling("user-1", task.ID, nil, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.WatermarkDirective != model.WatermarkDirectiveWithWatermark || retried.WatermarkParameterValue == nil || !*retried.WatermarkParameterValue {
+		t.Fatalf("retried watermark = %#v", retried)
+	}
+	if retried.WatermarkPolicyPublicationID != "" || retried.WatermarkPolicyVersion != 0 {
+		t.Fatalf("retried stale publication facts = %#v", retried)
+	}
+	claimed, err := repo.ClaimNextTask("worker-1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.WatermarkDirective != retried.WatermarkDirective || claimed.WatermarkParameterValue == nil || *claimed.WatermarkParameterValue != *retried.WatermarkParameterValue {
+		t.Fatalf("worker claim changed watermark snapshot: retried=%#v claimed=%#v", retried, claimed)
+	}
+}
+
+func TestFreezeTaskWatermarkRejectsBrokenCurrentPublication(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	repo := New(db)
+	now := time.Now().UTC()
+	publishAndEnableWatermark(t, repo, "user-1", "publication-broken", now)
+	if err := db.Delete(&model.PolicyPublication{}, "id = ?", "publication-broken").Error; err != nil {
+		t.Fatal(err)
+	}
+	task := &model.Task{ID: "task-broken-publication", UserID: "user-1", Capability: "video", Status: model.TaskStatusQueued}
+	if err := repo.CreateTaskWithActiveLimit(task, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled); err == nil {
+		t.Fatal("broken current publication was accepted")
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("broken publication left %d task rows", count)
+	}
+}
+
+func publishAndEnableWatermark(t *testing.T, repo *Repository, userID string, publicationID string, now time.Time) {
+	t.Helper()
+	publication := &model.PolicyPublication{ID: publicationID, ManagementRuleRichText: "<p>管理规则</p>", WatermarkPolicyURL: "https://example.com/policy", ContentHash: "hash", PublishedBy: "admin", PublishedAt: now}
+	audit := &model.AdminAuditEvent{ID: "audit-" + publicationID, ActorUserID: "admin", Action: "watermark_policy.publish", TargetType: "policy_publication", TargetID: publicationID, Summary: "发布规则", MetadataJSON: `{}`, CreatedAt: now}
+	if err := repo.PublishWatermarkPolicy(publication, audit); err != nil {
+		t.Fatal(err)
+	}
+	event := &model.UserWatermarkPreferenceEvent{ID: "enable-" + publicationID}
+	if _, _, err := repo.SaveWatermarkPreference(userID, true, publicationID, event, now); err != nil {
+		t.Fatal(err)
 	}
 }
 

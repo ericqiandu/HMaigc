@@ -301,12 +301,12 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 			ID: "image-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_image",
 			Capability: taskCapabilityImage, Status: model.TaskStatusQueued,
 		}
-		if err := svc.repo.CreateTaskWithActiveLimit(task, imagePolicy); err != nil {
+		if err := svc.repo.CreateTaskWithActiveLimit(task, imagePolicy, model.WatermarkCapabilityNotApplicable); err != nil {
 			t.Fatalf("create image task %d: %v", index+1, err)
 		}
 	}
 	excess := &model.Task{ID: "image-task-excess", UserID: owner.ID, Type: "canvas_image", Capability: taskCapabilityImage, Status: model.TaskStatusQueued}
-	if err := svc.repo.CreateTaskWithActiveLimit(excess, imagePolicy); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
+	if err := svc.repo.CreateTaskWithActiveLimit(excess, imagePolicy, model.WatermarkCapabilityNotApplicable); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		t.Fatalf("excess image task error = %v, want ErrCapabilityTaskLimit", err)
 	}
 	otherPolicy, _, err := svc.membershipActiveTaskPolicy(owner.ID, "canvas_text", runtimePolicy)
@@ -318,12 +318,12 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 			ID: "other-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_text",
 			Capability: taskCapabilityOther, Status: model.TaskStatusRunning,
 		}
-		if err := svc.repo.CreateTaskWithActiveLimit(task, otherPolicy); err != nil {
+		if err := svc.repo.CreateTaskWithActiveLimit(task, otherPolicy, model.WatermarkCapabilityNotApplicable); err != nil {
 			t.Fatalf("create other task %d: %v", index+1, err)
 		}
 	}
 	excessOther := &model.Task{ID: "other-task-excess", UserID: owner.ID, Type: "canvas_text", Capability: taskCapabilityOther, Status: model.TaskStatusQueued}
-	if err := svc.repo.CreateTaskWithActiveLimit(excessOther, otherPolicy); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
+	if err := svc.repo.CreateTaskWithActiveLimit(excessOther, otherPolicy, model.WatermarkCapabilityNotApplicable); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		t.Fatalf("excess other task error = %v, want ErrCapabilityTaskLimit", err)
 	}
 	if _, _, err := svc.membershipActiveTaskPolicy(owner.ID, "unknown-task", runtimePolicy); err == nil {

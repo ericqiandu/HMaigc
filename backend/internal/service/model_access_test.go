@@ -103,7 +103,7 @@ func TestMemberModelAllowsActiveTeamSeat(t *testing.T) {
 }
 
 func TestPublicChannelMarksMemberModelAccessibility(t *testing.T) {
-	channel := model.ModelChannel{ID: "channel-1", Scope: model.ChannelScopeSystem, Enabled: true}
+	channel := model.ModelChannel{ID: "channel-1", Scope: model.ChannelScopeSystem, Enabled: true, InterfaceType: model.ChannelInterfaceOpenAIImage}
 	item := model.ChannelModel{
 		ID: "member-image", ChannelID: channel.ID, ModelKey: "member-image", DisplayName: "会员图片模型",
 		MarketingCopy: "高质量会员图片模型", PromotionBadge: "限时4折",
@@ -132,7 +132,7 @@ func TestPublicChannelMarksMemberModelAccessibility(t *testing.T) {
 func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	channel := model.ModelChannel{ID: "channel-seedance", Scope: model.ChannelScopeSystem, Enabled: true}
 	item := model.ChannelModel{
-		ID: "seedance-25", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5",
+		ID: "seedance-25", ChannelID: channel.ID, ProviderCredentialID: "seedance-credential", ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "video", BillingMode: "per_second",
 		PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
 		PriceTiers: []model.ChannelModelPriceTier{
@@ -148,6 +148,9 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 		t.Fatalf("provider capabilities missing: %#v", catalog.ModelCosts)
 	}
 	capabilities := catalog.ModelCosts[0].ProviderCapabilities
+	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityControlled || capabilities.WatermarkCapability != model.WatermarkCapabilityControlled {
+		t.Fatalf("seedance watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
+	}
 	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
 		t.Fatalf("provider capabilities = %#v", capabilities)
 	}
@@ -163,7 +166,7 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 func TestPublicChannelPublishesImageParameterCapabilities(t *testing.T) {
 	channel := model.ModelChannel{ID: "channel-image", Scope: model.ChannelScopeSystem, Enabled: true}
 	item := model.ChannelModel{
-		ID: "gpt-image2", ChannelID: channel.ID, ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
+		ID: "gpt-image2", ChannelID: channel.ID, ProviderCredentialID: "image-credential", ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", BillingMode: "fixed_request",
 		PriceStrategy: "image_resolution", PriceConfigured: true, Enabled: true,
 		PriceTiers: []model.ChannelModelPriceTier{
@@ -178,11 +181,31 @@ func TestPublicChannelPublishesImageParameterCapabilities(t *testing.T) {
 		t.Fatalf("image provider capabilities missing: %#v", catalog.ModelCosts)
 	}
 	capabilities := catalog.ModelCosts[0].ProviderCapabilities
+	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityUnsupported || capabilities.WatermarkCapability != model.WatermarkCapabilityUnsupported {
+		t.Fatalf("image watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
+	}
 	if capabilities.Capability != "image" || strings.Join(capabilities.Resolutions, ",") != "1K,2K,4K" || len(capabilities.Ratios) != 13 {
 		t.Fatalf("image parameter capabilities = %#v", capabilities)
 	}
 	if strings.Join(capabilities.Qualities, ",") != "low,medium,high" || len(capabilities.OutputCounts) != 1 || capabilities.OutputCounts[0] != 1 {
 		t.Fatalf("image quality/count capabilities = %#v", capabilities)
+	}
+}
+
+func TestPublicSystemChannelHidesMediaModelWithoutWatermarkContract(t *testing.T) {
+	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true, InterfaceType: model.ChannelInterfaceType("unknown")}
+	item := model.ChannelModel{
+		ID: "unknown-video", ChannelID: channel.ID, ModelKey: "unknown-video", Capability: "video",
+		AccessPolicy: model.ModelAccessAuthenticated, BillingMode: "fixed_request", PriceStrategy: "flat",
+		UnitPriceMicrocredits: 1, PriceConfigured: true, Enabled: true,
+	}
+	public := publicChannel(channel, false, []model.ChannelModel{item}, false)
+	if len(public.Models) != 0 || len(public.ModelCosts) != 0 {
+		t.Fatalf("media model without watermark contract leaked publicly: %#v", public)
+	}
+	admin := publicChannel(channel, true, []model.ChannelModel{item}, true)
+	if len(admin.ModelCosts) != 1 || admin.ModelCosts[0].WatermarkCapability != "" {
+		t.Fatalf("admin lost unresolved watermark fact: %#v", admin.ModelCosts)
 	}
 }
 

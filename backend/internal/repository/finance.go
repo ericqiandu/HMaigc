@@ -320,12 +320,15 @@ type ActiveTaskPolicy struct {
 	Unlimited       bool
 }
 
-func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy) error {
+func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy, watermark model.WatermarkCapability) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := enforceActiveTaskLimit(tx, task.UserID, policy); err != nil {
 			return err
 		}
 		if err := freezeProviderTaskRuntimeTx(tx, task, order.ChannelModelID); err != nil {
+			return err
+		}
+		if err := freezeTaskWatermarkTx(tx, task, watermark); err != nil {
 			return err
 		}
 		if err := reserveBillingOrder(tx, order); err != nil {
@@ -366,16 +369,19 @@ func freezeProviderTaskRuntimeTx(tx *gorm.DB, task *model.Task, channelModelID s
 	return nil
 }
 
-func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, policy ActiveTaskPolicy) error {
+func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, policy ActiveTaskPolicy, watermark model.WatermarkCapability) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := enforceActiveTaskLimit(tx, task.UserID, policy); err != nil {
+			return err
+		}
+		if err := freezeTaskWatermarkTx(tx, task, watermark); err != nil {
 			return err
 		}
 		return tx.Create(task).Error
 	})
 }
 
-func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *model.BillingOrder, policy ActiveTaskPolicy) (*model.Task, error) {
+func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *model.BillingOrder, policy ActiveTaskPolicy, watermark model.WatermarkCapability) (*model.Task, error) {
 	var task model.Task
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		if err := enforceActiveTaskLimit(tx, userID, policy); err != nil {
@@ -386,10 +392,17 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 				return err
 			}
 		}
+		watermarkTask := model.Task{UserID: userID}
+		if err := freezeTaskWatermarkTx(tx, &watermarkTask, watermark); err != nil {
+			return err
+		}
 		updates := map[string]any{
 			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "result_json": "",
 			"capability": policy.Capability, "started_at": nil, "completed_at": nil, "updated_at": time.Now(),
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil,
+			"watermark_capability": watermarkTask.WatermarkCapability, "watermark_directive": watermarkTask.WatermarkDirective,
+			"watermark_parameter_applied": watermarkTask.WatermarkParameterApplied, "watermark_parameter_value": watermarkTask.WatermarkParameterValue,
+			"watermark_policy_publication_id": watermarkTask.WatermarkPolicyPublicationID, "watermark_policy_version": watermarkTask.WatermarkPolicyVersion,
 		}
 		if order != nil {
 			updates["billing_order_id"] = order.ID

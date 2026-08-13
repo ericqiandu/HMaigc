@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"strings"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 type ProviderAdapterDescriptor struct {
@@ -12,32 +14,32 @@ type ProviderAdapterDescriptor struct {
 }
 
 type ProviderModelSpec struct {
-	ModelKey                string   `json:"modelKey"`
-	DisplayName             string   `json:"displayName"`
-	MarketingCopy           string   `json:"marketingCopy"`
-	UpstreamMode            string   `json:"upstreamMode"`
-	Capability              string   `json:"capability"`
-	Resolutions             []string `json:"resolutions"`
-	Ratios                  []string `json:"ratios"`
-	Qualities               []string `json:"qualities"`
-	OutputCounts            []int    `json:"outputCounts"`
-	DurationMin             int      `json:"durationMin"`
-	DurationMax             int      `json:"durationMax"`
-	SupportsSmartDuration   bool     `json:"supportsSmartDuration"`
-	SupportsGeneratedAudio  bool     `json:"supportsGeneratedAudio"`
-	SupportsWatermark       bool     `json:"supportsWatermark"`
-	SupportsAudioOnly       bool     `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames  bool     `json:"requiresAdaptiveFrames"`
-	MaxImages               int      `json:"maxImages"`
-	MaxVideos               int      `json:"maxVideos"`
-	MaxAudios               int      `json:"maxAudios"`
-	MaxVideoDurationSeconds int      `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds int      `json:"maxAudioDurationSeconds"`
-	Tools                   []string `json:"tools"`
-	Published               bool     `json:"published"`
-	ChannelModelID          string   `json:"channelModelId"`
-	Enabled                 bool     `json:"enabled"`
-	PriceConfigured         bool     `json:"priceConfigured"`
+	ModelKey                string                    `json:"modelKey"`
+	DisplayName             string                    `json:"displayName"`
+	MarketingCopy           string                    `json:"marketingCopy"`
+	UpstreamMode            string                    `json:"upstreamMode"`
+	Capability              string                    `json:"capability"`
+	Resolutions             []string                  `json:"resolutions"`
+	Ratios                  []string                  `json:"ratios"`
+	Qualities               []string                  `json:"qualities"`
+	OutputCounts            []int                     `json:"outputCounts"`
+	DurationMin             int                       `json:"durationMin"`
+	DurationMax             int                       `json:"durationMax"`
+	SupportsSmartDuration   bool                      `json:"supportsSmartDuration"`
+	SupportsGeneratedAudio  bool                      `json:"supportsGeneratedAudio"`
+	WatermarkCapability     model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly       bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames  bool                      `json:"requiresAdaptiveFrames"`
+	MaxImages               int                       `json:"maxImages"`
+	MaxVideos               int                       `json:"maxVideos"`
+	MaxAudios               int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds int                       `json:"maxAudioDurationSeconds"`
+	Tools                   []string                  `json:"tools"`
+	Published               bool                      `json:"published"`
+	ChannelModelID          string                    `json:"channelModelId"`
+	Enabled                 bool                      `json:"enabled"`
+	PriceConfigured         bool                      `json:"priceConfigured"`
 }
 
 type ProviderRegistry struct {
@@ -71,6 +73,9 @@ func NewProviderRegistry(descriptors []ProviderAdapterDescriptor) (*ProviderRegi
 			if model.ModelKey == "" || model.DisplayName == "" || model.UpstreamMode == "" || model.Capability == "" {
 				return nil, fmt.Errorf("provider adapter %s/%s contains incomplete model identity", descriptor.ProviderKind, descriptor.Family)
 			}
+			if err := validateProviderWatermarkCapability(*model); err != nil {
+				return nil, fmt.Errorf("provider adapter %s/%s model %s: %w", descriptor.ProviderKind, descriptor.Family, model.ModelKey, err)
+			}
 			if _, exists := modelKeys[model.ModelKey]; exists {
 				return nil, fmt.Errorf("duplicate provider model key %s", model.ModelKey)
 			}
@@ -80,6 +85,23 @@ func NewProviderRegistry(descriptors []ProviderAdapterDescriptor) (*ProviderRegi
 		registry.byFamily[familyKey] = descriptor
 	}
 	return registry, nil
+}
+
+func validateProviderWatermarkCapability(spec ProviderModelSpec) error {
+	switch spec.WatermarkCapability {
+	case model.WatermarkCapabilityControlled, model.WatermarkCapabilityUnsupported:
+		if spec.Capability != "image" && spec.Capability != "video" {
+			return fmt.Errorf("watermark capability %q is only valid for media models", spec.WatermarkCapability)
+		}
+		return nil
+	case model.WatermarkCapabilityNotApplicable:
+		if spec.Capability == "image" || spec.Capability == "video" {
+			return fmt.Errorf("media model requires controlled or unsupported watermark capability")
+		}
+		return nil
+	default:
+		return fmt.Errorf("watermark capability is required")
+	}
 }
 
 func (r *ProviderRegistry) Descriptors() []ProviderAdapterDescriptor {
@@ -130,10 +152,11 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Family:       "gpt-image2",
 			Models: []ProviderModelSpec{{
 				ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2", UpstreamMode: "kz_gpt_image2", Capability: "image",
-				Resolutions:  []string{"1K", "2K", "4K"},
-				Ratios:       []string{"1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"},
-				Qualities:    []string{"low", "medium", "high"},
-				OutputCounts: []int{1},
+				WatermarkCapability: model.WatermarkCapabilityUnsupported,
+				Resolutions:         []string{"1K", "2K", "4K"},
+				Ratios:              []string{"1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"},
+				Qualities:           []string{"low", "medium", "high"},
+				OutputCounts:        []int{1},
 			}},
 		},
 		{
@@ -141,7 +164,7 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Family:       "gpt",
 			Models: []ProviderModelSpec{{
 				ModelKey: "gpt-5.5", DisplayName: "GPT 5.5", MarketingCopy: "支持图片理解与 Agent 工具调用",
-				UpstreamMode: "gpt-5.5", Capability: "text",
+				UpstreamMode: "gpt-5.5", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
 			}},
 		},
 		{
@@ -149,7 +172,7 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Family:       "deepseek",
 			Models: []ProviderModelSpec{{
 				ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
-				UpstreamMode: "deepseek-v4-pro", Capability: "text",
+				UpstreamMode: "deepseek-v4-pro", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
 			}},
 		},
 	}
@@ -160,7 +183,7 @@ func seedanceProviderModel(modelKey string, displayName string, resolutions []st
 		ModelKey: modelKey, DisplayName: displayName, UpstreamMode: modelKey, Capability: "video",
 		Resolutions: resolutions, Ratios: []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"},
 		DurationMin: 4, DurationMax: durationMax, SupportsSmartDuration: true,
-		SupportsGeneratedAudio: true, SupportsWatermark: true,
+		SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityControlled,
 		SupportsAudioOnly: supportsAudioOnly, RequiresAdaptiveFrames: supportsAudioOnly,
 		MaxImages: maxImages, MaxVideos: maxVideos, MaxAudios: maxAudios,
 		MaxVideoDurationSeconds: durationMax, MaxAudioDurationSeconds: durationMax,

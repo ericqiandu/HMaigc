@@ -4,7 +4,27 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	modelpkg "infinite-canvas/backend/internal/model"
 )
+
+func TestProviderRegistryRequiresExplicitWatermarkCapabilityForEveryMediaModel(t *testing.T) {
+	descriptor := ProviderAdapterDescriptor{
+		ProviderKind: "test",
+		Family:       "video",
+		Models: []ProviderModelSpec{{
+			ModelKey: "video-1", DisplayName: "Video", UpstreamMode: "video-1", Capability: "video",
+		}},
+	}
+	if _, err := NewProviderRegistry([]ProviderAdapterDescriptor{descriptor}); err == nil || !strings.Contains(err.Error(), "watermark capability") {
+		t.Fatalf("registry error = %v, want explicit watermark capability rejection", err)
+	}
+
+	descriptor.Models[0].WatermarkCapability = modelpkg.WatermarkCapabilityControlled
+	if _, err := NewProviderRegistry([]ProviderAdapterDescriptor{descriptor}); err != nil {
+		t.Fatalf("explicit watermark capability rejected: %v", err)
+	}
+}
 
 func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
@@ -116,7 +136,7 @@ func TestProviderRegistryPublishesSeedance20And25CompatibleCapabilities(t *testi
 	if model.ModelKey != "doubao-seedance-2-5-260628" || model.DisplayName != "Seedance 2.5" || model.UpstreamMode != model.ModelKey || model.Capability != "video" {
 		t.Fatalf("seedance 2.5 identity = %#v", model)
 	}
-	if model.DurationMin != 4 || model.DurationMax != 30 || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || !model.SupportsWatermark || !model.SupportsAudioOnly || !model.RequiresAdaptiveFrames {
+	if model.DurationMin != 4 || model.DurationMax != 30 || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || model.WatermarkCapability != modelpkg.WatermarkCapabilityControlled || !model.SupportsAudioOnly || !model.RequiresAdaptiveFrames {
 		t.Fatalf("seedance 2.5 duration/features = %#v", model)
 	}
 	if strings.Join(model.Resolutions, ",") != "480p,720p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
@@ -184,7 +204,7 @@ func TestProviderRegistryRejectsDuplicateProviderFamilyAndModelKeys(t *testing.T
 	base := ProviderAdapterDescriptor{
 		ProviderKind: "kuaizi",
 		Family:       "seedance",
-		Models:       []ProviderModelSpec{{ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5", UpstreamMode: "doubao-seedance-2-5-260628", Capability: "video"}},
+		Models:       []ProviderModelSpec{{ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5", UpstreamMode: "doubao-seedance-2-5-260628", Capability: "video", WatermarkCapability: modelpkg.WatermarkCapabilityControlled}},
 	}
 	tests := []struct {
 		name        string
@@ -193,7 +213,7 @@ func TestProviderRegistryRejectsDuplicateProviderFamilyAndModelKeys(t *testing.T
 	}{
 		{name: "provider family", descriptors: []ProviderAdapterDescriptor{base, base}, want: "kuaizi/seedance"},
 		{name: "model key in another family", descriptors: []ProviderAdapterDescriptor{base, {
-			ProviderKind: "kuaizi", Family: "other", Models: []ProviderModelSpec{{ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Duplicate", UpstreamMode: "other", Capability: "video"}},
+			ProviderKind: "kuaizi", Family: "other", Models: []ProviderModelSpec{{ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Duplicate", UpstreamMode: "other", Capability: "video", WatermarkCapability: modelpkg.WatermarkCapabilityControlled}},
 		}}, want: "doubao-seedance-2-5-260628"},
 	}
 	for _, test := range tests {

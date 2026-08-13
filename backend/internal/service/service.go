@@ -379,7 +379,11 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	task.BillingOrderID = billingOrder.ID
 	task.Provider = "system"
 	task.Model = billingOrder.Model
-	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, activeTaskPolicy)
+	watermarkCapability, err := s.taskWatermarkCapability(capability, billingOrder)
+	if err != nil {
+		return nil, err
+	}
+	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, activeTaskPolicy, watermarkCapability)
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
 	}
@@ -511,7 +515,11 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		return nil, err
 	}
 	task.Capability = capability
-	task, err = s.repo.RetryTaskWithBilling(userID, task.ID, billingOrder, activeTaskPolicy)
+	watermarkCapability, err := s.taskWatermarkCapability(capability, billingOrder)
+	if err != nil {
+		return nil, err
+	}
+	task, err = s.repo.RetryTaskWithBilling(userID, task.ID, billingOrder, activeTaskPolicy, watermarkCapability)
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest(creditInsufficientMessage(billingOrder.TeamID))
 	}

@@ -45,6 +45,7 @@ type AdminChannelModelFetchResult struct {
 type AdminChannelModelView struct {
 	model.ChannelModel
 	ProviderCapabilities *PublicProviderCapabilities `json:"providerCapabilities,omitempty"`
+	WatermarkCapability  model.WatermarkCapability   `json:"watermarkCapability"`
 }
 
 func (s *Service) EnsureSystemChannelModels() error {
@@ -70,7 +71,8 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]Adm
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.AdminSystemChannel(channelID); err != nil {
+	channel, err := s.repo.AdminSystemChannel(channelID)
+	if err != nil {
 		return nil, err
 	}
 	items, err := s.ensureChannelModels(channelID, true)
@@ -82,6 +84,7 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]Adm
 		result[index] = AdminChannelModelView{
 			ChannelModel:         items[index],
 			ProviderCapabilities: publicProviderModelCapabilities(items[index].ModelKey),
+			WatermarkCapability:  publicWatermarkCapability(*channel, items[index]),
 		}
 	}
 	return result, nil

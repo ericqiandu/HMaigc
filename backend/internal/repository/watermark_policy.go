@@ -176,6 +176,59 @@ func (r *Repository) SaveWatermarkPreference(userID string, remove bool, publica
 	return &saved, current, nil
 }
 
+func freezeTaskWatermarkTx(tx *gorm.DB, task *model.Task, capability model.WatermarkCapability) error {
+	task.WatermarkCapability = capability
+	task.WatermarkDirective = model.WatermarkDirectiveProviderDefault
+	task.WatermarkParameterApplied = false
+	task.WatermarkParameterValue = nil
+	task.WatermarkPolicyPublicationID = ""
+	task.WatermarkPolicyVersion = 0
+
+	switch capability {
+	case model.WatermarkCapabilityUnsupported, model.WatermarkCapabilityNotApplicable:
+		return nil
+	case model.WatermarkCapabilityControlled:
+	default:
+		return fmt.Errorf("unknown watermark capability %q", capability)
+	}
+
+	withWatermark := true
+	task.WatermarkDirective = model.WatermarkDirectiveWithWatermark
+	task.WatermarkParameterApplied = true
+	task.WatermarkParameterValue = &withWatermark
+
+	var head model.PolicyPublicationHead
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&head, "kind = ?", model.PolicyKindAIWatermark).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(head.CurrentPublicationID) == "" {
+		return nil
+	}
+	var publication model.PolicyPublication
+	if err := tx.First(&publication, "id = ? AND kind = ? AND version = ?", head.CurrentPublicationID, model.PolicyKindAIWatermark, head.CurrentVersion).Error; err != nil {
+		return fmt.Errorf("freeze current watermark publication %s: %w", head.CurrentPublicationID, err)
+	}
+	var preference model.UserWatermarkPreference
+	if err := tx.First(&preference, "user_id = ?", task.UserID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !preference.RemoveWatermark || preference.AcceptedPublicationID != head.CurrentPublicationID {
+		return nil
+	}
+	withoutWatermark := false
+	task.WatermarkDirective = model.WatermarkDirectiveWithoutWatermark
+	task.WatermarkParameterValue = &withoutWatermark
+	task.WatermarkPolicyPublicationID = head.CurrentPublicationID
+	task.WatermarkPolicyVersion = head.CurrentVersion
+	return nil
+}
+
 func newWatermarkFactID() (string, error) {
 	var value [16]byte
 	if _, err := rand.Read(value[:]); err != nil {

@@ -67,7 +67,7 @@ func validateStructuredReplacementQuotaWithPolicy(usage repository.UserStorageUs
 	return validateStructuredStorageQuotaWithPolicy(usage, kind, false, deltaBytes, policy)
 }
 
-func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, runtimePolicy RuntimePolicySetting, activeTaskPolicy repository.ActiveTaskPolicy) error {
+func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, runtimePolicy RuntimePolicySetting, activeTaskPolicy repository.ActiveTaskPolicy, watermark model.WatermarkCapability) error {
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	usage, err := s.repo.UserStorageUsage(task.UserID)
@@ -79,9 +79,9 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 		return err
 	}
 	if billingOrder != nil {
-		return s.repo.CreateTaskWithCreditReservation(task, billingOrder, activeTaskPolicy)
+		return s.repo.CreateTaskWithCreditReservation(task, billingOrder, activeTaskPolicy, watermark)
 	}
-	return s.repo.CreateTaskWithActiveLimit(task, activeTaskPolicy)
+	return s.repo.CreateTaskWithActiveLimit(task, activeTaskPolicy, watermark)
 }
 
 // saveTaskCompletion 在供应商已产出后无条件提交结果事实。

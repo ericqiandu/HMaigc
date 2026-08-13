@@ -132,6 +132,7 @@ type PublicChannelModelPrice struct {
 	AccessPolicy             model.ModelAccessPolicy       `json:"accessPolicy"`
 	Accessible               bool                          `json:"accessible"`
 	Capability               string                        `json:"capability"`
+	WatermarkCapability      model.WatermarkCapability     `json:"watermarkCapability"`
 	BillingMode              string                        `json:"billingMode"`
 	PriceStrategy            string                        `json:"priceStrategy"`
 	UnitPriceMicrocredits    int64                         `json:"unitPriceMicrocredits"`
@@ -140,28 +141,28 @@ type PublicChannelModelPrice struct {
 }
 
 type PublicProviderCapabilities struct {
-	ModelKey                string   `json:"modelKey"`
-	DisplayName             string   `json:"displayName"`
-	UpstreamMode            string   `json:"upstreamMode"`
-	Capability              string   `json:"capability"`
-	Resolutions             []string `json:"resolutions"`
-	InputVariants           []string `json:"inputVariants"`
-	Ratios                  []string `json:"ratios"`
-	Qualities               []string `json:"qualities"`
-	OutputCounts            []int    `json:"outputCounts"`
-	DurationMin             int      `json:"durationMin"`
-	DurationMax             int      `json:"durationMax"`
-	SupportsSmartDuration   bool     `json:"supportsSmartDuration"`
-	SupportsGeneratedAudio  bool     `json:"supportsGeneratedAudio"`
-	SupportsWatermark       bool     `json:"supportsWatermark"`
-	SupportsAudioOnly       bool     `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames  bool     `json:"requiresAdaptiveFrames"`
-	MaxImages               int      `json:"maxImages"`
-	MaxVideos               int      `json:"maxVideos"`
-	MaxAudios               int      `json:"maxAudios"`
-	MaxVideoDurationSeconds int      `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds int      `json:"maxAudioDurationSeconds"`
-	Tools                   []string `json:"tools"`
+	ModelKey                string                    `json:"modelKey"`
+	DisplayName             string                    `json:"displayName"`
+	UpstreamMode            string                    `json:"upstreamMode"`
+	Capability              string                    `json:"capability"`
+	Resolutions             []string                  `json:"resolutions"`
+	InputVariants           []string                  `json:"inputVariants"`
+	Ratios                  []string                  `json:"ratios"`
+	Qualities               []string                  `json:"qualities"`
+	OutputCounts            []int                     `json:"outputCounts"`
+	DurationMin             int                       `json:"durationMin"`
+	DurationMax             int                       `json:"durationMax"`
+	SupportsSmartDuration   bool                      `json:"supportsSmartDuration"`
+	SupportsGeneratedAudio  bool                      `json:"supportsGeneratedAudio"`
+	WatermarkCapability     model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly       bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames  bool                      `json:"requiresAdaptiveFrames"`
+	MaxImages               int                       `json:"maxImages"`
+	MaxVideos               int                       `json:"maxVideos"`
+	MaxAudios               int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds int                       `json:"maxAudioDurationSeconds"`
+	Tools                   []string                  `json:"tools"`
 }
 
 type PublicChannelModelPriceTier struct {
@@ -733,6 +734,10 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		if !item.Enabled {
 			continue
 		}
+		watermarkCapability := publicWatermarkCapability(channel, item)
+		if !admin && (item.Capability == "image" || item.Capability == "video") && watermarkCapability == "" {
+			continue
+		}
 		pricingReady := channelModelPricingReady(item)
 		if !admin && !pricingReady {
 			continue
@@ -747,7 +752,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
 				PromotionBadge: item.PromotionBadge, EstimatedDurationSeconds: item.EstimatedDurationSeconds, BrandKey: item.BrandKey,
 				AccessPolicy: item.AccessPolicy, Accessible: item.AccessPolicy == model.ModelAccessAuthenticated || hasMembership,
-				Capability:  item.Capability,
+				Capability: item.Capability, WatermarkCapability: watermarkCapability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
 				ProviderCapabilities: publicProviderModelCapabilities(item.ModelKey),
@@ -835,7 +840,7 @@ func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilitie
 		Qualities: append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
-		SupportsWatermark: capabilities.SupportsWatermark, SupportsAudioOnly: capabilities.SupportsAudioOnly,
+		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
 		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
 		MaxImages:              capabilities.MaxImages, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
