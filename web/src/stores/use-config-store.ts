@@ -50,6 +50,7 @@ export type ModelChannel = {
         accessPolicy: "authenticated" | "member";
         accessible: boolean;
         capability: ModelCapability;
+        watermarkCapability: WatermarkCapability;
         billingMode: "fixed_request" | "per_second";
         priceStrategy: "flat" | "image_resolution" | "video_resolution";
         unitPriceMicrocredits: number;
@@ -77,7 +78,7 @@ export type ProviderModelCapabilities = {
     durationMax: number;
     supportsSmartDuration: boolean;
     supportsGeneratedAudio: boolean;
-    supportsWatermark: boolean;
+    watermarkCapability: WatermarkCapability;
     supportsAudioOnly: boolean;
     requiresAdaptiveFrames: boolean;
     maxImages: number;
@@ -87,6 +88,8 @@ export type ProviderModelCapabilities = {
     maxAudioDurationSeconds: number;
     tools: string[];
 };
+
+export type WatermarkCapability = "controlled" | "unsupported" | "not_applicable";
 
 export type AiConfig = {
     channelMode: "remote" | "local";
@@ -113,7 +116,6 @@ export type AiConfig = {
     videoSeconds: string;
     vquality: string;
     videoGenerateAudio: string;
-    videoWatermark: string;
     videoSuperResolutionEnabled: string;
     videoSuperResolutionResolution: string;
     videoSuperResolutionScene: string;
@@ -163,7 +165,6 @@ export const defaultConfig: AiConfig = {
     videoSeconds: "6",
     vquality: "720",
     videoGenerateAudio: "true",
-    videoWatermark: "false",
     videoSuperResolutionEnabled: "false",
     videoSuperResolutionResolution: "1080p",
     videoSuperResolutionScene: "short_series",
@@ -359,7 +360,6 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot) {
             videoSeconds: normalizeVideoDuration(config.videoSeconds),
             vquality: normalizeVideoResolution(config.vquality),
             videoGenerateAudio: config.videoGenerateAudio || "true",
-            videoWatermark: config.videoWatermark || "false",
             videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === "true" ? "true" : "false",
             videoSuperResolutionResolution: config.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
             videoSuperResolutionScene: config.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,

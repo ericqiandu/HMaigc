@@ -342,7 +342,6 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
-        videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
         videoSuperResolutionEnabled: node?.metadata?.superResolutionEnabled || config.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
         videoSuperResolutionResolution: node?.metadata?.superResolutionResolution || config.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
         videoSuperResolutionScene: node?.metadata?.superResolutionScene || config.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,

@@ -271,7 +271,6 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
-        videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         videoSuperResolutionEnabled: node.metadata?.superResolutionEnabled || globalConfig.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
         videoSuperResolutionResolution: node.metadata?.superResolutionResolution || globalConfig.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,
         videoSuperResolutionScene: node.metadata?.superResolutionScene || globalConfig.videoSuperResolutionScene || defaultConfig.videoSuperResolutionScene,
@@ -296,7 +295,6 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
 function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
-    if (key === "videoWatermark") return { watermark: value };
     if (key === "videoSuperResolutionEnabled") return { superResolutionEnabled: value };
     if (key === "videoSuperResolutionResolution") return { superResolutionResolution: value };
     if (key === "videoSuperResolutionScene") return { superResolutionScene: value };

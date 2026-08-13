@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { WatermarkCapability } from "@/stores/use-config-store";
 
 export type ProviderHealthStatus = "unverified" | "healthy" | "insufficient_balance" | "invalid" | "blocked" | "unavailable" | "rejected" | "unknown";
 
@@ -13,7 +14,7 @@ export type ProviderModelSpec = {
     durationMax: number;
     supportsSmartDuration: boolean;
     supportsGeneratedAudio: boolean;
-    supportsWatermark: boolean;
+    watermarkCapability: WatermarkCapability;
     supportsAudioOnly: boolean;
     requiresAdaptiveFrames: boolean;
     maxImages: number;
@@ -71,6 +72,7 @@ const providerApi = axios.create({
 });
 
 const healthStatuses = new Set<ProviderHealthStatus>(["unverified", "healthy", "insufficient_balance", "invalid", "blocked", "unavailable", "rejected", "unknown"]);
+const watermarkCapabilities = new Set<WatermarkCapability>(["controlled", "unsupported", "not_applicable"]);
 
 function record(value: unknown, label: string): Record<string, unknown> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
@@ -123,6 +125,13 @@ function parseHealthStatus(value: unknown): ProviderHealthStatus {
     return value as ProviderHealthStatus;
 }
 
+function parseWatermarkCapability(value: unknown, label: string): WatermarkCapability {
+    if (typeof value !== "string" || !watermarkCapabilities.has(value as WatermarkCapability)) {
+        throw new Error(`${label}.watermarkCapability 不受支持`);
+    }
+    return value as WatermarkCapability;
+}
+
 function parseEndpoint(value: unknown, label: string): AdminProviderEndpoint {
     const source = record(value, label);
     return {
@@ -167,7 +176,7 @@ function parseModel(value: unknown, label: string): ProviderModelSpec {
         durationMax: integerField(source, "durationMax", label),
         supportsSmartDuration: booleanField(source, "supportsSmartDuration", label),
         supportsGeneratedAudio: booleanField(source, "supportsGeneratedAudio", label),
-        supportsWatermark: booleanField(source, "supportsWatermark", label),
+        watermarkCapability: parseWatermarkCapability(source.watermarkCapability, label),
         supportsAudioOnly: booleanField(source, "supportsAudioOnly", label),
         requiresAdaptiveFrames: booleanField(source, "requiresAdaptiveFrames", label),
         maxImages: integerField(source, "maxImages", label),

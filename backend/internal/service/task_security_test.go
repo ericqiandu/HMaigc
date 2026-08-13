@@ -11,6 +11,18 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestTaskInputRejectsClientWatermarkFields(t *testing.T) {
+	for _, input := range []map[string]any{
+		{"watermark": true},
+		{"config": map[string]any{"videoWatermark": "false"}},
+		{"metadata": map[string]any{"watermark": "true"}},
+	} {
+		if err := validateTaskWatermarkInput(input); err == nil {
+			t.Fatalf("validateTaskWatermarkInput(%#v) unexpectedly succeeded", input)
+		}
+	}
+}
+
 func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

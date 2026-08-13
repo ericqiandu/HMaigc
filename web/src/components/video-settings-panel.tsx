@@ -73,6 +73,12 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </CanvasGenerationSettingsSection>
                 ) : null}
 
+                {capabilities.watermarkCapability === "unsupported" ? (
+                    <CanvasGenerationSettingsSection label="AI 水印" theme={theme}>
+                        <UnsupportedSetting reason="该模型不支持水印控制，结果由模型服务商决定" />
+                    </CanvasGenerationSettingsSection>
+                ) : null}
+
                 <CanvasGenerationSettingsSection label="生成音频" theme={theme}>
                     {capabilities.supportsGeneratedAudio ? (
                         <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">

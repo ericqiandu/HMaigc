@@ -226,7 +226,6 @@ async function buildSeedanceAgentPlanPayload(config: AiConfig, model: string, ca
         resolution: config.vquality,
         duration: Number(config.videoSeconds),
         generate_audio: boolConfig(config.videoGenerateAudio, true),
-        watermark: boolConfig(config.videoWatermark, false),
     };
 }
 

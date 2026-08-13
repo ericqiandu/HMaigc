@@ -28,6 +28,14 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
 
     return (
         <div className="canvas-generation-settings canvas-image-generation-settings space-y-5">
+            {capabilities.watermarkCapability === "unsupported" ? (
+                <CanvasGenerationSettingsSection label="AI 水印" theme={theme}>
+                    <p className="canvas-image-watermark-note text-[11px] leading-5" style={{ color: theme.node.muted }}>
+                        该模型不支持水印控制，结果由模型服务商决定
+                    </p>
+                </CanvasGenerationSettingsSection>
+            ) : null}
+
             {capabilities.qualities.length ? (
                 <CanvasGenerationSettingsSection label="画质" theme={theme}>
                     <div className="canvas-image-quality-grid grid grid-cols-3 gap-2">

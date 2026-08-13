@@ -339,6 +339,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if containsInlineMediaDataURL(normalizedInput) {
 		return nil, BadAuthRequest("任务输入不能包含内嵌媒体，请先上传到资源存储")
 	}
+	if err := validateTaskWatermarkInput(normalizedInput); err != nil {
+		return nil, err
+	}
 	if err := validateSystemProviderInput(normalizedInput); err != nil {
 		return nil, err
 	}
@@ -494,6 +497,9 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	}
 	var billingInput map[string]any
 	if err := json.Unmarshal([]byte(decryptedInput), &billingInput); err != nil {
+		return nil, err
+	}
+	if err := validateTaskWatermarkInput(billingInput); err != nil {
 		return nil, err
 	}
 	if err := s.validateAudioTaskInput(userID, billingInput); err != nil {

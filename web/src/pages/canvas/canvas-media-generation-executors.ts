@@ -67,7 +67,6 @@ export async function executeVideoGeneration({
             seconds: generationConfig.videoSeconds,
             vquality: generationConfig.vquality,
             generateAudio: generationConfig.videoGenerateAudio,
-            watermark: generationConfig.videoWatermark,
             superResolutionEnabled: generationConfig.videoSuperResolutionEnabled,
             superResolutionResolution: generationConfig.videoSuperResolutionResolution,
             superResolutionScene: generationConfig.videoSuperResolutionScene,
@@ -96,7 +95,6 @@ export async function executeVideoGeneration({
             seconds: generationConfig.videoSeconds,
             vquality: generationConfig.vquality,
             generateAudio: generationConfig.videoGenerateAudio,
-            watermark: generationConfig.videoWatermark,
             superResolutionEnabled: generationConfig.videoSuperResolutionEnabled,
             superResolutionResolution: generationConfig.videoSuperResolutionResolution,
             superResolutionScene: generationConfig.videoSuperResolutionScene,
@@ -121,39 +119,68 @@ export async function executeVideoGeneration({
             ...childNodes,
         ];
     });
-    setConnections((current) => [
-        ...current,
-        ...(!isEmptyVideoNode ? [{ id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }] : []),
-        ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: videoId, toNodeId: childId })),
-    ]);
+    setConnections((current) => [...current, ...(!isEmptyVideoNode ? [{ id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }] : []), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: videoId, toNodeId: childId }))]);
 
     targetIds.forEach((targetId) => startGenerationRequest(targetId, nodeId, nodeId, controller));
     const batch = await runVideoOutputBatch(targetIds, async (targetId) => {
-            try {
-                const result = await runBackendCanvasGenerationTask({ projectId, nodeId: targetId, mode: "video", prompt: effectivePrompt, config: { ...generationConfig, count: "1" }, referenceImages: selectedGenerationContext.referenceImages, referenceVideos: selectedGenerationContext.referenceVideos, referenceAudios: selectedGenerationContext.referenceAudios, signal: controller.signal, metadata: { sourceNodeId: nodeId, batchRootId: count > 1 ? videoId : undefined, resolvedCharacterVersions: selectedGenerationContext.resolvedCharacterVersions, resolvedCharacterVoices: selectedGenerationContext.resolvedCharacterVoices, ...videoGenerationMetadata }, onTaskCreated: (task) => bindGenerationTask(targetId, task) });
-                if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-                const video = await storeBackendGeneratedVideo(result.video);
-                const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                setNodes((current) => {
-                    return current.map((node) => {
-                        if (node.id !== targetId) return node;
-                        const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
-                        const geometry = node.metadata?.locked ? {} : { width: videoSize.width, height: videoSize.height, position: { x: center.x - videoSize.width / 2, y: center.y - videoSize.height / 2 } };
-                        const generatedMetadata = { ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, superResolutionEnabled: generationConfig.videoSuperResolutionEnabled, superResolutionResolution: generationConfig.videoSuperResolutionResolution, superResolutionScene: generationConfig.videoSuperResolutionScene, superResolutionVersion: generationConfig.videoSuperResolutionVersion, superResolutionFps: generationConfig.videoSuperResolutionFps, references: generationReferenceUrls(selectedGenerationContext), ...videoGenerationMetadata };
-                        return { ...node, ...geometry, metadata: { ...node.metadata, ...generatedMetadata } };
-                    });
+        try {
+            const result = await runBackendCanvasGenerationTask({
+                projectId,
+                nodeId: targetId,
+                mode: "video",
+                prompt: effectivePrompt,
+                config: { ...generationConfig, count: "1" },
+                referenceImages: selectedGenerationContext.referenceImages,
+                referenceVideos: selectedGenerationContext.referenceVideos,
+                referenceAudios: selectedGenerationContext.referenceAudios,
+                signal: controller.signal,
+                metadata: {
+                    sourceNodeId: nodeId,
+                    batchRootId: count > 1 ? videoId : undefined,
+                    resolvedCharacterVersions: selectedGenerationContext.resolvedCharacterVersions,
+                    resolvedCharacterVoices: selectedGenerationContext.resolvedCharacterVoices,
+                    ...videoGenerationMetadata,
+                },
+                onTaskCreated: (task) => bindGenerationTask(targetId, task),
+            });
+            if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
+            const video = await storeBackendGeneratedVideo(result.video);
+            const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+            setNodes((current) => {
+                return current.map((node) => {
+                    if (node.id !== targetId) return node;
+                    const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
+                    const geometry = node.metadata?.locked ? {} : { width: videoSize.width, height: videoSize.height, position: { x: center.x - videoSize.width / 2, y: center.y - videoSize.height / 2 } };
+                    const generatedMetadata = {
+                        ...videoMetadata(video),
+                        prompt: effectivePrompt,
+                        model: generationConfig.model,
+                        size: generationConfig.size,
+                        seconds: generationConfig.videoSeconds,
+                        vquality: generationConfig.vquality,
+                        generateAudio: generationConfig.videoGenerateAudio,
+                        superResolutionEnabled: generationConfig.videoSuperResolutionEnabled,
+                        superResolutionResolution: generationConfig.videoSuperResolutionResolution,
+                        superResolutionScene: generationConfig.videoSuperResolutionScene,
+                        superResolutionVersion: generationConfig.videoSuperResolutionVersion,
+                        superResolutionFps: generationConfig.videoSuperResolutionFps,
+                        references: generationReferenceUrls(selectedGenerationContext),
+                        ...videoGenerationMetadata,
+                    };
+                    return { ...node, ...geometry, metadata: { ...node.metadata, ...generatedMetadata } };
                 });
-                return targetId;
-            } catch (error) {
-                if (!controller.signal.aborted) {
-                    const failure = generationFailureMetadata(error, effectivePrompt);
-                    setNodes((current) => current.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: "error", ...failure } } : node)));
-                }
-                throw error;
-            } finally {
-                finishGenerationRequest(targetId, controller);
+            });
+            return targetId;
+        } catch (error) {
+            if (!controller.signal.aborted) {
+                const failure = generationFailureMetadata(error, effectivePrompt);
+                setNodes((current) => current.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: "error", ...failure } } : node)));
             }
-        });
+            throw error;
+        } finally {
+            finishGenerationRequest(targetId, controller);
+        }
+    });
     if (controller.signal.aborted) return;
     if (batch.failed.length) showError(batch.succeeded.length ? "部分视频生成失败" : "全部视频生成失败");
 }
@@ -187,12 +214,23 @@ export async function executeAudioGeneration({
         metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...buildAudioGenerationMetadata(generationConfig) },
     };
     registerPendingNodeIds([audioId]);
-    setNodes((current) => (isEmptyAudioNode ? current.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode]));
+    setNodes((current) =>
+        isEmptyAudioNode ? current.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
+    );
     if (!isEmptyAudioNode) setConnections((current) => [...current, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
 
     startGenerationRequest(audioId, nodeId, nodeId, controller);
     try {
-        const result = await runBackendCanvasGenerationTask({ projectId, nodeId: audioId, mode: "audio", prompt: effectivePrompt, config: generationConfig, signal: controller.signal, metadata: { sourceNodeId: nodeId, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, resolvedCharacterVoiceKey: generationContext.resolvedCharacterVoices[0]?.voiceKey }, onTaskCreated: (task) => bindGenerationTask(audioId, task) });
+        const result = await runBackendCanvasGenerationTask({
+            projectId,
+            nodeId: audioId,
+            mode: "audio",
+            prompt: effectivePrompt,
+            config: generationConfig,
+            signal: controller.signal,
+            metadata: { sourceNodeId: nodeId, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, resolvedCharacterVoiceKey: generationContext.resolvedCharacterVoices[0]?.voiceKey },
+            onTaskCreated: (task) => bindGenerationTask(audioId, task),
+        });
         if (!result.audio?.dataUrl) throw new Error("后端任务没有返回音频");
         const audio = await storeGeneratedAudio(await (await fetch(result.audio.dataUrl)).blob(), generationConfig.audioFormat);
         setNodes((current) => current.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, ...audioMetadata(audio), prompt: effectivePrompt, ...buildAudioGenerationMetadata(generationConfig) } } : node)));

@@ -13,7 +13,6 @@ export type SystemProviderTaskConfig = Pick<
     | "videoSeconds"
     | "vquality"
     | "videoGenerateAudio"
-    | "videoWatermark"
     | "videoSuperResolutionEnabled"
     | "videoSuperResolutionResolution"
     | "videoSuperResolutionScene"
@@ -54,7 +53,6 @@ export function systemProviderTaskConfig(config: ResolvedModelRequestConfig): Sy
         videoSeconds: config.videoSeconds,
         vquality: config.vquality,
         videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
         videoSuperResolutionEnabled: config.videoSuperResolutionEnabled,
         videoSuperResolutionResolution: config.videoSuperResolutionResolution,
         videoSuperResolutionScene: config.videoSuperResolutionScene,

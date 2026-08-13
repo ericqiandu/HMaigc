@@ -37,6 +37,8 @@ describe("systemProviderTaskConfig", () => {
         expect("apiFormat" in result).toBe(false);
         expect("interfaceType" in result).toBe(false);
         expect("systemPrompt" in result).toBe(false);
+        expect("watermark" in result).toBe(false);
+        expect("videoWatermark" in result).toBe(false);
     });
 
     test("rejects models that are not bound to a system channel", () => {

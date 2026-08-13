@@ -1,5 +1,5 @@
 import { Form, Input, InputNumber, Select } from "antd";
-import { Cloud, SlidersHorizontal, Stamp } from "lucide-react";
+import { Cloud, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -7,13 +7,11 @@ import { UserOSSSettingsForm } from "@/components/layout/user-oss-settings-form"
 import { PageHeader } from "@/components/layout/workspace-page";
 import { audioFormatOptionsForInterface, audioSpeedRangeForInterface, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { defaultConfig, resolveModelChannel, useConfigStore } from "@/stores/use-config-store";
-import { WatermarkSettings } from "./watermark-settings";
 
-type SettingsSection = "preferences" | "watermark" | "storage";
+type SettingsSection = "preferences" | "storage";
 
 const settingsSections: Array<{ key: SettingsSection; label: string; description: string; icon: ReactNode }> = [
     { key: "preferences", label: "生成偏好", description: "画布与音频默认值", icon: <SlidersHorizontal className="size-4" /> },
-    { key: "watermark", label: "AI 水印", description: "视频生成水印策略", icon: <Stamp className="size-4" /> },
     { key: "storage", label: "我的 OSS", description: "管理个人媒体存储", icon: <Cloud className="size-4" /> },
 ];
 
@@ -77,7 +75,6 @@ export default function SettingsPage() {
                 <section className="settings-content-panel min-h-0 min-w-0 flex-1">
                     <div className="settings-content-scroll thin-scrollbar h-full overflow-y-auto">
                         {activeSection === "preferences" ? <PreferencesSettings config={config} updateConfig={updateConfig} /> : null}
-                        {activeSection === "watermark" ? <WatermarkSettings enabled={config.videoWatermark === "true"} onEnabledChange={(enabled) => updateConfig("videoWatermark", String(enabled))} /> : null}
                         {activeSection === "storage" ? (
                             <div className="settings-storage-pane">
                                 <UserOSSSettingsForm />

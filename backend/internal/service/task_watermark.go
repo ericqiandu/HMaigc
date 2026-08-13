@@ -7,6 +7,29 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func validateTaskWatermarkInput(input map[string]any) error {
+	if _, exists := input["watermark"]; exists {
+		return BadAuthRequest("水印由账号级设置决定，任务不能提交水印参数")
+	}
+	for _, section := range []string{"config", "metadata"} {
+		value, exists := input[section]
+		if !exists || value == nil {
+			continue
+		}
+		fields, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, exists := fields["watermark"]; exists {
+			return BadAuthRequest("水印由账号级设置决定，任务不能提交水印参数")
+		}
+		if _, exists := fields["videoWatermark"]; exists {
+			return BadAuthRequest("水印由账号级设置决定，任务不能提交水印参数")
+		}
+	}
+	return nil
+}
+
 func (s *Service) taskWatermarkCapability(taskCapability string, order *model.BillingOrder) (model.WatermarkCapability, error) {
 	capability := normalizeCapability(taskCapability)
 	if capability != "image" && capability != "video" {

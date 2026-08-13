@@ -1033,11 +1033,6 @@
         color: color-mix(in srgb, var(--foreground) 48%, transparent) !important;
     }
 
-    .settings-workspace-page .settings-watermark-option {
-        border-radius: 8px;
-        background: var(--workbench-surface-muted);
-    }
-
     .app-user-content [aria-label="技能分类"] button {
         border-radius: 8px;
     }

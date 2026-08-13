@@ -15,7 +15,36 @@ function miniMaxConfig(overrides: Partial<AiConfig> = {}): AiConfig {
         ...defaultConfig,
         model,
         videoModel: model,
-        channels: [{ id: "minimax", name: "MiniMax", baseUrl: "https://api.minimaxi.com", apiKey: "configured", apiFormat: "openai", interfaceType: "minimax-video", models: [model], scope: "system", enabled: true }],
+        channels: [
+            {
+                id: "minimax",
+                name: "MiniMax",
+                baseUrl: "https://api.minimaxi.com",
+                apiKey: "configured",
+                apiFormat: "openai",
+                interfaceType: "minimax-video",
+                models: [model],
+                scope: "system",
+                enabled: true,
+                modelCosts: [
+                    {
+                        model,
+                        marketingCopy: "",
+                        promotionBadge: "",
+                        estimatedDurationSeconds: 0,
+                        brandKey: "minimax",
+                        accessPolicy: "authenticated",
+                        accessible: true,
+                        capability: "video",
+                        watermarkCapability: "controlled",
+                        billingMode: "per_second",
+                        priceStrategy: "video_resolution",
+                        unitPriceMicrocredits: 1,
+                        priceTiers: [],
+                    },
+                ],
+            },
+        ],
         ...overrides,
     };
 }
@@ -34,7 +63,7 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         durationMax: is25 ? 30 : 15,
         supportsSmartDuration: true,
         supportsGeneratedAudio: true,
-        supportsWatermark: true,
+        watermarkCapability: "controlled" as const,
         supportsAudioOnly: is25,
         requiresAdaptiveFrames: is25,
         maxImages: is25 ? 30 : 9,
@@ -69,6 +98,7 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
                         accessPolicy: "authenticated",
                         accessible: true,
                         capability: "video",
+                        watermarkCapability: providerCapabilities.watermarkCapability,
                         billingMode: "per_second",
                         priceStrategy: "video_resolution",
                         unitPriceMicrocredits: 1,
@@ -159,6 +189,26 @@ describe("画布视频设置", () => {
         expect(markup).not.toContain("canvas-video-option-button");
         expect(globalsCSS).not.toContain(".canvas-video-generation-settings button[data-selected");
         expect(globalsCSS).not.toContain("\n    .canvas-video-settings-popover {\n");
+    });
+
+    test("不支持水印控制的模型只展示供应商决定说明", () => {
+        const config = seedanceConfig("doubao-seedance-2-5-260628");
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.watermarkCapability = "unsupported";
+
+        const markup = renderToStaticMarkup(
+            createElement(VideoSettingsPanel, {
+                config,
+                onConfigChange: () => undefined,
+                theme: canvasThemes.dark,
+                showTitle: false,
+            }),
+        );
+
+        expect(markup).toContain("该模型不支持水印控制，结果由模型服务商决定");
+        expect(markup).not.toContain("videoWatermark");
+        expect(markup).not.toContain('role="switch"');
     });
 });
 

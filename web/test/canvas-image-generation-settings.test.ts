@@ -35,6 +35,7 @@ function imageConfig(capabilities: ProviderModelCapabilities, overrides: Partial
                         accessPolicy: "authenticated",
                         accessible: true,
                         capability: "image",
+                        watermarkCapability: capabilities.watermarkCapability,
                         billingMode: "fixed_request",
                         priceStrategy: "image_resolution",
                         unitPriceMicrocredits: 1,
@@ -62,7 +63,7 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
     durationMax: 0,
     supportsSmartDuration: false,
     supportsGeneratedAudio: false,
-    supportsWatermark: false,
+    watermarkCapability: "unsupported" as const,
     supportsAudioOnly: false,
     requiresAdaptiveFrames: false,
     maxImages: 0,
@@ -147,5 +148,20 @@ describe("图片模型能力驱动参数", () => {
 
     test("后台未发布图片能力时显式失败，不回退到硬编码参数", () => {
         expect(() => resolveImageModelCapabilities({ ...defaultConfig, model: "images::unknown", channels: [] })).toThrow("缺少后台发布的图片能力契约");
+    });
+
+    test("不支持水印控制的图片模型只展示供应商决定说明", () => {
+        const config = imageConfig({ ...gptImage2Capabilities, watermarkCapability: "unsupported" });
+        const markup = renderToStaticMarkup(
+            createElement(CanvasImageGenerationSettings, {
+                config,
+                theme: canvasThemes.dark,
+                showCount: true,
+                onConfigChange: () => undefined,
+            }),
+        );
+
+        expect(markup).toContain("该模型不支持水印控制，结果由模型服务商决定");
+        expect(markup).not.toContain('role="switch"');
     });
 });

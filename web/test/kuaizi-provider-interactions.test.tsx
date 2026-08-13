@@ -24,7 +24,7 @@ const model = {
     durationMax: 15,
     supportsSmartDuration: true,
     supportsGeneratedAudio: true,
-    supportsWatermark: true,
+    watermarkCapability: "controlled" as const,
     supportsAudioOnly: false,
     requiresAdaptiveFrames: false,
     maxImages: 9,
