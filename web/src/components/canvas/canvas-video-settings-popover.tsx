@@ -107,23 +107,13 @@ function VideoSettingsPortal({
     const placeAbove = topPlacement ? topSpace >= estimatedHeight || topSpace >= bottomSpace : bottomSpace < estimatedHeight && topSpace > bottomSpace;
     const availableViewportHeight = Math.max(0, viewportHeight - margin * 2);
     const hasAnchoredSpace = placeAbove ? topSpace >= estimatedHeight : bottomSpace >= estimatedHeight;
-    const centeredTop = Math.max(
-        margin,
-        Math.min(
-            Math.max(margin, viewportHeight - estimatedHeight - margin),
-            buttonRect.top + buttonRect.height / 2 - estimatedHeight / 2,
-        ),
-    );
+    const centeredTop = Math.max(margin, Math.min(Math.max(margin, viewportHeight - estimatedHeight - margin), buttonRect.top + buttonRect.height / 2 - estimatedHeight / 2));
     const style = {
         position: "fixed",
         zIndex: 1200,
         width,
         left: Math.max(margin, Math.min(window.innerWidth - width - margin, left)),
-        ...(hasAnchoredSpace
-            ? placeAbove
-                ? { bottom: viewportHeight - buttonRect.top + gap, maxHeight: topSpace }
-                : { top: buttonRect.bottom + gap, maxHeight: bottomSpace }
-            : { top: centeredTop, maxHeight: availableViewportHeight }),
+        ...(hasAnchoredSpace ? (placeAbove ? { bottom: viewportHeight - buttonRect.top + gap, maxHeight: topSpace } : { top: buttonRect.bottom + gap, maxHeight: bottomSpace }) : { top: centeredTop, maxHeight: availableViewportHeight }),
         background: theme.spatial.elevated,
         border: `1px solid ${theme.toolbar.border}`,
         borderRadius: 12,
@@ -144,7 +134,14 @@ function VideoSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="canvas-video-generation-settings space-y-3.5" generationMode={generationMode} />
+            <VideoSettingsPanel
+                config={config}
+                onConfigChange={(key, value) => onConfigChange(key, value)}
+                theme={theme}
+                showTitle={false}
+                className="canvas-generation-settings canvas-video-generation-settings space-y-5"
+                generationMode={generationMode}
+            />
         </div>,
         document.body,
     );

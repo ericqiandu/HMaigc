@@ -373,7 +373,7 @@ export function CanvasNodePromptPanel({
     return (
         <div
             className={`canvas-node-prompt-panel aceternity-floating-panel overflow-hidden backdrop-blur-2xl ${isImageMode ? "canvas-media-prompt-panel canvas-node-prompt-panel--image rounded-xl p-2" : isVideoMode ? "canvas-media-prompt-panel canvas-node-prompt-panel--video rounded-xl p-2" : isAudioMode ? "canvas-media-prompt-panel canvas-node-prompt-panel--audio rounded-xl p-2" : "rounded-lg p-1.5"}`}
-            style={{ background: theme.spatial.elevated, color: theme.node.text, boxShadow: `0 20px 64px ${theme.spatial.shadow}, inset 0 1px 0 rgba(255,255,255,.07)` }}
+            style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, boxShadow: `0 20px 64px ${theme.spatial.shadow}` }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}

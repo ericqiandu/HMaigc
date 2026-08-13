@@ -1958,10 +1958,6 @@
         opacity: 0.55;
     }
 
-    .canvas-video-settings-popover .canvas-video-setting-label {
-        color: color-mix(in srgb, var(--foreground) 54%, transparent) !important;
-    }
-
     .canvas-video-settings-popover .canvas-video-duration-slider {
         height: 4px;
         border-radius: 999px;
@@ -1999,18 +1995,6 @@
         overflow-wrap: anywhere;
     }
 
-    .canvas-video-settings-popover .canvas-video-option-button,
-    .canvas-video-settings-popover .canvas-video-ratio-option {
-        border-color: color-mix(in srgb, var(--foreground) 15%, transparent);
-    }
-
-    .canvas-video-settings-popover .canvas-video-option-button[data-selected="true"],
-    .canvas-video-settings-popover .canvas-video-ratio-option[data-selected="true"] {
-        border-color: color-mix(in srgb, var(--foreground) 92%, transparent);
-        background: color-mix(in srgb, var(--foreground) 10%, transparent);
-        color: color-mix(in srgb, var(--foreground) 95%, transparent);
-    }
-
     .canvas-video-resolution-grid,
     .canvas-video-count-grid {
         grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
@@ -2045,58 +2029,28 @@
         display: none;
     }
 
-    .canvas-video-settings-popover {
-        border-color: color-mix(in srgb, var(--foreground) 16%, transparent) !important;
-        background: color-mix(in srgb, var(--background) 95%, var(--foreground) 5%) !important;
-        box-shadow: 0 18px 44px color-mix(in srgb, var(--foreground) 22%, transparent) !important;
-        font-family:
-            Inter,
-            ui-sans-serif,
-            system-ui,
-            -apple-system,
-            BlinkMacSystemFont,
-            "Segoe UI",
-            sans-serif;
-    }
-
-    .canvas-video-generation-settings {
+    .canvas-generation-settings {
         color: color-mix(in srgb, var(--foreground) 96%, transparent);
         font-size: 12px;
         font-weight: 500;
         line-height: 16px;
     }
 
-    .canvas-video-generation-settings .canvas-video-setting-label {
-        color: color-mix(in srgb, var(--foreground) 55%, transparent) !important;
+    .canvas-generation-settings-label {
         font-size: 12px;
         font-weight: 500;
         line-height: 16px;
     }
 
-    .canvas-video-generation-settings button {
-        color: color-mix(in srgb, var(--foreground) 62%, transparent) !important;
-        border-color: color-mix(in srgb, var(--foreground) 18%, transparent) !important;
-        border-radius: 8px !important;
-        background: transparent !important;
+    .canvas-generation-settings-option,
+    .canvas-generation-settings-ratio-option {
         font-size: 12px;
         font-weight: 500;
     }
 
-    .canvas-video-generation-settings button[data-selected="true"] {
-        color: color-mix(in srgb, var(--foreground) 96%, transparent) !important;
-        border-color: color-mix(in srgb, var(--foreground) 92%, transparent) !important;
-        background: color-mix(in srgb, var(--foreground) 10%, transparent) !important;
+    .canvas-generation-settings-option.is-active,
+    .canvas-generation-settings-ratio-option.is-active {
         font-weight: 600;
-    }
-
-    .canvas-video-generation-settings button[data-selected="true"] span.rounded-\[2px\] {
-        border-color: color-mix(in srgb, var(--foreground) 92%, transparent) !important;
-    }
-
-    .canvas-video-generation-settings button:hover:not(:disabled) {
-        color: color-mix(in srgb, var(--foreground) 90%, transparent) !important;
-        background: color-mix(in srgb, var(--foreground) 6%, transparent) !important;
-        opacity: 1 !important;
     }
 
     .canvas-video-generation-settings .video-settings-switch.ant-switch-checked {

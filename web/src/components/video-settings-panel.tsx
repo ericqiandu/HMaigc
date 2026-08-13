@@ -7,6 +7,7 @@ import { normalizeVideoResolution } from "@/lib/video-generation-options";
 import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "@/lib/video-model-capabilities";
 import { type AiConfig } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
+import { CanvasGenerationSettingsOption, CanvasGenerationSettingsRatioOption, CanvasGenerationSettingsSection } from "@/components/canvas/canvas-generation-settings-ui";
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
@@ -17,7 +18,7 @@ type VideoSettingsPanelProps = {
     generationMode?: CanvasVideoGenerationMode;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[316px] space-y-3", generationMode }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "canvas-generation-settings w-[316px] space-y-5", generationMode }: VideoSettingsPanelProps) {
     const capabilities = resolveVideoModelCapabilities(config);
     const normalizedConfig = normalizeVideoConfigForModel(config, generationMode);
     const ratioOptions = videoRatiosForMode(capabilities, generationMode);
@@ -33,15 +34,15 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="canvas-video-settings-title text-sm font-semibold">视频设置</div> : null}
 
-                <SettingGroup title="比例" color={theme.node.muted}>
+                <CanvasGenerationSettingsSection label="比例" theme={theme}>
                     <div className="canvas-video-ratio-grid grid gap-2">
                         {ratioOptions.map((item) => (
                             <RatioOption key={item.value} label={item.label} ratio={item.value} selected={ratio === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)} />
                         ))}
                     </div>
-                </SettingGroup>
+                </CanvasGenerationSettingsSection>
 
-                <SettingGroup title="清晰度" color={theme.node.muted}>
+                <CanvasGenerationSettingsSection label="清晰度" theme={theme}>
                     <div className="canvas-video-resolution-grid grid gap-2">
                         {capabilities.resolutions.map((item) => (
                             <OptionButton key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
@@ -49,30 +50,30 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionButton>
                         ))}
                     </div>
-                </SettingGroup>
+                </CanvasGenerationSettingsSection>
 
-                <SettingGroup title="视频时长" color={theme.node.muted}>
+                <CanvasGenerationSettingsSection label="视频时长" theme={theme}>
                     <VideoDurationInput duration={duration} durationOptions={durationOptions} customDurationRange={capabilities.customDurationRange} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
-                </SettingGroup>
+                </CanvasGenerationSettingsSection>
 
                 {capabilities.referenceLimits ? (
-                    <SettingGroup title="参考素材" color={theme.node.muted}>
+                    <CanvasGenerationSettingsSection label="参考素材" theme={theme}>
                         <div className="canvas-video-reference-limits text-[11px] leading-5" style={{ color: theme.node.muted }}>
                             最多 {capabilities.referenceLimits.images} 图 + {capabilities.referenceLimits.videos} 视频 + {capabilities.referenceLimits.audios} 音频
                             <span className="canvas-video-reference-duration-limits block">
                                 视频累计不超过 {capabilities.referenceLimits.totalVideoDurationSeconds} 秒 · 音频累计不超过 {capabilities.referenceLimits.totalAudioDurationSeconds} 秒
                             </span>
                         </div>
-                    </SettingGroup>
+                    </CanvasGenerationSettingsSection>
                 ) : null}
 
                 {capabilities.supportedTools.includes("web_search") ? (
-                    <SettingGroup title="联网搜索" color={theme.node.muted}>
+                    <CanvasGenerationSettingsSection label="联网搜索" theme={theme}>
                         <UnsupportedSetting reason="接口支持；独立计费尚未配置，暂不开放" />
-                    </SettingGroup>
+                    </CanvasGenerationSettingsSection>
                 ) : null}
 
-                <SettingGroup title="生成音频" color={theme.node.muted}>
+                <CanvasGenerationSettingsSection label="生成音频" theme={theme}>
                     {capabilities.supportsGeneratedAudio ? (
                         <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">
                             <OptionButton selected={generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "true")}>
@@ -85,9 +86,9 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     ) : (
                         <UnsupportedSetting reason={capabilities.unsupportedReasons.generatedAudio || "当前模型不支持同步生成音频"} />
                     )}
-                </SettingGroup>
+                </CanvasGenerationSettingsSection>
 
-                <SettingGroup title="生成数量" color={theme.node.muted}>
+                <CanvasGenerationSettingsSection label="生成数量" theme={theme}>
                     <div className="canvas-video-count-grid grid gap-2">
                         {capabilities.outputCounts.map((value) => (
                             <OptionButton key={value} selected={generationCount === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
@@ -95,7 +96,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionButton>
                         ))}
                     </div>
-                </SettingGroup>
+                </CanvasGenerationSettingsSection>
             </div>
         </ImageSettingsTheme>
     );
@@ -249,68 +250,17 @@ function UnsupportedSetting({ reason }: { reason: string }) {
 
 function OptionButton({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button
-            type="button"
-            data-selected={selected}
+        <CanvasGenerationSettingsOption
+            active={selected}
             disabled={disabled}
-            className="canvas-video-option-button h-8 cursor-pointer whitespace-nowrap rounded-lg border px-1 text-[12px] font-medium leading-none transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30"
-            style={{
-                background: selected ? "rgb(255 255 255 / 12%)" : "transparent",
-                borderColor: selected ? theme.node.text : theme.node.stroke,
-                color: selected ? theme.node.text : theme.node.muted,
-            }}
-            onMouseDown={(event) => event.stopPropagation()}
+            label={children}
+            theme={theme}
+            className="canvas-video-option h-8 cursor-pointer whitespace-nowrap px-1 text-[12px] font-medium leading-none disabled:cursor-not-allowed disabled:opacity-30"
             onClick={onClick}
-        >
-            {children}
-        </button>
+        />
     );
 }
 
 function RatioOption({ label, ratio, selected, theme, onClick }: { label: string; ratio: string; selected: boolean; theme: CanvasTheme; onClick: () => void }) {
-    const preview = ratioPreview(ratio);
-    return (
-        <button
-            type="button"
-            data-selected={selected}
-            className="canvas-video-ratio-option flex h-16 min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border px-1 text-[12px] font-medium leading-none transition hover:brightness-110"
-            style={{
-                background: selected ? "rgb(255 255 255 / 12%)" : "transparent",
-                borderColor: selected ? theme.node.text : theme.node.stroke,
-                color: selected ? theme.node.text : theme.node.muted,
-            }}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={onClick}
-        >
-            <span className="canvas-video-ratio-preview grid h-4 place-items-center">
-                {preview ? (
-                    <span className="canvas-video-ratio-preview-shape rounded-[2px] border" style={{ width: preview.width, height: preview.height, borderColor: "currentColor" }} />
-                ) : (
-                    <span className="canvas-video-ratio-auto-mark text-[9px] opacity-70">A</span>
-                )}
-            </span>
-            <span className="canvas-video-ratio-label whitespace-nowrap">{label}</span>
-        </button>
-    );
-}
-
-function SettingGroup({ title, color, children }: { title: string; color: string; children: ReactNode }) {
-    return (
-        <section className="canvas-video-setting-group space-y-2">
-            <div className="canvas-video-setting-label text-[12px] font-medium leading-4" style={{ color }}>
-                {title}
-            </div>
-            {children}
-        </section>
-    );
-}
-
-function ratioPreview(ratio: string) {
-    if (ratio === "16:9") return { width: 17, height: 10 };
-    if (ratio === "9:16") return { width: 9, height: 16 };
-    if (ratio === "1:1") return { width: 13, height: 13 };
-    if (ratio === "4:3") return { width: 16, height: 12 };
-    if (ratio === "3:4") return { width: 12, height: 16 };
-    if (ratio === "21:9") return { width: 18, height: 8 };
-    return null;
+    return <CanvasGenerationSettingsRatioOption active={selected} label={label} ratio={ratio} theme={theme} className="canvas-video-ratio-option px-1 text-[12px] font-medium leading-none" onClick={onClick} />;
 }

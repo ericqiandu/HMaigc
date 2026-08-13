@@ -85,4 +85,15 @@ describe("画布节点统一 UI", () => {
         expect(actionHoverRule).toContain("background: var(--bg-hover);");
         expect(actionRule).not.toContain("var(--workspace-ui-control");
     });
+
+    test("图片、视频与音频提示词区复用节点主体表面色", () => {
+        const source = readFileSync(new URL("../src/components/canvas/canvas-node-prompt-panel.tsx", import.meta.url), "utf8");
+        const composerCSS = readFileSync(new URL("../src/components/canvas/canvas-media-composer.css", import.meta.url), "utf8");
+
+        expect(source).toContain("background: theme.node.fill");
+        expect(source).toContain("borderColor: theme.node.stroke");
+        expect(source).not.toContain("background: theme.spatial.elevated");
+        expect(composerCSS).not.toContain("background: color-mix(in srgb, var(--background) 94%, var(--foreground) 6%) !important;");
+        expect(composerCSS).not.toContain("background: #ffffff !important;");
+    });
 });

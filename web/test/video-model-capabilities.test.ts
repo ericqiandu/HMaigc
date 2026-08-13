@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -136,6 +137,28 @@ describe("画布视频设置", () => {
 
         expect(markup).not.toContain("视频超分");
         expect(markup).not.toContain("独立超分");
+    });
+
+    test("视频参数与图片参数复用同一分组、选项和选中态", () => {
+        const markup = renderToStaticMarkup(
+            createElement(VideoSettingsPanel, {
+                config: seedanceConfig("doubao-seedance-2-5-260628"),
+                onConfigChange: () => undefined,
+                theme: canvasThemes.dark,
+                showTitle: false,
+            }),
+        );
+        const globalsCSS = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
+
+        expect(markup).toContain("canvas-generation-settings-section");
+        expect(markup).toContain("canvas-generation-settings-option");
+        expect(markup).toContain("canvas-generation-settings-ratio-option");
+        expect(markup).toContain(`background:${canvasThemes.dark.accent.primarySoft}`);
+        expect(markup).toContain(`background:${canvasThemes.dark.toolbar.itemHover}`);
+        expect(markup).toContain('aria-pressed="true"');
+        expect(markup).not.toContain("canvas-video-option-button");
+        expect(globalsCSS).not.toContain(".canvas-video-generation-settings button[data-selected");
+        expect(globalsCSS).not.toContain("\n    .canvas-video-settings-popover {\n");
     });
 });
 
