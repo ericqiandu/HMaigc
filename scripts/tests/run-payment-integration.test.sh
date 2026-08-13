@@ -23,6 +23,10 @@ docker() {
 }
 
 go() {
+	if [[ " $* " == *' -list '* ]]; then
+		printf '%s\n' TestPostgresWatermarkPublicationSerializesConcurrentVersions TestPostgresWatermarkPreferenceAndConsentRollbackTogether TestPostgresTaskCreateFreezesWatermarkWithBillingAndProviderRuntime TestPostgresTaskCreateRollsBackWhenWatermarkLogFails TestPostgresWatermarkTaskFreezeAllowsConcurrentReaders
+		return
+	fi
 	printf '%s\n' "$PWD" >"$PAYMENT_RUNNER_CAPTURE/working-directory"
 	printf '%s\n' "$@" >"$PAYMENT_RUNNER_CAPTURE/go-arguments"
 	printf '%s\n' \
@@ -92,5 +96,27 @@ for arguments in '--all --run TestPayment' '--run TestPayment --all'; do
 		exit 1
 	fi
 done
+
+required_capture="$test_root/required"
+mkdir -p "$required_capture"
+PAYMENT_RUNNER_CAPTURE="$required_capture" bash "$runner" \
+	--run '^TestPostgresWatermark' \
+	--require TestPostgresWatermarkPublicationSerializesConcurrentVersions \
+	--require TestPostgresWatermarkPreferenceAndConsentRollbackTogether \
+	--require TestPostgresTaskCreateFreezesWatermarkWithBillingAndProviderRuntime \
+	--require TestPostgresTaskCreateRollsBackWhenWatermarkLogFails \
+	--require TestPostgresWatermarkTaskFreezeAllowsConcurrentReaders
+
+missing_capture="$test_root/missing"
+mkdir -p "$missing_capture"
+set +e
+PAYMENT_RUNNER_CAPTURE="$missing_capture" bash "$runner" --run '^TestPostgresWatermark' --require TestPostgresWatermarkMissing \
+	>"$missing_capture/stdout" 2>"$missing_capture/stderr"
+missing_status=$?
+set -e
+if [[ "$missing_status" -ne 1 ]] || ! grep -Fq 'required Go test not found: TestPostgresWatermarkMissing' "$missing_capture/stderr"; then
+	printf 'missing required test gate exited %d or returned the wrong error\n' "$missing_status" >&2
+	exit 1
+fi
 
 printf '%s\n' 'payment integration runner contract test passed'

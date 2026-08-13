@@ -378,20 +378,7 @@
     /* Ant Design otherwise injects a second system stack into controls and
        overlays. Keep product text visually continuous without touching code
        or monospace content. */
-    .ant-app :is(
-        .ant-btn,
-        .ant-input,
-        .ant-input-affix-wrapper,
-        .ant-input-number,
-        .ant-select,
-        .ant-select-dropdown,
-        .ant-dropdown,
-        .ant-popover,
-        .ant-modal,
-        .ant-drawer,
-        .ant-table,
-        .ant-tooltip
-    ) {
+    .ant-app :is(.ant-btn, .ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-select-dropdown, .ant-dropdown, .ant-popover, .ant-modal, .ant-drawer, .ant-table, .ant-tooltip) {
         font-family: var(--font-family-sans);
     }
     #root {
@@ -1902,7 +1889,9 @@
         font-weight: 500;
         line-height: 16px;
         text-align: left;
-        transition: background-color 140ms ease, color 140ms ease;
+        transition:
+            background-color 140ms ease,
+            color 140ms ease;
     }
 
     .canvas-video-mode-option-wrap {
@@ -2265,7 +2254,10 @@
         font-weight: 600;
         line-height: 16px;
         cursor: pointer;
-        transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+        transition:
+            background-color 140ms ease,
+            color 140ms ease,
+            transform 140ms ease;
     }
 
     .canvas-node-action-danger {
@@ -2796,14 +2788,46 @@ html[data-theme-switching="true"] :where(.canvas-node-shell, .aceternity-comet-c
     letter-spacing: -0.02em;
 }
 
-.legal-document-rich-content h1 { font-size: 1.65em; }
-.legal-document-rich-content h2 { font-size: 1.35em; }
-.legal-document-rich-content h3 { font-size: 1.12em; }
-.legal-document-rich-content p { margin: 0.85em 0; }
+.legal-document-rich-content h1 {
+    font-size: 1.65em;
+}
+.legal-document-rich-content h2 {
+    font-size: 1.35em;
+}
+.legal-document-rich-content h3 {
+    font-size: 1.12em;
+}
+.legal-document-rich-content p {
+    margin: 0.85em 0;
+}
 .legal-document-rich-content ul,
-.legal-document-rich-content ol { margin: 1em 0; padding-left: 1.6em; }
-.legal-document-rich-content li { margin: 0.35em 0; }
-.legal-document-rich-content blockquote { margin: 1.2em 0; border-left: 2px solid currentColor; padding-left: 1em; opacity: 0.72; }
-.legal-document-rich-content hr { margin: 2em 0; border: 0; border-top: 1px solid var(--border); }
-.legal-document-rich-content a { color: var(--workspace-accent, #2563eb); text-decoration: underline; text-underline-offset: 2px; }
-.legal-document-rich-content img { display: block; max-width: 100%; height: auto; margin: 1.5em auto; object-fit: contain; }
+.legal-document-rich-content ol {
+    margin: 1em 0;
+    padding-left: 1.6em;
+}
+.legal-document-rich-content li {
+    margin: 0.35em 0;
+}
+.legal-document-rich-content blockquote {
+    margin: 1.2em 0;
+    border-left: 2px solid currentColor;
+    padding-left: 1em;
+    opacity: 0.72;
+}
+.legal-document-rich-content hr {
+    margin: 2em 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+}
+.legal-document-rich-content a {
+    color: var(--workspace-accent, #2563eb);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.legal-document-rich-content img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1.5em auto;
+    object-fit: contain;
+}

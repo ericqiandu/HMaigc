@@ -117,10 +117,16 @@ func (s *Service) UpdateWatermarkPreference(user *model.User, request UpdateWate
 	event := &model.UserWatermarkPreferenceEvent{ID: newID(), UserID: user.ID, RemoveWatermark: request.RemoveWatermark, PolicyPublicationID: publicationID, ResultStatus: "succeeded", CreatedAt: now}
 	preference, publication, err := s.repo.SaveWatermarkPreference(user.ID, request.RemoveWatermark, publicationID, event, now)
 	if errors.Is(err, repository.ErrWatermarkPolicyVersionConflict) {
+		if auditErr := s.recordWatermarkPreferenceFailure(user.ID, request.RemoveWatermark, publicationID, "version_conflict", now); auditErr != nil {
+			return nil, auditErr
+		}
 		log.Printf("event=watermark_preference_update_failed user_id=%s reason=version_conflict", user.ID)
 		return nil, Conflict("水印规范已更新，请重新阅读后确认")
 	}
 	if errors.Is(err, repository.ErrWatermarkPolicyUnavailable) {
+		if auditErr := s.recordWatermarkPreferenceFailure(user.ID, request.RemoveWatermark, publicationID, "policy_unavailable", now); auditErr != nil {
+			return nil, auditErr
+		}
 		log.Printf("event=watermark_preference_update_failed user_id=%s reason=policy_unavailable", user.ID)
 		return nil, BadAuthRequest("当前尚未发布可用的水印规范")
 	}
@@ -128,6 +134,13 @@ func (s *Service) UpdateWatermarkPreference(user *model.User, request UpdateWate
 		return nil, err
 	}
 	return watermarkPreferenceView(preference, publication), nil
+}
+
+func (s *Service) recordWatermarkPreferenceFailure(userID string, remove bool, publicationID string, resultStatus string, now time.Time) error {
+	return s.repo.RecordWatermarkPreferenceFailure(&model.UserWatermarkPreferenceEvent{
+		ID: newID(), UserID: userID, RemoveWatermark: remove,
+		PolicyPublicationID: publicationID, ResultStatus: resultStatus, CreatedAt: now,
+	})
 }
 
 func watermarkPreferenceView(preference *model.UserWatermarkPreference, publication *model.PolicyPublication) *WatermarkPreferenceView {

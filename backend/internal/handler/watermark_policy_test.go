@@ -52,7 +52,7 @@ func TestWatermarkPolicyRoutesEnforceAuthStrictJSONAndVersionConflict(t *testing
 		t.Fatalf("trailing JSON status = %d, body=%s", response.Code, response.Body.String())
 	}
 	var events int64
-	if err := fixture.db.Model(&model.UserWatermarkPreferenceEvent{}).Count(&events).Error; err != nil || events != 1 {
+	if err := fixture.db.Model(&model.UserWatermarkPreferenceEvent{}).Count(&events).Error; err != nil || events != 2 {
 		t.Fatalf("preference event count = %d, err=%v", events, err)
 	}
 }

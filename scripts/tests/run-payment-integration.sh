@@ -6,6 +6,7 @@ compose_file="$repo_root/deploy/tests/docker-compose.payment-integration.yml"
 run_pattern='Test.*(PaymentIntegrity|MembershipOrderIdempotency|PaymentCheckoutSession)'
 run_all=false
 run_pattern_overridden=false
+required_tests=()
 
 while (($# > 0)); do
     case "$1" in
@@ -22,6 +23,11 @@ while (($# > 0)); do
 			[[ "$run_all" == false ]] || { echo "--all may only be specified once" >&2; exit 2; }
 			run_all=true
 			shift
+			;;
+		--require)
+			(($# >= 2)) || { echo "--require requires an exact Go test name" >&2; exit 2; }
+			required_tests+=("$2")
+			shift 2
 			;;
         *)
             echo "unknown argument: $1" >&2
@@ -58,6 +64,15 @@ export REDIS_URL="redis://127.0.0.1:${redis_port}/0"
 export CANVAS_REQUIRE_INTEGRATION_TESTS=1
 
 cd "$repo_root/backend"
+if ((${#required_tests[@]} > 0)); then
+	available_tests="$(go test ./internal/database ./internal/repository ./internal/service -list "$run_pattern")"
+	for required_test in "${required_tests[@]}"; do
+		if ! grep -Fxq "$required_test" <<<"$available_tests"; then
+			echo "required Go test not found: $required_test" >&2
+			exit 1
+		fi
+	done
+fi
 go_test_arguments=(
 	test
 	./internal/database

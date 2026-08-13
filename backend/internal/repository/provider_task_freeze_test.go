@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -94,6 +95,7 @@ func TestFreezeTaskWatermarkUsesCurrentAccountFactInsideCreateTransaction(t *tes
 	if task.WatermarkPolicyPublicationID != "publication-1" || task.WatermarkPolicyVersion != 1 {
 		t.Fatalf("frozen publication = %q v%d", task.WatermarkPolicyPublicationID, task.WatermarkPolicyVersion)
 	}
+	assertFrozenWatermarkLog(t, db, task.ID, model.WatermarkDirectiveWithoutWatermark, false, "publication-1", 1)
 }
 
 func TestUserRetryRecomputesWatermarkWhileWorkerClaimKeepsSnapshot(t *testing.T) {
@@ -123,6 +125,7 @@ func TestUserRetryRecomputesWatermarkWhileWorkerClaimKeepsSnapshot(t *testing.T)
 	if retried.WatermarkPolicyPublicationID != "" || retried.WatermarkPolicyVersion != 0 {
 		t.Fatalf("retried stale publication facts = %#v", retried)
 	}
+	assertFrozenWatermarkLog(t, db, task.ID, model.WatermarkDirectiveWithWatermark, true, "", 0)
 	claimed, err := repo.ClaimNextTask("worker-1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +133,31 @@ func TestUserRetryRecomputesWatermarkWhileWorkerClaimKeepsSnapshot(t *testing.T)
 	if claimed == nil || claimed.WatermarkDirective != retried.WatermarkDirective || claimed.WatermarkParameterValue == nil || *claimed.WatermarkParameterValue != *retried.WatermarkParameterValue {
 		t.Fatalf("worker claim changed watermark snapshot: retried=%#v claimed=%#v", retried, claimed)
 	}
+}
+
+func assertFrozenWatermarkLog(t *testing.T, db *gorm.DB, taskID string, directive model.WatermarkDirective, parameterValue bool, publicationID string, publicationVersion int64) {
+	t.Helper()
+	var logs []model.TaskLog
+	if err := db.Where("task_id = ? AND message = ?", taskID, "水印执行指令已冻结").Find(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, log := range logs {
+		var payload struct {
+			Capability        model.WatermarkCapability `json:"capability"`
+			Directive         model.WatermarkDirective  `json:"directive"`
+			ParameterApplied  bool                      `json:"parameterApplied"`
+			ParameterValue    *bool                     `json:"parameterValue"`
+			PolicyPublication string                    `json:"policyPublicationId"`
+			PolicyVersion     int64                     `json:"policyVersion"`
+		}
+		if err := json.Unmarshal([]byte(log.Payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Capability == model.WatermarkCapabilityControlled && payload.Directive == directive && payload.ParameterApplied && payload.ParameterValue != nil && *payload.ParameterValue == parameterValue && payload.PolicyPublication == publicationID && payload.PolicyVersion == publicationVersion {
+			return
+		}
+	}
+	t.Fatalf("missing frozen watermark log directive=%q parameter=%v publication=%q version=%d in %#v", directive, parameterValue, publicationID, publicationVersion, logs)
 }
 
 func TestFreezeTaskWatermarkRejectsBrokenCurrentPublication(t *testing.T) {

@@ -176,6 +176,16 @@ func (r *Repository) SaveWatermarkPreference(userID string, remove bool, publica
 	return &saved, current, nil
 }
 
+// RecordWatermarkPreferenceFailure appends a safe business-rejection fact after the
+// preference transaction has rolled back. System/database failures are not rewritten
+// as successful audit facts by callers.
+func (r *Repository) RecordWatermarkPreferenceFailure(event *model.UserWatermarkPreferenceEvent) error {
+	if event == nil || strings.TrimSpace(event.ID) == "" || strings.TrimSpace(event.UserID) == "" || strings.TrimSpace(event.ResultStatus) == "" {
+		return gorm.ErrInvalidData
+	}
+	return r.db.Create(event).Error
+}
+
 func freezeTaskWatermarkTx(tx *gorm.DB, task *model.Task, capability model.WatermarkCapability) error {
 	task.WatermarkCapability = capability
 	task.WatermarkDirective = model.WatermarkDirectiveProviderDefault
@@ -198,7 +208,9 @@ func freezeTaskWatermarkTx(tx *gorm.DB, task *model.Task, capability model.Water
 	task.WatermarkParameterValue = &withWatermark
 
 	var head model.PolicyPublicationHead
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&head, "kind = ?", model.PolicyKindAIWatermark).Error; err != nil {
+	// Task creation only needs a stable publication snapshot. A shared row lock blocks a
+	// concurrent publication writer without serializing unrelated task creations.
+	if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&head, "kind = ?", model.PolicyKindAIWatermark).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
@@ -227,6 +239,34 @@ func freezeTaskWatermarkTx(tx *gorm.DB, task *model.Task, capability model.Water
 	task.WatermarkPolicyPublicationID = head.CurrentPublicationID
 	task.WatermarkPolicyVersion = head.CurrentVersion
 	return nil
+}
+
+type frozenWatermarkTaskLogPayload struct {
+	Capability          model.WatermarkCapability `json:"capability"`
+	Directive           model.WatermarkDirective  `json:"directive"`
+	ParameterApplied    bool                      `json:"parameterApplied"`
+	ParameterValue      *bool                     `json:"parameterValue"`
+	PolicyPublicationID string                    `json:"policyPublicationId"`
+	PolicyVersion       int64                     `json:"policyVersion"`
+}
+
+func createFrozenWatermarkTaskLogTx(tx *gorm.DB, task *model.Task) error {
+	payload, err := json.Marshal(frozenWatermarkTaskLogPayload{
+		Capability: task.WatermarkCapability, Directive: task.WatermarkDirective,
+		ParameterApplied: task.WatermarkParameterApplied, ParameterValue: task.WatermarkParameterValue,
+		PolicyPublicationID: task.WatermarkPolicyPublicationID, PolicyVersion: task.WatermarkPolicyVersion,
+	})
+	if err != nil {
+		return fmt.Errorf("encode frozen watermark task log: %w", err)
+	}
+	logID, err := newWatermarkFactID()
+	if err != nil {
+		return err
+	}
+	return tx.Create(&model.TaskLog{
+		ID: logID, UserID: task.UserID, TaskID: task.ID, Level: "info",
+		Message: "水印执行指令已冻结", Payload: string(payload), CreatedAt: time.Now().UTC(),
+	}).Error
 }
 
 func newWatermarkFactID() (string, error) {

@@ -52,7 +52,7 @@ type UserPolicyConsent struct {
 	AcceptedAt          time.Time `json:"acceptedAt"`
 }
 
-// UserWatermarkPreferenceEvent is append-only and records each accepted account-side write.
+// UserWatermarkPreferenceEvent is append-only and records each account-side write outcome.
 type UserWatermarkPreferenceEvent struct {
 	ID                  string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID              string    `json:"userId" gorm:"size:36;index:idx_user_watermark_preference_events_user_created,priority:1"`

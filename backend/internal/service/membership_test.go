@@ -58,6 +58,7 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 		&model.PaymentTransaction{},
 		&model.PaymentWebhookEvent{},
 		&model.Task{},
+		&model.TaskLog{},
 	); err != nil {
 		t.Fatal(err)
 	}

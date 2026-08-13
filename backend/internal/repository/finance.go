@@ -334,7 +334,10 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		if err := reserveBillingOrder(tx, order); err != nil {
 			return err
 		}
-		return tx.Create(task).Error
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		return createFrozenWatermarkTaskLogTx(tx, task)
 	})
 }
 
@@ -377,7 +380,10 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, policy ActiveTa
 		if err := freezeTaskWatermarkTx(tx, task, watermark); err != nil {
 			return err
 		}
-		return tx.Create(task).Error
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		return createFrozenWatermarkTaskLogTx(tx, task)
 	})
 }
 
@@ -416,7 +422,10 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 		if updated.RowsAffected != 1 {
 			return ErrTaskNotRetryable
 		}
-		return tx.First(&task, "id = ? AND user_id = ?", taskID, userID).Error
+		if err := tx.First(&task, "id = ? AND user_id = ?", taskID, userID).Error; err != nil {
+			return err
+		}
+		return createFrozenWatermarkTaskLogTx(tx, &task)
 	})
 	return &task, err
 }

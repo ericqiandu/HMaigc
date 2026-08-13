@@ -89,12 +89,38 @@ func TestWatermarkPreferenceStatusTracksImmutablePublication(t *testing.T) {
 	if authStatus(err) != http.StatusConflict {
 		t.Fatalf("stale preference error = %v", err)
 	}
+	var failedEvent model.UserWatermarkPreferenceEvent
+	if err := db.Where("user_id = ? AND result_status = ?", user.ID, "version_conflict").First(&failedEvent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedEvent.RemoveWatermark != true || failedEvent.PolicyPublicationID != v1.ID {
+		t.Fatalf("failed preference event = %#v", failedEvent)
+	}
 	disabled, err := svc.UpdateWatermarkPreference(user, UpdateWatermarkPreferenceRequest{RemoveWatermark: false, PublicationID: v1.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if disabled.Status != WatermarkPreferenceDisabled || disabled.RemoveWatermark {
 		t.Fatalf("disabled preference = %#v", disabled)
+	}
+}
+
+func TestUnavailableWatermarkPolicyRejectionIsAuditedWithoutChangingPreference(t *testing.T) {
+	svc, db, _, user := openWatermarkPolicyServiceFixture(t)
+	_, err := svc.UpdateWatermarkPreference(user, UpdateWatermarkPreferenceRequest{RemoveWatermark: true, PublicationID: "missing-publication"})
+	if authStatus(err) != http.StatusBadRequest {
+		t.Fatalf("unavailable policy error = %v", err)
+	}
+	var failedEvent model.UserWatermarkPreferenceEvent
+	if err := db.Where("user_id = ? AND result_status = ?", user.ID, "policy_unavailable").First(&failedEvent).Error; err != nil {
+		t.Fatal(err)
+	}
+	var preferenceCount int64
+	if err := db.Model(&model.UserWatermarkPreference{}).Where("user_id = ?", user.ID).Count(&preferenceCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if preferenceCount != 0 {
+		t.Fatalf("unavailable policy changed preference rows = %d", preferenceCount)
 	}
 }
 
