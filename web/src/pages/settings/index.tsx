@@ -1,85 +1,24 @@
 import { Form, Input, InputNumber, Select } from "antd";
-import { Cloud, SlidersHorizontal } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { UserOSSSettingsForm } from "@/components/layout/user-oss-settings-form";
 import { PageHeader } from "@/components/layout/workspace-page";
 import { audioFormatOptionsForInterface, audioSpeedRangeForInterface, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { defaultConfig, resolveModelChannel, useConfigStore } from "@/stores/use-config-store";
 
-type SettingsSection = "preferences" | "storage";
-
-const settingsSections: Array<{ key: SettingsSection; label: string; description: string; icon: ReactNode }> = [
-    { key: "preferences", label: "生成偏好", description: "画布与音频默认值", icon: <SlidersHorizontal className="size-4" /> },
-    { key: "storage", label: "我的 OSS", description: "管理个人媒体存储", icon: <Cloud className="size-4" /> },
-];
-
-function isSettingsSection(value: string | null): value is SettingsSection {
-    return settingsSections.some((section) => section.key === value);
-}
-
 export default function SettingsPage() {
     const navigate = useNavigate();
-    const [searchParams, setSearchParams] = useSearchParams();
-    const requestedSection = searchParams.get("section");
-    const [activeSection, setActiveSection] = useState<SettingsSection>(isSettingsSection(requestedSection) ? requestedSection : "preferences");
+    const [searchParams] = useSearchParams();
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const shouldReturnToCreation = searchParams.get("continue") === "1";
 
-    useEffect(() => {
-        if (isSettingsSection(requestedSection)) {
-            setActiveSection(requestedSection);
-            return;
-        }
-        const next = new URLSearchParams(searchParams);
-        next.set("section", "preferences");
-        setSearchParams(next, { replace: true });
-    }, [requestedSection, searchParams, setSearchParams]);
-
-    const selectSection = (section: SettingsSection) => {
-        setActiveSection(section);
-        const next = new URLSearchParams(searchParams);
-        next.set("section", section);
-        setSearchParams(next, { replace: true });
-    };
-
     return (
         <main className="settings-workspace-page flex h-full min-h-0 flex-col bg-background px-4 pb-8 pt-20 text-foreground sm:px-6 md:px-[104px] md:pt-[90px]">
-            <PageHeader title="个人设置" description="管理生成偏好与个人媒体存储" onBack={shouldReturnToCreation ? () => navigate(-1) : undefined} backLabel={shouldReturnToCreation ? "返回创作页面" : "返回首页"} />
-            <div className="settings-page-body mt-4 flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
-                <aside className="settings-section-nav w-full shrink-0 bg-muted/[.18] p-2 md:w-[208px] md:rounded-lg" aria-label="个人设置分类">
-                    <nav className="thin-scrollbar flex gap-1 overflow-x-auto md:block md:space-y-1">
-                        {settingsSections.map((item) => {
-                            const selected = item.key === activeSection;
-                            return (
-                                <button
-                                    key={item.key}
-                                    type="button"
-                                    className={`settings-section-button flex min-w-[176px] items-center gap-3 rounded-md px-3 py-2 text-left transition-colors md:w-full ${selected ? "bg-foreground text-background" : "text-foreground/62 hover:bg-foreground/[.05] hover:text-foreground"}`}
-                                    aria-current={selected ? "page" : undefined}
-                                    onClick={() => selectSection(item.key)}
-                                >
-                                    <span className="settings-section-icon shrink-0">{item.icon}</span>
-                                    <span className="settings-section-copy min-w-0">
-                                        <span className="settings-section-label block truncate text-[13px] font-medium">{item.label}</span>
-                                        <span className={`settings-section-description mt-0.5 block truncate text-[10px] ${selected ? "text-background/60" : "text-foreground/42"}`}>{item.description}</span>
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </nav>
-                </aside>
-
-                <section className="settings-content-panel min-h-0 min-w-0 flex-1">
+            <PageHeader title="个人设置" description="管理生成任务的个人默认值" onBack={shouldReturnToCreation ? () => navigate(-1) : undefined} backLabel={shouldReturnToCreation ? "返回创作页面" : "返回首页"} />
+            <div className="settings-page-body mt-4 min-h-0 flex-1">
+                <section className="settings-content-panel mx-auto h-full min-h-0 w-full max-w-5xl">
                     <div className="settings-content-scroll thin-scrollbar h-full overflow-y-auto">
-                        {activeSection === "preferences" ? <PreferencesSettings config={config} updateConfig={updateConfig} /> : null}
-                        {activeSection === "storage" ? (
-                            <div className="settings-storage-pane">
-                                <UserOSSSettingsForm />
-                            </div>
-                        ) : null}
+                        <PreferencesSettings config={config} updateConfig={updateConfig} />
                     </div>
                 </section>
             </div>

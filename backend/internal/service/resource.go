@@ -206,7 +206,7 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 	if err != nil {
 		return nil, err
 	}
-	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting(userID)
+	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting()
 	if err != nil {
 		return nil, err
 	}
@@ -510,15 +510,7 @@ func (s *Service) activeOSSSetting() (ossSettingValue, error) {
 	return validateActiveOSSSetting(setting, "管理员尚未启用 OSS", "平台 OSS 配置不完整，请联系管理员")
 }
 
-func (s *Service) activeResourceOSSSetting(userID string) (ossSettingValue, string, bool, error) {
-	userSetting, value, err := s.readUserOSSSetting(userID)
-	if err != nil {
-		return ossSettingValue{}, "", false, err
-	}
-	if userSetting != nil && value.Enabled {
-		value, err = validateActiveOSSSetting(value, "用户 OSS 尚未启用", "你的 OSS 配置不完整")
-		return value, userSetting.ID, true, err
-	}
+func (s *Service) activeResourceOSSSetting() (ossSettingValue, string, bool, error) {
 	_, systemValue, err := s.readOSSSetting()
 	if err != nil {
 		return ossSettingValue{}, "", false, err

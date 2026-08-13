@@ -16,38 +16,6 @@ import (
 )
 
 func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
-	r.GET("/settings/oss", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.UserOSSSetting(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.PATCH("/settings/oss", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.OSSSettingRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		setting, err := svc.UpdateUserOSSSetting(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
 	r.GET("/resources", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

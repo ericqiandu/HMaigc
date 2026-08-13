@@ -136,46 +136,39 @@ func TestHydratePublicUpstreamResourceRejectsLocalStorage(t *testing.T) {
 	}
 }
 
-func TestActiveResourceOSSSettingPrefersUserVersion(t *testing.T) {
+func TestActiveResourceOSSSettingIgnoresLegacyUserVersion(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()
-	svc := newResourceTestService(t)
+	svc, db := newResourceTestServiceWithDB(t)
 	systemJSON, _ := json.Marshal(ossSettingValue{Enabled: true, Provider: "aliyun", Endpoint: server.URL, Bucket: "system", AccessKeyID: "system-id", AccessKeySecret: "system-secret"})
 	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(systemJSON)}); err != nil {
 		t.Fatal(err)
 	}
-	actor := &model.User{ID: "user-1"}
-	created, err := svc.UpdateUserOSSSetting(actor, OSSSettingRequest{Enabled: true, Provider: "aliyun", Endpoint: server.URL, Bucket: "user", AccessKeyID: "user-id", AccessKeySecret: "user-secret"})
+	legacyJSON, _ := json.Marshal(ossSettingValue{Enabled: true, Provider: "aliyun", Endpoint: server.URL, Bucket: "user", AccessKeyID: "user-id", AccessKeySecret: "user-secret"})
+	if err := db.Create(&model.UserOSSSetting{ID: "legacy-setting", UserID: "user-1", Enabled: true, ValueJSON: string(legacyJSON)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	setting, settingID, useOSS, err := svc.activeResourceOSSSetting()
 	if err != nil {
 		t.Fatal(err)
 	}
-	setting, settingID, useOSS, err := svc.activeResourceOSSSetting(actor.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !useOSS || settingID == "" || setting.Bucket != "user" || !created.Enabled {
+	if !useOSS || settingID != "" || setting.Bucket != "system" {
 		t.Fatalf("activeResourceOSSSetting() = %#v, %q, %v", setting, settingID, useOSS)
 	}
 }
 
-func TestUserOSSSettingVersionsKeepHistoricalSecrets(t *testing.T) {
-	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	defer server.Close()
-	svc := newResourceTestService(t)
-	actor := &model.User{ID: "user-1"}
-	if _, err := svc.UpdateUserOSSSetting(actor, OSSSettingRequest{Enabled: true, Provider: "aliyun", Endpoint: server.URL, Bucket: "old", AccessKeyID: "old-id", AccessKeySecret: "old-secret"}); err != nil {
-		t.Fatal(err)
-	}
-	oldSetting, _, err := svc.readUserOSSSetting(actor.ID)
+func TestHistoricalUserOSSSettingRemainsReadableByResourceVersion(t *testing.T) {
+	svc, db := newResourceTestServiceWithDB(t)
+	storedSecret, err := svc.encryptSettingSecret("old-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UpdateUserOSSSetting(actor, OSSSettingRequest{Enabled: true, Provider: "aliyun", Endpoint: server.URL, Bucket: "new", AccessKeyID: "new-id", AccessKeySecret: "new-secret"}); err != nil {
+	valueJSON, _ := json.Marshal(ossSettingValue{Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "old", AccessKeyID: "old-id", AccessKeySecret: storedSecret})
+	if err := db.Create(&model.UserOSSSetting{ID: "legacy-setting", UserID: "user-1", Enabled: true, ValueJSON: string(valueJSON)}).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, oldValue, err := svc.readUserOSSSettingByID(actor.ID, oldSetting.ID)
+	_, oldValue, err := svc.readUserOSSSettingByID("user-1", "legacy-setting")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +179,12 @@ func TestUserOSSSettingVersionsKeepHistoricalSecrets(t *testing.T) {
 
 func newResourceTestService(t *testing.T) *Service {
 	t.Helper()
+	service, _ := newResourceTestServiceWithDB(t)
+	return service
+}
+
+func newResourceTestServiceWithDB(t *testing.T) (*Service, *gorm.DB) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +192,7 @@ func newResourceTestService(t *testing.T) *Service {
 	if err := db.AutoMigrate(&model.SystemSetting{}, &model.UserOSSSetting{}, &model.UserDailyUploadUsage{}, &model.Resource{}, &model.SessionFile{}); err != nil {
 		t.Fatal(err)
 	}
-	return &Service{repo: repository.New(db), dataDir: t.TempDir()}
+	return &Service{repo: repository.New(db), dataDir: t.TempDir()}, db
 }
 
 func TestLegacyMediaMigrationSkipsInvalidDataURL(t *testing.T) {

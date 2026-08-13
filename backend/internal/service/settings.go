@@ -109,48 +109,6 @@ func (s *Service) UpdateOSSSetting(actor *model.User, req OSSSettingRequest) (*P
 	return &public, nil
 }
 
-func (s *Service) UserOSSSetting(actor *model.User) (*PublicOSSSetting, error) {
-	if actor == nil {
-		return nil, Unauthorized("请先登录")
-	}
-	setting, value, err := s.readUserOSSSetting(actor.ID)
-	if err != nil {
-		return nil, err
-	}
-	public := publicUserOSSSetting(setting, value)
-	return &public, nil
-}
-
-func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest) (*PublicOSSSetting, error) {
-	if actor == nil {
-		return nil, Unauthorized("请先登录")
-	}
-	_, currentValue, err := s.readUserOSSSetting(actor.ID)
-	if err != nil {
-		return nil, err
-	}
-	next, err := ossSettingFromRequest(req, currentValue)
-	if err != nil {
-		return nil, err
-	}
-	stored := next
-	stored.AccessKeySecret, err = s.encryptSettingSecret(next.AccessKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	valueJSON, err := json.Marshal(stored)
-	if err != nil {
-		return nil, err
-	}
-	// 配置按版本追加而不是覆盖，资源会固定引用创建时的版本。
-	setting := model.UserOSSSetting{ID: newID(), UserID: actor.ID, Enabled: next.Enabled, ValueJSON: string(valueJSON)}
-	if err := s.repo.CreateUserOSSSetting(&setting); err != nil {
-		return nil, err
-	}
-	public := publicUserOSSSetting(&setting, next)
-	return &public, nil
-}
-
 func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error) {
 	setting, err := s.repo.SystemSetting(ossSettingKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -186,18 +144,6 @@ func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error
 		}
 	}
 	return setting, normalizeOSSSetting(value), nil
-}
-
-func (s *Service) readUserOSSSetting(userID string) (*model.UserOSSSetting, ossSettingValue, error) {
-	setting, err := s.repo.LatestUserOSSSetting(userID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, defaultOSSSetting(), nil
-	}
-	if err != nil {
-		return nil, ossSettingValue{}, err
-	}
-	value, err := s.userOSSSettingValue(setting)
-	return setting, value, err
 }
 
 func (s *Service) readUserOSSSettingByID(userID string, id string) (*model.UserOSSSetting, ossSettingValue, error) {
@@ -462,26 +408,6 @@ func publicOSSSetting(setting *model.SystemSetting, value ossSettingValue) Publi
 	}
 	if setting != nil {
 		result.UpdatedBy = setting.UpdatedBy
-		result.CreatedAt = setting.CreatedAt
-		result.UpdatedAt = setting.UpdatedAt
-	}
-	return result
-}
-
-func publicUserOSSSetting(setting *model.UserOSSSetting, value ossSettingValue) PublicOSSSetting {
-	result := PublicOSSSetting{
-		Enabled:            value.Enabled,
-		Provider:           value.Provider,
-		Region:             value.Region,
-		Endpoint:           value.Endpoint,
-		Bucket:             value.Bucket,
-		AccessKeyID:        value.AccessKeyID,
-		HasAccessKeySecret: strings.TrimSpace(value.AccessKeySecret) != "",
-		PublicBaseURL:      value.PublicBaseURL,
-		PathPrefix:         value.PathPrefix,
-	}
-	if setting != nil {
-		result.UpdatedBy = setting.UserID
 		result.CreatedAt = setting.CreatedAt
 		result.UpdatedAt = setting.UpdatedAt
 	}

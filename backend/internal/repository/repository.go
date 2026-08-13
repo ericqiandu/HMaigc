@@ -652,24 +652,12 @@ func (r *Repository) DeleteSystemSetting(key string) error {
 	return r.db.Delete(&model.SystemSetting{}, "key = ?", key).Error
 }
 
-func (r *Repository) LatestUserOSSSetting(userID string) (*model.UserOSSSetting, error) {
-	var setting model.UserOSSSetting
-	if err := r.db.Where("user_id = ?", userID).Order("created_at desc, id desc").First(&setting).Error; err != nil {
-		return nil, err
-	}
-	return &setting, nil
-}
-
 func (r *Repository) UserOSSSettingForUser(userID string, id string) (*model.UserOSSSetting, error) {
 	var setting model.UserOSSSetting
 	if err := r.db.First(&setting, "id = ? AND user_id = ?", id, userID).Error; err != nil {
 		return nil, err
 	}
 	return &setting, nil
-}
-
-func (r *Repository) CreateUserOSSSetting(setting *model.UserOSSSetting) error {
-	return r.db.Create(setting).Error
 }
 
 func (r *Repository) ReserveDailyUpload(userID string, day string, size int64, limit int64) error {

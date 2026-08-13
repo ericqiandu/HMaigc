@@ -24,23 +24,6 @@ export type RemoteResource = {
     updatedAt: string;
 };
 
-export type UserOSSSetting = {
-    enabled: boolean;
-    provider: "aliyun";
-    region: string;
-    endpoint: string;
-    bucket: string;
-    accessKeyId: string;
-    hasAccessKeySecret: boolean;
-    publicBaseUrl: string;
-    pathPrefix: string;
-    updatedAt?: string;
-};
-
-export type UserOSSSettingInput = Pick<UserOSSSetting, "enabled" | "provider" | "region" | "endpoint" | "bucket" | "accessKeyId" | "pathPrefix"> & {
-    accessKeySecret?: string;
-};
-
 const apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
 const api = axios.create({ baseURL: apiBaseURL, withCredentials: true });
 const resourceCache = new Map<string, RemoteResource>();
@@ -55,14 +38,6 @@ async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>) {
 
 export function resourceStorageKey(id: string) {
     return `resource:${id}`;
-}
-
-export function getUserOSSSetting() {
-    return request<{ setting: UserOSSSetting }>(api.get("/settings/oss"));
-}
-
-export function updateUserOSSSetting(input: UserOSSSettingInput) {
-    return request<{ setting: UserOSSSetting }>(api.patch("/settings/oss", input));
 }
 
 export function resourceIdFromStorageKey(storageKey?: string) {

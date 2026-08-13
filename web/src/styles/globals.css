@@ -993,7 +993,6 @@
         background: color-mix(in srgb, var(--workbench-page-background) 92%, transparent);
     }
 
-    .settings-workspace-page .settings-section-nav,
     .settings-workspace-page .settings-content-panel {
         border-radius: 12px;
         background: var(--workbench-surface);
@@ -1001,23 +1000,6 @@
 
     .settings-workspace-page .settings-content-panel {
         padding: 24px;
-    }
-
-    .settings-workspace-page .settings-section-button {
-        border-radius: 8px;
-    }
-
-    .settings-workspace-page .settings-section-button[aria-current="page"] {
-        background: var(--workbench-surface-muted) !important;
-        color: var(--foreground) !important;
-    }
-
-    .settings-workspace-page .settings-section-button[aria-current="page"] .settings-section-icon {
-        color: var(--workbench-primary);
-    }
-
-    .settings-workspace-page .settings-section-button[aria-current="page"] .settings-section-description {
-        color: color-mix(in srgb, var(--foreground) 48%, transparent) !important;
     }
 
     .app-user-content [aria-label="技能分类"] button {

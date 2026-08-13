@@ -155,7 +155,7 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 :where(.workspace-ui-scope, .settings-workspace-page) .app-table-surface,
 :where(.workspace-ui-scope, .settings-workspace-page) .app-collection-card,
 :where(.workspace-ui-scope, .settings-workspace-page) .canvas-library-new-button,
-.settings-workspace-page :where(.settings-section-nav, .settings-content-panel) {
+.settings-workspace-page .settings-content-panel {
     border-color: transparent;
     border-radius: var(--workspace-ui-radius-surface);
     background: var(--workspace-ui-surface);
@@ -176,15 +176,6 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
 }
 
 .workspace-ui-scope .team-navigation-item[aria-current="page"] :where(.team-navigation-meta, .team-navigation-chevron) {
-    color: var(--workspace-ui-text-secondary) !important;
-}
-
-.settings-workspace-page .settings-section-button[aria-current="page"] {
-    background: var(--workspace-ui-control-hover) !important;
-    color: var(--workspace-ui-text) !important;
-}
-
-.settings-workspace-page .settings-section-button[aria-current="page"] .settings-section-description {
     color: var(--workspace-ui-text-secondary) !important;
 }
 
@@ -360,43 +351,8 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
         flex: none;
     }
 
-    .settings-workspace-page .settings-section-nav {
-        padding: 4px;
-    }
-
-    .settings-workspace-page .settings-section-nav > nav {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 4px;
-        overflow: visible;
-    }
-
-    .settings-workspace-page .settings-section-button {
-        width: 100%;
-        min-width: 0;
-        min-height: 44px;
-        justify-content: center;
-        gap: 6px;
-        padding: 8px;
-        text-align: center;
-    }
-
-    .settings-workspace-page .settings-section-button[aria-current="page"] {
-        background: var(--workspace-ui-control-hover) !important;
-        color: var(--workspace-ui-text) !important;
-    }
-
-    .settings-workspace-page .settings-section-copy {
-        min-width: 0;
-    }
-
-    .settings-workspace-page .settings-section-description {
-        display: none;
-    }
-
     .settings-workspace-page .settings-content-panel {
         min-height: auto;
-        margin-top: var(--workspace-ui-space-3);
     }
 
     .settings-workspace-page .settings-content-scroll {
