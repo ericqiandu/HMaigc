@@ -77,6 +77,7 @@ type CanvasProjectWorldLayersProps = {
 
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
 const EMPTY_CANVAS_NODES: CanvasNodeData[] = [];
+const LIVE_DRAG_OFFSET: Position = { x: 0, y: 0 };
 
 export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
     const { theme, viewportScale } = props;
@@ -118,7 +119,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                     <CanvasFrameNode
                         key={node.id}
                         data={node}
-                        dragOffset={props.dragPreview?.nodeIds.has(node.id) ? props.dragPreview : undefined}
+                        dragOffset={props.dragPreview?.nodeIds.has(node.id) ? LIVE_DRAG_OFFSET : undefined}
                         childNodes={props.frameChildrenById.get(node.id) || EMPTY_CANVAS_NODES}
                         scale={viewportScale}
                         isSelected={props.selectedNodeIds.has(node.id)}
@@ -134,7 +135,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                     <CanvasNode
                         key={node.id}
                         data={node}
-                        dragOffset={props.dragPreview?.nodeIds.has(node.id) ? props.dragPreview : undefined}
+                        dragOffset={props.dragPreview?.nodeIds.has(node.id) ? LIVE_DRAG_OFFSET : undefined}
                         scale={viewportScale}
                         isSelected={props.selectedNodeIds.has(node.id)}
                         isRelated={props.relatedNodeIds.has(node.id)}

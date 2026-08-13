@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 
 import { calculateNodeAlignment, createNodeAlignmentContext, isHiddenBatchChild, sameStringSet, type NodeAlignmentContext } from "@/lib/canvas/canvas-project-domain";
+import { applyCanvasLiveNodeDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, shouldSyncCanvasDragPreview, type FrameDropContext } from "@/lib/canvas/canvas-drag-performance";
 import { applyFrameDrop, findFrameDropTarget, getFrameChildIds, isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import type { CanvasNodeData, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 
@@ -58,10 +59,13 @@ export function useCanvasSelectionController({
     onDeselect,
 }: UseCanvasSelectionControllerOptions) {
     const dragFrameRef = useRef<number | null>(null);
+    const dragSurfaceRef = useRef<HTMLElement | null>(null);
     const pendingNodeDragRef = useRef<Position>({ x: 0, y: 0 });
     const pendingAlignmentGuidesRef = useRef<{ vertical?: number; horizontal?: number }>({});
     const alignmentContextRef = useRef<NodeAlignmentContext | null>(null);
     const lastFrameDropCheckRef = useRef(0);
+    const lastDragPreviewSyncRef = useRef(0);
+    const frameDropContextRef = useRef<FrameDropContext | null>(null);
     const selectionFrameRef = useRef<number | null>(null);
     const selectionBoxElementRef = useRef<HTMLDivElement>(null);
     const selectionBoundsElementRef = useRef<HTMLDivElement>(null);
@@ -124,6 +128,7 @@ export function useCanvasSelectionController({
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
         event.stopPropagation();
         if (event.button !== 0) return;
+        dragSurfaceRef.current = event.currentTarget instanceof Element ? event.currentTarget.closest("[data-canvas-world-layer]")?.parentElement || null : null;
         setSelectedConnectionId(null);
         const currentNodes = nodesRef.current;
         const nextSelected = new Set(selectedNodeIdsRef.current);
@@ -176,7 +181,10 @@ export function useCanvasSelectionController({
         nodeDraggingRef.current = true;
         pendingNodeDragRef.current = { x: 0, y: 0 };
         alignmentContextRef.current = createNodeAlignmentContext(currentNodes, initialSelectedNodes);
+        frameDropContextRef.current = createFrameDropContext(currentNodes, new Set(draggedNodeIds));
         lastFrameDropCheckRef.current = 0;
+        lastDragPreviewSyncRef.current = 0;
+        applyCanvasLiveNodeDrag(dragSurfaceRef.current, { x: 0, y: 0 });
         setIsNodeDragging(true);
         setAlignmentGuides({});
         setDragPreview({ x: 0, y: 0, nodeIds: new Set(initialSelectedNodes.map((item) => item.id)) });
@@ -200,6 +208,7 @@ export function useCanvasSelectionController({
         historyPausedRef.current = false;
         nodeDraggingRef.current = false;
         setIsNodeDragging(false);
+        clearCanvasLiveNodeDrag(dragSurfaceRef.current);
         setDragPreview(null);
         setAlignmentGuides({});
         if (dragRef.current.hasMoved) {
@@ -214,6 +223,8 @@ export function useCanvasSelectionController({
         }
         setFrameDropTargetId(null);
         alignmentContextRef.current = null;
+        frameDropContextRef.current = null;
+        dragSurfaceRef.current = null;
         dragRef.current = { ...EMPTY_DRAG_STATE };
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
@@ -230,19 +241,17 @@ export function useCanvasSelectionController({
         dragFrameRef.current = requestAnimationFrame(() => {
             const aligned = calculateNodeAlignment(alignmentContextRef.current, pendingNodeDragRef.current, 7 / viewportRef.current.k);
             const latest = aligned.offset;
+            applyCanvasLiveNodeDrag(dragSurfaceRef.current, latest);
             pendingAlignmentGuidesRef.current = aligned.guides;
-            const initialById = new Map(dragRef.current.initialSelectedNodes.map((item) => [item.id, item]));
             const now = performance.now();
             if (now - lastFrameDropCheckRef.current >= 100) {
                 lastFrameDropCheckRef.current = now;
-                const draggedNodeIds = new Set(dragRef.current.draggedNodeIds);
-                const positioned = nodesRef.current.map((node) => {
-                    const initial = initialById.get(node.id);
-                    return initial ? { ...node, position: { x: initial.x + latest.x, y: initial.y + latest.y } } : node;
-                });
-                setFrameDropTargetId(findFrameDropTarget(positioned, draggedNodeIds));
+                setFrameDropTargetId(findFrameDropTargetFromContext(frameDropContextRef.current, latest));
             }
-            setDragPreview((current) => current ? { ...current, x: latest.x, y: latest.y } : current);
+            if (shouldSyncCanvasDragPreview(now, lastDragPreviewSyncRef.current)) {
+                lastDragPreviewSyncRef.current = now;
+                setDragPreview((current) => current ? { ...current, x: latest.x, y: latest.y } : current);
+            }
             const nextGuides = dragRef.current.hasMoved ? pendingAlignmentGuidesRef.current : {};
             setAlignmentGuides((current) => current.vertical === nextGuides.vertical && current.horizontal === nextGuides.horizontal ? current : nextGuides);
             dragFrameRef.current = null;
@@ -322,6 +331,8 @@ export function useCanvasSelectionController({
         return () => {
             if (dragFrameRef.current) cancelAnimationFrame(dragFrameRef.current);
             if (selectionFrameRef.current) cancelAnimationFrame(selectionFrameRef.current);
+            clearCanvasLiveNodeDrag(dragSurfaceRef.current);
+            dragSurfaceRef.current = null;
             window.removeEventListener("mousemove", handleMouseMove);
             window.removeEventListener("mouseup", handleMouseUp);
             window.removeEventListener("pointermove", handlePointerMove);

@@ -145,7 +145,14 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
         <div
             data-node-id={data.id}
             className={`absolute z-0 select-none ${dragOffset ? "cursor-grabbing" : "cursor-default"}`}
-            style={{ transform: `translate(${data.position.x + (dragOffset?.x || 0)}px, ${data.position.y + (dragOffset?.y || 0)}px)`, width: data.width, height: data.height, contain: "layout style" }}
+            style={{
+                transform: dragOffset
+                    ? `translate(calc(${data.position.x}px + var(--canvas-live-drag-x, 0px)), calc(${data.position.y}px + var(--canvas-live-drag-y, 0px)))`
+                    : `translate(${data.position.x}px, ${data.position.y}px)`,
+                width: data.width,
+                height: data.height,
+                contain: "layout style",
+            }}
             onMouseDown={(event) => onMouseDown(event, data.id)}
             onDoubleClick={(event) => {
                 if (!collapsed || (event.target instanceof Element && event.target.closest("button,input"))) return;

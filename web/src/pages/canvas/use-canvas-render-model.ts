@@ -4,7 +4,7 @@ import { buildNodeGenerationInputs, type NodeGenerationInput } from "@/component
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
-import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
 import type { UpdreamSkill } from "@/services/api/skills";
 import type { Asset, ImageAsset } from "@/stores/use-asset-store";
@@ -241,14 +241,15 @@ export function useCanvasRenderModel({
     const activeStylePresetId = useMemo(() => semanticNodes.find((node) => node.metadata?.workflowKind === "styleboard")?.metadata?.stylePresetId, [semanticNodes]);
     const activeScriptNode = useMemo(() => semanticNodes.find((node) => node.id === scriptEditorNodeId && node.type === CanvasNodeType.Script) || null, [scriptEditorNodeId, semanticNodes]);
     const activeDirectorScene = useMemo(() => directorScenes?.find((scene) => scene.id === activeDirectorNode?.metadata?.directorSceneId) || null, [activeDirectorNode?.metadata?.directorSceneId, directorScenes]);
-    const canvasResourceReferences = useMemo(() => buildCanvasResourceReferences(semanticNodes, connections, dialogNodeId || activeNodeId), [activeNodeId, connections, dialogNodeId, semanticNodes]);
+    const resourceGraph = useMemo(() => createCanvasResourceGraph(semanticNodes, connections), [connections, semanticNodes]);
+    const canvasResourceReferences = useMemo(() => buildCanvasResourceReferencesFromGraph(resourceGraph, dialogNodeId || activeNodeId), [activeNodeId, dialogNodeId, resourceGraph]);
     const resourceReferenceByNodeId = useMemo(() => new Map(canvasResourceReferences.map((reference) => [reference.nodeId, reference])), [canvasResourceReferences]);
     const skillMentionReferences = useMemo(() => buildSkillMentionReferences(activatedSkills), [activatedSkills]);
     const mentionReferencesByNodeId = useMemo(() => {
-        const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        semanticNodes.forEach((node) => map.set(node.id, [...buildNodeMentionReferences(node, semanticNodes, connections), ...skillMentionReferences]));
+        const map = buildNodeMentionReferencesByNodeId(semanticNodes, resourceGraph);
+        map.forEach((references, nodeId) => map.set(nodeId, [...references, ...skillMentionReferences]));
         return map;
-    }, [connections, semanticNodes, skillMentionReferences]);
+    }, [resourceGraph, semanticNodes, skillMentionReferences]);
 
     return {
         activeDirectorNode,

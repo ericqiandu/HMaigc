@@ -11,7 +11,7 @@ import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/g
 import { useThemeStore } from "@/stores/use-theme-store";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl } from "@/services/resource-blob-cache";
-import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasTextDraftEditor, type CanvasTextDraftEditorHandle } from "./canvas-text-draft-editor";
 import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -64,7 +64,7 @@ type NodeContentRendererProps = {
     node: CanvasNodeData;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     isEditingContent: boolean;
-    textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+    textareaRef: React.RefObject<CanvasTextDraftEditorHandle | null>;
     isBatchRoot: boolean;
     batchCount: number;
     batchExpanded: boolean;
@@ -143,7 +143,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const cometDepth = hasMediaContent ? 6.8 : data.type === CanvasNodeType.Script ? 2.8 : 4.6;
     const cometTranslate = hasMediaContent ? 6 : data.type === CanvasNodeType.Script ? 2.5 : 4;
     const cometDisabled = reduceMediaEffects || Boolean(dragOffset) || isEditingContent || isGeneratingNode || scale < 0.32 || batchClosing || batchOpening;
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const textareaRef = useRef<CanvasTextDraftEditorHandle>(null);
     const resizeRef = useRef({
         isResizing: false,
         corner: "bottom-right" as ResizeCorner,
@@ -158,7 +158,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     });
 
     useEffect(() => {
-        const textarea = textareaRef.current;
+        const textarea = textareaRef.current?.element;
         if (!textarea) return;
 
         const handleWheel = (event: WheelEvent) => event.stopPropagation();
@@ -168,7 +168,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 
     useEffect(() => {
         if (!isEditingContent) return;
-        const textarea = textareaRef.current;
+        const textarea = textareaRef.current?.element;
         textarea?.focus();
         textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
     }, [isEditingContent]);
@@ -179,8 +179,9 @@ export const CanvasNode = React.memo(function CanvasNode({
         const handleOutsidePointerDown = (event: PointerEvent) => {
             const target = event.target;
             if (!(target instanceof Node)) return;
-            if (isEditingContent && textareaRef.current?.contains(target)) return;
+            if (isEditingContent && textareaRef.current?.element?.contains(target)) return;
 
+            textareaRef.current?.commit();
             setIsEditingContent(false);
         };
 
@@ -266,7 +267,9 @@ export const CanvasNode = React.memo(function CanvasNode({
             data-node-id={data.id}
             className={`node-element absolute flex select-none flex-col ${dragOffset ? "cursor-grabbing" : "cursor-default"} ${isSelected ? "z-50" : "z-10"}`}
             style={{
-                transform: `translate(${data.position.x + (dragOffset?.x || 0)}px, ${data.position.y + (dragOffset?.y || 0)}px)`,
+                transform: dragOffset
+                    ? `translate(calc(${data.position.x}px + var(--canvas-live-drag-x, 0px)), calc(${data.position.y}px + var(--canvas-live-drag-y, 0px)))`
+                    : `translate(${data.position.x}px, ${data.position.y}px)`,
                 width: data.width,
                 height: data.height,
                 contain: "layout style",
@@ -591,18 +594,16 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
     return (
         <div className="flex h-full w-full flex-col overflow-hidden pt-10">
             {isEditingContent ? (
-                <CanvasResourceMentionTextarea
+                <CanvasTextDraftEditor
                     ref={textareaRef}
+                    nodeId={node.id}
                     className="thin-scrollbar block h-full w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-4 pt-0 pb-4 m-0 font-mono outline-none select-text appearance-none"
                     style={textStyle}
                     value={node.metadata?.content || ""}
                     references={mentionReferences}
                     highlightLabels={false}
-                    onChange={(value) => onContentChange(node.id, value)}
-                    onBlur={onStopEditing}
-                    onKeyDown={(event) => {
-                        if (event.key === "Escape") onStopEditing();
-                    }}
+                    onCommit={onContentChange}
+                    onStopEditing={onStopEditing}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                     onWheel={(event) => event.stopPropagation()}
