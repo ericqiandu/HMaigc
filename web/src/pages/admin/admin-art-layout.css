@@ -7,8 +7,8 @@
     --workspace-ui-text-tertiary: rgb(29 29 31 / 52%);
 }
 
-.dark .admin-workspace.workspace-ui-scope,
-.dark .admin-mobile-navigation-drawer {
+.admin-theme-root[data-admin-theme="dark"] .admin-workspace.workspace-ui-scope,
+.admin-theme-root[data-admin-theme="dark"] .admin-mobile-navigation-drawer {
     --admin-panel-shadow: none;
     --workspace-ui-page: #0a0a0b;
     --workspace-ui-surface: #171718;

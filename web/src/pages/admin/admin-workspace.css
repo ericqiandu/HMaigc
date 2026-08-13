@@ -1,84 +1,82 @@
-@layer utilities {
-    .admin-theme-root[data-admin-theme="light"],
-    .admin-theme-root[data-admin-theme="light"] .admin-workspace {
-        --admin-chart-primary: #1677ff;
-        --admin-chart-secondary: #13a8a8;
-        --admin-chart-warning: #d46b08;
-        --workspace-ui-page: #f5f7fa;
-        --workspace-ui-surface: #ffffff;
-        --workspace-ui-surface-subtle: #fafafa;
-        --workspace-ui-control: #ffffff;
-        --workspace-ui-control-hover: rgb(31 35 41 / 5%);
-        --workspace-ui-text: #1f2329;
-        --workspace-ui-text-secondary: #646a73;
-        --workspace-ui-text-tertiary: #8f959e;
-        --workspace-ui-text-disabled: rgb(31 35 41 / 35%);
-        --workspace-ui-divider: #e8eaed;
-        --workspace-ui-accent: #2979c9;
-        --admin-chart-primary: #2979c9;
-        --admin-chart-secondary: #0f766e;
-        --admin-chart-warning: #b65c00;
-        --background: #f5f7fa;
-        --foreground: #1f2329;
-        --card: #ffffff;
-        --card-foreground: #1f2329;
-        --popover: #ffffff;
-        --popover-foreground: #1f2329;
-        --primary: #2979c9;
-        --primary-foreground: #ffffff;
-        --muted: #fafafa;
-        --muted-foreground: #8f959e;
-        --border: #e8eaed;
-        --input: #ffffff;
-        color-scheme: light;
-    }
+.admin-theme-root[data-admin-theme="light"],
+.admin-theme-root[data-admin-theme="light"] .admin-workspace {
+    --admin-chart-primary: #1677ff;
+    --admin-chart-secondary: #13a8a8;
+    --admin-chart-warning: #d46b08;
+    --workspace-ui-page: #f5f7fa;
+    --workspace-ui-surface: #ffffff;
+    --workspace-ui-surface-subtle: #fafafa;
+    --workspace-ui-control: #ffffff;
+    --workspace-ui-control-hover: rgb(31 35 41 / 5%);
+    --workspace-ui-text: #1f2329;
+    --workspace-ui-text-secondary: #646a73;
+    --workspace-ui-text-tertiary: #8f959e;
+    --workspace-ui-text-disabled: rgb(31 35 41 / 35%);
+    --workspace-ui-divider: #e8eaed;
+    --workspace-ui-accent: #2979c9;
+    --admin-chart-primary: #2979c9;
+    --admin-chart-secondary: #0f766e;
+    --admin-chart-warning: #b65c00;
+    --background: #f5f7fa;
+    --foreground: #1f2329;
+    --card: #ffffff;
+    --card-foreground: #1f2329;
+    --popover: #ffffff;
+    --popover-foreground: #1f2329;
+    --primary: #2979c9;
+    --primary-foreground: #ffffff;
+    --muted: #fafafa;
+    --muted-foreground: #8f959e;
+    --border: #e8eaed;
+    --input: #ffffff;
+    color-scheme: light;
+}
 
-    .admin-theme-root[data-admin-theme="dark"],
-    .admin-theme-root[data-admin-theme="dark"] .admin-workspace {
-        --admin-chart-primary: #4096ff;
-        --admin-chart-secondary: #36cfc9;
-        --admin-chart-warning: #fa8c16;
-        --workspace-ui-page: #0b0f14;
-        --workspace-ui-surface: #1b212b;
-        --workspace-ui-surface-subtle: #111827;
-        --workspace-ui-control: #1b212b;
-        --workspace-ui-control-hover: rgb(255 255 255 / 5%);
-        --workspace-ui-text: rgb(255 255 255 / 96%);
-        --workspace-ui-text-secondary: rgb(255 255 255 / 72%);
-        --workspace-ui-text-tertiary: rgb(255 255 255 / 48%);
-        --workspace-ui-text-disabled: rgb(255 255 255 / 38%);
-        --workspace-ui-divider: rgb(255 255 255 / 8%);
-        --workspace-ui-accent: #7ccbff;
-        --admin-chart-primary: #7ccbff;
-        --admin-chart-secondary: #5eead4;
-        --admin-chart-warning: #ff9f0a;
-        --background: #0b0f14;
-        --foreground: rgb(255 255 255 / 96%);
-        --card: #1b212b;
-        --card-foreground: rgb(255 255 255 / 96%);
-        --popover: #1b212b;
-        --popover-foreground: rgb(255 255 255 / 96%);
-        --primary: #7ccbff;
-        --primary-foreground: #06111a;
-        --muted: #111827;
-        --muted-foreground: rgb(255 255 255 / 48%);
-        --border: rgb(255 255 255 / 8%);
-        --input: #1b212b;
-        color-scheme: dark;
-    }
+.admin-theme-root[data-admin-theme="dark"],
+.admin-theme-root[data-admin-theme="dark"] .admin-workspace {
+    --admin-chart-primary: #4096ff;
+    --admin-chart-secondary: #36cfc9;
+    --admin-chart-warning: #fa8c16;
+    --workspace-ui-page: #0b0f14;
+    --workspace-ui-surface: #1b212b;
+    --workspace-ui-surface-subtle: #111827;
+    --workspace-ui-control: #1b212b;
+    --workspace-ui-control-hover: rgb(255 255 255 / 5%);
+    --workspace-ui-text: rgb(255 255 255 / 96%);
+    --workspace-ui-text-secondary: rgb(255 255 255 / 72%);
+    --workspace-ui-text-tertiary: rgb(255 255 255 / 48%);
+    --workspace-ui-text-disabled: rgb(255 255 255 / 38%);
+    --workspace-ui-divider: rgb(255 255 255 / 8%);
+    --workspace-ui-accent: #7ccbff;
+    --admin-chart-primary: #7ccbff;
+    --admin-chart-secondary: #5eead4;
+    --admin-chart-warning: #ff9f0a;
+    --background: #0b0f14;
+    --foreground: rgb(255 255 255 / 96%);
+    --card: #1b212b;
+    --card-foreground: rgb(255 255 255 / 96%);
+    --popover: #1b212b;
+    --popover-foreground: rgb(255 255 255 / 96%);
+    --primary: #7ccbff;
+    --primary-foreground: #06111a;
+    --muted: #111827;
+    --muted-foreground: rgb(255 255 255 / 48%);
+    --border: rgb(255 255 255 / 8%);
+    --input: #1b212b;
+    color-scheme: dark;
+}
 
-    .admin-theme-root,
-    .admin-theme-app {
-        width: 100%;
-        min-width: 0;
-        height: 100%;
-        min-height: 0;
-    }
+.admin-theme-root,
+.admin-theme-app {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+}
 
-    .admin-workspace {
-        width: 100%;
-        height: 100%;
-    }
+.admin-workspace {
+    width: 100%;
+    height: 100%;
 }
 
 @layer utilities {

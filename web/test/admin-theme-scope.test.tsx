@@ -38,6 +38,14 @@ function ThemeProbe() {
 }
 
 describe("admin theme scope", () => {
+    test("does not let the creation dark class override the independent admin theme", async () => {
+        const adminStyles = await Bun.file(new URL("../src/pages/admin/admin-art-layout.css", import.meta.url)).text();
+        const themeStyles = await Bun.file(new URL("../src/pages/admin/admin-workspace.css", import.meta.url)).text();
+        expect(adminStyles).not.toContain(".dark .admin-workspace");
+        expect(adminStyles).toContain('.admin-theme-root[data-admin-theme="dark"] .admin-workspace');
+        expect(themeStyles.trimStart()).toStartWith('.admin-theme-root[data-admin-theme="light"]');
+    });
+
     test("defaults to light and never mutates the creation theme preference", async () => {
         const creationTheme = JSON.stringify({ state: { theme: "dark" } });
         localStorage.setItem("infinite-canvas:theme_store", creationTheme);
