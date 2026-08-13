@@ -111,16 +111,25 @@ describe("admin pro layout", () => {
         expect(document.querySelector(".admin-page-content .analytics-refresh")).toBeNull();
     });
 
-    test("renders the overview before filters and moves analytics actions into the page header", async () => {
+    test("renders metrics, filters, trend and details in one semantic data-page order", async () => {
         await renderAnalyticsPage();
         await flushEffects();
 
         const layout = document.querySelector(".admin-analytics-layout");
-        const sections = Array.from(layout?.children ?? []).map((node) => node.className);
-        expect(sections.slice(0, 3)).toEqual(["admin-analytics-overview-grid", "admin-analytics-toolbar", "admin-analytics-trend"]);
-        expect(layout?.children.item(3)?.classList.contains("admin-analytics-tabs")).toBe(true);
+        const dataLayout = layout?.querySelector(".admin-data-layout");
+        const sections = Array.from(dataLayout?.children ?? []).map((node) => node.className);
+        expect(sections).toEqual(["admin-metric-band", "admin-metric-band", "admin-filter-section", "admin-content-section", "admin-content-section"]);
+        expect(dataLayout?.querySelectorAll(".admin-metric-band")).toHaveLength(2);
+        expect(dataLayout?.querySelector('[role="region"][aria-label="统计筛选"]')).not.toBeNull();
+        expect(Array.from(dataLayout?.querySelectorAll(".admin-content-section-title") ?? [], (title) => title.textContent)).toEqual(["使用趋势", "分析明细"]);
+
+        const text = dataLayout?.textContent ?? "";
+        expect(text.indexOf("运行概览")).toBeLessThan(text.indexOf("商业指标"));
+        expect(text.indexOf("商业指标")).toBeLessThan(text.indexOf("时间范围"));
+        expect(text.indexOf("时间范围")).toBeLessThan(text.indexOf("使用趋势"));
+        expect(text.indexOf("使用趋势")).toBeLessThan(text.indexOf("模型分析"));
         expect(document.querySelector(".admin-page-actions .admin-analytics-refresh-button")?.textContent).toContain("刷新");
-        expect(document.querySelector(".admin-analytics-toolbar .admin-analytics-refresh-button")).toBeNull();
+        expect(document.querySelector(".admin-filter-section .admin-analytics-refresh-button")).toBeNull();
         expect(document.querySelector(".admin-table-empty")?.textContent).toContain("暂无模型统计");
     });
 

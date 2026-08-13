@@ -73,7 +73,7 @@ export function AdminContentSection({ title, description, actions, children }: A
         <section className="admin-content-section" role="region" aria-labelledby={headingId}>
             <header className="admin-data-section-header">
                 <div className="admin-data-section-copy">
-                    <h2 id={headingId} className="admin-data-section-title">
+                    <h2 id={headingId} className="admin-data-section-title admin-content-section-title">
                         {title}
                     </h2>
                     {description ? <p className="admin-data-section-description">{description}</p> : null}

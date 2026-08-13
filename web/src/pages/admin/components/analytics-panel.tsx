@@ -9,6 +9,7 @@ import { useSearchParams } from "react-router";
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { exportAdminAnalytics, getAdminAnalytics, listAdminUsers, type AdminReferenceData, type AdminAnalytics, type AnalyticsFilters } from "@/services/api/auth";
+import { AdminContentSection, AdminDataLayout, AdminFilterSection, AdminMetric, AdminMetricBand } from "./admin-data-layout";
 import { AdminPageActions } from "./admin-shell";
 import { AdminContentError, AdminContentSkeleton, AdminExportButton, AdminTableEmpty } from "./admin-ui";
 
@@ -164,151 +165,136 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                 <>
                     {loadError ? <AdminContentError title="数据概览刷新失败" description={`${loadError}。当前继续显示上一次成功读取的数据。`} onRetry={() => void reload()} /> : null}
 
-                    <div className="admin-analytics-overview-grid">
-                        <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-efficiency-title">
-                            <div className="admin-analytics-section-heading">
-                                <div className="admin-analytics-section-copy">
-                                    <h2 id="admin-analytics-efficiency-title" className="admin-analytics-section-title">
-                                        运行概览
-                                    </h2>
-                                    <p className="admin-analytics-section-description">用户活跃度、任务量与服务性能</p>
-                                </div>
+                    <AdminDataLayout>
+                        <AdminMetricBand
+                            title="运行概览"
+                            description="用户活跃度、任务量与服务性能"
+                            queue={
                                 <div className="admin-analytics-queue-status" aria-label={`当前队列 ${data.kpi.currentQueuedTasks}`}>
                                     <span className="admin-analytics-queue-label">队列</span>
                                     <strong className="admin-analytics-queue-value">{data.kpi.currentQueuedTasks}</strong>
                                 </div>
-                            </div>
-                            <div className="admin-analytics-metrics">
-                                <Metric label="活跃用户" value={data.kpi.activeUsers} detail={`DAU ${data.kpi.dau} · WAU ${data.kpi.wau} · MAU ${data.kpi.mau}`} />
-                                <Metric label="生成任务" value={data.kpi.generationTasks} detail={`上游请求 ${data.kpi.upstreamRequests}`} />
-                                <Metric label="请求成功率" value={percent(data.kpi.successRate)} />
-                                <Metric label="P95 耗时" value={formatDuration(data.kpi.p95DurationMs)} />
-                            </div>
-                        </section>
+                            }
+                        >
+                            <AdminMetric label="活跃用户" value={data.kpi.activeUsers} detail={`DAU ${data.kpi.dau} · WAU ${data.kpi.wau} · MAU ${data.kpi.mau}`} />
+                            <AdminMetric label="生成任务" value={data.kpi.generationTasks} detail={`上游请求 ${data.kpi.upstreamRequests}`} />
+                            <AdminMetric label="请求成功率" value={percent(data.kpi.successRate)} />
+                            <AdminMetric label="P95 耗时" value={formatDuration(data.kpi.p95DurationMs)} />
+                        </AdminMetricBand>
 
-                        <section className="admin-analytics-metric-section" aria-labelledby="admin-analytics-business-title">
-                            <div className="admin-analytics-section-heading">
-                                <div className="admin-analytics-section-copy">
-                                    <h2 id="admin-analytics-business-title" className="admin-analytics-section-title">
-                                        商业指标
-                                    </h2>
-                                    <p className="admin-analytics-section-description">成本、营收、毛利与冻结资金</p>
-                                </div>
-                            </div>
-                            <div className="admin-analytics-metrics">
-                                <Metric label="上游估算成本" value={formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable)} />
-                                <Metric label="已结算积分营收" value={formatCredits(data.kpi.settledRevenueMicrocredits)} detail={`${data.kpi.settledBillingOrders} 笔已结算订单`} />
-                                <Metric label="积分毛利" value={formatCredits(data.kpi.grossProfitMicrocredits)} detail={`基础成本 ${formatCredits(data.kpi.settledBaseCostMicrocredits)}`} />
-                                <Metric label="冻结积分" value={formatCredits(data.kpi.pendingAmountMicrocredits + data.kpi.reviewAmountMicrocredits)} detail={`处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${data.kpi.reviewBillingOrders} 笔`} />
-                            </div>
-                        </section>
-                    </div>
+                        <AdminMetricBand title="商业指标" description="成本、营收、毛利与冻结资金">
+                            <AdminMetric label="上游估算成本" value={formatCost(data.kpi.estimatedCostMicros, data.kpi.currency, data.kpi.costAvailable)} />
+                            <AdminMetric label="已结算积分营收" value={formatCredits(data.kpi.settledRevenueMicrocredits)} detail={`${data.kpi.settledBillingOrders} 笔已结算订单`} />
+                            <AdminMetric label="积分毛利" value={formatCredits(data.kpi.grossProfitMicrocredits)} detail={`基础成本 ${formatCredits(data.kpi.settledBaseCostMicrocredits)}`} />
+                            <AdminMetric label="冻结积分" value={formatCredits(data.kpi.pendingAmountMicrocredits + data.kpi.reviewAmountMicrocredits)} detail={`处理中 ${data.kpi.pendingBillingOrders} 笔 · 待复核 ${data.kpi.reviewBillingOrders} 笔`} />
+                        </AdminMetricBand>
 
-                    <div className="admin-analytics-toolbar">
-                        <ListToolbar>
-                            <label className="admin-analytics-filter admin-analytics-date-filter">
-                                <span className="admin-analytics-filter-label">时间范围</span>
-                                <DatePicker.RangePicker className="admin-analytics-range-picker" allowClear={false} value={range} onChange={(value) => value?.[0] && value?.[1] && setRange([value[0], value[1]])} />
-                            </label>
-                            <FilterSelect
-                                label="用户"
-                                value={userId}
-                                onChange={setUserId}
-                                options={userOptions.map((user) => ({ label: user.displayName || user.username, value: user.id }))}
-                                filterOption={false}
-                                loading={searchingUsers}
-                                onSearch={(value) => void searchUsers(value)}
+                        <AdminFilterSection label="统计筛选">
+                            <div className="admin-analytics-toolbar">
+                                <ListToolbar>
+                                    <label className="admin-analytics-filter admin-analytics-date-filter">
+                                        <span className="admin-analytics-filter-label">时间范围</span>
+                                        <DatePicker.RangePicker className="admin-analytics-range-picker" allowClear={false} value={range} onChange={(value) => value?.[0] && value?.[1] && setRange([value[0], value[1]])} />
+                                    </label>
+                                    <FilterSelect
+                                        label="用户"
+                                        value={userId}
+                                        onChange={setUserId}
+                                        options={userOptions.map((user) => ({ label: user.displayName || user.username, value: user.id }))}
+                                        filterOption={false}
+                                        loading={searchingUsers}
+                                        onSearch={(value) => void searchUsers(value)}
+                                    />
+                                    <FilterSelect label="模型" value={model} onChange={setModel} options={modelOptions} wide />
+                                    <FilterSelect label="渠道" value={channelId} onChange={setChannelId} options={channels.map((channel) => ({ label: channel.name, value: channel.id }))} />
+                                    <FilterSelect label="能力" value={capability} onChange={setCapability} options={capabilityOptions} />
+                                </ListToolbar>
+                            </div>
+                        </AdminFilterSection>
+
+                        <AdminContentSection title="使用趋势" description="生成任务与真实上游请求分开统计，成功率按上游请求计算。">
+                            <div className="admin-analytics-chart">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={data.trend} margin={{ top: 8, right: 12, bottom: 0, left: -16 }}>
+                                        <CartesianGrid stroke="var(--workspace-ui-divider)" vertical={false} />
+                                        <XAxis dataKey="day" tickFormatter={(value) => value.slice(5)} tick={{ fontSize: 11 }} />
+                                        <YAxis yAxisId="count" allowDecimals={false} tick={{ fontSize: 11 }} />
+                                        <YAxis yAxisId="rate" orientation="right" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 11 }} />
+                                        <ChartTooltip labelFormatter={(value) => `日期 ${value}`} />
+                                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                                        <Area yAxisId="count" type="monotone" dataKey="tasks" name="生成任务" stroke="var(--admin-chart-primary)" fill="var(--admin-chart-primary)" fillOpacity={0.1} />
+                                        <Area yAxisId="count" type="monotone" dataKey="requests" name="上游请求" stroke="var(--admin-chart-secondary)" fill="var(--admin-chart-secondary)" fillOpacity={0.08} />
+                                        <Line yAxisId="rate" type="monotone" dataKey="requestSuccessRate" name="成功率" stroke="var(--admin-chart-warning)" dot={false} strokeWidth={2} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </AdminContentSection>
+
+                        <AdminContentSection title="分析明细" description="按模型、用户和异常类型查看当前筛选范围内的运营事实。">
+                            <Tabs
+                                className="admin-analytics-tabs"
+                                items={[
+                                    {
+                                        key: "models",
+                                        label: "模型分析",
+                                        children: (
+                                            <TableSurface className="admin-analytics-table-surface mt-0">
+                                                <Table
+                                                    className="admin-analytics-table"
+                                                    rowKey={(row) => `${row.model}:${row.capability}`}
+                                                    size="small"
+                                                    loading={loading}
+                                                    columns={modelColumns}
+                                                    dataSource={data.models}
+                                                    locale={{ emptyText: <AdminTableEmpty compact title="暂无模型统计" description="模型产生调用后，任务、成功率与费用会显示在这里。" /> }}
+                                                    pagination={{ pageSize: 10 }}
+                                                    scroll={{ x: 1250 }}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                    },
+                                    {
+                                        key: "users",
+                                        label: "用户活动",
+                                        children: (
+                                            <TableSurface className="admin-analytics-table-surface mt-0">
+                                                <Table
+                                                    className="admin-analytics-table"
+                                                    rowKey="userId"
+                                                    size="small"
+                                                    loading={loading}
+                                                    columns={userColumns}
+                                                    dataSource={data.users}
+                                                    locale={{ emptyText: <AdminTableEmpty compact title="暂无用户活动" description="用户使用生成与画布功能后，活跃数据会显示在这里。" /> }}
+                                                    pagination={{ pageSize: 10 }}
+                                                    scroll={{ x: 900 }}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                    },
+                                    {
+                                        key: "failures",
+                                        label: `异常定位${data.failures.length ? ` (${data.failures.reduce((sum, item) => sum + item.count, 0)})` : ""}`,
+                                        children: (
+                                            <TableSurface className="admin-analytics-table-surface mt-0">
+                                                <Table
+                                                    className="admin-analytics-table"
+                                                    rowKey={(row) => `${row.type}:${row.model}`}
+                                                    size="small"
+                                                    loading={loading}
+                                                    columns={failureColumns}
+                                                    dataSource={data.failures}
+                                                    locale={{ emptyText: <AdminTableEmpty compact title="暂无异常记录" description="当前筛选范围内没有模型调用异常。" /> }}
+                                                    pagination={{ pageSize: 10 }}
+                                                    scroll={{ x: 900 }}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                    },
+                                ]}
                             />
-                            <FilterSelect label="模型" value={model} onChange={setModel} options={modelOptions} wide />
-                            <FilterSelect label="渠道" value={channelId} onChange={setChannelId} options={channels.map((channel) => ({ label: channel.name, value: channel.id }))} />
-                            <FilterSelect label="能力" value={capability} onChange={setCapability} options={capabilityOptions} />
-                        </ListToolbar>
-                    </div>
-
-                    <section className="admin-analytics-trend">
-                        <div className="admin-analytics-trend-heading">
-                            <h2 className="admin-analytics-trend-title">使用趋势</h2>
-                            <p className="admin-analytics-trend-description">生成任务与真实上游请求分开统计，成功率按上游请求计算。</p>
-                        </div>
-                        <div className="admin-analytics-chart">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <ComposedChart data={data.trend} margin={{ top: 8, right: 12, bottom: 0, left: -16 }}>
-                                    <CartesianGrid stroke="var(--workspace-ui-divider)" vertical={false} />
-                                    <XAxis dataKey="day" tickFormatter={(value) => value.slice(5)} tick={{ fontSize: 11 }} />
-                                    <YAxis yAxisId="count" allowDecimals={false} tick={{ fontSize: 11 }} />
-                                    <YAxis yAxisId="rate" orientation="right" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 11 }} />
-                                    <ChartTooltip labelFormatter={(value) => `日期 ${value}`} />
-                                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                                    <Area yAxisId="count" type="monotone" dataKey="tasks" name="生成任务" stroke="var(--admin-chart-primary)" fill="var(--admin-chart-primary)" fillOpacity={0.1} />
-                                    <Area yAxisId="count" type="monotone" dataKey="requests" name="上游请求" stroke="var(--admin-chart-secondary)" fill="var(--admin-chart-secondary)" fillOpacity={0.08} />
-                                    <Line yAxisId="rate" type="monotone" dataKey="requestSuccessRate" name="成功率" stroke="var(--admin-chart-warning)" dot={false} strokeWidth={2} />
-                                </ComposedChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </section>
-
-                    <Tabs
-                        className="admin-analytics-tabs"
-                        items={[
-                            {
-                                key: "models",
-                                label: "模型分析",
-                                children: (
-                                    <TableSurface className="admin-analytics-table-surface mt-0">
-                                        <Table
-                                            className="admin-analytics-table"
-                                            rowKey={(row) => `${row.model}:${row.capability}`}
-                                            size="small"
-                                            loading={loading}
-                                            columns={modelColumns}
-                                            dataSource={data.models}
-                                            locale={{ emptyText: <AdminTableEmpty compact title="暂无模型统计" description="模型产生调用后，任务、成功率与费用会显示在这里。" /> }}
-                                            pagination={{ pageSize: 10 }}
-                                            scroll={{ x: 1250 }}
-                                        />
-                                    </TableSurface>
-                                ),
-                            },
-                            {
-                                key: "users",
-                                label: "用户活动",
-                                children: (
-                                    <TableSurface className="admin-analytics-table-surface mt-0">
-                                        <Table
-                                            className="admin-analytics-table"
-                                            rowKey="userId"
-                                            size="small"
-                                            loading={loading}
-                                            columns={userColumns}
-                                            dataSource={data.users}
-                                            locale={{ emptyText: <AdminTableEmpty compact title="暂无用户活动" description="用户使用生成与画布功能后，活跃数据会显示在这里。" /> }}
-                                            pagination={{ pageSize: 10 }}
-                                            scroll={{ x: 900 }}
-                                        />
-                                    </TableSurface>
-                                ),
-                            },
-                            {
-                                key: "failures",
-                                label: `异常定位${data.failures.length ? ` (${data.failures.reduce((sum, item) => sum + item.count, 0)})` : ""}`,
-                                children: (
-                                    <TableSurface className="admin-analytics-table-surface mt-0">
-                                        <Table
-                                            className="admin-analytics-table"
-                                            rowKey={(row) => `${row.type}:${row.model}`}
-                                            size="small"
-                                            loading={loading}
-                                            columns={failureColumns}
-                                            dataSource={data.failures}
-                                            locale={{ emptyText: <AdminTableEmpty compact title="暂无异常记录" description="当前筛选范围内没有模型调用异常。" /> }}
-                                            pagination={{ pageSize: 10 }}
-                                            scroll={{ x: 900 }}
-                                        />
-                                    </TableSurface>
-                                ),
-                            },
-                        ]}
-                    />
+                        </AdminContentSection>
+                    </AdminDataLayout>
                 </>
             ) : null}
         </div>
@@ -352,16 +338,6 @@ function FilterSelect({
                 options={options}
             />
         </label>
-    );
-}
-
-function Metric({ label, value, detail }: { label: string; value: string | number; detail?: string }) {
-    return (
-        <article className="admin-analytics-metric">
-            <span className="admin-analytics-metric-label">{label}</span>
-            <strong className="admin-analytics-metric-value">{value}</strong>
-            {detail ? <span className="admin-analytics-metric-detail">{detail}</span> : null}
-        </article>
     );
 }
 
