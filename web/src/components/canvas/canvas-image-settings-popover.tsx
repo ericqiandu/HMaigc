@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
-import { CanvasImageGenerationSettings, imageCanvasAspectLabel, imageCanvasQualityLabel, imageCanvasResolutionLabel, imageModelSupportsBatch } from "@/components/canvas/canvas-image-generation-settings";
+import { CanvasImageGenerationSettings } from "@/components/canvas/canvas-image-generation-settings";
+import { findImageModelCapabilities, imageCanvasSettingsSummary } from "@/lib/image-model-capabilities";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -27,12 +28,9 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-    const quality = config.quality || "auto";
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const transparentLabel = config.transparentBackground === "true" ? " · 透明" : "";
-    const settingsSummary = `${imageCanvasAspectLabel(config.size)} · ${imageCanvasQualityLabel(quality)} · ${imageCanvasResolutionLabel(config.size)}`;
-    const effectiveShowCount = showCount && imageModelSupportsBatch(config.model);
-    const summary = effectiveShowCount ? `${settingsSummary} · ${count}张${transparentLabel}` : `${settingsSummary}${transparentLabel}`;
+    const capabilities = findImageModelCapabilities(config);
+    const effectiveShowCount = showCount && Boolean(capabilities && capabilities.outputCounts.length > 1);
+    const summary = capabilities ? imageCanvasSettingsSummary(config, showCount) : "参数未配置";
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);

@@ -11,7 +11,7 @@ import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { imageModelMetadataPatch } from "./canvas-image-generation-settings";
+import { imageModelMetadataPatch } from "@/lib/image-model-capabilities";
 import { CanvasAudioComposerControls } from "./canvas-audio-composer-controls";
 import { CanvasAudioTextTools } from "./canvas-audio-text-tools";
 import { CanvasResourceMentionTextarea, type CanvasResourceMentionTextareaHandle } from "./canvas-resource-mention-textarea";
@@ -308,7 +308,7 @@ export function CanvasNodePromptPanel({
                         fullWidth
                         config={config}
                         value={config.model}
-                        onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : mode === "image" ? imageModelMetadataPatch(model) : { model })}
+                        onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : mode === "image" ? imageModelMetadataPatch(config, model) : { model })}
                         capability={mode}
                         onMissingConfig={handleMissingSystemModel}
                         showSelectedEstimate={false}

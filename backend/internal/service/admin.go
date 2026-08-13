@@ -147,6 +147,8 @@ type PublicProviderCapabilities struct {
 	Resolutions             []string `json:"resolutions"`
 	InputVariants           []string `json:"inputVariants"`
 	Ratios                  []string `json:"ratios"`
+	Qualities               []string `json:"qualities"`
+	OutputCounts            []int    `json:"outputCounts"`
 	DurationMin             int      `json:"durationMin"`
 	DurationMax             int      `json:"durationMax"`
 	SupportsSmartDuration   bool     `json:"supportsSmartDuration"`
@@ -818,14 +820,19 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 }
 
 func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilities {
-	capabilities, ok := kuaiziSeedanceModelSpec(modelKey)
-	if !ok {
+	capabilities, ok := kuaiziProviderModelSpec(modelKey)
+	if !ok || (capabilities.Capability != "image" && capabilities.Capability != "video") {
 		return nil
+	}
+	inputVariants := []string{}
+	if capabilities.Capability == "video" {
+		inputVariants = []string{"standard", "reference_video"}
 	}
 	return &PublicProviderCapabilities{
 		ModelKey: capabilities.ModelKey, DisplayName: capabilities.DisplayName,
 		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
-		Resolutions: append([]string(nil), capabilities.Resolutions...), InputVariants: []string{"standard", "reference_video"}, Ratios: append([]string(nil), capabilities.Ratios...),
+		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, Ratios: append([]string{}, capabilities.Ratios...),
+		Qualities: append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
 		SupportsWatermark: capabilities.SupportsWatermark, SupportsAudioOnly: capabilities.SupportsAudioOnly,

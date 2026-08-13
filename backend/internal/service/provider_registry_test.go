@@ -60,10 +60,12 @@ func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	}
 	var descriptors []struct {
 		Models []struct {
-			ModelKey    string          `json:"modelKey"`
-			Resolutions json.RawMessage `json:"resolutions"`
-			Ratios      json.RawMessage `json:"ratios"`
-			Tools       json.RawMessage `json:"tools"`
+			ModelKey     string          `json:"modelKey"`
+			Resolutions  json.RawMessage `json:"resolutions"`
+			Ratios       json.RawMessage `json:"ratios"`
+			Qualities    json.RawMessage `json:"qualities"`
+			OutputCounts json.RawMessage `json:"outputCounts"`
+			Tools        json.RawMessage `json:"tools"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(payload, &descriptors); err != nil {
@@ -72,15 +74,32 @@ func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	for _, descriptor := range descriptors {
 		for _, model := range descriptor.Models {
 			for field, value := range map[string]json.RawMessage{
-				"resolutions": model.Resolutions,
-				"ratios":      model.Ratios,
-				"tools":       model.Tools,
+				"resolutions":  model.Resolutions,
+				"ratios":       model.Ratios,
+				"qualities":    model.Qualities,
+				"outputCounts": model.OutputCounts,
+				"tools":        model.Tools,
 			} {
 				if string(value) == "null" {
 					t.Fatalf("model %s field %s encoded as null, want []", model.ModelKey, field)
 				}
 			}
 		}
+	}
+}
+
+func TestProviderRegistryPublishesGPTImage2ParameterCapabilities(t *testing.T) {
+	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, _ := registry.Descriptor("kuaizi", "gpt-image2")
+	model := descriptor.Models[0]
+	if strings.Join(model.Qualities, ",") != "low,medium,high" {
+		t.Fatalf("GPT Image 2 qualities = %#v", model.Qualities)
+	}
+	if len(model.OutputCounts) != 1 || model.OutputCounts[0] != 1 {
+		t.Fatalf("GPT Image 2 output counts = %#v", model.OutputCounts)
 	}
 }
 

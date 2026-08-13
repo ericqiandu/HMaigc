@@ -1,3 +1,4 @@
+import { findImageModelCapabilities, imageCanvasAspectLabel, imageCanvasQualityLabel, imageCanvasResolutionLabel, imageSizeValue } from "@/lib/image-model-capabilities";
 import { cn } from "@/lib/utils";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -9,68 +10,66 @@ type CanvasImageGenerationSettingsProps = {
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 };
 
-type ImageResolution = "1K" | "2K" | "4K";
-
-const qualityOptions = [
-    { value: "low", label: "低画质" },
-    { value: "medium", label: "标准画质" },
-    { value: "high", label: "高画质" },
-] as const;
-
-const resolutionOptions: ImageResolution[] = ["1K", "2K", "4K"];
-const ratioOptions = ["1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"] as const;
-const countOptions = [1, 2, 4] as const;
-
 export function CanvasImageGenerationSettings({ config, theme, showCount, onConfigChange }: CanvasImageGenerationSettingsProps) {
-    const quality = normalizeQuality(config.quality);
-    const ratio = imageCanvasAspectLabel(config.size);
-    const resolution = imageCanvasResolutionLabel(config.size);
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const counts = countOptions.includes(count as (typeof countOptions)[number]) ? countOptions : [...countOptions, count];
+    const capabilities = findImageModelCapabilities(config);
+    if (!capabilities) {
+        return <p className="canvas-image-capability-error px-1 py-2 text-xs opacity-60">后台尚未发布该图片模型的参数能力</p>;
+    }
+    const quality = capabilities.qualities.includes(config.quality) ? config.quality : capabilities.qualities[0] || "";
+    const ratio = imageCanvasAspectLabel(config.size, capabilities.ratios);
+    const resolution = imageCanvasResolutionLabel(config.size, capabilities.resolutions);
+    const parsedCount = Math.max(1, Math.floor(Number(config.count) || 1));
+    const count = capabilities.outputCounts.includes(parsedCount) ? parsedCount : capabilities.outputCounts[0] || 1;
 
-    const updateDimensions = (nextRatio: string, nextResolution: ImageResolution) => {
-        onConfigChange("size", buildImageDimensions(nextRatio, nextResolution));
+    const updateDimensions = (nextRatio: string, nextResolution: string) => {
+        onConfigChange("size", imageSizeValue(nextRatio, nextResolution));
     };
 
     return (
         <div className="canvas-image-generation-settings space-y-5">
-            <SettingsSection label="画质">
-                <div className="canvas-image-quality-grid grid grid-cols-3 gap-2">
-                    {qualityOptions.map((option) => (
-                        <SettingsButton key={option.value} active={quality === option.value} label={option.label} theme={theme} className="canvas-image-quality-option h-8" onClick={() => onConfigChange("quality", option.value)} />
-                    ))}
-                </div>
-            </SettingsSection>
+            {capabilities.qualities.length ? (
+                <SettingsSection label="画质">
+                    <div className="canvas-image-quality-grid grid grid-cols-3 gap-2">
+                        {capabilities.qualities.map((option) => (
+                            <SettingsButton key={option} active={quality === option} label={imageCanvasQualityLabel(option)} theme={theme} className="canvas-image-quality-option h-8" onClick={() => onConfigChange("quality", option)} />
+                        ))}
+                    </div>
+                </SettingsSection>
+            ) : null}
 
-            <SettingsSection label="清晰度">
-                <div className="canvas-image-resolution-grid grid grid-cols-3 gap-2">
-                    {resolutionOptions.map((option) => (
-                        <SettingsButton key={option} active={resolution === option} label={option} theme={theme} className="canvas-image-resolution-option h-8" onClick={() => updateDimensions(ratio, option)} />
-                    ))}
-                </div>
-            </SettingsSection>
+            {capabilities.resolutions.length ? (
+                <SettingsSection label="清晰度">
+                    <div className="canvas-image-resolution-grid grid grid-cols-3 gap-2">
+                        {capabilities.resolutions.map((option) => (
+                            <SettingsButton key={option} active={resolution === option} label={option} theme={theme} className="canvas-image-resolution-option h-8" onClick={() => updateDimensions(ratio, option)} />
+                        ))}
+                    </div>
+                </SettingsSection>
+            ) : null}
 
-            <SettingsSection label="比例">
-                <div className="canvas-image-ratio-grid grid grid-cols-5 gap-2">
-                    {ratioOptions.map((option) => (
-                        <button
-                            key={option}
-                            type="button"
-                            className={cn("canvas-image-ratio-option flex h-[63px] flex-col items-center justify-center gap-1.5 rounded-lg transition-colors", ratio === option ? "is-active" : "opacity-60 hover:opacity-90")}
-                            style={settingButtonStyle(theme, ratio === option)}
-                            onClick={() => updateDimensions(option, resolution)}
-                        >
-                            <RatioIcon ratio={option} active={ratio === option} />
-                            <span className="canvas-image-ratio-label">{option}</span>
-                        </button>
-                    ))}
-                </div>
-            </SettingsSection>
+            {capabilities.ratios.length ? (
+                <SettingsSection label="比例">
+                    <div className="canvas-image-ratio-grid grid grid-cols-5 gap-2">
+                        {capabilities.ratios.map((option) => (
+                            <button
+                                key={option}
+                                type="button"
+                                className={cn("canvas-image-ratio-option flex h-[63px] flex-col items-center justify-center gap-1.5 rounded-lg transition-colors", ratio === option ? "is-active" : "opacity-60 hover:opacity-90")}
+                                style={settingButtonStyle(theme, ratio === option)}
+                                onClick={() => updateDimensions(option, resolution)}
+                            >
+                                <RatioIcon ratio={option} active={ratio === option} />
+                                <span className="canvas-image-ratio-label">{option}</span>
+                            </button>
+                        ))}
+                    </div>
+                </SettingsSection>
+            ) : null}
 
-            {showCount && imageModelSupportsBatch(config.model) ? (
+            {showCount && capabilities.outputCounts.length > 1 ? (
                 <SettingsSection label="生成数量">
-                    <div className={cn("canvas-image-count-grid grid gap-2", counts.length === 4 ? "grid-cols-4" : "grid-cols-3")}>
-                        {counts.map((option) => (
+                    <div className={cn("canvas-image-count-grid grid gap-2", capabilities.outputCounts.length === 4 ? "grid-cols-4" : "grid-cols-3")}>
+                        {capabilities.outputCounts.map((option) => (
                             <SettingsButton key={option} active={count === option} label={`${option}张`} theme={theme} className="canvas-image-count-option h-8" onClick={() => onConfigChange("count", String(option))} />
                         ))}
                     </div>
@@ -99,12 +98,13 @@ function SettingsButton({ active, label, theme, className, onClick }: { active: 
 
 function RatioIcon({ ratio, active }: { ratio: string; active: boolean }) {
     const [width, height] = ratio.split(":").map(Number);
+    const valid = width > 0 && height > 0;
     const longest = 16;
-    const scale = longest / Math.max(width, height);
+    const scale = valid ? longest / Math.max(width, height) : 1;
     return (
         <span
             className={cn("canvas-image-ratio-icon block rounded-[2px] border", active ? "border-current" : "border-current/70")}
-            style={{ width: Math.max(5, Math.round(width * scale)), height: Math.max(5, Math.round(height * scale)) }}
+            style={{ width: valid ? Math.max(5, Math.round(width * scale)) : 12, height: valid ? Math.max(5, Math.round(height * scale)) : 12 }}
             aria-hidden="true"
         />
     );
@@ -118,75 +118,4 @@ function settingButtonStyle(theme: CanvasTheme, active: boolean) {
     };
 }
 
-function normalizeQuality(value?: string) {
-    return value === "low" || value === "high" ? value : "medium";
-}
-
-export function imageCanvasQualityLabel(value?: string) {
-    if (value === "low") return "低画质";
-    if (value === "high") return "高画质";
-    return "标准画质";
-}
-
-export function imageCanvasResolutionLabel(size?: string): ImageResolution {
-    const dimensions = parseDimensions(size);
-    if (!dimensions) return "1K";
-    const longest = Math.max(dimensions.width, dimensions.height);
-    if (longest >= 2800) return "4K";
-    if (longest >= 1900) return "2K";
-    return "1K";
-}
-
-export function imageCanvasAspectLabel(size?: string) {
-    const dimensions = parseDimensions(size);
-    if (!dimensions) return "1:1";
-    const target = dimensions.width / dimensions.height;
-    return ratioOptions.reduce((closest, candidate) => {
-        const [width, height] = candidate.split(":").map(Number);
-        const [closestWidth, closestHeight] = closest.split(":").map(Number);
-        return Math.abs(width / height - target) < Math.abs(closestWidth / closestHeight - target) ? candidate : closest;
-    });
-}
-
-function parseDimensions(size?: string) {
-    if (!size) return null;
-    const match = /^(\d+)x(\d+)$/i.exec(size.trim());
-    if (!match) return null;
-    const width = Number(match[1]);
-    const height = Number(match[2]);
-    return width > 0 && height > 0 ? { width, height } : null;
-}
-
-export function buildImageDimensions(ratio: string, resolution: ImageResolution) {
-    const [widthRatio, heightRatio] = ratio.split(":").map(Number);
-    const square = widthRatio === heightRatio;
-    const landscape = widthRatio > heightRatio;
-    const longestEdge = resolution === "4K" ? 3840 : resolution === "2K" ? 2048 : square ? 1024 : 1824;
-    const shortestEdge = alignDimension((longestEdge * Math.min(widthRatio, heightRatio)) / Math.max(widthRatio, heightRatio));
-    let width = square ? longestEdge : landscape ? longestEdge : shortestEdge;
-    let height = square ? longestEdge : landscape ? shortestEdge : longestEdge;
-    const maxPixels = 8_294_400;
-    if (width * height > maxPixels) {
-        const scale = Math.sqrt(maxPixels / (width * height));
-        width = floorDimension(width * scale);
-        height = floorDimension(height * scale);
-    }
-    return `${width}x${height}`;
-}
-
-function alignDimension(value: number) {
-    return Math.max(64, Math.round(value / 16) * 16);
-}
-
-function floorDimension(value: number) {
-    return Math.max(64, Math.floor(value / 16) * 16);
-}
-
-export function imageModelSupportsBatch(model?: string) {
-    const modelName = (model || "").split("::").at(-1);
-    return modelName !== "kz_gpt_image2";
-}
-
-export function imageModelMetadataPatch(model: string) {
-    return imageModelSupportsBatch(model) ? { model } : { model, count: 1 };
-}
+export { buildImageDimensions } from "@/lib/image-model-capabilities";

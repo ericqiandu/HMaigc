@@ -160,6 +160,32 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestPublicChannelPublishesImageParameterCapabilities(t *testing.T) {
+	channel := model.ModelChannel{ID: "channel-image", Scope: model.ChannelScopeSystem, Enabled: true}
+	item := model.ChannelModel{
+		ID: "gpt-image2", ChannelID: channel.ID, ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", BillingMode: "fixed_request",
+		PriceStrategy: "image_resolution", PriceConfigured: true, Enabled: true,
+		PriceTiers: []model.ChannelModelPriceTier{
+			{Resolution: "1K", UnitPriceMicrocredits: 1},
+			{Resolution: "2K", UnitPriceMicrocredits: 1},
+			{Resolution: "4K", UnitPriceMicrocredits: 1},
+		},
+	}
+
+	catalog := publicChannel(channel, false, []model.ChannelModel{item}, false)
+	if len(catalog.ModelCosts) != 1 || catalog.ModelCosts[0].ProviderCapabilities == nil {
+		t.Fatalf("image provider capabilities missing: %#v", catalog.ModelCosts)
+	}
+	capabilities := catalog.ModelCosts[0].ProviderCapabilities
+	if capabilities.Capability != "image" || strings.Join(capabilities.Resolutions, ",") != "1K,2K,4K" || len(capabilities.Ratios) != 13 {
+		t.Fatalf("image parameter capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.Qualities, ",") != "low,medium,high" || len(capabilities.OutputCounts) != 1 || capabilities.OutputCounts[0] != 1 {
+		t.Fatalf("image quality/count capabilities = %#v", capabilities)
+	}
+}
+
 func TestPublicSystemChannelDoesNotPublishIncompleteManagedVideoPricing(t *testing.T) {
 	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true}
 	item := model.ChannelModel{

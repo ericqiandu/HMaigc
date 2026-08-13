@@ -5,7 +5,7 @@ import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/fil
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isArkPlanBaseUrl, isSeedanceVideoConfig, seedanceReferenceError } from "@/lib/seedance-video";
 import { normalizeVideoConfigForModel, resolveSeedanceProviderCapabilities } from "@/lib/video-model-capabilities";
-import { buildApiUrl, isSystemProxyBaseUrl, modelOptionName, resolveModelRequestConfig, type AiConfig, type VideoProviderCapabilities } from "@/stores/use-config-store";
+import { buildApiUrl, isSystemProxyBaseUrl, modelOptionName, resolveModelRequestConfig, type AiConfig, type ProviderModelCapabilities } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -143,7 +143,7 @@ async function pollOpenAIVideoTask(config: ResolvedAiConfig, task: VideoGenerati
 async function createSeedanceTask(
     config: ResolvedAiConfig,
     model: string,
-    capabilities: VideoProviderCapabilities,
+    capabilities: ProviderModelCapabilities,
     prompt: string,
     references: ReferenceImage[],
     videoReferences: ReferenceVideo[],
@@ -209,7 +209,7 @@ function usesSeedanceCompatibleProtocol(config: ResolvedAiConfig) {
     return config.interfaceType === "ai-open-platform-video-volcengine" || isArkPlanBaseUrl(config.baseUrl);
 }
 
-async function buildSeedanceAgentPlanPayload(config: AiConfig, model: string, capabilities: VideoProviderCapabilities, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
+async function buildSeedanceAgentPlanPayload(config: AiConfig, model: string, capabilities: ProviderModelCapabilities, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
     const modelName = modelOptionName(model);
     if (!capabilities.supportsAudioOnly && audioReferences.length && !references.length && !videoReferences.length) {
         throw new Error("Seedance 参考音频不能单独使用，请同时添加参考图或参考视频");

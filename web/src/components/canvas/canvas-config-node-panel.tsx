@@ -10,7 +10,7 @@ import { normalizeVideoConfigForModel, videoModelMetadataPatch } from "@/lib/vid
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { imageModelMetadataPatch } from "./canvas-image-generation-settings";
+import { imageModelMetadataPatch } from "@/lib/image-model-capabilities";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -168,7 +168,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         className="canvas-compact-control h-10"
                         config={config}
                         value={config.model}
-                        onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : mode === "image" ? imageModelMetadataPatch(model) : { model })}
+                        onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : mode === "image" ? imageModelMetadataPatch(config, model) : { model })}
                         capability={mode}
                         onMissingConfig={handleMissingSystemModel}
                         fullWidth

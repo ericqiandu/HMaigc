@@ -58,12 +58,12 @@ export type ModelChannel = {
             inputVariant: "standard" | "reference_video";
             unitPriceMicrocredits: number;
         }>;
-        providerCapabilities?: VideoProviderCapabilities;
+        providerCapabilities?: ProviderModelCapabilities;
     }>;
     voices?: ChannelVoice[];
 };
 
-export type VideoProviderCapabilities = {
+export type ProviderModelCapabilities = {
     modelKey: string;
     displayName: string;
     upstreamMode: string;
@@ -71,6 +71,8 @@ export type VideoProviderCapabilities = {
     resolutions: string[];
     inputVariants: Array<"standard" | "reference_video">;
     ratios: string[];
+    qualities: string[];
+    outputCounts: number[];
     durationMin: number;
     durationMax: number;
     supportsSmartDuration: boolean;

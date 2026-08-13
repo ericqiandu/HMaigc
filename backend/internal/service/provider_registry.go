@@ -19,6 +19,8 @@ type ProviderModelSpec struct {
 	Capability              string   `json:"capability"`
 	Resolutions             []string `json:"resolutions"`
 	Ratios                  []string `json:"ratios"`
+	Qualities               []string `json:"qualities"`
+	OutputCounts            []int    `json:"outputCounts"`
 	DurationMin             int      `json:"durationMin"`
 	DurationMax             int      `json:"durationMax"`
 	SupportsSmartDuration   bool     `json:"supportsSmartDuration"`
@@ -104,6 +106,8 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 		result.Models[index] = model
 		result.Models[index].Resolutions = append([]string{}, model.Resolutions...)
 		result.Models[index].Ratios = append([]string{}, model.Ratios...)
+		result.Models[index].Qualities = append([]string{}, model.Qualities...)
+		result.Models[index].OutputCounts = append([]int{}, model.OutputCounts...)
 		result.Models[index].Tools = append([]string{}, model.Tools...)
 	}
 	return result
@@ -126,8 +130,10 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Family:       "gpt-image2",
 			Models: []ProviderModelSpec{{
 				ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2", UpstreamMode: "kz_gpt_image2", Capability: "image",
-				Resolutions: []string{"1K", "2K", "4K"},
-				Ratios:      []string{"1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"},
+				Resolutions:  []string{"1K", "2K", "4K"},
+				Ratios:       []string{"1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"},
+				Qualities:    []string{"low", "medium", "high"},
+				OutputCounts: []int{1},
 			}},
 		},
 		{

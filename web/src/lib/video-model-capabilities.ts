@@ -2,7 +2,7 @@ import { isMiniMaxH3VideoConfig, miniMaxH3DurationOptions, miniMaxH3ResolutionOp
 import { isKlingVideoConfig, klingDurationOptions, klingRatioOptions, klingResolutionOptions, normalizeKlingDuration, normalizeKlingResolution } from "@/lib/kling-video";
 import { isSeedanceVideoConfig, normalizeResolutionToken, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { normalizeVideoDuration, normalizeVideoResolution, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
-import { modelOptionName, resolveModelRequestConfig, type AiConfig, type VideoProviderCapabilities } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelRequestConfig, type AiConfig, type ProviderModelCapabilities } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
 
 export type VideoParameterOption = Readonly<{ value: string; label: string }>;
@@ -114,7 +114,7 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
     };
 }
 
-export function resolveSeedanceProviderCapabilities(config: AiConfig, model: string): VideoProviderCapabilities {
+export function resolveSeedanceProviderCapabilities(config: AiConfig, model: string): ProviderModelCapabilities {
     const resolved = resolveModelRequestConfig(config, config.model || config.videoModel);
     const channel = config.channels.find((candidate) => candidate.id === resolved.channelId);
     const capabilities = channel?.modelCosts?.find((candidate) => candidate.model === model)?.providerCapabilities;
