@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { Window } from "happy-dom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -10,19 +9,6 @@ let CanvasAgentSelectionSummary: (typeof import("../src/components/canvas/canvas
 let resolveAgentDefaultRequestConfig: (typeof import("../src/components/canvas/canvas-agent-default-model"))["resolveAgentDefaultRequestConfig"];
 
 beforeAll(async () => {
-    const browserWindow = new Window({ url: "http://localhost/canvas/test" });
-    const globals: Record<string, unknown> = {
-        window: browserWindow,
-        document: browserWindow.document,
-        navigator: browserWindow.navigator,
-        HTMLElement: browserWindow.HTMLElement,
-        Element: browserWindow.Element,
-        Node: browserWindow.Node,
-        ShadowRoot: browserWindow.ShadowRoot,
-        SVGElement: browserWindow.SVGElement,
-        getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
-    };
-    for (const [name, value] of Object.entries(globals)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
     ({ CanvasAgentModelMenu } = await import("../src/components/canvas/canvas-agent-model-menu"));
     ({ CanvasAgentSelectionSummary } = await import("../src/components/canvas/canvas-agent-selection-summary"));
     ({ resolveAgentDefaultRequestConfig } = await import("../src/components/canvas/canvas-agent-default-model"));

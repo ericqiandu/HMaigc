@@ -1,20 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { Window } from "happy-dom";
 
 import { agentDefaultModelOptions, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
 
 let configStore: typeof import("../src/stores/use-config-store");
 
 beforeAll(async () => {
-    const browserWindow = new Window({ url: "http://localhost/admin/model-pricing" });
-    for (const [name, value] of Object.entries({
-        window: browserWindow,
-        document: browserWindow.document,
-        localStorage: browserWindow.localStorage,
-        navigator: browserWindow.navigator,
-    })) {
-        Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-    }
     configStore = await import("../src/stores/use-config-store");
 });
 

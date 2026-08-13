@@ -1,5 +1,4 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { Window } from "happy-dom";
 import { readFileSync } from "node:fs";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
@@ -111,36 +110,6 @@ let createRoot: (container: Element | DocumentFragment) => Root;
 let mountedRoot: Root | null = null;
 
 beforeAll(async () => {
-    const browserWindow = new Window({ url: "http://localhost/admin/providers/kuaizi" });
-    const globals: Record<string, unknown> = {
-        window: browserWindow,
-        document: browserWindow.document,
-        navigator: browserWindow.navigator,
-        localStorage: browserWindow.localStorage,
-        Event: browserWindow.Event,
-        MouseEvent: browserWindow.MouseEvent,
-        KeyboardEvent: browserWindow.KeyboardEvent,
-        HTMLElement: browserWindow.HTMLElement,
-        HTMLAnchorElement: browserWindow.HTMLAnchorElement,
-        HTMLButtonElement: browserWindow.HTMLButtonElement,
-        HTMLInputElement: browserWindow.HTMLInputElement,
-        Element: browserWindow.Element,
-        Node: browserWindow.Node,
-        ShadowRoot: browserWindow.ShadowRoot,
-        SVGElement: browserWindow.SVGElement,
-        Blob: browserWindow.Blob,
-        FileReader: browserWindow.FileReader,
-        XMLHttpRequest: browserWindow.XMLHttpRequest,
-        getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
-        requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
-        cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
-        ResizeObserver: browserWindow.ResizeObserver,
-    };
-    for (const [name, value] of Object.entries(globals)) {
-        Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-    }
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean; __APP_VERSION__: string }).IS_REACT_ACT_ENVIRONMENT = true;
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean; __APP_VERSION__: string }).__APP_VERSION__ = "test";
     ({ createRoot } = await import("react-dom/client"));
     ({ default: KuaiziProviderPage } = await import("../src/pages/admin/providers/kuaizi-provider-page"));
 });
