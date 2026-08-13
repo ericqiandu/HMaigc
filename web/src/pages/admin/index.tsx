@@ -3,6 +3,7 @@ import { Button } from "antd";
 import { ShieldX } from "lucide-react";
 import { useNavigate } from "react-router";
 import { AdminProvider } from "./admin-context";
+import { AdminLayoutSettingsProvider } from "./admin-layout-settings";
 import { AdminThemeProvider } from "./admin-theme";
 import { AdminShell } from "./components/admin-shell";
 import { AdminStatePanel } from "./components/admin-ui";
@@ -31,10 +32,12 @@ export default function AdminPage() {
     }
 
     return (
-        <AdminThemeProvider>
-            <AdminProvider>
-                <AdminShell />
-            </AdminProvider>
-        </AdminThemeProvider>
+        <AdminLayoutSettingsProvider>
+            <AdminThemeProvider>
+                <AdminProvider>
+                    <AdminShell />
+                </AdminProvider>
+            </AdminThemeProvider>
+        </AdminLayoutSettingsProvider>
     );
 }
