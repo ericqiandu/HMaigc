@@ -124,14 +124,15 @@ func miniMaxH3VideoBody(input canvasGenerationInput) (map[string]interface{}, er
 		return nil, err
 	}
 	content = append(content, media...)
-	return map[string]interface{}{
-		"model":          miniMaxH3Model,
-		"content":        content,
-		"duration":       duration,
-		"resolution":     resolution,
-		"ratio":          ratio,
-		"aigc_watermark": strings.EqualFold(strings.TrimSpace(input.Config.VideoWatermark), "true"),
-	}, nil
+	body := map[string]interface{}{
+		"model":      miniMaxH3Model,
+		"content":    content,
+		"duration":   duration,
+		"resolution": resolution,
+		"ratio":      ratio,
+	}
+	insertFrozenWatermark(body, "aigc_watermark", input.Watermark)
+	return body, nil
 }
 
 func miniMaxH3MediaContent(input canvasGenerationInput, mode string) ([]map[string]interface{}, error) {

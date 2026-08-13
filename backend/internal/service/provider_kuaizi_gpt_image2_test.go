@@ -92,6 +92,12 @@ func TestKuaiziGPTImage2SubmitsDocumentedPayloadAndDownloadsResult(t *testing.T)
 	if _, exists := createBody["negative_prompt"]; exists {
 		t.Fatal("negative_prompt must not be sent in the first integration slice")
 	}
+	if _, exists := createBody["watermark"]; exists {
+		t.Fatalf("unsupported GPT Image 2 request contains watermark: %#v", createBody)
+	}
+	if _, exists := createBody["aigc_watermark"]; exists {
+		t.Fatalf("unsupported GPT Image 2 request contains aigc_watermark: %#v", createBody)
+	}
 	if statusBody["task_id"] != "kz-cgt-image-1" {
 		t.Fatalf("status payload = %#v", statusBody)
 	}
@@ -190,7 +196,7 @@ func TestProcessTaskUsesFrozenKuaiziGPTImage2Credential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "image-task", UserID: "user", Type: "canvas_image", Model: "kz_gpt_image2", Status: model.TaskStatusRunning, LeaseOwner: "image-worker", InputJSON: string(inputJSON), ProviderAccountID: "image-account", ProviderEndpointVersionID: "image-endpoint-v1", ProviderCredentialVersionID: "image-key-v1"}
+	task := model.Task{ID: "image-task", UserID: "user", Type: "canvas_image", Model: "kz_gpt_image2", Status: model.TaskStatusRunning, LeaseOwner: "image-worker", InputJSON: string(inputJSON), ProviderAccountID: "image-account", ProviderEndpointVersionID: "image-endpoint-v1", ProviderCredentialVersionID: "image-key-v1", WatermarkCapability: model.WatermarkCapabilityUnsupported, WatermarkDirective: model.WatermarkDirectiveProviderDefault}
 	if err := repo.Create(&task); err != nil {
 		t.Fatal(err)
 	}

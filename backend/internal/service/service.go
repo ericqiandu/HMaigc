@@ -1060,7 +1060,7 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 		return result, nil, err
 	}
 	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
-		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.Type, task.Prompt, task.InputJSON)
+		result, err := s.processCanvasGenerationTask(ctx, task)
 		return result, nil, err
 	}
 	return nil, nil, fmt.Errorf("不支持的任务类型：%s", task.Type)

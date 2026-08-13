@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 func TestParseKlingCredentialsRequiresStrictJSON(t *testing.T) {
@@ -66,6 +68,12 @@ func TestKlingTextVideoRequest(t *testing.T) {
 	if path != "/v1/videos/text2video" || body["model_name"] != "kling-v2-6" || body["mode"] != "pro" || body["duration"] != "10" || body["aspect_ratio"] != "16:9" {
 		t.Fatalf("unexpected request: path=%s body=%#v", path, body)
 	}
+	if _, exists := body["watermark"]; exists {
+		t.Fatalf("unsupported Kling request contains watermark: %#v", body)
+	}
+	if _, exists := body["aigc_watermark"]; exists {
+		t.Fatalf("unsupported Kling request contains aigc_watermark: %#v", body)
+	}
 }
 
 func TestKlingFirstLastFrameRequest(t *testing.T) {
@@ -92,7 +100,6 @@ func TestKlingRejectsUnsupportedParametersAndModes(t *testing.T) {
 		{name: "resolution", mutate: func(input *canvasGenerationInput) { input.Config.VQuality = "2k" }},
 		{name: "ratio", mutate: func(input *canvasGenerationInput) { input.Config.Size = "4:3" }},
 		{name: "audio", mutate: func(input *canvasGenerationInput) { input.Config.VideoGenerateAudio = "true" }},
-		{name: "watermark", mutate: func(input *canvasGenerationInput) { input.Config.VideoWatermark = "true" }},
 		{name: "omni reference", mutate: func(input *canvasGenerationInput) { input.Metadata["videoGenerationMode"] = "omni_reference" }},
 	}
 	for _, test := range tests {
@@ -117,9 +124,10 @@ func TestKlingVideoResultURL(t *testing.T) {
 
 func klingTestInput(mode string) canvasGenerationInput {
 	return canvasGenerationInput{
-		Prompt: "一位演员走进晨雾中的城市",
+		Prompt:    "一位演员走进晨雾中的城市",
+		Watermark: taskWatermarkRuntime{Capability: model.WatermarkCapabilityUnsupported, Directive: model.WatermarkDirectiveProviderDefault},
 		Config: providerConfig{
-			Model: "kling-v2-6", VideoSeconds: "10", VQuality: "1080p", Size: "16:9", VideoGenerateAudio: "false", VideoWatermark: "false",
+			Model: "kling-v2-6", VideoSeconds: "10", VQuality: "1080p", Size: "16:9", VideoGenerateAudio: "false",
 		},
 		Metadata: map[string]interface{}{"videoGenerationMode": mode},
 	}

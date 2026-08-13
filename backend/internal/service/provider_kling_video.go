@@ -127,10 +127,6 @@ func klingVideoRequest(input canvasGenerationInput) (string, map[string]interfac
 	if strings.EqualFold(strings.TrimSpace(input.Config.VideoGenerateAudio), "true") {
 		return "", nil, errors.New("当前可灵视频接口不支持同步生成音频")
 	}
-	if strings.EqualFold(strings.TrimSpace(input.Config.VideoWatermark), "true") {
-		return "", nil, errors.New("当前可灵视频接口不支持水印参数")
-	}
-
 	generationMode := metadataString(input.Metadata, "videoGenerationMode")
 	if generationMode == "" {
 		generationMode = "text"

@@ -52,9 +52,9 @@ func runAIOpenPlatformVolcengineVideoTask(ctx context.Context, input canvasGener
 			"resolution":        resolution,
 			"duration":          duration,
 			"generate_audio":    parseBool(input.Config.VideoGenerateAudio, true),
-			"watermark":         parseBool(input.Config.VideoWatermark, false),
 			"return_last_frame": true,
 		}
+		insertFrozenWatermark(request, "watermark", input.Watermark)
 		var created map[string]interface{}
 		if err := requestAIOpenPlatformVolcengineJSON(
 			withProviderAsyncCreate(withProviderRequestKind(ctx, "create")),

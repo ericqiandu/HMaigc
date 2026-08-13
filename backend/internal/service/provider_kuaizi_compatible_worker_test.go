@@ -56,7 +56,7 @@ func TestProcessTaskUsesFrozenKuaiziCompatibleRuntimeForSeedance20And25(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			task := model.Task{ID: "task", UserID: "user", Type: "canvas_video", Model: modelKey, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1"}
+			task := model.Task{ID: "task", UserID: "user", Type: "canvas_video", Model: modelKey, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
 			if err := repo.Create(&task); err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestKuaiziAsyncCreateFencePreventsSecondPostAfterWorkerCrash(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "crashed-task", UserID: "user", Type: "canvas_video", Model: "doubao-seedance-2-5-260628", Status: model.TaskStatusRunning, LeaseOwner: "worker-2", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1"}
+	task := model.Task{ID: "crashed-task", UserID: "user", Type: "canvas_video", Model: "doubao-seedance-2-5-260628", Status: model.TaskStatusRunning, LeaseOwner: "worker-2", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
 	if err := repo.Create(&task); err != nil {
 		t.Fatal(err)
 	}

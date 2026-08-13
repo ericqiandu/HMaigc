@@ -37,7 +37,7 @@ type PublicCanvasShare struct {
 var publicCanvasMetadataKeys = map[string]bool{
 	"content": true, "composerContent": true, "prompt": true, "status": true, "fontSize": true,
 	"generationMode": true, "generationType": true, "model": true, "size": true, "quality": true, "transparentBackground": true,
-	"count": true, "seconds": true, "vquality": true, "generateAudio": true, "watermark": true,
+	"count": true, "seconds": true, "vquality": true, "generateAudio": true,
 	"superResolutionEnabled": true, "superResolutionResolution": true, "superResolutionScene": true, "superResolutionVersion": true, "superResolutionFps": true,
 	"audioVoice": true, "audioFormat": true, "audioSpeed": true, "audioVolume": true, "audioPitch": true,
 	"audioEmotion": true, "audioLanguageBoost": true, "audioSampleRate": true, "audioBitrate": true,

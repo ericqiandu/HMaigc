@@ -44,6 +44,9 @@ func TestRunAIOpenPlatformVolcengineVideoTaskUsesCompatibleContract(t *testing.T
 				payload["return_last_frame"] != true {
 				t.Fatalf("create payload = %#v", payload)
 			}
+			if payload["watermark"] != false {
+				t.Fatalf("frozen watermark = %#v, want false", payload["watermark"])
+			}
 			content, ok := payload["content"].([]interface{})
 			if !ok || len(content) != 1 {
 				t.Fatalf("content = %#v", payload["content"])
@@ -69,7 +72,8 @@ func TestRunAIOpenPlatformVolcengineVideoTaskUsesCompatibleContract(t *testing.T
 	defer server.Close()
 
 	result, err := runAIOpenPlatformVolcengineVideoTask(context.Background(), canvasGenerationInput{
-		Prompt: "海面缓慢起伏",
+		Prompt:    "海面缓慢起伏",
+		Watermark: taskWatermarkRuntime{Capability: model.WatermarkCapabilityControlled, Directive: model.WatermarkDirectiveWithoutWatermark, Parameter: boolPointer(false)},
 		Config: providerConfig{
 			BaseURL:            server.URL,
 			APIKey:             "test-key",
@@ -94,6 +98,37 @@ func TestRunAIOpenPlatformVolcengineVideoTaskUsesCompatibleContract(t *testing.T
 		t.Fatalf("video = %#v", video)
 	}
 }
+
+func TestTaskWatermarkRuntimeRejectsInconsistentSnapshots(t *testing.T) {
+	value := true
+	withoutWatermark := false
+	tests := []model.Task{
+		{WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark},
+		{WatermarkCapability: model.WatermarkCapabilityUnsupported, WatermarkDirective: model.WatermarkDirectiveProviderDefault, WatermarkParameterApplied: true, WatermarkParameterValue: &value},
+		{WatermarkCapability: model.WatermarkCapabilityNotApplicable, WatermarkDirective: model.WatermarkDirectiveWithoutWatermark},
+		{WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithoutWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: &withoutWatermark},
+		{WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: &value, WatermarkPolicyPublicationID: "unexpected", WatermarkPolicyVersion: 1},
+		{WatermarkCapability: model.WatermarkCapabilityUnsupported, WatermarkDirective: model.WatermarkDirectiveProviderDefault, WatermarkPolicyPublicationID: "unexpected", WatermarkPolicyVersion: 1},
+	}
+	for index, task := range tests {
+		if _, err := taskWatermarkRuntimeFromTask(task); err == nil {
+			t.Fatalf("inconsistent snapshot %d was accepted: %#v", index, task)
+		}
+	}
+}
+
+func TestControlledProviderSendsFrozenWatermarkValue(t *testing.T) {
+	for _, value := range []bool{true, false} {
+		input := canvasGenerationInput{Watermark: taskWatermarkRuntime{Capability: model.WatermarkCapabilityControlled, Parameter: boolPointer(value)}}
+		body := map[string]interface{}{}
+		insertFrozenWatermark(body, "watermark", input.Watermark)
+		if body["watermark"] != value {
+			t.Fatalf("watermark = %#v, want %v", body["watermark"], value)
+		}
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
 
 func TestRunAIOpenPlatformVolcengineVideoTaskRejectsInvalidParameters(t *testing.T) {
 	tests := []struct {
@@ -787,7 +822,10 @@ func TestProcessTaskValidatesInterfaceBeforeHydratingMedia(t *testing.T) {
 		ReferenceImages: []providerMedia{{StorageKey: "resource:missing"}},
 	}
 	raw, _ := json.Marshal(input)
-	_, err = (&Service{repo: repository.New(db)}).processCanvasGenerationTask(context.Background(), "user-1", "video_generate", "", string(raw))
+	_, err = (&Service{repo: repository.New(db)}).processCanvasGenerationTask(context.Background(), model.Task{
+		UserID: "user-1", Type: "video_generate", Prompt: "make it move", InputJSON: string(raw),
+		WatermarkCapability: model.WatermarkCapabilityUnsupported, WatermarkDirective: model.WatermarkDirectiveProviderDefault,
+	})
 	if err == nil || !strings.Contains(err.Error(), "不支持video生成") {
 		t.Fatalf("processCanvasGenerationTask() error = %v", err)
 	}

@@ -30,6 +30,13 @@ type canvasGenerationInput struct {
 	ReferenceAudios []providerMedia        `json:"referenceAudios"`
 	Mask            *providerMedia         `json:"mask"`
 	Metadata        map[string]interface{} `json:"metadata"`
+	Watermark       taskWatermarkRuntime   `json:"-"`
+}
+
+type taskWatermarkRuntime struct {
+	Capability model.WatermarkCapability
+	Directive  model.WatermarkDirective
+	Parameter  *bool
 }
 
 type providerConfig struct {
@@ -46,7 +53,6 @@ type providerConfig struct {
 	VideoSeconds                   string `json:"videoSeconds"`
 	VQuality                       string `json:"vquality"`
 	VideoGenerateAudio             string `json:"videoGenerateAudio"`
-	VideoWatermark                 string `json:"videoWatermark"`
 	VideoSuperResolutionEnabled    string `json:"videoSuperResolutionEnabled"`
 	VideoSuperResolutionResolution string `json:"videoSuperResolutionResolution"`
 	VideoSuperResolutionScene      string `json:"videoSuperResolutionScene"`
@@ -185,18 +191,23 @@ func (e providerHTTPError) Error() string {
 	return fmt.Sprintf("接口请求失败：%s %s", e.Status, e.Body)
 }
 
-func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string, taskType string, fallbackPrompt string, rawInput string) (map[string]interface{}, error) {
+func (s *Service) processCanvasGenerationTask(ctx context.Context, task model.Task) (map[string]interface{}, error) {
 	var input canvasGenerationInput
-	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
+	watermark, err := taskWatermarkRuntimeFromTask(task)
+	if err != nil {
+		return nil, err
+	}
+	input.Watermark = watermark
 	if strings.TrimSpace(input.Prompt) == "" {
-		input.Prompt = fallbackPrompt
+		input.Prompt = task.Prompt
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
-	if input.Mode == "" && strings.HasPrefix(taskType, "video_") {
+	if input.Mode == "" && strings.HasPrefix(task.Type, "video_") {
 		input.Mode = "video"
 	}
 	config, err := s.resolveProviderConfig(input.Config)
@@ -205,7 +216,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	}
 	input.Config = config
 	if input.Mode == "audio" {
-		if err := s.validateAudioTaskVoice(userID, input.Config); err != nil {
+		if err := s.validateAudioTaskVoice(task.UserID, input.Config); err != nil {
 			return nil, err
 		}
 	}
@@ -222,7 +233,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		requirePublicMedia := input.Config.InterfaceType == string(model.ChannelInterfaceAIOpenVideoVolcengine) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceMiniMaxVideo) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceKlingVideo)
-		if err := s.hydrateGenerationMedia(userID, &input, requirePublicMedia); err != nil {
+		if err := s.hydrateGenerationMedia(task.UserID, &input, requirePublicMedia); err != nil {
 			return nil, err
 		}
 	}
@@ -237,6 +248,42 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return runAudioTask(ctx, input)
 	default:
 		return nil, fmt.Errorf("不支持的生成模式：%s", input.Mode)
+	}
+}
+
+func taskWatermarkRuntimeFromTask(task model.Task) (taskWatermarkRuntime, error) {
+	runtime := taskWatermarkRuntime{Capability: task.WatermarkCapability, Directive: task.WatermarkDirective, Parameter: task.WatermarkParameterValue}
+	switch task.WatermarkCapability {
+	case model.WatermarkCapabilityControlled:
+		if !task.WatermarkParameterApplied || task.WatermarkParameterValue == nil {
+			return taskWatermarkRuntime{}, errors.New("受控水印任务缺少冻结参数")
+		}
+		if *task.WatermarkParameterValue && task.WatermarkDirective != model.WatermarkDirectiveWithWatermark {
+			return taskWatermarkRuntime{}, errors.New("受控水印任务的冻结指令与参数不一致")
+		}
+		if *task.WatermarkParameterValue && (task.WatermarkPolicyPublicationID != "" || task.WatermarkPolicyVersion != 0) {
+			return taskWatermarkRuntime{}, errors.New("带水印任务不应携带去水印协议快照")
+		}
+		if !*task.WatermarkParameterValue && task.WatermarkDirective != model.WatermarkDirectiveWithoutWatermark {
+			return taskWatermarkRuntime{}, errors.New("受控去水印任务的冻结指令与参数不一致")
+		}
+		if !*task.WatermarkParameterValue && (task.WatermarkPolicyPublicationID == "" || task.WatermarkPolicyVersion <= 0) {
+			return taskWatermarkRuntime{}, errors.New("去水印任务缺少协议发布快照")
+		}
+		return runtime, nil
+	case model.WatermarkCapabilityUnsupported, model.WatermarkCapabilityNotApplicable:
+		if task.WatermarkDirective != model.WatermarkDirectiveProviderDefault || task.WatermarkParameterApplied || task.WatermarkParameterValue != nil || task.WatermarkPolicyPublicationID != "" || task.WatermarkPolicyVersion != 0 {
+			return taskWatermarkRuntime{}, errors.New("不支持水印控制的任务携带了冻结参数")
+		}
+		return runtime, nil
+	default:
+		return taskWatermarkRuntime{}, fmt.Errorf("任务缺少明确的水印能力快照：%q", task.WatermarkCapability)
+	}
+}
+
+func insertFrozenWatermark(body map[string]interface{}, field string, watermark taskWatermarkRuntime) {
+	if watermark.Parameter != nil {
+		body[field] = *watermark.Parameter
 	}
 }
 
@@ -987,8 +1034,8 @@ func runSeedanceAgentPlanVideoTask(ctx context.Context, input canvasGenerationIn
 			"resolution":     normalizeSeedanceResolution(input.Config.VQuality, input.Config.Model),
 			"duration":       normalizeSeedanceDuration(input.Config.VideoSeconds),
 			"generate_audio": parseBool(input.Config.VideoGenerateAudio, true),
-			"watermark":      parseBool(input.Config.VideoWatermark, false),
 		}
+		insertFrozenWatermark(body, "watermark", input.Watermark)
 		if err := postJSON(ctx, input.Config, "/contents/generations/tasks", body, &created); err != nil {
 			return nil, err
 		}

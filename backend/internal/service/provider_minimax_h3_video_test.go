@@ -3,6 +3,8 @@ package service
 import (
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 func TestMiniMaxH3UsesV2RootAndUnwrapsTaskResponse(t *testing.T) {
@@ -34,6 +36,9 @@ func TestMiniMaxH3TextVideoBody(t *testing.T) {
 	}
 	if body["model"] != miniMaxH3Model || body["resolution"] != "2K" || body["ratio"] != "16:9" || body["duration"] != 8 {
 		t.Fatalf("unexpected body: %#v", body)
+	}
+	if body["aigc_watermark"] != false {
+		t.Fatalf("frozen MiniMax watermark = %#v, want false", body["aigc_watermark"])
 	}
 	content, ok := body["content"].([]map[string]interface{})
 	if !ok || len(content) != 1 || content[0]["type"] != "text" {
@@ -95,9 +100,10 @@ func TestMiniMaxH3RejectsUnsupportedParameters(t *testing.T) {
 
 func miniMaxH3TestInput(mode string) canvasGenerationInput {
 	return canvasGenerationInput{
-		Prompt: "一位演员走进晨雾中的城市",
+		Prompt:    "一位演员走进晨雾中的城市",
+		Watermark: taskWatermarkRuntime{Capability: model.WatermarkCapabilityControlled, Directive: model.WatermarkDirectiveWithoutWatermark, Parameter: boolPointer(false)},
 		Config: providerConfig{
-			Model: miniMaxH3Model, VideoSeconds: "8", VQuality: "2k", Size: "16:9", VideoWatermark: "true",
+			Model: miniMaxH3Model, VideoSeconds: "8", VQuality: "2k", Size: "16:9",
 		},
 		Metadata: map[string]interface{}{"videoGenerationMode": mode},
 	}

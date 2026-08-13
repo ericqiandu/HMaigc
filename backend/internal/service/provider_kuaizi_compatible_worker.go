@@ -17,6 +17,11 @@ func (s *Service) processKuaiziCompatibleTask(ctx context.Context, task model.Ta
 	if strings.TrimSpace(input.Prompt) == "" {
 		input.Prompt = task.Prompt
 	}
+	watermark, err := taskWatermarkRuntimeFromTask(task)
+	if err != nil {
+		return nil, err
+	}
+	input.Watermark = watermark
 	input.Config.Model = task.Model
 	if resumedProviderRequestID(ctx) == "" {
 		if err := s.hydrateGenerationMedia(task.UserID, &input, true); err != nil {
