@@ -54,9 +54,10 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
                             <button
                                 key={option}
                                 type="button"
-                                className={cn("canvas-image-ratio-option flex h-[63px] flex-col items-center justify-center gap-1.5 rounded-lg transition-colors", ratio === option ? "is-active" : "opacity-60 hover:opacity-90")}
+                                className={cn("canvas-image-ratio-option flex h-[63px] flex-col items-center justify-center gap-1.5 rounded-lg transition-colors", ratio === option ? "is-active" : "hover:brightness-110")}
                                 style={settingButtonStyle(theme, ratio === option)}
                                 onClick={() => updateDimensions(option, resolution)}
+                                aria-pressed={ratio === option}
                             >
                                 <RatioIcon ratio={option} active={ratio === option} />
                                 <span className="canvas-image-ratio-label">{option}</span>
@@ -90,7 +91,7 @@ function SettingsSection({ label, children }: { label: string; children: React.R
 
 function SettingsButton({ active, label, theme, className, onClick }: { active: boolean; label: string; theme: CanvasTheme; className: string; onClick: () => void }) {
     return (
-        <button type="button" className={cn("canvas-image-settings-option rounded-lg transition-colors", active ? "is-active" : "opacity-60 hover:opacity-90", className)} style={settingButtonStyle(theme, active)} onClick={onClick}>
+        <button type="button" className={cn("canvas-image-settings-option rounded-lg transition-colors", active ? "is-active" : "hover:brightness-110", className)} style={settingButtonStyle(theme, active)} onClick={onClick} aria-pressed={active}>
             <span className="canvas-image-settings-option-label">{label}</span>
         </button>
     );
@@ -112,9 +113,9 @@ function RatioIcon({ ratio, active }: { ratio: string; active: boolean }) {
 
 function settingButtonStyle(theme: CanvasTheme, active: boolean) {
     return {
-        color: theme.node.text,
-        background: active ? "rgba(255, 255, 255, 0.1)" : "transparent",
-        border: `1px solid ${active ? "#ffffff" : "#525252"}`,
+        color: active ? theme.accent.primary : theme.node.muted,
+        background: active ? theme.accent.primarySoft : theme.toolbar.itemHover,
+        border: `1px solid ${active ? theme.spatial.glowStrong : theme.toolbar.border}`,
     };
 }
 

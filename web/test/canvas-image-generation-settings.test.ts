@@ -114,6 +114,21 @@ describe("图片模型能力驱动参数", () => {
         expect(markup).not.toContain("生成数量");
     });
 
+    test("参数选项复用画布选中态与中性表面，不使用独立灰白配色", () => {
+        const markup = renderToStaticMarkup(
+            createElement(CanvasImageGenerationSettings, {
+                config: imageConfig(gptImage2Capabilities, { quality: "medium", size: "1024x1024" }),
+                theme: canvasThemes.dark,
+                showCount: true,
+                onConfigChange: () => undefined,
+            }),
+        );
+        expect(markup).toContain(`background:${canvasThemes.dark.accent.primarySoft}`);
+        expect(markup).toContain(`background:${canvasThemes.dark.toolbar.itemHover}`);
+        expect(markup).toContain('aria-pressed="true"');
+        expect(markup).not.toContain("#525252");
+    });
+
     test("切换模型后清理不受支持的参数并选择能力内首项", () => {
         const next = imageConfig(
             { ...gptImage2Capabilities, modelKey: "ratio-only", resolutions: [], qualities: [], outputCounts: [1], ratios: ["1:1", "16:9"] },
