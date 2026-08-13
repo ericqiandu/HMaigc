@@ -12,8 +12,8 @@
   - `seedream5.0lite`：0–14 张参考图；单图或原生组图；参考图数量与输出数量之和不得超过 15。
   - `seedream5.0pro`：0–10 张参考图；每次只生成 1 张。
 - 支持文生图、单图参考和多图参考。
-- 支持 2K、3K、常用比例预设、随机种子、提示词优化、JPEG/PNG 输出。
-- Lite 支持 1–15 张输出；可选数量必须根据当前参考图数量实时收窄。
+- 支持 2K、3K、常用比例预设、提示词优化、JPEG/PNG 输出。
+- Lite 在无参考图时支持 1–15 张输出；单张参考图只允许 1 张输出；2–14 张参考图时允许组图且可选数量必须实时收窄。
 - 生成结果及时下载并进入现有平台资产链路，不依赖上游 URL 长期有效。
 - 沿用现有图片模型的按张计费语义；Lite 一次上游任务返回多张时，计费数量仍等于实际请求的输出张数。
 
@@ -39,8 +39,7 @@
 
 公共能力 DTO 增加图片模型需要的结构字段，前端不得按模型名猜测：
 
-- `batchStrategy`: `single_task` 或 `one_task_per_output`；Seedream Lite 为 `single_task`。
-- `supportsSeed`
+- `imageBatchStrategy`: `single_task` 或 `one_task_per_output`；Seedream Lite 为 `single_task`。
 - `supportsPromptOptimization`
 - `outputFormats`
 - 既有 `resolutions`、`ratios`、`outputCounts`、`maxImages` 继续作为动态真源。
@@ -52,7 +51,6 @@
 画布生成配置增加明确字段：
 
 - `resolution`: `2K` / `3K`
-- `seed`: 空值表示不发送；整数 `-1` 表示随机
 - `optimizePrompt`: `true` / `false`
 - `outputFormat`: `jpeg` / `png`
 - `count`: 请求输出张数
@@ -64,6 +62,7 @@ Seedream Lite 的约束为：
 ```text
 referenceImageCount <= 14
 outputCount >= 1
+outputCount > 1 且 referenceImageCount > 0 时，referenceImageCount >= 2
 referenceImageCount + outputCount <= 15
 ```
 
@@ -81,6 +80,8 @@ referenceImageCount + outputCount <= 15
 4. 只接受 `running`、`succeeded`、`failed` 三种状态；未知状态显式失败并进入现有待核对链路。
 5. `succeeded` 必须返回非空 `image_urls`，数量必须与请求输出数量一致；少图、多图或非法 URL 都不得伪装成功。
 6. 下载每个结果并验证 HTTPS、重定向、特殊地址、内容类型、响应体上限和敏感信息反射，然后交给现有资产保存流程。
+
+Seedream 组图不得先把全部图片编码为 Base64 聚合在内存中。后端按 URL 顺序逐张下载、逐张写入现有 `Resource` 存储，任务结果只保存 `/api/resources/{id}/file`、`resource:{id}` 与尺寸、字节数、MIME 等资源事实。该路径不新增资源表或兼容字段。
 
 创建请求已经写出但响应不确定时，复用现有 `KuaiziCompatibleCreateError` 与 provider task fact，禁止再次创建导致重复扣费。Key、prompt、上游错误正文及签名 URL 不进入任务错误、API 日志或前端错误消息。
 
@@ -100,7 +101,7 @@ referenceImageCount + outputCount <= 15
   -> 所有资产成功落库后结算一次订单
 ```
 
-非原生批次模型仍按其后台 `batchStrategy` 执行，前端不按 `seedream` 字符串分支。一个批次部分下载失败时必须保留已经成功保存的图片，并把订单标记为待核对，禁止删除成功资产或把整个批次伪装成全部失败。
+非原生批次模型仍按其后台 `imageBatchStrategy` 执行，前端不按 `seedream` 字符串分支。一个批次部分下载失败时，任务以 `failed + partial result` 收口：`ResultJSON` 保存已落库图片及结构化 `partialFailure`，订单标记为待核对。前端识别该事实后回填已成功节点并将其余节点置为失败；禁止删除成功资产、重复创建上游任务或把整个批次伪装成全部失败。
 
 ### 5. 计费与发布
 
@@ -114,12 +115,14 @@ referenceImageCount + outputCount <= 15
 
 图片节点只展示所选模型支持的参数：
 
-- Lite：清晰度、比例、生成数量、随机种子、提示词优化、输出格式。
-- Pro：清晰度、比例、随机种子、提示词优化、输出格式；不显示生成数量。
+- Lite：清晰度、比例、生成数量、提示词优化、输出格式。
+- Pro：清晰度、比例、提示词优化、输出格式；不显示生成数量。
 
 参考图数量变化后，Lite 的输出数量选项即时收窄。例如已有 10 张参考图时，只显示 1–5 张；若当前值变得非法，界面要求用户重新选择，不静默改成默认值。Pro 超过 10 张参考图时在提交前明确报错。
 
-随机种子默认留空；提示词优化默认关闭；输出格式默认 JPEG。默认值必须在前后端契约中一致，并在任务快照中可追溯。
+前端不展示、不保存种子，后端也不发送 `seed`，由上游执行正常随机生成。提示词优化默认关闭；输出格式默认 JPEG。默认值必须在前后端契约中一致，并在任务快照中可追溯。
+
+前端也不展示水印开关；后端始终显式发送 `watermark=false`，避免供应商默认值变化影响用户资产。
 
 ## 安全与可观测性
 
@@ -134,7 +137,7 @@ referenceImageCount + outputCount <= 15
 ### 后端 focused tests
 
 - registry 能精确发布 Lite/Pro 能力且不影响现有四个系列。
-- Lite/Pro 参数边界、参考图上限、参考图与输出总量、种子、尺寸、格式和 prompt 优化映射。
+- Lite/Pro 参数边界、参考图上限、参考图与输出总量、尺寸、格式和 prompt 优化映射。
 - 一次 Lite 组图只创建一次上游任务，轮询返回 N 张并完整下载。
 - HTTP/业务错误、未知状态、缺 task ID、创建不确定、数量不一致、非法 URL、非图片内容、超限响应和敏感信息反射。
 - 冻结 endpoint/credential 仍被使用，Key 不进入任务输入和日志。
@@ -153,13 +156,12 @@ referenceImageCount + outputCount <= 15
 - 后端定向测试、全量 `go test ./...`、`go vet ./...`、`go build ./...`。
 - Web 定向测试、全量测试、TypeScript/Vite 生产构建。
 - 使用本地 TLS mock 完成创建、轮询、组图和失败流程；不使用真实 Key、不产生真实上游费用。
-- 复用 `.local/project-workbench-debug` 做本地构建启动，只读核对管理员发布与画布动态参数；不新建或清理用户数据库。
+- 复用 `scripts/local-compose.ps1` 显式绑定主项目 `.local/data` 做本地构建启动，只读核对管理员发布与画布动态参数；不新建或清理用户数据库。
 
 ## 变更预算
 
 - 生产职责：模型能力与发布、Seedream 异步适配、图片节点原生批次与动态参数，共 3 项。
-- 预计生产文件：10–12 个。超过小功能默认 8 文件参考值的原因是必须同步后端 registry/adapter/计费契约与前端 capability/executor，不能通过模型名硬编码或平行流程缩减文件数。
-- 预计净新增生产代码：约 650–850 行；任一新生产文件控制在 500 行以内。
+- 分两段执行但只在全部通过后发布：A 段为模型能力、定价、单图 adapter 与前端参数，预算不超过 20 个生产文件/约 1000 行；B 段为 Lite 原生组图和部分结果，预算不超过 8 个生产文件/约 600 行。
+- 两段合计不超过 27 个生产文件、约 1600 行净新增生产代码；文件数来自前后端共享 DTO、任务快照、重试与部分结果契约的必要同步，禁止用模型名硬编码压缩表面文件数。
 - 不新增数据库表或字段，不引入新依赖，不修改部署结构。
-- 若实施中超过 18 个生产文件、净新增超过 1200 行，或需要修改 provider task 状态机/数据库结构，则立即停止并重新评估，不继续堆补丁。
-
+- 若任一段超过自己的预算 50%、出现超过 500 行的新生产文件，或需要修改 provider task 状态机/数据库结构，则立即停止并重新评估，不继续堆补丁。
