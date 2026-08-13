@@ -11,6 +11,17 @@
 }
 
 @media (max-width: 1279px) {
+    .admin-workspace .admin-page-frame {
+        padding-inline: 24px;
+    }
+
+    .admin-workspace .admin-theme-toggle,
+    .admin-workspace .admin-mobile-menu-button {
+        width: 44px;
+        min-width: 44px;
+        min-height: 44px;
+    }
+
     .admin-workspace :where(.ant-input:not(textarea), .ant-input-affix-wrapper, .ant-input-number, .ant-picker, .ant-select-single .ant-select-selector) {
         min-height: 44px !important;
     }
@@ -111,6 +122,20 @@
 }
 
 @media (max-width: 639px) {
+    .admin-workspace .admin-page-frame {
+        padding: 20px 16px 40px;
+    }
+
+    .admin-workspace .admin-page-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .admin-workspace .admin-page-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
     .admin-workspace .kuaizi-provider-facts {
         grid-template-columns: minmax(0, 1fr);
     }

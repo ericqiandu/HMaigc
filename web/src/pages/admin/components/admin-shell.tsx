@@ -1,6 +1,7 @@
 import { Drawer, Tooltip } from "antd";
-import { ChevronRight, Home, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { ChevronRight, Home, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
 import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
@@ -15,8 +16,11 @@ import "../admin-feature-workspace.css";
 import "../admin-responsive.css";
 import "../admin-art-layout.css";
 import "../admin-navigation-layout.css";
+import { useAdminTheme } from "../admin-theme";
 import { AdminNavigation, findAdminNavigationGroup, findAdminNavigationItem } from "./admin-navigation";
 import { AdminModelCenterTabs } from "./admin-model-center-tabs";
+
+const AdminPageActionTargetContext = createContext<HTMLElement | null>(null);
 
 export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
@@ -62,8 +66,10 @@ export function AdminShell() {
 
 function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boolean; onToggleCollapsed: () => void }) {
     const location = useLocation();
+    const { setTheme, theme } = useAdminTheme();
     const currentGroup = findAdminNavigationGroup(location.pathname)?.label ?? "管理后台";
     const currentItem = findAdminNavigationItem(location.pathname)?.label ?? "管理";
+    const nextTheme = theme === "light" ? "dark" : "light";
 
     return (
         <header className="admin-desktop-header hidden shrink-0 items-center justify-between xl:flex">
@@ -79,37 +85,57 @@ function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boole
                     <span className="admin-desktop-location-current truncate">{currentItem}</span>
                 </div>
             </div>
-            <NavLink to="/canvas" className="admin-desktop-return-link flex items-center">
-                <Home className="admin-desktop-return-icon size-3.5" />
-                <span className="admin-desktop-return-label">返回创作台</span>
-            </NavLink>
+            <div className="admin-desktop-header-actions flex items-center">
+                <Tooltip title={`切换为${nextTheme === "dark" ? "深色" : "浅色"}后台`} placement="bottom">
+                    <button type="button" className="admin-theme-toggle app-workspace-icon-button" aria-label={`切换为${nextTheme === "dark" ? "深色" : "浅色"}后台`} aria-pressed={theme === "dark"} onClick={() => setTheme(nextTheme)}>
+                        {theme === "dark" ? <Sun className="admin-theme-toggle-icon size-4" /> : <Moon className="admin-theme-toggle-icon size-4" />}
+                    </button>
+                </Tooltip>
+                <NavLink to="/canvas" className="admin-desktop-return-link flex items-center">
+                    <Home className="admin-desktop-return-icon size-3.5" />
+                    <span className="admin-desktop-return-label">返回创作台</span>
+                </NavLink>
+            </div>
         </header>
     );
 }
 
 export function AdminPageFrame({ title, description, actions, modelCenter = false, children }: { title: string; description: string; actions?: ReactNode; modelCenter?: boolean; children: ReactNode }) {
+    const [actionTarget, setActionTarget] = useState<HTMLDivElement | null>(null);
+
     return (
-        <main id="admin-main-content" className="admin-page thin-scrollbar h-full overflow-y-auto" tabIndex={-1}>
-            <div className="admin-page-frame mx-auto w-full">
-                <header className="admin-page-header flex flex-wrap justify-between">
-                    <div className="admin-page-heading min-w-0">
-                        <h1 className="admin-page-title">{title}</h1>
-                        <p className="admin-page-description max-w-2xl">{description}</p>
-                    </div>
-                    {actions ? <div className="admin-page-actions flex shrink-0 items-center">{actions}</div> : null}
-                </header>
-                {modelCenter ? <AdminModelCenterTabs /> : null}
-                <div className="admin-page-content">{children}</div>
-            </div>
-        </main>
+        <AdminPageActionTargetContext.Provider value={actionTarget}>
+            <main id="admin-main-content" className="admin-page thin-scrollbar h-full overflow-y-auto" tabIndex={-1}>
+                <div className="admin-page-frame mx-auto w-full">
+                    <header className="admin-page-header flex flex-wrap justify-between">
+                        <div className="admin-page-heading min-w-0">
+                            <h1 className="admin-page-title">{title}</h1>
+                            <p className="admin-page-description max-w-2xl">{description}</p>
+                        </div>
+                        <div ref={setActionTarget} className="admin-page-actions flex shrink-0 items-center">
+                            {actions}
+                        </div>
+                    </header>
+                    {modelCenter ? <AdminModelCenterTabs /> : null}
+                    <div className="admin-page-content">{children}</div>
+                </div>
+            </main>
+        </AdminPageActionTargetContext.Provider>
     );
+}
+
+export function AdminPageActions({ children }: { children: ReactNode }) {
+    const target = useContext(AdminPageActionTargetContext);
+    return target ? createPortal(children, target) : null;
 }
 
 function MobileAdminNavigation() {
     const [open, setOpen] = useState(false);
     const location = useLocation();
+    const { getPortalContainer, setTheme, theme } = useAdminTheme();
     const { settings } = useSiteSettings();
     const currentItem = findAdminNavigationItem(location.pathname);
+    const nextTheme = theme === "light" ? "dark" : "light";
 
     useEffect(() => {
         setOpen(false);
@@ -139,9 +165,14 @@ function MobileAdminNavigation() {
                         <span className="admin-mobile-page-name block truncate">{currentItem?.label ?? "管理后台"}</span>
                     </span>
                 </Link>
-                <button type="button" className="admin-mobile-menu-button app-workspace-icon-button" onClick={() => setOpen(true)} aria-label="打开管理后台导航" aria-expanded={open}>
-                    <Menu className="admin-mobile-menu-icon size-4" />
-                </button>
+                <div className="admin-mobile-header-actions flex items-center">
+                    <button type="button" className="admin-theme-toggle app-workspace-icon-button" aria-label={`切换为${nextTheme === "dark" ? "深色" : "浅色"}后台`} aria-pressed={theme === "dark"} onClick={() => setTheme(nextTheme)}>
+                        {theme === "dark" ? <Sun className="admin-theme-toggle-icon size-4" /> : <Moon className="admin-theme-toggle-icon size-4" />}
+                    </button>
+                    <button type="button" className="admin-mobile-menu-button app-workspace-icon-button" onClick={() => setOpen(true)} aria-label="打开管理后台导航" aria-expanded={open}>
+                        <Menu className="admin-mobile-menu-icon size-4" />
+                    </button>
+                </div>
             </header>
             <Drawer
                 rootClassName="admin-mobile-navigation-drawer"
@@ -155,6 +186,7 @@ function MobileAdminNavigation() {
                 width={320}
                 open={open}
                 onClose={() => setOpen(false)}
+                getContainer={getPortalContainer}
                 destroyOnHidden
             >
                 <div className="admin-mobile-drawer-body flex h-full min-h-0 flex-col">
