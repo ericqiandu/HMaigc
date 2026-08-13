@@ -1,5 +1,5 @@
 import { Drawer, Tooltip } from "antd";
-import { ChevronRight, Home, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
+import { ChevronRight, Home, Menu, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
@@ -17,6 +17,7 @@ import "../admin-responsive.css";
 import "../admin-art-layout.css";
 import "../admin-navigation-layout.css";
 import { useAdminTheme } from "../admin-theme";
+import { AdminLayoutSettingsDrawer } from "./admin-layout-settings-drawer";
 import { AdminNavigation, findAdminNavigationGroup, findAdminNavigationItem } from "./admin-navigation";
 import { AdminModelCenterTabs } from "./admin-model-center-tabs";
 
@@ -24,6 +25,7 @@ const AdminPageActionTargetContext = createContext<HTMLElement | null>(null);
 
 export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const { settings } = useSiteSettings();
     const toggleCollapsed = () => {
         setCollapsed((current) => {
@@ -56,20 +58,19 @@ export function AdminShell() {
                 <AdminNavigationFooter collapsed={collapsed} />
             </aside>
             <section className="admin-workspace-main flex min-w-0 flex-1 flex-col overflow-hidden">
-                <MobileAdminNavigation />
-                <AdminDesktopHeader collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
+                <MobileAdminNavigation onOpenSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} />
+                <AdminDesktopHeader collapsed={collapsed} onOpenSettings={() => setSettingsOpen(true)} onToggleCollapsed={toggleCollapsed} settingsOpen={settingsOpen} />
                 <Outlet />
             </section>
+            <AdminLayoutSettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         </div>
     );
 }
 
-function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boolean; onToggleCollapsed: () => void }) {
+function AdminDesktopHeader({ collapsed, onOpenSettings, onToggleCollapsed, settingsOpen }: { collapsed: boolean; onOpenSettings: () => void; onToggleCollapsed: () => void; settingsOpen: boolean }) {
     const location = useLocation();
-    const { setTheme, theme } = useAdminTheme();
     const currentGroup = findAdminNavigationGroup(location.pathname)?.label ?? "管理后台";
     const currentItem = findAdminNavigationItem(location.pathname)?.label ?? "管理";
-    const nextTheme = theme === "light" ? "dark" : "light";
 
     return (
         <header className="admin-desktop-header hidden shrink-0 items-center justify-between xl:flex">
@@ -86,9 +87,9 @@ function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boole
                 </div>
             </div>
             <div className="admin-desktop-header-actions flex items-center">
-                <Tooltip title={`切换为${nextTheme === "dark" ? "深色" : "浅色"}后台`} placement="bottom">
-                    <button type="button" className="admin-theme-toggle app-workspace-icon-button" aria-label={`切换为${nextTheme === "dark" ? "深色" : "浅色"}后台`} aria-pressed={theme === "dark"} onClick={() => setTheme(nextTheme)}>
-                        {theme === "dark" ? <Sun className="admin-theme-toggle-icon size-4" /> : <Moon className="admin-theme-toggle-icon size-4" />}
+                <Tooltip title="界面设置" placement="bottom">
+                    <button type="button" className="admin-layout-settings-trigger app-workspace-icon-button" aria-label="打开后台界面设置" aria-expanded={settingsOpen} onClick={onOpenSettings}>
+                        <Settings2 className="admin-layout-settings-trigger-icon size-4" />
                     </button>
                 </Tooltip>
                 <NavLink to="/canvas" className="admin-desktop-return-link flex items-center">
@@ -129,13 +130,12 @@ export function AdminPageActions({ children }: { children: ReactNode }) {
     return target ? createPortal(children, target) : null;
 }
 
-function MobileAdminNavigation() {
+function MobileAdminNavigation({ onOpenSettings, settingsOpen }: { onOpenSettings: () => void; settingsOpen: boolean }) {
     const [open, setOpen] = useState(false);
     const location = useLocation();
-    const { getPortalContainer, setTheme, theme } = useAdminTheme();
+    const { getPortalContainer } = useAdminTheme();
     const { settings } = useSiteSettings();
     const currentItem = findAdminNavigationItem(location.pathname);
-    const nextTheme = theme === "light" ? "dark" : "light";
 
     useEffect(() => {
         setOpen(false);
@@ -166,8 +166,8 @@ function MobileAdminNavigation() {
                     </span>
                 </Link>
                 <div className="admin-mobile-header-actions flex items-center">
-                    <button type="button" className="admin-theme-toggle app-workspace-icon-button" aria-label={`切换为${nextTheme === "dark" ? "深色" : "浅色"}后台`} aria-pressed={theme === "dark"} onClick={() => setTheme(nextTheme)}>
-                        {theme === "dark" ? <Sun className="admin-theme-toggle-icon size-4" /> : <Moon className="admin-theme-toggle-icon size-4" />}
+                    <button type="button" className="admin-layout-settings-trigger app-workspace-icon-button" aria-label="打开后台界面设置" aria-expanded={settingsOpen} onClick={onOpenSettings}>
+                        <Settings2 className="admin-layout-settings-trigger-icon size-4" />
                     </button>
                     <button type="button" className="admin-mobile-menu-button app-workspace-icon-button" onClick={() => setOpen(true)} aria-label="打开管理后台导航" aria-expanded={open}>
                         <Menu className="admin-mobile-menu-icon size-4" />

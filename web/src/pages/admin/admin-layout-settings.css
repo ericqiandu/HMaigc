@@ -1,0 +1,192 @@
+.admin-layout-settings-drawer .ant-drawer-content {
+    background: var(--workspace-ui-surface);
+}
+
+.admin-layout-settings-drawer .ant-drawer-header {
+    min-height: 56px;
+    border-bottom-color: var(--workspace-ui-divider);
+    padding: 12px 20px;
+}
+
+.admin-layout-settings-drawer .ant-drawer-body {
+    padding: 0 20px 24px;
+}
+
+.admin-layout-settings-title {
+    color: var(--workspace-ui-text);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.admin-layout-settings-body {
+    display: grid;
+}
+
+.admin-layout-persistence-error {
+    margin-top: 16px;
+}
+
+.admin-layout-settings-section {
+    padding: 20px 0;
+    border-bottom: 1px solid var(--workspace-ui-divider);
+}
+
+.admin-layout-settings-section-heading {
+    display: grid;
+    gap: 3px;
+}
+
+.admin-layout-settings-section-title {
+    margin: 0;
+    color: var(--workspace-ui-text);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.admin-layout-settings-section-description,
+.admin-layout-switch-description {
+    margin: 0;
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.admin-layout-settings-section-content {
+    display: grid;
+    gap: 14px;
+    margin-top: 12px;
+}
+
+.admin-layout-choice-grid {
+    display: grid;
+    gap: 8px;
+}
+
+.admin-layout-choice-grid-two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-layout-choice-grid-three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-layout-choice {
+    min-height: 38px;
+    border: 1px solid var(--workspace-ui-divider);
+    border-radius: var(--workspace-ui-radius-control);
+    background: var(--workspace-ui-control);
+    color: var(--workspace-ui-text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    transition:
+        border-color 160ms ease,
+        color 160ms ease,
+        background-color 160ms ease;
+}
+
+.admin-layout-choice:hover {
+    border-color: color-mix(in srgb, var(--workspace-ui-accent) 48%, var(--workspace-ui-divider));
+    color: var(--workspace-ui-text);
+}
+
+.admin-layout-choice[data-active="true"] {
+    border-color: var(--workspace-ui-accent);
+    background: color-mix(in srgb, var(--workspace-ui-accent) 9%, var(--workspace-ui-surface));
+    color: var(--workspace-ui-accent);
+}
+
+.admin-layout-choice:focus-visible,
+.admin-layout-color-preset:focus-visible {
+    outline: 2px solid var(--workspace-ui-accent);
+    outline-offset: 2px;
+}
+
+.admin-layout-color-presets {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.admin-layout-color-preset {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 7px;
+    border: 0;
+    border-radius: var(--workspace-ui-radius-control);
+    background: var(--workspace-ui-control);
+    padding: 0 8px;
+    color: var(--workspace-ui-text-secondary);
+    font-size: 11px;
+}
+
+.admin-layout-color-preset[data-active="true"] {
+    color: var(--workspace-ui-text);
+    box-shadow: inset 0 0 0 1px var(--workspace-ui-accent);
+}
+
+.admin-layout-color-swatch {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--admin-color-swatch);
+}
+
+.admin-layout-color-field,
+.admin-layout-field-block {
+    display: grid;
+    gap: 7px;
+}
+
+.admin-layout-field-label,
+.admin-layout-switch-title {
+    color: var(--workspace-ui-text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+}
+
+.admin-layout-color-error {
+    color: var(--ant-color-error);
+    font-size: 11px;
+    line-height: 16px;
+}
+
+.admin-layout-switch-row {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.admin-layout-switch-copy {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+}
+
+.admin-layout-reset-button {
+    min-height: 40px;
+    margin-top: 20px;
+}
+
+@media (max-width: 639px) {
+    .admin-layout-settings-drawer .ant-drawer-header,
+    .admin-layout-settings-drawer .ant-drawer-body {
+        padding-inline: 16px;
+    }
+
+    .admin-layout-choice,
+    .admin-layout-reset-button {
+        min-height: 44px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .admin-layout-choice {
+        transition: none;
+    }
+}
