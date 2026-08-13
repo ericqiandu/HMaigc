@@ -178,7 +178,7 @@ export function KuaiziProviderPageView({
     const endpointBusy = operation === "endpoint";
     const endpointStatus = account.endpointCandidate ? { label: "有待验证更新" } : account.endpoint?.active ? { label: "已启用", color: "success" } : account.endpoint ? { label: "待验证" } : { label: "未配置" };
     return (
-        <AdminPageFrame title="筷子科技" description="统一维护一套服务地址与账号 Key；各模型系列只负责能力与发布。">
+        <AdminPageFrame title="模型中心" description="统一维护一套服务地址与账号 Key；各模型系列只负责能力与发布。" modelCenter>
             <div className="kuaizi-provider-page-content">
                 {loadError ? <AdminContentError title="筷子科技配置刷新失败" description={loadError.message} onRetry={onRetry} /> : null}
                 <SettingsSectionCard
@@ -471,7 +471,7 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
 
     if (loading && !account) {
         return (
-            <AdminPageFrame title="筷子科技" description="正在读取供应商配置。">
+            <AdminPageFrame title="模型中心" description="正在读取筷子科技账号配置。" modelCenter>
                 <AdminContentSkeleton rows={8} label="正在加载筷子科技配置" />
             </AdminPageFrame>
         );
@@ -479,7 +479,7 @@ export default function KuaiziProviderPage({ api = providerAccountsApi }: { api?
 
     if (!account) {
         return (
-            <AdminPageFrame title="筷子科技" description="统一维护服务地址与模型系列凭据。">
+            <AdminPageFrame title="模型中心" description="统一维护服务地址与模型系列凭据。" modelCenter>
                 <AdminContentError title="筷子科技配置加载失败" description={loadError?.message ?? "服务端未返回供应商配置"} onRetry={() => void load()} />
             </AdminPageFrame>
         );

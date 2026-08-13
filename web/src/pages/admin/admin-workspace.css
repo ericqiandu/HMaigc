@@ -320,6 +320,77 @@
         margin-bottom: 24px;
     }
 
+    .admin-model-center-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-bottom: 24px;
+        background: var(--workspace-ui-surface-subtle);
+    }
+
+    .admin-model-center-tab {
+        display: flex;
+        min-width: 0;
+        min-height: 64px;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        color: var(--workspace-ui-text-secondary);
+        transition:
+            background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+            color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .admin-model-center-tab + .admin-model-center-tab {
+        border-left: 1px solid var(--workspace-ui-divider);
+    }
+
+    .admin-model-center-tab:hover,
+    .admin-model-center-tab.is-active {
+        background: var(--workspace-ui-surface);
+        color: var(--workspace-ui-text);
+    }
+
+    .admin-model-center-tab:focus-visible {
+        outline: 2px solid var(--workspace-ui-focus);
+        outline-offset: -2px;
+    }
+
+    .admin-model-center-tab-icon {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+    }
+
+    .admin-model-center-tab-copy {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .admin-model-center-tab-label {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+    }
+
+    .admin-model-center-tab-description {
+        overflow: hidden;
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-model-center-tab-status {
+        flex: 0 0 auto;
+        color: var(--workspace-ui-accent);
+        font-size: 11px;
+        line-height: 16px;
+    }
+
     .admin-page-heading {
         flex: 1 1 420px;
     }
@@ -1688,7 +1759,6 @@
         background: var(--workspace-ui-surface);
         outline: none;
     }
-
 
     .admin-workspace .site-settings-form {
         display: grid;

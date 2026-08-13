@@ -1,11 +1,5 @@
 import { Drawer, Tooltip } from "antd";
-import {
-    ChevronRight,
-    Home,
-    Menu,
-    PanelLeftClose,
-    PanelLeftOpen,
-} from "lucide-react";
+import { ChevronRight, Home, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
@@ -22,6 +16,7 @@ import "../admin-responsive.css";
 import "../admin-art-layout.css";
 import "../admin-navigation-layout.css";
 import { AdminNavigation, findAdminNavigationGroup, findAdminNavigationItem } from "./admin-navigation";
+import { AdminModelCenterTabs } from "./admin-model-center-tabs";
 
 export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
@@ -36,7 +31,9 @@ export function AdminShell() {
 
     return (
         <div className="app-user-workspace admin-workspace workspace-ui-scope flex h-full min-h-0 overflow-hidden text-foreground">
-            <a className="admin-skip-link" href="#admin-main-content">跳到主要内容</a>
+            <a className="admin-skip-link" href="#admin-main-content">
+                跳到主要内容
+            </a>
             <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden xl:flex", collapsed ? "w-16" : "w-[236px]")}>
                 <div className={cn("admin-sidebar-brand flex h-16 shrink-0 items-center", collapsed ? "justify-center" : "gap-2.5 px-4")}>
                     <Link to="/" className={cn("admin-brand-link flex min-w-0 items-center", collapsed ? "justify-center" : "flex-1 gap-2.5")} title={settings.siteName}>
@@ -90,7 +87,7 @@ function AdminDesktopHeader({ collapsed, onToggleCollapsed }: { collapsed: boole
     );
 }
 
-export function AdminPageFrame({ title, description, actions, children }: { title: string; description: string; actions?: ReactNode; children: ReactNode }) {
+export function AdminPageFrame({ title, description, actions, modelCenter = false, children }: { title: string; description: string; actions?: ReactNode; modelCenter?: boolean; children: ReactNode }) {
     return (
         <main id="admin-main-content" className="admin-page thin-scrollbar h-full overflow-y-auto" tabIndex={-1}>
             <div className="admin-page-frame mx-auto w-full">
@@ -101,6 +98,7 @@ export function AdminPageFrame({ title, description, actions, children }: { titl
                     </div>
                     {actions ? <div className="admin-page-actions flex shrink-0 items-center">{actions}</div> : null}
                 </header>
+                {modelCenter ? <AdminModelCenterTabs /> : null}
                 <div className="admin-page-content">{children}</div>
             </div>
         </main>
@@ -172,10 +170,7 @@ function AdminNavigationFooter({ collapsed, onNavigate }: { collapsed: boolean; 
     return (
         <div className="admin-sidebar-footer shrink-0">
             <Tooltip title={collapsed ? "更新日志" : undefined} placement="right">
-                <AppChangelogButton
-                    className={cn("admin-sidebar-footer-action flex w-full items-center transition-colors", collapsed ? "justify-center px-0" : "gap-2 px-2.5")}
-                    showVersion={!collapsed}
-                />
+                <AppChangelogButton className={cn("admin-sidebar-footer-action flex w-full items-center transition-colors", collapsed ? "justify-center px-0" : "gap-2 px-2.5")} showVersion={!collapsed} />
             </Tooltip>
             {onNavigate ? (
                 <NavLink to="/canvas" onClick={onNavigate} className="admin-sidebar-footer-action flex items-center gap-2 px-2.5 transition-colors">

@@ -12,10 +12,9 @@ import {
     Gift,
     Globe2,
     HardDrive,
-    KeyRound,
     Mail,
     MessageSquareText,
-    RadioTower,
+    Boxes,
     ScrollText,
     Search,
     ServerCog,
@@ -63,10 +62,8 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
         id: "models-cost",
         label: "模型与计费",
         items: [
-            { path: "/admin/models", label: "AI 模型", description: "渠道接入、模型目录、图标与启停", icon: RadioTower },
-            { path: "/admin/providers/kuaizi", label: "筷子科技", description: "公共服务地址、系列凭据与验证状态", icon: KeyRound },
+            { path: "/admin/models", label: "模型中心", description: "渠道、模型、筷子账号、价格与 Agent", icon: Boxes },
             { path: "/admin/voices", label: "音色管理", description: "系统音色、克隆音色、权限与模型兼容", icon: AudioLines },
-            { path: "/admin/model-pricing", label: "商业定价", description: "供应商成本、积分售价与利润率", icon: BadgeDollarSign },
             { path: "/admin/super-resolution-pricing", label: "超分定价", description: "独立视频增强成本、帧率档与积分售价", icon: Sparkles },
             { path: "/admin/storyboard-prompts", label: "分镜提示词", description: "Agent 分镜提示词模板与版本", icon: MessageSquareText },
         ],
@@ -105,11 +102,15 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
 ];
 
 export function findAdminNavigationGroup(pathname: string) {
-    return ADMIN_NAVIGATION_GROUPS.find((group) => group.items.some((item) => item.path === pathname));
+    return ADMIN_NAVIGATION_GROUPS.find((group) => group.items.some((item) => adminNavigationItemMatches(item, pathname)));
 }
 
 export function findAdminNavigationItem(pathname: string) {
-    return ADMIN_NAVIGATION_GROUPS.flatMap((group) => group.items).find((item) => item.path === pathname);
+    return ADMIN_NAVIGATION_GROUPS.flatMap((group) => group.items).find((item) => adminNavigationItemMatches(item, pathname));
+}
+
+function adminNavigationItemMatches(item: AdminNavigationItem, pathname: string) {
+    return item.path === pathname || (item.path !== "/admin" && pathname.startsWith(`${item.path}/`));
 }
 
 export function AdminNavigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
@@ -122,9 +123,7 @@ export function AdminNavigation({ collapsed, onNavigate }: { collapsed: boolean;
         if (!normalizedQuery) return ADMIN_NAVIGATION_GROUPS;
         return ADMIN_NAVIGATION_GROUPS.map((group) => ({
             ...group,
-            items: group.items.filter((item) =>
-                `${group.label} ${item.label} ${item.description}`.toLocaleLowerCase().includes(normalizedQuery),
-            ),
+            items: group.items.filter((item) => `${group.label} ${item.label} ${item.description}`.toLocaleLowerCase().includes(normalizedQuery)),
         })).filter((group) => group.items.length > 0);
     }, [normalizedQuery]);
 
@@ -170,12 +169,7 @@ export function AdminNavigation({ collapsed, onNavigate }: { collapsed: boolean;
                     return (
                         <section key={group.id} className="admin-navigation-group">
                             {!collapsed ? (
-                                <button
-                                    type="button"
-                                    className="admin-navigation-group-trigger"
-                                    aria-expanded={expanded}
-                                    onClick={() => toggleGroup(group.id)}
-                                >
+                                <button type="button" className="admin-navigation-group-trigger" aria-expanded={expanded} onClick={() => toggleGroup(group.id)}>
                                     <span className="admin-navigation-label">{group.label}</span>
                                     <span className="admin-navigation-group-meta">
                                         <span className="admin-navigation-group-count">{group.items.length}</span>

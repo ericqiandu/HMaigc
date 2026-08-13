@@ -322,7 +322,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </div>
                 </div>
                 <Space className="channel-model-manager-actions" wrap>
-                    <Link className="channel-model-pricing-link" to="/admin/model-pricing">
+                    <Link className="channel-model-pricing-link" to="/admin/models/pricing">
                         <Button className="channel-model-pricing-button">商业定价</Button>
                     </Link>
                     <Button className="channel-model-fetch-button" loading={fetching} icon={<RefreshCw className="channel-model-fetch-icon size-4" />} onClick={() => void fetchModels()}>

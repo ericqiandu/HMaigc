@@ -316,7 +316,7 @@ export default function ChannelsPage() {
 
     if (managingChannel) {
         return (
-            <AdminPageFrame title="AI 模型配置" description={`${managingChannel.name} · 模型、成本与售价`}>
+            <AdminPageFrame title="模型中心" description={`${managingChannel.name} · 模型、成本与售价`} modelCenter>
                 <div className="admin-channel-model-content">
                     <ChannelModelManager
                         channel={managingChannel}
@@ -333,8 +333,9 @@ export default function ChannelsPage() {
 
     return (
         <AdminPageFrame
-            title="AI 模型配置"
+            title="模型中心"
             description="统一管理系统渠道、模型目录与连接状态"
+            modelCenter
             actions={
                 <Button className="admin-channel-create-button" type="primary" icon={<Plus className="admin-channel-create-icon size-4" />} onClick={() => openDrawer()}>
                     新增系统渠道

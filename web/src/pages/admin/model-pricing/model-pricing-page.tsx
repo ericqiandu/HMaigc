@@ -325,7 +325,7 @@ export default function ModelPricingPage() {
 
     if (loadError && models.length === 0) {
         return (
-            <AdminPageFrame title="商业定价" description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。">
+            <AdminPageFrame title="模型中心" description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润。" modelCenter>
                 <AdminContentError title="模型商业定价加载失败" description={loadError} onRetry={() => void reload()} />
             </AdminPageFrame>
         );
@@ -333,8 +333,9 @@ export default function ModelPricingPage() {
 
     return (
         <AdminPageFrame
-            title="商业定价"
+            title="模型中心"
             description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。"
+            modelCenter
             actions={
                 <Button className="model-pricing-settings-button" icon={<Settings2 className="size-4" />} onClick={openSettings}>
                     商业参数

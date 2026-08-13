@@ -75,6 +75,24 @@
 }
 
 @media (max-width: 767px) {
+    .admin-workspace .admin-model-center-tabs {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-workspace .admin-model-center-tab {
+        min-height: 44px;
+        padding: 8px 12px;
+    }
+
+    .admin-workspace .admin-model-center-tab + .admin-model-center-tab {
+        border-top: 1px solid var(--workspace-ui-divider);
+        border-left: 0;
+    }
+
+    .admin-workspace .admin-model-center-tab-description {
+        white-space: normal;
+    }
+
     .admin-membership-mobile-section {
         display: block;
     }
