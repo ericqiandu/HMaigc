@@ -3,6 +3,7 @@ import { ChevronDown, Coins, LogOut, Settings2, ShieldCheck, Stamp, UserPlus, Us
 import { useEffect, useState, type JSX, type ReactNode } from "react";
 import { Link } from "react-router";
 
+import { AIWatermarkSettingsModal } from "@/components/account/ai-watermark-settings-modal";
 import { openReferralCenter, ReferralRewardCenter } from "@/components/account/referral-reward-center";
 import { useConfirmLogout } from "@/components/auth/use-confirm-logout";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
@@ -21,6 +22,7 @@ export function SiteAccountActions(): JSX.Element {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const [menuOpen, setMenuOpen] = useState(false);
+    const [watermarkOpen, setWatermarkOpen] = useState(false);
     const { availableMicrocredits } = useWalletBalance(user?.id, Boolean(user));
     const membershipAction = useMembershipAction(user?.id);
     const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
@@ -49,6 +51,7 @@ export function SiteAccountActions(): JSX.Element {
     return (
         <div className="site-account-actions flex items-center gap-2">
             <ReferralRewardCenter />
+            <AIWatermarkSettingsModal open={watermarkOpen} onClose={() => setWatermarkOpen(false)} />
             <SystemAnnouncementCenter userId={user.id} className="site-account-notifications grid shrink-0 place-items-center rounded-full transition-colors" staticMotion />
             <div className="site-account-pill flex items-center rounded-full px-1.5 backdrop-blur-xl">
                 <Link to="/wallet" className="site-account-balance flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium tabular-nums transition-opacity hover:opacity-70" title={`${balance} 积分`}>
@@ -74,6 +77,10 @@ export function SiteAccountActions(): JSX.Element {
                             setTheme={setTheme}
                             close={() => setMenuOpen(false)}
                             invite={() => void handleInvite()}
+                            openWatermark={() => {
+                                setMenuOpen(false);
+                                setWatermarkOpen(true);
+                            }}
                             logout={() => {
                                 setMenuOpen(false);
                                 confirmLogout();
@@ -99,6 +106,7 @@ function AccountMenu({
     setTheme,
     close,
     invite,
+    openWatermark,
     logout: logOut,
 }: {
     user: LocalUser;
@@ -108,6 +116,7 @@ function AccountMenu({
     setTheme: (theme: "light" | "dark") => void;
     close: () => void;
     invite: () => void;
+    openWatermark: () => void;
     logout: () => void;
 }) {
     return (
@@ -128,7 +137,7 @@ function AccountMenu({
                 <AccountMenuLink to="/membership" icon={<MembershipIcon className="site-account-menu-icon size-4" />} label={membershipAction.label} onNavigate={close} />
                 <AccountMenuButton icon={<UserPlus className="site-account-menu-icon size-4" />} label="邀请好友" onClick={invite} />
                 <AccountMenuLink to="/settings" icon={<Settings2 className="site-account-menu-icon size-4" />} label="账户设置" onNavigate={close} />
-                <AccountMenuLink to="/settings?section=watermark" icon={<Stamp className="site-account-menu-icon size-4" />} label="AI 水印设置" onNavigate={close} />
+                <AccountMenuButton icon={<Stamp className="site-account-menu-icon size-4" />} label="AI 水印设置" onClick={openWatermark} />
                 {user.role === "admin" ? <AccountMenuLink to="/admin" icon={<ShieldCheck className="site-account-menu-icon size-4" />} label="管理后台" onNavigate={close} /> : null}
             </nav>
             <div className="site-account-theme flex h-10 items-center px-2">

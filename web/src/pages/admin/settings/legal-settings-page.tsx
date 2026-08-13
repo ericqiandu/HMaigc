@@ -9,6 +9,7 @@ import { adminSiteSettingsQueryKey, getAdminSiteSettings, publicSiteSettingsQuer
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminContentSkeleton, SettingsSectionCard } from "../components/admin-ui";
 import { LegalRichTextEditor } from "../components/legal-rich-text-editor";
+import { AIWatermarkPolicyEditor } from "./ai-watermark-policy-editor";
 import { emptyLegalDraft, legalDraftsEqual, normalizeLegalDraft, type LegalDraft } from "./legal-draft";
 
 export default function LegalSettingsPage() {
@@ -79,6 +80,7 @@ export default function LegalSettingsPage() {
     return (
         <AdminPageFrame title="法律与协议" description="独立维护用户协议、隐私政策、会员服务协议及其公开展示内容">
             <div className="legal-settings-page space-y-5">
+                <AIWatermarkPolicyEditor />
                 {settingQuery.isLoading ? (
                     <AdminContentSkeleton rows={16} label="正在加载法律内容" />
                 ) : settingQuery.error && !setting ? (

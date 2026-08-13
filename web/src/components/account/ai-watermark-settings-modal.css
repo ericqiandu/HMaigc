@@ -1,0 +1,68 @@
+.ai-watermark-settings-modal .ant-modal-content {
+    border-radius: var(--radius-xl);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+}
+.ai-watermark-settings-modal .ant-modal-header {
+    margin-bottom: var(--space-4);
+    background: transparent;
+}
+.ai-watermark-settings-content {
+    display: grid;
+    gap: var(--space-4);
+    max-height: min(72vh, 680px);
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+.ai-watermark-settings-intro,
+.ai-watermark-settings-control p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    line-height: 17px;
+}
+.ai-watermark-settings-rule {
+    max-height: 280px;
+    overflow-y: auto;
+    padding-block: var(--space-2);
+    border-block: 1px solid var(--border-light);
+}
+.ai-watermark-settings-link {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--brand-primary);
+    font-size: var(--text-xs);
+}
+.ai-watermark-settings-control {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    padding-block: var(--space-4);
+    border-top: 1px solid var(--border-light);
+}
+.ai-watermark-settings-control-icon {
+    color: var(--text-secondary);
+}
+.ai-watermark-settings-control h3 {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+}
+.ai-watermark-settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+}
+@media (max-width: 639px) {
+    .ai-watermark-settings-modal {
+        width: calc(100vw - 24px) !important;
+        max-width: none;
+    }
+    .ai-watermark-settings-actions .ant-btn {
+        min-height: 44px;
+        flex: 1;
+    }
+}

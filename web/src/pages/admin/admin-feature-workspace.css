@@ -1,4 +1,46 @@
 @layer utilities {
+    .ai-watermark-policy-form {
+        display: grid;
+        gap: var(--space-4);
+    }
+
+    .ai-watermark-policy-field {
+        display: grid;
+        min-width: 0;
+        gap: var(--space-2);
+    }
+
+    .ai-watermark-policy-label {
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: var(--font-medium);
+    }
+
+    .ai-watermark-policy-help,
+    .ai-watermark-policy-meta {
+        color: var(--text-tertiary);
+        font-size: var(--text-xs);
+        line-height: 17px;
+    }
+
+    .ai-watermark-policy-footer,
+    .ai-watermark-policy-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+    }
+
+    .ai-watermark-policy-link {
+        display: inline-flex;
+        min-height: 36px;
+        align-items: center;
+        gap: var(--space-1);
+        color: var(--brand-primary);
+        font-size: var(--text-xs);
+    }
+
     .admin-workspace .legal-settings-page {
         width: 100%;
         max-width: none;
