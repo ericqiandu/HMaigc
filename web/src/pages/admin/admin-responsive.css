@@ -11,11 +11,17 @@
 }
 
 @media (max-width: 1279px) {
+    .admin-workspace .admin-mobile-header {
+        position: sticky;
+        z-index: 30;
+        top: 0;
+    }
+
     .admin-workspace .admin-page-frame {
         padding-inline: 24px;
     }
 
-    .admin-workspace .admin-theme-toggle,
+    .admin-workspace .admin-layout-settings-trigger,
     .admin-workspace .admin-mobile-menu-button {
         width: 44px;
         min-width: 44px;

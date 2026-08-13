@@ -13,8 +13,8 @@
     --workspace-ui-text-tertiary: #8f959e;
     --workspace-ui-text-disabled: rgb(31 35 41 / 35%);
     --workspace-ui-divider: #e8eaed;
-    --workspace-ui-accent: #2979c9;
-    --admin-chart-primary: #2979c9;
+    --workspace-ui-accent: var(--admin-color-primary);
+    --admin-chart-primary: var(--admin-color-primary);
     --admin-chart-secondary: #0f766e;
     --admin-chart-warning: #b65c00;
     --background: #f5f7fa;
@@ -23,7 +23,7 @@
     --card-foreground: #1f2329;
     --popover: #ffffff;
     --popover-foreground: #1f2329;
-    --primary: #2979c9;
+    --primary: var(--admin-color-primary);
     --primary-foreground: #ffffff;
     --muted: #fafafa;
     --muted-foreground: #8f959e;
@@ -47,8 +47,8 @@
     --workspace-ui-text-tertiary: rgb(255 255 255 / 48%);
     --workspace-ui-text-disabled: rgb(255 255 255 / 38%);
     --workspace-ui-divider: rgb(255 255 255 / 8%);
-    --workspace-ui-accent: #7ccbff;
-    --admin-chart-primary: #7ccbff;
+    --workspace-ui-accent: var(--admin-color-primary);
+    --admin-chart-primary: var(--admin-color-primary);
     --admin-chart-secondary: #5eead4;
     --admin-chart-warning: #ff9f0a;
     --background: #0b0f14;
@@ -57,7 +57,7 @@
     --card-foreground: rgb(255 255 255 / 96%);
     --popover: #1b212b;
     --popover-foreground: rgb(255 255 255 / 96%);
-    --primary: #7ccbff;
+    --primary: var(--admin-color-primary);
     --primary-foreground: #06111a;
     --muted: #111827;
     --muted-foreground: rgb(255 255 255 / 48%);
@@ -91,6 +91,32 @@
 
     .admin-workspace {
         background: var(--workspace-ui-page);
+    }
+
+    .admin-theme-root[data-admin-menu-theme="light"] .admin-sidebar,
+    .admin-theme-root[data-admin-menu-theme][data-admin-menu-theme="light"] .admin-mobile-navigation-drawer {
+        --workspace-ui-surface: #ffffff;
+        --workspace-ui-surface-subtle: #fafafa;
+        --workspace-ui-control: #f5f7fa;
+        --workspace-ui-control-hover: #eef1f4;
+        --workspace-ui-divider: #e8eaed;
+        --workspace-ui-text: #1f2329;
+        --workspace-ui-text-secondary: #646a73;
+        --workspace-ui-text-tertiary: #8f959e;
+        color-scheme: light;
+    }
+
+    .admin-theme-root[data-admin-menu-theme="dark"] .admin-sidebar,
+    .admin-theme-root[data-admin-menu-theme][data-admin-menu-theme="dark"] .admin-mobile-navigation-drawer {
+        --workspace-ui-surface: #171718;
+        --workspace-ui-surface-subtle: #1d1d1f;
+        --workspace-ui-control: rgb(250 250 250 / 7%);
+        --workspace-ui-control-hover: rgb(250 250 250 / 11%);
+        --workspace-ui-divider: rgb(250 250 250 / 8%);
+        --workspace-ui-text: rgb(250 250 250 / 96%);
+        --workspace-ui-text-secondary: rgb(250 250 250 / 72%);
+        --workspace-ui-text-tertiary: rgb(250 250 250 / 58%);
+        color-scheme: dark;
     }
 
     .admin-skip-link {
@@ -388,6 +414,24 @@
         max-width: 1304px;
         margin-inline: auto;
         padding: 24px 32px 56px;
+    }
+
+    .admin-workspace[data-admin-content-width="fixed"] .admin-page-frame {
+        max-width: 1120px;
+    }
+
+    .admin-workspace[data-admin-content-width="fluid"] .admin-page-frame {
+        max-width: 1304px;
+    }
+
+    .admin-workspace[data-admin-fixed-header="false"] .admin-workspace-main {
+        overflow-y: auto;
+    }
+
+    .admin-workspace[data-admin-fixed-header="false"] .admin-page {
+        height: auto;
+        flex: 0 0 auto;
+        overflow-y: visible;
     }
 
     .admin-page-content {

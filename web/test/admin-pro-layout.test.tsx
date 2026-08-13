@@ -6,7 +6,8 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
-import { AdminPageActions, AdminPageFrame } from "../src/pages/admin/components/admin-shell";
+import { DEFAULT_ADMIN_LAYOUT_SETTINGS } from "../src/pages/admin/admin-layout-settings";
+import { AdminPageActions, AdminPageFrame, adminWorkspacePresentation } from "../src/pages/admin/components/admin-shell";
 import type { AdminAnalytics } from "../src/services/api/auth";
 
 const analyticsFixture: AdminAnalytics = {
@@ -63,6 +64,33 @@ afterEach(async () => {
 });
 
 describe("admin pro layout", () => {
+    test("projects the configured widths and layout facts while keeping collapsed navigation at 64px", () => {
+        const expandedWidths = ([208, 236, 272] as const).map((siderWidth) => adminWorkspacePresentation({ ...DEFAULT_ADMIN_LAYOUT_SETTINGS, siderWidth }, false).workspaceStyle["--admin-sider-width"]);
+        const expanded = adminWorkspacePresentation({ ...DEFAULT_ADMIN_LAYOUT_SETTINGS, contentWidth: "fixed", fixedHeader: false, siderWidth: 272 }, false);
+        const collapsed = adminWorkspacePresentation({ ...DEFAULT_ADMIN_LAYOUT_SETTINGS, siderWidth: 208 }, true);
+
+        expect(expandedWidths).toEqual(["208px", "236px", "272px"]);
+        expect(expanded.workspaceAttributes).toEqual({ "data-admin-content-width": "fixed", "data-admin-fixed-header": "false" });
+        expect(expanded.workspaceStyle["--admin-sider-width"]).toBe("272px");
+        expect(expanded.sidebarWidth).toBe("var(--admin-sider-width)");
+        expect(collapsed.sidebarWidth).toBe(64);
+    });
+
+    test("defines fixed and fluid content widths, independent menu themes, and mobile sticky navigation", async () => {
+        const workspaceStyles = await Bun.file(new URL("../src/pages/admin/admin-workspace.css", import.meta.url)).text();
+        const responsiveStyles = await Bun.file(new URL("../src/pages/admin/admin-responsive.css", import.meta.url)).text();
+
+        expect(workspaceStyles).toContain('[data-admin-content-width="fixed"] .admin-page-frame');
+        expect(workspaceStyles).toContain("max-width: 1120px");
+        expect(workspaceStyles).toContain('[data-admin-content-width="fluid"] .admin-page-frame');
+        expect(workspaceStyles).toContain("max-width: 1304px");
+        expect(workspaceStyles).toContain('[data-admin-menu-theme="light"]');
+        expect(workspaceStyles).toContain('[data-admin-menu-theme="dark"]');
+        expect(workspaceStyles).toContain('[data-admin-fixed-header="false"] .admin-workspace-main');
+        expect(responsiveStyles).toContain("position: sticky");
+        expect(responsiveStyles).toContain("top: 0");
+    });
+
     test("renders descendant actions in the page header slot", async () => {
         const host = document.createElement("div");
         document.body.append(host);

@@ -27,6 +27,8 @@ describe("admin layout settings drawer", () => {
         await clickControl(".admin-layout-content-fixed");
         await clickControl(".admin-layout-fixed-header");
 
+        expect(document.querySelector(".admin-theme-root")?.getAttribute("data-admin-theme")).toBe("dark");
+        expect(document.querySelector(".admin-theme-root")?.getAttribute("data-admin-menu-theme")).toBe("light");
         expect(settingsProbe()).toMatchObject({
             theme: "dark",
             menuTheme: "light",

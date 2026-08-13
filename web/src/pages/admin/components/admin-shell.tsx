@@ -1,6 +1,6 @@
 import { Drawer, Tooltip } from "antd";
 import { ChevronRight, Home, Menu, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
@@ -16,6 +16,7 @@ import "../admin-feature-workspace.css";
 import "../admin-responsive.css";
 import "../admin-art-layout.css";
 import "../admin-navigation-layout.css";
+import { useAdminLayoutSettings, type AdminLayoutSettings } from "../admin-layout-settings";
 import { useAdminTheme } from "../admin-theme";
 import { AdminLayoutSettingsDrawer } from "./admin-layout-settings-drawer";
 import { AdminNavigation, findAdminNavigationGroup, findAdminNavigationItem } from "./admin-navigation";
@@ -23,10 +24,28 @@ import { AdminModelCenterTabs } from "./admin-model-center-tabs";
 
 const AdminPageActionTargetContext = createContext<HTMLElement | null>(null);
 
+type AdminWorkspaceStyle = CSSProperties & {
+    "--admin-sider-width": string;
+};
+
+export function adminWorkspacePresentation(settings: AdminLayoutSettings, collapsed: boolean) {
+    const workspaceStyle: AdminWorkspaceStyle = { "--admin-sider-width": `${settings.siderWidth}px` };
+    return {
+        sidebarWidth: collapsed ? 64 : "var(--admin-sider-width)",
+        workspaceAttributes: {
+            "data-admin-content-width": settings.contentWidth,
+            "data-admin-fixed-header": settings.fixedHeader ? "true" : "false",
+        },
+        workspaceStyle,
+    };
+}
+
 export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const { settings } = useSiteSettings();
+    const { settings: siteSettings } = useSiteSettings();
+    const { settings: layoutSettings } = useAdminLayoutSettings();
+    const presentation = adminWorkspacePresentation(layoutSettings, collapsed);
     const toggleCollapsed = () => {
         setCollapsed((current) => {
             const next = !current;
@@ -36,19 +55,24 @@ export function AdminShell() {
     };
 
     return (
-        <div className="app-user-workspace admin-workspace workspace-ui-scope flex h-full min-h-0 overflow-hidden text-foreground">
+        <div
+            className="app-user-workspace admin-workspace workspace-ui-scope flex h-full min-h-0 overflow-hidden text-foreground"
+            data-admin-content-width={presentation.workspaceAttributes["data-admin-content-width"]}
+            data-admin-fixed-header={presentation.workspaceAttributes["data-admin-fixed-header"]}
+            style={presentation.workspaceStyle}
+        >
             <a className="admin-skip-link" href="#admin-main-content">
                 跳到主要内容
             </a>
-            <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden xl:flex", collapsed ? "w-16" : "w-[236px]")}>
+            <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden xl:flex", collapsed ? "w-16" : null)} style={{ width: presentation.sidebarWidth }}>
                 <div className={cn("admin-sidebar-brand flex h-16 shrink-0 items-center", collapsed ? "justify-center" : "gap-2.5 px-4")}>
-                    <Link to="/" className={cn("admin-brand-link flex min-w-0 items-center", collapsed ? "justify-center" : "flex-1 gap-2.5")} title={settings.siteName}>
+                    <Link to="/" className={cn("admin-brand-link flex min-w-0 items-center", collapsed ? "justify-center" : "flex-1 gap-2.5")} title={siteSettings.siteName}>
                         <span className="admin-brand-mark grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-foreground/[.06]">
-                            <img className="admin-brand-image size-5 object-contain" src={siteLogoURL(settings)} alt="" />
+                            <img className="admin-brand-image size-5 object-contain" src={siteLogoURL(siteSettings)} alt="" />
                         </span>
                         {!collapsed ? (
                             <span className="admin-brand-copy min-w-0">
-                                <span className="admin-brand-name block truncate text-sm font-semibold">{settings.siteName}</span>
+                                <span className="admin-brand-name block truncate text-sm font-semibold">{siteSettings.siteName}</span>
                                 <span className="admin-brand-caption block truncate text-[11px] font-medium tracking-[0.08em] text-foreground/45">ADMIN CONSOLE</span>
                             </span>
                         ) : null}
