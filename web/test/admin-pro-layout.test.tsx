@@ -78,6 +78,8 @@ describe("admin pro layout", () => {
 
     test("defines fixed and fluid content widths, independent menu themes, and mobile sticky navigation", async () => {
         const workspaceStyles = await Bun.file(new URL("../src/pages/admin/admin-workspace.css", import.meta.url)).text();
+        const domainStyles = await Bun.file(new URL("../src/pages/admin/admin-domain-workspace.css", import.meta.url)).text();
+        const artStyles = await Bun.file(new URL("../src/pages/admin/admin-art-layout.css", import.meta.url)).text();
         const responsiveStyles = await Bun.file(new URL("../src/pages/admin/admin-responsive.css", import.meta.url)).text();
 
         expect(workspaceStyles).toContain('[data-admin-content-width="fixed"] .admin-page-frame');
@@ -89,6 +91,17 @@ describe("admin pro layout", () => {
         expect(workspaceStyles).toContain('[data-admin-fixed-header="false"] .admin-workspace-main');
         expect(responsiveStyles).toContain("position: sticky");
         expect(responsiveStyles).toContain("top: 0");
+
+        expect(workspaceStyles).toContain(".admin-data-layout");
+        expect(workspaceStyles).toContain(".admin-metric-band-list");
+        expect(workspaceStyles).toContain("grid-template-columns: repeat(4, minmax(0, 1fr))");
+        expect(responsiveStyles).toContain(".admin-metric-band-list");
+        expect(responsiveStyles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
+        expect(responsiveStyles).toContain("grid-template-columns: minmax(0, 1fr)");
+        const adminStyles = `${workspaceStyles}\n${domainStyles}\n${artStyles}\n${responsiveStyles}`;
+        expect(adminStyles).not.toContain("admin-analytics-overview-grid");
+        expect(adminStyles).not.toContain("admin-analytics-metric-section");
+        expect(adminStyles).not.toContain("admin-analytics-metrics");
     });
 
     test("renders descendant actions in the page header slot", async () => {
