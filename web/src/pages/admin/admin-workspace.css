@@ -1,6 +1,9 @@
 @layer utilities {
     .admin-theme-root[data-admin-theme="light"],
     .admin-theme-root[data-admin-theme="light"] .admin-workspace {
+        --admin-chart-primary: #1677ff;
+        --admin-chart-secondary: #13a8a8;
+        --admin-chart-warning: #d46b08;
         --workspace-ui-page: #f5f7fa;
         --workspace-ui-surface: #ffffff;
         --workspace-ui-surface-subtle: #fafafa;
@@ -32,6 +35,9 @@
 
     .admin-theme-root[data-admin-theme="dark"],
     .admin-theme-root[data-admin-theme="dark"] .admin-workspace {
+        --admin-chart-primary: #4096ff;
+        --admin-chart-secondary: #36cfc9;
+        --admin-chart-warning: #fa8c16;
         --workspace-ui-page: #0b0f14;
         --workspace-ui-surface: #1b212b;
         --workspace-ui-surface-subtle: #111827;

@@ -186,6 +186,86 @@
     background: var(--workspace-ui-surface);
 }
 
+.admin-workspace .admin-analytics-layout {
+    gap: 16px;
+}
+
+.admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
+    padding: 14px 16px;
+}
+
+.admin-workspace .admin-analytics-overview-grid {
+    gap: 16px;
+}
+
+.admin-workspace .admin-analytics-metric-section,
+.admin-workspace .admin-analytics-trend,
+.admin-workspace .admin-analytics-table-surface {
+    border-radius: 8px;
+}
+
+.admin-workspace .admin-analytics-metric-section,
+.admin-workspace .admin-analytics-trend {
+    overflow: hidden;
+}
+
+.admin-workspace .admin-analytics-trend-heading {
+    padding: 16px 20px 12px;
+}
+
+.admin-workspace .admin-analytics-tabs > .ant-tabs-nav {
+    margin-bottom: 12px;
+}
+
+.admin-workspace .admin-analytics-tabs > .ant-tabs-content-holder {
+    min-width: 0;
+}
+
+.admin-workspace .admin-analytics-layout > .admin-content-skeleton,
+.admin-workspace .admin-analytics-layout > .admin-content-error {
+    width: 100%;
+}
+
+@media (max-width: 1023px) {
+    .admin-workspace .admin-analytics-overview-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 767px) {
+    .admin-workspace .admin-analytics-layout {
+        gap: 12px;
+    }
+
+    .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-workspace .admin-analytics-date-filter {
+        grid-column: 1 / -1;
+    }
+
+    .admin-workspace .admin-analytics-section-heading {
+        min-height: 60px;
+    }
+}
+
+@media (max-width: 479px) {
+    .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar-fields,
+    .admin-workspace .admin-analytics-metrics {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-workspace .admin-analytics-metric {
+        min-height: 88px;
+    }
+
+    .admin-workspace .admin-analytics-chart {
+        height: 260px;
+        padding-inline: 8px;
+    }
+}
+
 @media (max-width: 1279px) {
     .admin-workspace .model-pricing-toolbar,
     .admin-workspace .model-pricing-toolbar .workspace-list-toolbar-fields {
