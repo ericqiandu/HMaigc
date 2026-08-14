@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Ban, Copy, Eye, KeyRound, RefreshCw, Search, TicketCheck } from "lucide-react";
+import { Ban, Copy, Eye, RefreshCw, Search, TicketCheck } from "lucide-react";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { createAdminRedeemBatch, disableAdminRedeemBatch, disableAdminRedeemCode, listAdminRedeemBatchCodes, listAdminRedeemBatches, type AdminRedeemCode, type RedeemBatch } from "@/services/api/wallet";
-import { AdminContentError, AdminExportButton, AdminTableEmpty, AdminTableSkeleton, SettingsSectionCard } from "./admin-ui";
+import { AdminContentSection, AdminDataLayout } from "./admin-data-layout";
+import { formatCompactNumberInput } from "./admin-form-system";
+import { AdminContentError, AdminExportButton, AdminTableEmpty, AdminTableSkeleton } from "./admin-ui";
 import { redeemBatchDisableDescription, redeemBatchRequest, redeemCodeDisableDescription, type RedeemFormValues } from "./redemption-code-domain";
 
 export default function RedemptionCodesPanel() {
@@ -138,8 +140,8 @@ export default function RedemptionCodesPanel() {
     ];
 
     return (
-        <div className="admin-redemption-layout">
-            <SettingsSectionCard icon={<KeyRound className="size-4" />} title="生成兑换码批次" description="兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。">
+        <AdminDataLayout>
+            <AdminContentSection className="admin-redemption-generator" title="生成兑换码批次" description="兑换码为 32 位随机字符串，生成后加密保存，可在批次明细中再次查看。">
                 <Form form={form} layout="vertical" requiredMark={false} disabled={creating} className="admin-redemption-form grid md:grid-cols-12">
                     <Form.Item
                         name="amount"
@@ -150,7 +152,7 @@ export default function RedemptionCodesPanel() {
                         ]}
                         className="admin-redemption-amount-field md:col-span-4"
                     >
-                        <InputNumber style={{ width: "100%" }} min={0.000001} precision={6} />
+                        <InputNumber style={{ width: "100%" }} min={0.000001} precision={6} step={0.000001} formatter={formatCompactNumberInput} />
                     </Form.Item>
                     <Form.Item
                         name="count"
@@ -176,21 +178,21 @@ export default function RedemptionCodesPanel() {
                         </Button>
                     </div>
                 </Form>
-            </SettingsSectionCard>
+            </AdminContentSection>
 
-            <section className="admin-redemption-records">
-                <div className="admin-redemption-records-heading">
-                    <div className="admin-redemption-records-copy">
-                        <h2 className="admin-redemption-records-title">批次记录</h2>
-                        <p className="admin-redemption-records-description">查看每个兑换码的当前状态、核销用户、时间和来源 IP。</p>
-                    </div>
+            <AdminContentSection
+                className="admin-redemption-records"
+                title="批次记录"
+                description="查看每个兑换码的当前状态、核销用户、时间和来源 IP。"
+                actions={
                     <div className="admin-redemption-records-meta">
                         <span className="admin-redemption-records-count">共 {total} 个批次</span>
                         <Button className="admin-redemption-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
                             刷新
                         </Button>
                     </div>
-                </div>
+                }
+            >
                 <ListToolbar
                     active={Boolean(keyword || validity !== "all")}
                     onReset={() => {
@@ -261,11 +263,11 @@ export default function RedemptionCodesPanel() {
                         ) : null}
                     </TableSurface>
                 ) : null}
-            </section>
+            </AdminContentSection>
 
             <GeneratedCodesModal codes={generatedCodes} onClose={() => setGeneratedCodes([])} />
             <RedeemBatchCodesModal key={selectedBatch?.id || "closed"} batch={selectedBatch} onClose={() => setSelectedBatch(null)} />
-        </div>
+        </AdminDataLayout>
     );
 }
 

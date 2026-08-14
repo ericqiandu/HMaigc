@@ -13,26 +13,18 @@ export function AdminModelCenterTabs() {
     const inRouter = useInRouterContext();
 
     return (
-        <nav className="admin-model-center-tabs" aria-label="模型中心配置流程">
+        <nav className="admin-model-center-tabs" aria-label="模型中心">
             {MODEL_CENTER_SECTIONS.map((section) => {
                 const Icon = section.icon;
                 const content = (
                     <>
                         <Icon className="admin-model-center-tab-icon" aria-hidden="true" />
-                        <span className="admin-model-center-tab-copy">
-                            <span className="admin-model-center-tab-label">{section.label}</span>
-                            <span className="admin-model-center-tab-description">{section.description}</span>
-                        </span>
+                        <span className="admin-model-center-tab-label">{section.label}</span>
                     </>
                 );
                 return inRouter ? (
                     <NavLink key={section.path} to={section.path} end className={({ isActive }) => cn("admin-model-center-tab", isActive && "is-active")}>
-                        {({ isActive }) => (
-                            <>
-                                {content}
-                                {isActive ? <span className="admin-model-center-tab-status">当前</span> : null}
-                            </>
-                        )}
+                        {content}
                     </NavLink>
                 ) : (
                     <a key={section.path} href={section.path} className="admin-model-center-tab">

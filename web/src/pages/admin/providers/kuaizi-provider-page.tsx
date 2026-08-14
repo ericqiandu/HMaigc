@@ -1,10 +1,11 @@
 import { Alert, Button, Input, Modal, Tag } from "antd";
-import { KeyRound, ServerCog, ShieldCheck } from "lucide-react";
+import { ServerCog, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { providerAccountsApi, type AdminProviderAccount, type AdminProviderCredential, type AdminProviderCredentialVersion, type ProviderAccountsApi, type ProviderAdapterDescriptor, type ProviderHealthStatus } from "@/services/api/provider-accounts";
+import { AdminContentSection, AdminDataLayout } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminContentError, AdminContentSkeleton, SettingsSectionCard, configuredSecretText } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, configuredSecretText } from "../components/admin-ui";
 import { endpointDraftChanged, formatKuaiziBalance, providerFamilyViews } from "./kuaizi-provider-domain";
 import { createKuaiziAwaitingSync, isKuaiziAwaitingSync, kuaiziAwaitingSyncError, type KuaiziMutationScope, type KuaiziProviderOperation } from "./kuaizi-provider-mutation";
 import "./kuaizi-provider.css";
@@ -93,32 +94,30 @@ function CandidateFacts({ candidate, hasActive }: { candidate: AdminProviderCred
     );
 }
 
-function ProviderModelFamilyCard({ adapter, credentialHealthy, busy, locked, error, onPublish }: { adapter: ProviderAdapterDescriptor; credentialHealthy: boolean; busy: boolean; locked: boolean; error?: Error; onPublish: () => void }) {
+function ProviderModelFamilyRow({ adapter, credentialHealthy, busy, locked, error, onPublish }: { adapter: ProviderAdapterDescriptor; credentialHealthy: boolean; busy: boolean; locked: boolean; error?: Error; onPublish: () => void }) {
     const publishedCount = adapter.models.filter((item) => item.published).length;
     return (
-        <SettingsSectionCard
-            className="kuaizi-provider-family-card"
-            icon={<ServerCog className="size-5" aria-hidden="true" />}
-            title={adapter.family}
-            description={adapter.models.map((model) => model.displayName).join("、") || "后端尚未登记模型"}
-            status={
+        <div className="kuaizi-provider-family-row">
+            <div className="kuaizi-provider-family-identity">
+                <ServerCog className="kuaizi-provider-family-icon size-5" aria-hidden="true" />
+                <div className="kuaizi-provider-family-copy">
+                    <h3 className="kuaizi-provider-family-title">{adapter.family}</h3>
+                    <p className="kuaizi-provider-family-models">{adapter.models.map((model) => model.displayName).join("、") || "后端尚未登记模型"}</p>
+                    <p className="kuaizi-provider-publication-state">
+                        已发布 {publishedCount}/{adapter.models.length}；未定价模型不会向用户开放。
+                    </p>
+                </div>
+            </div>
+            <div className="kuaizi-provider-family-actions">
                 <Tag className="kuaizi-provider-health-tag" variant="filled">
                     已登记
                 </Tag>
-            }
-            footer={
-                <div className="kuaizi-provider-family-actions">
-                    <Button className="kuaizi-provider-secondary-action" loading={busy} disabled={locked || !credentialHealthy} onClick={onPublish}>
-                        {publishedCount === adapter.models.length ? "同步模型" : "发布模型"}
-                    </Button>
-                </div>
-            }
-        >
-            <p className="kuaizi-provider-publication-state">
-                已发布 {publishedCount}/{adapter.models.length}；未定价模型不会向用户开放。
-            </p>
+                <Button className="kuaizi-provider-secondary-action" loading={busy} disabled={locked || !credentialHealthy} onClick={onPublish}>
+                    {publishedCount === adapter.models.length ? "同步模型" : "发布模型"}
+                </Button>
+            </div>
             {error ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="最近一次操作失败" description={error.message} /> : null}
-        </SettingsSectionCard>
+        </div>
     );
 }
 
@@ -126,22 +125,19 @@ function AccountCredentialCard({ account, busy, locked, error, onOpen, onVerify 
     const active = account.credential?.active;
     const candidate = account.credential?.candidate;
     return (
-        <SettingsSectionCard
+        <AdminContentSection
             className="kuaizi-provider-account-credential-card"
-            icon={<KeyRound className="size-5" aria-hidden="true" />}
             title="账号统一凭据"
             description="所有筷子科技图片、视频与 Agent 模型共同使用这一枚 write-only Key。"
-            status={
-                active ? (
-                    healthTag(active.healthStatus)
-                ) : (
-                    <Tag className="kuaizi-provider-health-tag" variant="filled">
-                        未配置
-                    </Tag>
-                )
-            }
-            footer={
-                <div className="kuaizi-provider-family-actions">
+            actions={
+                <div className="kuaizi-provider-credential-actions">
+                    {active ? (
+                        healthTag(active.healthStatus)
+                    ) : (
+                        <Tag className="kuaizi-provider-health-tag" variant="filled">
+                            未配置
+                        </Tag>
+                    )}
                     <Button className="kuaizi-provider-secondary-action" disabled={locked} onClick={onOpen}>
                         {active?.hasKey || candidate?.hasKey ? "更新密钥" : "配置密钥"}
                     </Button>
@@ -154,7 +150,7 @@ function AccountCredentialCard({ account, busy, locked, error, onOpen, onVerify 
             <CredentialFacts active={active} />
             {candidate ? <CandidateFacts candidate={candidate} hasActive={Boolean(active)} /> : null}
             {error ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="最近一次操作失败" description={error.message} /> : null}
-        </SettingsSectionCard>
+        </AdminContentSection>
     );
 }
 
@@ -176,74 +172,72 @@ export function KuaiziProviderPageView({
 }: KuaiziProviderPageViewProps) {
     const families = providerFamilyViews(account);
     const endpointBusy = operation === "endpoint";
-    const endpointStatus = account.endpointCandidate ? { label: "有待验证更新" } : account.endpoint?.active ? { label: "已启用", color: "success" } : account.endpoint ? { label: "待验证" } : { label: "未配置" };
+    const endpointStatus: { label: string; color?: string } = account.endpointCandidate ? { label: "有待验证更新" } : account.endpoint?.active ? { label: "已启用", color: "success" } : account.endpoint ? { label: "待验证" } : { label: "未配置" };
     return (
         <AdminPageFrame title="模型中心" description="统一维护一套服务地址与账号 Key；各模型系列只负责能力与发布。" modelCenter>
             <div className="kuaizi-provider-page-content">
                 {loadError ? <AdminContentError title="筷子科技配置刷新失败" description={loadError.message} onRetry={onRetry} /> : null}
-                <div className="kuaizi-provider-account-grid">
-                    <SettingsSectionCard
+                <AdminDataLayout>
+                    <AdminContentSection
                         className="kuaizi-provider-endpoint-card"
-                        icon={<ServerCog className="size-5" aria-hidden="true" />}
                         title="公共服务配置"
                         description="Base URL 由所有后端登记的筷子科技模型系列共享。"
-                        status={endpointStatus}
-                        footer={
+                        actions={
+                            <Tag className="kuaizi-provider-health-tag" color={endpointStatus.color} variant="filled">
+                                {endpointStatus.label}
+                            </Tag>
+                        }
+                    >
+                        <div className="kuaizi-provider-endpoint-body">
+                            <label className="kuaizi-provider-field-label" htmlFor="kuaizi-provider-base-url">
+                                Base URL
+                            </label>
+                            <Input
+                                id="kuaizi-provider-base-url"
+                                className="kuaizi-provider-base-url"
+                                value={endpointDraft}
+                                disabled={Boolean(operation)}
+                                placeholder="https://…"
+                                autoComplete="url"
+                                onChange={(event) => onEndpointChange(event.currentTarget.value)}
+                            />
+                            {operationErrors.endpoint ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="服务地址保存失败" description={operationErrors.endpoint.message} /> : null}
+                            {account.endpointCandidate ? (
+                                <p className="kuaizi-provider-endpoint-candidate">
+                                    候选地址 v{account.endpointCandidate.version}：{account.endpointCandidate.baseUrl}
+                                </p>
+                            ) : null}
                             <div className="kuaizi-provider-endpoint-footer">
                                 <span className="kuaizi-provider-sync-state">{endpointSyncPending ? "写入结果待同步" : endpointDirty ? "有未保存变更" : "已同步"}</span>
                                 <Button className="kuaizi-provider-save-endpoint" type="primary" loading={endpointBusy} disabled={Boolean(operation) || endpointSyncPending || !endpointDirty || loading} onClick={onSaveEndpoint}>
                                     保存服务地址
                                 </Button>
                             </div>
-                        }
-                    >
-                        <label className="kuaizi-provider-field-label" htmlFor="kuaizi-provider-base-url">
-                            Base URL
-                        </label>
-                        <Input
-                            id="kuaizi-provider-base-url"
-                            className="kuaizi-provider-base-url"
-                            value={endpointDraft}
-                            disabled={Boolean(operation)}
-                            placeholder="https://…"
-                            autoComplete="url"
-                            onChange={(event) => onEndpointChange(event.currentTarget.value)}
-                        />
-                        {operationErrors.endpoint ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="服务地址保存失败" description={operationErrors.endpoint.message} /> : null}
-                        {account.endpointCandidate ? (
-                            <p className="kuaizi-provider-endpoint-candidate">
-                                候选地址 v{account.endpointCandidate.version}：{account.endpointCandidate.baseUrl}
-                            </p>
-                        ) : null}
-                    </SettingsSectionCard>
+                        </div>
+                    </AdminContentSection>
 
                     <AccountCredentialCard account={account} busy={operation === "credential"} locked={Boolean(operation)} error={operationErrors.credential} onOpen={onOpenCredential} onVerify={onVerifyCredential} />
-                </div>
-
-                <section className="kuaizi-provider-families" aria-labelledby="kuaizi-provider-families-title">
-                    <div className="kuaizi-provider-section-heading">
-                        <div className="kuaizi-provider-section-copy">
-                            <h2 id="kuaizi-provider-families-title" className="kuaizi-provider-section-title">
-                                模型系列
-                            </h2>
-                            <p className="kuaizi-provider-section-description">系列目录完全来自后端 adapter registry，不在前端维护模型家族枚举。</p>
+                    <AdminContentSection
+                        className="kuaizi-provider-families"
+                        title="模型系列"
+                        description="系列目录完全来自后端 adapter registry，不在前端维护模型家族枚举。"
+                        actions={<span className="kuaizi-provider-family-count">{families.length} 个系列</span>}
+                    >
+                        <div className="kuaizi-provider-family-list">
+                            {families.map(({ adapter }) => (
+                                <ProviderModelFamilyRow
+                                    key={`${adapter.providerKind}:${adapter.family}`}
+                                    adapter={adapter}
+                                    credentialHealthy={account.credential?.active?.healthStatus === "healthy"}
+                                    busy={operation === `models:${adapter.family}`}
+                                    locked={Boolean(operation)}
+                                    error={operationErrors[adapter.family]}
+                                    onPublish={() => onPublishModels(adapter.family)}
+                                />
+                            ))}
                         </div>
-                        <span className="kuaizi-provider-family-count">{families.length} 个系列</span>
-                    </div>
-                    <div className="kuaizi-provider-family-list">
-                        {families.map(({ adapter }) => (
-                            <ProviderModelFamilyCard
-                                key={`${adapter.providerKind}:${adapter.family}`}
-                                adapter={adapter}
-                                credentialHealthy={account.credential?.active?.healthStatus === "healthy"}
-                                busy={operation === `models:${adapter.family}`}
-                                locked={Boolean(operation)}
-                                error={operationErrors[adapter.family]}
-                                onPublish={() => onPublishModels(adapter.family)}
-                            />
-                        ))}
-                    </div>
-                </section>
+                    </AdminContentSection>
+                </AdminDataLayout>
             </div>
         </AdminPageFrame>
     );

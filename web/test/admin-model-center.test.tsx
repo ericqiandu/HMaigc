@@ -31,16 +31,22 @@ describe("admin model center", () => {
         expect(routerSource).not.toContain('path: "model-pricing"');
     });
 
-    test("renders accessible links and marks the current section", () => {
+    test("renders the model workflow as compact tabs instead of descriptive navigation cards", () => {
         const markup = renderToStaticMarkup(
             <MemoryRouter initialEntries={["/admin/models/kuaizi"]}>
                 <AdminModelCenterTabs />
             </MemoryRouter>,
         );
-        expect(markup).toContain('aria-label="模型中心配置流程"');
+        expect(markup).toContain('aria-label="模型中心"');
+        expect(markup).not.toContain('role="tablist"');
+        expect(markup).not.toContain('role="tab"');
         expect(markup).toContain('aria-current="page"');
         expect(markup).toContain("渠道与模型");
         expect(markup).toContain("筷子账号");
         expect(markup).toContain("价格与 Agent");
+        expect(markup).not.toContain("接入渠道并维护用户可用模型");
+        expect(markup).not.toContain("维护统一服务地址、Key 与验证状态");
+        expect(markup).not.toContain("配置成本、积分售价与全站 Agent 模型");
+        expect(markup).not.toContain("当前</span>");
     });
 });

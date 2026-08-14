@@ -51,21 +51,36 @@ export function AdminLayoutSettingsDrawer({ open, onClose }: AdminLayoutSettings
         <Drawer
             rootClassName="admin-layout-settings-drawer"
             className="admin-layout-settings-drawer-panel"
-            title={<span className="admin-layout-settings-title">界面设置</span>}
+            title={
+                <div className="admin-layout-settings-heading">
+                    <span className="admin-layout-settings-title">界面设置</span>
+                    <span className="admin-layout-settings-subtitle">实时预览，仅影响管理后台</span>
+                </div>
+            }
             placement="right"
-            size="min(360px, calc(100vw - 24px))"
+            size="min(420px, calc(100vw - 24px))"
             open={open}
             onClose={onClose}
             getContainer={getPortalContainer}
             destroyOnHidden
+            footer={
+                <div className="admin-layout-settings-footer">
+                    <Button className="admin-layout-reset-button" type="text" icon={<RotateCcw className="admin-layout-reset-icon size-4" />} onClick={resetAllSettings}>
+                        恢复默认
+                    </Button>
+                    <Button className="admin-layout-done-button" type="primary" onClick={onClose}>
+                        完成
+                    </Button>
+                </div>
+            }
         >
             <div className="admin-layout-settings-body">
                 {persistenceError ? <Alert className="admin-layout-persistence-error" type="error" showIcon title="当前预览已生效，但无法保存到此浏览器" description={persistenceError} /> : null}
 
                 <SettingsSection title="整体主题" description="仅影响管理后台，不改变创作端外观。">
                     <div className="admin-layout-choice-grid admin-layout-choice-grid-two" role="group" aria-label="后台整体主题">
-                        <ChoiceButton className="admin-layout-theme-light" active={settings.theme === "light"} label="浅色" onClick={() => updateSettings({ theme: "light" })} />
-                        <ChoiceButton className="admin-layout-theme-dark" active={settings.theme === "dark"} label="深色" onClick={() => updateSettings({ theme: "dark" })} />
+                        <ChoiceButton className="admin-layout-theme-light" active={settings.theme === "light"} label="浅色" description="明亮内容表面" preview="light" onClick={() => updateSettings({ theme: "light" })} />
+                        <ChoiceButton className="admin-layout-theme-dark" active={settings.theme === "dark"} label="深色" description="低照度工作环境" preview="dark" onClick={() => updateSettings({ theme: "dark" })} />
                     </div>
                 </SettingsSection>
 
@@ -119,7 +134,7 @@ export function AdminLayoutSettingsDrawer({ open, onClose }: AdminLayoutSettings
                         <span className="admin-layout-field-label">侧栏宽度</span>
                         <div className="admin-layout-choice-grid admin-layout-choice-grid-three" role="group" aria-label="后台侧栏宽度">
                             {([208, 236, 272] as const).map((siderWidth) => (
-                                <ChoiceButton key={siderWidth} className={`admin-layout-sider-${siderWidth}`} active={settings.siderWidth === siderWidth} label={`${siderWidth}px`} onClick={() => updateSettings({ siderWidth })} />
+                                <ChoiceButton key={siderWidth} className={`admin-layout-sider-${siderWidth}`} active={settings.siderWidth === siderWidth} label={siderWidthLabel(siderWidth)} onClick={() => updateSettings({ siderWidth })} />
                             ))}
                         </div>
                     </div>
@@ -128,7 +143,15 @@ export function AdminLayoutSettingsDrawer({ open, onClose }: AdminLayoutSettings
                 <SettingsSection title="页面布局" description="控制业务内容的阅读宽度与顶部栏滚动方式。">
                     <div className="admin-layout-choice-grid admin-layout-choice-grid-two" role="group" aria-label="后台内容宽度">
                         {(["fixed", "fluid"] as const).map((contentWidth) => (
-                            <ChoiceButton key={contentWidth} className={`admin-layout-content-${contentWidth}`} active={settings.contentWidth === contentWidth} label={contentWidthLabel(contentWidth)} onClick={() => updateSettings({ contentWidth })} />
+                            <ChoiceButton
+                                key={contentWidth}
+                                className={`admin-layout-content-${contentWidth}`}
+                                active={settings.contentWidth === contentWidth}
+                                label={contentWidthLabel(contentWidth)}
+                                description={contentWidth === "fixed" ? "聚焦阅读宽度" : "充分利用屏幕"}
+                                preview={contentWidth}
+                                onClick={() => updateSettings({ contentWidth })}
+                            />
                         ))}
                     </div>
                     <div className="admin-layout-switch-row">
@@ -139,10 +162,6 @@ export function AdminLayoutSettingsDrawer({ open, onClose }: AdminLayoutSettings
                         <Switch className="admin-layout-fixed-header" aria-label="固定后台顶部栏" checked={settings.fixedHeader} onChange={(fixedHeader) => updateSettings({ fixedHeader })} />
                     </div>
                 </SettingsSection>
-
-                <Button className="admin-layout-reset-button" icon={<RotateCcw className="admin-layout-reset-icon size-4" />} block onClick={resetAllSettings}>
-                    恢复默认设置
-                </Button>
             </div>
         </Drawer>
     );
@@ -160,10 +179,21 @@ function SettingsSection({ children, description, title }: { children: ReactNode
     );
 }
 
-function ChoiceButton({ active, className, label, onClick }: { active: boolean; className: string; label: string; onClick: () => void }) {
+type ChoicePreview = "dark" | "fixed" | "fluid" | "light";
+
+function ChoiceButton({ active, className, description, label, onClick, preview }: { active: boolean; className: string; description?: string; label: string; onClick: () => void; preview?: ChoicePreview }) {
     return (
         <button type="button" className={`admin-layout-choice ${className}`} data-active={active ? "true" : "false"} aria-pressed={active} onClick={onClick}>
-            <span className="admin-layout-choice-label">{label}</span>
+            {preview ? (
+                <span className={`admin-layout-choice-preview is-${preview}`} aria-hidden="true">
+                    <span className="admin-layout-choice-preview-sider" />
+                    <span className="admin-layout-choice-preview-content" />
+                </span>
+            ) : null}
+            <span className="admin-layout-choice-copy">
+                <span className="admin-layout-choice-label">{label}</span>
+                {description ? <span className="admin-layout-choice-description">{description}</span> : null}
+            </span>
         </button>
     );
 }
@@ -176,4 +206,9 @@ function menuThemeLabel(menuTheme: AdminMenuTheme) {
 function contentWidthLabel(contentWidth: AdminContentWidth) {
     const labels: Record<AdminContentWidth, string> = { fixed: "固定", fluid: "流式" };
     return labels[contentWidth];
+}
+
+function siderWidthLabel(siderWidth: 208 | 236 | 272) {
+    const labels: Record<typeof siderWidth, string> = { 208: "紧凑", 236: "标准", 272: "宽松" };
+    return labels[siderWidth];
 }

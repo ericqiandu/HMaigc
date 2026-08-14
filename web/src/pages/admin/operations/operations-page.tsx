@@ -1,9 +1,10 @@
 import { Alert, App, Button, Input, Modal, Table, Tag } from "antd";
-import { ArchiveRestore, CircleAlert, CloudDownload, DatabaseBackup, RefreshCw, RotateCcw, ServerCog, ShieldCheck, TerminalSquare } from "lucide-react";
+import { ArchiveRestore, CircleAlert, CloudDownload, DatabaseBackup, RefreshCw, RotateCcw, ServerCog, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
-import { AdminContentError, AdminContentSkeleton, AdminTableEmpty, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
+import { AdminContentSection, AdminDataLayout } from "@/pages/admin/components/admin-data-layout";
+import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
 import { actionLabels, backupColumns, createOperationColumns, formatLogTime, formatTime, OperationActionButton, OperationStatusTag, OverviewMetric, releaseCheckDetail, shortCommit } from "@/pages/admin/operations/operations-presenters";
 import {
     getOperation,
@@ -214,7 +215,7 @@ export default function OperationsPage() {
                 </Button>
             }
         >
-            <div className="operations-page admin-data-page space-y-5">
+            <AdminDataLayout>
                 {dashboardError ? (
                     <AdminContentError
                         title={hasDashboardData ? "运维状态刷新失败" : "独立运维控制器不可用"}
@@ -227,43 +228,44 @@ export default function OperationsPage() {
                     <AdminContentSkeleton rows={12} label="正在读取运维控制器状态" />
                 ) : !hasDashboardData ? null : (
                     <>
-                        <section className="operations-overview-grid grid grid-cols-1 gap-px overflow-hidden rounded-[10px] bg-border/70 md:grid-cols-2 xl:grid-cols-4" aria-label="运维状态概览">
-                            <OverviewMetric
-                                icon={<ServerCog className="operations-metric-icon-svg size-4" />}
-                                label="控制器"
-                                value={overview?.controller.status === "ok" ? "在线" : loading ? "连接中" : "离线"}
-                                detail={overview ? `${overview.controller.version} · ${shortCommit(overview.controller.commit)}` : "等待状态"}
-                                tone={overview?.controller.status === "ok" ? "success" : "neutral"}
-                            />
-                            <OverviewMetric
-                                icon={<CloudDownload className="operations-metric-icon-svg size-4" />}
-                                label="当前 / 最新"
-                                value={`${overview?.release.currentVersion || "--"} / ${overview?.release.latestVersion || "--"}`}
-                                detail={releaseCheckDetail(overview)}
-                                tone={overview?.release.updateAvailable ? "warning" : overview?.release.status === "ok" ? "success" : "neutral"}
-                            />
-                            <OverviewMetric
-                                icon={<DatabaseBackup className="operations-metric-icon-svg size-4" />}
-                                label="最近备份"
-                                value={overview?.latestBackup?.version || "--"}
-                                detail={overview?.latestBackup ? formatTime(overview.latestBackup.createdAt) : "暂无有效恢复点"}
-                                tone={overview?.latestBackup?.checksumStatus === "verified" ? "success" : "neutral"}
-                            />
-                            <OverviewMetric
-                                icon={<ArchiveRestore className="operations-metric-icon-svg size-4" />}
-                                label="回滚状态"
-                                value={overview?.rollbackReady ? "可回滚" : "不可回滚"}
-                                detail={overview ? `${overview.rollbackStatus}${overview.rollbackReady ? ` · 目标 ${overview.previousVersion}` : ""}` : "等待状态"}
-                                tone={overview?.rollbackReady ? "success" : "neutral"}
-                            />
-                        </section>
+                        <AdminContentSection className="operations-overview-section" title="运行状态概览" description="集中查看控制器、版本、备份与回滚恢复点。">
+                            <div className="operations-overview-grid grid grid-cols-1 gap-px md:grid-cols-2 xl:grid-cols-4" aria-label="运维状态概览">
+                                <OverviewMetric
+                                    icon={<ServerCog className="operations-metric-icon-svg size-4" />}
+                                    label="控制器"
+                                    value={overview?.controller.status === "ok" ? "在线" : loading ? "连接中" : "离线"}
+                                    detail={overview ? `${overview.controller.version} · ${shortCommit(overview.controller.commit)}` : "等待状态"}
+                                    tone={overview?.controller.status === "ok" ? "success" : "neutral"}
+                                />
+                                <OverviewMetric
+                                    icon={<CloudDownload className="operations-metric-icon-svg size-4" />}
+                                    label="当前 / 最新"
+                                    value={`${overview?.release.currentVersion || "--"} / ${overview?.release.latestVersion || "--"}`}
+                                    detail={releaseCheckDetail(overview)}
+                                    tone={overview?.release.updateAvailable ? "warning" : overview?.release.status === "ok" ? "success" : "neutral"}
+                                />
+                                <OverviewMetric
+                                    icon={<DatabaseBackup className="operations-metric-icon-svg size-4" />}
+                                    label="最近备份"
+                                    value={overview?.latestBackup?.version || "--"}
+                                    detail={overview?.latestBackup ? formatTime(overview.latestBackup.createdAt) : "暂无有效恢复点"}
+                                    tone={overview?.latestBackup?.checksumStatus === "verified" ? "success" : "neutral"}
+                                />
+                                <OverviewMetric
+                                    icon={<ArchiveRestore className="operations-metric-icon-svg size-4" />}
+                                    label="回滚状态"
+                                    value={overview?.rollbackReady ? "可回滚" : "不可回滚"}
+                                    detail={overview ? `${overview.rollbackStatus}${overview.rollbackReady ? ` · 目标 ${overview.previousVersion}` : ""}` : "等待状态"}
+                                    tone={overview?.rollbackReady ? "success" : "neutral"}
+                                />
+                            </div>
+                        </AdminContentSection>
 
-                        <SettingsSectionCard
+                        <AdminContentSection
                             className="operations-actions-card"
-                            icon={<ShieldCheck className="operations-actions-icon size-4" />}
                             title="受控操作"
                             description="业务后端仅校验管理员并签发请求；Docker、备份和服务重启只由独立控制器执行。"
-                            status={
+                            actions={
                                 hasActiveOperation ? (
                                     <Tag className="operations-active-tag" color="processing" variant="filled">
                                         任务执行中
@@ -323,14 +325,13 @@ export default function OperationsPage() {
                                     onClick={() => openAction("verify")}
                                 />
                             </div>
-                        </SettingsSectionCard>
+                        </AdminContentSection>
 
-                        <SettingsSectionCard
+                        <AdminContentSection
                             className="operations-log-card"
-                            icon={<TerminalSquare className="operations-log-card-icon size-4" />}
                             title="实时执行日志"
                             description={selectedOperation ? `${actionLabels[selectedOperation.action]} · ${selectedOperation.phase}` : "选择一条审计记录查看控制器日志"}
-                            status={selectedOperation ? <OperationStatusTag status={selectedOperation.status} /> : null}
+                            actions={selectedOperation ? <OperationStatusTag status={selectedOperation.status} /> : null}
                         >
                             <div ref={logViewportRef} className="operations-log-viewport thin-scrollbar" role="log" aria-live="polite">
                                 {logs.length > 0 ? (
@@ -349,14 +350,13 @@ export default function OperationsPage() {
                             </div>
                             {logError ? <AdminContentError title="控制器日志读取失败" description={logs.length ? `${logError}。当前继续显示已成功读取的日志。` : logError} onRetry={() => void loadSelectedOperation(selectedOperationId)} /> : null}
                             {selectedOperation?.error ? <Alert className="operations-operation-error" type="error" showIcon message="任务失败" description={selectedOperation.error} /> : null}
-                        </SettingsSectionCard>
+                        </AdminContentSection>
 
-                        <SettingsSectionCard
+                        <AdminContentSection
                             className="operations-audit-card"
-                            icon={<ServerCog className="operations-audit-card-icon size-4" />}
                             title="操作审计"
                             description="控制器独立数据库中的不可编辑执行记录，业务数据库回滚不会清除这些证据。"
-                            status={<span className="operations-section-count">共 {operations.length} 条记录</span>}
+                            actions={<span className="operations-section-count">共 {operations.length} 条记录</span>}
                         >
                             <Table<OperationsRecord>
                                 className="operations-audit-table"
@@ -371,14 +371,13 @@ export default function OperationsPage() {
                                 onRow={(record) => ({ onClick: () => setSelectedOperationId(record.id) })}
                                 locale={{ emptyText: <AdminTableEmpty compact title="暂无运维操作" description="升级、回滚、备份和环境校验记录会显示在这里。" /> }}
                             />
-                        </SettingsSectionCard>
+                        </AdminContentSection>
 
-                        <SettingsSectionCard
+                        <AdminContentSection
                             className="operations-backups-card"
-                            icon={<DatabaseBackup className="operations-backups-card-icon size-4" />}
                             title="备份状态"
                             description="恢复点按清单与 SHA-256 校验；校验失败的备份不会作为可用恢复依据。"
-                            status={<span className="operations-section-count">共 {backups.length} 个恢复点</span>}
+                            actions={<span className="operations-section-count">共 {backups.length} 个恢复点</span>}
                         >
                             <Table<OperationsBackup>
                                 className="operations-backups-table"
@@ -391,10 +390,10 @@ export default function OperationsPage() {
                                 scroll={{ x: "max-content" }}
                                 locale={{ emptyText: <AdminTableEmpty compact title="暂无备份" description="执行升级或立即备份后，恢复点会显示在这里。" /> }}
                             />
-                        </SettingsSectionCard>
+                        </AdminContentSection>
                     </>
                 )}
-            </div>
+            </AdminDataLayout>
 
             <Modal
                 className="admin-operation-modal operations-confirm-modal workspace-ui-scope"

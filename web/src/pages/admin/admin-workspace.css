@@ -481,33 +481,38 @@
     }
 
     .admin-model-center-tabs {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        display: flex;
+        min-width: 0;
         margin-bottom: 24px;
-        background: var(--workspace-ui-surface-subtle);
+        border-bottom: 1px solid var(--workspace-ui-divider);
     }
 
     .admin-model-center-tab {
+        position: relative;
         display: flex;
         min-width: 0;
-        min-height: 64px;
+        min-height: 44px;
         align-items: center;
-        gap: 12px;
-        padding: 12px 16px;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 20px;
         color: var(--workspace-ui-text-secondary);
-        transition:
-            background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
-            color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
-
-    .admin-model-center-tab + .admin-model-center-tab {
-        border-left: 1px solid var(--workspace-ui-divider);
+        transition: color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
     .admin-model-center-tab:hover,
     .admin-model-center-tab.is-active {
-        background: var(--workspace-ui-surface);
-        color: var(--workspace-ui-text);
+        color: var(--workspace-ui-accent);
+    }
+
+    .admin-model-center-tab.is-active::after {
+        position: absolute;
+        right: 16px;
+        bottom: -1px;
+        left: 16px;
+        height: 2px;
+        background: var(--workspace-ui-accent);
+        content: "";
     }
 
     .admin-model-center-tab:focus-visible {
@@ -521,34 +526,13 @@
         flex: 0 0 auto;
     }
 
-    .admin-model-center-tab-copy {
-        display: flex;
-        min-width: 0;
-        flex: 1 1 auto;
-        flex-direction: column;
-        gap: 2px;
-    }
-
     .admin-model-center-tab-label {
         font-size: 14px;
         font-weight: 600;
         line-height: 20px;
-    }
-
-    .admin-model-center-tab-description {
         overflow: hidden;
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 18px;
         text-overflow: ellipsis;
         white-space: nowrap;
-    }
-
-    .admin-model-center-tab-status {
-        flex: 0 0 auto;
-        color: var(--workspace-ui-accent);
-        font-size: 12px;
-        line-height: 18px;
     }
 
     .admin-page-heading {
@@ -1541,6 +1525,16 @@
         padding: 16px 20px 20px;
     }
 
+    .admin-workspace .admin-content-section-body > .app-table-surface,
+    .admin-workspace .admin-content-section-body > .workspace-list-toolbar + .app-table-surface,
+    .admin-workspace .admin-credit-store-table-surface {
+        border-radius: 0 !important;
+    }
+
+    .admin-workspace .admin-credit-store-tabs .ant-tabs-nav {
+        margin-bottom: 16px;
+    }
+
     .admin-workspace .admin-analytics-toolbar,
     .admin-workspace .admin-analytics-toolbar .workspace-list-toolbar {
         width: 100%;
@@ -1648,98 +1642,12 @@
         background: var(--workspace-ui-accent);
     }
 
-    .admin-membership-plan-modal .ant-modal-content {
-        padding: 20px;
-    }
-
-    .admin-membership-plan-modal .ant-modal-header {
-        margin-bottom: 20px;
-    }
-
-    .admin-membership-plan-form .admin-membership-form-item {
-        margin-bottom: 20px;
-    }
-
-    .admin-membership-form-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px 12px;
-        margin-bottom: 24px;
-    }
-
-    .admin-membership-form-grid .admin-membership-grid-field {
-        min-width: 0;
-        margin-bottom: 0;
-    }
-
     .admin-membership-name-input,
     .admin-membership-number-input {
         width: 100%;
     }
 
-    .admin-membership-plan-form .admin-membership-benefits,
-    .admin-membership-plan-form .admin-membership-team-entitlements {
-        margin-bottom: 20px;
-    }
-
-    .admin-membership-benefit-header,
-    .admin-membership-benefit-row {
-        display: flex;
-        align-items: center;
-    }
-
-    .admin-membership-benefit-header {
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 10px;
-    }
-
-    .admin-membership-benefit-heading {
-        display: grid;
-        min-width: 0;
-        gap: 2px;
-    }
-
-    .admin-membership-benefit-title {
-        color: var(--workspace-ui-text);
-        font-size: 13px;
-        line-height: 20px;
-        font-weight: 600;
-    }
-
-    .admin-membership-benefit-summary {
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 11px;
-        line-height: 16px;
-    }
-
-    .admin-membership-benefit-add {
-        flex: 0 0 auto;
-    }
-
-    .admin-membership-benefit-list {
-        display: grid;
-        gap: 8px;
-    }
-
-    .admin-membership-benefit-row {
-        gap: 6px;
-    }
-
-    .admin-membership-plan-form .admin-membership-benefit-field {
-        flex: 1 1 auto;
-        min-width: 0;
-        margin-bottom: 0;
-    }
-
-    .admin-membership-benefit-input {
-        width: 100%;
-    }
-
     .admin-membership-benefit-remove {
-        width: 32px;
-        min-width: 32px;
-        height: 32px;
         padding: 0;
         color: var(--workspace-ui-text-tertiary);
     }
@@ -2017,54 +1925,8 @@
         margin-top: 4px;
     }
 
-    .admin-workspace .admin-log-summary {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        min-width: 0;
-        overflow: hidden;
-        border-radius: var(--workspace-ui-radius-surface);
-        background: var(--workspace-ui-surface);
-    }
-
-    .admin-workspace .admin-log-summary-item {
-        display: grid;
-        grid-template-columns: 16px minmax(0, 1fr) auto;
-        min-width: 0;
-        min-height: 56px;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 16px;
-        color: var(--workspace-ui-text-secondary);
-        font-size: 12px;
-        line-height: 18px;
-    }
-
-    .admin-workspace .admin-log-summary-item + .admin-log-summary-item {
-        border-left: 1px solid var(--workspace-ui-divider);
-    }
-
-    .admin-workspace .admin-log-summary-item strong {
-        color: var(--workspace-ui-text);
-        font-size: 18px;
-        font-weight: 600;
-        line-height: 24px;
-        font-variant-numeric: tabular-nums;
-    }
-
-    .admin-workspace .admin-log-summary-icon {
-        color: var(--workspace-ui-text-tertiary);
-    }
-
-    .admin-workspace .admin-log-summary-item.is-success .admin-log-summary-icon {
-        color: var(--workspace-ui-success);
-    }
-
-    .admin-workspace .admin-log-summary-item.is-failed .admin-log-summary-icon {
-        color: var(--workspace-ui-error);
-    }
-
     .admin-workspace .admin-log-toolbar {
-        margin-top: 16px;
+        margin-bottom: 16px;
     }
 
     .admin-workspace .admin-log-status-filter {
@@ -2229,20 +2091,6 @@
     }
 
     @media (max-width: 639px) {
-        .admin-workspace .admin-log-summary {
-            grid-template-columns: 1fr;
-        }
-
-        .admin-workspace .admin-log-summary-item {
-            min-height: 48px;
-            padding-inline: 14px;
-        }
-
-        .admin-workspace .admin-log-summary-item + .admin-log-summary-item {
-            border-top: 1px solid var(--workspace-ui-divider);
-            border-left: 0;
-        }
-
         .admin-workspace .runtime-policy-settings-content {
             gap: 14px;
         }

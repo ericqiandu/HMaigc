@@ -1,31 +1,9 @@
 @layer utilities {
-    .admin-workspace .credit-operations {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        min-width: 0;
-        max-width: 100%;
-        width: 100%;
-        gap: 24px;
-    }
-
-    .admin-workspace .credit-operations > *,
-    .admin-workspace :where(.credit-operations-overview, .credit-orders-section),
-    .admin-workspace .credit-operations-overview > *,
+    .admin-workspace .credit-orders-section,
     .admin-workspace .credit-orders-section > * {
         width: 100%;
         min-width: 0;
         max-width: 100%;
-    }
-
-    .admin-workspace .credit-operations-overview {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 20px;
-    }
-
-    @media (min-width: 1280px) {
-        .admin-workspace .credit-operations-overview {
-            grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.85fr);
-        }
     }
 
     .admin-workspace .credit-orders-section .app-table-surface,
@@ -38,19 +16,6 @@
     .admin-workspace .credit-policy-fields,
     .admin-workspace .credit-adjustment-fields {
         gap: 16px;
-    }
-
-    .admin-workspace .credit-policy-panel,
-    .admin-workspace .credit-adjustment-panel {
-        height: 100%;
-    }
-
-    .admin-workspace :where(.credit-policy-panel, .credit-adjustment-panel) .admin-section-card-header {
-        padding: 22px 24px;
-    }
-
-    .admin-workspace .credit-adjustment-panel .admin-section-card-footer {
-        padding: 18px 24px;
     }
 
     .admin-workspace .credit-policy-form,
@@ -97,11 +62,6 @@
         color: var(--workspace-ui-text-tertiary);
         font-size: 11px;
         line-height: 17px;
-    }
-
-    .admin-workspace .credit-orders-heading {
-        margin-bottom: 18px;
-        align-items: center;
     }
 
     .admin-workspace .credit-orders-section .workspace-list-toolbar {
@@ -397,31 +357,21 @@
         margin: 14px 0 0;
     }
 
-    .admin-workspace .admin-redemption-records-heading {
-        min-height: 40px;
-    }
-
-    .admin-workspace .admin-redemption-records-title {
-        color: var(--workspace-ui-text);
-        line-height: 20px;
-    }
-
-    .admin-workspace .admin-redemption-records-description {
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 11px;
-        line-height: 17px;
-    }
-
     .operations-overview-grid {
         overflow: hidden;
-        border-radius: var(--workspace-ui-radius-surface);
+        border-radius: 0;
         background: var(--workspace-ui-divider);
         border: 0;
         box-shadow: none;
     }
 
-    .operations-page {
-        min-width: 0;
+    .operations-overview-section .admin-content-section-body,
+    .operations-actions-card .admin-content-section-body,
+    .operations-log-card .admin-content-section-body,
+    .operations-audit-card .admin-content-section-body,
+    .operations-backups-card .admin-content-section-body {
+        overflow: hidden;
+        padding: 0;
     }
 
     .operations-metric {
@@ -615,11 +565,6 @@
         line-height: 18px;
     }
 
-    .operations-audit-card .admin-section-card-content,
-    .operations-backups-card .admin-section-card-content {
-        overflow: hidden;
-    }
-
     .operations-log-card .admin-content-error {
         margin: 12px 16px 16px;
     }
@@ -653,50 +598,18 @@
         font-size: 12px;
     }
 
-    .model-pricing-metrics {
-        overflow: hidden;
-        gap: 1px;
-        border: 0;
-        border-radius: var(--workspace-ui-radius-surface);
-        background: var(--workspace-ui-divider);
-    }
-
-    .model-pricing-metric {
-        min-width: 0;
-        min-height: 112px;
-        background: var(--workspace-ui-surface);
-        padding: 18px 20px;
-        transition: background-color 140ms ease;
-    }
-
-    .model-pricing-metric:hover {
-        background: color-mix(in srgb, var(--workspace-ui-surface) 92%, var(--workspace-ui-surface-hover));
-    }
-
-    .model-pricing-metric-label {
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 18px;
-    }
-
-    .model-pricing-metric-value {
-        margin-top: 10px;
-        color: var(--workspace-ui-text);
-        font-size: 24px;
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-        line-height: 28px;
-    }
-
-    .model-pricing-metric-detail {
-        margin-top: 5px;
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 11px;
-        line-height: 17px;
-    }
-
     .model-pricing-notice {
         border-radius: var(--workspace-ui-radius-control);
+    }
+
+    .admin-workspace .model-pricing-agent-setting-controls {
+        max-width: 760px;
+    }
+
+    .admin-workspace .model-pricing-result-count {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 12px;
+        line-height: 20px;
     }
 
     .admin-workspace .model-pricing-toolbar {
@@ -721,6 +634,14 @@
     .admin-workspace .model-pricing-model {
         display: grid;
         gap: 2px;
+    }
+
+    .admin-workspace .model-pricing-table-section .model-pricing-toolbar {
+        margin-bottom: 16px;
+    }
+
+    .admin-workspace .admin-content-section-body > .model-pricing-table-surface {
+        border-radius: 0 !important;
     }
 
     .admin-workspace .model-pricing-model-name {
@@ -1058,26 +979,10 @@
         max-width: 300px;
     }
 
-    .admin-announcement-form {
-        padding-top: 0;
-    }
-
-    .admin-workspace .admin-announcements-layout {
-        display: grid;
-        min-width: 0;
-        max-width: 100%;
-        gap: 16px;
-    }
-
-    .admin-workspace .admin-announcements-heading {
-        min-width: 0;
-        margin-bottom: 0;
-        border-bottom: 1px solid var(--workspace-ui-divider);
-        padding-bottom: 20px;
-    }
-
-    .admin-workspace .admin-announcements-icon {
-        color: var(--workspace-ui-text-secondary);
+    .admin-workspace .admin-announcements-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
 
     .admin-workspace .admin-announcements-count {
@@ -1087,21 +992,12 @@
         line-height: 20px;
     }
 
-    .admin-workspace .admin-announcements-description {
-        margin-top: 2px;
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 17px;
-    }
-
-    .admin-workspace .admin-announcements-layout > .admin-content-error {
+    .admin-workspace .admin-announcements-layout .admin-content-error {
         margin: 0;
     }
 
     .admin-announcement-modal .admin-announcement-impact {
-        margin-bottom: 20px;
         border: 0;
-        border-radius: var(--workspace-ui-radius-control);
         background: var(--workspace-ui-surface-subtle);
     }
 
@@ -1118,22 +1014,14 @@
         line-height: 18px;
     }
 
-    .admin-announcement-modal .admin-announcement-form .ant-form-item:last-child {
-        margin-bottom: 0;
-    }
-
     @media (max-width: 639px) {
-        .admin-workspace .admin-announcements-heading,
-        .admin-workspace .admin-announcements-heading-copy {
+        .admin-workspace .admin-announcements-actions {
             width: 100%;
-        }
-
-        .admin-workspace .admin-announcements-heading {
             align-items: stretch;
             flex-direction: column;
         }
 
-        .admin-workspace .admin-announcements-heading > .ant-btn {
+        .admin-workspace .admin-announcements-actions > .ant-btn {
             min-height: 44px;
             width: 100%;
             justify-content: center;
@@ -1798,11 +1686,6 @@
             flex: 1 1 0;
         }
 
-        .admin-workspace .model-pricing-metric {
-            min-height: 96px;
-            padding: 16px;
-        }
-
         .admin-workspace .referral-admin-program {
             align-items: flex-start;
             gap: 16px;
@@ -2211,7 +2094,6 @@
     width: 136px;
 }
 
-.admin-membership-form-intro,
 .admin-membership-order-impact {
     display: grid;
     gap: 4px;
@@ -2220,7 +2102,6 @@
     padding-bottom: 16px;
 }
 
-.admin-membership-form-intro-title,
 .admin-membership-order-impact strong {
     color: var(--workspace-ui-text);
     font-size: 14px;
@@ -2228,7 +2109,6 @@
     line-height: 20px;
 }
 
-.admin-membership-form-intro-copy,
 .admin-membership-order-impact span,
 .admin-membership-order-impact p {
     margin: 0;
@@ -2263,15 +2143,6 @@
     }
 }
 
-/* Announcement management uses the same unlayered cascade as Ant Design. */
-.admin-workspace .admin-announcements-layout {
-    gap: 20px;
-}
-
-.admin-workspace .admin-announcements-heading {
-    padding: 4px 0 22px;
-}
-
 .admin-workspace .admin-announcements-search {
     width: min(100%, 420px);
     min-width: 260px;
@@ -2279,30 +2150,6 @@
 
 .admin-workspace .admin-announcements-status-filter {
     width: 144px;
-}
-
-.admin-announcement-modal .admin-announcement-form {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr);
-    gap: 18px 20px;
-    padding-top: 0;
-}
-
-.admin-announcement-modal .admin-announcement-impact,
-.admin-announcement-modal .admin-announcement-content-field {
-    grid-column: 1 / -1;
-}
-
-.admin-announcement-modal .admin-announcement-impact {
-    margin-bottom: 2px;
-    border: 0;
-    border-radius: var(--workspace-ui-radius-control);
-    background: var(--workspace-ui-surface-subtle);
-}
-
-.admin-announcement-modal .admin-announcement-form .ant-form-item {
-    min-width: 0;
-    margin-bottom: 0;
 }
 
 @media (max-width: 767px) {
@@ -2314,15 +2161,5 @@
     .admin-workspace .admin-announcements-status-filter {
         flex: 1 1 144px;
         width: auto;
-    }
-
-    .admin-announcement-modal .admin-announcement-form {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 16px;
-    }
-
-    .admin-announcement-modal .admin-announcement-impact,
-    .admin-announcement-modal .admin-announcement-content-field {
-        grid-column: auto;
     }
 }

@@ -1,9 +1,11 @@
-.admin-layout-settings-drawer .ant-drawer-content {
+.admin-layout-settings-drawer .ant-drawer-content,
+.admin-layout-settings-drawer .ant-drawer-header,
+.admin-layout-settings-drawer .ant-drawer-footer {
     background: var(--workspace-ui-surface);
 }
 
 .admin-layout-settings-drawer .ant-drawer-header {
-    min-height: 56px;
+    min-height: 68px;
     border-bottom-color: var(--workspace-ui-divider);
     padding: 12px 20px;
 }
@@ -12,10 +14,30 @@
     padding: 0 20px 24px;
 }
 
+.admin-layout-settings-drawer .ant-drawer-footer {
+    border-top-color: var(--workspace-ui-divider);
+    padding: 12px 20px;
+}
+
+.admin-layout-settings-heading {
+    display: grid;
+    gap: 2px;
+}
+
 .admin-layout-settings-title {
     color: var(--workspace-ui-text);
     font-size: 15px;
     font-weight: 600;
+    line-height: 20px;
+}
+
+.admin-layout-settings-subtitle,
+.admin-layout-settings-section-description,
+.admin-layout-switch-description,
+.admin-layout-choice-description {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 12px;
+    line-height: 17px;
 }
 
 .admin-layout-settings-body {
@@ -33,7 +55,7 @@
 
 .admin-layout-settings-section-heading {
     display: grid;
-    gap: 3px;
+    gap: 2px;
 }
 
 .admin-layout-settings-section-title {
@@ -47,9 +69,6 @@
 .admin-layout-settings-section-description,
 .admin-layout-switch-description {
     margin: 0;
-    color: var(--workspace-ui-text-tertiary);
-    font-size: 12px;
-    line-height: 18px;
 }
 
 .admin-layout-settings-section-content {
@@ -72,28 +91,87 @@
 }
 
 .admin-layout-choice {
+    display: flex;
     min-height: 38px;
-    border: 1px solid var(--workspace-ui-divider);
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+    border: 0;
     border-radius: var(--workspace-ui-radius-control);
     background: var(--workspace-ui-control);
+    padding: 8px 10px;
     color: var(--workspace-ui-text-secondary);
-    font-size: 12px;
-    font-weight: 500;
+    text-align: left;
     transition:
-        border-color 160ms ease,
-        color 160ms ease,
-        background-color 160ms ease;
+        background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        box-shadow 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .admin-layout-choice:hover {
-    border-color: color-mix(in srgb, var(--workspace-ui-accent) 48%, var(--workspace-ui-divider));
+    background: var(--workspace-ui-control-hover);
     color: var(--workspace-ui-text);
 }
 
 .admin-layout-choice[data-active="true"] {
-    border-color: var(--workspace-ui-accent);
-    background: color-mix(in srgb, var(--workspace-ui-accent) 9%, var(--workspace-ui-surface));
-    color: var(--workspace-ui-accent);
+    background: color-mix(in srgb, var(--workspace-ui-accent) 10%, var(--workspace-ui-control));
+    color: var(--workspace-ui-text);
+    box-shadow: inset 0 0 0 1px var(--workspace-ui-accent);
+}
+
+.admin-layout-choice-copy {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+}
+
+.admin-layout-choice-label {
+    color: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+}
+
+.admin-layout-choice-preview {
+    display: grid;
+    width: 48px;
+    height: 34px;
+    flex: 0 0 auto;
+    grid-template-columns: 13px minmax(0, 1fr);
+    overflow: hidden;
+    border-radius: 6px;
+    background: #e8ebf0;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 10%);
+}
+
+.admin-layout-choice-preview-sider {
+    background: #d3d8e0;
+}
+
+.admin-layout-choice-preview-content {
+    margin: 6px;
+    background: #ffffff;
+}
+
+.admin-layout-choice-preview.is-dark {
+    background: #111827;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%);
+}
+
+.admin-layout-choice-preview.is-dark .admin-layout-choice-preview-sider {
+    background: #0b0f14;
+}
+
+.admin-layout-choice-preview.is-dark .admin-layout-choice-preview-content {
+    background: #252b35;
+}
+
+.admin-layout-choice-preview.is-fixed .admin-layout-choice-preview-content {
+    margin-inline: 10px;
+}
+
+.admin-layout-choice-preview.is-fluid .admin-layout-choice-preview-content {
+    margin-inline: 4px;
 }
 
 .admin-layout-choice:focus-visible,
@@ -110,13 +188,14 @@
 
 .admin-layout-color-preset {
     display: flex;
-    min-height: 44px;
+    min-height: 40px;
+    min-width: 0;
     align-items: center;
     gap: 7px;
     border: 0;
     border-radius: var(--workspace-ui-radius-control);
     background: var(--workspace-ui-control);
-    padding: 0 8px;
+    padding: 0 10px;
     color: var(--workspace-ui-text-secondary);
     font-size: 11px;
 }
@@ -127,11 +206,17 @@
 }
 
 .admin-layout-color-swatch {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex: 0 0 auto;
     border-radius: 50%;
     background: var(--admin-color-swatch);
+}
+
+.admin-layout-color-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .admin-layout-color-field,
@@ -168,19 +253,37 @@
     gap: 1px;
 }
 
+.admin-layout-settings-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.admin-layout-reset-button,
+.admin-layout-done-button {
+    min-height: 36px;
+}
+
 .admin-layout-reset-button {
-    min-height: 40px;
-    margin-top: 20px;
+    color: var(--workspace-ui-text-secondary);
+}
+
+.admin-layout-done-button {
+    min-width: 88px;
 }
 
 @media (max-width: 639px) {
     .admin-layout-settings-drawer .ant-drawer-header,
-    .admin-layout-settings-drawer .ant-drawer-body {
+    .admin-layout-settings-drawer .ant-drawer-body,
+    .admin-layout-settings-drawer .ant-drawer-footer {
         padding-inline: 16px;
     }
 
     .admin-layout-choice,
-    .admin-layout-reset-button {
+    .admin-layout-color-preset,
+    .admin-layout-reset-button,
+    .admin-layout-done-button {
         min-height: 44px;
     }
 }

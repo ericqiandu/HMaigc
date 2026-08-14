@@ -1,6 +1,6 @@
 import { App, Button, Input, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CircleCheck, CircleX, Eye, FileClock, RefreshCw, Search } from "lucide-react";
+import { Eye, RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
@@ -9,6 +9,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { exportAdminApiLogs, listAdminApiLogs, type ApiCallLog } from "@/services/api/auth";
 import { useAdminContext } from "../admin-context";
 import { ApiLogDetailDrawer } from "../components/api-log-detail-drawer";
+import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminBatchBar, AdminContentError, AdminExportButton, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 
@@ -97,7 +98,16 @@ export default function LogsPage() {
         { title: "错误码", dataIndex: "errorCode", width: 160, ellipsis: true, render: (value) => <span className="admin-log-error-code">{value || "--"}</span> },
         { title: "耗时", dataIndex: "durationMs", width: 100, align: "right", render: (value) => <span className="admin-log-numeric-value">{value}ms</span> },
         { title: "Token", width: 145, align: "right", render: (_, log) => <span className="admin-log-numeric-value">{log.usageAvailable ? `${log.inputTokens} / ${log.outputTokens}` : "--"}</span> },
-        { title: "费用", width: 140, align: "right", render: (_, log) => <span className="admin-log-numeric-value" title={log.costCalculationError || undefined}>{log.costAvailable ? `${log.currency || "USD"} ${(log.estimatedCostMicros / 1_000_000).toFixed(6)}` : log.costCalculationError ? "核算失败" : "--"}</span> },
+        {
+            title: "费用",
+            width: 140,
+            align: "right",
+            render: (_, log) => (
+                <span className="admin-log-numeric-value" title={log.costCalculationError || undefined}>
+                    {log.costAvailable ? `${log.currency || "USD"} ${(log.estimatedCostMicros / 1_000_000).toFixed(6)}` : log.costCalculationError ? "核算失败" : "--"}
+                </span>
+            ),
+        },
         {
             title: "操作",
             width: 90,
@@ -130,100 +140,96 @@ export default function LogsPage() {
                 </div>
             }
         >
-            <section className="admin-log-summary" aria-label="请求日志摘要">
-                <div className="admin-log-summary-item">
-                    <FileClock className="admin-log-summary-icon size-4" />
-                    <span className="admin-log-summary-label">筛选结果</span>
-                    <strong className="admin-log-summary-value">{total}</strong>
-                </div>
-                <div className="admin-log-summary-item is-success">
-                    <CircleCheck className="admin-log-summary-icon size-4" />
-                    <span className="admin-log-summary-label">当前页成功</span>
-                    <strong className="admin-log-summary-value">{currentPageSummary.succeeded}</strong>
-                </div>
-                <div className="admin-log-summary-item is-failed">
-                    <CircleX className="admin-log-summary-icon size-4" />
-                    <span className="admin-log-summary-label">当前页失败</span>
-                    <strong className="admin-log-summary-value">{currentPageSummary.failed}</strong>
-                </div>
-            </section>
-            <ListToolbar
-                className="admin-log-toolbar"
-                active={hasFilters}
-                onReset={() => updateUrl({ filter: "", status: "all", page: 1 })}
-                trailing={
-                    <span className="admin-log-result-context">
-                        第 {page} 页 · 当前显示 {logs.length} 条
-                    </span>
-                }
-            >
-                <Input
-                    allowClear
-                    className="app-list-search admin-log-search"
-                    prefix={<Search className="admin-log-search-icon size-4 text-foreground/40" />}
-                    value={keyword}
-                    placeholder="搜索用户、渠道、模型、路径或请求号"
-                    onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
-                />
-                <Select
-                    className="admin-log-status-filter"
-                    value={status}
-                    onChange={(value) => updateUrl({ status: value, page: 1 })}
-                    options={[
-                        { label: "全部结果", value: "all" },
-                        { label: "成功", value: "succeeded" },
-                        { label: "失败", value: "failed" },
-                    ]}
-                />
-            </ListToolbar>
-            <div className="admin-log-selection-region">
-                <AdminBatchBar count={selectedIds.length} onClear={() => setSelectedIds([])}>
-                    <AdminExportButton
-                        className="admin-log-selected-export-button"
-                        type="primary"
-                        size="small"
-                        exportFile={() => exportAdminApiLogs({ ids: selectedIds })}
-                        fileName={() => `请求明细-已选${selectedIds.length}条.csv`}
-                        label="导出已选"
-                        successMessage={`已导出选中的 ${selectedIds.length} 条请求明细`}
-                        errorMessage="导出请求明细失败"
-                    />
-                </AdminBatchBar>
-            </div>
-            <TableSurface className="admin-log-table-surface">
-                {loading && logs.length === 0 ? (
-                    <AdminTableSkeleton rows={8} columns={11} />
-                ) : loadError && logs.length === 0 ? (
-                    <div className="admin-log-load-error">
-                        <AdminContentError title="请求日志读取失败" description={loadError} onRetry={() => void reload()} />
-                    </div>
-                ) : (
-                    <>
-                        {loadError ? (
-                            <div className="admin-log-refresh-error">
-                                <AdminContentError title="请求日志刷新失败" description={`${loadError}。当前继续显示上一次成功读取的数据。`} onRetry={() => void reload()} />
-                            </div>
-                        ) : null}
-                        <Table
-                            className="app-data-table admin-log-table"
-                            size="middle"
-                            rowKey="id"
-                            loading={loading}
-                            rowSelection={{ selectedRowKeys: selectedIds, preserveSelectedRowKeys: false, onChange: (keys) => setSelectedIds(keys.map(String)) }}
-                            columns={columns}
-                            dataSource={logs}
-                            locale={{
-                                emptyText: (
-                                    <AdminTableEmpty filtered={hasFilters} title={hasFilters ? "没有符合筛选条件的请求" : "暂无请求日志"} description={hasFilters ? "调整搜索词或状态筛选后再试。" : "模型调用发生后，请求阶段、耗时和费用会显示在这里。"} />
-                                ),
-                            }}
-                            pagination={false}
-                            scroll={{ x: "max-content" }}
+            <AdminDataLayout>
+                <AdminMetricBand title="请求日志概览" description="当前筛选结果与本页调用状态。">
+                    <AdminMetric label="筛选结果" value={total} detail="符合当前筛选条件" />
+                    <AdminMetric label="当前页成功" value={currentPageSummary.succeeded} detail="上游调用成功" />
+                    <AdminMetric label="当前页失败" value={currentPageSummary.failed} detail="需要排查的请求" />
+                </AdminMetricBand>
+                <AdminContentSection
+                    className="admin-log-content-section"
+                    title="请求明细"
+                    description="按用户、渠道、模型、路径和状态检索真实调用记录。"
+                    actions={
+                        <span className="admin-log-result-context">
+                            第 {page} 页 · 当前显示 {logs.length} 条
+                        </span>
+                    }
+                >
+                    <ListToolbar className="admin-log-toolbar" active={hasFilters} onReset={() => updateUrl({ filter: "", status: "all", page: 1 })}>
+                        <Input
+                            allowClear
+                            className="app-list-search admin-log-search"
+                            prefix={<Search className="admin-log-search-icon size-4 text-foreground/40" />}
+                            value={keyword}
+                            placeholder="搜索用户、渠道、模型、路径或请求号"
+                            onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
                         />
-                        <PaginationBar current={page} pageSize={pageSize} total={total} onChange={(nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize })} />
-                    </>
-                )}
-            </TableSurface>
+                        <Select
+                            className="admin-log-status-filter"
+                            value={status}
+                            onChange={(value) => updateUrl({ status: value, page: 1 })}
+                            options={[
+                                { label: "全部结果", value: "all" },
+                                { label: "成功", value: "succeeded" },
+                                { label: "失败", value: "failed" },
+                            ]}
+                        />
+                    </ListToolbar>
+                    <div className="admin-log-selection-region">
+                        <AdminBatchBar count={selectedIds.length} onClear={() => setSelectedIds([])}>
+                            <AdminExportButton
+                                className="admin-log-selected-export-button"
+                                type="primary"
+                                size="small"
+                                exportFile={() => exportAdminApiLogs({ ids: selectedIds })}
+                                fileName={() => `请求明细-已选${selectedIds.length}条.csv`}
+                                label="导出已选"
+                                successMessage={`已导出选中的 ${selectedIds.length} 条请求明细`}
+                                errorMessage="导出请求明细失败"
+                            />
+                        </AdminBatchBar>
+                    </div>
+                    <TableSurface className="admin-log-table-surface">
+                        {loading && logs.length === 0 ? (
+                            <AdminTableSkeleton rows={8} columns={11} />
+                        ) : loadError && logs.length === 0 ? (
+                            <div className="admin-log-load-error">
+                                <AdminContentError title="请求日志读取失败" description={loadError} onRetry={() => void reload()} />
+                            </div>
+                        ) : (
+                            <>
+                                {loadError ? (
+                                    <div className="admin-log-refresh-error">
+                                        <AdminContentError title="请求日志刷新失败" description={`${loadError}。当前继续显示上一次成功读取的数据。`} onRetry={() => void reload()} />
+                                    </div>
+                                ) : null}
+                                <Table
+                                    className="app-data-table admin-log-table"
+                                    size="middle"
+                                    rowKey="id"
+                                    loading={loading}
+                                    rowSelection={{ selectedRowKeys: selectedIds, preserveSelectedRowKeys: false, onChange: (keys) => setSelectedIds(keys.map(String)) }}
+                                    columns={columns}
+                                    dataSource={logs}
+                                    locale={{
+                                        emptyText: (
+                                            <AdminTableEmpty
+                                                filtered={hasFilters}
+                                                title={hasFilters ? "没有符合筛选条件的请求" : "暂无请求日志"}
+                                                description={hasFilters ? "调整搜索词或状态筛选后再试。" : "模型调用发生后，请求阶段、耗时和费用会显示在这里。"}
+                                            />
+                                        ),
+                                    }}
+                                    pagination={false}
+                                    scroll={{ x: "max-content" }}
+                                />
+                                <PaginationBar current={page} pageSize={pageSize} total={total} onChange={(nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize })} />
+                            </>
+                        )}
+                    </TableSurface>
+                </AdminContentSection>
+            </AdminDataLayout>
             <ApiLogDetailDrawer logId={detailLogId} onClose={() => setDetailLogId(null)} />
         </AdminPageFrame>
     );

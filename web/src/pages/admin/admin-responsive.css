@@ -152,21 +152,23 @@
 
 @media (max-width: 767px) {
     .admin-workspace .admin-model-center-tabs {
-        grid-template-columns: minmax(0, 1fr);
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .admin-workspace .admin-model-center-tab {
         min-height: 44px;
-        padding: 8px 12px;
+        gap: 4px;
+        padding: 0 4px;
     }
 
-    .admin-workspace .admin-model-center-tab + .admin-model-center-tab {
-        border-top: 1px solid var(--workspace-ui-divider);
-        border-left: 0;
+    .admin-workspace .admin-model-center-tab.is-active::after {
+        right: 4px;
+        left: 4px;
     }
 
-    .admin-workspace .admin-model-center-tab-description {
-        white-space: normal;
+    .admin-workspace .admin-model-center-tab-icon {
+        display: none;
     }
 
     .admin-membership-mobile-section {
@@ -197,6 +199,11 @@
 }
 
 @media (max-width: 639px) {
+    .admin-workspace .ant-tabs-nav-more,
+    .admin-workspace .admin-log-detail-button.ant-btn {
+        min-height: 44px;
+    }
+
     .admin-workspace .admin-channel-list-toolbar .workspace-list-toolbar-fields {
         grid-template-columns: minmax(0, 1fr);
     }

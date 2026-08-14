@@ -1,7 +1,7 @@
-import { App, Button, Drawer, Form, Input, InputNumber, Select, Segmented, Table, Tag } from "antd";
+import { Alert, App, Button, Drawer, Form, Input, InputNumber, Select, Segmented, Table, Tag } from "antd";
 import type { FormInstance } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CircleDollarSign, Pencil, Search, Settings2, TriangleAlert } from "lucide-react";
+import { Pencil, Search, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
@@ -21,6 +21,7 @@ import {
 } from "@/services/api/auth";
 import { listAdminChannelModels, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
 import { useAdminContext } from "../admin-context";
+import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { agentDefaultModelOptions } from "./agent-model-options";
@@ -347,110 +348,111 @@ export default function ModelPricingPage() {
                     <AdminContentError title="模型商业定价刷新失败" description={loadError} onRetry={() => void reload()} />
                 </div>
             ) : null}
-            <section className="model-pricing-agent-setting mb-5 bg-foreground/[0.035] px-4 py-4" aria-labelledby="model-pricing-agent-setting-title">
-                <div className="model-pricing-agent-setting-copy mb-3">
-                    <h2 id="model-pricing-agent-setting-title" className="model-pricing-agent-setting-title text-sm font-semibold">
-                        Agent 模型配置
-                    </h2>
-                    <p className="model-pricing-agent-setting-description mt-1 text-xs leading-5 text-foreground/48">画布 Agent 全站使用这里指定的唯一文本模型，用户端不提供切换入口；模型失效时会明确停用，不自动降级。</p>
-                </div>
-                <div className="model-pricing-agent-setting-controls flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <Select
-                        aria-label="全站 Agent 默认模型"
-                        className="model-pricing-agent-model-select min-w-0 flex-1"
-                        value={agentModelId || undefined}
-                        placeholder="选择已启用并完成定价的文本模型"
-                        options={agentModelOptions}
-                        onChange={setAgentModelId}
+            <AdminDataLayout>
+                <AdminContentSection className="model-pricing-agent-section" title="Agent 模型配置" description="全站使用唯一已启用文本模型；模型失效时明确停用，不自动降级。">
+                    <div className="model-pricing-agent-setting-controls flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <Select
+                            aria-label="全站 Agent 默认模型"
+                            className="model-pricing-agent-model-select min-w-0 flex-1"
+                            value={agentModelId || undefined}
+                            placeholder="选择已启用并完成定价的文本模型"
+                            options={agentModelOptions}
+                            onChange={setAgentModelId}
+                        />
+                        <Button className="model-pricing-agent-model-save" type="primary" loading={savingAgentModel} disabled={!agentModelId || agentModelId === agentSetting?.channelModelId} onClick={() => void saveAgentModel()}>
+                            保存 Agent 模型
+                        </Button>
+                    </div>
+                </AdminContentSection>
+                <AdminMetricBand title="商业定价概览" description="集中查看模型定价完整性与利润风险。">
+                    <AdminMetric label="全部模型" value={models.length} detail="已接入系统目录" />
+                    <AdminMetric label="定价完整" value={configuredCount} detail="成本、售价与利润可核算" />
+                    <AdminMetric label="利润预警" value={warningCount} detail={setting.configured ? `低于 ${setting.targetMarginBasisPoints / 100}% 目标` : "尚未配置利润基准"} />
+                    <AdminMetric label="待完善" value={incompleteCount} detail="缺少成本、售价或商业参数" />
+                </AdminMetricBand>
+                {!setting.configured ? (
+                    <Alert
+                        className="model-pricing-notice"
+                        type="warning"
+                        showIcon
+                        title="商业参数尚未配置"
+                        description="请先配置每积分收入价值和目标利润率，系统才能核算模型利润。"
+                        action={
+                            <Button className="model-pricing-notice-action" size="small" onClick={openSettings}>
+                                立即配置
+                            </Button>
+                        }
                     />
-                    <Button className="model-pricing-agent-model-save" type="primary" loading={savingAgentModel} disabled={!agentModelId || agentModelId === agentSetting?.channelModelId} onClick={() => void saveAgentModel()}>
-                        保存 Agent 模型
-                    </Button>
-                </div>
-            </section>
-            <section className="model-pricing-metrics mb-5 grid grid-cols-2 lg:grid-cols-4" aria-label="模型商业定价概览">
-                <Metric label="全部模型" value={models.length} detail="已接入系统目录" />
-                <Metric label="定价完整" value={configuredCount} detail="成本、售价与利润可核算" />
-                <Metric label="利润预警" value={warningCount} detail={setting.configured ? `低于 ${setting.targetMarginBasisPoints / 100}% 目标` : "尚未配置利润基准"} tone="warning" />
-                <Metric label="待完善" value={incompleteCount} detail="缺少成本、售价或商业参数" tone="muted" />
-            </section>
-            {!setting.configured ? (
-                <div className="model-pricing-notice mb-5 flex items-center justify-between gap-4 bg-amber-500/8 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-                    <span className="model-pricing-notice-copy flex items-center gap-2">
-                        <TriangleAlert className="size-4 shrink-0" />
-                        请先配置每积分收入价值和目标利润率，系统才能核算模型利润。
-                    </span>
-                    <Button className="model-pricing-notice-action" size="small" onClick={openSettings}>
-                        立即配置
-                    </Button>
-                </div>
-            ) : null}
-            <ListToolbar
-                className="model-pricing-toolbar"
-                active={Boolean(keyword || capability !== "all" || status !== "all")}
-                onReset={() => {
-                    setKeyword("");
-                    setCapability("all");
-                    setStatus("all");
-                }}
-            >
-                <Input className="app-list-search model-pricing-search" allowClear prefix={<Search className="size-4 text-foreground/40" />} placeholder="搜索模型或渠道" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
-                <Select
-                    aria-label="筛选模型类型"
-                    className="model-pricing-filter"
-                    value={capability}
-                    onChange={setCapability}
-                    options={[
-                        { label: "全部类型", value: "all" },
-                        { label: "文案", value: "text" },
-                        { label: "图片", value: "image" },
-                        { label: "视频", value: "video" },
-                        { label: "音频", value: "audio" },
-                    ]}
-                />
-                <Select
-                    aria-label="筛选定价状态"
-                    className="model-pricing-filter"
-                    value={status}
-                    onChange={setStatus}
-                    options={[
-                        { label: "全部状态", value: "all" },
-                        { label: "定价完整", value: "configured" },
-                        { label: "利润预警", value: "warning" },
-                        { label: "待完善", value: "incomplete" },
-                    ]}
-                />
-            </ListToolbar>
-            <TableSurface className="model-pricing-table-surface">
-                {loading && models.length === 0 ? (
-                    <AdminTableSkeleton rows={8} columns={8} />
-                ) : (
-                    <Table
-                        className="app-data-table model-pricing-table"
-                        rowKey="id"
-                        loading={loading}
-                        columns={columns}
-                        dataSource={rows}
-                        locale={{
-                            emptyText: (
-                                <AdminTableEmpty
-                                    filtered={Boolean(keyword || capability !== "all" || status !== "all")}
-                                    title={models.length === 0 ? "尚未接入可定价模型" : undefined}
-                                    description={models.length === 0 ? "请先在 AI 模型配置中创建渠道并添加模型。" : undefined}
-                                />
-                            ),
+                ) : null}
+                <AdminContentSection className="model-pricing-table-section" title="模型价格表" description="维护供应商成本、用户售价和利润状态。" actions={<span className="model-pricing-result-count">共 {rows.length} 个模型</span>}>
+                    <ListToolbar
+                        className="model-pricing-toolbar"
+                        active={Boolean(keyword || capability !== "all" || status !== "all")}
+                        onReset={() => {
+                            setKeyword("");
+                            setCapability("all");
+                            setStatus("all");
                         }}
-                        pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型` }}
-                        scroll={{ x: 1130 }}
-                    />
-                )}
-            </TableSurface>
+                    >
+                        <Input className="app-list-search model-pricing-search" allowClear prefix={<Search className="size-4 text-foreground/40" />} placeholder="搜索模型或渠道" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                        <Select
+                            aria-label="筛选模型类型"
+                            className="model-pricing-filter"
+                            value={capability}
+                            onChange={setCapability}
+                            options={[
+                                { label: "全部类型", value: "all" },
+                                { label: "文案", value: "text" },
+                                { label: "图片", value: "image" },
+                                { label: "视频", value: "video" },
+                                { label: "音频", value: "audio" },
+                            ]}
+                        />
+                        <Select
+                            aria-label="筛选定价状态"
+                            className="model-pricing-filter"
+                            value={status}
+                            onChange={setStatus}
+                            options={[
+                                { label: "全部状态", value: "all" },
+                                { label: "定价完整", value: "configured" },
+                                { label: "利润预警", value: "warning" },
+                                { label: "待完善", value: "incomplete" },
+                            ]}
+                        />
+                    </ListToolbar>
+                    <TableSurface className="model-pricing-table-surface">
+                        {loading && models.length === 0 ? (
+                            <AdminTableSkeleton rows={8} columns={8} />
+                        ) : (
+                            <Table
+                                className="app-data-table model-pricing-table"
+                                rowKey="id"
+                                loading={loading}
+                                columns={columns}
+                                dataSource={rows}
+                                locale={{
+                                    emptyText: (
+                                        <AdminTableEmpty
+                                            filtered={Boolean(keyword || capability !== "all" || status !== "all")}
+                                            title={models.length === 0 ? "尚未接入可定价模型" : undefined}
+                                            description={models.length === 0 ? "请先在 AI 模型配置中创建渠道并添加模型。" : undefined}
+                                        />
+                                    ),
+                                }}
+                                pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 个模型` }}
+                                scroll={{ x: 1130 }}
+                            />
+                        )}
+                    </TableSurface>
+                </AdminContentSection>
+            </AdminDataLayout>
             <PricingDrawer model={editing} form={pricingForm} strategy={priceStrategy} saving={saving} dirty={pricingDirty} onDirty={() => setPricingDirty(true)} onClose={() => setEditing(null)} onSave={() => void savePricing()} />
             <Drawer
                 className="admin-object-drawer model-pricing-settings-drawer"
                 title="商业定价基准"
                 open={settingsOpen}
-                width={460}
+                size={460}
                 onClose={() => {
                     if (saving) return;
                     setSettingsOpen(false);
@@ -520,7 +522,7 @@ function PricingDrawer({
             className="admin-object-drawer model-pricing-drawer"
             title={model ? `配置 ${model.displayName || model.modelKey}` : "模型商业定价"}
             open={Boolean(model)}
-            width={620}
+            size={620}
             onClose={() => {
                 if (saving) return;
                 onClose();
@@ -686,19 +688,6 @@ function CountField({ name, label }: { name: keyof PricingFormValues; label: str
         <Form.Item className="model-pricing-field" name={name} label={label} rules={[{ type: "integer", min: 0, message: "请输入不小于 0 的整数" }]}>
             <InputNumber className="model-pricing-number-input w-full" min={0} precision={0} placeholder="未配置" />
         </Form.Item>
-    );
-}
-
-function Metric({ label, value, detail, tone = "default" }: { label: string; value: number; detail: string; tone?: "default" | "warning" | "muted" }) {
-    return (
-        <div className="model-pricing-metric">
-            <div className="model-pricing-metric-label flex items-center gap-1.5 text-xs text-foreground/48">
-                {tone === "warning" ? <TriangleAlert className="size-3.5 text-amber-500" /> : <CircleDollarSign className="size-3.5" />}
-                {label}
-            </div>
-            <div className="model-pricing-metric-value mt-2 text-2xl font-semibold tabular-nums">{value}</div>
-            <div className="model-pricing-metric-detail mt-1 text-[11px] text-foreground/38">{detail}</div>
-        </div>
     );
 }
 

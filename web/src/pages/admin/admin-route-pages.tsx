@@ -17,22 +17,52 @@ function PageFallback({ label }: { label: string }) {
 
 export function AnalyticsPage() {
     const { references } = useAdminContext();
-    return <AdminPageFrame title="数据概览" description="活跃、调用与成本趋势"><Suspense fallback={<PageFallback label="统计数据" />}><AnalyticsPanel users={references.users} channels={references.channels} /></Suspense></AdminPageFrame>;
+    return (
+        <AdminPageFrame title="数据概览" description="活跃、调用与成本趋势">
+            <Suspense fallback={<PageFallback label="统计数据" />}>
+                <AnalyticsPanel users={references.users} channels={references.channels} />
+            </Suspense>
+        </AdminPageFrame>
+    );
 }
 
 export function AnnouncementsPage() {
-    return <AdminPageFrame title="系统公告" description="发布、关闭与历史公告"><Suspense fallback={<PageFallback label="系统公告" />}><AdminAnnouncementsPanel /></Suspense></AdminPageFrame>;
+    return (
+        <AdminPageFrame title="系统公告" description="发布、关闭与历史公告">
+            <Suspense fallback={<PageFallback label="系统公告" />}>
+                <AdminAnnouncementsPanel />
+            </Suspense>
+        </AdminPageFrame>
+    );
 }
 
 export function CreditOperationsPage() {
     const { references } = useAdminContext();
-    return <AdminPageFrame title="积分管理" description="积分规则、人工调账与异常计费"><Suspense fallback={<PageFallback label="积分管理数据" />}><CreditOperationsPanel users={references.users} /></Suspense></AdminPageFrame>;
+    return (
+        <AdminPageFrame title="积分管理" description="积分规则、人工调账与异常计费">
+            <Suspense fallback={<PageFallback label="积分管理数据" />}>
+                <CreditOperationsPanel users={references.users} />
+            </Suspense>
+        </AdminPageFrame>
+    );
 }
 
 export function AccessSettingsPage() {
-    return <AdminPageFrame title="登录与注册" description="管理账号准入策略与 Linux.do OAuth 登录"><Suspense fallback={<PageFallback label="登录与注册配置" />}><AccessSettingsPanel /></Suspense></AdminPageFrame>;
+    return (
+        <AdminPageFrame title="登录与注册" description="管理账号准入策略与 Linux.do OAuth 登录">
+            <Suspense fallback={<PageFallback label="登录与注册配置" />}>
+                <AccessSettingsPanel />
+            </Suspense>
+        </AdminPageFrame>
+    );
 }
 
 export function EmailSettingsPage() {
-    return <AdminPageFrame title="邮件服务" description="注册验证码 SMTP"><div className="admin-settings-page"><Suspense fallback={<PageFallback label="邮件配置" />}><EmailSettingsPanel /></Suspense></div></AdminPageFrame>;
+    return (
+        <AdminPageFrame title="邮件服务" description="注册验证码 SMTP">
+            <Suspense fallback={<PageFallback label="邮件配置" />}>
+                <EmailSettingsPanel />
+            </Suspense>
+        </AdminPageFrame>
+    );
 }

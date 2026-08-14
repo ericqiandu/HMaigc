@@ -1,12 +1,13 @@
 import { Alert, App, Button, Form, Input, Modal, Popconfirm, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { BellRing, CircleAlert, Info, Plus, Search, ShieldAlert, Wrench } from "lucide-react";
+import { CircleAlert, Info, Plus, Search, ShieldAlert, Wrench } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useBlocker } from "react-router";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { closeAdminAnnouncement, createAdminAnnouncement, listAdminAnnouncements, type AnnouncementLevel, type AnnouncementStatus, type SystemAnnouncement } from "@/services/api/announcements";
+import { AdminContentSection, AdminDataLayout } from "./admin-data-layout";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "./admin-ui";
 import { announcementFormIsEmpty, emptyAnnouncementForm, normalizeAnnouncementForm, type AnnouncementFormValues } from "./announcement-form-values";
 
@@ -233,93 +234,94 @@ export default function AdminAnnouncementsPanel() {
     ];
 
     return (
-        <div className="admin-announcements-layout">
-            <div className="admin-announcements-heading mb-5 flex flex-wrap items-center justify-between gap-4">
-                <div className="admin-announcements-heading-copy flex min-w-0 items-center gap-4">
-                    <span className="admin-announcements-icon grid size-9 shrink-0 place-items-center">
-                        <BellRing className="admin-announcements-icon-symbol size-4" />
-                    </span>
-                    <div className="admin-announcements-summary min-w-0">
-                        <div className="admin-announcements-count text-sm font-medium text-foreground" role="status" aria-live="polite">{hasSuccessfulLoad ? `${total} 条公告记录` : "公告记录尚未读取"}</div>
-                        <div className="admin-announcements-description mt-1 text-xs leading-5 text-foreground/50">关闭公告会立即从用户公告中心移除</div>
+        <AdminDataLayout>
+            <AdminContentSection
+                className="admin-announcements-layout"
+                title="公告目录"
+                description="发布、关闭并追踪用户公告；关闭后会立即从用户公告中心移除。"
+                actions={
+                    <div className="admin-announcements-actions">
+                        <span className="admin-announcements-count" role="status" aria-live="polite">
+                            {hasSuccessfulLoad ? `共 ${total} 条记录` : "公告记录尚未读取"}
+                        </span>
+                        <Button className="admin-announcements-publish" type="primary" icon={<Plus className="admin-announcements-publish-icon size-4" />} onClick={openPublishModal}>
+                            发布公告
+                        </Button>
                     </div>
-                </div>
-                <Button className="admin-announcements-publish" type="primary" icon={<Plus className="admin-announcements-publish-icon size-4" />} onClick={openPublishModal}>
-                    发布公告
-                </Button>
-            </div>
-
-            <ListToolbar
-                active={Boolean(keyword || status !== "all")}
-                onReset={() => {
-                    setKeyword("");
-                    setStatus("all");
-                    setPage(1);
-                }}
+                }
             >
-                <Input
-                    allowClear
-                    className="admin-announcements-search app-list-search"
-                    prefix={<Search className="admin-announcements-search-icon size-4 text-foreground/40" />}
-                    value={keyword}
-                    placeholder="搜索公告标题或正文"
-                    onChange={(event) => {
-                        setKeyword(event.target.value);
+                <ListToolbar
+                    active={Boolean(keyword || status !== "all")}
+                    onReset={() => {
+                        setKeyword("");
+                        setStatus("all");
                         setPage(1);
                     }}
-                />
-                <Select
-                    className="admin-announcements-status-filter w-32"
-                    aria-label="筛选系统公告状态"
-                    value={status}
-                    onChange={(value) => {
-                        setStatus(value);
-                        setPage(1);
-                    }}
-                    options={[
-                        { label: "全部状态", value: "all" },
-                        { label: "发布中", value: "active" },
-                        { label: "已关闭", value: "closed" },
-                    ]}
-                />
-            </ListToolbar>
-            {loadError && hasSuccessfulLoad ? <AdminContentError title="公告列表刷新失败" description={`${loadError}。当前仍显示上次成功读取的结果。`} onRetry={() => void reload()} /> : null}
-            <TableSurface>
-                {!hasSuccessfulLoad && loading ? <AdminTableSkeleton rows={8} columns={6} /> : null}
-                {!hasSuccessfulLoad && !loading && loadError ? <AdminContentError title="公告列表读取失败" description={loadError} onRetry={() => void reload()} /> : null}
-                {hasSuccessfulLoad ? (
-                    <Table
-                        className="app-data-table"
-                        size="middle"
-                        rowKey="id"
-                        loading={loading}
-                        columns={columns}
-                        dataSource={announcements}
-                        locale={{
-                            emptyText: (
-                                <AdminTableEmpty
-                                    filtered={Boolean(keyword || status !== "all")}
-                                    title={keyword || status !== "all" ? "没有符合条件的公告" : "暂无公告"}
-                                    description={keyword || status !== "all" ? "调整关键词或状态筛选后再试。" : "发布后，公告会出现在这里并同步到用户公告中心。"}
-                                />
-                            ),
+                >
+                    <Input
+                        allowClear
+                        className="admin-announcements-search app-list-search"
+                        prefix={<Search className="admin-announcements-search-icon size-4 text-foreground/40" />}
+                        value={keyword}
+                        placeholder="搜索公告标题或正文"
+                        onChange={(event) => {
+                            setKeyword(event.target.value);
+                            setPage(1);
                         }}
-                        pagination={{
-                            current: page,
-                            pageSize,
-                            total,
-                            showSizeChanger: true,
-                            pageSizeOptions: [20, 50, 100],
-                            showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
-                            onChange: (nextPage, nextPageSize) => {
-                                setPage(nextPageSize !== pageSize ? 1 : nextPage);
-                                setPageSize(nextPageSize);
-                            },
-                        }}
-                        scroll={{ x: 890 }}
                     />
-                ) : null}
-            </TableSurface>
+                    <Select
+                        className="admin-announcements-status-filter w-32"
+                        aria-label="筛选系统公告状态"
+                        value={status}
+                        onChange={(value) => {
+                            setStatus(value);
+                            setPage(1);
+                        }}
+                        options={[
+                            { label: "全部状态", value: "all" },
+                            { label: "发布中", value: "active" },
+                            { label: "已关闭", value: "closed" },
+                        ]}
+                    />
+                </ListToolbar>
+                {loadError && hasSuccessfulLoad ? <AdminContentError title="公告列表刷新失败" description={`${loadError}。当前仍显示上次成功读取的结果。`} onRetry={() => void reload()} /> : null}
+                <TableSurface>
+                    {!hasSuccessfulLoad && loading ? <AdminTableSkeleton rows={8} columns={6} /> : null}
+                    {!hasSuccessfulLoad && !loading && loadError ? <AdminContentError title="公告列表读取失败" description={loadError} onRetry={() => void reload()} /> : null}
+                    {hasSuccessfulLoad ? (
+                        <Table
+                            className="app-data-table"
+                            size="middle"
+                            rowKey="id"
+                            loading={loading}
+                            columns={columns}
+                            dataSource={announcements}
+                            locale={{
+                                emptyText: (
+                                    <AdminTableEmpty
+                                        filtered={Boolean(keyword || status !== "all")}
+                                        title={keyword || status !== "all" ? "没有符合条件的公告" : "暂无公告"}
+                                        description={keyword || status !== "all" ? "调整关键词或状态筛选后再试。" : "发布后，公告会出现在这里并同步到用户公告中心。"}
+                                    />
+                                ),
+                            }}
+                            pagination={{
+                                current: page,
+                                pageSize,
+                                total,
+                                showSizeChanger: true,
+                                pageSizeOptions: [20, 50, 100],
+                                showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
+                                onChange: (nextPage, nextPageSize) => {
+                                    setPage(nextPageSize !== pageSize ? 1 : nextPage);
+                                    setPageSize(nextPageSize);
+                                },
+                            }}
+                            scroll={{ x: 890 }}
+                        />
+                    ) : null}
+                </TableSurface>
+            </AdminContentSection>
 
             <Modal
                 className="admin-operation-modal admin-announcement-modal workspace-ui-scope"
@@ -367,7 +369,7 @@ export default function AdminAnnouncementsPanel() {
                     </Form.Item>
                 </Form>
             </Modal>
-        </div>
+        </AdminDataLayout>
     );
 }
 

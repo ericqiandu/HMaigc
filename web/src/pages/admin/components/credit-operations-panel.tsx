@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Form, Input, InputNumber, Modal, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CircleAlert, Coins, RefreshCw, Save, Search, Settings2, UserRoundCog } from "lucide-react";
+import { CircleAlert, Coins, RefreshCw, Save, Search } from "lucide-react";
 
 import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { formatCredits } from "@/constant/credits";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { AdminContentError, AdminContentSkeleton, AdminRowActions, AdminTableEmpty, AdminTableSkeleton, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
+import { AdminContentSection, AdminDataLayout } from "@/pages/admin/components/admin-data-layout";
+import { formatCompactNumberInput } from "@/pages/admin/components/admin-form-system";
+import { AdminContentError, AdminContentSkeleton, AdminRowActions, AdminTableEmpty, AdminTableSkeleton } from "@/pages/admin/components/admin-ui";
 import { listAdminUsers, type AdminReferenceData, type LocalUser } from "@/services/api/auth";
 import { adjustAdminUserCredits, getAdminCreditPolicy, listAdminBillingOrders, resolveAdminBillingOrder, updateAdminCreditPolicy, type BillingOrder } from "@/services/api/wallet";
 
@@ -166,9 +168,21 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
             title: values.amount >= 0 ? "确认增加用户积分" : "确认扣减用户积分",
             content: (
                 <div className="credit-adjustment-confirm-summary">
-                    <div className="credit-adjustment-confirm-row"><span className="credit-adjustment-confirm-label">目标用户</span><strong className="credit-adjustment-confirm-value">{targetName}</strong></div>
-                    <div className="credit-adjustment-confirm-row"><span className="credit-adjustment-confirm-label">积分变化</span><strong className={`credit-adjustment-confirm-value ${values.amount >= 0 ? "is-positive" : "is-negative"}`}>{values.amount >= 0 ? "+" : ""}{values.amount}</strong></div>
-                    <div className="credit-adjustment-confirm-row"><span className="credit-adjustment-confirm-label">调整依据</span><span className="credit-adjustment-confirm-value">{values.note.trim()}</span></div>
+                    <div className="credit-adjustment-confirm-row">
+                        <span className="credit-adjustment-confirm-label">目标用户</span>
+                        <strong className="credit-adjustment-confirm-value">{targetName}</strong>
+                    </div>
+                    <div className="credit-adjustment-confirm-row">
+                        <span className="credit-adjustment-confirm-label">积分变化</span>
+                        <strong className={`credit-adjustment-confirm-value ${values.amount >= 0 ? "is-positive" : "is-negative"}`}>
+                            {values.amount >= 0 ? "+" : ""}
+                            {values.amount}
+                        </strong>
+                    </div>
+                    <div className="credit-adjustment-confirm-row">
+                        <span className="credit-adjustment-confirm-label">调整依据</span>
+                        <span className="credit-adjustment-confirm-value">{values.note.trim()}</span>
+                    </div>
                 </div>
             ),
             okText: values.amount >= 0 ? "确认增加" : "确认扣减",
@@ -254,12 +268,12 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
     ];
 
     return (
-        <div className="credit-operations space-y-6">
-            <div className="credit-operations-overview grid min-w-0 items-start">
-                <SettingsSectionCard className="credit-policy-panel" icon={<Settings2 className="credit-policy-icon size-4" />} title="积分策略" description="注册、签到与模型倍率统一在服务端结算。">
-                    {policyLoading && !policyLoaded ? <AdminContentSkeleton rows={5} compact label="正在读取积分策略" /> : null}
-                    {policyError && !policyLoaded ? <AdminContentError title="积分策略读取失败" description={policyError} onRetry={() => void loadPolicy()} /> : null}
-                    {policyLoaded ? <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form admin-content-form" onValuesChange={() => setPolicyDirty(true)} onFinish={() => void savePolicy()}>
+        <AdminDataLayout>
+            <AdminContentSection className="credit-policy-panel" title="积分策略" description="注册、签到与模型倍率统一在服务端结算。">
+                {policyLoading && !policyLoaded ? <AdminContentSkeleton rows={5} compact label="正在读取积分策略" /> : null}
+                {policyError && !policyLoaded ? <AdminContentError title="积分策略读取失败" description={policyError} onRetry={() => void loadPolicy()} /> : null}
+                {policyLoaded ? (
+                    <Form form={policyForm} layout="vertical" requiredMark={false} className="credit-policy-form admin-content-form" onValuesChange={() => setPolicyDirty(true)} onFinish={() => void savePolicy()}>
                         <div className="credit-policy-fields grid gap-5 md:grid-cols-3">
                             <Form.Item
                                 name="signupBonus"
@@ -269,7 +283,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                     { type: "number", min: 0 },
                                 ]}
                             >
-                                <InputNumber className="w-full" min={0} precision={6} />
+                                <InputNumber className="w-full" min={0} precision={6} step={0.000001} formatter={formatCompactNumberInput} />
                             </Form.Item>
                             <Form.Item
                                 name="checkinBonus"
@@ -279,7 +293,7 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                     { type: "number", min: 0 },
                                 ]}
                             >
-                                <InputNumber className="w-full" min={0} precision={6} />
+                                <InputNumber className="w-full" min={0} precision={6} step={0.000001} formatter={formatCompactNumberInput} />
                             </Form.Item>
                             <Form.Item
                                 name="defaultMultiplier"
@@ -289,78 +303,73 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                                     { type: "number", min: 0.0001, max: 100 },
                                 ]}
                             >
-                                <InputNumber className="w-full" min={0.0001} max={100} precision={4} />
+                                <InputNumber className="w-full" min={0.0001} max={100} precision={4} step={0.0001} formatter={formatCompactNumberInput} />
                             </Form.Item>
                         </div>
                         <Form.Item name="modelMultipliers" label="模型独立倍率" extra="每行一项，格式为 模型名=倍率。例如 gpt-image-1=1.5">
                             <Input.TextArea rows={4} placeholder={"gpt-image-1=1.5\nseedance-1.0-pro=2"} />
                         </Form.Item>
                         <div className="admin-form-actions credit-policy-actions flex justify-end">
-                            <span className={`credit-policy-sync-state ${policyDirty ? "is-dirty" : ""}`} role="status">{policyDirty ? "有未保存修改" : "已与服务端同步"}</span>
+                            <span className={`credit-policy-sync-state ${policyDirty ? "is-dirty" : ""}`} role="status">
+                                {policyDirty ? "有未保存修改" : "已与服务端同步"}
+                            </span>
                             <Button className="admin-form-submit" type="primary" htmlType="submit" icon={<Save className="size-4" />} loading={savingPolicy} disabled={!policyDirty}>
                                 保存积分策略
                             </Button>
                         </div>
-                    </Form> : null}
-                </SettingsSectionCard>
-                <SettingsSectionCard
-                    className="credit-adjustment-panel"
-                    icon={<UserRoundCog className="credit-adjustment-icon size-4" />}
-                    title="人工调整积分"
-                    description="所有变更都会写入不可修改的用户积分流水。"
-                    footer={
-                        <div className="credit-adjustment-notice flex items-start gap-3.5">
-                            <CircleAlert className="credit-adjustment-notice-icon mt-0.5 size-4 shrink-0" />
-                            <div className="credit-adjustment-notice-copy">
-                                <h3 className="credit-adjustment-notice-title">写操作强校验</h3>
-                                <p className="credit-adjustment-notice-description">余额不足时不允许负向调整，建议在备注中填写工单号或处理依据。</p>
-                            </div>
-                        </div>
-                    }
-                >
-                        <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form admin-content-form" onFinish={() => void adjust()}>
-                            <Form.Item name="userId" label="目标用户" rules={[{ required: true, message: "请选择用户" }]}>
-                                <Select
-                                    showSearch
-                                    filterOption={false}
-                                    loading={searchingUsers}
-                                    placeholder="搜索用户名或显示名称"
-                                    onSearch={(value) => void searchUsers(value)}
-                                    options={adjustmentUsers.map((user) => ({ label: `${user.displayName || user.username} · @${user.username}`, value: user.id }))}
-                                />
-                            </Form.Item>
-                            <div className="credit-adjustment-fields grid gap-5 sm:grid-cols-2 xl:grid-cols-1">
-                                <Form.Item name="amount" label="积分变化" extra="正数增加，负数扣减。" rules={[
-                                    { required: true, message: "请填写积分变化" },
-                                    { validator: (_rule, value?: number) => value === 0 ? Promise.reject(new Error("积分变化不能为 0")) : Promise.resolve() },
-                                ]}>
-                                    <InputNumber className="w-full" precision={6} prefix={<Coins className="size-3.5 text-foreground/45" />} placeholder="例如 10 或 -2" />
-                                </Form.Item>
-                                <Form.Item name="note" label="调整原因" rules={[{ required: true, message: "请填写调整原因" }]}>
-                                    <Input maxLength={500} placeholder="将显示在审计流水中" />
-                                </Form.Item>
-                            </div>
-                            <div className="admin-form-actions credit-adjustment-actions flex justify-end">
-                                <Button className="admin-form-submit" type="primary" htmlType="submit" icon={<Coins className="size-4" />} loading={adjusting}>
-                                    确认调整
-                                </Button>
-                            </div>
-                        </Form>
-                </SettingsSectionCard>
-            </div>
-
-            <section className="credit-orders-section min-w-0 pt-1">
-                <div className="credit-orders-heading mb-5 flex flex-wrap items-end justify-between gap-4">
-                    <div className="credit-orders-heading-copy">
-                        <div className="credit-orders-title-row flex items-center gap-2">
-                            <h2 className="credit-orders-title text-base font-semibold">计费订单</h2>
-                            <Tag variant="filled" color={orderStatus === "review" && total ? "warning" : "default"}>
-                                {total} 条
-                            </Tag>
-                        </div>
-                        <p className="mt-1.5 text-xs leading-5 text-foreground/55">待核对订单可人工结算或退款，已结算与已退款历史保持只读。</p>
+                    </Form>
+                ) : null}
+            </AdminContentSection>
+            <AdminContentSection className="credit-adjustment-panel" title="人工调整积分" description="所有变更都会写入不可修改的用户积分流水。">
+                <Form form={adjustmentForm} layout="vertical" requiredMark={false} className="credit-adjustment-form admin-content-form" onFinish={() => void adjust()}>
+                    <Form.Item name="userId" label="目标用户" rules={[{ required: true, message: "请选择用户" }]}>
+                        <Select
+                            showSearch
+                            filterOption={false}
+                            loading={searchingUsers}
+                            placeholder="搜索用户名或显示名称"
+                            onSearch={(value) => void searchUsers(value)}
+                            options={adjustmentUsers.map((user) => ({ label: `${user.displayName || user.username} · @${user.username}`, value: user.id }))}
+                        />
+                    </Form.Item>
+                    <div className="credit-adjustment-fields grid gap-5 sm:grid-cols-2 xl:grid-cols-1">
+                        <Form.Item
+                            name="amount"
+                            label="积分变化"
+                            extra="正数增加，负数扣减。"
+                            rules={[{ required: true, message: "请填写积分变化" }, { validator: (_rule, value?: number) => (value === 0 ? Promise.reject(new Error("积分变化不能为 0")) : Promise.resolve()) }]}
+                        >
+                            <InputNumber className="w-full" precision={6} step={0.000001} formatter={formatCompactNumberInput} prefix={<Coins className="size-3.5 text-foreground/45" />} placeholder="例如 10 或 -2" />
+                        </Form.Item>
+                        <Form.Item name="note" label="调整原因" rules={[{ required: true, message: "请填写调整原因" }]}>
+                            <Input maxLength={500} placeholder="将显示在审计流水中" />
+                        </Form.Item>
+                    </div>
+                    <div className="admin-form-actions credit-adjustment-actions flex justify-end">
+                        <Button className="admin-form-submit" type="primary" htmlType="submit" icon={<Coins className="size-4" />} loading={adjusting}>
+                            确认调整
+                        </Button>
+                    </div>
+                </Form>
+                <div className="credit-adjustment-notice flex items-start gap-3.5">
+                    <CircleAlert className="credit-adjustment-notice-icon mt-0.5 size-4 shrink-0" />
+                    <div className="credit-adjustment-notice-copy">
+                        <h3 className="credit-adjustment-notice-title">写操作强校验</h3>
+                        <p className="credit-adjustment-notice-description">余额不足时不允许负向调整，建议在备注中填写工单号或处理依据。</p>
                     </div>
                 </div>
+            </AdminContentSection>
+
+            <AdminContentSection
+                className="credit-orders-section"
+                title="计费订单"
+                description="待核对订单可人工结算或退款，已结算与已退款历史保持只读。"
+                actions={
+                    <Tag variant="filled" color={orderStatus === "review" && total ? "warning" : "default"}>
+                        {total} 条
+                    </Tag>
+                }
+            >
                 <ListToolbar
                     active={Boolean(keyword || orderStatus !== "review")}
                     onReset={() => {
@@ -370,8 +379,12 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                     }}
                     trailing={
                         <div className="credit-orders-toolbar-trailing">
-                            <span className="credit-orders-result-count" role="status">共 {total} 条记录</span>
-                            <Button className="credit-orders-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>刷新</Button>
+                            <span className="credit-orders-result-count" role="status">
+                                共 {total} 条记录
+                            </span>
+                            <Button className="credit-orders-refresh" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
+                                刷新
+                            </Button>
                         </div>
                     }
                 >
@@ -406,38 +419,44 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                     />
                 </ListToolbar>
                 {ordersError ? <AdminContentError title="计费订单读取失败" description={ordersError} onRetry={() => void reload()} /> : null}
-                {!ordersError || orders.length > 0 ? <TableSurface>
-                    {loading && orders.length === 0 ? <AdminTableSkeleton rows={7} columns={8} /> : null}
-                    {orders.length > 0 || !loading ? <Table
-                        className="credit-orders-table app-data-table"
-                        rowKey="id"
-                        size="middle"
-                        loading={loading}
-                        columns={columns}
-                        dataSource={orders}
-                        locale={{ emptyText: <AdminTableEmpty filtered={Boolean(keyword || orderStatus !== "review")} /> }}
-                        pagination={{
-                            current: page,
-                            pageSize,
-                            total,
-                            showSizeChanger: true,
-                            pageSizeOptions: [20, 50, 100],
-                            showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
-                            onChange: (nextPage, nextPageSize) => {
-                                setPage(nextPageSize !== pageSize ? 1 : nextPage);
-                                setPageSize(nextPageSize);
-                            },
-                        }}
-                        scroll={{ x: 1160 }}
-                    /> : null}
-                </TableSurface> : null}
-            </section>
+                {!ordersError || orders.length > 0 ? (
+                    <TableSurface>
+                        {loading && orders.length === 0 ? <AdminTableSkeleton rows={7} columns={8} /> : null}
+                        {orders.length > 0 || !loading ? (
+                            <Table
+                                className="credit-orders-table app-data-table"
+                                rowKey="id"
+                                size="middle"
+                                loading={loading}
+                                columns={columns}
+                                dataSource={orders}
+                                locale={{ emptyText: <AdminTableEmpty filtered={Boolean(keyword || orderStatus !== "review")} /> }}
+                                pagination={{
+                                    current: page,
+                                    pageSize,
+                                    total,
+                                    showSizeChanger: true,
+                                    pageSizeOptions: [20, 50, 100],
+                                    showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
+                                    onChange: (nextPage, nextPageSize) => {
+                                        setPage(nextPageSize !== pageSize ? 1 : nextPage);
+                                        setPageSize(nextPageSize);
+                                    },
+                                }}
+                                scroll={{ x: 1160 }}
+                            />
+                        ) : null}
+                    </TableSurface>
+                ) : null}
+            </AdminContentSection>
 
             <Modal
                 className="admin-operation-modal admin-credit-resolution-modal workspace-ui-scope"
                 title={resolvingOrder?.action === "settle" ? "确认扣除冻结积分" : "确认退回冻结积分"}
                 open={Boolean(resolvingOrder)}
-                onCancel={() => { if (!resolving) setResolvingOrder(null); }}
+                onCancel={() => {
+                    if (!resolving) setResolvingOrder(null);
+                }}
                 onOk={() => void resolveBilling()}
                 confirmLoading={resolving}
                 keyboard={!resolving}
@@ -447,18 +466,29 @@ export default function CreditOperationsPanel({ users }: { users: AdminReference
                 cancelText="取消"
                 okButtonProps={{ danger: resolvingOrder?.action === "refund" }}
             >
-                {resolvingOrder ? <div className="credit-resolution-summary">
-                    <div className="credit-resolution-summary-item"><span className="credit-resolution-summary-label">模型</span><strong className="credit-resolution-summary-value">{resolvingOrder.order.model}</strong></div>
-                    <div className="credit-resolution-summary-item"><span className="credit-resolution-summary-label">冻结积分</span><strong className="credit-resolution-summary-value">{formatCredits(resolvingOrder.order.amountMicrocredits)}</strong></div>
-                    <div className="credit-resolution-summary-item"><span className="credit-resolution-summary-label">请求号</span><span className="credit-resolution-summary-value is-mono">{resolvingOrder.order.providerRequestId || "未获取"}</span></div>
-                </div> : null}
+                {resolvingOrder ? (
+                    <div className="credit-resolution-summary">
+                        <div className="credit-resolution-summary-item">
+                            <span className="credit-resolution-summary-label">模型</span>
+                            <strong className="credit-resolution-summary-value">{resolvingOrder.order.model}</strong>
+                        </div>
+                        <div className="credit-resolution-summary-item">
+                            <span className="credit-resolution-summary-label">冻结积分</span>
+                            <strong className="credit-resolution-summary-value">{formatCredits(resolvingOrder.order.amountMicrocredits)}</strong>
+                        </div>
+                        <div className="credit-resolution-summary-item">
+                            <span className="credit-resolution-summary-label">请求号</span>
+                            <span className="credit-resolution-summary-value is-mono">{resolvingOrder.order.providerRequestId || "未获取"}</span>
+                        </div>
+                    </div>
+                ) : null}
                 <Form form={resolutionForm} layout="vertical" requiredMark={false} className="credit-resolution-form">
                     <Form.Item name="note" label="核对依据" rules={[{ required: true, message: "请填写供应商账单、任务状态或处理依据" }]}>
                         <Input.TextArea rows={4} maxLength={500} placeholder="例如：供应商后台确认该请求未产生费用" />
                     </Form.Item>
                 </Form>
             </Modal>
-        </div>
+        </AdminDataLayout>
     );
 }
 

@@ -181,18 +181,34 @@ describe("kuaizi provider API and domain", () => {
 });
 
 describe("kuaizi provider settings components", () => {
-    test("uses a compact account overview and a two-column family catalog on desktop", async () => {
-        const pageSource = await Bun.file(new URL("../src/pages/admin/providers/kuaizi-provider-page.tsx", import.meta.url)).text();
-        const pageStyles = await Bun.file(new URL("../src/pages/admin/providers/kuaizi-provider.css", import.meta.url)).text();
+    test("renders the account workflow as one shared Pro data layout without nested cards", () => {
+        const markup = renderToStaticMarkup(
+            createElement(KuaiziProviderPageView, {
+                account: parsedFixture(),
+                endpointDraft: "https://aiopenapi.kuaizi.cn",
+                endpointDirty: false,
+                endpointSyncPending: false,
+                loading: false,
+                operation: null,
+                loadError: null,
+                operationErrors: {},
+                onEndpointChange: () => undefined,
+                onSaveEndpoint: () => undefined,
+                onOpenCredential: () => undefined,
+                onVerifyCredential: () => undefined,
+                onPublishModels: () => undefined,
+                onRetry: () => undefined,
+            }),
+        );
 
-        expect(pageSource).toContain('className="kuaizi-provider-account-grid"');
-        expect(pageSource.indexOf('className="kuaizi-provider-account-grid"')).toBeLessThan(pageSource.indexOf('className="kuaizi-provider-families"'));
-        expect(pageStyles).toContain(".kuaizi-provider-account-grid");
-        expect(pageStyles).toContain("grid-template-columns: minmax(320px, 5fr) minmax(0, 7fr)");
-        expect(pageStyles).toContain(".kuaizi-provider-family-list");
-        expect(pageStyles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
-        expect(pageStyles).toContain(".kuaizi-provider-account-grid .admin-section-card-content");
-        expect(pageStyles).toContain("padding: var(--workspace-ui-space-4)");
+        expect(markup).toContain('class="admin-data-layout"');
+        const endpointSection = markup.indexOf(">公共服务配置</h2>");
+        const credentialSection = markup.indexOf(">账号统一凭据</h2>");
+        const familySection = markup.indexOf(">模型系列</h2>");
+        expect(endpointSection).toBeLessThan(credentialSection);
+        expect(credentialSection).toBeLessThan(familySection);
+        expect(markup).toContain('class="kuaizi-provider-family-row"');
+        expect(markup).not.toContain("admin-section-card");
     });
 
     test("renders first failed candidates and equally unhealthy active versions by explicit role", () => {

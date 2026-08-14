@@ -19,6 +19,7 @@ type AdminFilterSectionProps = {
 };
 
 type AdminContentSectionProps = {
+    className?: string;
     title: string;
     description?: string;
     actions?: ReactNode;
@@ -66,11 +67,11 @@ export function AdminFilterSection({ label, children }: AdminFilterSectionProps)
     );
 }
 
-export function AdminContentSection({ title, description, actions, children }: AdminContentSectionProps) {
+export function AdminContentSection({ className, title, description, actions, children }: AdminContentSectionProps) {
     const headingId = useId();
 
     return (
-        <section className="admin-content-section" role="region" aria-labelledby={headingId}>
+        <section className={["admin-content-section", className].filter(Boolean).join(" ")} role="region" aria-labelledby={headingId}>
             <header className="admin-data-section-header">
                 <div className="admin-data-section-copy">
                     <h2 id={headingId} className="admin-data-section-title admin-content-section-title">

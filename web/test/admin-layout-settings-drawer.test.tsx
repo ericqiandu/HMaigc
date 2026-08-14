@@ -83,7 +83,10 @@ describe("admin layout settings drawer", () => {
         expect(document.querySelector(".admin-layout-settings-drawer .ant-drawer-content-wrapper")).not.toBeNull();
         expect(requiredElement<HTMLButtonElement>(".admin-layout-theme-light").getAttribute("aria-pressed")).toBe("true");
         expect(requiredElement<HTMLInputElement>(".admin-layout-color-input").getAttribute("aria-label")).toBe("自定义后台品牌色");
-        expect(requiredElement<HTMLButtonElement>(".admin-layout-reset-button").textContent).toContain("恢复默认设置");
+        expect(document.querySelector(".admin-layout-settings-subtitle")?.textContent).toContain("实时预览");
+        expect(document.querySelectorAll(".admin-layout-choice-preview")).toHaveLength(4);
+        expect(requiredElement<HTMLButtonElement>(".admin-layout-reset-button").textContent).toContain("恢复默认");
+        expect(requiredElement<HTMLButtonElement>(".admin-layout-done-button").textContent?.replaceAll(" ", "")).toContain("完成");
     });
 });
 

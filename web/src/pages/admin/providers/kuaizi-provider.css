@@ -3,36 +3,14 @@
 .kuaizi-provider-page-content > *,
 .kuaizi-provider-families,
 .kuaizi-provider-family-list,
-.kuaizi-provider-family-card {
+.kuaizi-provider-family-row {
     min-width: 0;
     max-width: 100%;
 }
 
-.kuaizi-provider-page-content,
-.kuaizi-provider-family-list {
+.kuaizi-provider-page-content {
     display: grid;
-    gap: var(--workspace-ui-space-4);
-}
-
-.kuaizi-provider-account-grid {
-    display: grid;
-    grid-template-columns: minmax(320px, 5fr) minmax(0, 7fr);
-    align-items: start;
-    gap: var(--workspace-ui-space-4);
-    min-width: 0;
-}
-
-.kuaizi-provider-page-content .admin-section-card-header {
-    padding: var(--workspace-ui-space-4);
-}
-
-.kuaizi-provider-page-content .admin-section-card-footer {
-    padding: var(--workspace-ui-space-3) var(--workspace-ui-space-4);
-}
-
-.kuaizi-provider-account-grid .admin-section-card-content,
-.kuaizi-provider-family-card .admin-section-card-content {
-    padding: var(--workspace-ui-space-4);
+    gap: var(--workspace-ui-space-5);
 }
 
 .kuaizi-provider-field-label {
@@ -76,7 +54,6 @@
 
 .kuaizi-provider-endpoint-candidate,
 .kuaizi-provider-empty-fact,
-.kuaizi-provider-section-description,
 .kuaizi-provider-editor-description,
 .kuaizi-provider-candidate-note {
     margin: var(--workspace-ui-space-2) 0 0;
@@ -87,17 +64,23 @@
 
 .kuaizi-provider-endpoint-footer,
 .kuaizi-provider-family-actions,
+.kuaizi-provider-credential-actions,
 .kuaizi-provider-editor-actions,
-.kuaizi-provider-candidate-heading,
-.kuaizi-provider-section-heading {
+.kuaizi-provider-candidate-heading {
     display: flex;
     align-items: center;
     gap: var(--workspace-ui-space-2);
 }
 
+.kuaizi-provider-endpoint-body {
+    display: grid;
+    max-width: 920px;
+}
+
 .kuaizi-provider-endpoint-footer {
     width: 100%;
     justify-content: space-between;
+    margin-top: var(--workspace-ui-space-4);
 }
 
 .kuaizi-provider-sync-state,
@@ -107,12 +90,6 @@
     line-height: 17px;
 }
 
-.kuaizi-provider-section-heading {
-    justify-content: space-between;
-    padding: 0 var(--workspace-ui-space-1);
-}
-
-.kuaizi-provider-section-title,
 .kuaizi-provider-editor-title {
     margin: 0;
     color: var(--workspace-ui-text);
@@ -209,15 +186,64 @@
 }
 
 .kuaizi-provider-family-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: grid;
 }
 
-.kuaizi-provider-family-card .admin-section-card-content {
-    padding-block: var(--workspace-ui-space-3);
+.kuaizi-provider-family-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--workspace-ui-space-4);
+    padding: var(--workspace-ui-space-4) 0;
+}
+
+.kuaizi-provider-family-row + .kuaizi-provider-family-row {
+    border-top: 1px solid var(--workspace-ui-divider);
+}
+
+.kuaizi-provider-family-row > .kuaizi-provider-operation-error {
+    grid-column: 1 / -1;
+    margin-top: 0;
+}
+
+.kuaizi-provider-family-identity {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: var(--workspace-ui-space-3);
+}
+
+.kuaizi-provider-family-icon {
+    flex: none;
+    margin-top: 1px;
+    color: var(--workspace-ui-text-tertiary);
+}
+
+.kuaizi-provider-family-copy {
+    min-width: 0;
+}
+
+.kuaizi-provider-family-title,
+.kuaizi-provider-family-models {
+    margin: 0;
+}
+
+.kuaizi-provider-family-title {
+    color: var(--workspace-ui-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.kuaizi-provider-family-models {
+    margin-top: var(--workspace-ui-space-1);
+    color: var(--workspace-ui-text-secondary);
+    font-size: 12px;
+    line-height: 18px;
 }
 
 .kuaizi-provider-publication-state {
-    margin: 0;
+    margin: var(--workspace-ui-space-1) 0 0;
     color: var(--workspace-ui-text-secondary);
     font-size: 12px;
     line-height: 17px;
@@ -258,13 +284,14 @@
 }
 
 @media (max-width: 1023px) {
-    .kuaizi-provider-account-grid {
-        grid-template-columns: minmax(0, 1fr);
+    .kuaizi-provider-credential-actions {
+        align-items: flex-end;
+        flex-direction: column;
     }
 }
 
 @media (max-width: 767px) {
-    .kuaizi-provider-family-list {
+    .kuaizi-provider-family-row {
         grid-template-columns: minmax(0, 1fr);
     }
 

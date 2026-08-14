@@ -79,7 +79,7 @@ export default function LegalSettingsPage() {
 
     return (
         <AdminPageFrame title="法律与协议" description="独立维护用户协议、隐私政策、会员服务协议及其公开展示内容">
-            <div className="legal-settings-page space-y-5">
+            <div className="legal-settings-page admin-settings-page space-y-5">
                 <AIWatermarkPolicyEditor />
                 {settingQuery.isLoading ? (
                     <AdminContentSkeleton rows={16} label="正在加载法律内容" />

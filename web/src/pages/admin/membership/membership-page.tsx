@@ -5,6 +5,7 @@ import { useBlocker } from "react-router";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
 import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "@/pages/admin/components/admin-data-layout";
+import { AdminFormGrid, AdminFormIntro, AdminFormSection } from "@/pages/admin/components/admin-form-system";
 import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
 import { TableSurface } from "@/components/layout/workspace-page";
 import { closeAdminMembershipOrder, listAdminMembershipOrders, listAdminMembershipPlans, type MembershipOrder, type MembershipPlan, type UpdateMembershipPlanInput, updateAdminMembershipPlan } from "@/services/api/membership";
@@ -551,7 +552,7 @@ export default function MembershipAdminPage() {
             </div>
             <Modal
                 className="admin-operation-modal admin-membership-plan-modal workspace-ui-scope"
-                width={720}
+                width={780}
                 title={`编辑 ${editing?.name ?? ""}`}
                 open={Boolean(editing)}
                 closable={!savingPlan}
@@ -563,109 +564,111 @@ export default function MembershipAdminPage() {
                 onOk={() => void savePlan()}
                 okText={planDirty ? "保存并生效" : "已同步"}
             >
-                <Form className="admin-membership-plan-form" form={form} layout="vertical" disabled={savingPlan} onValuesChange={() => setPlanDirty(true)}>
-                    <div className="admin-membership-form-intro">
-                        <strong className="admin-membership-form-intro-title">套餐计费与资源权益</strong>
-                        <span className="admin-membership-form-intro-copy">价格、积分、并发和席位调整会影响后续新订单；已生效订阅按服务端订阅快照执行。</span>
-                    </div>
-                    <Form.Item className="admin-membership-form-item" name="name" label="名称" rules={[{ required: true }]}>
-                        <Input className="admin-membership-name-input" />
-                    </Form.Item>
-                    <div className="admin-membership-form-grid">
-                        <Form.Item className="admin-membership-grid-field" name="priceCents" label="售价（分）" rules={[{ required: true }]}>
-                            <InputNumber className="admin-membership-number-input" min={0} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="originalPriceCents" label="原价（分）">
-                            <InputNumber className="admin-membership-number-input" min={0} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="creditsPerPeriod" label="周期积分（微积分）">
-                            <InputNumber className="admin-membership-number-input" min={0} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="imageConcurrency" label="图片并发">
-                            <InputNumber className="admin-membership-number-input" min={1} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="videoConcurrency" label="视频并发">
-                            <InputNumber className="admin-membership-number-input" min={1} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="topupDiscountBasisPoints" label="充值折扣基点">
-                            <InputNumber className="admin-membership-number-input" min={1} max={10000} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="minSeats" label="最少席位">
-                            <InputNumber className="admin-membership-number-input" min={0} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="maxSeats" label="最多席位">
-                            <InputNumber className="admin-membership-number-input" min={0} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="teamStorageTB" label="团队存储（TB）">
-                            <InputNumber className="admin-membership-number-input" min={0} precision={1} />
-                        </Form.Item>
-                        <Form.Item className="admin-membership-grid-field" name="sortOrder" label="排序">
-                            <InputNumber className="admin-membership-number-input" />
-                        </Form.Item>
-                    </div>
-                    {editing?.audience === "team" ? (
-                        <div className="admin-membership-team-entitlements grid grid-cols-2 gap-x-5">
-                            <Form.Item className="admin-membership-entitlement-field" name="unlimitedTaskQueue" label="无限任务排队" valuePropName="checked">
-                                <Switch className="admin-membership-entitlement-switch" />
+                <Form className="admin-membership-plan-form admin-form-stack" form={form} layout="vertical" disabled={savingPlan} onValuesChange={() => setPlanDirty(true)}>
+                    <AdminFormIntro title="套餐计费与资源权益" description="调整仅影响后续新订单；已生效订阅继续按服务端订阅快照执行。" />
+                    <AdminFormSection title="基础计费" description="面向用户展示的名称、价格与周期积分。">
+                        <AdminFormGrid>
+                            <Form.Item className="admin-membership-form-item is-full" name="name" label="套餐名称" rules={[{ required: true }]}>
+                                <Input className="admin-membership-name-input" />
                             </Form.Item>
-                            <Form.Item className="admin-membership-entitlement-field" name="sharedAssetsEnabled" label="团队共享资产库" valuePropName="checked">
-                                <Switch className="admin-membership-entitlement-switch" />
+                            <Form.Item className="admin-membership-grid-field" name="priceCents" label="售价（分）" rules={[{ required: true }]}>
+                                <InputNumber className="admin-membership-number-input" min={0} />
                             </Form.Item>
-                            <Form.Item className="admin-membership-entitlement-field" name="projectPermissionsEnabled" label="项目权限管理" valuePropName="checked">
-                                <Switch className="admin-membership-entitlement-switch" />
+                            <Form.Item className="admin-membership-grid-field" name="originalPriceCents" label="原价（分）">
+                                <InputNumber className="admin-membership-number-input" min={0} />
                             </Form.Item>
-                            <Form.Item className="admin-membership-entitlement-field" name="invoicingEnabled" label="开票权益" valuePropName="checked">
-                                <Switch className="admin-membership-entitlement-switch" />
+                            <Form.Item className="admin-membership-grid-field" name="creditsPerPeriod" label="周期积分（微积分）">
+                                <InputNumber className="admin-membership-number-input" min={0} />
                             </Form.Item>
-                            <Form.Item className="admin-membership-entitlement-field" name="commercialUseEnabled" label="商业使用权益" valuePropName="checked">
-                                <Switch className="admin-membership-entitlement-switch" />
+                            <Form.Item className="admin-membership-grid-field" name="topupDiscountBasisPoints" label="充值折扣基点">
+                                <InputNumber className="admin-membership-number-input" min={1} max={10000} />
                             </Form.Item>
-                        </div>
-                    ) : null}
-                    {editing?.audience === "team" ? (
-                        <div className="admin-membership-team-benefit-contract mb-5 bg-black/[0.025] px-4 py-3 dark:bg-white/[0.04]">
-                            <strong className="admin-membership-team-benefit-title block text-sm font-medium">团队权益采用结构化配置</strong>
-                            <p className="admin-membership-team-benefit-description mt-1 text-xs leading-5 text-foreground/55">
-                                多人画布协作、席位管理、积分用量管控与团队资产隔离为团队套餐内置能力；共享资产、任务排队、项目权限、开票、存储与商业授权由上方配置决定，购买页会据此自动生成真实权益清单。
-                            </p>
-                        </div>
-                    ) : (
-                        <Form.List name="benefits">
-                            {(fields, { add, remove }) => (
-                                <div className="admin-membership-benefits">
-                                    <div className="admin-membership-benefit-header">
-                                        <div className="admin-membership-benefit-heading">
-                                            <strong className="admin-membership-benefit-title">套餐权益</strong>
-                                            <span className="admin-membership-benefit-summary">将展示在用户端套餐说明中</span>
-                                        </div>
-                                        <Button className="admin-membership-benefit-add" icon={<Plus className="admin-membership-benefit-action-icon" size={15} strokeWidth={1.8} />} onClick={() => add("")}>
-                                            添加权益
-                                        </Button>
-                                    </div>
-                                    <div className="admin-membership-benefit-list">
-                                        {fields.map(({ key, ...field }, index) => (
-                                            <div className="admin-membership-benefit-row" key={key}>
-                                                <Form.Item className="admin-membership-benefit-field" {...field} rules={[{ required: true, message: "请输入套餐权益" }]}>
-                                                    <Input className="admin-membership-benefit-input" placeholder={`权益 ${index + 1}`} />
-                                                </Form.Item>
-                                                <Button
-                                                    className="admin-membership-benefit-remove"
-                                                    type="text"
-                                                    icon={<Trash2 className="admin-membership-benefit-action-icon" size={15} strokeWidth={1.8} />}
-                                                    aria-label={`移除权益 ${index + 1}`}
-                                                    title="移除权益"
-                                                    onClick={() => remove(field.name)}
-                                                />
+                        </AdminFormGrid>
+                    </AdminFormSection>
+                    <AdminFormSection title="资源配置" description="控制并发、团队席位、存储与列表排序。">
+                        <AdminFormGrid>
+                            <Form.Item className="admin-membership-grid-field" name="imageConcurrency" label="图片并发">
+                                <InputNumber className="admin-membership-number-input" min={1} />
+                            </Form.Item>
+                            <Form.Item className="admin-membership-grid-field" name="videoConcurrency" label="视频并发">
+                                <InputNumber className="admin-membership-number-input" min={1} />
+                            </Form.Item>
+                            <Form.Item className="admin-membership-grid-field" name="minSeats" label="最少席位">
+                                <InputNumber className="admin-membership-number-input" min={0} />
+                            </Form.Item>
+                            <Form.Item className="admin-membership-grid-field" name="maxSeats" label="最多席位">
+                                <InputNumber className="admin-membership-number-input" min={0} />
+                            </Form.Item>
+                            <Form.Item className="admin-membership-grid-field" name="teamStorageTB" label="团队存储（TB）">
+                                <InputNumber className="admin-membership-number-input" min={0} precision={1} />
+                            </Form.Item>
+                            <Form.Item className="admin-membership-grid-field" name="sortOrder" label="排序">
+                                <InputNumber className="admin-membership-number-input" />
+                            </Form.Item>
+                        </AdminFormGrid>
+                    </AdminFormSection>
+                    <AdminFormSection title="套餐权益" description={editing?.audience === "team" ? "团队能力按结构化开关生成真实权益清单。" : "这些说明将直接展示在用户端套餐详情中。"}>
+                        {editing?.audience === "team" ? (
+                            <AdminFormGrid className="admin-membership-team-entitlements">
+                                <Form.Item className="admin-membership-entitlement-field" name="unlimitedTaskQueue" label="无限任务排队" valuePropName="checked">
+                                    <Switch className="admin-membership-entitlement-switch" />
+                                </Form.Item>
+                                <Form.Item className="admin-membership-entitlement-field" name="sharedAssetsEnabled" label="团队共享资产库" valuePropName="checked">
+                                    <Switch className="admin-membership-entitlement-switch" />
+                                </Form.Item>
+                                <Form.Item className="admin-membership-entitlement-field" name="projectPermissionsEnabled" label="项目权限管理" valuePropName="checked">
+                                    <Switch className="admin-membership-entitlement-switch" />
+                                </Form.Item>
+                                <Form.Item className="admin-membership-entitlement-field" name="invoicingEnabled" label="开票权益" valuePropName="checked">
+                                    <Switch className="admin-membership-entitlement-switch" />
+                                </Form.Item>
+                                <Form.Item className="admin-membership-entitlement-field" name="commercialUseEnabled" label="商业使用权益" valuePropName="checked">
+                                    <Switch className="admin-membership-entitlement-switch" />
+                                </Form.Item>
+                            </AdminFormGrid>
+                        ) : (
+                            <Form.List name="benefits">
+                                {(fields, { add, remove }) => (
+                                    <div className="admin-membership-benefits">
+                                        <div className="admin-membership-benefit-header">
+                                            <div className="admin-membership-benefit-heading">
+                                                <strong className="admin-membership-benefit-title">套餐权益</strong>
+                                                <span className="admin-membership-benefit-summary">将展示在用户端套餐说明中</span>
                                             </div>
-                                        ))}
+                                            <Button className="admin-membership-benefit-add" icon={<Plus className="admin-membership-benefit-action-icon" size={15} strokeWidth={1.8} />} onClick={() => add("")}>
+                                                添加权益
+                                            </Button>
+                                        </div>
+                                        <div className="admin-membership-benefit-list">
+                                            {fields.map(({ key, ...field }, index) => (
+                                                <div className="admin-membership-benefit-row" key={key}>
+                                                    <Form.Item className="admin-membership-benefit-field" {...field} rules={[{ required: true, message: "请输入套餐权益" }]}>
+                                                        <Input className="admin-membership-benefit-input" placeholder={`权益 ${index + 1}`} />
+                                                    </Form.Item>
+                                                    <Button
+                                                        className="admin-membership-benefit-remove"
+                                                        type="text"
+                                                        icon={<Trash2 className="admin-membership-benefit-action-icon" size={15} strokeWidth={1.8} />}
+                                                        aria-label={`移除权益 ${index + 1}`}
+                                                        title="移除权益"
+                                                        onClick={() => remove(field.name)}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-                        </Form.List>
-                    )}
-                    <Form.Item className="admin-membership-form-item" name="enabled" label="上架" valuePropName="checked">
-                        <Switch />
-                    </Form.Item>
+                                )}
+                            </Form.List>
+                        )}
+                    </AdminFormSection>
+                    <AdminFormSection title="发布状态" description="关闭后套餐不会出现在用户购买入口。">
+                        <div className="admin-form-switch-row">
+                            <span className="admin-form-note">允许用户在会员页面购买此套餐</span>
+                            <Form.Item className="admin-membership-form-item" name="enabled" valuePropName="checked">
+                                <Switch aria-label="套餐上架状态" />
+                            </Form.Item>
+                        </div>
+                    </AdminFormSection>
                 </Form>
             </Modal>
             <Modal

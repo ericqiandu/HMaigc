@@ -358,7 +358,6 @@
         transition: none;
     }
 
-    .admin-workspace .model-pricing-metric,
     .admin-workspace .app-table-surface .ant-table-tbody > tr > td {
         transition: none;
     }

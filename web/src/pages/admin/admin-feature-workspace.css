@@ -610,62 +610,14 @@
         }
     }
 
-    .admin-redemption-layout,
     .admin-redemption-records,
     .admin-redemption-form > *,
     .admin-redeem-codes-modal .ant-modal-content {
         min-width: 0;
     }
 
-    .admin-redemption-layout {
-        display: grid;
-        gap: 28px;
-    }
-
-    .admin-redemption-form {
-        gap: 0 24px;
-        padding: 24px 28px 8px;
-    }
-
-    .admin-redemption-form .ant-form-item {
-        margin-bottom: 18px;
-    }
-
     .admin-redemption-note-field {
         margin-top: 2px;
-    }
-
-    .admin-redemption-actions {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 20px;
-        min-height: 64px;
-        padding-top: 4px;
-        border-top: 1px solid var(--workspace-ui-divider);
-    }
-
-    .admin-redemption-records-heading {
-        display: flex;
-        min-height: 44px;
-        align-items: center;
-        justify-content: space-between;
-        gap: 20px;
-        margin-bottom: 16px;
-    }
-
-    .admin-redemption-records-copy {
-        min-width: 0;
-    }
-
-    .admin-redemption-records-title {
-        margin: 0;
-        font-size: 14px;
-        font-weight: 600;
-    }
-
-    .admin-redemption-records-description {
-        margin: 4px 0 0;
     }
 
     .admin-redemption-records-meta {
@@ -688,12 +640,6 @@
 
     .admin-redemption-validity-filter {
         width: 144px;
-    }
-
-    .admin-redemption-actions-note {
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 18px;
     }
 
     .admin-redemption-row-actions,
@@ -724,7 +670,7 @@
         margin-bottom: 12px;
     }
 
-    .admin-redemption-records > .admin-content-error,
+    .admin-redemption-records .admin-content-error,
     .admin-redeem-codes-modal .admin-content-error {
         margin-bottom: 12px;
     }
@@ -733,33 +679,21 @@
         .admin-redemption-form :where(.ant-input, .ant-input-number, .ant-picker),
         .admin-redemption-records :where(.ant-input, .ant-select-selector),
         .admin-redemption-actions > .ant-btn,
-        .admin-redemption-records-heading > .ant-btn,
         .admin-redeem-codes-modal :where(.ant-select-selector) {
             min-height: 44px;
         }
     }
 
     @media (max-width: 767px) {
-        .admin-redemption-form {
-            gap: 0;
-            padding: 20px 18px 8px;
-        }
-
         .admin-redemption-form :where(.ant-input, .ant-input-number, .ant-picker),
         .admin-redemption-records :where(.ant-input, .ant-select-selector),
         .admin-redeem-codes-modal :where(.ant-select-selector) {
             min-height: 44px;
         }
 
-        .admin-redemption-actions,
-        .admin-redemption-records-heading,
         .admin-redeem-codes-toolbar {
             align-items: stretch;
             flex-direction: column;
-        }
-
-        .admin-redemption-layout {
-            gap: 24px;
         }
 
         .admin-redemption-records-meta {
@@ -768,7 +702,6 @@
         }
 
         .admin-redemption-actions > .ant-btn,
-        .admin-redemption-records-heading > .ant-btn,
         .admin-redemption-refresh,
         .admin-redeem-codes-toolbar > .ant-select,
         .admin-generated-codes-actions,
@@ -783,7 +716,6 @@
         }
 
         .admin-redemption-actions > .ant-btn,
-        .admin-redemption-records-heading > .ant-btn,
         .admin-generated-codes-actions > .ant-btn,
         .admin-redeem-codes-actions > .ant-btn {
             min-height: 44px;
@@ -794,24 +726,5 @@
         .admin-redeem-codes-actions {
             flex-direction: column-reverse;
         }
-    }
-}
-
-/* Ant Design component styles are unlayered and therefore outrank declarations
-   inside `@layer utilities`. Keep third-party layout corrections unlayered so
-   the spacing visible in the browser matches the admin design contract. */
-.admin-workspace .admin-redemption-form {
-    gap: 0 24px;
-    padding: 24px 28px 8px;
-}
-
-.admin-workspace .admin-redemption-form .ant-form-item {
-    margin-bottom: 18px;
-}
-
-@media (max-width: 767px) {
-    .admin-workspace .admin-redemption-form {
-        gap: 0;
-        padding: 20px 18px 8px;
     }
 }

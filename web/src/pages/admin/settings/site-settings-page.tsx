@@ -192,7 +192,7 @@ export default function SiteSettingsPage() {
                 ) : null
             }
         >
-            <div className="site-settings-page space-y-5">
+            <div className="site-settings-page admin-settings-page space-y-5">
                 {settingQuery.isLoading && !setting ? <AdminContentSkeleton rows={12} label="正在加载站点配置" /> : null}
                 {settingQuery.error ? (
                     <AdminContentError title={setting ? "站点配置刷新失败" : "站点配置读取失败"} description={settingQuery.error instanceof Error ? settingQuery.error.message : "读取站点配置失败"} onRetry={() => void settingQuery.refetch()} />
