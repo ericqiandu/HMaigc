@@ -124,6 +124,14 @@ func TestProviderAccountSchemaRejectsConflictingHistoricalRowsWithoutDeletion(t 
 	}
 }
 
+func TestCanonicalProviderPredicateAcceptsPostgresNormalizedEquality(t *testing.T) {
+	want := canonicalProviderPredicate("status = 'active'")
+	got := canonicalProviderPredicate("((status)::text = 'active'::text)")
+	if got != want {
+		t.Fatalf("PostgreSQL normalized predicate = %q, want %q", got, want)
+	}
+}
+
 func openProviderSchemaSQLite(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

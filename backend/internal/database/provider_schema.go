@@ -235,8 +235,8 @@ func canonicalProviderPredicate(value string) string {
 	canonical = strings.ReplaceAll(canonical, " ", "")
 	canonical = strings.ReplaceAll(canonical, "\n", "")
 	canonical = strings.ReplaceAll(canonical, "\t", "")
-	canonical = strings.TrimPrefix(canonical, "(")
-	canonical = strings.TrimSuffix(canonical, ")")
+	canonical = strings.ReplaceAll(canonical, "(", "")
+	canonical = strings.ReplaceAll(canonical, ")", "")
 	return canonical
 }
 
