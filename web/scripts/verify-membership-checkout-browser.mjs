@@ -205,7 +205,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
                 width: bounds.width,
             };
         });
-        assert.equal(storefrontCloseFacts.ariaLabel, "关闭会员商城", `${label}: 页面关闭按钮缺少准确可访问名称`);
+        assert.equal(storefrontCloseFacts.ariaLabel, "关闭会员商城并返回首页", `${label}: 页面关闭按钮缺少准确可访问名称`);
         assert.ok(storefrontCloseFacts.width >= 44 && storefrontCloseFacts.height >= 44, `${label}: 页面关闭按钮触控热区不足 44px`);
         if (state === "membership-personal-creating-dialog") {
             await page.click(".membership-storefront-close");
