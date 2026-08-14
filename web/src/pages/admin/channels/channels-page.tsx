@@ -10,6 +10,7 @@ import { refreshSystemChannels } from "@/lib/user-session";
 import { createAdminChannel, deleteAdminChannel, listAdminChannels, updateAdminChannel } from "@/services/api/auth";
 import { defaultBaseUrlForChannelInterface, type ChannelInterfaceType, type ModelChannel } from "@/stores/use-config-store";
 import { useAdminContext } from "../admin-context";
+import { AdminContentSection, AdminDataLayout, AdminFilterSection, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminRowActions, AdminTableEmpty, AdminTableSkeleton, configuredSecretText } from "../components/admin-ui";
 import { ChannelModelManager } from "../components/channel-model-manager";
@@ -342,91 +343,94 @@ export default function ChannelsPage() {
                 </Button>
             }
         >
-            <section className="admin-channel-context" aria-label="模型渠道概览">
-                <div className="admin-channel-context-item">
-                    <span className="admin-channel-context-label">渠道目录</span>
-                    <strong className="admin-channel-context-value">{loading && !channels.length ? "等待读取" : `${total} 个渠道`}</strong>
-                </div>
-                <div className="admin-channel-context-item">
-                    <span className="admin-channel-context-label">当前页能力</span>
-                    <strong className="admin-channel-context-value">
-                        {enabledChannelCount} 个启用 · {visibleModelCount} 个模型
-                    </strong>
-                </div>
-                <div className="admin-channel-context-item">
-                    <span className="admin-channel-context-label">配置完整性</span>
-                    <strong className={`admin-channel-context-value${incompleteChannelCount ? " is-warning" : ""}`}>{incompleteChannelCount ? `${incompleteChannelCount} 个待完善` : "当前页配置完整"}</strong>
-                </div>
-                <p className="admin-channel-context-note">渠道密钥、启停和模型目录会直接决定用户可调用的系统模型；成本与积分售价继续在商业定价中独立维护。</p>
-            </section>
-            <ListToolbar className="admin-channel-list-toolbar" active={hasFilters} onReset={() => updateUrl({ filter: "", interfaceType: "all", status: "all", page: 1 })} trailing={<span className="admin-channel-result-count">共 {total} 个渠道</span>}>
-                <Input
-                    id="admin-channel-search"
-                    aria-label="搜索系统渠道"
-                    autoComplete="off"
-                    allowClear
-                    className="app-list-search"
-                    prefix={<Search className="size-4 text-foreground/40" />}
-                    value={keyword}
-                    placeholder="搜索渠道名称或地址"
-                    onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
-                />
-                <Select className="w-40" value={interfaceType} onChange={(value) => updateUrl({ interfaceType: value, page: 1 })} options={[{ label: "全部接口", value: "all" }, ...interfaceTypeOptions.flatMap((group) => group.options)]} />
-                <Select
-                    className="w-32"
-                    value={status}
-                    onChange={(value) => updateUrl({ status: value, page: 1 })}
-                    options={[
-                        { label: "全部状态", value: "all" },
-                        { label: "已启用", value: "enabled" },
-                        { label: "已停用", value: "disabled" },
-                    ]}
-                />
-            </ListToolbar>
-            {loadError && channels.length > 0 ? <AdminContentError title="渠道刷新失败" description={loadError} onRetry={() => void reload()} /> : null}
             {loadError && channels.length === 0 ? (
                 <AdminContentError title="系统渠道读取失败" description={loadError} onRetry={() => void reload()} />
+            ) : loading && channels.length === 0 ? (
+                <div className="admin-channel-content">
+                    <AdminDataLayout>
+                        <AdminContentSection title="渠道目录" description="正在读取渠道连接、并发、启停和模型目录。">
+                            <TableSurface className="admin-channel-table-surface">
+                                <AdminTableSkeleton rows={8} columns={7} />
+                            </TableSurface>
+                        </AdminContentSection>
+                    </AdminDataLayout>
+                </div>
             ) : (
-                <TableSurface>
-                    {loading && channels.length === 0 ? (
-                        <AdminTableSkeleton rows={8} columns={7} />
-                    ) : (
-                        <Table
-                            className="admin-channel-table app-data-table"
-                            size="middle"
-                            rowKey="id"
-                            loading={loading}
-                            columns={columns}
-                            dataSource={channels}
-                            locale={{
-                                emptyText: (
-                                    <AdminTableEmpty
-                                        filtered={hasFilters}
-                                        title={hasFilters ? undefined : "还没有系统渠道"}
-                                        description={hasFilters ? undefined : "创建渠道并配置模型后，普通用户即可使用系统模型。"}
-                                        action={
-                                            hasFilters ? undefined : (
-                                                <Button className="admin-channel-empty-create" type="primary" icon={<Plus className="admin-channel-empty-create-icon size-4" />} onClick={() => openDrawer()}>
-                                                    新增系统渠道
-                                                </Button>
-                                            )
-                                        }
-                                    />
-                                ),
-                            }}
-                            pagination={{
-                                current: page,
-                                pageSize,
-                                total,
-                                showSizeChanger: true,
-                                pageSizeOptions: [20, 50, 100],
-                                showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
-                                onChange: (nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize }),
-                            }}
-                            scroll={{ x: "max-content" }}
-                        />
-                    )}
-                </TableSurface>
+                <div className="admin-channel-content">
+                    <AdminDataLayout>
+                        <AdminMetricBand title="渠道接入概览" description="集中查看渠道、模型和配置完整性。">
+                            <AdminMetric label="渠道目录" value={`${total} 个渠道`} detail="当前筛选下的服务端结果" />
+                            <AdminMetric label="已启用渠道" value={`${enabledChannelCount} 个`} detail="可进入系统模型集合" />
+                            <AdminMetric label="已登记模型" value={`${visibleModelCount} 个`} detail="当前页渠道内模型总数" />
+                            <AdminMetric label="待完善配置" value={`${incompleteChannelCount} 个`} detail="缺少密钥或模型目录" />
+                        </AdminMetricBand>
+                        <AdminFilterSection label="渠道筛选条件">
+                            <ListToolbar className="admin-channel-list-toolbar" active={hasFilters} onReset={() => updateUrl({ filter: "", interfaceType: "all", status: "all", page: 1 })}>
+                                <Input
+                                    id="admin-channel-search"
+                                    aria-label="搜索系统渠道"
+                                    autoComplete="off"
+                                    allowClear
+                                    className="app-list-search"
+                                    prefix={<Search className="size-4 text-foreground/40" />}
+                                    value={keyword}
+                                    placeholder="搜索渠道名称或地址"
+                                    onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
+                                />
+                                <Select className="w-40" value={interfaceType} onChange={(value) => updateUrl({ interfaceType: value, page: 1 })} options={[{ label: "全部接口", value: "all" }, ...interfaceTypeOptions.flatMap((group) => group.options)]} />
+                                <Select
+                                    className="w-32"
+                                    value={status}
+                                    onChange={(value) => updateUrl({ status: value, page: 1 })}
+                                    options={[
+                                        { label: "全部状态", value: "all" },
+                                        { label: "已启用", value: "enabled" },
+                                        { label: "已停用", value: "disabled" },
+                                    ]}
+                                />
+                            </ListToolbar>
+                        </AdminFilterSection>
+                        <AdminContentSection title="渠道目录" description="维护渠道连接、并发、启停和渠道内模型。" actions={<span className="admin-channel-result-count">共 {total} 个渠道</span>}>
+                            {loadError ? <AdminContentError title="渠道刷新失败" description={loadError} onRetry={() => void reload()} /> : null}
+                            <TableSurface className="admin-channel-table-surface">
+                                <Table
+                                    className="admin-channel-table app-data-table"
+                                    size="middle"
+                                    rowKey="id"
+                                    loading={loading}
+                                    columns={columns}
+                                    dataSource={channels}
+                                    locale={{
+                                        emptyText: (
+                                            <AdminTableEmpty
+                                                filtered={hasFilters}
+                                                title={hasFilters ? undefined : "还没有系统渠道"}
+                                                description={hasFilters ? undefined : "创建渠道并配置模型后，普通用户即可使用系统模型。"}
+                                                action={
+                                                    hasFilters ? undefined : (
+                                                        <Button className="admin-channel-empty-create" type="primary" icon={<Plus className="admin-channel-empty-create-icon size-4" />} onClick={() => openDrawer()}>
+                                                            新增系统渠道
+                                                        </Button>
+                                                    )
+                                                }
+                                            />
+                                        ),
+                                    }}
+                                    pagination={{
+                                        current: page,
+                                        pageSize,
+                                        total,
+                                        showSizeChanger: true,
+                                        pageSizeOptions: [20, 50, 100],
+                                        showTotal: (value, range) => `${range[0]}-${range[1]} / 共 ${value} 条`,
+                                        onChange: (nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize }),
+                                    }}
+                                    scroll={{ x: "max-content" }}
+                                />
+                            </TableSurface>
+                        </AdminContentSection>
+                    </AdminDataLayout>
+                </div>
             )}
             <Drawer
                 className="admin-object-drawer admin-channel-editor-drawer"

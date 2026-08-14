@@ -212,6 +212,25 @@
         min-width: 0;
     }
 
+    .admin-workspace .admin-channel-content,
+    .admin-workspace .admin-channel-content > *,
+    .admin-workspace .admin-channel-content .admin-data-layout,
+    .admin-workspace .admin-channel-content .admin-content-section,
+    .admin-workspace .admin-channel-content .admin-content-section-body {
+        min-width: 0;
+    }
+
+    .admin-workspace .admin-content-section-body > .admin-channel-table-surface {
+        width: 100%;
+        min-width: 0;
+        border-radius: 0 !important;
+    }
+
+    .admin-workspace .admin-channel-table-surface :where(.ant-table-wrapper, .ant-table-content, .ant-table-body) {
+        min-width: 0;
+        max-width: 100%;
+    }
+
     .admin-workspace .referral-admin-content .admin-metric-band-list {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }

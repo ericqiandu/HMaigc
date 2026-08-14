@@ -287,57 +287,6 @@
         line-height: 17px;
     }
 
-    .admin-channel-context {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(280px, 1.45fr);
-        min-width: 0;
-        overflow: hidden;
-        background: var(--workspace-ui-surface);
-        border-radius: var(--workspace-ui-radius-lg);
-    }
-
-    .admin-channel-context-item,
-    .admin-channel-context-note {
-        min-width: 0;
-        margin: 0;
-        padding: 16px 18px;
-    }
-
-    .admin-channel-context-item {
-        display: grid;
-        align-content: center;
-        gap: 4px;
-        border-right: 1px solid var(--workspace-ui-divider);
-    }
-
-    .admin-channel-context-label {
-        color: var(--workspace-ui-text-tertiary);
-        font-size: 12px;
-        line-height: 17px;
-    }
-
-    .admin-channel-context-value {
-        overflow: hidden;
-        color: var(--workspace-ui-text);
-        font-size: 14px;
-        font-weight: 600;
-        line-height: 20px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .admin-channel-context-value.is-warning {
-        color: var(--workspace-ui-warning);
-    }
-
-    .admin-channel-context-note {
-        display: flex;
-        align-items: center;
-        color: var(--workspace-ui-text-secondary);
-        font-size: 12px;
-        line-height: 18px;
-    }
-
     .admin-channel-list-toolbar .workspace-list-toolbar-fields,
     .channel-model-manager-toolbar .workspace-list-toolbar-fields {
         display: grid;
@@ -454,23 +403,6 @@
     }
 
     @media (max-width: 1279px) {
-        .admin-channel-context {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .admin-channel-context-item:nth-child(2) {
-            border-right: 0;
-        }
-
-        .admin-channel-context-item:nth-child(-n + 2) {
-            border-bottom: 1px solid var(--workspace-ui-divider);
-        }
-
-        .admin-channel-context-note {
-            border-left: 1px solid var(--workspace-ui-divider);
-        }
-
-        .admin-channel-list-toolbar .workspace-list-toolbar-fields,
         .channel-model-manager-toolbar .workspace-list-toolbar-fields {
             grid-template-columns: minmax(0, 1fr) minmax(128px, 0.5fr);
         }
@@ -558,23 +490,6 @@
     }
 
     @media (max-width: 639px) {
-        .admin-channel-context {
-            grid-template-columns: minmax(0, 1fr);
-        }
-
-        .admin-channel-context-item,
-        .admin-channel-context-item:nth-child(2),
-        .admin-channel-context-note {
-            border: 0;
-            border-bottom: 1px solid var(--workspace-ui-divider);
-            padding: 14px 16px;
-        }
-
-        .admin-channel-context-note {
-            border-bottom: 0;
-        }
-
-        .admin-channel-list-toolbar .workspace-list-toolbar-fields,
         .channel-model-manager-toolbar .workspace-list-toolbar-fields {
             grid-template-columns: minmax(0, 1fr);
         }

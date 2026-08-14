@@ -100,6 +100,30 @@
         flex-basis: 100%;
     }
 
+    .admin-workspace .admin-channel-list-toolbar .workspace-list-toolbar-fields {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(128px, 0.5fr);
+    }
+
+    .admin-workspace .admin-channel-list-toolbar :where(.app-list-search, .ant-select) {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-workspace .admin-channel-create-button,
+    .admin-workspace .admin-channel-list-toolbar :where(.ant-input-affix-wrapper, .ant-select-single, .ant-select-single .ant-select-selector) {
+        min-height: 44px !important;
+    }
+
+    .admin-workspace .admin-channel-list-toolbar :where(.ant-select-single, .ant-select-single .ant-select-selector) {
+        height: 44px !important;
+    }
+
+    .admin-workspace .admin-filter-section .admin-channel-list-toolbar .ant-input-affix-wrapper.app-list-search {
+        height: 44px !important;
+        min-height: 44px !important;
+    }
+
     .admin-workspace .admin-users-content-actions {
         flex-wrap: wrap;
         justify-content: flex-end;
@@ -169,6 +193,10 @@
 }
 
 @media (max-width: 639px) {
+    .admin-workspace .admin-channel-list-toolbar .workspace-list-toolbar-fields {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .admin-workspace .admin-page-frame {
         padding: 20px 16px 40px;
     }
