@@ -4,7 +4,7 @@
     --workspace-ui-page: #f5f5f7;
     --workspace-ui-surface-subtle: #f7f7f9;
     --workspace-ui-text-secondary: rgb(29 29 31 / 68%);
-    --workspace-ui-text-tertiary: rgb(29 29 31 / 52%);
+    --workspace-ui-text-tertiary: #69707a;
 }
 
 .admin-theme-root[data-admin-theme="dark"] .admin-workspace.workspace-ui-scope,

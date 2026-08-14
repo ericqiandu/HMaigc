@@ -10,7 +10,7 @@
     --workspace-ui-control-hover: rgb(31 35 41 / 5%);
     --workspace-ui-text: #1f2329;
     --workspace-ui-text-secondary: #646a73;
-    --workspace-ui-text-tertiary: #8f959e;
+    --workspace-ui-text-tertiary: #69707a;
     --workspace-ui-text-disabled: rgb(31 35 41 / 35%);
     --workspace-ui-divider: #e8eaed;
     --workspace-ui-accent: var(--admin-color-primary);
@@ -26,7 +26,7 @@
     --primary: var(--admin-color-primary);
     --primary-foreground: #ffffff;
     --muted: #fafafa;
-    --muted-foreground: #8f959e;
+    --muted-foreground: #69707a;
     --border: #e8eaed;
     --input: #ffffff;
     color-scheme: light;
@@ -102,7 +102,7 @@
         --workspace-ui-divider: #e8eaed;
         --workspace-ui-text: #1f2329;
         --workspace-ui-text-secondary: #646a73;
-        --workspace-ui-text-tertiary: #8f959e;
+        --workspace-ui-text-tertiary: #69707a;
         color-scheme: light;
     }
 
