@@ -2124,65 +2124,80 @@
         white-space: nowrap;
     }
 
-    .admin-workspace .admin-prompt-summary {
-        display: grid;
-        grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(0, 1fr));
-        overflow: hidden;
-        border-radius: var(--workspace-ui-radius-surface);
-        background: var(--workspace-ui-surface);
-    }
-
-    .admin-workspace .admin-prompt-summary-item {
-        display: grid;
-        grid-template-columns: 20px minmax(0, 1fr);
-        align-items: center;
-        min-width: 0;
-        gap: 4px 8px;
-        padding: 16px 20px;
-        color: var(--workspace-ui-text-secondary);
+    .admin-workspace .admin-model-billing-content-count {
+        color: var(--workspace-ui-text-tertiary);
         font-size: 12px;
-        line-height: 17px;
-    }
-
-    .admin-workspace .admin-prompt-summary-item + .admin-prompt-summary-item {
-        border-left: 1px solid var(--workspace-ui-divider);
-    }
-
-    .admin-workspace .admin-prompt-summary-item strong {
-        grid-column: 2;
-        overflow: hidden;
-        color: var(--workspace-ui-text);
-        font-size: 16px;
-        font-weight: 600;
-        line-height: 22px;
-        text-overflow: ellipsis;
+        font-variant-numeric: tabular-nums;
+        line-height: 20px;
         white-space: nowrap;
     }
 
-    .admin-workspace .admin-prompt-guidance {
+    .admin-workspace .super-resolution-pricing-filter-content {
         display: flex;
+        min-width: 0;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+    }
+
+    .admin-workspace .super-resolution-pricing-summary-copy {
+        display: flex;
+        min-width: 0;
         align-items: flex-start;
-        gap: 10px;
-        padding: 12px 0;
-        color: var(--workspace-ui-text-secondary);
-        font-size: 12px;
-        line-height: 17px;
+        gap: 12px;
     }
 
-    .admin-workspace .admin-prompt-guidance > svg {
+    .admin-workspace .super-resolution-pricing-summary-icon {
         flex: 0 0 auto;
-        margin-top: 2px;
+        margin-top: 1px;
+        color: var(--workspace-ui-accent);
     }
 
-    .admin-workspace .admin-prompt-guidance strong {
+    .admin-workspace .super-resolution-pricing-summary-text {
+        min-width: 0;
+    }
+
+    .admin-workspace .super-resolution-pricing-summary-title {
         color: var(--workspace-ui-text);
         font-size: 13px;
         font-weight: 600;
         line-height: 20px;
     }
 
-    .admin-workspace .admin-prompt-guidance p {
+    .admin-workspace .super-resolution-pricing-summary-description {
         margin: 2px 0 0;
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        line-height: 18px;
+    }
+
+    .admin-workspace .super-resolution-pricing-edition {
+        flex: 0 0 auto;
+    }
+
+    .admin-workspace .admin-prompt-list-toolbar {
+        background: transparent;
+        padding: 0;
+    }
+
+    .admin-workspace .admin-prompt-list-toolbar .workspace-list-toolbar-fields {
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) 132px;
+        width: 100%;
+    }
+
+    .admin-workspace .admin-prompt-list-toolbar :where(.app-list-search, .admin-prompt-status-filter) {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-workspace .admin-content-section-body > :where(.admin-voice-table-surface, .super-resolution-pricing-table-surface, .admin-prompt-table-surface) {
+        border-radius: 0 !important;
+    }
+
+    .admin-workspace .super-resolution-pricing-refresh-error,
+    .admin-workspace .admin-prompt-refresh-error {
+        margin-bottom: 16px;
     }
 
     .admin-workspace .admin-storyboard-prompt-table .ant-table-cell {
@@ -2214,24 +2229,6 @@
     }
 
     @media (max-width: 639px) {
-        .admin-workspace .admin-prompt-summary {
-            grid-template-columns: minmax(0, 1fr);
-        }
-
-        .admin-workspace .admin-prompt-summary-item {
-            min-height: 56px;
-            padding: 10px 14px;
-        }
-
-        .admin-workspace .admin-prompt-summary-item + .admin-prompt-summary-item {
-            border-top: 1px solid var(--workspace-ui-divider);
-            border-left: 0;
-        }
-
-        .admin-workspace .admin-prompt-guidance {
-            padding-block: 10px;
-        }
-
         .admin-workspace .admin-log-summary {
             grid-template-columns: 1fr;
         }
