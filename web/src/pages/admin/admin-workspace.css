@@ -1,5 +1,6 @@
 .admin-theme-root[data-admin-theme="light"],
-.admin-theme-root[data-admin-theme="light"] .admin-workspace {
+.admin-theme-root[data-admin-theme="light"] .admin-workspace,
+.admin-theme-root[data-admin-theme="light"] .workspace-ui-scope {
     --admin-chart-primary: #1677ff;
     --admin-chart-secondary: #13a8a8;
     --admin-chart-warning: #d46b08;
@@ -33,7 +34,8 @@
 }
 
 .admin-theme-root[data-admin-theme="dark"],
-.admin-theme-root[data-admin-theme="dark"] .admin-workspace {
+.admin-theme-root[data-admin-theme="dark"] .admin-workspace,
+.admin-theme-root[data-admin-theme="dark"] .workspace-ui-scope {
     --admin-chart-primary: #4096ff;
     --admin-chart-secondary: #36cfc9;
     --admin-chart-warning: #fa8c16;

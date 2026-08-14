@@ -67,4 +67,12 @@ describe("admin light theme contrast", () => {
         expect(contrastRatio(resolveColor(tertiaryValue, page), page)).toBeGreaterThanOrEqual(4.5);
         expect(contrastRatio(resolveColor(tertiaryValue, surface), surface)).toBeGreaterThanOrEqual(4.5);
     });
+
+    test("keeps workspace-scoped admin portal content on the light token set", () => {
+        const lightPortalScope = '.admin-theme-root[data-admin-theme="light"] .workspace-ui-scope';
+
+        expect(customProperty(adminWorkspaceStyles, lightPortalScope, "--workspace-ui-text")).toBe("#1f2329");
+        expect(customProperty(adminWorkspaceStyles, lightPortalScope, "--workspace-ui-surface")).toBe("#ffffff");
+        expect(customProperty(adminWorkspaceStyles, lightPortalScope, "--workspace-ui-text-secondary")).toBe("#646a73");
+    });
 });
