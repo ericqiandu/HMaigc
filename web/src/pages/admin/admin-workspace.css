@@ -1186,6 +1186,11 @@
         line-height: 20px;
     }
 
+    .admin-workspace .app-table-surface .ant-table-tbody > tr > td.ant-table-cell-fix-start,
+    .admin-workspace .app-table-surface .ant-table-tbody > tr > td.ant-table-cell-fix-end {
+        background: var(--workspace-ui-surface) !important;
+    }
+
     .admin-workspace .app-table-surface :where(.ant-table-cell) {
         vertical-align: middle;
     }
@@ -1200,6 +1205,13 @@
 
     .admin-workspace .app-table-surface .ant-table-tbody > tr:hover > td {
         background: var(--workspace-ui-control);
+    }
+
+    .admin-workspace .app-table-surface .ant-table-tbody > tr:hover > td.ant-table-cell-fix-start,
+    .admin-workspace .app-table-surface .ant-table-tbody > tr:hover > td.ant-table-cell-fix-end,
+    .admin-workspace .app-table-surface .ant-table-tbody > tr:focus-within > td.ant-table-cell-fix-start,
+    .admin-workspace .app-table-surface .ant-table-tbody > tr:focus-within > td.ant-table-cell-fix-end {
+        background: var(--workspace-ui-control) !important;
     }
 
     .admin-workspace .admin-membership-plan-cell {
