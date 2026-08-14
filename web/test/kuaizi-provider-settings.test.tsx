@@ -181,6 +181,20 @@ describe("kuaizi provider API and domain", () => {
 });
 
 describe("kuaizi provider settings components", () => {
+    test("uses a compact account overview and a two-column family catalog on desktop", async () => {
+        const pageSource = await Bun.file(new URL("../src/pages/admin/providers/kuaizi-provider-page.tsx", import.meta.url)).text();
+        const pageStyles = await Bun.file(new URL("../src/pages/admin/providers/kuaizi-provider.css", import.meta.url)).text();
+
+        expect(pageSource).toContain('className="kuaizi-provider-account-grid"');
+        expect(pageSource.indexOf('className="kuaizi-provider-account-grid"')).toBeLessThan(pageSource.indexOf('className="kuaizi-provider-families"'));
+        expect(pageStyles).toContain(".kuaizi-provider-account-grid");
+        expect(pageStyles).toContain("grid-template-columns: minmax(320px, 5fr) minmax(0, 7fr)");
+        expect(pageStyles).toContain(".kuaizi-provider-family-list");
+        expect(pageStyles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
+        expect(pageStyles).toContain(".kuaizi-provider-account-grid .admin-section-card-content");
+        expect(pageStyles).toContain("padding: var(--workspace-ui-space-4)");
+    });
+
     test("renders first failed candidates and equally unhealthy active versions by explicit role", () => {
         for (const healthStatus of ["invalid", "blocked", "unavailable"] as const) {
             const version = {

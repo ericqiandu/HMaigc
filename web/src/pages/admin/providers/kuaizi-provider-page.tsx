@@ -181,42 +181,44 @@ export function KuaiziProviderPageView({
         <AdminPageFrame title="模型中心" description="统一维护一套服务地址与账号 Key；各模型系列只负责能力与发布。" modelCenter>
             <div className="kuaizi-provider-page-content">
                 {loadError ? <AdminContentError title="筷子科技配置刷新失败" description={loadError.message} onRetry={onRetry} /> : null}
-                <SettingsSectionCard
-                    className="kuaizi-provider-endpoint-card"
-                    icon={<ServerCog className="size-5" aria-hidden="true" />}
-                    title="公共服务配置"
-                    description="Base URL 由所有后端登记的筷子科技模型系列共享。"
-                    status={endpointStatus}
-                    footer={
-                        <div className="kuaizi-provider-endpoint-footer">
-                            <span className="kuaizi-provider-sync-state">{endpointSyncPending ? "写入结果待同步" : endpointDirty ? "有未保存变更" : "已同步"}</span>
-                            <Button className="kuaizi-provider-save-endpoint" type="primary" loading={endpointBusy} disabled={Boolean(operation) || endpointSyncPending || !endpointDirty || loading} onClick={onSaveEndpoint}>
-                                保存服务地址
-                            </Button>
-                        </div>
-                    }
-                >
-                    <label className="kuaizi-provider-field-label" htmlFor="kuaizi-provider-base-url">
-                        Base URL
-                    </label>
-                    <Input
-                        id="kuaizi-provider-base-url"
-                        className="kuaizi-provider-base-url"
-                        value={endpointDraft}
-                        disabled={Boolean(operation)}
-                        placeholder="https://…"
-                        autoComplete="url"
-                        onChange={(event) => onEndpointChange(event.currentTarget.value)}
-                    />
-                    {operationErrors.endpoint ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="服务地址保存失败" description={operationErrors.endpoint.message} /> : null}
-                    {account.endpointCandidate ? (
-                        <p className="kuaizi-provider-endpoint-candidate">
-                            候选地址 v{account.endpointCandidate.version}：{account.endpointCandidate.baseUrl}
-                        </p>
-                    ) : null}
-                </SettingsSectionCard>
+                <div className="kuaizi-provider-account-grid">
+                    <SettingsSectionCard
+                        className="kuaizi-provider-endpoint-card"
+                        icon={<ServerCog className="size-5" aria-hidden="true" />}
+                        title="公共服务配置"
+                        description="Base URL 由所有后端登记的筷子科技模型系列共享。"
+                        status={endpointStatus}
+                        footer={
+                            <div className="kuaizi-provider-endpoint-footer">
+                                <span className="kuaizi-provider-sync-state">{endpointSyncPending ? "写入结果待同步" : endpointDirty ? "有未保存变更" : "已同步"}</span>
+                                <Button className="kuaizi-provider-save-endpoint" type="primary" loading={endpointBusy} disabled={Boolean(operation) || endpointSyncPending || !endpointDirty || loading} onClick={onSaveEndpoint}>
+                                    保存服务地址
+                                </Button>
+                            </div>
+                        }
+                    >
+                        <label className="kuaizi-provider-field-label" htmlFor="kuaizi-provider-base-url">
+                            Base URL
+                        </label>
+                        <Input
+                            id="kuaizi-provider-base-url"
+                            className="kuaizi-provider-base-url"
+                            value={endpointDraft}
+                            disabled={Boolean(operation)}
+                            placeholder="https://…"
+                            autoComplete="url"
+                            onChange={(event) => onEndpointChange(event.currentTarget.value)}
+                        />
+                        {operationErrors.endpoint ? <Alert className="kuaizi-provider-operation-error" type="error" showIcon title="服务地址保存失败" description={operationErrors.endpoint.message} /> : null}
+                        {account.endpointCandidate ? (
+                            <p className="kuaizi-provider-endpoint-candidate">
+                                候选地址 v{account.endpointCandidate.version}：{account.endpointCandidate.baseUrl}
+                            </p>
+                        ) : null}
+                    </SettingsSectionCard>
 
-                <AccountCredentialCard account={account} busy={operation === "credential"} locked={Boolean(operation)} error={operationErrors.credential} onOpen={onOpenCredential} onVerify={onVerifyCredential} />
+                    <AccountCredentialCard account={account} busy={operation === "credential"} locked={Boolean(operation)} error={operationErrors.credential} onOpen={onOpenCredential} onVerify={onVerifyCredential} />
+                </div>
 
                 <section className="kuaizi-provider-families" aria-labelledby="kuaizi-provider-families-title">
                     <div className="kuaizi-provider-section-heading">
