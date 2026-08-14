@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
+
+	"gorm.io/gorm"
 )
 
 func TestAgentRuntimeRepairCreatesExactlyOneNextModelTask(t *testing.T) {
@@ -84,6 +88,252 @@ func TestAgentRuntimeToolDecisionWaitsWithoutSubmittingAnotherModelTask(t *testi
 	}
 	if replayed.State.Status != agentruntime.RunWaitingTool || taskCount != 1 || calls.Load() != 1 {
 		t.Fatalf("tool replay = %#v tasks=%d calls=%d", replayed, taskCount, calls.Load())
+	}
+}
+
+func TestCoordinatePendingAgentReadToolsReauthorizesCanvasAndResumesModel(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		decision  string
+		selection *AgentCanvasSelectionFacts
+		wantNode  string
+	}{
+		{
+			name:     "read state",
+			decision: `{"kind":"tool_call","toolCall":{"toolCallId":"call-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{"expectedRevision":7}}}`,
+		},
+		{
+			name:      "read selection",
+			decision:  `{"kind":"tool_call","toolCall":{"toolCallId":"call-read-selection","toolName":"canvas.read_selection","actionVersion":1,"arguments":{}}}`,
+			selection: &AgentCanvasSelectionFacts{Revision: 7, NodeIDs: []string{"node-1"}}, wantNode: "node-1",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server, _ := newAgentRuntimeDecisionServer(t, testCase.decision)
+			defer server.Close()
+			svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+			now := time.Now().UTC()
+			project := model.CanvasProject{
+				ID: "runtime-canvas", UserID: "runtime-user", Title: "第一幕", Revision: 7,
+				PayloadJSON: `{"id":"runtime-canvas","nodes":[{"id":"node-1","type":"image","data":{"prompt":"日落"}}],"connections":[]}`,
+				CreatedAt:   now, UpdatedAt: now,
+			}
+			if err := db.Create(&project).Error; err != nil {
+				t.Fatal(err)
+			}
+			input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-" + strings.ReplaceAll(testCase.name, " ", "-"), UserMessage: "读取画布", MaxSteps: 4}
+			if _, err := svc.StartAgentRuntime(input); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.ProcessNextTask(); err != nil {
+				t.Fatal(err)
+			}
+			waiting, err := svc.ResumeAgentRuntime(input.Scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			coordinateInput := CoordinateAgentToolInput{
+				ToolCallID: waiting.State.PendingToolCall.ToolCallID, ActionVersion: waiting.State.PendingToolCall.ActionVersion,
+				Selection: testCase.selection,
+			}
+			progress, err := svc.CoordinatePendingAgentTool(input.Scope, coordinateInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if progress.State.Status != agentruntime.RunRunning || progress.State.StepNumber != waiting.State.StepNumber || progress.State.StateVersion != waiting.State.StateVersion+1 || progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded || progress.ModelTask == nil {
+				t.Fatalf("coordinated progress = %#v", progress)
+			}
+			result := string(progress.State.LastToolResult.Output)
+			if !strings.Contains(result, `"revision":7`) || (testCase.wantNode != "" && !strings.Contains(result, testCase.wantNode)) {
+				t.Fatalf("tool result = %s", result)
+			}
+			if !strings.Contains(progress.ModelTask.Prompt, `"lastToolResult"`) || !strings.Contains(progress.ModelTask.Prompt, `"revision":7`) {
+				t.Fatalf("next model prompt = %s", progress.ModelTask.Prompt)
+			}
+			replayed, err := svc.CoordinatePendingAgentTool(input.Scope, coordinateInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replayed.State.StateVersion != progress.State.StateVersion || replayed.ModelTask == nil || replayed.ModelTask.ID != progress.ModelTask.ID {
+				t.Fatalf("tool replay = %#v", replayed)
+			}
+		})
+	}
+}
+
+func TestSubmitAgentToolApprovalRequiresExactFrozenIdentity(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply","toolName":"canvas.apply_ops","actionVersion":3,"arguments":{"baseRevision":7,"ops":[]}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-approval", UserMessage: "修改画布", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.State.Status != agentruntime.RunWaitingApproval {
+		t.Fatalf("approval state = %#v", waiting.State)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", input.Scope.CanvasID).Update("user_id", "another-user").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitAgentToolApproval(input.Scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-apply", ActionVersion: 3, Decision: agentruntime.ToolApprovalApproved,
+	}); err == nil {
+		t.Fatal("approval accepted after canvas access was revoked")
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", input.Scope.CanvasID).Update("user_id", input.Scope.ActorUserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitAgentToolApproval(input.Scope, AgentToolApprovalSubmission{
+		ToolCallID: "wrong-call", ActionVersion: 3, Decision: agentruntime.ToolApprovalApproved,
+	}); err == nil {
+		t.Fatal("mismatched approval identity was accepted")
+	}
+	approved, err := svc.SubmitAgentToolApproval(input.Scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-apply", ActionVersion: 3, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.State.Status != agentruntime.RunWaitingTool || approved.State.StepNumber != waiting.State.StepNumber || approved.State.StateVersion != waiting.State.StateVersion+1 {
+		t.Fatalf("approved state = %#v", approved.State)
+	}
+	replayed, err := svc.SubmitAgentToolApproval(input.Scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-apply", ActionVersion: 3, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.State.StateVersion != approved.State.StateVersion || replayed.State.Status != agentruntime.RunWaitingTool {
+		t.Fatalf("approval replay = %#v", replayed.State)
+	}
+}
+
+func TestCoordinatePendingAgentToolRejectsRevokedCanvasAccess(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	now := time.Now().UTC()
+	if err := db.Create(&model.CanvasProject{
+		ID: "runtime-canvas", UserID: "runtime-user", Title: "第一幕", Revision: 7,
+		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-revoked", UserMessage: "读取画布", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", input.Scope.CanvasID).Update("user_id", "another-user").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CoordinatePendingAgentTool(input.Scope, CoordinateAgentToolInput{
+		ToolCallID: waiting.State.PendingToolCall.ToolCallID, ActionVersion: waiting.State.PendingToolCall.ActionVersion,
+	}); err == nil {
+		t.Fatal("revoked canvas access was accepted")
+	}
+	checkpoint, err := svc.repo.LoadAgentCheckpoint(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Status != agentruntime.RunWaitingTool || checkpoint.StateVersion != waiting.State.StateVersion {
+		t.Fatalf("revoked access changed runtime = %#v", checkpoint)
+	}
+}
+
+func createAgentRuntimeCanvas(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&model.CanvasProject{
+		ID: "runtime-canvas", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
+		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentAgentToolApprovalDoesNotAcknowledgeOppositeDecision(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"ops":[]}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-approval-race", UserMessage: "修改画布", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResumeAgentRuntime(input.Scope); err != nil {
+		t.Fatal(err)
+	}
+	decisions := []agentruntime.ToolApprovalDecision{agentruntime.ToolApprovalApproved, agentruntime.ToolApprovalRejected}
+	errs := make([]error, len(decisions))
+	var workers sync.WaitGroup
+	for index, approvalDecision := range decisions {
+		workers.Add(1)
+		go func(worker int, candidate agentruntime.ToolApprovalDecision) {
+			defer workers.Done()
+			_, errs[worker] = svc.SubmitAgentToolApproval(input.Scope, AgentToolApprovalSubmission{
+				ToolCallID: "call-apply", ActionVersion: 1, Decision: candidate,
+			})
+		}(index, approvalDecision)
+	}
+	workers.Wait()
+	var successCount int
+	for _, err := range errs {
+		if err == nil {
+			successCount++
+		}
+	}
+	if successCount != 1 {
+		t.Fatalf("opposite approvals acknowledged=%d errors=%v", successCount, errs)
+	}
+	var call model.AgentToolCall
+	if err := db.First(&call, "run_id = ? AND tool_call_id = ?", input.Scope.RunID, "call-apply").Error; err != nil {
+		t.Fatal(err)
+	}
+	if call.ApprovalDecision != agentruntime.ToolApprovalApproved && call.ApprovalDecision != agentruntime.ToolApprovalRejected {
+		t.Fatalf("persisted approval = %#v", call)
+	}
+}
+
+func TestAgentCanvasReadStateReturnsBoundedCompressedFacts(t *testing.T) {
+	prompt := strings.Repeat("镜", 600)
+	project := &model.CanvasProject{
+		ID: "canvas-compact", UserID: "runtime-user", Title: "压缩事实", Revision: 9,
+		PayloadJSON: `{"nodes":[{"id":"node-1","type":"image","title":"参考图","position":{"x":1,"y":2},"width":320,"height":240,"metadata":{"prompt":"` + prompt + `","providerSecret":"must-not-pass"}}],"connections":[]}`,
+	}
+	output, err := executeAgentCanvasReadState(project, []byte(`{"expectedRevision":9}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), "providerSecret") || strings.Contains(string(output), "must-not-pass") {
+		t.Fatalf("unapproved metadata reached Agent facts: %s", output)
+	}
+	var result agentCanvasReadStateResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.NodeCount != 1 || result.NodesTruncated || len(result.Nodes) != 1 || len([]rune(result.Nodes[0].Metadata.Prompt)) != agentCanvasTextFactLimit {
+		t.Fatalf("compressed result = %#v", result)
 	}
 }
 

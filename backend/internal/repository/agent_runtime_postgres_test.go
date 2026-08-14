@@ -257,16 +257,19 @@ func TestPostgresAgentRuntimeTransitionCASAcrossConnections(t *testing.T) {
 	secondDB := openSecondAgentPostgresConnection(t, db)
 	scope := repositoryAgentScope()
 	createAgentRunForTest(t, New(db), scope)
-	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("max_steps", 3).Error; err != nil {
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Updates(struct {
+		MaxSteps     int `gorm:"column:max_steps"`
+		StateVersion int `gorm:"column:state_version"`
+	}{MaxSteps: 3, StateVersion: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
-	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning, UserMessage: "test"}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	for _, candidate := range []*Repository{New(db), New(secondDB)} {
 		go func(repo *Repository) {
 			<-start
-			errs <- repo.CommitAgentRuntimeTransition(scope, 0, transition, time.Now().UTC())
+			errs <- repo.CommitAgentRuntimeTransition(scope, agentruntime.RuntimeState{StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "test"}, transition, time.Now().UTC())
 		}(candidate)
 	}
 	close(start)
@@ -290,6 +293,86 @@ func TestPostgresAgentRuntimeTransitionCASAcrossConnections(t *testing.T) {
 	}
 	if run.StepNumber != 1 || run.LastEventSequence != 1 {
 		t.Fatalf("PostgreSQL transition facts = %#v", run)
+	}
+}
+
+func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := openSecondAgentPostgresConnection(t, db)
+	scope := repositoryAgentScope()
+	repo := New(db)
+	createAgentRunForTest(t, repo, scope)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: 1, UserMessage: "读取当前画布", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasReadState,
+			ActionVersion: 1, Arguments: []byte(`{}`),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
+		ToolCallID: "call-read-state", ActionVersion: 1, Succeeded: true,
+		Output: []byte(`{"canvasId":"canvas-1","revision":7}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, candidate := range []*Repository{repo, New(secondDB)} {
+		go func(currentRepo *Repository) {
+			<-start
+			errs <- currentRepo.CommitAgentRuntimeTransition(scope, requested.State, resolved, time.Now().UTC())
+		}(candidate)
+	}
+	close(start)
+	var succeeded, conflicted int
+	for range 2 {
+		switch err := <-errs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrAgentRuntimeStepConflict):
+			conflicted++
+		default:
+			t.Fatalf("tool completion error = %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("tool completion CAS succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
+	loaded, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StateVersion != 3 || loaded.StepNumber != 1 || loaded.Status != agentruntime.RunRunning || loaded.LastToolResult == nil {
+		t.Fatalf("tool completion checkpoint = %#v", loaded)
+	}
+	var call model.AgentToolCall
+	if err := db.First(&call, "run_id = ? AND tool_call_id = ?", scope.RunID, "call-read-state").Error; err != nil {
+		t.Fatal(err)
+	}
+	if call.Status != agentruntime.ToolCallSucceeded || call.OutputJSON != `{"canvasId":"canvas-1","revision":7}` {
+		t.Fatalf("tool completion call = %#v", call)
 	}
 }
 

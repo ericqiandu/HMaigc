@@ -86,6 +86,8 @@ const (
 	EventRunStatusChanged EventKind = "run.status_changed"
 	EventModelDelta       EventKind = "model.delta"
 	EventToolCall         EventKind = "tool.call"
+	EventApprovalRequired EventKind = "approval.required"
+	EventApprovalDecided  EventKind = "approval.decided"
 	EventToolResult       EventKind = "tool.result"
 	EventCheckpointSaved  EventKind = "checkpoint.saved"
 	EventRunCompleted     EventKind = "run.completed"
@@ -94,7 +96,7 @@ const (
 
 func (kind EventKind) Valid() bool {
 	switch kind {
-	case EventRunCreated, EventRunStatusChanged, EventModelDelta, EventToolCall, EventToolResult, EventCheckpointSaved, EventRunCompleted, EventRunFailed:
+	case EventRunCreated, EventRunStatusChanged, EventModelDelta, EventToolCall, EventApprovalRequired, EventApprovalDecided, EventToolResult, EventCheckpointSaved, EventRunCompleted, EventRunFailed:
 		return true
 	default:
 		return false

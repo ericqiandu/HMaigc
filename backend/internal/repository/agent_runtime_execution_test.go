@@ -25,7 +25,7 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !initialized.Created || initialized.Run.ModelRecordID != input.ModelRecordID || initialized.Run.ModelKey != input.ModelKey || initialized.Run.MaxSteps != input.MaxSteps {
+	if !initialized.Created || initialized.Run.StateVersion != 1 || initialized.Run.ModelRecordID != input.ModelRecordID || initialized.Run.ModelKey != input.ModelKey || initialized.Run.MaxSteps != input.MaxSteps {
 		t.Fatalf("initialized run = %#v", initialized)
 	}
 	loaded, err := repo.LoadAgentCheckpoint(scope)
@@ -65,6 +65,107 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	}
 }
 
+func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: 1, UserMessage: "读取当前画布", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+		ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasReadState,
+		ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`),
+	}}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	var call model.AgentToolCall
+	if err := db.First(&call, "run_id = ? AND tool_call_id = ? AND action_version = ?", scope.RunID, "call-read-state", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if call.Status != agentruntime.ToolCallPending || call.RiskLevel != agentruntime.ToolRiskRead || call.RequiredAccess != agentruntime.AccessViewer || call.ApprovalRequired || call.IdempotencyKey != scope.RunID+":call-read-state:1" || call.InputJSON != `{"expectedRevision":7}` {
+		t.Fatalf("registered call = %#v", call)
+	}
+	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Succeeded: true,
+		Output: []byte(`{"canvasId":"canvas-1","revision":7}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&call, "id = ?", call.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if call.Status != agentruntime.ToolCallSucceeded || call.OutputJSON != `{"canvasId":"canvas-1","revision":7}` {
+		t.Fatalf("completed call = %#v", call)
+	}
+	loaded, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StateVersion != 3 || loaded.StepNumber != 1 || loaded.Status != agentruntime.RunRunning || loaded.LastToolResult == nil {
+		t.Fatalf("resolved checkpoint = %#v", loaded)
+	}
+}
+
+func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: 1, UserMessage: "生成一张图片", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-generate", ToolName: agentruntime.ToolGenerationSubmit,
+			ActionVersion: 1, Arguments: []byte(`{"prompt":"test"}`),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: "call-generate", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	var call model.AgentToolCall
+	if err := db.First(&call, "run_id = ? AND tool_call_id = ?", scope.RunID, "call-generate").Error; err != nil {
+		t.Fatal(err)
+	}
+	if call.Status != agentruntime.ToolCallPending || call.ApprovalDecision != agentruntime.ToolApprovalApproved || call.ApprovalByUserID != scope.ActorUserID || call.ApprovalDecidedAt == nil {
+		t.Fatalf("approved call = %#v", call)
+	}
+}
+
 func TestCommitAgentRuntimeTransitionPersistsRunEventsAndCheckpointAtomically(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
@@ -72,9 +173,13 @@ func TestCommitAgentRuntimeTransitionPersistsRunEventsAndCheckpointAtomically(t 
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Updates(model.AgentRun{MaxSteps: 3, ModelRecordID: "model-1", ModelKey: "gpt", ToolSchemaVersion: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
-	state := agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning}
+	previous := agentruntime.RuntimeState{StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "test"}
+	state := agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning, UserMessage: "test"}
 	transition := agentruntime.RuntimeTransition{State: state, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged, agentruntime.EventCheckpointSaved}}
-	if err := repo.CommitAgentRuntimeTransition(scope, 0, transition, time.Now().UTC()); err != nil {
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("state_version", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, previous, transition, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := repo.LoadAgentCheckpoint(scope)
@@ -106,14 +211,18 @@ func TestCommitAgentRuntimeTransitionFencesConcurrentStepAndRollsBack(t *testing
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("max_steps", 3).Error; err != nil {
 		t.Fatal(err)
 	}
-	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	previous := agentruntime.RuntimeState{StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "test"}
+	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning, UserMessage: "test"}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("state_version", 1).Error; err != nil {
+		t.Fatal(err)
+	}
 	var wait sync.WaitGroup
 	errs := make(chan error, 2)
 	for range 2 {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			errs <- repo.CommitAgentRuntimeTransition(scope, 0, transition, time.Now().UTC())
+			errs <- repo.CommitAgentRuntimeTransition(scope, previous, transition, time.Now().UTC())
 		}()
 	}
 	wait.Wait()
@@ -134,8 +243,9 @@ func TestCommitAgentRuntimeTransitionFencesConcurrentStepAndRollsBack(t *testing
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Updates(model.AgentRun{Status: agentruntime.RunSucceeded, StepNumber: 2}).Error; err != nil {
 		t.Fatal(err)
 	}
-	terminalTransition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 4, StepNumber: 3, MaxSteps: 3, Status: agentruntime.RunFailed}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunFailed}}
-	if err := repo.CommitAgentRuntimeTransition(scope, 2, terminalTransition, time.Now().UTC()); !errors.Is(err, ErrAgentRuntimeStepConflict) {
+	terminalPrevious := agentruntime.RuntimeState{StateVersion: 3, StepNumber: 2, MaxSteps: 3, Status: agentruntime.RunRunning, UserMessage: "test"}
+	terminalTransition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 4, StepNumber: 3, MaxSteps: 3, Status: agentruntime.RunFailed, UserMessage: "test"}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunFailed}}
+	if err := repo.CommitAgentRuntimeTransition(scope, terminalPrevious, terminalTransition, time.Now().UTC()); !errors.Is(err, ErrAgentRuntimeStepConflict) {
 		t.Fatalf("terminal overwrite error = %v", err)
 	}
 
@@ -153,8 +263,12 @@ func TestLoadAgentCheckpointRejectsSnapshotDrift(t *testing.T) {
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("max_steps", 3).Error; err != nil {
 		t.Fatal(err)
 	}
-	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
-	if err := repo.CommitAgentRuntimeTransition(scope, 0, transition, time.Now().UTC()); err != nil {
+	previous := agentruntime.RuntimeState{StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "test"}
+	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning, UserMessage: "test"}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("state_version", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, previous, transition, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("status", agentruntime.RunFailed).Error; err != nil {
@@ -181,8 +295,12 @@ func TestCommitAgentRuntimeTransitionRollsBackRunAndEventsWhenCheckpointFails(t 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Callback().Create().Remove(callback) })
-	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
-	if err := repo.CommitAgentRuntimeTransition(scope, 0, transition, time.Now().UTC()); err == nil || err.Error() != "transition checkpoint failed" {
+	previous := agentruntime.RuntimeState{StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "test"}
+	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning, UserMessage: "test"}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("state_version", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, previous, transition, time.Now().UTC()); err == nil || err.Error() != "transition checkpoint failed" {
 		t.Fatalf("checkpoint failure = %v", err)
 	}
 	var run model.AgentRun

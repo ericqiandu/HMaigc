@@ -35,6 +35,73 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 	if waiting.State.Status != agentruntime.RunWaitingTool || waiting.State.PendingToolCall == nil {
 		t.Fatalf("tool transition = %#v", waiting)
 	}
+
+	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1, Arguments: []byte(`{"baseRevision":3,"ops":[]}`)}}
+	waitingApproval, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: writeTool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waitingApproval.State.Status != agentruntime.RunWaitingApproval || waitingApproval.State.PendingToolCall == nil {
+		t.Fatalf("approval transition = %#v", waitingApproval)
+	}
+}
+
+func TestResolveToolPreservesModelStepAndAdvancesStateVersion(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 2, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingTool,
+		UserMessage: "读取当前画布",
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-1", ToolName: agentruntime.ToolCanvasReadState,
+			ActionVersion: 1, Arguments: []byte(`{}`),
+		},
+	}
+	transition, err := agentruntime.ResolveTool(current, agentruntime.ToolResolution{
+		ToolCallID: "call-1", ActionVersion: 1, Succeeded: true,
+		Output: []byte(`{"canvasId":"canvas-1","revision":7}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunRunning || transition.State.StepNumber != 1 || transition.State.StateVersion != 3 {
+		t.Fatalf("resolved state = %#v", transition.State)
+	}
+	if transition.State.PendingToolCall != nil || transition.State.LastToolResult == nil || !transition.State.LastToolResult.Succeeded {
+		t.Fatalf("resolved tool facts = %#v", transition.State)
+	}
+}
+
+func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 2, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingApproval,
+		UserMessage: "生成一张图片",
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-generate", ToolName: agentruntime.ToolGenerationSubmit,
+			ActionVersion: 2, Arguments: []byte(`{"model":"image"}`),
+		},
+	}
+	approved, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
+		ToolCallID: "call-generate", ActionVersion: 2, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.State.Status != agentruntime.RunWaitingTool || approved.State.StateVersion != 3 || approved.State.StepNumber != 1 || approved.State.PendingToolCall == nil {
+		t.Fatalf("approved transition = %#v", approved)
+	}
+	rejected, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
+		ToolCallID: "call-generate", ActionVersion: 2, Decision: agentruntime.ToolApprovalRejected,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.State.Status != agentruntime.RunRunning || rejected.State.PendingToolCall != nil || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+		t.Fatalf("rejected transition = %#v", rejected)
+	}
+	if _, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
+		ToolCallID: "another-call", ActionVersion: 2, Decision: agentruntime.ToolApprovalApproved,
+	}); err == nil {
+		t.Fatal("mismatched approval identity was accepted")
+	}
 }
 
 func TestAdvanceRuntimeFailsClosedAtBoundaries(t *testing.T) {
@@ -52,7 +119,6 @@ func TestAdvanceRuntimeFailsClosedAtBoundaries(t *testing.T) {
 
 	invalid := []agentruntime.RuntimeState{
 		{StateVersion: 0, MaxSteps: 3, Status: agentruntime.RunQueued},
-		{StateVersion: 2, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued},
 		{StateVersion: 1, MaxSteps: 0, Status: agentruntime.RunQueued},
 		{StateVersion: 1, MaxSteps: 25, Status: agentruntime.RunQueued},
 		{StateVersion: 1, MaxSteps: 3, Status: agentruntime.RunSucceeded, UserMessage: "请读取画布"},

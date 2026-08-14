@@ -45,6 +45,7 @@ type agentRuntimeModelContext struct {
 	UserMessage      string                             `json:"userMessage"`
 	ExpectedDelivery *agentruntime.ExpectedDelivery     `json:"expectedDelivery,omitempty"`
 	Verification     *agentruntime.DeliveryVerification `json:"deliveryVerification,omitempty"`
+	LastToolResult   *agentruntime.ToolResult           `json:"lastToolResult,omitempty"`
 	PreviousMessage  string                             `json:"previousMessage,omitempty"`
 }
 
@@ -92,7 +93,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 		return nil, errors.New("agent runtime request facts conflict")
 	}
 	switch state.Status {
-	case agentruntime.RunSucceeded, agentruntime.RunFailed, agentruntime.RunCancelled, agentruntime.RunWaitingTool:
+	case agentruntime.RunSucceeded, agentruntime.RunFailed, agentruntime.RunCancelled, agentruntime.RunWaitingApproval, agentruntime.RunWaitingTool:
 		return &AgentRuntimeProgress{Run: run, State: state}, nil
 	case agentruntime.RunQueued, agentruntime.RunRunning:
 	default:
@@ -120,7 +121,7 @@ func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimePro
 	if err != nil {
 		return nil, err
 	}
-	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled || state.Status == agentruntime.RunWaitingTool {
+	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled || state.Status == agentruntime.RunWaitingApproval || state.Status == agentruntime.RunWaitingTool {
 		return &AgentRuntimeProgress{Run: *run, State: state}, nil
 	}
 	taskID := agentRuntimeModelTaskID(scope.RunID, state.StepNumber)
@@ -172,7 +173,7 @@ func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimePro
 }
 
 func (s *Service) commitAgentRuntimeState(scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition) (*AgentRuntimeProgress, error) {
-	if err := s.repo.CommitAgentRuntimeTransition(scope, previous.StepNumber, transition, time.Now().UTC()); err != nil {
+	if err := s.repo.CommitAgentRuntimeTransition(scope, previous, transition, time.Now().UTC()); err != nil {
 		if !errors.Is(err, repository.ErrAgentRuntimeStepConflict) {
 			return nil, err
 		}
@@ -329,7 +330,7 @@ func agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.Runtim
 	context := agentRuntimeModelContext{
 		RunID: scope.RunID, CanvasID: scope.CanvasID, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
-		Verification: state.Verification, PreviousMessage: state.FinalMessage,
+		Verification: state.Verification, LastToolResult: state.LastToolResult, PreviousMessage: state.FinalMessage,
 	}
 	encoded, err := json.Marshal(context)
 	if err != nil {

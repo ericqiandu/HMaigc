@@ -130,6 +130,16 @@ func TestMigrateSchemaAddsAgentRuntimeWithoutChangingCanvasFacts(t *testing.T) {
 			t.Fatalf("missing additive agent runtime table for %T", table)
 		}
 	}
+	for _, column := range []string{"state_version"} {
+		if !db.Migrator().HasColumn(&model.AgentRun{}, column) {
+			t.Fatalf("missing additive agent_runs column %s", column)
+		}
+	}
+	for _, column := range []string{"risk_level", "required_access", "approval_required", "approval_decision", "approval_by_user_id", "approval_decided_at", "idempotency_key"} {
+		if !db.Migrator().HasColumn(&model.AgentToolCall{}, column) {
+			t.Fatalf("missing additive agent_tool_calls column %s", column)
+		}
+	}
 	var storedCanvas model.CanvasProject
 	if err := db.First(&storedCanvas, "id = ?", canvas.ID).Error; err != nil {
 		t.Fatal(err)

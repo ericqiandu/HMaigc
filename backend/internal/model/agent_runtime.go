@@ -25,6 +25,7 @@ type AgentRun struct {
 	ClientRequestID   string                 `json:"clientRequestId" gorm:"size:120;not null"`
 	Status            agentruntime.RunStatus `json:"status" gorm:"size:32;not null"`
 	LastEventSequence int64                  `json:"lastEventSequence" gorm:"not null;default:0"`
+	StateVersion      int                    `json:"stateVersion" gorm:"not null;default:0"`
 	StepNumber        int                    `json:"stepNumber" gorm:"not null;default:0"`
 	MaxSteps          int                    `json:"maxSteps" gorm:"not null;default:0"`
 	ModelRecordID     string                 `json:"modelRecordId" gorm:"size:80;not null;default:''"`
@@ -54,15 +55,22 @@ type AgentCheckpoint struct {
 }
 
 type AgentToolCall struct {
-	ID            string                      `json:"id" gorm:"primaryKey;size:80"`
-	RunID         string                      `json:"runId" gorm:"size:80;not null"`
-	ToolCallID    string                      `json:"toolCallId" gorm:"size:120;not null"`
-	ActionVersion int                         `json:"actionVersion" gorm:"not null"`
-	ToolName      string                      `json:"toolName" gorm:"size:120;not null"`
-	Status        agentruntime.ToolCallStatus `json:"status" gorm:"size:32;not null"`
-	InputJSON     string                      `json:"-" gorm:"type:text;not null"`
-	OutputJSON    string                      `json:"-" gorm:"type:text;not null"`
-	ErrorCode     string                      `json:"errorCode,omitempty" gorm:"size:80;not null;default:''"`
-	CreatedAt     time.Time                   `json:"createdAt"`
-	UpdatedAt     time.Time                   `json:"updatedAt"`
+	ID                string                            `json:"id" gorm:"primaryKey;size:80"`
+	RunID             string                            `json:"runId" gorm:"size:80;not null"`
+	ToolCallID        string                            `json:"toolCallId" gorm:"size:120;not null"`
+	ActionVersion     int                               `json:"actionVersion" gorm:"not null"`
+	ToolName          string                            `json:"toolName" gorm:"size:120;not null"`
+	Status            agentruntime.ToolCallStatus       `json:"status" gorm:"size:32;not null"`
+	RiskLevel         agentruntime.ToolRiskLevel        `json:"riskLevel" gorm:"size:8;not null;default:''"`
+	RequiredAccess    agentruntime.AccessLevel          `json:"requiredAccess" gorm:"size:16;not null;default:''"`
+	ApprovalRequired  bool                              `json:"approvalRequired" gorm:"not null;default:false"`
+	ApprovalDecision  agentruntime.ToolApprovalDecision `json:"approvalDecision,omitempty" gorm:"size:16;not null;default:''"`
+	ApprovalByUserID  string                            `json:"approvalByUserId,omitempty" gorm:"size:80;not null;default:''"`
+	ApprovalDecidedAt *time.Time                        `json:"approvalDecidedAt,omitempty"`
+	IdempotencyKey    string                            `json:"idempotencyKey" gorm:"size:256;not null;default:''"`
+	InputJSON         string                            `json:"-" gorm:"type:text;not null"`
+	OutputJSON        string                            `json:"-" gorm:"type:text;not null"`
+	ErrorCode         string                            `json:"errorCode,omitempty" gorm:"size:80;not null;default:''"`
+	CreatedAt         time.Time                         `json:"createdAt"`
+	UpdatedAt         time.Time                         `json:"updatedAt"`
 }
