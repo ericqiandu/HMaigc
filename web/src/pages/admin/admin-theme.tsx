@@ -58,6 +58,8 @@ export function createAdminAntTheme(theme: AdminThemeName, colorPrimary: string)
             colorPrimary,
             colorSuccess: dark ? "#30d158" : "#166534",
             colorTextPlaceholder: dark ? "rgba(255, 255, 255, 0.58)" : "#69707a",
+            fontFamily: "var(--admin-font-family)",
+            fontWeightStrong: 600,
         },
     };
 }
