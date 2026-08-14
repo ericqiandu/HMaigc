@@ -1929,52 +1929,20 @@
 
 /* Membership operations use one content rhythm across catalog, orders and payment facts. */
 .admin-workspace .admin-membership-content {
-    display: grid;
     min-width: 0;
-    gap: 20px;
 }
 
-.admin-workspace .admin-membership-context {
-    display: grid;
-    grid-template-columns: minmax(150px, 0.55fr) minmax(150px, 0.55fr) minmax(320px, 1.9fr);
-    min-width: 0;
-    border: 1px solid var(--workspace-ui-divider);
-    border-radius: var(--workspace-ui-radius-surface);
-    background: var(--workspace-ui-surface);
+.admin-workspace .admin-membership-content .admin-metric-band-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.admin-workspace .admin-membership-context-item,
-.admin-workspace .admin-membership-context-note {
-    min-width: 0;
-    margin: 0;
-    padding: 14px 16px;
-}
-
-.admin-workspace .admin-membership-context-item {
-    display: grid;
-    align-content: center;
-    gap: 2px;
-    border-right: 1px solid var(--workspace-ui-divider);
-}
-
-.admin-workspace .admin-membership-context-label {
-    color: var(--workspace-ui-text-tertiary);
-    font-size: 11px;
-    line-height: 16px;
-}
-
-.admin-workspace .admin-membership-context-value {
-    color: var(--workspace-ui-text);
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-}
-
-.admin-workspace .admin-membership-context-note {
-    align-self: center;
+.admin-workspace .admin-membership-operation-note {
+    display: block;
+    max-width: 520px;
     color: var(--workspace-ui-text-secondary);
     font-size: 12px;
     line-height: 18px;
+    text-align: right;
 }
 
 .admin-workspace .admin-membership-refresh.ant-btn,
@@ -1990,6 +1958,13 @@
 .admin-workspace .admin-membership-tabs > .ant-tabs-content-holder > .ant-tabs-content,
 .admin-workspace .admin-membership-tabs .ant-tabs-tabpane {
     min-width: 0;
+}
+
+.admin-workspace .admin-membership-tabs .ant-tabs-tabpane > .app-table-surface {
+    width: calc(100% + 40px);
+    margin: 0 -20px -20px;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .admin-workspace .admin-membership-inline-error {
@@ -2247,42 +2222,7 @@
     color: var(--workspace-ui-danger);
 }
 
-@media (max-width: 1279px) {
-    .admin-workspace .admin-membership-context {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .admin-workspace .admin-membership-context-note {
-        grid-column: 1 / -1;
-        border-top: 1px solid var(--workspace-ui-divider);
-    }
-
-    .admin-workspace .admin-membership-context-item:nth-child(2) {
-        border-right: 0;
-    }
-}
-
 @media (max-width: 639px) {
-    .admin-workspace .admin-membership-content {
-        gap: 16px;
-    }
-
-    .admin-workspace .admin-membership-context {
-        grid-template-columns: 1fr;
-    }
-
-    .admin-workspace .admin-membership-context-item {
-        border-right: 0;
-        border-bottom: 1px solid var(--workspace-ui-divider);
-        padding: 12px 14px;
-    }
-
-    .admin-workspace .admin-membership-context-note {
-        grid-column: auto;
-        border-top: 0;
-        padding: 12px 14px;
-    }
-
     .admin-workspace .admin-invoice-toolbar {
         align-items: stretch;
         flex-direction: column;

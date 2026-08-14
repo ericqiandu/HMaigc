@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBlocker } from "react-router";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
+import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "@/pages/admin/components/admin-data-layout";
 import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
 import { TableSurface } from "@/components/layout/workspace-page";
 import { closeAdminMembershipOrder, listAdminMembershipOrders, listAdminMembershipPlans, type MembershipOrder, type MembershipPlan, type UpdateMembershipPlanInput, updateAdminMembershipPlan } from "@/services/api/membership";
@@ -293,269 +294,260 @@ export default function MembershipAdminPage() {
             }
         >
             <div className="admin-membership-content">
-                <section className="admin-membership-context" aria-label="会员运营概览">
-                    <div className="admin-membership-context-item">
-                        <span className="admin-membership-context-label">套餐目录</span>
-                        <strong className="admin-membership-context-value">{plansState.loaded && !plansState.error ? `${plansState.data.length} 个套餐` : "等待读取"}</strong>
-                    </div>
-                    <div className="admin-membership-context-item">
-                        <span className="admin-membership-context-label">待核款订单</span>
-                        <strong className="admin-membership-context-value">{ordersState.loaded && !ordersState.error ? `${pendingOrderCount} 笔待处理` : "进入订单后读取"}</strong>
-                    </div>
-                    <p className="admin-membership-context-note">支付到账只通过验签回调或渠道查单履约；异常交易请在支付交易中发起对账。</p>
-                </section>
-                <Select className="admin-membership-mobile-section" aria-label="选择会员管理功能" value={activeSection} options={membershipSectionOptions} onChange={(value: MembershipSection) => setActiveSection(value)} />
-                <Tabs
-                    className="admin-membership-tabs"
-                    activeKey={activeSection}
-                    onChange={(key) => setActiveSection(key as MembershipSection)}
-                    items={[
-                        {
-                            key: "plans",
-                            label: "套餐与权益",
-                            children:
-                                !plansState.loaded && plansState.loading ? (
-                                    <AdminContentSkeleton rows={6} label="正在加载套餐配置" />
-                                ) : plansState.error && plansState.data.length === 0 ? (
-                                    <AdminContentError title="套餐配置加载失败" description={plansState.error} onRetry={() => void loadPlans()} />
-                                ) : (
-                                    <TableSurface className="admin-membership-table-surface mt-0">
-                                        {plansState.error ? (
-                                            <div className="admin-membership-inline-error" role="status">
-                                                刷新失败，当前展示上次成功读取的数据：{plansState.error}
-                                            </div>
-                                        ) : null}
-                                        <Table
-                                            className="admin-membership-table"
-                                            rowKey="id"
-                                            loading={plansState.loading && plansState.data.length > 0}
-                                            dataSource={plansState.data}
-                                            locale={{ emptyText: <AdminTableEmpty title="暂无套餐配置" description="服务端尚未提供可运营的会员套餐。" /> }}
-                                            pagination={false}
-                                            size="small"
-                                            columns={[
-                                                {
-                                                    title: "套餐",
-                                                    width: 190,
-                                                    render: (_, row) => (
-                                                        <div className="admin-membership-plan-cell">
-                                                            <strong className="admin-membership-plan-name">{row.name}</strong>
-                                                            <span className="admin-membership-plan-meta">
-                                                                {row.audience === "team" ? "团队套餐" : "个人套餐"} · {billingCycleLabel(row.billingCycle)}
-                                                            </span>
-                                                        </div>
-                                                    ),
-                                                },
-                                                { title: "价格", width: 110, responsive: ["sm"], render: (_, row) => <span className="admin-membership-table-number is-price">{money(row.priceCents)}</span> },
-                                                { title: "周期积分", width: 130, responsive: ["md"], render: (_, row) => <span className="admin-membership-table-number">{credits(row.creditsPerPeriod)}</span> },
-                                                {
-                                                    title: "图片 / 视频并发",
-                                                    width: 140,
-                                                    responsive: ["lg"],
-                                                    render: (_, row) => (
-                                                        <span className="admin-membership-table-number">
-                                                            {row.imageConcurrency} / {row.videoConcurrency}
-                                                        </span>
-                                                    ),
-                                                },
-                                                { title: "席位", width: 90, responsive: ["lg"], render: (_, row) => <span className="admin-membership-seat-count">{row.audience === "team" ? `${row.minSeats}–${row.maxSeats}` : "1"}</span> },
-                                                {
-                                                    title: "状态",
-                                                    width: 80,
-                                                    responsive: ["sm"],
-                                                    render: (_, row) => (
-                                                        <Tag className="admin-membership-plan-status" color={row.enabled ? "green" : "default"}>
-                                                            {row.enabled ? "上架" : "下架"}
-                                                        </Tag>
-                                                    ),
-                                                },
-                                                {
-                                                    title: "操作",
-                                                    width: 64,
-                                                    align: "center",
-                                                    render: (_, row) => (
-                                                        <Button
-                                                            className="admin-membership-edit-button"
-                                                            type="text"
-                                                            icon={<SquarePen className="admin-membership-edit-icon size-4" />}
-                                                            aria-label={`编辑${row.name}套餐`}
-                                                            title="编辑套餐"
-                                                            onClick={() => openPlan(row)}
-                                                        />
-                                                    ),
-                                                },
-                                            ]}
-                                            scroll={{ x: "max-content" }}
-                                        />
-                                    </TableSurface>
-                                ),
-                        },
-                        {
-                            key: "storefront",
-                            label: "商城展示",
-                            children: <MembershipStorefrontAdminPanel />,
-                        },
-                        {
-                            key: "orders",
-                            label: "会员订单",
-                            children:
-                                !ordersState.loaded && ordersState.loading ? (
-                                    <AdminContentSkeleton rows={8} label="正在加载会员订单" />
-                                ) : ordersState.error && ordersState.data.length === 0 ? (
-                                    <AdminContentError title="会员订单加载失败" description={ordersState.error} onRetry={() => void loadOrders()} />
-                                ) : (
-                                    <TableSurface className="admin-membership-orders-surface mt-0">
-                                        {ordersState.error ? (
-                                            <div className="admin-membership-inline-error" role="status">
-                                                刷新失败，当前展示上次成功读取的数据：{ordersState.error}
-                                            </div>
-                                        ) : null}
-                                        <Table
-                                            className="admin-membership-orders"
-                                            rowKey="id"
-                                            loading={ordersState.loading && ordersState.data.length > 0}
-                                            dataSource={ordersState.data}
-                                            locale={{ emptyText: <AdminTableEmpty title="暂无会员订单" description="当前没有会员购买或待核款记录。" /> }}
-                                            size="small"
-                                            scroll={{ x: 980 }}
-                                            columns={[
-                                                { title: "订单号", dataIndex: "orderNumber" },
-                                                { title: "用户", dataIndex: "userId", ellipsis: true },
-                                                { title: "金额", render: (_, row) => money(row.totalPriceCents) },
-                                                { title: "席位", dataIndex: "seats" },
-                                                {
-                                                    title: "状态",
-                                                    render: (_, row) => (
-                                                        <Tag className="admin-membership-order-status" color={row.status === "paid" ? "green" : row.status === "cancelled" ? "default" : row.status === "refunded" ? "blue" : "gold"}>
-                                                            {{ pending: "待支付", paid: "已支付", cancelled: "已关闭", refunded: "退款状态待核对" }[row.status]}
-                                                        </Tag>
-                                                    ),
-                                                },
-                                                { title: "创建时间", render: (_, row) => new Date(row.createdAt).toLocaleString("zh-CN") },
-                                                { title: "处理记录", render: (_, row) => row.resolutionNote || "—", ellipsis: true },
-                                                {
-                                                    title: "操作",
-                                                    render: (_, row) =>
-                                                        row.status === "pending" ? (
-                                                            <Button className="admin-membership-close-button" type="text" danger size="small" onClick={() => setClosing(row)}>
-                                                                关闭
-                                                            </Button>
-                                                        ) : (
-                                                            "—"
-                                                        ),
-                                                },
-                                            ]}
-                                        />
-                                    </TableSurface>
-                                ),
-                        },
-                        {
-                            key: "invoices",
-                            label: "开票处理",
-                            children: <InvoiceAdminPanel />,
-                        },
-                        {
-                            key: "transactions",
-                            label: "支付交易",
-                            children:
-                                !transactionsState.loaded && transactionsState.loading ? (
-                                    <AdminContentSkeleton rows={8} label="正在加载支付交易" />
-                                ) : transactionsState.error && transactionsState.data.length === 0 ? (
-                                    <AdminContentError title="支付交易加载失败" description={transactionsState.error} onRetry={() => void loadTransactions()} />
-                                ) : (
-                                    <TableSurface className="admin-payment-transactions-surface mt-0">
-                                        {transactionsState.error ? (
-                                            <div className="admin-membership-inline-error" role="status">
-                                                刷新失败，当前展示上次成功读取的数据：{transactionsState.error}
-                                            </div>
-                                        ) : null}
-                                        <Table
-                                            className="admin-payment-transactions-table"
-                                            rowKey="id"
-                                            loading={transactionsState.loading && transactionsState.data.length > 0}
-                                            dataSource={transactionsState.data}
-                                            locale={{ emptyText: <AdminTableEmpty title="暂无支付交易" description="当前没有微信或支付宝交易记录。" /> }}
-                                            size="small"
-                                            pagination={{ pageSize: 30, hideOnSinglePage: true }}
-                                            scroll={{ x: 1080 }}
-                                            columns={[
-                                                { title: "商户订单号", dataIndex: "merchantOrderNo", ellipsis: true },
-                                                { title: "渠道", render: (_, row) => <Tag className="admin-payment-provider-tag">{row.provider === "wechat" ? "微信" : "支付宝"}</Tag> },
-                                                { title: "用户", dataIndex: "userId", ellipsis: true },
-                                                { title: "金额", render: (_, row) => money(row.amountCents) },
-                                                {
-                                                    title: "状态",
-                                                    render: (_, row) => (
-                                                        <Tag className="admin-payment-status-tag" color={row.status === "paid" ? "green" : row.status === "failed" ? "red" : "gold"}>
-                                                            {paymentStatusLabel(row.status)}
-                                                        </Tag>
-                                                    ),
-                                                },
-                                                { title: "渠道流水", render: (_, row) => row.providerTradeNo || "—", ellipsis: true },
-                                                { title: "失败原因", render: (_, row) => row.failureReason || "—", ellipsis: true },
-                                                { title: "创建时间", render: (_, row) => new Date(row.createdAt).toLocaleString("zh-CN") },
-                                                {
-                                                    title: "操作",
-                                                    fixed: "right",
-                                                    width: 108,
-                                                    render: (_, row) => (
-                                                        <PaymentTransactionReconciliationAction
-                                                            transaction={row}
-                                                            loading={reconcilingTransactionIds.has(row.id)}
-                                                            onRequest={requestTransactionReconciliation}
-                                                        />
-                                                    ),
-                                                },
-                                            ]}
-                                        />
-                                    </TableSurface>
-                                ),
-                        },
-                        {
-                            key: "webhooks",
-                            label: "回调审计",
-                            children:
-                                !webhooksState.loaded && webhooksState.loading ? (
-                                    <AdminContentSkeleton rows={8} label="正在加载回调审计" />
-                                ) : webhooksState.error && webhooksState.data.length === 0 ? (
-                                    <AdminContentError title="回调审计加载失败" description={webhooksState.error} onRetry={() => void loadWebhooks()} />
-                                ) : (
-                                    <TableSurface className="admin-payment-webhooks-surface mt-0">
-                                        {webhooksState.error ? (
-                                            <div className="admin-membership-inline-error" role="status">
-                                                刷新失败，当前展示上次成功读取的数据：{webhooksState.error}
-                                            </div>
-                                        ) : null}
-                                        <Table
-                                            className="admin-payment-webhooks-table"
-                                            rowKey="id"
-                                            loading={webhooksState.loading && webhooksState.data.length > 0}
-                                            dataSource={webhooksState.data}
-                                            locale={{ emptyText: <AdminTableEmpty title="暂无回调事件" description="当前没有支付渠道回调审计记录。" /> }}
-                                            size="small"
-                                            pagination={{ pageSize: 30, hideOnSinglePage: true }}
-                                            scroll={{ x: 920 }}
-                                            columns={[
-                                                { title: "事件 ID", dataIndex: "providerEventId", ellipsis: true },
-                                                { title: "渠道", render: (_, row) => <Tag className="admin-webhook-provider-tag">{row.provider === "wechat" ? "微信" : "支付宝"}</Tag> },
-                                                { title: "交易 ID", render: (_, row) => row.transactionId || "—", ellipsis: true },
-                                                {
-                                                    title: "状态",
-                                                    render: (_, row) => (
-                                                        <Tag className="admin-webhook-status-tag" color={row.status === "processed" ? "green" : row.status === "rejected" ? "red" : "gold"}>
-                                                            {webhookStatusLabel(row.status)}
-                                                        </Tag>
-                                                    ),
-                                                },
-                                                { title: "失败原因", render: (_, row) => row.failureReason || "—", ellipsis: true },
-                                                { title: "接收时间", render: (_, row) => new Date(row.receivedAt).toLocaleString("zh-CN") },
-                                            ]}
-                                        />
-                                    </TableSurface>
-                                ),
-                        },
-                    ]}
-                />
+                <AdminDataLayout>
+                    <AdminMetricBand title="会员运营概览" description="集中查看会员商品与待处理订单事实。" queue={<span className="admin-membership-operation-note">支付到账只通过验签回调或渠道查单履约；异常交易请在支付交易中发起对账。</span>}>
+                        <AdminMetric label="套餐目录" value={plansState.loaded && !plansState.error ? `${plansState.data.length} 个套餐` : plansState.error ? "读取失败" : "等待读取"} detail="已登记的个人与团队套餐" />
+                        <AdminMetric label="待核款订单" value={ordersState.loaded && !ordersState.error ? `${pendingOrderCount} 笔待处理` : ordersState.error ? "读取失败" : "进入订单后读取"} detail="会员订单模块按需加载" />
+                    </AdminMetricBand>
+                    <AdminContentSection title="会员业务模块" description="按业务职责维护套餐、商城、订单、发票、交易与回调事实。">
+                        <Select className="admin-membership-mobile-section" aria-label="选择会员管理功能" value={activeSection} options={membershipSectionOptions} onChange={(value: MembershipSection) => setActiveSection(value)} />
+                        <Tabs
+                            className="admin-membership-tabs"
+                            activeKey={activeSection}
+                            onChange={(key) => setActiveSection(key as MembershipSection)}
+                            items={[
+                                {
+                                    key: "plans",
+                                    label: "套餐与权益",
+                                    children:
+                                        !plansState.loaded && plansState.loading ? (
+                                            <AdminContentSkeleton rows={6} label="正在加载套餐配置" />
+                                        ) : plansState.error && plansState.data.length === 0 ? (
+                                            <AdminContentError title="套餐配置加载失败" description={plansState.error} onRetry={() => void loadPlans()} />
+                                        ) : (
+                                            <TableSurface className="admin-membership-table-surface mt-0">
+                                                {plansState.error ? (
+                                                    <div className="admin-membership-inline-error" role="status">
+                                                        刷新失败，当前展示上次成功读取的数据：{plansState.error}
+                                                    </div>
+                                                ) : null}
+                                                <Table
+                                                    className="admin-membership-table"
+                                                    rowKey="id"
+                                                    loading={plansState.loading && plansState.data.length > 0}
+                                                    dataSource={plansState.data}
+                                                    locale={{ emptyText: <AdminTableEmpty title="暂无套餐配置" description="服务端尚未提供可运营的会员套餐。" /> }}
+                                                    pagination={false}
+                                                    size="small"
+                                                    columns={[
+                                                        {
+                                                            title: "套餐",
+                                                            width: 190,
+                                                            render: (_, row) => (
+                                                                <div className="admin-membership-plan-cell">
+                                                                    <strong className="admin-membership-plan-name">{row.name}</strong>
+                                                                    <span className="admin-membership-plan-meta">
+                                                                        {row.audience === "team" ? "团队套餐" : "个人套餐"} · {billingCycleLabel(row.billingCycle)}
+                                                                    </span>
+                                                                </div>
+                                                            ),
+                                                        },
+                                                        { title: "价格", width: 110, responsive: ["sm"], render: (_, row) => <span className="admin-membership-table-number is-price">{money(row.priceCents)}</span> },
+                                                        { title: "周期积分", width: 130, responsive: ["md"], render: (_, row) => <span className="admin-membership-table-number">{credits(row.creditsPerPeriod)}</span> },
+                                                        {
+                                                            title: "图片 / 视频并发",
+                                                            width: 140,
+                                                            responsive: ["lg"],
+                                                            render: (_, row) => (
+                                                                <span className="admin-membership-table-number">
+                                                                    {row.imageConcurrency} / {row.videoConcurrency}
+                                                                </span>
+                                                            ),
+                                                        },
+                                                        { title: "席位", width: 90, responsive: ["lg"], render: (_, row) => <span className="admin-membership-seat-count">{row.audience === "team" ? `${row.minSeats}–${row.maxSeats}` : "1"}</span> },
+                                                        {
+                                                            title: "状态",
+                                                            width: 80,
+                                                            responsive: ["sm"],
+                                                            render: (_, row) => (
+                                                                <Tag className="admin-membership-plan-status" color={row.enabled ? "green" : "default"}>
+                                                                    {row.enabled ? "上架" : "下架"}
+                                                                </Tag>
+                                                            ),
+                                                        },
+                                                        {
+                                                            title: "操作",
+                                                            width: 64,
+                                                            align: "center",
+                                                            render: (_, row) => (
+                                                                <Button
+                                                                    className="admin-membership-edit-button"
+                                                                    type="text"
+                                                                    icon={<SquarePen className="admin-membership-edit-icon size-4" />}
+                                                                    aria-label={`编辑${row.name}套餐`}
+                                                                    title="编辑套餐"
+                                                                    onClick={() => openPlan(row)}
+                                                                />
+                                                            ),
+                                                        },
+                                                    ]}
+                                                    scroll={{ x: "max-content" }}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                },
+                                {
+                                    key: "storefront",
+                                    label: "商城展示",
+                                    children: <MembershipStorefrontAdminPanel />,
+                                },
+                                {
+                                    key: "orders",
+                                    label: "会员订单",
+                                    children:
+                                        !ordersState.loaded && ordersState.loading ? (
+                                            <AdminContentSkeleton rows={8} label="正在加载会员订单" />
+                                        ) : ordersState.error && ordersState.data.length === 0 ? (
+                                            <AdminContentError title="会员订单加载失败" description={ordersState.error} onRetry={() => void loadOrders()} />
+                                        ) : (
+                                            <TableSurface className="admin-membership-orders-surface mt-0">
+                                                {ordersState.error ? (
+                                                    <div className="admin-membership-inline-error" role="status">
+                                                        刷新失败，当前展示上次成功读取的数据：{ordersState.error}
+                                                    </div>
+                                                ) : null}
+                                                <Table
+                                                    className="admin-membership-orders"
+                                                    rowKey="id"
+                                                    loading={ordersState.loading && ordersState.data.length > 0}
+                                                    dataSource={ordersState.data}
+                                                    locale={{ emptyText: <AdminTableEmpty title="暂无会员订单" description="当前没有会员购买或待核款记录。" /> }}
+                                                    size="small"
+                                                    scroll={{ x: 980 }}
+                                                    columns={[
+                                                        { title: "订单号", dataIndex: "orderNumber" },
+                                                        { title: "用户", dataIndex: "userId", ellipsis: true },
+                                                        { title: "金额", render: (_, row) => money(row.totalPriceCents) },
+                                                        { title: "席位", dataIndex: "seats" },
+                                                        {
+                                                            title: "状态",
+                                                            render: (_, row) => (
+                                                                <Tag className="admin-membership-order-status" color={row.status === "paid" ? "green" : row.status === "cancelled" ? "default" : row.status === "refunded" ? "blue" : "gold"}>
+                                                                    {{ pending: "待支付", paid: "已支付", cancelled: "已关闭", refunded: "退款状态待核对" }[row.status]}
+                                                                </Tag>
+                                                            ),
+                                                        },
+                                                        { title: "创建时间", render: (_, row) => new Date(row.createdAt).toLocaleString("zh-CN") },
+                                                        { title: "处理记录", render: (_, row) => row.resolutionNote || "—", ellipsis: true },
+                                                        {
+                                                            title: "操作",
+                                                            render: (_, row) =>
+                                                                row.status === "pending" ? (
+                                                                    <Button className="admin-membership-close-button" type="text" danger size="small" onClick={() => setClosing(row)}>
+                                                                        关闭
+                                                                    </Button>
+                                                                ) : (
+                                                                    "—"
+                                                                ),
+                                                        },
+                                                    ]}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                },
+                                {
+                                    key: "invoices",
+                                    label: "开票处理",
+                                    children: <InvoiceAdminPanel />,
+                                },
+                                {
+                                    key: "transactions",
+                                    label: "支付交易",
+                                    children:
+                                        !transactionsState.loaded && transactionsState.loading ? (
+                                            <AdminContentSkeleton rows={8} label="正在加载支付交易" />
+                                        ) : transactionsState.error && transactionsState.data.length === 0 ? (
+                                            <AdminContentError title="支付交易加载失败" description={transactionsState.error} onRetry={() => void loadTransactions()} />
+                                        ) : (
+                                            <TableSurface className="admin-payment-transactions-surface mt-0">
+                                                {transactionsState.error ? (
+                                                    <div className="admin-membership-inline-error" role="status">
+                                                        刷新失败，当前展示上次成功读取的数据：{transactionsState.error}
+                                                    </div>
+                                                ) : null}
+                                                <Table
+                                                    className="admin-payment-transactions-table"
+                                                    rowKey="id"
+                                                    loading={transactionsState.loading && transactionsState.data.length > 0}
+                                                    dataSource={transactionsState.data}
+                                                    locale={{ emptyText: <AdminTableEmpty title="暂无支付交易" description="当前没有微信或支付宝交易记录。" /> }}
+                                                    size="small"
+                                                    pagination={{ pageSize: 30, hideOnSinglePage: true }}
+                                                    scroll={{ x: 1080 }}
+                                                    columns={[
+                                                        { title: "商户订单号", dataIndex: "merchantOrderNo", ellipsis: true },
+                                                        { title: "渠道", render: (_, row) => <Tag className="admin-payment-provider-tag">{row.provider === "wechat" ? "微信" : "支付宝"}</Tag> },
+                                                        { title: "用户", dataIndex: "userId", ellipsis: true },
+                                                        { title: "金额", render: (_, row) => money(row.amountCents) },
+                                                        {
+                                                            title: "状态",
+                                                            render: (_, row) => (
+                                                                <Tag className="admin-payment-status-tag" color={row.status === "paid" ? "green" : row.status === "failed" ? "red" : "gold"}>
+                                                                    {paymentStatusLabel(row.status)}
+                                                                </Tag>
+                                                            ),
+                                                        },
+                                                        { title: "渠道流水", render: (_, row) => row.providerTradeNo || "—", ellipsis: true },
+                                                        { title: "失败原因", render: (_, row) => row.failureReason || "—", ellipsis: true },
+                                                        { title: "创建时间", render: (_, row) => new Date(row.createdAt).toLocaleString("zh-CN") },
+                                                        {
+                                                            title: "操作",
+                                                            fixed: "right",
+                                                            width: 108,
+                                                            render: (_, row) => <PaymentTransactionReconciliationAction transaction={row} loading={reconcilingTransactionIds.has(row.id)} onRequest={requestTransactionReconciliation} />,
+                                                        },
+                                                    ]}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                },
+                                {
+                                    key: "webhooks",
+                                    label: "回调审计",
+                                    children:
+                                        !webhooksState.loaded && webhooksState.loading ? (
+                                            <AdminContentSkeleton rows={8} label="正在加载回调审计" />
+                                        ) : webhooksState.error && webhooksState.data.length === 0 ? (
+                                            <AdminContentError title="回调审计加载失败" description={webhooksState.error} onRetry={() => void loadWebhooks()} />
+                                        ) : (
+                                            <TableSurface className="admin-payment-webhooks-surface mt-0">
+                                                {webhooksState.error ? (
+                                                    <div className="admin-membership-inline-error" role="status">
+                                                        刷新失败，当前展示上次成功读取的数据：{webhooksState.error}
+                                                    </div>
+                                                ) : null}
+                                                <Table
+                                                    className="admin-payment-webhooks-table"
+                                                    rowKey="id"
+                                                    loading={webhooksState.loading && webhooksState.data.length > 0}
+                                                    dataSource={webhooksState.data}
+                                                    locale={{ emptyText: <AdminTableEmpty title="暂无回调事件" description="当前没有支付渠道回调审计记录。" /> }}
+                                                    size="small"
+                                                    pagination={{ pageSize: 30, hideOnSinglePage: true }}
+                                                    scroll={{ x: 920 }}
+                                                    columns={[
+                                                        { title: "事件 ID", dataIndex: "providerEventId", ellipsis: true },
+                                                        { title: "渠道", render: (_, row) => <Tag className="admin-webhook-provider-tag">{row.provider === "wechat" ? "微信" : "支付宝"}</Tag> },
+                                                        { title: "交易 ID", render: (_, row) => row.transactionId || "—", ellipsis: true },
+                                                        {
+                                                            title: "状态",
+                                                            render: (_, row) => (
+                                                                <Tag className="admin-webhook-status-tag" color={row.status === "processed" ? "green" : row.status === "rejected" ? "red" : "gold"}>
+                                                                    {webhookStatusLabel(row.status)}
+                                                                </Tag>
+                                                            ),
+                                                        },
+                                                        { title: "失败原因", render: (_, row) => row.failureReason || "—", ellipsis: true },
+                                                        { title: "接收时间", render: (_, row) => new Date(row.receivedAt).toLocaleString("zh-CN") },
+                                                    ]}
+                                                />
+                                            </TableSurface>
+                                        ),
+                                },
+                            ]}
+                        />
+                    </AdminContentSection>
+                </AdminDataLayout>
             </div>
             <Modal
                 className="admin-operation-modal admin-membership-plan-modal workspace-ui-scope"
