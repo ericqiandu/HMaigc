@@ -4,6 +4,12 @@
 
 ## 未发布
 
+### 单一 Agent Runtime
+
+- 建立服务端单一主 Agent 的可恢复模型决策循环、通用交付验收、工具调用冻结、审批和只读画布事实读取；模型步骤与工具执行状态使用独立版本，不因刷新或重复提交重复消费。
+- 接通 `canvas.apply_ops` 确定性修改：个人画布所有者与团队 editor/manager 共用现有 `CanvasChange` revision CAS 和幂等事务，审批后冻结完整 patch，提交中断可跨进程恢复，revision 冲突和非法参数作为结构化工具失败回灌主 Agent。
+- Agent 模型调用继续复用既有 Task、BillingOrder、Provider 冻结和 Worker lease 商业链路；前端入口、生成工具、SSE 和旧 Agent 硬切仍按后续里程碑实施。
+
 ## v1.0.44 - 2026-08-14
 
 ### 生产启动修复

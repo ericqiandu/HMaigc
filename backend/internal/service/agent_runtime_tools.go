@@ -1,7 +1,13 @@
 package service
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -103,13 +109,17 @@ func (s *Service) CoordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		if loadErr != nil {
 			return nil, loadErr
 		}
-		if record.Status != agentruntime.ToolCallSucceeded {
+		if record.Status != agentruntime.ToolCallSucceeded && record.Status != agentruntime.ToolCallFailed {
 			return nil, errors.New("agent tool coordination facts conflict")
 		}
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	}
 	call := state.PendingToolCall
-	_, policy, err := s.frozenAgentToolCall(scope, call, agentruntime.ToolCallPending)
+	expectedStatus := agentruntime.ToolCallPending
+	if state.PendingToolStarted {
+		expectedStatus = agentruntime.ToolCallRunning
+	}
+	record, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +138,8 @@ func (s *Service) CoordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		if err = decodeAgentCanvasReadSelectionArguments(call.Arguments); err == nil {
 			output, err = executeAgentCanvasReadSelection(project, input.Selection)
 		}
+	case agentruntime.ToolCanvasApplyOps:
+		return s.coordinatePendingAgentCanvasMutation(scope, state, call, record)
 	default:
 		return nil, errors.New("agent tool executor is not connected")
 	}
@@ -222,4 +234,175 @@ func authorizeAgentToolScope(scope agentruntime.Scope, project *model.CanvasProj
 		}
 	}
 	return Forbidden("当前用户没有执行该 Agent 工具的画布权限")
+}
+
+type agentCanvasApplyOpsArguments struct {
+	BaseRevision int64               `json:"baseRevision"`
+	Patch        CanvasMutationPatch `json:"patch"`
+}
+
+type agentCanvasApplyOpsResult struct {
+	CanvasID          string `json:"canvasId"`
+	BaseRevision      int64  `json:"baseRevision"`
+	CommittedRevision int64  `json:"committedRevision"`
+	ClientMutationID  string `json:"clientMutationId"`
+}
+
+func decodeAgentCanvasApplyOpsArguments(raw json.RawMessage) (agentCanvasApplyOpsArguments, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var arguments agentCanvasApplyOpsArguments
+	if err := decoder.Decode(&arguments); err != nil {
+		return agentCanvasApplyOpsArguments{}, errors.New("agent canvas mutation arguments are invalid")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || arguments.BaseRevision < 0 {
+		return agentCanvasApplyOpsArguments{}, errors.New("agent canvas mutation arguments are invalid")
+	}
+	if err := validateCanvasMutationPatch(arguments.Patch); err != nil {
+		return agentCanvasApplyOpsArguments{}, err
+	}
+	return arguments, nil
+}
+
+func agentCanvasMutationID(idempotencyKey string) string {
+	digest := sha256.Sum256([]byte(idempotencyKey))
+	return "agent-" + hex.EncodeToString(digest[:])
+}
+
+func (s *Service) coordinatePendingAgentCanvasMutation(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	call *agentruntime.ToolCallDecision,
+	record *model.AgentToolCall,
+) (*AgentRuntimeProgress, error) {
+	arguments, err := decodeAgentCanvasApplyOpsArguments(call.Arguments)
+	if err != nil {
+		return s.resolvePendingAgentToolFailure(scope, state, call, "canvas_mutation_invalid")
+	}
+	if !state.PendingToolStarted {
+		started, beginErr := agentruntime.BeginToolExecution(state, agentruntime.ToolExecution{
+			ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		})
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		progress, commitErr := s.commitAgentRuntimeState(scope, state, started)
+		if commitErr != nil {
+			return nil, commitErr
+		}
+		state = progress.State
+		if state.Status != agentruntime.RunWaitingTool || state.PendingToolCall == nil ||
+			state.PendingToolCall.ToolCallID != call.ToolCallID || state.PendingToolCall.ActionVersion != call.ActionVersion ||
+			!state.PendingToolStarted {
+			completed, loadErr := s.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			if completed.Status != agentruntime.ToolCallSucceeded && completed.Status != agentruntime.ToolCallFailed {
+				return nil, errors.New("agent canvas mutation execution facts conflict")
+			}
+			return s.agentRuntimeProgressForCurrentState(scope, state)
+		}
+		record, _, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallRunning)
+		if err != nil {
+			return nil, err
+		}
+	}
+	mutation, err := s.CommitCanvasMutation(&model.User{ID: scope.ActorUserID}, scope.CanvasID, CanvasMutationRequest{
+		BaseRevision: arguments.BaseRevision, ClientMutationID: agentCanvasMutationID(record.IdempotencyKey), Patch: arguments.Patch,
+	})
+	if err != nil {
+		if failureCode := agentCanvasMutationFailureCode(err); failureCode != "" {
+			return s.resolvePendingAgentToolFailure(scope, state, call, failureCode)
+		}
+		return nil, err
+	}
+	output, err := json.Marshal(agentCanvasApplyOpsResult{
+		CanvasID: mutation.CanvasID, BaseRevision: arguments.BaseRevision,
+		CommittedRevision: mutation.Revision, ClientMutationID: mutation.ClientMutationID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	latest, err := s.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		return nil, err
+	}
+	if latest.Status != agentruntime.RunWaitingTool || latest.PendingToolCall == nil ||
+		latest.PendingToolCall.ToolCallID != call.ToolCallID || latest.PendingToolCall.ActionVersion != call.ActionVersion ||
+		!latest.PendingToolStarted {
+		completed, loadErr := s.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if completed.Status != agentruntime.ToolCallSucceeded && completed.Status != agentruntime.ToolCallFailed {
+			return nil, errors.New("agent canvas mutation completion facts conflict")
+		}
+		return s.agentRuntimeProgressForCurrentState(scope, latest)
+	}
+	resolved, err := agentruntime.ResolveTool(latest, agentruntime.ToolResolution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Succeeded: true, Output: output,
+	})
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.commitAgentRuntimeState(scope, latest, resolved)
+	if err != nil {
+		return nil, err
+	}
+	completed, err := s.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
+	if err != nil {
+		return nil, err
+	}
+	if completed.Status != agentruntime.ToolCallSucceeded {
+		return nil, errors.New("agent canvas mutation completion facts conflict")
+	}
+	return s.agentRuntimeProgressForCurrentState(scope, progress.State)
+}
+
+func agentCanvasMutationFailureCode(err error) string {
+	var conflictErr *CanvasMutationConflictError
+	if errors.As(err, &conflictErr) {
+		return conflictErr.Code
+	}
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		return ""
+	}
+	switch authErr.Status {
+	case http.StatusBadRequest:
+		return "canvas_mutation_invalid"
+	case http.StatusConflict:
+		return "canvas_revision_conflict"
+	default:
+		return ""
+	}
+}
+
+func (s *Service) resolvePendingAgentToolFailure(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	call *agentruntime.ToolCallDecision,
+	failureCode string,
+) (*AgentRuntimeProgress, error) {
+	resolved, err := agentruntime.ResolveTool(state, agentruntime.ToolResolution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: failureCode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.commitAgentRuntimeState(scope, state, resolved)
+	if err != nil {
+		return nil, err
+	}
+	recorded, err := s.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
+	if err != nil {
+		return nil, err
+	}
+	if recorded.Status != agentruntime.ToolCallFailed || recorded.ErrorCode != failureCode {
+		return nil, errors.New("agent canvas mutation failure facts conflict")
+	}
+	return s.agentRuntimeProgressForCurrentState(scope, progress.State)
 }

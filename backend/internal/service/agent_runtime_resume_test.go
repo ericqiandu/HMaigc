@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -214,6 +215,247 @@ func TestSubmitAgentToolApprovalRequiresExactFrozenIdentity(t *testing.T) {
 	}
 	if replayed.State.StateVersion != approved.State.StateVersion || replayed.State.Status != agentruntime.RunWaitingTool {
 		t.Fatalf("approval replay = %#v", replayed.State)
+	}
+}
+
+func TestCoordinatePendingAgentCanvasMutationCommitsFrozenPatchAndResumesModel(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply-title","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"agent-title","type":"text","data":{"text":"第一幕"}}]}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-agent-canvas-write", UserMessage: "在画布加入第一幕标题", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResumeAgentRuntime(scope); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := svc.SubmitAgentToolApproval(scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-apply-title", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.State.Status != agentruntime.RunWaitingTool {
+		t.Fatalf("approved state = %#v", approved.State)
+	}
+	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-apply-title", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.PendingToolCall != nil ||
+		progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded || progress.ModelTask == nil {
+		t.Fatalf("canvas mutation progress = %#v", progress)
+	}
+	resultJSON := string(progress.State.LastToolResult.Output)
+	if !strings.Contains(resultJSON, `"baseRevision":7`) || !strings.Contains(resultJSON, `"committedRevision":8`) ||
+		!strings.Contains(resultJSON, `"clientMutationId":"agent-`) {
+		t.Fatalf("canvas mutation result = %s", resultJSON)
+	}
+	project, err := svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 8 || !strings.Contains(project.PayloadJSON, `"id":"agent-title"`) {
+		t.Fatalf("committed canvas = %#v", project)
+	}
+	replayed, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-apply-title", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err = svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 8 || replayed.State.StateVersion != progress.State.StateVersion ||
+		replayed.ModelTask == nil || replayed.ModelTask.ID != progress.ModelTask.ID {
+		t.Fatalf("canvas mutation replay = %#v project=%#v", replayed, project)
+	}
+}
+
+func TestCoordinatePendingAgentCanvasMutationReportsRevisionConflictForModelRepair(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-stale-apply","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"stale-node","type":"text"}]}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-stale-agent-write", UserMessage: "增加节点", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResumeAgentRuntime(scope); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitAgentToolApproval(scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-stale-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	title := "协作者已更新"
+	if _, err := svc.CommitCanvasMutation(&model.User{ID: scope.ActorUserID}, scope.CanvasID, CanvasMutationRequest{
+		BaseRevision: 7, ClientMutationID: "external-collaborator-write",
+		Patch: CanvasMutationPatch{Document: &CanvasDocumentPatch{Title: &title}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-stale-apply", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.LastToolResult == nil ||
+		progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "canvas_revision_conflict" ||
+		progress.ModelTask == nil {
+		t.Fatalf("revision conflict progress = %#v", progress)
+	}
+	project, err := svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 8 || strings.Contains(project.PayloadJSON, `"id":"stale-node"`) {
+		t.Fatalf("stale mutation changed canvas = %#v", project)
+	}
+	replayed, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-stale-apply", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.State.StateVersion != progress.State.StateVersion || replayed.State.LastToolResult == nil ||
+		replayed.State.LastToolResult.ErrorCode != "canvas_revision_conflict" || replayed.ModelTask == nil ||
+		replayed.ModelTask.ID != progress.ModelTask.ID {
+		t.Fatalf("revision conflict replay = %#v", replayed)
+	}
+}
+
+func TestCoordinatePendingAgentCanvasMutationRecoversAfterCommittedCanvasBeforeToolResult(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-crash-recovery","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"recovered-node","type":"text"}]}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-agent-crash-recovery", UserMessage: "增加可恢复节点", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResumeAgentRuntime(scope); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitAgentToolApproval(scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-crash-recovery", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	callbackName := "test:fail-agent-tool-result-checkpoint"
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		checkpoint, ok := tx.Statement.Dest.(*model.AgentCheckpoint)
+		if ok && strings.Contains(checkpoint.StateJSON, `"lastToolResult"`) {
+			tx.AddError(errors.New("injected checkpoint failure after canvas commit"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, firstErr := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-crash-recovery", ActionVersion: 1,
+	})
+	if firstErr == nil || !strings.Contains(firstErr.Error(), "injected checkpoint failure") {
+		t.Fatalf("first coordination error = %v", firstErr)
+	}
+	if err := db.Callback().Create().Remove(callbackName); err != nil {
+		t.Fatal(err)
+	}
+	project, err := svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 8 || !strings.Contains(project.PayloadJSON, `"id":"recovered-node"`) {
+		t.Fatalf("canvas was not committed before interruption = %#v", project)
+	}
+	interrupted, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interrupted.Status != agentruntime.RunWaitingTool || !interrupted.PendingToolStarted {
+		t.Fatalf("interrupted runtime = %#v", interrupted)
+	}
+	recovered, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-crash-recovery", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err = svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 8 || recovered.State.LastToolResult == nil || !recovered.State.LastToolResult.Succeeded {
+		t.Fatalf("recovered coordination = %#v project=%#v", recovered, project)
+	}
+	var changes int64
+	if err := db.Model(&model.CanvasChange{}).Where("canvas_id = ?", scope.CanvasID).Count(&changes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if changes != 1 {
+		t.Fatalf("canvas changes after recovery = %d", changes)
+	}
+}
+
+func TestCoordinatePendingAgentCanvasMutationRejectsLegacyOpsShapeWithoutCompatibilityPath(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-legacy-ops","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"ops":[]}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-legacy-agent-ops", UserMessage: "修改画布", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResumeAgentRuntime(scope); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitAgentToolApproval(scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-legacy-ops", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-legacy-ops", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded ||
+		progress.State.LastToolResult.ErrorCode != "canvas_mutation_invalid" || progress.ModelTask == nil {
+		t.Fatalf("legacy shape progress = %#v", progress)
+	}
+	project, err := svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 7 {
+		t.Fatalf("legacy shape changed canvas revision = %d", project.Revision)
 	}
 }
 

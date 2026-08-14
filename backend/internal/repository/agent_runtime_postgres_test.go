@@ -376,6 +376,119 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	}
 }
 
+func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := openSecondAgentPostgresConnection(t, db)
+	firstRepo, secondRepo := New(db), New(secondDB)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, firstRepo, scope)
+	if _, err := firstRepo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: 1, UserMessage: "修改当前画布", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := firstRepo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+			Arguments: []byte(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"node-pg"}]}}`),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: "call-pg-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
+		ToolCallID: "call-pg-apply", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, approved.State, started, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Create(&model.CanvasProject{
+		ID: scope.CanvasID, UserID: scope.ActorUserID, Title: "before", Revision: 7,
+		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	clientMutationID := "agent-pg-recovery"
+	changePayload := `{"upsertNodes":[{"id":"node-pg"}]}`
+	firstCommit, err := firstRepo.CommitCanvasChange(
+		scope.CanvasID, "change-first", scope.ActorUserID, 7, clientMutationID, changePayload, time.Now().UTC(),
+		func(current *model.CanvasProject) (string, string, error) {
+			return `{"nodes":[{"id":"node-pg"}],"connections":[]}`, current.Title, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstCommit.Change.Revision != 8 {
+		t.Fatalf("first canvas commit = %#v", firstCommit)
+	}
+	replayed, err := secondRepo.CommitCanvasChange(
+		scope.CanvasID, "change-retry", scope.ActorUserID, 7, clientMutationID, changePayload, time.Now().UTC(),
+		func(current *model.CanvasProject) (string, string, error) {
+			t.Fatal("idempotent canvas replay called apply callback")
+			return "", "", nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Change.ID != firstCommit.Change.ID || replayed.Change.Revision != 8 {
+		t.Fatalf("replayed canvas commit = %#v", replayed)
+	}
+	resolved, err := agentruntime.ResolveTool(started.State, agentruntime.ToolResolution{
+		ToolCallID: "call-pg-apply", ActionVersion: 1, Succeeded: true,
+		Output: []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"committedRevision":8,"clientMutationId":"agent-pg-recovery"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := secondRepo.CommitAgentRuntimeTransition(scope, started.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := firstRepo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != agentruntime.RunRunning || loaded.LastToolResult == nil || !loaded.LastToolResult.Succeeded {
+		t.Fatalf("recovered runtime = %#v", loaded)
+	}
+	var changes int64
+	if err := db.Model(&model.CanvasChange{}).Where("canvas_id = ?", scope.CanvasID).Count(&changes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if changes != 1 {
+		t.Fatalf("canvas changes after PostgreSQL recovery = %d", changes)
+	}
+}
+
 func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {

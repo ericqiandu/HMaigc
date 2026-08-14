@@ -71,6 +71,7 @@ type AgentToolCall struct {
 	InputJSON         string                            `json:"-" gorm:"type:text;not null"`
 	OutputJSON        string                            `json:"-" gorm:"type:text;not null"`
 	ErrorCode         string                            `json:"errorCode,omitempty" gorm:"size:80;not null;default:''"`
+	StartedAt         *time.Time                        `json:"startedAt,omitempty"`
 	CreatedAt         time.Time                         `json:"createdAt"`
 	UpdatedAt         time.Time                         `json:"updatedAt"`
 }

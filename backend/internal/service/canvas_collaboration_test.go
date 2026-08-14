@@ -37,6 +37,37 @@ func createCollaborationTestCanvas(t *testing.T, db *gorm.DB, owner *model.User,
 	}
 }
 
+func TestPersonalCanvasOwnerUsesRevisionedMutationProtocol(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "personal-canvas-owner", "personal-canvas-owner@example.com")
+	other := createTeamTestUser(t, db, "personal-canvas-other", "personal-canvas-other@example.com")
+	createCollaborationTestCanvas(t, db, owner, "personal-revisioned-canvas")
+	title := "个人画布新标题"
+	request := CanvasMutationRequest{
+		BaseRevision: 0, ClientMutationID: "personal-owner-change",
+		Patch: CanvasMutationPatch{Document: &CanvasDocumentPatch{Title: &title}},
+	}
+	committed, err := svc.CommitCanvasMutation(owner, "personal-revisioned-canvas", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.Revision != 1 || committed.ActorUserID != owner.ID || committed.ClientMutationID != request.ClientMutationID {
+		t.Fatalf("personal canvas mutation = %#v", committed)
+	}
+	replayed, err := svc.CommitCanvasMutation(owner, "personal-revisioned-canvas", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Revision != 1 {
+		t.Fatalf("personal canvas replay = %#v", replayed)
+	}
+	if _, err := svc.CommitCanvasMutation(other, "personal-revisioned-canvas", CanvasMutationRequest{
+		BaseRevision: 1, ClientMutationID: "personal-intruder-change", Patch: request.Patch,
+	}); err == nil {
+		t.Fatal("another user mutated a personal canvas")
+	}
+}
+
 func TestCanvasCollaborationPermissionAndMutationLifecycle(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "canvas-owner", "canvas-owner@example.com")

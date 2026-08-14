@@ -10,17 +10,18 @@ import (
 const maxRuntimeSteps = 24
 
 type RuntimeState struct {
-	StateVersion     int                   `json:"stateVersion"`
-	StepNumber       int                   `json:"stepNumber"`
-	MaxSteps         int                   `json:"maxSteps"`
-	Status           RunStatus             `json:"status"`
-	ExpectedDelivery *ExpectedDelivery     `json:"expectedDelivery,omitempty"`
-	Verification     *DeliveryVerification `json:"verification,omitempty"`
-	PendingToolCall  *ToolCallDecision     `json:"pendingToolCall,omitempty"`
-	LastToolResult   *ToolResult           `json:"lastToolResult,omitempty"`
-	FinalMessage     string                `json:"finalMessage,omitempty"`
-	FailureCode      string                `json:"failureCode,omitempty"`
-	UserMessage      string                `json:"userMessage"`
+	StateVersion       int                   `json:"stateVersion"`
+	StepNumber         int                   `json:"stepNumber"`
+	MaxSteps           int                   `json:"maxSteps"`
+	Status             RunStatus             `json:"status"`
+	ExpectedDelivery   *ExpectedDelivery     `json:"expectedDelivery,omitempty"`
+	Verification       *DeliveryVerification `json:"verification,omitempty"`
+	PendingToolCall    *ToolCallDecision     `json:"pendingToolCall,omitempty"`
+	PendingToolStarted bool                  `json:"pendingToolStarted,omitempty"`
+	LastToolResult     *ToolResult           `json:"lastToolResult,omitempty"`
+	FinalMessage       string                `json:"finalMessage,omitempty"`
+	FailureCode        string                `json:"failureCode,omitempty"`
+	UserMessage        string                `json:"userMessage"`
 }
 
 type RuntimeInput struct {
@@ -39,6 +40,11 @@ type ToolResolution struct {
 	Succeeded     bool
 	Output        json.RawMessage
 	ErrorCode     string
+}
+
+type ToolExecution struct {
+	ToolCallID    string
+	ActionVersion int
 }
 
 type ToolResult struct {
@@ -75,6 +81,7 @@ func Fail(current RuntimeState, failureCode string) (RuntimeTransition, error) {
 	next.StepNumber++
 	next.Status = RunFailed
 	next.PendingToolCall = nil
+	next.PendingToolStarted = false
 	next.Verification = nil
 	next.FailureCode = failureCode
 	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
@@ -91,6 +98,7 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	next.StateVersion++
 	next.StepNumber++
 	next.PendingToolCall = nil
+	next.PendingToolStarted = false
 	next.LastToolResult = nil
 	next.Verification = nil
 	next.FailureCode = ""
@@ -161,11 +169,29 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 	next.StateVersion++
 	next.Status = RunRunning
 	next.PendingToolCall = nil
+	next.PendingToolStarted = false
 	next.LastToolResult = &ToolResult{
 		ToolCallID: resolution.ToolCallID, ActionVersion: resolution.ActionVersion,
 		Succeeded: resolution.Succeeded, Output: append(json.RawMessage(nil), output...), ErrorCode: resolution.ErrorCode,
 	}
 	return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunStatusChanged}}, nil
+}
+
+func BeginToolExecution(current RuntimeState, execution ToolExecution) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status != RunWaitingTool || current.PendingToolCall == nil || current.PendingToolStarted {
+		return RuntimeTransition{}, errors.New("agent runtime tool is not pending execution")
+	}
+	execution.ToolCallID = strings.TrimSpace(execution.ToolCallID)
+	if execution.ToolCallID != current.PendingToolCall.ToolCallID || execution.ActionVersion != current.PendingToolCall.ActionVersion {
+		return RuntimeTransition{}, errors.New("agent tool execution identity is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.PendingToolStarted = true
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolStarted}}, nil
 }
 
 func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTransition, error) {
@@ -188,6 +214,7 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 	case ToolApprovalRejected:
 		next.Status = RunRunning
 		next.PendingToolCall = nil
+		next.PendingToolStarted = false
 		next.LastToolResult = &ToolResult{
 			ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
@@ -217,6 +244,9 @@ func validateAdvancingState(state RuntimeState) error {
 func validateRuntimeState(state RuntimeState) error {
 	if state.StateVersion < 1 || state.StepNumber < 0 || state.MaxSteps < 1 || state.MaxSteps > maxRuntimeSteps || state.StepNumber > state.MaxSteps {
 		return errors.New("agent runtime state boundary is invalid")
+	}
+	if state.PendingToolStarted && (state.Status != RunWaitingTool || state.PendingToolCall == nil) {
+		return errors.New("agent runtime tool execution state is invalid")
 	}
 	if strings.TrimSpace(state.UserMessage) == "" || len(state.UserMessage) > 64*1024 {
 		return errors.New("agent runtime user message is invalid")

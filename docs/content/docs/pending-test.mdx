@@ -1,5 +1,11 @@
 # Pending tests
 
+## 单一 Agent Runtime
+
+- 在后续 Web 桥接完成后，从个人画布与团队 editor 画布分别批准一次 `canvas.apply_ops`，确认节点修改只增加一个 revision，刷新或重复提交不会产生第二条 CanvasChange；viewer、失效团队和跨画布调用必须显式拒绝。
+- 模拟画布已经提交、Runtime 工具结果事务尚未提交时重启进程，确认恢复后沿同一 `clientMutationId` 收敛到原 committed revision；协作者抢先提交导致 revision 过期时，主 Agent 应收到 `canvas_revision_conflict` 并重新读取画布，不覆盖他人修改。
+- 当前里程碑尚未开放 Agent HTTP/SSE 与前端入口，也未接通 `generation.submit` / `generation.wait`；这些能力不得在 UI 中提前显示为可用。
+
 ## 前后台视觉系统审查
 
 - 验证后台在 1440px 与超宽屏下有效内容不超过 1240px，表单、指标卡和运营表格不会随视口无限拉宽；1024px 以下仍按既有抽屉导航切换。

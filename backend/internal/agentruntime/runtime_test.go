@@ -1,6 +1,7 @@
 package agentruntime_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentruntime"
@@ -67,6 +68,36 @@ func TestResolveToolPreservesModelStepAndAdvancesStateVersion(t *testing.T) {
 	}
 	if transition.State.PendingToolCall != nil || transition.State.LastToolResult == nil || !transition.State.LastToolResult.Succeeded {
 		t.Fatalf("resolved tool facts = %#v", transition.State)
+	}
+}
+
+func TestBeginToolExecutionPersistsRunningInterruptionWithoutConsumingModelStep(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 3, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingTool,
+		UserMessage: "在画布中增加标题节点",
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasApplyOps,
+			ActionVersion: 2, Arguments: json.RawMessage(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"title-node"}]}}`),
+		},
+	}
+
+	transition, err := agentruntime.BeginToolExecution(current, agentruntime.ToolExecution{
+		ToolCallID: "call-apply", ActionVersion: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.StateVersion != 4 || transition.State.StepNumber != 1 ||
+		transition.State.Status != agentruntime.RunWaitingTool || !transition.State.PendingToolStarted {
+		t.Fatalf("started state = %#v", transition.State)
+	}
+	if len(transition.EventKinds) != 1 || transition.EventKinds[0] != agentruntime.EventToolStarted {
+		t.Fatalf("started events = %#v", transition.EventKinds)
+	}
+	if _, err := agentruntime.BeginToolExecution(transition.State, agentruntime.ToolExecution{
+		ToolCallID: "call-apply", ActionVersion: 2,
+	}); err == nil {
+		t.Fatal("already started tool execution was accepted as a new transition")
 	}
 }
 

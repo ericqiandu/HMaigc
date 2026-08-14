@@ -2,19 +2,21 @@
 
 ## Agent Runtime 作用域与恢复事实
 
-单一 Agent Runtime 当前建立服务端作用域、恢复事实与计费模型决策循环；工具调用只持久化为等待态，尚不执行真实工具副作用，也不开放前端入口。五张表职责如下：
+单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批与画布确定性修改；前端入口、生成工具和事件流仍未开放。五张表职责如下：
 
 - `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
 - `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态和最后事件序号；`thread_id + client_request_id` 唯一；
 - `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
 - `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
-- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一预留确定性工具幂等事实，后续里程碑才接入真实工具执行。
+- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。
 
 Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
 
 服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。
 
 Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。首次初始化会同时冻结用户原始请求、步数预算、默认模型记录、模型 Key 与工具 schema 版本，并原子创建首个事件和 checkpoint；不同事实复用同一 run 必须冲突。恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。
+
+工具状态转换使用独立 `state_version`，不会伪增模型 `step_number`。`canvas.read_state` 与 `canvas.read_selection` 每次执行都重新校验完整 Scope、当前权限和 revision；`canvas.apply_ops` 在批准后先持久化 `tool.started` 与 `started_at`，再以 `runId + toolCallId + actionVersion` 派生唯一 `clientMutationId`，复用 `CanvasChange` 的 revision CAS 与幂等事务。个人画布所有者和团队有效 editor/manager 走同一增量 mutation 协议；画布已提交但 Runtime 结果事务中断时，重试只读取同一 CanvasChange 并补齐工具结果，不重复增加 revision。revision 冲突和参数错误作为结构化工具失败回灌主 Agent，权限撤销或基础设施错误保持显式失败，不伪装成成功。
 
 每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version，worker 才能在请求边界解密 Key。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；Task 失败或决策非法会显式终结 run，repairable 结果只创建唯一下一步任务，工具决策停在 `waiting_tool`。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
 

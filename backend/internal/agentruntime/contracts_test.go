@@ -137,6 +137,7 @@ func TestEventKindSetRejectsUnknownValues(t *testing.T) {
 		agentruntime.EventToolCall,
 		agentruntime.EventApprovalRequired,
 		agentruntime.EventApprovalDecided,
+		agentruntime.EventToolStarted,
 		agentruntime.EventToolResult,
 		agentruntime.EventCheckpointSaved,
 		agentruntime.EventRunCompleted,

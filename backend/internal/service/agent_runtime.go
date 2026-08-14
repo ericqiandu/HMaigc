@@ -343,4 +343,5 @@ const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基�
 你每次只能返回一个 JSON 对象，禁止 Markdown 和额外文本：
 1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
 2. 调用工具：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read_state|canvas.read_selection|canvas.apply_ops|generation.submit|generation.wait","actionVersion":1,"arguments":{}}}
+canvas.apply_ops 的 arguments 结构是 {"baseRevision":0,"patch":{"upsertNodes":[],"deleteNodeIds":[],"upsertConnections":[],"deleteConnectionIds":[],"document":{}}}；baseRevision 必须是当前非负版本，只填写本次实际需要的 patch 字段，节点和连线必须包含稳定 id。
 只有真实事实足以满足交付时才能 final；需要画布或生成事实时必须先调用工具。`

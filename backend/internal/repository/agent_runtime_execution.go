@@ -267,6 +267,23 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 		}
 		return nil
 	}
+	if previous.Status == agentruntime.RunWaitingTool && next.Status == agentruntime.RunWaitingTool &&
+		previous.PendingToolCall != nil && next.PendingToolCall != nil &&
+		previous.PendingToolCall.ToolCallID == next.PendingToolCall.ToolCallID &&
+		previous.PendingToolCall.ActionVersion == next.PendingToolCall.ActionVersion &&
+		!previous.PendingToolStarted && next.PendingToolStarted {
+		result := db.Model(&model.AgentToolCall{}).
+			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status = ?", runID,
+				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallPending).
+			Updates(agentToolExecutionUpdates{Status: agentruntime.ToolCallRunning, StartedAt: now, UpdatedAt: now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrAgentRuntimeStepConflict
+		}
+		return nil
+	}
 	if previous.PendingToolCall == nil || next.LastToolResult == nil ||
 		next.LastToolResult.ToolCallID != previous.PendingToolCall.ToolCallID ||
 		next.LastToolResult.ActionVersion != previous.PendingToolCall.ActionVersion {
@@ -312,6 +329,12 @@ type agentToolApprovalUpdates struct {
 	ApprovalByUserID  string                            `gorm:"column:approval_by_user_id"`
 	ApprovalDecidedAt time.Time                         `gorm:"column:approval_decided_at"`
 	UpdatedAt         time.Time                         `gorm:"column:updated_at"`
+}
+
+type agentToolExecutionUpdates struct {
+	Status    agentruntime.ToolCallStatus `gorm:"column:status"`
+	StartedAt time.Time                   `gorm:"column:started_at"`
+	UpdatedAt time.Time                   `gorm:"column:updated_at"`
 }
 
 func approvalDecisionForToolResult(previous agentruntime.RuntimeState, next agentruntime.RuntimeState) agentruntime.ToolApprovalDecision {

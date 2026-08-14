@@ -122,6 +122,67 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 }
 
+func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: 1, UserMessage: "修改当前画布", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+			Arguments: []byte(`{"baseRevision":7,"patch":{"deleteNodeIds":["obsolete"]}}`),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: "call-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
+		ToolCallID: "call-apply", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, approved.State, started, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.AgentToolCallForScope(scope, "call-apply", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != agentruntime.ToolCallRunning || record.StartedAt == nil {
+		t.Fatalf("started tool record = %#v", record)
+	}
+	loaded, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.PendingToolStarted || loaded.StateVersion != started.State.StateVersion || loaded.StepNumber != approved.State.StepNumber {
+		t.Fatalf("started checkpoint = %#v", loaded)
+	}
+}
+
 func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
