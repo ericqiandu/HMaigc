@@ -1,5 +1,19 @@
 # 后端数据库
 
+## Agent Runtime 作用域与恢复事实
+
+单一 Agent Runtime 的第一阶段只建立服务端作用域与恢复事实，不开放模型循环、工具执行或前端入口。五张表职责如下：
+
+- `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
+- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态和最后事件序号；`thread_id + client_request_id` 唯一；
+- `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
+- `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
+- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一预留确定性工具幂等事实，后续里程碑才接入真实工具执行。
+
+Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
+
+服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。
+
 ## 历史资源 OSS 迁移
 
 `storage_migration_jobs` 保存一次由管理员创建的本地资源迁移快照与执行事实：

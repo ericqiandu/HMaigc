@@ -86,6 +86,11 @@ func Models() []any {
 		&model.CanvasProject{},
 		&model.CanvasCollaborator{},
 		&model.CanvasChange{},
+		&model.AgentThread{},
+		&model.AgentRun{},
+		&model.AgentRunEvent{},
+		&model.AgentCheckpoint{},
+		&model.AgentToolCall{},
 		&model.CanvasShare{},
 		&model.StoryboardPromptTemplate{},
 		&model.Announcement{},
@@ -174,6 +179,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := EnsureProviderIntegritySchema(tx); err != nil {
+			return err
+		}
+		if err := EnsureAgentRuntimeIntegritySchema(tx); err != nil {
 			return err
 		}
 		return EnsureWatermarkPolicyIntegritySchema(tx)
