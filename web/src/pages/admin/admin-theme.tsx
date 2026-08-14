@@ -26,7 +26,7 @@ export function AdminThemeProvider({ children }: { children: ReactNode }) {
         <div ref={setRootElement} className="admin-theme-root" data-admin-theme={settings.theme} data-admin-menu-theme={resolveAdminMenuTheme(settings)} style={rootStyle}>
             {rootElement ? (
                 <AdminThemeContext.Provider value={value}>
-                    <ConfigProvider locale={zhCN} getPopupContainer={getPortalContainer} theme={adminAntTheme(settings.theme, settings.colorPrimary)}>
+                    <ConfigProvider locale={zhCN} getPopupContainer={getPortalContainer} theme={createAdminAntTheme(settings.theme, settings.colorPrimary)}>
                         <App className="admin-theme-app">{children}</App>
                     </ConfigProvider>
                 </AdminThemeContext.Provider>
@@ -41,7 +41,7 @@ export function useAdminTheme() {
     return value;
 }
 
-function adminAntTheme(theme: AdminThemeName, colorPrimary: string): ThemeConfig {
+export function createAdminAntTheme(theme: AdminThemeName, colorPrimary: string): ThemeConfig {
     const dark = theme === "dark";
     const base = getAntThemeConfig(dark);
 
@@ -56,6 +56,8 @@ function adminAntTheme(theme: AdminThemeName, colorPrimary: string): ThemeConfig
             colorInfo: colorPrimary,
             colorLink: colorPrimary,
             colorPrimary,
+            colorSuccess: dark ? "#30d158" : "#166534",
+            colorTextPlaceholder: dark ? "rgba(255, 255, 255, 0.58)" : "#69707a",
         },
     };
 }

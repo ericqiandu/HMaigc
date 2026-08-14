@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 
+import { createAdminAntTheme } from "../src/pages/admin/admin-theme";
+
 const adminWorkspaceStyles = readFileSync(new URL("../src/pages/admin/admin-workspace.css", import.meta.url), "utf8");
 const adminArtStyles = readFileSync(new URL("../src/pages/admin/admin-art-layout.css", import.meta.url), "utf8");
 
@@ -17,6 +19,18 @@ function customProperty(source: string, selector: string, property: string): str
     });
     if (!value) throw new Error(`missing ${property} on ${selector}`);
     return value;
+}
+
+function declaration(source: string, selector: string, property: string): { important: boolean; value: string } {
+    let result: { important: boolean; value: string } | null = null;
+    postcss.parse(source).walkRules((rule) => {
+        if (!rule.selectors.includes(selector)) return;
+        rule.walkDecls(property, (item) => {
+            result = { important: item.important, value: item.value };
+        });
+    });
+    if (!result) throw new Error(`missing ${property} on ${selector}`);
+    return result;
 }
 
 function parseHex(value: string): Rgb {
@@ -57,6 +71,39 @@ describe("admin light theme contrast", () => {
 
         expect(contrastRatio(resolveColor(tertiaryValue, page), page)).toBeGreaterThanOrEqual(4.5);
         expect(contrastRatio(resolveColor(tertiaryValue, surface), surface)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    test("keeps neutral admin controls visibly separated from light content surfaces", () => {
+        const lightWorkspace = '.admin-theme-root[data-admin-theme="light"] .admin-workspace';
+        const surface = parseHex(customProperty(adminWorkspaceStyles, lightWorkspace, "--workspace-ui-surface"));
+        const controlBorder = parseHex(customProperty(adminWorkspaceStyles, lightWorkspace, "--workspace-ui-control-border"));
+
+        expect(contrastRatio(controlBorder, surface)).toBeGreaterThanOrEqual(1.5);
+    });
+
+    test("keeps light theme placeholders and success labels readable", () => {
+        const theme = createAdminAntTheme("light", "#2979C9");
+        const placeholder = parseHex(String(theme.token?.colorTextPlaceholder));
+        const success = parseHex(String(theme.token?.colorSuccess));
+        const lightWorkspace = '.admin-theme-root[data-admin-theme="light"] .admin-workspace';
+        const successSurface = parseHex(customProperty(adminWorkspaceStyles, lightWorkspace, "--workspace-ui-success-surface"));
+
+        expect(contrastRatio(placeholder, [255, 255, 255])).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(success, successSurface)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    test("keeps the semantic success surface above Ant Design generated tag styles", () => {
+        const successSurface = declaration(adminWorkspaceStyles, ".admin-workspace .ant-tag-success", "background-color");
+
+        expect(successSurface).toEqual({ important: true, value: "var(--workspace-ui-success-surface)" });
+    });
+
+    test("keeps the admin control border above legacy transparent toolbar overrides", () => {
+        const inputBoundary = declaration(adminWorkspaceStyles, ".admin-workspace :where(.ant-input-affix-wrapper)", "border-color");
+        const selectBoundary = declaration(adminWorkspaceStyles, ".admin-workspace :where(.ant-select-single)", "border-color");
+
+        expect(inputBoundary).toEqual({ important: true, value: "var(--workspace-ui-control-border)" });
+        expect(selectBoundary).toEqual({ important: true, value: "var(--workspace-ui-control-border)" });
     });
 
     test("keeps the direct mobile navigation color override readable in light mode", () => {

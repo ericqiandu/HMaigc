@@ -8,6 +8,8 @@
     --workspace-ui-surface: #ffffff;
     --workspace-ui-surface-subtle: #fafafa;
     --workspace-ui-control: #ffffff;
+    --workspace-ui-control-border: #c9ced6;
+    --workspace-ui-control-border-hover: #aeb5bf;
     --workspace-ui-control-hover: rgb(31 35 41 / 5%);
     --workspace-ui-text: #1f2329;
     --workspace-ui-text-secondary: #646a73;
@@ -15,6 +17,8 @@
     --workspace-ui-text-disabled: rgb(31 35 41 / 35%);
     --workspace-ui-divider: #e8eaed;
     --workspace-ui-accent: var(--admin-color-primary);
+    --workspace-ui-success: #166534;
+    --workspace-ui-success-surface: #f0f9f2;
     --admin-chart-primary: var(--admin-color-primary);
     --admin-chart-secondary: #0f766e;
     --admin-chart-warning: #b65c00;
@@ -43,6 +47,8 @@
     --workspace-ui-surface: #1b212b;
     --workspace-ui-surface-subtle: #111827;
     --workspace-ui-control: #1b212b;
+    --workspace-ui-control-border: rgb(255 255 255 / 14%);
+    --workspace-ui-control-border-hover: rgb(255 255 255 / 22%);
     --workspace-ui-control-hover: rgb(255 255 255 / 5%);
     --workspace-ui-text: rgb(255 255 255 / 96%);
     --workspace-ui-text-secondary: rgb(255 255 255 / 72%);
@@ -50,6 +56,8 @@
     --workspace-ui-text-disabled: rgb(255 255 255 / 38%);
     --workspace-ui-divider: rgb(255 255 255 / 8%);
     --workspace-ui-accent: var(--admin-color-primary);
+    --workspace-ui-success: #30d158;
+    --workspace-ui-success-surface: rgb(48 209 88 / 12%);
     --admin-chart-primary: var(--admin-color-primary);
     --admin-chart-secondary: #5eead4;
     --admin-chart-warning: #ff9f0a;
@@ -612,14 +620,14 @@
 
     .admin-workspace :where(.ant-btn-default:not(:disabled)),
     .admin-workspace .admin-page-actions :where(.ant-btn-primary:not(:disabled)) {
-        border-color: transparent !important;
+        border-color: var(--workspace-ui-control-border) !important;
         background: var(--workspace-ui-control) !important;
         color: var(--workspace-ui-text) !important;
     }
 
     .admin-workspace :where(.ant-btn-default:not(:disabled):hover),
     .admin-workspace .admin-page-actions :where(.ant-btn-primary:not(:disabled):hover) {
-        border-color: transparent !important;
+        border-color: var(--workspace-ui-control-border-hover) !important;
         background: var(--workspace-ui-control-hover) !important;
         color: var(--workspace-ui-text) !important;
     }
@@ -640,9 +648,10 @@
     .admin-workspace :where(.ant-input-affix-wrapper),
     .admin-workspace :where(.ant-input-number),
     .admin-workspace :where(.ant-picker),
+    .admin-workspace :where(.ant-select-single),
     .admin-workspace :where(.ant-select-single .ant-select-selector) {
         min-height: var(--workspace-ui-control-height) !important;
-        border-color: transparent;
+        border-color: var(--workspace-ui-control-border) !important;
         border-radius: var(--workspace-ui-radius-control);
         background: var(--workspace-ui-control);
         box-shadow: none;
@@ -653,16 +662,18 @@
     .admin-workspace :where(.ant-input-affix-wrapper:hover),
     .admin-workspace :where(.ant-input-number:hover),
     .admin-workspace :where(.ant-picker:hover),
+    .admin-workspace :where(.ant-select-single:hover),
     .admin-workspace :where(.ant-select-single:hover .ant-select-selector) {
-        border-color: transparent;
+        border-color: var(--workspace-ui-control-border-hover) !important;
         background: var(--workspace-ui-control-hover);
     }
 
     .admin-workspace :where(.ant-input-affix-wrapper-focused),
     .admin-workspace :where(.ant-input-number-focused),
     .admin-workspace :where(.ant-picker-focused),
+    .admin-workspace :where(.ant-select-focused),
     .admin-workspace :where(.ant-select-focused .ant-select-selector) {
-        border-color: var(--workspace-ui-accent);
+        border-color: var(--workspace-ui-accent) !important;
         background: var(--workspace-ui-control);
         box-shadow: 0 0 0 2px var(--workspace-ui-focus);
     }
@@ -2564,6 +2575,11 @@
         border-radius: 5px;
         font-size: 11px;
         line-height: 20px;
+    }
+
+    .admin-workspace .ant-tag-success {
+        background-color: var(--workspace-ui-success-surface) !important;
+        color: var(--workspace-ui-success) !important;
     }
 
     .admin-workspace .admin-form-actions {

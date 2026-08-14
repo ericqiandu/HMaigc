@@ -11,6 +11,8 @@
     --workspace-ui-text-disabled: var(--text-placeholder);
     --workspace-ui-divider: var(--border-light);
     --workspace-ui-control: var(--bg-surface);
+    --workspace-ui-control-border: var(--border-default);
+    --workspace-ui-control-border-hover: var(--border-active);
     --workspace-ui-control-hover: var(--bg-hover);
     --workspace-ui-accent: var(--brand-primary);
     --workspace-ui-focus: color-mix(in srgb, var(--brand-primary) 32%, transparent);
