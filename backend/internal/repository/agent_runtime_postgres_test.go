@@ -293,6 +293,66 @@ func TestPostgresAgentRuntimeTransitionCASAcrossConnections(t *testing.T) {
 	}
 }
 
+func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := openSecondAgentPostgresConnection(t, db)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, New(db), scope)
+	input := InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "agent-model-record", ModelKey: "gpt-5.5",
+		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取画布并给出下一步", Now: time.Now().UTC(),
+	}
+	start := make(chan struct{})
+	results := make(chan *InitializedAgentRun, 2)
+	errs := make(chan error, 2)
+	for _, candidate := range []*Repository{New(db), New(secondDB)} {
+		go func(repo *Repository) {
+			<-start
+			result, err := repo.InitializeAgentRun(input)
+			results <- result
+			errs <- err
+		}(candidate)
+	}
+	close(start)
+	created := 0
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+		result := <-results
+		if result == nil || result.Run.ModelRecordID != input.ModelRecordID || result.Run.ModelKey != input.ModelKey || result.Run.MaxSteps != input.MaxSteps {
+			t.Fatalf("PostgreSQL initialization result = %#v", result)
+		}
+		if result.Created {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("PostgreSQL initialization created=%d", created)
+	}
+	var eventCount int64
+	var checkpointCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 || checkpointCount != 1 {
+		t.Fatalf("PostgreSQL initialization facts: events=%d checkpoints=%d", eventCount, checkpointCount)
+	}
+	input.ModelKey = "different-model"
+	if _, err := New(secondDB).InitializeAgentRun(input); !errors.Is(err, ErrAgentRuntimeInitializationConflict) {
+		t.Fatalf("PostgreSQL conflicting replay = %v", err)
+	}
+}
+
 func openSecondAgentPostgresConnection(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
 	dialector, ok := db.Dialector.(*postgresdriver.Dialector)

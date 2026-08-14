@@ -1,6 +1,9 @@
 package agentruntime
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 const maxRuntimeSteps = 24
 
@@ -14,6 +17,7 @@ type RuntimeState struct {
 	PendingToolCall  *ToolCallDecision     `json:"pendingToolCall,omitempty"`
 	FinalMessage     string                `json:"finalMessage,omitempty"`
 	FailureCode      string                `json:"failureCode,omitempty"`
+	UserMessage      string                `json:"userMessage"`
 }
 
 type RuntimeInput struct {
@@ -24,6 +28,24 @@ type RuntimeInput struct {
 type RuntimeTransition struct {
 	State      RuntimeState
 	EventKinds []EventKind
+}
+
+func Fail(current RuntimeState, failureCode string) (RuntimeTransition, error) {
+	if err := validateAdvancingState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	failureCode = strings.TrimSpace(failureCode)
+	if !validFailureCode(failureCode) {
+		return RuntimeTransition{}, errors.New("agent runtime failure code is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.StepNumber++
+	next.Status = RunFailed
+	next.PendingToolCall = nil
+	next.Verification = nil
+	next.FailureCode = failureCode
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
 }
 
 func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error) {
@@ -76,8 +98,23 @@ func validateAdvancingState(state RuntimeState) error {
 	if state.StateVersion != state.StepNumber+1 || state.StepNumber < 0 || state.MaxSteps < 1 || state.MaxSteps > maxRuntimeSteps || state.StepNumber >= state.MaxSteps {
 		return errors.New("agent runtime state boundary is invalid")
 	}
+	if strings.TrimSpace(state.UserMessage) == "" || len(state.UserMessage) > 64*1024 {
+		return errors.New("agent runtime user message is invalid")
+	}
 	if state.Status != RunQueued && state.Status != RunRunning {
 		return errors.New("agent runtime state is not advanceable")
 	}
 	return nil
+}
+
+func validFailureCode(value string) bool {
+	if value == "" || len(value) > 80 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
+			return false
+		}
+	}
+	return true
 }

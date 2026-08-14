@@ -1058,6 +1058,13 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
+	if task.Type == agentRuntimeModelTaskType {
+		text, err := s.processAgentRuntimeModelText(ctx, task)
+		if err != nil {
+			return nil, nil, err
+		}
+		return map[string]interface{}{"mode": "text", "text": text}, nil, nil
+	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)
 	}

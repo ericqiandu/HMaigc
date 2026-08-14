@@ -2,7 +2,7 @@
 
 ## Agent Runtime 作用域与恢复事实
 
-单一 Agent Runtime 的第一阶段只建立服务端作用域与恢复事实，不开放模型循环、工具执行或前端入口。五张表职责如下：
+单一 Agent Runtime 当前建立服务端作用域、恢复事实与计费模型决策循环；工具调用只持久化为等待态，尚不执行真实工具副作用，也不开放前端入口。五张表职责如下：
 
 - `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
 - `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态和最后事件序号；`thread_id + client_request_id` 唯一；
@@ -14,7 +14,9 @@ Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、
 
 服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。
 
-Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。模型语义决策与通用交付验收已经独立于数据库和供应商协议；默认 Agent 模型网关必须复用既有计费任务链，禁止以普通 HTTP 请求绕过积分、审计或模型冻结事实。
+Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。首次初始化会同时冻结用户原始请求、步数预算、默认模型记录、模型 Key 与工具 schema 版本，并原子创建首个事件和 checkpoint；不同事实复用同一 run 必须冲突。恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。
+
+每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version，worker 才能在请求边界解密 Key。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；Task 失败或决策非法会显式终结 run，repairable 结果只创建唯一下一步任务，工具决策停在 `waiting_tool`。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
 
 ## 历史资源 OSS 迁移
 

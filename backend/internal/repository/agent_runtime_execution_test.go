@@ -12,6 +12,59 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	input := InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-record-1", ModelKey: "gpt-5.5",
+		MaxSteps: 4, ToolSchemaVersion: 1, UserMessage: "请根据当前画布继续完成任务", Now: now,
+	}
+	initialized, err := repo.InitializeAgentRun(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !initialized.Created || initialized.Run.ModelRecordID != input.ModelRecordID || initialized.Run.ModelKey != input.ModelKey || initialized.Run.MaxSteps != input.MaxSteps {
+		t.Fatalf("initialized run = %#v", initialized)
+	}
+	loaded, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StateVersion != 1 || loaded.StepNumber != 0 || loaded.Status != agentruntime.RunQueued || loaded.UserMessage != input.UserMessage {
+		t.Fatalf("initial checkpoint = %#v", loaded)
+	}
+	replayed, err := repo.InitializeAgentRun(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Created {
+		t.Fatalf("initialization replay created facts = %#v", replayed)
+	}
+	var eventCount, checkpointCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 || checkpointCount != 1 {
+		t.Fatalf("initial facts duplicated: events=%d checkpoints=%d", eventCount, checkpointCount)
+	}
+
+	conflict := input
+	conflict.ModelKey = "deepseek-v4-pro"
+	if _, err := repo.InitializeAgentRun(conflict); !errors.Is(err, ErrAgentRuntimeInitializationConflict) {
+		t.Fatalf("different model replay error = %v", err)
+	}
+	conflict = input
+	conflict.UserMessage = "另一个用户请求"
+	if _, err := repo.InitializeAgentRun(conflict); !errors.Is(err, ErrAgentRuntimeInitializationConflict) {
+		t.Fatalf("different user message replay error = %v", err)
+	}
+}
+
 func TestCommitAgentRuntimeTransitionPersistsRunEventsAndCheckpointAtomically(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
