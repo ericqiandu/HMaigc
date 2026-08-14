@@ -246,6 +246,53 @@ func TestPostgresAgentEventSequenceAcrossConnections(t *testing.T) {
 	}
 }
 
+func TestPostgresAgentRuntimeTransitionCASAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := openSecondAgentPostgresConnection(t, db)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, New(db), scope)
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("max_steps", 3).Error; err != nil {
+		t.Fatal(err)
+	}
+	transition := agentruntime.RuntimeTransition{State: agentruntime.RuntimeState{StateVersion: 2, StepNumber: 1, MaxSteps: 3, Status: agentruntime.RunRunning}, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, candidate := range []*Repository{New(db), New(secondDB)} {
+		go func(repo *Repository) {
+			<-start
+			errs <- repo.CommitAgentRuntimeTransition(scope, 0, transition, time.Now().UTC())
+		}(candidate)
+	}
+	close(start)
+	success, conflict := 0, 0
+	for range 2 {
+		err := <-errs
+		if err == nil {
+			success++
+		} else if errors.Is(err, ErrAgentRuntimeStepConflict) {
+			conflict++
+		} else {
+			t.Fatal(err)
+		}
+	}
+	if success != 1 || conflict != 1 {
+		t.Fatalf("PostgreSQL transition CAS: success=%d conflict=%d", success, conflict)
+	}
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.StepNumber != 1 || run.LastEventSequence != 1 {
+		t.Fatalf("PostgreSQL transition facts = %#v", run)
+	}
+}
+
 func openSecondAgentPostgresConnection(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
 	dialector, ok := db.Dialector.(*postgresdriver.Dialector)

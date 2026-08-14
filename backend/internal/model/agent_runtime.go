@@ -25,6 +25,11 @@ type AgentRun struct {
 	ClientRequestID   string                 `json:"clientRequestId" gorm:"size:120;not null"`
 	Status            agentruntime.RunStatus `json:"status" gorm:"size:32;not null"`
 	LastEventSequence int64                  `json:"lastEventSequence" gorm:"not null;default:0"`
+	StepNumber        int                    `json:"stepNumber" gorm:"not null;default:0"`
+	MaxSteps          int                    `json:"maxSteps" gorm:"not null;default:0"`
+	ModelRecordID     string                 `json:"modelRecordId" gorm:"size:80;not null;default:''"`
+	ModelKey          string                 `json:"modelKey" gorm:"size:120;not null;default:''"`
+	ToolSchemaVersion int                    `json:"toolSchemaVersion" gorm:"not null;default:0"`
 	CreatedAt         time.Time              `json:"createdAt"`
 	UpdatedAt         time.Time              `json:"updatedAt"`
 	CompletedAt       *time.Time             `json:"completedAt,omitempty"`

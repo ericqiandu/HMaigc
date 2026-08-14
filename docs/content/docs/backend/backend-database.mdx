@@ -14,6 +14,8 @@ Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、
 
 服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。
 
+Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。模型语义决策与通用交付验收已经独立于数据库和供应商协议；默认 Agent 模型网关必须复用既有计费任务链，禁止以普通 HTTP 请求绕过积分、审计或模型冻结事实。
+
 ## 历史资源 OSS 迁移
 
 `storage_migration_jobs` 保存一次由管理员创建的本地资源迁移快照与执行事实：
