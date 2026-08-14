@@ -1,12 +1,13 @@
 import { App, Button, Input, InputNumber, Modal, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Ban, Coins, Gift, RefreshCw, Save, ShoppingBag, UserPlus, UsersRound } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Ban, RefreshCw, Save } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBlocker } from "react-router";
 
 import { disqualifyAdminReferral, getAdminReferralProgram, updateAdminReferralProgram, updateAdminReferralRule, type AdminReferralProgramData, type ReferralInvitation, type ReferralRule } from "@/services/api/referral";
+import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
-import { AdminContentError, AdminContentSkeleton, AdminTableEmpty, SettingsSectionCard } from "../components/admin-ui";
+import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "../components/admin-ui";
 import { PaginationBar } from "@/components/layout/workspace-page";
 
 type RuleDraft = {
@@ -243,101 +244,106 @@ export default function ReferralProgramPage() {
             {loadError ? <AdminContentError title={data ? "邀请运营数据刷新失败" : "邀请运营数据读取失败"} description={loadError} onRetry={() => void load(page)} /> : null}
             {data ? (
                 <div className="referral-admin-content">
-                    <section className="referral-admin-overview" aria-label="邀请活动概览">
-                        <AdminMetric icon={<UsersRound className="size-4" />} label="邀请注册关系" value={data.summary.registeredCount.toLocaleString("zh-CN")} />
-                        <AdminMetric icon={<ShoppingBag className="size-4" />} label="已触发首购" value={data.summary.purchasedCount.toLocaleString("zh-CN")} />
-                        <AdminMetric icon={<Coins className="size-4" />} label="累计发放积分" value={formatCredits(data.summary.grantedTotalMicrocredits)} />
-                    </section>
+                    <AdminDataLayout>
+                        <AdminMetricBand title="邀请活动概览" description="注册绑定、首购转化与已发放奖励的真实累计事实">
+                            <AdminMetric label="邀请注册关系" value={data.summary.registeredCount.toLocaleString("zh-CN")} />
+                            <AdminMetric label="已触发首购" value={data.summary.purchasedCount.toLocaleString("zh-CN")} />
+                            <AdminMetric label="累计发放积分" value={formatCredits(data.summary.grantedTotalMicrocredits)} />
+                        </AdminMetricBand>
 
-                    <SettingsSectionCard
-                        icon={<Gift className="size-4" />}
-                        title="活动状态"
-                        description="关闭后不再接受新邀请码绑定；已绑定关系与历史奖励保留。重新开放前必须完成全部个人付费套餐规则。"
-                        status={{ label: data.program.enabled ? "开放中" : "未开放", color: data.program.enabled ? "success" : "default" }}
-                    >
-                        <div className="referral-admin-program">
-                            <div className="referral-admin-program-copy">
-                                <div className="referral-admin-program-title">允许新用户通过邀请码建立关系</div>
-                                <div className="referral-admin-program-note">邀请码只在首次注册时生效，绑定后不可更换。</div>
+                        <AdminContentSection
+                            title="活动配置"
+                            description="关闭后不再接受新邀请码绑定；已绑定关系与历史奖励保留。"
+                            actions={<span className={`referral-admin-section-status ${data.program.enabled ? "is-active" : ""}`}>{data.program.enabled ? "开放中" : "未开放"}</span>}
+                        >
+                            <div className="referral-admin-program">
+                                <div className="referral-admin-program-copy">
+                                    <div className="referral-admin-program-title">允许新用户通过邀请码建立关系</div>
+                                    <div className="referral-admin-program-note">邀请码只在首次注册时生效，绑定后不可更换；重新开放前必须完成全部个人付费套餐规则。</div>
+                                </div>
+                                <Switch className="referral-admin-program-switch" checked={data.program.enabled} loading={savingProgram} onChange={(checked) => void toggleProgram(checked)} aria-label="开放邀请活动" />
                             </div>
-                            <Switch className="referral-admin-program-switch" checked={data.program.enabled} loading={savingProgram} onChange={(checked) => void toggleProgram(checked)} aria-label="开放邀请活动" />
-                        </div>
-                    </SettingsSectionCard>
+                        </AdminContentSection>
 
-                    <SettingsSectionCard
-                        icon={<Coins className="size-4" />}
-                        title="套餐奖励规则"
-                        description="分别配置好友与邀请人的长期积分。规则按实际购买套餐结算，团队会员不参与。"
-                        status={hasDirtyRules ? "有未保存修改" : `${data.rules.filter((rule) => rule.enabled).length}/${data.rules.length} 已启用`}
-                    >
-                        <div className="referral-admin-rules divide-y divide-border/55">
-                            {data.rules.map((rule) => {
-                                const draft = drafts[rule.membershipPlanId] || { inviterCredits: 0, inviteeCredits: 0, enabled: false };
-                                const dirty = ruleDraftChanged(rule, draft);
-                                return (
-                                    <div key={rule.membershipPlanId} className="referral-admin-rule">
-                                        <div className="referral-admin-rule-plan min-w-0">
-                                            <div className="referral-admin-rule-name truncate text-sm font-medium">
-                                                {rule.planName} · {cycleLabel(rule.billingCycle)}
+                        <AdminContentSection
+                            title="套餐奖励"
+                            description="分别配置好友与邀请人的长期积分。规则按实际购买套餐结算，团队会员不参与。"
+                            actions={<span className={`referral-admin-section-status ${hasDirtyRules ? "is-dirty" : ""}`}>{hasDirtyRules ? "有未保存修改" : `${data.rules.filter((rule) => rule.enabled).length}/${data.rules.length} 已启用`}</span>}
+                        >
+                            <div className="referral-admin-rules divide-y divide-border/55">
+                                {data.rules.map((rule) => {
+                                    const draft = drafts[rule.membershipPlanId] || { inviterCredits: 0, inviteeCredits: 0, enabled: false };
+                                    const dirty = ruleDraftChanged(rule, draft);
+                                    return (
+                                        <div key={rule.membershipPlanId} className="referral-admin-rule">
+                                            <div className="referral-admin-rule-plan min-w-0">
+                                                <div className="referral-admin-rule-name truncate text-sm font-medium">
+                                                    {rule.planName} · {cycleLabel(rule.billingCycle)}
+                                                </div>
+                                                <div className="referral-admin-rule-code mt-1 truncate text-xs text-foreground/45">{rule.planCode}</div>
                                             </div>
-                                            <div className="referral-admin-rule-code mt-1 truncate text-xs text-foreground/45">{rule.planCode}</div>
+                                            <label className="referral-admin-rule-field">
+                                                <span className="referral-admin-rule-label mb-1 block text-xs text-foreground/55">好友奖励积分</span>
+                                                <InputNumber
+                                                    className="referral-admin-rule-input w-full"
+                                                    min={0}
+                                                    max={10_000_000}
+                                                    precision={0}
+                                                    value={draft.inviteeCredits}
+                                                    onChange={(value) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, inviteeCredits: value || 0 } }))}
+                                                />
+                                            </label>
+                                            <label className="referral-admin-rule-field">
+                                                <span className="referral-admin-rule-label mb-1 block text-xs text-foreground/55">邀请人奖励积分</span>
+                                                <InputNumber
+                                                    className="referral-admin-rule-input w-full"
+                                                    min={0}
+                                                    max={10_000_000}
+                                                    precision={0}
+                                                    value={draft.inviterCredits}
+                                                    onChange={(value) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, inviterCredits: value || 0 } }))}
+                                                />
+                                            </label>
+                                            <div className="referral-admin-rule-enabled flex items-center gap-2">
+                                                <Switch
+                                                    className="referral-admin-rule-switch"
+                                                    size="small"
+                                                    checked={draft.enabled}
+                                                    onChange={(checked) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, enabled: checked } }))}
+                                                />
+                                                <span className="referral-admin-rule-enabled-label text-xs text-foreground/55">{draft.enabled ? "启用" : "停用"}</span>
+                                            </div>
+                                            <Button
+                                                className="referral-admin-rule-save"
+                                                type={dirty ? "primary" : "default"}
+                                                icon={<Save className="size-3.5" />}
+                                                disabled={!dirty || Boolean(savingPlanId)}
+                                                loading={savingPlanId === rule.membershipPlanId}
+                                                onClick={() => void saveRule(rule)}
+                                            >
+                                                {dirty ? "保存" : "已保存"}
+                                            </Button>
                                         </div>
-                                        <label className="referral-admin-rule-field">
-                                            <span className="referral-admin-rule-label mb-1 block text-xs text-foreground/55">好友奖励积分</span>
-                                            <InputNumber
-                                                className="referral-admin-rule-input w-full"
-                                                min={0}
-                                                max={10_000_000}
-                                                precision={0}
-                                                value={draft.inviteeCredits}
-                                                onChange={(value) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, inviteeCredits: value || 0 } }))}
-                                            />
-                                        </label>
-                                        <label className="referral-admin-rule-field">
-                                            <span className="referral-admin-rule-label mb-1 block text-xs text-foreground/55">邀请人奖励积分</span>
-                                            <InputNumber
-                                                className="referral-admin-rule-input w-full"
-                                                min={0}
-                                                max={10_000_000}
-                                                precision={0}
-                                                value={draft.inviterCredits}
-                                                onChange={(value) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, inviterCredits: value || 0 } }))}
-                                            />
-                                        </label>
-                                        <div className="referral-admin-rule-enabled flex items-center gap-2">
-                                            <Switch className="referral-admin-rule-switch" size="small" checked={draft.enabled} onChange={(checked) => setDrafts((current) => ({ ...current, [rule.membershipPlanId]: { ...draft, enabled: checked } }))} />
-                                            <span className="referral-admin-rule-enabled-label text-xs text-foreground/55">{draft.enabled ? "启用" : "停用"}</span>
-                                        </div>
-                                        <Button
-                                            className="referral-admin-rule-save"
-                                            type={dirty ? "primary" : "default"}
-                                            icon={<Save className="size-3.5" />}
-                                            disabled={!dirty || Boolean(savingPlanId)}
-                                            loading={savingPlanId === rule.membershipPlanId}
-                                            onClick={() => void saveRule(rule)}
-                                        >
-                                            {dirty ? "保存" : "已保存"}
-                                        </Button>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </SettingsSectionCard>
+                                    );
+                                })}
+                            </div>
+                        </AdminContentSection>
 
-                    <SettingsSectionCard icon={<UserPlus className="size-4" />} title="邀请关系" description="查看绑定、首购和异常资格。绑定关系本身不可删除或改绑。" status={`${data.total.toLocaleString("zh-CN")} 条关系`}>
-                        <Table<ReferralInvitation>
-                            className="referral-admin-table app-data-table"
-                            rowKey="id"
-                            size="middle"
-                            loading={loading}
-                            columns={columns}
-                            dataSource={data.invites}
-                            pagination={false}
-                            scroll={{ x: 980 }}
-                            locale={{ emptyText: <AdminTableEmpty compact title="暂无邀请关系" description="用户绑定邀请关系后，记录会显示在这里。" /> }}
-                        />
-                        {data.total > pageSize ? <PaginationBar current={page} pageSize={pageSize} total={data.total} showSizeChanger={false} onChange={(nextPage) => confirmDiscardRules(() => setPage(nextPage))} /> : null}
-                    </SettingsSectionCard>
+                        <AdminContentSection title="邀请关系" description="查看绑定、首购和异常资格。绑定关系本身不可删除或改绑。" actions={<span className="referral-admin-section-status">共 {data.total.toLocaleString("zh-CN")} 条关系</span>}>
+                            <Table<ReferralInvitation>
+                                className="referral-admin-table app-data-table"
+                                rowKey="id"
+                                size="middle"
+                                loading={loading}
+                                columns={columns}
+                                dataSource={data.invites}
+                                pagination={false}
+                                scroll={{ x: 980 }}
+                                locale={{ emptyText: <AdminTableEmpty compact title="暂无邀请关系" description="用户绑定邀请关系后，记录会显示在这里。" /> }}
+                            />
+                            {data.total > pageSize ? <PaginationBar current={page} pageSize={pageSize} total={data.total} showSizeChanger={false} onChange={(nextPage) => confirmDiscardRules(() => setPage(nextPage))} /> : null}
+                        </AdminContentSection>
+                    </AdminDataLayout>
                 </div>
             ) : null}
 
@@ -347,7 +353,7 @@ export default function ReferralProgramPage() {
                 open={Boolean(disqualifyTarget)}
                 confirmLoading={disqualifying}
                 closable={!disqualifying}
-                maskClosable={!disqualifying}
+                mask={{ closable: !disqualifying }}
                 keyboard={!disqualifying}
                 okText="确认取消资格"
                 cancelText="返回"
@@ -381,18 +387,6 @@ export default function ReferralProgramPage() {
                 </div>
             </Modal>
         </AdminPageFrame>
-    );
-}
-
-function AdminMetric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-    return (
-        <div className="referral-admin-metric px-5 py-4">
-            <div className="referral-admin-metric-label flex items-center gap-1.5">
-                <span className="referral-admin-metric-icon">{icon}</span>
-                <span className="referral-admin-metric-label-text">{label}</span>
-            </div>
-            <div className="referral-admin-metric-value mt-2 tabular-nums">{value}</div>
-        </div>
     );
 }
 
