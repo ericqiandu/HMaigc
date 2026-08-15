@@ -107,6 +107,50 @@ func TestKuaiziGPTImage2SubmitsDocumentedPayloadAndDownloadsResult(t *testing.T)
 	}
 }
 
+func TestKuaiziGPTImage2RetriesTransientPollServerErrorWithoutCreatingAgain(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	createCalls := 0
+	pollCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case kuaiziGPTImage2CreatePath:
+			createCalls++
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"kz-cgt-transient-poll"}}`))
+		case kuaiziGPTImage2StatusPath:
+			pollCalls++
+			if pollCalls == 1 {
+				writer.WriteHeader(http.StatusInternalServerError)
+				_, _ = writer.Write([]byte(`{"code":500,"message":"temporary status failure"}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"kz-cgt-transient-poll","status":"succeeded","image_url":"` + server.URL + `/result.png"}}`))
+		case "/result.png":
+			writer.Header().Set("Content-Type", "image/png")
+			_, _ = writer.Write([]byte("png"))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	result, err := runKuaiziGPTImage2TaskWithPollInterval(context.Background(), canvasGenerationInput{
+		Prompt: "生成海报",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "image-key", Model: kuaiziGPTImage2Model, Size: "1024x1024"},
+	}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createCalls != 1 || pollCalls != 2 {
+		t.Fatalf("create calls = %d, poll calls = %d", createCalls, pollCalls)
+	}
+	if images, ok := result["images"].([]map[string]string); !ok || len(images) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestKuaiziGPTImage2DoesNotForwardApiKeyThroughRedirect(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")

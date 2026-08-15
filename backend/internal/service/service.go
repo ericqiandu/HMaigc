@@ -486,7 +486,36 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		return nil, err
 	}
 	if hasUncertainBilling {
-		return nil, BadAuthRequest("该任务的上游费用状态仍待核对，不能重新生成，请先由管理员完成计费核对")
+		if strings.TrimSpace(task.ProviderRequestID) == "" {
+			return nil, BadAuthRequest("该任务的上游费用状态仍待核对，不能重新生成，请先由管理员完成计费核对")
+		}
+		policy, policyErr := s.RuntimePolicy()
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
+			return nil, err
+		}
+		activeTaskPolicy, capability, policyErr := s.membershipActiveTaskPolicy(userID, task.Type, policy)
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		task.Capability = capability
+		resumed, resumeErr := s.repo.ResumeTaskWithUncertainBilling(userID, task.ID, activeTaskPolicy)
+		if errors.Is(resumeErr, repository.ErrCapabilityTaskLimit) {
+			return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
+		}
+		if errors.Is(resumeErr, repository.ErrActiveTaskLimit) {
+			return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))
+		}
+		if errors.Is(resumeErr, repository.ErrTaskNotRetryable) || errors.Is(resumeErr, repository.ErrBillingStateConflict) {
+			return nil, BadAuthRequest("任务状态已变化，请刷新后重试")
+		}
+		if resumeErr != nil {
+			return nil, resumeErr
+		}
+		_ = s.log(userID, task.ID, "info", "继续核对既有上游任务", task.ProviderRequestID)
+		return taskForOutput(*resumed), nil
 	}
 	if isContentModerationFailure(task.Error) {
 		return nil, BadAuthRequest(contentModerationRetryMessage)
@@ -890,15 +919,25 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
 	}
 	if !reconcilingCancellation {
-		if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
-			task.Status = model.TaskStatusFailed
-			task.Stage = "计费准备失败"
-			task.Error = taskFailureMessage(err)
-			task.CompletedAt = ptr(time.Now())
-			if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
-				return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+		billingAlreadyUncertain := false
+		if strings.TrimSpace(task.ProviderRequestID) != "" && strings.TrimSpace(task.BillingOrderID) != "" {
+			if order, orderErr := s.repo.BillingOrder(task.BillingOrderID); orderErr == nil {
+				billingAlreadyUncertain = order.Status == model.BillingStatusUncertain && strings.TrimSpace(order.ProviderRequestID) == strings.TrimSpace(task.ProviderRequestID)
+			} else {
+				return orderErr
 			}
-			return err
+		}
+		if !billingAlreadyUncertain {
+			if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
+				task.Status = model.TaskStatusFailed
+				task.Stage = "计费准备失败"
+				task.Error = taskFailureMessage(err)
+				task.CompletedAt = ptr(time.Now())
+				if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
+					return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+				}
+				return err
+			}
 		}
 	}
 	result, canvasOps, err := s.processTask(ctx, *task)

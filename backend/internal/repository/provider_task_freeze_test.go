@@ -45,6 +45,42 @@ func TestFreezeProviderTaskRuntimeUsesActiveVersions(t *testing.T) {
 	}
 }
 
+func TestResumeTaskWithUncertainBillingPreservesExistingProviderRequest(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "resume-image", UserID: "user", Type: "canvas_image", Capability: "image", Status: model.TaskStatusFailed,
+		Stage: "生成失败", Progress: 35, Error: "HTTP 500", BillingOrderID: "resume-order",
+		ProviderRequestID: "kz-cgt-existing", ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: "resume-order", UserID: "user", TaskID: task.ID, IdempotencyKey: "resume-order", Status: model.BillingStatusUncertain,
+		ProviderRequestID: task.ProviderRequestID, AmountMicrocredits: 1_000_000, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := New(db).ResumeTaskWithUncertainBilling("user", task.ID, ActiveTaskPolicy{Unlimited: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Status != model.TaskStatusQueued || resumed.ProviderRequestID != task.ProviderRequestID || resumed.BillingOrderID != order.ID || resumed.PollStage != "provider_resume" {
+		t.Fatalf("resumed task = %#v", resumed)
+	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.Status != model.BillingStatusUncertain || storedOrder.ProviderRequestID != task.ProviderRequestID {
+		t.Fatalf("billing order = %#v", storedOrder)
+	}
+}
+
 func TestFreezeProviderTaskRuntimeRejectsUnhealthyCredential(t *testing.T) {
 	db := openProviderRepositorySQLite(t)
 	seedProviderRuntime(t, db, time.Now().UTC(), "unavailable")
