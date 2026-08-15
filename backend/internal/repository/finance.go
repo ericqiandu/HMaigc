@@ -676,6 +676,19 @@ func (r *Repository) MarkBillingRunning(id string) error {
 	return nil
 }
 
+func (r *Repository) BeginTokenBillingRequest(id string, now time.Time) error {
+	result := r.db.Model(&model.BillingOrder{}).
+		Where("id = ? AND billing_mode = ? AND status = ?", strings.TrimSpace(id), "token_usage", model.BillingStatusReserved).
+		Updates(map[string]any{"status": model.BillingStatusRunning, "started_at": &now, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrBillingStateConflict
+	}
+	return nil
+}
+
 func (r *Repository) MarkBillingUncertain(id string, errorText string) error {
 	return r.db.Model(&model.BillingOrder{}).
 		Where("id = ? AND status IN ?", id, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
@@ -758,6 +771,22 @@ func (r *Repository) RescheduleTokenBillingReconciliation(id string, owner strin
 		Where("id = ? AND billing_mode = ? AND status = ? AND reconcile_lease_owner = ? AND reconcile_lease_token = ?", id, "token_usage", model.BillingStatusUncertain, owner, leaseToken).
 		Updates(map[string]any{
 			"provider_billing_status": "pending", "error": truncateRepositoryText(reason, 1000), "next_reconcile_at": next,
+			"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrBillingStateConflict
+	}
+	return nil
+}
+
+func (r *Repository) RequireTokenBillingReview(id string, owner string, leaseToken string, reason string) error {
+	result := r.db.Model(&model.BillingOrder{}).
+		Where("id = ? AND billing_mode = ? AND status = ? AND reconcile_lease_owner = ? AND reconcile_lease_token = ?", strings.TrimSpace(id), "token_usage", model.BillingStatusUncertain, strings.TrimSpace(owner), strings.TrimSpace(leaseToken)).
+		Updates(map[string]any{
+			"provider_billing_status": "requires_review", "error": truncateRepositoryText(reason, 1000), "next_reconcile_at": nil,
 			"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": time.Now(),
 		})
 	if result.Error != nil {

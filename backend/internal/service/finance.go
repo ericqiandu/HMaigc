@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -475,6 +477,22 @@ type TokenBillingReservation struct {
 	CredentialVersionID  string
 }
 
+func (s *Service) ProxyTokenBillingConfig(userID string, channelID string, modelKey string) (TokenPricingSnapshot, bool, error) {
+	item, err := s.requireAccessibleChannelModel(strings.TrimSpace(userID), strings.TrimSpace(channelID), strings.TrimPrefix(strings.TrimSpace(modelKey), "models/"))
+	if err != nil {
+		return TokenPricingSnapshot{}, false, err
+	}
+	if item.BillingMode != "token_usage" {
+		return TokenPricingSnapshot{}, false, nil
+	}
+	pricing, err := s.repo.ModelPricing(item.ChannelID, item.ModelKey, "text")
+	if err != nil {
+		return TokenPricingSnapshot{}, false, err
+	}
+	snapshot, err := validateTokenUsageModelBilling(*item, pricing)
+	return snapshot, err == nil, err
+}
+
 func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)
@@ -868,6 +886,13 @@ func (s *Service) MarkBillingRunning(orderID string) error {
 	return s.repo.MarkBillingRunning(orderID)
 }
 
+func (s *Service) BeginTokenBillingRequest(orderID string) error {
+	if strings.TrimSpace(orderID) == "" {
+		return errors.New("Token 计费订单不存在")
+	}
+	return s.repo.BeginTokenBillingRequest(orderID, time.Now())
+}
+
 func (s *Service) SettleBilling(orderID string, providerRequestID string) error {
 	if orderID == "" {
 		return nil
@@ -887,6 +912,90 @@ func (s *Service) MarkBillingUncertain(orderID string, errorText string) error {
 		return nil
 	}
 	return s.repo.MarkBillingUncertain(orderID, truncateRunes(errorText, 1000))
+}
+
+func (s *Service) ReconcileTokenBillingNow(ctx context.Context, orderID string, providerTaskID string, usage TokenUsageFact) error {
+	order, err := s.repo.BillingOrder(strings.TrimSpace(orderID))
+	if err != nil {
+		return err
+	}
+	providerTaskID = strings.TrimSpace(providerTaskID)
+	if order.BillingMode != "token_usage" || providerTaskID == "" {
+		return errors.New("Token 账单核对事实不完整")
+	}
+	if err := s.repo.UpdateBillingProviderRequestID(order.ID, providerTaskID); err != nil {
+		return err
+	}
+	order.ProviderRequestID = providerTaskID
+	return s.reconcileTokenBillingOrder(ctx, order, usage, false)
+}
+
+func (s *Service) ScheduleTokenBillingReconciliation(orderID string, providerTaskID string, reason string) error {
+	return s.repo.MarkTokenBillingForReconciliation(strings.TrimSpace(orderID), strings.TrimSpace(providerTaskID), reason, time.Now().Add(5*time.Second))
+}
+
+func (s *Service) RunTokenBillingReconciliationBatch(ctx context.Context, now time.Time, limit int) error {
+	orders, err := s.repo.ClaimTokenBillingReconciliations(s.workerID, now, time.Minute, limit)
+	if err != nil {
+		return err
+	}
+	for index := range orders {
+		if err := s.reconcileTokenBillingOrder(ctx, &orders[index], TokenUsageFact{}, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.BillingOrder, usage TokenUsageFact, claimed bool) error {
+	runtime, err := s.resolveFrozenKuaiziBillingRuntime(order)
+	if err != nil {
+		return s.deferTokenBillingReconciliation(order, claimed, "frozen_runtime_unavailable")
+	}
+	client := NewKuaiziClient(KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), 20*time.Second))
+	fact, err := client.BillingByTaskID(ctx, runtime.BaseURL, runtime.APIKey, order.ProviderRequestID)
+	if err != nil {
+		var billingError *KuaiziBillingError
+		code := "billing_lookup_failed"
+		if errors.As(err, &billingError) {
+			code = billingError.Code
+		}
+		return s.deferTokenBillingReconciliation(order, claimed, code)
+	}
+	switch fact.Status {
+	case "pending":
+		return s.deferTokenBillingReconciliation(order, claimed, "billing_pending")
+	case "failed":
+		if fact.Amount != 0 {
+			return s.deferTokenBillingReconciliation(order, claimed, "failed_bill_has_amount")
+		}
+		return s.repo.RefundBillingOrder(order.ID, "上游账单明确失败且未扣费")
+	case "succeeded":
+		return s.repo.SettleTokenBilling(order.ID, fact.OrderID, fact.Amount, repository.TokenUsageFact{InputTokens: usage.InputTokens, CachedTokens: usage.CachedTokens, OutputTokens: usage.OutputTokens}, time.Now())
+	default:
+		return s.deferTokenBillingReconciliation(order, claimed, "billing_status_invalid")
+	}
+}
+
+func (s *Service) deferTokenBillingReconciliation(order *model.BillingOrder, claimed bool, reason string) error {
+	if claimed && order.ReconcileAttempts >= 8 {
+		return s.repo.RequireTokenBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
+	}
+	next := time.Now().Add(tokenBillingReconcileDelay(order.ReconcileAttempts))
+	if claimed {
+		return s.repo.RescheduleTokenBillingReconciliation(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason, next)
+	}
+	return s.repo.MarkTokenBillingForReconciliation(order.ID, order.ProviderRequestID, reason, next)
+}
+
+func tokenBillingReconcileDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	if attempt > 6 {
+		attempt = 6
+	}
+	return time.Duration(1<<attempt) * 5 * time.Second
 }
 
 func (s *Service) BillingFailureRequiresReview(orderID string, taskID string, err error) bool {

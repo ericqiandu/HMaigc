@@ -1,7 +1,12 @@
 package service
 
 import (
+	"context"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -247,6 +252,94 @@ func TestReserveProxyTokenBillingIdempotencyDoesNotReserveTwice(t *testing.T) {
 	}
 	if reserveCount != 1 {
 		t.Fatalf("reserve ledger count = %d", reserveCount)
+	}
+}
+
+func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
+	var billingCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != kuaiziBillingPath || request.Header.Get("ApiKey") != "frozen-token-key" {
+			t.Fatalf("billing request = %s, ApiKey=%q", request.URL.Path, request.Header.Get("ApiKey"))
+		}
+		billingCalls.Add(1)
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-order","amount":6,"status":"succeeded","task_id":"provider-task","task_status":"succeeded","task_duration":1,"total_tokens":42,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "settle-by-task", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{}); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingAmount != 6 || stored.ProviderBillingOrderID != "provider-order" || billingCalls.Load() != 1 {
+		t.Fatalf("settled order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+}
+
+func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testing.T) {
+	var billingCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		call := billingCalls.Add(1)
+		status := "pending"
+		if call > 1 {
+			status = "succeeded"
+		}
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-order","amount":6,"status":"`+status+`","task_id":"provider-task","task_status":"succeeded","task_duration":1,"total_tokens":42,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "pending-bill", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("next_reconcile_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RunTokenBillingReconciliationBatch(context.Background(), time.Now(), 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusSettled || billingCalls.Load() != 2 {
+		t.Fatalf("reconciled order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+}
+
+func installFrozenTokenRuntime(t *testing.T, svc *Service, db *gorm.DB, baseURL string, reservation TokenBillingReservation, key string) {
+	t.Helper()
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	now := time.Now().UTC()
+	account := model.ProviderAccount{ID: "token-provider-account", ProviderKind: kuaiziProviderKind, Name: "筷子科技", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	endpoint := model.ProviderEndpointVersion{ID: reservation.EndpointVersionID, ProviderAccountID: account.ID, BaseURL: baseURL, Status: "retired", Version: 1, CreatedAt: now}
+	credential := model.ProviderCredential{ID: "token-provider-credential", ProviderAccountID: account.ID, Family: kuaiziAccountCredentialFamily, Enabled: true, HealthStatus: "healthy", CreatedAt: now, UpdatedAt: now}
+	ciphertext, err := svc.EncryptProviderSecret(account.ID, credential.ID, 1, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := model.ProviderCredentialVersion{ID: reservation.CredentialVersionID, ProviderCredentialID: credential.ID, KeyCipher: ciphertext, Status: "retired", Version: 1, CreatedAt: now}
+	for _, row := range []any{&account, &endpoint, &credential, &version} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

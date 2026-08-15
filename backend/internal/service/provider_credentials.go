@@ -31,9 +31,65 @@ type SaveProviderCredentialRequest struct {
 
 // SystemProxyRuntime 只在一次受控上游请求的内存边界内存在，不进入 DTO、日志或数据库。
 type SystemProxyRuntime struct {
-	BaseURL    string
-	HeaderName string
-	APIKey     string
+	BaseURL                     string
+	HeaderName                  string
+	APIKey                      string
+	ProviderEndpointVersionID   string
+	ProviderCredentialVersionID string
+}
+
+func (s *Service) resolveFrozenKuaiziBillingRuntime(order *model.BillingOrder) (SystemProxyRuntime, error) {
+	if order == nil || strings.TrimSpace(order.ProviderEndpointVersionID) == "" || strings.TrimSpace(order.ProviderCredentialVersionID) == "" {
+		return SystemProxyRuntime{}, errors.New("Token 账单缺少冻结的供应商版本")
+	}
+	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
+	if err != nil {
+		return SystemProxyRuntime{}, err
+	}
+	endpoints, err := s.repo.ProviderEndpointVersions(account.ID)
+	if err != nil {
+		return SystemProxyRuntime{}, err
+	}
+	var endpoint *model.ProviderEndpointVersion
+	for index := range endpoints {
+		if endpoints[index].ID == order.ProviderEndpointVersionID {
+			endpoint = &endpoints[index]
+			break
+		}
+	}
+	credentials, err := s.repo.ProviderCredentials(account.ID)
+	if err != nil {
+		return SystemProxyRuntime{}, err
+	}
+	var credential *model.ProviderCredential
+	var version *model.ProviderCredentialVersion
+	for index := range credentials {
+		versions, versionsErr := s.repo.ProviderCredentialVersions(credentials[index].ID)
+		if versionsErr != nil {
+			return SystemProxyRuntime{}, versionsErr
+		}
+		for versionIndex := range versions {
+			if versions[versionIndex].ID == order.ProviderCredentialVersionID {
+				credential = &credentials[index]
+				version = &versions[versionIndex]
+				break
+			}
+		}
+		if version != nil {
+			break
+		}
+	}
+	if endpoint == nil || credential == nil || version == nil {
+		return SystemProxyRuntime{}, errors.New("冻结的筷子供应商版本不存在")
+	}
+	key, err := NewProviderSecretCipher(s.dataDir).Decrypt(account.ID, credential.ID, version.Version, version.KeyCipher)
+	if err != nil {
+		return SystemProxyRuntime{}, errors.New("解密冻结的筷子 Key 失败")
+	}
+	return SystemProxyRuntime{
+		BaseURL: endpoint.BaseURL, HeaderName: "ApiKey", APIKey: key,
+		ProviderEndpointVersionID: endpoint.ID, ProviderCredentialVersionID: version.ID,
+	}, nil
 }
 
 func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKey string) (SystemProxyRuntime, error) {
@@ -98,7 +154,10 @@ func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKe
 	if err != nil {
 		return SystemProxyRuntime{}, ServiceUnavailable("解密筷子科技账号 Key 失败")
 	}
-	return SystemProxyRuntime{BaseURL: kuaiziChatCompletionsBaseURL(endpoint.BaseURL), HeaderName: "ApiKey", APIKey: key}, nil
+	return SystemProxyRuntime{
+		BaseURL: kuaiziChatCompletionsBaseURL(endpoint.BaseURL), HeaderName: "ApiKey", APIKey: key,
+		ProviderEndpointVersionID: endpoint.ID, ProviderCredentialVersionID: version.ID,
+	}, nil
 }
 
 func systemProxyHeaderName(apiFormat string) string {

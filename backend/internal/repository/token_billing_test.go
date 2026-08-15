@@ -34,6 +34,24 @@ func TestSettleTokenBillingConsumesActualAndReturnsDifference(t *testing.T) {
 	}
 }
 
+func TestBeginTokenBillingRequestAllowsExactlyOneSend(t *testing.T) {
+	repo, db := openTokenBillingRepository(t)
+	order := reserveTokenBillingFixture(t, repo, db, "begin-once")
+	if err := repo.BeginTokenBillingRequest(order.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.BeginTokenBillingRequest(order.ID, time.Now().UTC().Add(time.Second)); !errors.Is(err, ErrBillingStateConflict) {
+		t.Fatalf("second begin error = %v", err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusRunning {
+		t.Fatalf("status = %q", stored.Status)
+	}
+}
+
 func TestSettleTokenBillingIsIdempotent(t *testing.T) {
 	repo, db := openTokenBillingRepository(t)
 	order := reserveTokenBillingFixture(t, repo, db, "settle-idempotent")
