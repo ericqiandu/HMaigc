@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, BookOpenText, Focus, History, PanelRightClose, Plus, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
+import { Bot, BookOpenText, Focus, History, PanelRightClose, Plus, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -37,6 +37,7 @@ import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary, removeLastCanvasAgentSelection } from "./canvas-agent-selection-summary";
 import { resolveAgentDefaultRequestConfig } from "./canvas-agent-default-model";
 import { waitForCanvasGeneration } from "@/lib/canvas/canvas-agent-generation-wait";
+import { CanvasAssistantReferenceChip } from "./canvas-assistant-reference-chip";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
@@ -1080,7 +1081,7 @@ export function CanvasAssistantPanel({
                     {selectedReferences.length ? (
                         <div className="thin-scrollbar flex max-w-full gap-1.5 overflow-x-auto px-3 pb-1">
                             {selectedReferences.map((item, index) => (
-                                <AssistantReferenceChip
+                                <CanvasAssistantReferenceChip
                                     key={item.id}
                                     item={item}
                                     label={assistantImageReferenceLabel(selectedReferences, index)}
@@ -1297,38 +1298,8 @@ function MessageReferences({ message }: { message: CanvasAssistantMessage }) {
     return (
         <div className={`flex max-w-[88%] flex-wrap gap-2 ${message.role === "user" ? "ml-auto justify-end" : "ml-11 justify-start"}`}>
             {message.references?.map((item, index, references) => (
-                <AssistantReferenceChip key={item.id} item={item} label={assistantImageReferenceLabel(references, index)} />
+                <CanvasAssistantReferenceChip key={item.id} item={item} label={assistantImageReferenceLabel(references, index)} />
             ))}
-        </div>
-    );
-}
-
-function AssistantReferenceChip({ item, label, onRemove }: { item: CanvasAssistantReference; label?: string; onRemove?: () => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "文";
-    return (
-        <div className="group/chip relative inline-flex h-8 max-w-[150px] shrink-0 items-center gap-1.5 rounded-lg text-sm" style={{ color: theme.node.text }}>
-            {item.dataUrl ? (
-                <span className="relative block size-8 shrink-0">
-                    <img src={item.dataUrl} alt="" className="size-8 rounded-lg object-cover" />
-                    {label ? <span className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-medium leading-none text-white">{label}</span> : null}
-                </span>
-            ) : (
-                <span className="grid size-8 place-items-center rounded-lg border text-sm font-medium" style={{ background: theme.node.panel, borderColor: theme.node.activeStroke }}>
-                    {text}
-                </span>
-            )}
-            {onRemove ? (
-                <button
-                    type="button"
-                    className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover/chip:opacity-100"
-                    style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke }}
-                    onClick={onRemove}
-                    aria-label="移除引用"
-                >
-                    <X className="size-3" />
-                </button>
-            ) : null}
         </div>
     );
 }
