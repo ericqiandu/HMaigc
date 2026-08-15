@@ -51,8 +51,8 @@ export type ModelChannel = {
         accessible: boolean;
         capability: ModelCapability;
         watermarkCapability: WatermarkCapability;
-        billingMode: "fixed_request" | "per_second";
-        priceStrategy: "flat" | "image_resolution" | "video_resolution";
+        billingMode: "fixed_request" | "per_second" | "token_usage";
+        priceStrategy: "flat" | "image_resolution" | "video_resolution" | "token";
         unitPriceMicrocredits: number;
         priceTiers: Array<{
             resolution: string;

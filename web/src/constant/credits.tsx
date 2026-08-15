@@ -11,8 +11,8 @@ export function CreditSymbol({ className, ...props }: ComponentProps<"span">) {
 
 export type ModelCreditCost = {
     model: string;
-    billingMode: "fixed_request" | "per_second";
-    priceStrategy: "flat" | "image_resolution" | "video_resolution";
+    billingMode: "fixed_request" | "per_second" | "token_usage";
+    priceStrategy: "flat" | "image_resolution" | "video_resolution" | "token";
     unitPriceMicrocredits: number;
     priceTiers: Array<{
         resolution: string;

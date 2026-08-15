@@ -24,7 +24,7 @@ import { useAdminContext } from "../admin-context";
 import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
-import { agentDefaultModelOptions } from "./agent-model-options";
+import { agentDefaultModelOptions, pricingContractForModel } from "./agent-model-options";
 import { imagePricingSpecifications, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
@@ -109,11 +109,12 @@ export default function ModelPricingPage() {
 
     const openPricing = (model: CommercialModel) => {
         const pricing = model.pricing;
+        const contract = pricingContractForModel(model, pricing);
         setEditing(model);
         pricingForm.setFieldsValue({
             currency: pricing?.currency || setting.currency,
-            billingMode: model.billingMode,
-            priceStrategy: model.priceStrategy,
+            billingMode: contract.billingMode,
+            priceStrategy: contract.priceStrategy,
             unitCredits: model.priceConfigured && model.priceStrategy === "flat" ? fromMicro(model.unitPriceMicrocredits) : undefined,
             inputPerMillion: optionalMoney(pricing?.inputPerMillionMicros),
             outputPerMillion: optionalMoney(pricing?.outputPerMillionMicros),
@@ -127,7 +128,7 @@ export default function ModelPricingPage() {
             tierCosts: Object.fromEntries(pricing?.tiers.map((tier) => [tier.specification, fromMicro(tier.supplierCostMicros)]) || []),
             tierCredits: Object.fromEntries(model.priceTiers.map((tier) => [pricingTierKey(tier.resolution, tier.inputVariant), fromMicro(tier.unitPriceMicrocredits)])),
         });
-        setPricingDirty(false);
+        setPricingDirty(contract.billingMode !== model.billingMode || contract.priceStrategy !== model.priceStrategy);
     };
 
     const openSettings = () => {
@@ -237,6 +238,7 @@ export default function ModelPricingPage() {
                 supplierCostMicros: toMicro(supplierCost),
             })),
         };
+        const tokenPricing = values.billingMode === "token_usage" && values.priceStrategy === "token";
         const modelInput = {
             modelKey: editing.modelKey,
             displayName: editing.displayName,
@@ -254,7 +256,11 @@ export default function ModelPricingPage() {
                 inputVariant: specification.inputVariant || "standard",
                 unitPriceMicrocredits: toMicro(userCredits as number),
             })),
-            priceConfigured: values.priceStrategy === "flat" ? Boolean(values.unitCredits && values.unitCredits > 0) : baseSaleTierInputs.length > 0,
+            priceConfigured: tokenPricing
+                ? pricingInput.inputPerMillionMicros > 0 && pricingInput.outputPerMillionMicros > 0 && pricingInput.expectedOutputTokens > 0
+                : values.priceStrategy === "flat"
+                  ? Boolean(values.unitCredits && values.unitCredits > 0)
+                  : baseSaleTierInputs.length > 0,
             enabled: editing.enabled,
         };
         setSaving(true);
@@ -558,6 +564,7 @@ function PricingDrawer({
                             options={[
                                 { label: "按次", value: "fixed_request" },
                                 { label: "按秒", value: "per_second", disabled: capability !== "video" },
+                                { label: "按 Token", value: "token_usage", disabled: capability !== "text" },
                             ]}
                         />
                     </Form.Item>
@@ -568,6 +575,7 @@ function PricingDrawer({
                             options={[
                                 { label: "统一价格", value: "flat" },
                                 { label: "按分辨率", value: capability === "video" ? "video_resolution" : "image_resolution", disabled: capability !== "image" && capability !== "video" },
+                                { label: "Token 用量", value: "token", disabled: capability !== "text" },
                             ]}
                         />
                     </Form.Item>
@@ -576,7 +584,7 @@ function PricingDrawer({
                     <ResolutionPricingFields strategy={strategy} billingMode={billingMode} model={model} />
                 ) : (
                     <>
-                        <FlatPricingFields capability={capability} />
+                        <FlatPricingFields capability={capability} strategy={strategy} />
                         <SupplierOnlyPricingFields modelKey={model?.modelKey || ""} strategy={strategy} />
                     </>
                 )}
@@ -585,7 +593,7 @@ function PricingDrawer({
     );
 }
 
-function FlatPricingFields({ capability }: { capability?: ChannelModel["capability"] }) {
+function FlatPricingFields({ capability, strategy }: { capability?: ChannelModel["capability"]; strategy: ChannelModel["priceStrategy"] }) {
     return (
         <div className="model-pricing-flat-fields">
             <h3 className="model-pricing-section-title mb-4 text-sm font-semibold">成本与积分售价</h3>
@@ -612,9 +620,13 @@ function FlatPricingFields({ capability }: { capability?: ChannelModel["capabili
                     <MoneyField name="perVideoSecond" label="供应商成本 / 秒" />
                 </div>
             ) : null}
-            <Form.Item className="model-pricing-field" name="unitCredits" label="用户消耗积分" rules={[{ required: true, type: "number", min: 0.000001, message: "积分售价必须大于 0" }]}>
-                <InputNumber className="model-pricing-number-input w-full" min={0.000001} precision={6} />
-            </Form.Item>
+            {strategy === "token" ? (
+                <p className="model-pricing-section-description text-xs leading-5 text-foreground/48">用户积分按实际上游 Token 用量自动核算，1 元等于 100 积分。</p>
+            ) : (
+                <Form.Item className="model-pricing-field" name="unitCredits" label="用户消耗积分" rules={[{ required: true, type: "number", min: 0.000001, message: "积分售价必须大于 0" }]}>
+                    <InputNumber className="model-pricing-number-input w-full" min={0.000001} precision={6} />
+                </Form.Item>
+            )}
         </div>
     );
 }
@@ -728,6 +740,7 @@ function capabilityLabel(value: ChannelModel["capability"]) {
 }
 
 function commercialStatus(model: CommercialModel, setting: ModelPricingOperationsSetting): "configured" | "warning" | "incomplete" {
+    if (model.priceStrategy === "token") return model.priceConfigured && comparableCost(model) !== null ? (setting.targetMarginBasisPoints > 0 ? "warning" : "configured") : "incomplete";
     const margins = model.priceStrategy === "flat" ? [marginPercent(model, setting)] : model.priceTiers.map((tier) => marginPercent(model, setting, pricingTierKey(tier.resolution, tier.inputVariant)));
     if (margins.length === 0 || margins.some((margin) => margin === null)) return "incomplete";
     return margins.some((margin) => Number(margin) * 10_000 < setting.targetMarginBasisPoints) ? "warning" : "configured";
@@ -736,6 +749,7 @@ function commercialStatus(model: CommercialModel, setting: ModelPricingOperation
 function marginPercent(model: CommercialModel, setting: ModelPricingOperationsSetting, resolution?: string) {
     if (!setting.configured || !model.priceConfigured || !model.pricing) return null;
     const cost = comparableCost(model, resolution);
+    if (model.priceStrategy === "token") return cost === null ? null : 0;
     const credits = model.priceStrategy !== "flat" ? model.priceTiers.find((tier) => pricingTierKey(tier.resolution, tier.inputVariant) === resolution)?.unitPriceMicrocredits : model.unitPriceMicrocredits;
     if (cost === null || !credits || credits <= 0) return null;
     const revenue = (credits * setting.creditRevenueMicros) / 1_000_000;
@@ -745,7 +759,7 @@ function marginPercent(model: CommercialModel, setting: ModelPricingOperationsSe
 function comparableCost(model: CommercialModel, resolution?: string) {
     const pricing = model.pricing;
     if (!pricing) return null;
-    if (model.priceStrategy !== "flat") return pricing.tiers.find((tier) => tier.specification === resolution)?.supplierCostMicros ?? null;
+    if (model.priceStrategy !== "flat" && model.priceStrategy !== "token") return pricing.tiers.find((tier) => tier.specification === resolution)?.supplierCostMicros ?? null;
     if (model.capability === "text") {
         const tokenCost =
             (pricing.inputPerMillionMicros * pricing.expectedInputTokens) / 1_000_000 + (pricing.outputPerMillionMicros * pricing.expectedOutputTokens) / 1_000_000 + (pricing.cachedPerMillionMicros * pricing.expectedCachedTokens) / 1_000_000;
@@ -757,6 +771,7 @@ function comparableCost(model: CommercialModel, resolution?: string) {
 }
 
 function formatMargin(model: CommercialModel, setting: ModelPricingOperationsSetting) {
+    if (model.priceStrategy === "token") return model.priceConfigured ? <span className="model-pricing-margin tabular-nums">0.0%</span> : <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
     if (model.priceStrategy !== "flat") {
         const specifications = specificationsForModel(model).filter((specification) => model.priceTiers.some((tier) => pricingTierKey(tier.resolution, tier.inputVariant) === specification.key));
         if (specifications.length === 0) return <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
@@ -771,7 +786,7 @@ function formatMargin(model: CommercialModel, setting: ModelPricingOperationsSet
 function formatCost(model: CommercialModel) {
     const pricing = model.pricing;
     if (!pricing) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
-    if (model.priceStrategy !== "flat" || pricing.tiers.length > 0)
+    if ((model.priceStrategy !== "flat" && model.priceStrategy !== "token") || pricing.tiers.length > 0)
         return <span className="model-pricing-cost text-xs">{pricing.tiers.map((tier) => `${tierLabel(tier.specification)} ${money(tierCost(pricing, tier.specification), pricing.currency)}`).join(" · ")}</span>;
     const value = comparableCost(model);
     return value === null ? (
@@ -785,6 +800,7 @@ function formatCost(model: CommercialModel) {
 
 function formatCustomerPrice(model: CommercialModel) {
     if (!model.priceConfigured) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
+    if (model.priceStrategy === "token") return <span className="model-pricing-price text-xs">按实际上游 Token 用量</span>;
     if (model.priceStrategy !== "flat")
         return <span className="model-pricing-price text-xs">{model.priceTiers.map((tier) => `${tierLabel(pricingTierKey(tier.resolution, tier.inputVariant))} ${fromMicro(tier.unitPriceMicrocredits)} 积分`).join(" · ")}</span>;
     return (

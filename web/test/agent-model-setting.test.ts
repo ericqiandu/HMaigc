@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
-import { agentDefaultModelOptions, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
+import { agentDefaultModelOptions, pricingContractForModel, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
 
 let configStore: typeof import("../src/stores/use-config-store");
 
@@ -46,6 +46,39 @@ describe("Agent default model setting", () => {
             candidate({ id: "zero", unitPriceMicrocredits: 0 }),
         ]);
         expect(options).toEqual([{ label: "GPT 5.5 · 筷子科技", value: valid.id }]);
+    });
+
+    test("admin candidates include a complete token-usage text model", () => {
+        const tokenModel = candidate({
+            id: "deepseek-token",
+            modelKey: "deepseek-v4-pro",
+            displayName: "DeepSeek V4 Pro",
+            billingMode: "token_usage",
+            priceStrategy: "token",
+            unitPriceMicrocredits: 0,
+        });
+        expect(agentDefaultModelOptions([tokenModel])).toEqual([{ label: "DeepSeek V4 Pro · 筷子科技", value: tokenModel.id }]);
+    });
+
+    test("complete token supplier pricing hard-cuts a text model to token billing", () => {
+        expect(
+            pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro" }), {
+                inputPerMillionMicros: 3_000_000,
+                outputPerMillionMicros: 6_000_000,
+                cachedPerMillionMicros: 25_000,
+                expectedOutputTokens: 8192,
+            }),
+        ).toEqual({ billingMode: "token_usage", priceStrategy: "token" });
+    });
+
+    test("an unmanaged text channel keeps its published billing contract", () => {
+        expect(
+            pricingContractForModel(candidate({ providerCredentialId: undefined, modelKey: "deepseek-v4-pro" }), {
+                inputPerMillionMicros: 3_000_000,
+                outputPerMillionMicros: 6_000_000,
+                expectedOutputTokens: 8192,
+            }),
+        ).toEqual({ billingMode: "fixed_request", priceStrategy: "flat" });
     });
 
     test("session merge accepts only an exact model reference present in the server catalog", () => {
