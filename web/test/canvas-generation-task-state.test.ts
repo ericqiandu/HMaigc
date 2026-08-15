@@ -1,10 +1,38 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
-import { convergeGenerationTaskCancellation, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot, retryBoundGenerationTask } from "../src/lib/canvas/canvas-generation-task-state";
+import { convergeGenerationTaskCancellation, generationStopPlan, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot, retryBoundGenerationTask } from "../src/lib/canvas/canvas-generation-task-state";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
+const canvasProjectSource = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");
+
 describe("canvas generation task state", () => {
+    test("collects every task bound to one running source and keeps pending local work visible", () => {
+        expect(
+            generationStopPlan(
+                [
+                    { targetNodeId: "child-1", runningNodeId: "source", taskId: "task-1" },
+                    { targetNodeId: "child-2", runningNodeId: "source", taskId: "task-2" },
+                    { targetNodeId: "child-3", runningNodeId: "source" },
+                    { targetNodeId: "other", runningNodeId: "other", taskId: "task-other" },
+                ],
+                "source",
+            ),
+        ).toEqual({
+            boundTasks: [
+                { targetNodeId: "child-1", taskId: "task-1" },
+                { targetNodeId: "child-2", taskId: "task-2" },
+            ],
+            hasLocalRequests: true,
+        });
+    });
+
+    test("uses the unified stop path from both canvas generation controls", () => {
+        expect(canvasProjectSource.match(/onStop=\{stopNodeGeneration\}/g)).toHaveLength(2);
+        expect(canvasProjectSource).not.toContain("onStop={confirmStopGeneration}");
+    });
+
     test("keeps a cancelled task terminal when an older running response arrives late", () => {
         const cancelled = mergeGenerationTaskSnapshot(node(), task({ status: "cancelled", stage: "任务已取消", updatedAt: "2026-08-12T11:14:54Z" }));
 

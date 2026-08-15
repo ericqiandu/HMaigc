@@ -14,6 +14,28 @@ type GenerationTaskRetryApi = {
 
 const terminalTaskStatuses = new Set<TaskStatus>(["succeeded", "failed", "cancelled"]);
 
+export type GenerationStopRequest = {
+    targetNodeId: string;
+    runningNodeId: string;
+    taskId?: string;
+};
+
+export type GenerationStopPlan = {
+    boundTasks: Array<{ targetNodeId: string; taskId: string }>;
+    hasLocalRequests: boolean;
+};
+
+export function generationStopPlan(requests: GenerationStopRequest[], runningNodeId: string): GenerationStopPlan {
+    const matching = requests.filter((request) => request.runningNodeId === runningNodeId);
+    return {
+        boundTasks: matching.flatMap((request) => {
+            const taskId = request.taskId?.trim();
+            return taskId ? [{ targetNodeId: request.targetNodeId, taskId }] : [];
+        }),
+        hasLocalRequests: matching.some((request) => !request.taskId?.trim()),
+    };
+}
+
 export function isTerminalGenerationTask(task: Pick<GenerationTask, "status">) {
     return terminalTaskStatuses.has(task.status);
 }

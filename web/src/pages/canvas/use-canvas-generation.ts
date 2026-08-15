@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
 import { applyGenerationTaskResultToNodes, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
-import { convergeGenerationTaskCancellation, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot } from "@/lib/canvas/canvas-generation-task-state";
+import { convergeGenerationTaskCancellation, generationStopPlan, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot, type GenerationStopRequest } from "@/lib/canvas/canvas-generation-task-state";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { cancelGenerationTask, listGenerationTasks, listTaskLogs, queryGenerationTask, waitForGenerationTask, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -11,10 +11,8 @@ import { cinematicStoryboardColumns, storyboardRowsFromTask } from "@/lib/canvas
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
 
-type CanvasGenerationRequest = {
-    targetNodeId: string;
+type CanvasGenerationRequest = GenerationStopRequest & {
     originNodeId: string;
-    runningNodeId: string;
     controller: AbortController;
 };
 
@@ -125,6 +123,43 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         [applyGenerationTaskResult, confirmStopGeneration, message, modal, setNodes],
     );
 
+    const stopNodeGeneration = useCallback(
+        (nodeId: string) => {
+            const initialPlan = generationStopPlan(Array.from(generationRequestsRef.current.values()), nodeId);
+            if (!initialPlan.boundTasks.length) {
+                confirmStopGeneration(nodeId);
+                return;
+            }
+            modal.confirm({
+                title: initialPlan.boundTasks.length > 1 ? "取消后台生成任务？" : "取消后台任务？",
+                content: initialPlan.hasLocalRequests ? "本轮已提交的后台任务将被取消，尚未提交的生成请求也会停止；已生成完成的内容仍会保留。" : "任务会在后端停止，已生成完成的内容仍会保留。",
+                okText: initialPlan.boundTasks.length > 1 ? "取消全部任务" : "取消任务",
+                cancelText: "继续生成",
+                okButtonProps: { danger: true },
+                onOk: async () => {
+                    const currentPlan = generationStopPlan(Array.from(generationRequestsRef.current.values()), nodeId);
+                    const boundTaskById = new Map([...initialPlan.boundTasks, ...currentPlan.boundTasks].map((binding) => [binding.taskId, binding]));
+                    const boundTasks = Array.from(boundTaskById.values());
+                    const results = await Promise.all(
+                        boundTasks.map(async (binding) => ({
+                            ...binding,
+                            task: await convergeGenerationTaskCancellation(binding.taskId, { cancel: cancelGenerationTask, query: queryGenerationTask }),
+                        })),
+                    );
+                    stopGenerationByRunningId(nodeId);
+                    for (const result of results) {
+                        if (result.task.status === "succeeded" || hasUsableGenerationTaskResult(result.task)) await applyGenerationTaskResult(result.targetNodeId, result.task);
+                        else setNodes((current) => current.map((item) => (item.id === result.targetNodeId ? mergeGenerationTaskSnapshot(item, result.task) : item)));
+                    }
+                    if (results.some((result) => result.task.status === "succeeded" || hasUsableGenerationTaskResult(result.task))) message.info("任务已停止，已生成结果已保留");
+                    else if (results.every((result) => result.task.status === "cancelled")) message.success(results.length > 1 ? "后台任务已全部取消" : "任务已取消");
+                    else message.info("取消请求已提交，任务状态正在核对");
+                },
+            });
+        },
+        [applyGenerationTaskResult, confirmStopGeneration, message, modal, setNodes, stopGenerationByRunningId],
+    );
+
     const openNodeTaskDetails = useCallback(
         async (node: CanvasNodeData) => {
             const taskId = node.metadata?.taskId;
@@ -157,6 +192,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const bindGenerationTask = useCallback(
         (targetNodeId: string, task: GenerationTask) => {
+            const request = generationRequestsRef.current.get(targetNodeId);
+            if (request) generationRequestsRef.current.set(targetNodeId, { ...request, taskId: task.id });
             setNodes((current) => current.map((node) => (node.id === targetNodeId ? mergeGenerationTaskSnapshot(node, task) : node)));
         },
         [setNodes],
@@ -253,13 +290,13 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     return {
         bindGenerationTask,
         cancelNodeTask,
-        confirmStopGeneration,
         finishGenerationRequest,
         openNodeTaskDetails,
         runningNodeId,
         setRunningNodeId,
         setTaskDetail,
         startGenerationRequest,
+        stopNodeGeneration,
         taskDetail,
         taskDetailLoading,
         taskDetailLogs,
