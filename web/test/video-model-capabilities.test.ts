@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "../src/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "../src/lib/video-model-capabilities";
 import { VideoSettingsPanel, validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
@@ -113,6 +113,10 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
 }
 
 describe("MiniMax H3 视频能力", () => {
+    test("后台未发布视频模型时不进入视频能力解析", () => {
+        expect(hasPublishedVideoModel(defaultConfig)).toBe(false);
+    });
+
     test("视频节点开放一次创建 1、2 或 4 条独立生成任务", () => {
         expect(resolveVideoModelCapabilities(miniMaxConfig()).outputCounts).toEqual([1, 2, 4]);
     });

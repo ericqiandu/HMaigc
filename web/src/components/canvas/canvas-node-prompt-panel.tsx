@@ -6,7 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
 import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -66,7 +66,8 @@ export function CanvasNodePromptPanel({
     const isVideoMode = mode === "video";
     const isAudioMode = mode === "audio";
     const config = buildNodeConfig(globalConfig, node, mode);
-    const videoCapabilities = mode === "video" ? resolveVideoModelCapabilities(config) : null;
+    const videoModelPublished = isVideoMode && hasPublishedVideoModel(config);
+    const videoCapabilities = videoModelPublished ? resolveVideoModelCapabilities(config) : null;
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     const [prompt, setPrompt] = useState(savedPrompt);
@@ -77,7 +78,7 @@ export function CanvasNodePromptPanel({
     const [promptContentHeight, setPromptContentHeight] = useState(0);
     const promptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
     const expandedPromptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
-    const effectiveVideoConfig = isVideoMode ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
+    const effectiveVideoConfig = videoModelPublished ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
     const activeVideoReferenceCount = mentionReferences.filter((item) => item.active && item.kind === "video").length;
@@ -326,7 +327,7 @@ export function CanvasNodePromptPanel({
                             onMissingConfig={handleMissingSystemModel}
                             onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                         />
-                    ) : mode === "video" ? (
+                    ) : mode === "video" && videoModelPublished ? (
                         <>
                             <CanvasVideoGenerationModePicker
                                 metadata={node.metadata}
@@ -690,7 +691,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
-    return mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
+    return mode === "video" && hasPublishedVideoModel(config) ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
 }
 
 function promptPlaceholder(mode: CanvasNodeGenerationMode, hasTextContent: boolean) {

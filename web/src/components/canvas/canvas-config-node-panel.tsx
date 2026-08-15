@@ -6,7 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { normalizeVideoConfigForModel, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -46,7 +46,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const mode = node.metadata?.generationMode || "image";
     const simpleMode = workspaceMode === "simple";
     const config = buildNodeConfig(globalConfig, node, mode);
-    const effectiveVideoConfig = mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
+    const videoModelPublished = mode === "video" && hasPublishedVideoModel(config);
+    const effectiveVideoConfig = videoModelPublished ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
     const operationOptions = node.metadata?.videoEditOperation === "concat" ? [...videoOperationOptions, { label: "合并成片", value: "concat" as const }] : videoOperationOptions;
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
     const priceChannel = resolveModelChannel(config, config.model);
@@ -173,7 +174,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         onMissingConfig={handleMissingSystemModel}
                         fullWidth
                     />
-                    {mode === "video" ? (
+                    {mode === "video" && videoModelPublished ? (
                         <CanvasVideoSettingsPopover
                             config={config}
                             generationMode={resolveVideoGenerationMode(node.metadata)}
@@ -289,7 +290,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
-    return mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
+    return mode === "video" && hasPublishedVideoModel(config) ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {
