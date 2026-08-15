@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 
-import { agentRuntimeClient, agentRuntimeHandleStorage, type AgentRuntimeClient, type AgentRuntimeEvent, type AgentRuntimeHandle, type AgentRuntimeHandleStorage, type AgentRuntimeView } from "@/services/api/agent-runtime";
+import { agentRuntimeClient, agentRuntimeHandleStorage, type AgentRuntimeClient, type AgentRuntimeEvent, type AgentRuntimeHandle, type AgentRuntimeHandleStorage, type AgentRuntimeView, type AgentThreadHistoryItem } from "@/services/api/agent-runtime";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 
@@ -23,12 +23,16 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
     const [restored, setRestored] = useState(false);
     const [pendingUserMessage, setPendingUserMessage] = useState("");
     const [selectionRetry, setSelectionRetry] = useState(0);
+    const [threads, setThreads] = useState<AgentThreadHistoryItem[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(true);
+    const [historyError, setHistoryError] = useState("");
     const cursorRef = useRef(0);
     const threadIdRef = useRef("");
     const pendingRunRef = useRef<AgentRuntimeHandle["pendingRun"]>(undefined);
     const submittedSelectionRef = useRef(new Set<string>());
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const canvasRevisionRef = useRef(canvasRevision);
+    const historyRequestRef = useRef(0);
 
     useEffect(() => {
         selectedNodeIdsRef.current = selectedNodeIds;
@@ -58,8 +62,40 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         [persist],
     );
 
+    const selectThread = useCallback(
+        (item: AgentThreadHistoryItem) => {
+            threadIdRef.current = item.thread.id;
+            pendingRunRef.current = undefined;
+            cursorRef.current = item.latestRun && !terminalStatuses.has(item.latestRun.state.status) ? item.latestRun.run.lastEventSequence : 0;
+            submittedSelectionRef.current.clear();
+            setThreadId(item.thread.id);
+            setView(item.latestRun);
+            setEvents([]);
+            setError("");
+            setConnection("idle");
+            setPendingUserMessage("");
+            void persist(item.latestRun, item.thread.id).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
+        },
+        [persist],
+    );
+
+    const reloadThreads = useCallback(async () => {
+        const requestID = ++historyRequestRef.current;
+        setHistoryLoading(true);
+        setHistoryError("");
+        try {
+            const history = await client.listThreads(canvasId, 20);
+            if (historyRequestRef.current === requestID) setThreads(history.items);
+        } catch (cause) {
+            if (historyRequestRef.current === requestID) setHistoryError(errorMessage(cause, "Agent 历史加载失败"));
+        } finally {
+            if (historyRequestRef.current === requestID) setHistoryLoading(false);
+        }
+    }, [canvasId, client]);
+
     useEffect(() => {
         let cancelled = false;
+        const historyRequestID = ++historyRequestRef.current;
         threadIdRef.current = "";
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
@@ -71,40 +107,58 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         setConnection("idle");
         setPendingUserMessage("");
         setRestored(false);
-        void storage
-            .load(canvasId)
-            .then(async (handle) => {
-                if (cancelled || !handle) return;
-                threadIdRef.current = handle.threadId;
-                pendingRunRef.current = handle.pendingRun;
-                cursorRef.current = handle.lastSequence;
-                setThreadId(handle.threadId);
-                if (handle.activeRunId) {
-                    const resumed = await client.getRun(handle.activeRunId);
-                    if (!cancelled) {
-                        pendingRunRef.current = undefined;
-                        adoptView(resumed);
-                    }
-                } else if (handle.pendingRun) {
+        setThreads([]);
+        setHistoryLoading(true);
+        setHistoryError("");
+        void Promise.allSettled([storage.load(canvasId), client.listThreads(canvasId, 20)])
+            .then(async ([handleResult, historyResult]) => {
+                if (cancelled || historyRequestRef.current !== historyRequestID) return;
+                const handle = handleResult.status === "fulfilled" ? handleResult.value : null;
+                const historyItems = historyResult.status === "fulfilled" ? historyResult.value.items : [];
+                const handleLoadError = handleResult.status === "rejected" ? errorMessage(handleResult.reason, "Agent 本地恢复句柄读取失败") : "";
+                setThreads(historyItems);
+                setHistoryLoading(false);
+                if (historyResult.status === "rejected") setHistoryError(errorMessage(historyResult.reason, "Agent 历史加载失败"));
+
+                if (handle?.pendingRun) {
+                    threadIdRef.current = handle.threadId;
+                    pendingRunRef.current = handle.pendingRun;
+                    cursorRef.current = handle.lastSequence;
+                    setThreadId(handle.threadId);
                     setPendingUserMessage(handle.pendingRun.userMessage);
                     const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: 8 });
-                    if (!cancelled) {
-                        pendingRunRef.current = undefined;
-                        setPendingUserMessage("");
-                        adoptView(resumed);
-                    }
+                    if (cancelled || historyRequestRef.current !== historyRequestID) return;
+                    pendingRunRef.current = undefined;
+                    setPendingUserMessage("");
+                    adoptView(resumed);
+                    return;
                 }
+                if (handle?.activeRunId) {
+                    threadIdRef.current = handle.threadId;
+                    cursorRef.current = handle.lastSequence;
+                    setThreadId(handle.threadId);
+                    const resumed = await client.getRun(handle.activeRunId);
+                    if (cancelled || historyRequestRef.current !== historyRequestID) return;
+                    adoptView(resumed);
+                    return;
+                }
+                const selected = (handle ? historyItems.find((item) => item.thread.id === handle.threadId) : undefined) ?? historyItems[0];
+                if (selected) selectThread(selected);
+                if (handleLoadError) setError(handleLoadError);
             })
             .catch((cause: unknown) => {
-                if (!cancelled) setError(errorMessage(cause, "Agent 运行恢复失败"));
+                if (!cancelled && historyRequestRef.current === historyRequestID) setError(errorMessage(cause, "Agent 运行恢复失败"));
             })
             .finally(() => {
-                if (!cancelled) setRestored(true);
+                if (!cancelled && historyRequestRef.current === historyRequestID) {
+                    setHistoryLoading(false);
+                    setRestored(true);
+                }
             });
         return () => {
             cancelled = true;
         };
-    }, [adoptView, canvasId, client, storage]);
+    }, [adoptView, canvasId, client, selectThread, storage]);
 
     const runId = view?.run.id || "";
     const terminal = Boolean(view && terminalStatuses.has(view.state.status));
@@ -188,6 +242,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                 pendingRunRef.current = undefined;
                 setPendingUserMessage("");
                 adoptView(started);
+                void reloadThreads();
                 return true;
             } catch (cause) {
                 setError(errorMessage(cause, "Agent 运行启动失败"));
@@ -196,7 +251,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                 setBusy(false);
             }
         },
-        [adoptView, busy, canvasId, client, view],
+        [adoptView, busy, canvasId, client, persist, reloadThreads, view],
     );
 
     const decideApproval = useCallback(
@@ -231,8 +286,29 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
     }, [canvasId, storage, view]);
 
     return useMemo(
-        () => ({ threadId, view, events, busy, error, connection, restored, terminal, pendingUserMessage, canRetrySelection: Boolean(pendingSelection && error), submit, decideApproval, retrySelection, newThread }),
-        [busy, connection, decideApproval, error, events, newThread, pendingSelection, pendingUserMessage, restored, retrySelection, submit, terminal, threadId, view],
+        () => ({
+            threadId,
+            selectedThreadId: threadId,
+            threads,
+            historyLoading,
+            historyError,
+            view,
+            events,
+            busy,
+            error,
+            connection,
+            restored,
+            terminal,
+            pendingUserMessage,
+            canRetrySelection: Boolean(pendingSelection && error),
+            submit,
+            decideApproval,
+            retrySelection,
+            newThread,
+            selectThread,
+            reloadThreads,
+        }),
+        [busy, connection, decideApproval, error, events, historyError, historyLoading, newThread, pendingSelection, pendingUserMessage, reloadThreads, restored, retrySelection, selectThread, submit, terminal, threadId, threads, view],
     );
 }
 

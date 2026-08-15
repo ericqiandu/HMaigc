@@ -447,6 +447,100 @@
     padding: 20px 16px;
 }
 
+.canvas-agent-runtime-history-list {
+    display: grid;
+    gap: 12px;
+}
+.canvas-agent-runtime-history-heading,
+.canvas-agent-runtime-history-item,
+.canvas-agent-runtime-history-item-main,
+.canvas-agent-runtime-history-error {
+    display: flex;
+}
+.canvas-agent-runtime-history-heading {
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+.canvas-agent-runtime-history-title {
+    font-size: 14px;
+    line-height: 20px;
+}
+.canvas-agent-runtime-history-count,
+.canvas-agent-runtime-history-state {
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 18px;
+}
+.canvas-agent-runtime-history-items {
+    display: grid;
+    gap: 4px;
+}
+.canvas-agent-runtime-history-item {
+    width: 100%;
+    min-width: 0;
+    min-height: 54px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+.canvas-agent-runtime-history-item:hover,
+.canvas-agent-runtime-history-item[aria-current="true"] {
+    background: color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+.canvas-agent-runtime-history-item:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+.canvas-agent-runtime-history-item-main {
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+}
+.canvas-agent-runtime-history-item-title {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+.canvas-agent-runtime-history-item-status,
+.canvas-agent-runtime-history-item-time {
+    color: var(--muted-foreground);
+    font-size: 10px;
+    line-height: 16px;
+}
+.canvas-agent-runtime-history-item-time {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+.canvas-agent-runtime-history-error {
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--status-danger);
+    font-size: 11px;
+    line-height: 18px;
+}
+.canvas-agent-runtime-history-error-copy {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-history-retry.ant-btn {
+    flex: 0 0 auto;
+    color: inherit;
+}
+
 .canvas-agent-runtime-empty {
     display: grid;
     min-height: 280px;

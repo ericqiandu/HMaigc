@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, CheckCircle2, ChevronDown, CircleAlert, PanelRightClose, Plus, Send, ShieldCheck, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, ChevronDown, CircleAlert, History, PanelRightClose, Plus, Send, ShieldCheck, XCircle } from "lucide-react";
 import { Button, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -7,6 +7,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeState } from "@/services/api/agent-runtime";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasAgentLaunchRequest } from "@/types/canvas";
+import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
 import { useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
 
@@ -27,6 +28,7 @@ type CanvasAssistantPanelProps = {
 export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeIds, closing, onCollapse, agentLaunchRequest, onAgentLaunchHandled, runtimeClient, runtimeStorage }: CanvasAssistantPanelProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [prompt, setPrompt] = useState("");
+    const [historyOpen, setHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
     const runtime = useAgentRuntime({ canvasId: projectId, canvasRevision, selectedNodeIds, client: runtimeClient, storage: runtimeStorage });
     const active = Boolean(runtime.view && !runtime.terminal);
@@ -35,6 +37,8 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
         if (!runtime.pendingUserMessage) return;
         setPrompt((current) => current || runtime.pendingUserMessage);
     }, [runtime.pendingUserMessage]);
+
+    useEffect(() => setHistoryOpen(false), [projectId]);
 
     useEffect(() => {
         if (!agentLaunchRequest || !runtime.restored || launchAttemptRef.current === agentLaunchRequest.id) return;
@@ -75,13 +79,27 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                     </div>
                 </div>
                 <div className="canvas-agent-runtime-header-actions">
+                    <Tooltip title="历史对话">
+                        <Button
+                            className="canvas-agent-runtime-icon-button"
+                            type="text"
+                            icon={<History className="canvas-agent-runtime-button-icon" />}
+                            disabled={!runtime.restored || runtime.busy}
+                            onClick={() => setHistoryOpen((open) => !open)}
+                            aria-label="历史对话"
+                            aria-pressed={historyOpen}
+                        />
+                    </Tooltip>
                     <Tooltip title={active ? "当前任务完成后才能新建对话" : "新建对话"}>
                         <Button
                             className="canvas-agent-runtime-icon-button"
                             type="text"
                             icon={<Plus className="canvas-agent-runtime-button-icon" />}
                             disabled={active || runtime.busy}
-                            onClick={() => void runtime.newThread()}
+                            onClick={() => {
+                                setHistoryOpen(false);
+                                void runtime.newThread();
+                            }}
                             aria-label="新建 Agent 对话"
                         />
                     </Tooltip>
@@ -92,7 +110,23 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
             </header>
 
             <section className="canvas-agent-runtime-content thin-scrollbar">
-                {!runtime.view ? <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} /> : <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />}
+                {historyOpen ? (
+                    <AgentRuntimeHistoryList
+                        items={runtime.threads}
+                        selectedThreadId={runtime.selectedThreadId}
+                        loading={runtime.historyLoading}
+                        error={runtime.historyError}
+                        onSelect={(item) => {
+                            runtime.selectThread(item);
+                            setHistoryOpen(false);
+                        }}
+                        onRetry={() => void runtime.reloadThreads()}
+                    />
+                ) : !runtime.view ? (
+                    <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} />
+                ) : (
+                    <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />
+                )}
                 {runtime.error ? (
                     <div className="canvas-agent-runtime-error" role="alert">
                         <CircleAlert className="canvas-agent-runtime-error-icon" />
