@@ -159,6 +159,13 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := fixture.db.Create(&model.AgentThread{
+		ID: "history-thread-archived", TenantKind: agentruntime.TenantPersonal, TenantID: fixture.userID,
+		CreatedByUserID: fixture.userID, CanvasID: "handler-agent-history-canvas", Status: agentruntime.ThreadArchived,
+		CreatedAt: baseTime.Add(5 * time.Hour), UpdatedAt: baseTime.Add(5 * time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	response := fixture.request(http.MethodGet, "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=20", "", fixture.userCookie, "")
 	if response.Code != http.StatusOK {
@@ -182,6 +189,9 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	if len(envelope.Data.Items) != 3 {
 		t.Fatalf("history item count = %d, body = %s", len(envelope.Data.Items), response.Body.String())
 	}
+	if strings.Contains(response.Body.String(), `"tenantId"`) || strings.Contains(response.Body.String(), `"createdByUserId"`) || strings.Contains(response.Body.String(), `"domainProjectId"`) {
+		t.Fatalf("history response exposed internal scope facts: %s", response.Body.String())
+	}
 	if first := envelope.Data.Items[0]; first.Thread.ID != newerScope.ThreadID || first.LatestRun == nil || first.LatestRun.Run.ID != newerScope.RunID || first.LatestRun.State.UserMessage != "较新的任务" {
 		t.Fatalf("newest item = %#v", first)
 	}
@@ -192,6 +202,21 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	if empty.Thread.ID != emptyThread.ID || empty.LatestRun != nil || !empty.ActivityAt.Equal(empty.Thread.UpdatedAt) {
 		t.Fatalf("empty item = %#v", empty)
 	}
+	limited := fixture.request(http.MethodGet, "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=1", "", fixture.userCookie, "")
+	if limited.Code != http.StatusOK {
+		t.Fatalf("limited history status = %d, body = %s", limited.Code, limited.Body.String())
+	}
+	var limitedEnvelope struct {
+		Data struct {
+			Items []json.RawMessage
+		}
+	}
+	if err := json.Unmarshal(limited.Body.Bytes(), &limitedEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(limitedEnvelope.Data.Items) != 1 {
+		t.Fatalf("limited history item count = %d, body = %s", len(limitedEnvelope.Data.Items), limited.Body.String())
+	}
 
 	for _, test := range []struct {
 		name string
@@ -201,6 +226,7 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 		{name: "zero limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=0"},
 		{name: "limit too large", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=21"},
 		{name: "decimal limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=1.5"},
+		{name: "signed limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=%2B1"},
 		{name: "trailing limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=1x"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

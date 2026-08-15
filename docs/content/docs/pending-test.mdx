@@ -410,6 +410,12 @@
 # 第二十七阶段待验收：单一 Agent Runtime 面板
 
 - 从首页输入目标并附加参考图片，确认只创建一次画布与一次 Agent run；首页不出现模型、Skill 或自动/确认双轨选择，启动提示词不进入 URL。
+- 同一用户在同一画布刷新页面，确认优先恢复本地 `pendingRun` 或 `activeRunId`，游标、审批状态和最终内容均与服务端事实一致。
+- 清空浏览器本地 Agent 句柄后从另一设备打开同一画布，确认通过服务端历史恢复最近活动会话及其最新 Run；不得创建默认 Thread、默认 Run 或第二次模型任务。
+- 打开“历史对话”并选择旧终态会话，确认展示该会话真实 `userMessage`、状态和 `finalMessage`，本地句柄切换到所选 Thread，但不取消其他仍在服务端运行的 Run。
+- 模拟历史接口失败且本地存在有效活动 Run，确认活动 Run 仍通过 `GET /api/agent/runs/:runId` 恢复；历史错误独立显示并可重试，不得把运行状态改成失败或清空已有内容。
+- 使用另一用户、另一团队或另一画布访问历史接口，确认不可看到目标会话；空 Thread 允许 `latestRun=null`，存在 Run 但缺失或冲突 checkpoint 时必须显式失败。
+- 启动新 Run 后确认面板重新读取服务端历史；刷新失败只影响历史区，已经启动的 Run、SSE 订阅和本地幂等句柄保持有效。
 - 在运行启动响应写出后断网，刷新画布，确认客户端复用同一 `clientRequestId` 收敛到原 run，不新增第二个运行或模型计费任务。
 - 触发 `canvas.read_selection`，确认请求携带当前服务端画布 revision 和真实选区节点 ID；revision 冲突必须显示服务端失败，不使用旧选区或默认 revision。
 - 触发需要审批的 `canvas.apply_ops` 与 `generation.submit`，确认面板展示冻结工具名、action version 和参数；拒绝、批准、重复点击与刷新恢复均收敛到同一工具调用。

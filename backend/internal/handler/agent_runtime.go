@@ -166,6 +166,11 @@ func strictAgentThreadHistoryLimit(raw string) (int, error) {
 	if strings.TrimSpace(raw) != raw {
 		return 0, errors.New("Agent 会话历史数量无效")
 	}
+	for _, digit := range raw {
+		if digit < '0' || digit > '9' {
+			return 0, errors.New("Agent 会话历史数量无效")
+		}
+	}
 	limit, err := strconv.Atoi(raw)
 	if err != nil || limit < 1 || limit > 20 {
 		return 0, errors.New("Agent 会话历史数量无效")

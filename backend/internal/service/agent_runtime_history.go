@@ -12,10 +12,18 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+type AgentThreadHistoryThreadView struct {
+	ID        string                    `json:"id"`
+	CanvasID  string                    `json:"canvasId"`
+	Status    agentruntime.ThreadStatus `json:"status"`
+	CreatedAt time.Time                 `json:"createdAt"`
+	UpdatedAt time.Time                 `json:"updatedAt"`
+}
+
 type AgentThreadHistoryItem struct {
-	Thread     model.AgentThread `json:"thread"`
-	ActivityAt time.Time         `json:"activityAt"`
-	LatestRun  *AgentRuntimeView `json:"latestRun"`
+	Thread     AgentThreadHistoryThreadView `json:"thread"`
+	ActivityAt time.Time                    `json:"activityAt"`
+	LatestRun  *AgentRuntimeView            `json:"latestRun"`
 }
 
 type AgentThreadHistoryView struct {
@@ -40,7 +48,13 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 	}
 	view := &AgentThreadHistoryView{Items: make([]AgentThreadHistoryItem, 0, len(records))}
 	for _, record := range records {
-		item := AgentThreadHistoryItem{Thread: record.Thread, ActivityAt: record.ActivityAt}
+		item := AgentThreadHistoryItem{
+			Thread: AgentThreadHistoryThreadView{
+				ID: record.Thread.ID, CanvasID: record.Thread.CanvasID, Status: record.Thread.Status,
+				CreatedAt: record.Thread.CreatedAt, UpdatedAt: record.Thread.UpdatedAt,
+			},
+			ActivityAt: record.ActivityAt,
+		}
 		if record.Run != nil {
 			state, err := decodeAgentRuntimeState(record.StateJSON)
 			if err != nil {

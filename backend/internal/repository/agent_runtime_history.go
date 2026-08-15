@@ -58,7 +58,7 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 			SELECT *
 			  FROM agent_threads
 			 WHERE tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
-			   AND domain_project_id = ? AND canvas_id = ?
+			   AND domain_project_id = ? AND canvas_id = ? AND status = ?
 		), ranked_runs AS (
 			SELECT agent_runs.*,
 			       ROW_NUMBER() OVER (
@@ -104,7 +104,7 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 		          AND latest_checkpoint.state_version = ranked_runs.state_version
 		   )
 		 ORDER BY COALESCE(ranked_runs.updated_at, scoped_threads.updated_at) DESC, scoped_threads.id DESC
-		 LIMIT ?`, scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID, limit).Scan(&rows).Error
+		 LIMIT ?`, scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID, agentruntime.ThreadActive, limit).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
