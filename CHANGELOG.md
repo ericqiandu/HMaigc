@@ -8,7 +8,9 @@
 
 - 建立服务端单一主 Agent 的可恢复模型决策循环、通用交付验收、工具调用冻结、审批和只读画布事实读取；模型步骤与工具执行状态使用独立版本，不因刷新或重复提交重复消费。
 - 接通 `canvas.apply_ops` 确定性修改：个人画布所有者与团队 editor/manager 共用现有 `CanvasChange` revision CAS 和幂等事务，审批后冻结完整 patch，提交中断可跨进程恢复，revision 冲突和非法参数作为结构化工具失败回灌主 Agent。
-- Agent 模型调用继续复用既有 Task、BillingOrder、Provider 冻结和 Worker lease 商业链路；`generation.submit` 与 `generation.wait` 已接通真实生成任务、计费幂等、终态资产和通用交付证据，前端入口、SSE 和旧 Agent 硬切仍按后续里程碑实施。
+- Agent 模型调用继续复用既有 Task、BillingOrder、Provider 冻结和 Worker lease 商业链路；`generation.submit` 与 `generation.wait` 已接通真实生成任务、计费幂等、终态资产和通用交付证据，Web 面板与旧 Agent 硬切仍按后续里程碑实施。
+- 新增作用域严格的 Agent REST/SSE 入口，事件只按数据库 sequence 增量传输并支持 `afterSequence` 断线续读；跨用户、跨画布和过期权限均重新核验，响应禁止缓存。
+- 主 Agent 每个模型步骤冻结当前用户可调用的媒体模型、价格与能力事实，不传递供应商地址或密钥；生成等待由 worker 终态通知和后台持久化核对共同恢复，浏览器刷新不再承担唯一续跑责任。
 
 ## v1.0.44 - 2026-08-14
 

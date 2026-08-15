@@ -92,6 +92,79 @@ func TestAgentRuntimeToolDecisionWaitsWithoutSubmittingAnotherModelTask(t *testi
 	}
 }
 
+func TestDriveAgentRunsResumesModelDecisionAndExecutesServerTool(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-drive-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
+	server, calls := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-drive-tool", UserMessage: "读取画布", MaxSteps: 4}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded || progress.ModelTask == nil {
+		t.Fatalf("driven progress = %#v", progress)
+	}
+	var taskCount int64
+	if err := db.Model(&model.Task{}).Where("user_id = ? AND type = ?", input.Scope.ActorUserID, agentRuntimeModelTaskType).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 2 || calls.Load() != 1 {
+		t.Fatalf("driven facts: tasks=%d calls=%d", taskCount, calls.Load())
+	}
+}
+
+func TestDriveAgentRunsTerminatesRunAfterCanvasAccessIsRevoked(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"tool_call","toolCall":{"toolCallId":"call-revoked-selection","toolName":"canvas.read_selection","actionVersion":1,"arguments":{}}}`)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-revoked-scope", UserMessage: "读取事实", MaxSteps: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.State.Status != agentruntime.RunWaitingTool {
+		t.Fatalf("run before access revocation = %#v", waiting.State)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", scope.CanvasID).Update("user_id", "another-user").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunFailed || state.FailureCode != "scope_access_revoked" {
+		t.Fatalf("revoked run state = %#v", state)
+	}
+	toolCall, err := svc.repo.AgentToolCallForScope(scope, "call-revoked-selection", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolCall.Status != agentruntime.ToolCallFailed || toolCall.ErrorCode != "scope_access_revoked" {
+		t.Fatalf("revoked tool call = %#v", toolCall)
+	}
+}
+
 func TestCoordinatePendingAgentReadToolsReauthorizesCanvasAndResumesModel(t *testing.T) {
 	for _, testCase := range []struct {
 		name      string
@@ -119,7 +192,7 @@ func TestCoordinatePendingAgentReadToolsReauthorizesCanvasAndResumesModel(t *tes
 				PayloadJSON: `{"id":"runtime-canvas","nodes":[{"id":"node-1","type":"image","data":{"prompt":"日落"}}],"connections":[]}`,
 				CreatedAt:   now, UpdatedAt: now,
 			}
-			if err := db.Create(&project).Error; err != nil {
+			if err := db.Save(&project).Error; err != nil {
 				t.Fatal(err)
 			}
 			input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-" + strings.ReplaceAll(testCase.name, " ", "-"), UserMessage: "读取画布", MaxSteps: 4}
@@ -465,7 +538,7 @@ func TestCoordinatePendingAgentToolRejectsRevokedCanvasAccess(t *testing.T) {
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	now := time.Now().UTC()
-	if err := db.Create(&model.CanvasProject{
+	if err := db.Save(&model.CanvasProject{
 		ID: "runtime-canvas", UserID: "runtime-user", Title: "第一幕", Revision: 7,
 		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
@@ -502,7 +575,7 @@ func TestCoordinatePendingAgentToolRejectsRevokedCanvasAccess(t *testing.T) {
 func createAgentRuntimeCanvas(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	now := time.Now().UTC()
-	if err := db.Create(&model.CanvasProject{
+	if err := db.Save(&model.CanvasProject{
 		ID: "runtime-canvas", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
 		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {

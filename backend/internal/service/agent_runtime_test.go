@@ -348,6 +348,12 @@ func newAgentRuntimeServiceFixture(t *testing.T, endpointURL string) (*Service, 
 	if err := db.Create(&model.CreditAccount{UserID: "runtime-user", AvailableMicrocredits: 1_000}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&model.CanvasProject{
+		ID: "runtime-canvas", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
+		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	return svc, db, fixture
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -36,6 +37,8 @@ type Service struct {
 	storageMigrationOnce sync.Once
 	sessionCreateMu      sync.Mutex
 	characterTaskMu      sync.Mutex
+	agentDriveMu         sync.Mutex
+	agentDriveCursor     string
 	siteSettingMu        sync.Mutex
 	voicePreviewGroup    singleflight.Group
 	activeCancels        map[string]context.CancelFunc
@@ -185,6 +188,19 @@ func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
 }
 
 func (s *Service) StartWorker() {
+	go func() {
+		drive := func() {
+			if err := s.DriveAgentRuns(100); err != nil {
+				log.Printf("agent runtime drive failed: %v", err)
+			}
+		}
+		drive()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			drive()
+		}
+	}()
 	go func() {
 		slots := make(chan struct{}, maxChannelConcurrencyLimit)
 		dispatch := func() {
@@ -912,6 +928,26 @@ func (s *Service) ProcessNextTask() error {
 
 func (s *Service) processClaimedTask(task *model.Task) error {
 	_ = s.log(task.UserID, task.ID, "info", "后端任务开始处理", "")
+	runID := ""
+	if task.Type == agentRuntimeModelTaskType {
+		runID, _ = agentRuntimeModelRunID(task.Operation)
+	} else if generationRunID, generationTask := agentGenerationRunID(task.Operation); generationTask {
+		runID = generationRunID
+	}
+	if runID != "" {
+		defer func() {
+			reference := repository.ActiveAgentRunReference{RunID: runID, ActorUserID: task.UserID}
+			var err error
+			if task.Type == agentRuntimeModelTaskType {
+				err = s.resumeAgentRunReference(reference)
+			} else {
+				err = s.driveAgentRunReference(reference)
+			}
+			if err != nil {
+				_ = s.log(task.UserID, task.ID, "error", "Agent 运行恢复失败", taskFailureMessage(err))
+			}
+		}()
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err

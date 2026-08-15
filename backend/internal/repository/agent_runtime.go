@@ -35,6 +35,51 @@ type AgentRunRecord struct {
 	Created bool
 }
 
+type AgentRunIdentity struct {
+	Thread model.AgentThread
+	Run    model.AgentRun
+}
+
+func (r *Repository) CreateAgentThread(scope agentruntime.Scope, now time.Time) (*model.AgentThread, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if now.IsZero() {
+		return nil, errors.New("agent thread creation time is required")
+	}
+	return agentThreadForCreate(r.db, scope, now)
+}
+
+func (r *Repository) AgentThreadForActor(threadID string, actorUserID string) (*model.AgentThread, error) {
+	threadID = strings.TrimSpace(threadID)
+	actorUserID = strings.TrimSpace(actorUserID)
+	if threadID == "" || actorUserID == "" {
+		return nil, errors.New("agent thread identity is invalid")
+	}
+	var thread model.AgentThread
+	if err := r.db.Where("id = ? AND created_by_user_id = ?", threadID, actorUserID).Take(&thread).Error; err != nil {
+		return nil, err
+	}
+	return &thread, nil
+}
+
+func (r *Repository) AgentRunIdentityForActor(runID string, actorUserID string) (*AgentRunIdentity, error) {
+	runID = strings.TrimSpace(runID)
+	actorUserID = strings.TrimSpace(actorUserID)
+	if runID == "" || actorUserID == "" {
+		return nil, errors.New("agent run identity is invalid")
+	}
+	var run model.AgentRun
+	if err := r.db.Where("id = ? AND actor_user_id = ?", runID, actorUserID).Take(&run).Error; err != nil {
+		return nil, err
+	}
+	thread, err := r.AgentThreadForActor(run.ThreadID, actorUserID)
+	if err != nil {
+		return nil, err
+	}
+	return &AgentRunIdentity{Thread: *thread, Run: run}, nil
+}
+
 func (r *Repository) CreateAgentRun(input CreateAgentRunInput) (*AgentRunRecord, error) {
 	if err := input.Scope.Validate(); err != nil {
 		return nil, err

@@ -1,9 +1,31 @@
 package repository
 
 import (
+	"errors"
+
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
+
+type ActiveAgentRunReference struct {
+	RunID       string `gorm:"column:run_id"`
+	ActorUserID string `gorm:"column:actor_user_id"`
+}
+
+func (r *Repository) ActiveAgentRunsAfter(afterRunID string, limit int) ([]ActiveAgentRunReference, error) {
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("active agent run limit is invalid")
+	}
+	var references []ActiveAgentRunReference
+	query := r.db.Table("agent_runs").Select("id AS run_id, actor_user_id").
+		Where("status IN ?", []agentruntime.RunStatus{agentruntime.RunQueued, agentruntime.RunRunning, agentruntime.RunWaitingTool}).
+		Order("id ASC").Limit(limit)
+	if afterRunID != "" {
+		query = query.Where("id > ?", afterRunID)
+	}
+	err := query.Scan(&references).Error
+	return references, err
+}
 
 func (r *Repository) AgentToolCallForScope(scope agentruntime.Scope, toolCallID string, actionVersion int) (*model.AgentToolCall, error) {
 	if err := scope.Validate(); err != nil {

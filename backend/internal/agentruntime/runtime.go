@@ -87,6 +87,34 @@ func Fail(current RuntimeState, failureCode string) (RuntimeTransition, error) {
 	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
 }
 
+// Terminate records an external, non-model failure for any active runtime state.
+func Terminate(current RuntimeState, failureCode string) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status == RunSucceeded || current.Status == RunFailed || current.Status == RunCancelled {
+		return RuntimeTransition{}, errors.New("agent runtime is already terminal")
+	}
+	failureCode = strings.TrimSpace(failureCode)
+	if !validFailureCode(failureCode) {
+		return RuntimeTransition{}, errors.New("agent runtime failure code is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.Status = RunFailed
+	next.Verification = nil
+	next.FailureCode = failureCode
+	if current.PendingToolCall != nil {
+		next.LastToolResult = &ToolResult{
+			ToolCallID: current.PendingToolCall.ToolCallID, ActionVersion: current.PendingToolCall.ActionVersion,
+			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: failureCode,
+		}
+	}
+	next.PendingToolCall = nil
+	next.PendingToolStarted = false
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+}
+
 func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error) {
 	if err := validateAdvancingState(current); err != nil {
 		return RuntimeTransition{}, err

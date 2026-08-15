@@ -65,6 +65,33 @@ func TestCreateAgentRunIsIdempotentWithinThread(t *testing.T) {
 	}
 }
 
+func TestActiveAgentRunsAfterUsesPrimaryKeyCursorWithoutStarvation(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	now := time.Now().UTC()
+	for index, runID := range []string{"active-run-a", "active-run-b", "active-run-c"} {
+		scope := repositoryAgentScope()
+		scope.ThreadID = fmt.Sprintf("active-thread-%d", index)
+		scope.RunID = runID
+		if _, err := repo.CreateAgentRun(CreateAgentRunInput{Scope: scope, ClientRequestID: fmt.Sprintf("active-request-%d", index), Now: now.Add(time.Duration(index) * time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", "active-run-b").Update("status", agentruntime.RunWaitingApproval).Error; err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.ActiveAgentRunsAfter("", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.ActiveAgentRunsAfter(first[0].RunID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].RunID != "active-run-a" || len(second) != 1 || second[0].RunID != "active-run-c" {
+		t.Fatalf("active run cursor pages = %#v then %#v", first, second)
+	}
+}
+
 func TestCreateAgentRunRejectsThreadScopeConflict(t *testing.T) {
 	repo, _ := openAgentRuntimeRepositorySQLite(t)
 	now := time.Now().UTC()

@@ -101,7 +101,17 @@ func agentGenerationIdentity(value string) string {
 }
 
 func agentGenerationOperation(runID string) string {
-	return "agent_runtime:" + agentGenerationIdentity(runID)
+	return "agent_runtime:" + strings.TrimSpace(runID)
+}
+
+func agentGenerationRunID(operation string) (string, bool) {
+	const prefix = "agent_runtime:"
+	operation = strings.TrimSpace(operation)
+	if !strings.HasPrefix(operation, prefix) || len(operation) > 64 {
+		return "", false
+	}
+	runID := strings.TrimSpace(strings.TrimPrefix(operation, prefix))
+	return runID, runID != ""
 }
 
 func (s *Service) coordinatePendingAgentGenerationSubmit(

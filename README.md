@@ -10,7 +10,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - `docker-compose.production.yml`：使用 PostgreSQL 和 Redis 的生产环境。
 
 仓库只保留上述两条运行路径，不再维护旧镜像部署、重复 Compose 或上游一键安装脚本。
-画布助手正在硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent 或 Codex 插件连接路径。当前服务端已具备冻结模型、计费决策循环、可恢复检查点、工具风险策略、审批事实及只读画布工具协调，Web 仍使用既有入口，待后续事件流和面板切换完成后再移除旧浏览器执行链。
+画布助手正在硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent 或 Codex 插件连接路径。当前服务端已具备冻结模型、计费决策循环、可恢复检查点、五类工具协调、通用交付验收，以及按持久化 sequence 续读的 REST/SSE 协议；Web 仍使用既有入口，待面板切换完成后再移除旧浏览器执行链。
 
 ### 首页到 Agent 的创作链路
 
@@ -24,8 +24,9 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。
 - 工具调用按 `runId + toolCallId + actionVersion` 冻结并幂等登记。`canvas.read_state`、`canvas.read_selection` 已由服务端协调；选择事实必须匹配当前画布 revision 和真实节点。
-- `canvas.apply_ops`、`generation.submit` 已登记风险和审批策略，但本阶段不执行写入或生成副作用；`generation.wait` 的协调器也尚未接线。未接线能力会显式失败，不会回退到旧 Agent 或假装执行成功。
-- 模型每轮接收上一工具的结构化结果，并继续使用通用交付验收契约决定下一步。HTTP/SSE 入口、前端审批面板、写入工具和生成工具属于后续里程碑。
+- `canvas.apply_ops` 使用画布 revision CAS 与稳定 `clientMutationId` 幂等提交；`generation.submit` 复用正式 Task、BillingOrder、积分预留和冻结供应商版本，`generation.wait` 只接受同一运行创建的任务与真实终态资产。后台 worker 会定期核对持久化等待事实，进程中断后不依赖浏览器重复提交生成任务。
+- 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；每个模型步骤冻结该目录快照，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。
+- 正式传输入口为 `POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、审批和工具结果提交。SSE 仅发送已持久化事件；前端审批面板与旧入口硬切仍属于后续里程碑。
 
 ## 本地开发
 

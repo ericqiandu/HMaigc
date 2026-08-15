@@ -16,6 +16,21 @@ import (
 )
 
 const agentRuntimeModelTaskType = "agent_runtime_model"
+
+func agentRuntimeModelOperation(runID string) string {
+	return "agent_model:" + strings.TrimSpace(runID)
+}
+
+func agentRuntimeModelRunID(operation string) (string, bool) {
+	const prefix = "agent_model:"
+	operation = strings.TrimSpace(operation)
+	if !strings.HasPrefix(operation, prefix) || len(operation) > 64 {
+		return "", false
+	}
+	runID := strings.TrimSpace(strings.TrimPrefix(operation, prefix))
+	return runID, runID != ""
+}
+
 const agentRuntimeToolSchemaVersion = 1
 
 type StartAgentRuntimeInput struct {
@@ -47,6 +62,7 @@ type agentRuntimeModelContext struct {
 	Verification     *agentruntime.DeliveryVerification `json:"deliveryVerification,omitempty"`
 	LastToolResult   *agentruntime.ToolResult           `json:"lastToolResult,omitempty"`
 	PreviousMessage  string                             `json:"previousMessage,omitempty"`
+	CallableModels   []agentRuntimeCallableModelFact    `json:"callableModels"`
 }
 
 func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntimeProgress, error) {
@@ -236,7 +252,7 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if !managed || spec.Capability != "text" || item.ProviderCredentialID == "" || item.ModelKey != run.ModelKey {
 		return nil, ServiceUnavailable("Agent 冻结模型事实不可执行")
 	}
-	prompt, err := agentRuntimeModelPrompt(scope, state)
+	prompt, err := s.agentRuntimeModelPrompt(scope, state)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +272,7 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	task := &model.Task{
 		ID: taskID, UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
 		Type: agentRuntimeModelTaskType, Capability: capability, Status: model.TaskStatusQueued,
-		Stage: "等待 Agent 模型调度", Progress: 5, Prompt: prompt, Operation: "agent_runtime_model",
+		Stage: "等待 Agent 模型调度", Progress: 5, Prompt: prompt, Operation: agentRuntimeModelOperation(scope.RunID),
 		Provider: "system", Model: item.ModelKey, InputJSON: string(encodedInput),
 	}
 	if err := s.ensureTaskProjectActive(scope.ActorUserID, scope.CanvasID); err != nil {
@@ -295,7 +311,7 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *model.Task, run model.AgentRun, state agentruntime.RuntimeState) (*model.Task, error) {
 	if task == nil || task.ID != agentRuntimeModelTaskID(run.ID, state.StepNumber) || task.UserID != run.ActorUserID ||
 		task.ProjectID != scope.CanvasID || task.Type != agentRuntimeModelTaskType || strings.TrimSpace(task.Capability) == "" ||
-		task.Model != run.ModelKey || task.Operation != "agent_runtime_model" || task.Provider != "system" ||
+		task.Model != run.ModelKey || task.Operation != agentRuntimeModelOperation(scope.RunID) || task.Provider != "system" ||
 		task.ProviderAccountID == "" || task.ProviderEndpointVersionID == "" || task.ProviderCredentialVersionID == "" {
 		return nil, errors.New("agent runtime model task facts conflict")
 	}
@@ -308,8 +324,8 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 		order.Scene != "agent_runtime_model" || order.Quantity != 1 || order.AmountMicrocredits <= 0 {
 		return nil, errors.New("agent runtime billing facts conflict")
 	}
-	prompt, err := agentRuntimeModelPrompt(scope, state)
-	if err != nil {
+	prompt := task.Prompt
+	if err := validateFrozenAgentRuntimeModelPrompt(scope, state, prompt); err != nil {
 		return nil, err
 	}
 	expectedInput, err := json.Marshal(agentRuntimeModelTaskInput{
@@ -334,24 +350,11 @@ func agentRuntimeBillingKey(runID string, step int) string {
 	return fmt.Sprintf("agent-runtime:%s:%d", runID, step)
 }
 
-func agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState) (string, error) {
-	context := agentRuntimeModelContext{
-		RunID: scope.RunID, CanvasID: scope.CanvasID, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
-		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
-		Verification: state.Verification, LastToolResult: state.LastToolResult, PreviousMessage: state.FinalMessage,
-	}
-	encoded, err := json.Marshal(context)
-	if err != nil {
-		return "", err
-	}
-	return "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n" + string(encoded), nil
-}
-
 const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基于真实运行事实自主理解用户意图，不使用固定工作流或默认路由。
 你每次只能返回一个 JSON 对象，禁止 Markdown 和额外文本：
 1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
 2. 调用工具：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read_state|canvas.read_selection|canvas.apply_ops|generation.submit|generation.wait","actionVersion":1,"arguments":{}}}
 canvas.apply_ops 的 arguments 结构是 {"baseRevision":0,"patch":{"upsertNodes":[],"deleteNodeIds":[],"upsertConnections":[],"deleteConnectionIds":[],"document":{}}}；baseRevision 必须是当前非负版本，只填写本次实际需要的 patch 字段，节点和连线必须包含稳定 id。
-generation.submit 的 arguments 结构是 {"type":"canvas_image|canvas_video|canvas_audio","prompt":"真实生成提示词","input":{"mode":"image|video|audio","config":{}}}；type 与 input.mode 必须对应，input 必须使用当前系统模型目录公开的真实任务参数，不得猜测模型、价格或默认配置。提交成功后必须保存返回的 taskId，并使用 generation.wait 等待同一任务。
+generation.submit 的 arguments 结构是 {"type":"canvas_image|canvas_video|canvas_audio","prompt":"真实生成提示词","input":{"mode":"image|video|audio","config":{}}}；type 与 input.mode 必须对应，input.config 只能使用本轮 callableModels 中同一条记录公开的 channelId、model 与能力参数，不得猜测模型、价格或默认配置。提交成功后必须保存返回的 taskId，并使用 generation.wait 等待同一任务。
 generation.wait 的 arguments 结构是 {"taskId":"generation.submit 返回的 taskId"}；只有返回 succeeded 且包含真实资产 URL 时才构成交付事实，queued 或 running 表示仍在等待，不得重复提交生成任务。
 只有真实事实足以满足交付时才能 final；需要画布或生成事实时必须先调用工具。`

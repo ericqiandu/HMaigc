@@ -175,6 +175,18 @@ func TestAgentGenerationWaitPersistsUntilRealTerminalAsset(t *testing.T) {
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
+	now := time.Now()
+	leaseExpiresAt := now.Add(time.Hour)
+	providerTaskCreatedAt := now.Add(time.Minute)
+	if err := db.Create(&model.Task{
+		ID: "agent-generation-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Type: "canvas_image", Capability: "image", Status: model.TaskStatusRunning,
+		Stage: "供应商生成中", Progress: 50, Operation: agentGenerationOperation(scope.RunID), Model: "kz_gpt_image2",
+		LeaseOwner: "active-generation-worker", LeaseExpiresAt: &leaseExpiresAt,
+		CreatedAt: providerTaskCreatedAt, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.ProcessNextTask(); err != nil {
 		t.Fatal(err)
 	}
@@ -184,15 +196,6 @@ func TestAgentGenerationWaitPersistsUntilRealTerminalAsset(t *testing.T) {
 	}
 	if waiting.State.Status != agentruntime.RunWaitingTool || waiting.State.PendingToolCall == nil {
 		t.Fatalf("wait decision state = %#v", waiting.State)
-	}
-	now := time.Now().UTC()
-	if err := db.Create(&model.Task{
-		ID: "agent-generation-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
-		Type: "canvas_image", Capability: "image", Status: model.TaskStatusRunning,
-		Stage: "供应商生成中", Progress: 50, Operation: agentGenerationOperation(scope.RunID), Model: "kz_gpt_image2",
-		CreatedAt: now, UpdatedAt: now,
-	}).Error; err != nil {
-		t.Fatal(err)
 	}
 	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{ToolCallID: "call-wait-image", ActionVersion: 1})
 	if err != nil {
@@ -209,7 +212,10 @@ func TestAgentGenerationWaitPersistsUntilRealTerminalAsset(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	completed, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{ToolCallID: "call-wait-image", ActionVersion: 1})
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := svc.ResumeAgentRuntime(scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,13 +251,6 @@ func TestAgentRuntimeFinalDeliveryUsesPersistedGenerationEvidence(t *testing.T) 
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ProcessNextTask(); err != nil {
-		t.Fatal(err)
-	}
-	waiting, err := svc.ResumeAgentRuntime(scope)
-	if err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
 		ID: "delivery-generation-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
@@ -261,9 +260,13 @@ func TestAgentRuntimeFinalDeliveryUsesPersistedGenerationEvidence(t *testing.T) 
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	coordinated, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
-		ToolCallID: waiting.State.PendingToolCall.ToolCallID, ActionVersion: waiting.State.PendingToolCall.ActionVersion,
-	})
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	coordinated, err := svc.ResumeAgentRuntime(scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,13 +337,6 @@ func TestAgentGenerationWaitRejectsTaskOutsideCurrentRun(t *testing.T) {
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ProcessNextTask(); err != nil {
-		t.Fatal(err)
-	}
-	waiting, err := svc.ResumeAgentRuntime(scope)
-	if err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
 		ID: "foreign-generation-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
@@ -350,9 +346,13 @@ func TestAgentGenerationWaitRejectsTaskOutsideCurrentRun(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
-		ToolCallID: waiting.State.PendingToolCall.ToolCallID, ActionVersion: waiting.State.PendingToolCall.ActionVersion,
-	})
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,13 +382,6 @@ func TestAgentGenerationWaitNeverTurnsFailureIntoArtifact(t *testing.T) {
 			if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-wait-no-artifact", UserMessage: "等待生成", MaxSteps: 6}); err != nil {
 				t.Fatal(err)
 			}
-			if err := svc.ProcessNextTask(); err != nil {
-				t.Fatal(err)
-			}
-			waiting, err := svc.ResumeAgentRuntime(scope)
-			if err != nil {
-				t.Fatal(err)
-			}
 			now := time.Now().UTC()
 			if err := db.Create(&model.Task{
 				ID: "generation-no-artifact", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
@@ -397,9 +390,13 @@ func TestAgentGenerationWaitNeverTurnsFailureIntoArtifact(t *testing.T) {
 			}).Error; err != nil {
 				t.Fatal(err)
 			}
-			progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
-				ToolCallID: waiting.State.PendingToolCall.ToolCallID, ActionVersion: waiting.State.PendingToolCall.ActionVersion,
-			})
+			if err := svc.ProcessNextTask(); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.DriveAgentRuns(10); err != nil {
+				t.Fatal(err)
+			}
+			progress, err := svc.ResumeAgentRuntime(scope)
 			if err != nil {
 				t.Fatal(err)
 			}
