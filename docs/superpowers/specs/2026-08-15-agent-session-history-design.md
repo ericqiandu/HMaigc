@@ -70,6 +70,7 @@ GET /api/agent/threads?canvasId=<canvas-id>&limit=<1..20>
         "createdAt": "ISO-8601",
         "updatedAt": "ISO-8601"
       },
+      "activityAt": "ISO-8601",
       "latestRun": {
         "run": {},
         "state": {}
@@ -84,7 +85,8 @@ GET /api/agent/threads?canvasId=<canvas-id>&limit=<1..20>
 - `canvasId` 必填，必须通过现有画布授权服务确认用户可访问。
 - `limit` 缺省为 20，只允许 1–20；非法值返回明确的 400。
 - 结果只包含登录用户本人在该租户、项目和画布作用域内创建的对话。
-- 按对话最近活动时间倒序，稳定次序使用 `updatedAt` 后接 `id`。
+- `activityAt` 是只读派生事实：有运行时取最新 Run 的 `updatedAt`，空对话取 Thread 的 `updatedAt`；不为排序改写 Thread 或 Runtime 状态机。
+- 按 `activityAt` 倒序，稳定次序使用 `activityAt` 后接 Thread `id`。
 - `latestRun` 使用现有 `AgentRuntimeView` 契约，不新增平行运行 DTO。
 - 空对话使用显式 `null`，不伪造运行、标题或默认内容。
 - 列表标题不进入服务端语义模型；Web 直接展示最新运行的 `state.userMessage`，仅通过 CSS 做视觉截断。
