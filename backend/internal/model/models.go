@@ -107,6 +107,7 @@ const (
 	CreditLedgerAdminGrant      CreditLedgerType = "admin_grant"
 	CreditLedgerReserve         CreditLedgerType = "reserve"
 	CreditLedgerConsume         CreditLedgerType = "consume"
+	CreditLedgerRelease         CreditLedgerType = "release"
 	CreditLedgerRefund          CreditLedgerType = "refund"
 	CreditLedgerAdminAdjust     CreditLedgerType = "admin_adjustment"
 	CreditLedgerSignupBonus     CreditLedgerType = "signup_bonus"

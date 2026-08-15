@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+
+	"gorm.io/gorm"
 )
 
 func TestKuaiziTextModelAllowsTokenUsageBilling(t *testing.T) {
@@ -171,4 +173,108 @@ func TestTokenChargeMicrocreditsRejectsInvalidUsageAndOverflow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReserveProxyTokenBillingAtomicallyFreezesMaximumCost(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	now := time.Now().UTC()
+	channel := model.ModelChannel{ID: "reserve-token-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", CreatedAt: now, UpdatedAt: now}
+	item := model.ChannelModel{
+		ID: "reserve-token-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
+		PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	pricing := model.ModelPricing{
+		ID: "reserve-token-price", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
+		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+	}
+	account := model.CreditAccount{UserID: "reserve-token-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	for _, row := range []any{&channel, &item, &pricing, &account} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	reservation := TokenBillingReservation{
+		EstimatedInputTokens: 200_000,
+		MaxOutputTokens:      50_000,
+		Pricing: TokenPricingSnapshot{
+			InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 50_000,
+		},
+		EndpointVersionID:   "endpoint-v1",
+		CredentialVersionID: "credential-v1",
+	}
+
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, channel.ID, item.ModelKey, "agent", "reserve-token-request", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.AmountMicrocredits != 30_000_000 || order.ReservedAmountMicrocredits != 30_000_000 || order.EstimatedInputTokens != 200_000 || order.MaxOutputTokens != 50_000 || order.ProviderEndpointVersionID != "endpoint-v1" || order.ProviderCredentialVersionID != "credential-v1" || order.TokenPricingSnapshotJSON == "" {
+		t.Fatalf("reserved order = %#v", order)
+	}
+	var storedAccount model.CreditAccount
+	if err := db.First(&storedAccount, "user_id = ?", account.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedAccount.AvailableMicrocredits != 70_000_000 || storedAccount.ReservedMicrocredits != 30_000_000 {
+		t.Fatalf("reserved account = %#v", storedAccount)
+	}
+}
+
+func TestReserveProxyTokenBillingIdempotencyDoesNotReserveTwice(t *testing.T) {
+	svc, db, account, channel, item, reservation := tokenReservationServiceFixture(t)
+	first, err := svc.ReserveProxyTokenBilling(account.UserID, channel.ID, item.ModelKey, "agent", "same-request", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.ReserveProxyTokenBilling(account.UserID, channel.ID, item.ModelKey, "agent", "same-request", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("idempotent order IDs = %q and %q", first.ID, second.ID)
+	}
+	var storedAccount model.CreditAccount
+	if err := db.First(&storedAccount, "user_id = ?", account.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedAccount.AvailableMicrocredits != 70_000_000 || storedAccount.ReservedMicrocredits != 30_000_000 {
+		t.Fatalf("idempotent account = %#v", storedAccount)
+	}
+	var reserveCount int64
+	if err := db.Model(&model.CreditLedgerEntry{}).Where("billing_order_id = ? AND type = ?", first.ID, model.CreditLedgerReserve).Count(&reserveCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reserveCount != 1 {
+		t.Fatalf("reserve ledger count = %d", reserveCount)
+	}
+}
+
+func tokenReservationServiceFixture(t *testing.T) (*Service, *gorm.DB, model.CreditAccount, model.ModelChannel, model.ChannelModel, TokenBillingReservation) {
+	t.Helper()
+	svc, db := openProviderCredentialService(t)
+	now := time.Now().UTC()
+	channel := model.ModelChannel{ID: "idempotent-token-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", CreatedAt: now, UpdatedAt: now}
+	item := model.ChannelModel{
+		ID: "idempotent-token-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
+		PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	pricing := model.ModelPricing{
+		ID: "idempotent-token-price", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
+		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+	}
+	account := model.CreditAccount{UserID: "idempotent-token-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	for _, row := range []any{&channel, &item, &pricing, &account} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	reservation := TokenBillingReservation{
+		EstimatedInputTokens: 200_000, MaxOutputTokens: 50_000,
+		Pricing:           TokenPricingSnapshot{InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 50_000},
+		EndpointVersionID: "endpoint-v1", CredentialVersionID: "credential-v1",
+	}
+	return svc, db, account, channel, item, reservation
 }

@@ -467,6 +467,111 @@ type BillingUsage struct {
 	SuperResolutionFPS        int
 }
 
+type TokenBillingReservation struct {
+	EstimatedInputTokens int64
+	MaxOutputTokens      int64
+	Pricing              TokenPricingSnapshot
+	EndpointVersionID    string
+	CredentialVersionID  string
+}
+
+func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
+	userID = strings.TrimSpace(userID)
+	channelID = strings.TrimSpace(channelID)
+	modelKey = strings.TrimSpace(modelKey)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	reservation.EndpointVersionID = strings.TrimSpace(reservation.EndpointVersionID)
+	reservation.CredentialVersionID = strings.TrimSpace(reservation.CredentialVersionID)
+	if userID == "" || channelID == "" || modelKey == "" || idempotencyKey == "" || reservation.EstimatedInputTokens <= 0 || reservation.MaxOutputTokens <= 0 || reservation.EndpointVersionID == "" || reservation.CredentialVersionID == "" {
+		return nil, BadAuthRequest("Token 计费预留事实不完整")
+	}
+	item, err := s.requireAccessibleChannelModel(userID, channelID, modelKey)
+	if err != nil {
+		return nil, err
+	}
+	pricing, err := s.repo.ModelPricing(channelID, modelKey, "text")
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, BadAuthRequest("当前 Agent 模型尚未配置 Token 供应商价格")
+	}
+	if err != nil {
+		return nil, err
+	}
+	configured, err := validateTokenUsageModelBilling(*item, pricing)
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
+	if reservation.Pricing != configured || reservation.MaxOutputTokens != configured.MaxOutputTokens {
+		return nil, BadAuthRequest("Token 计费预留价格与已发布配置不一致")
+	}
+	policy, err := s.creditPolicy()
+	if err != nil {
+		return nil, err
+	}
+	multiplierBPS := policy.DefaultMultiplierBPS
+	if configuredMultiplier := policy.ModelMultiplierBPS[modelKey]; configuredMultiplier > 0 {
+		multiplierBPS = configuredMultiplier
+	}
+	amount, err := tokenChargeMicrocredits(configured, TokenUsageFact{InputTokens: reservation.EstimatedInputTokens, OutputTokens: reservation.MaxOutputTokens}, multiplierBPS)
+	if err != nil {
+		return nil, err
+	}
+	pricingJSON, err := json.Marshal(configured)
+	if err != nil {
+		return nil, err
+	}
+	teamID, err := s.billingTeamID(userID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	order := &model.BillingOrder{
+		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: "proxy-token:" + idempotencyKey,
+		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: "text", Scene: truncateRunes(firstNonEmpty(strings.TrimSpace(scene), "agent"), 80),
+		BillingMode: "token_usage", PriceVersion: item.PriceVersion, MultiplierBasisPoints: multiplierBPS, Quantity: 1,
+		AmountMicrocredits: amount, ReservedAmountMicrocredits: amount, TokenPricingSnapshotJSON: string(pricingJSON),
+		EstimatedInputTokens: reservation.EstimatedInputTokens, MaxOutputTokens: reservation.MaxOutputTokens,
+		ProviderEndpointVersionID: reservation.EndpointVersionID, ProviderCredentialVersionID: reservation.CredentialVersionID,
+		Status: model.BillingStatusReserved, CreatedAt: now, UpdatedAt: now,
+	}
+	existing, lookupErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
+	if lookupErr == nil {
+		if !sameTokenBillingReservation(existing, order) {
+			return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
+		}
+		return existing, nil
+	}
+	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		return nil, lookupErr
+	}
+	if err := s.repo.ReserveBillingOrder(order); err != nil {
+		existing, existingErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
+		if existingErr == nil {
+			if !sameTokenBillingReservation(existing, order) {
+				return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
+			}
+			return existing, nil
+		}
+		if errors.Is(err, repository.ErrInsufficientCredits) {
+			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
+		}
+		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
+			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
+		}
+		return nil, err
+	}
+	return order, nil
+}
+
+func sameTokenBillingReservation(existing *model.BillingOrder, requested *model.BillingOrder) bool {
+	return existing != nil && requested != nil &&
+		existing.BillingMode == "token_usage" && existing.UserID == requested.UserID && existing.IdempotencyKey == requested.IdempotencyKey &&
+		existing.ChannelID == requested.ChannelID && existing.ChannelModelID == requested.ChannelModelID && existing.Model == requested.Model &&
+		existing.Scene == requested.Scene && existing.PriceVersion == requested.PriceVersion && existing.MultiplierBasisPoints == requested.MultiplierBasisPoints &&
+		existing.ReservedAmountMicrocredits == requested.ReservedAmountMicrocredits && existing.TokenPricingSnapshotJSON == requested.TokenPricingSnapshotJSON &&
+		existing.EstimatedInputTokens == requested.EstimatedInputTokens && existing.MaxOutputTokens == requested.MaxOutputTokens &&
+		existing.ProviderEndpointVersionID == requested.ProviderEndpointVersionID && existing.ProviderCredentialVersionID == requested.ProviderCredentialVersionID
+}
+
 func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, usage BillingUsage) (*model.BillingOrder, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
