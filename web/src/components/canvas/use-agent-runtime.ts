@@ -1,0 +1,317 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { nanoid } from "nanoid";
+
+import { agentRuntimeClient, agentRuntimeHandleStorage, type AgentRuntimeClient, type AgentRuntimeEvent, type AgentRuntimeHandle, type AgentRuntimeHandleStorage, type AgentRuntimeView, type AgentThreadHistoryItem } from "@/services/api/agent-runtime";
+
+const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
+
+type UseAgentRuntimeInput = {
+    canvasId: string;
+    canvasRevision: number;
+    selectedNodeIds: Set<string>;
+    client?: AgentRuntimeClient;
+    storage?: AgentRuntimeHandleStorage;
+};
+
+export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, client = agentRuntimeClient, storage = agentRuntimeHandleStorage }: UseAgentRuntimeInput) {
+    const [threadId, setThreadId] = useState("");
+    const [view, setView] = useState<AgentRuntimeView | null>(null);
+    const [events, setEvents] = useState<AgentRuntimeEvent[]>([]);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "reconnecting">("idle");
+    const [restored, setRestored] = useState(false);
+    const [pendingUserMessage, setPendingUserMessage] = useState("");
+    const [selectionRetry, setSelectionRetry] = useState(0);
+    const [threads, setThreads] = useState<AgentThreadHistoryItem[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(true);
+    const [historyError, setHistoryError] = useState("");
+    const cursorRef = useRef(0);
+    const threadIdRef = useRef("");
+    const pendingRunRef = useRef<AgentRuntimeHandle["pendingRun"]>(undefined);
+    const submittedSelectionRef = useRef(new Set<string>());
+    const selectedNodeIdsRef = useRef(selectedNodeIds);
+    const canvasRevisionRef = useRef(canvasRevision);
+    const historyRequestRef = useRef(0);
+
+    useEffect(() => {
+        selectedNodeIdsRef.current = selectedNodeIds;
+    }, [selectedNodeIds]);
+    useEffect(() => {
+        canvasRevisionRef.current = canvasRevision;
+    }, [canvasRevision]);
+
+    const persist = useCallback(
+        async (nextView: AgentRuntimeView | null, nextThreadId = threadIdRef.current) => {
+            if (!nextThreadId) return;
+            const active = nextView && !terminalStatuses.has(nextView.state.status) ? nextView.run.id : undefined;
+            const handle: AgentRuntimeHandle = { threadId: nextThreadId, lastSequence: active ? cursorRef.current : 0 };
+            if (active) handle.activeRunId = active;
+            else if (pendingRunRef.current) handle.pendingRun = pendingRunRef.current;
+            await storage.save(canvasId, handle);
+        },
+        [canvasId, storage],
+    );
+
+    const adoptView = useCallback(
+        (nextView: AgentRuntimeView) => {
+            setView(nextView);
+            setError("");
+            void persist(nextView).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
+        },
+        [persist],
+    );
+
+    const selectThread = useCallback(
+        (item: AgentThreadHistoryItem) => {
+            threadIdRef.current = item.thread.id;
+            pendingRunRef.current = undefined;
+            cursorRef.current = item.latestRun && !terminalStatuses.has(item.latestRun.state.status) ? item.latestRun.run.lastEventSequence : 0;
+            submittedSelectionRef.current.clear();
+            setThreadId(item.thread.id);
+            setView(item.latestRun);
+            setEvents([]);
+            setError("");
+            setConnection("idle");
+            setPendingUserMessage("");
+            void persist(item.latestRun, item.thread.id).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
+        },
+        [persist],
+    );
+
+    const reloadThreads = useCallback(async () => {
+        const requestID = ++historyRequestRef.current;
+        setHistoryLoading(true);
+        setHistoryError("");
+        try {
+            const history = await client.listThreads(canvasId, 20);
+            if (historyRequestRef.current === requestID) setThreads(history.items);
+        } catch (cause) {
+            if (historyRequestRef.current === requestID) setHistoryError(errorMessage(cause, "Agent 历史加载失败"));
+        } finally {
+            if (historyRequestRef.current === requestID) setHistoryLoading(false);
+        }
+    }, [canvasId, client]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const historyRequestID = ++historyRequestRef.current;
+        threadIdRef.current = "";
+        pendingRunRef.current = undefined;
+        cursorRef.current = 0;
+        submittedSelectionRef.current.clear();
+        setThreadId("");
+        setView(null);
+        setEvents([]);
+        setError("");
+        setConnection("idle");
+        setPendingUserMessage("");
+        setRestored(false);
+        setThreads([]);
+        setHistoryLoading(true);
+        setHistoryError("");
+        void Promise.allSettled([storage.load(canvasId), client.listThreads(canvasId, 20)])
+            .then(async ([handleResult, historyResult]) => {
+                if (cancelled || historyRequestRef.current !== historyRequestID) return;
+                const handle = handleResult.status === "fulfilled" ? handleResult.value : null;
+                const historyItems = historyResult.status === "fulfilled" ? historyResult.value.items : [];
+                const handleLoadError = handleResult.status === "rejected" ? errorMessage(handleResult.reason, "Agent 本地恢复句柄读取失败") : "";
+                setThreads(historyItems);
+                setHistoryLoading(false);
+                if (historyResult.status === "rejected") setHistoryError(errorMessage(historyResult.reason, "Agent 历史加载失败"));
+
+                if (handle?.pendingRun) {
+                    threadIdRef.current = handle.threadId;
+                    pendingRunRef.current = handle.pendingRun;
+                    cursorRef.current = handle.lastSequence;
+                    setThreadId(handle.threadId);
+                    setPendingUserMessage(handle.pendingRun.userMessage);
+                    const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: 8 });
+                    if (cancelled || historyRequestRef.current !== historyRequestID) return;
+                    pendingRunRef.current = undefined;
+                    setPendingUserMessage("");
+                    adoptView(resumed);
+                    return;
+                }
+                if (handle?.activeRunId) {
+                    threadIdRef.current = handle.threadId;
+                    cursorRef.current = handle.lastSequence;
+                    setThreadId(handle.threadId);
+                    const resumed = await client.getRun(handle.activeRunId);
+                    if (cancelled || historyRequestRef.current !== historyRequestID) return;
+                    adoptView(resumed);
+                    return;
+                }
+                const selected = (handle ? historyItems.find((item) => item.thread.id === handle.threadId) : undefined) ?? historyItems[0];
+                if (selected) selectThread(selected);
+                if (handleLoadError) setError(handleLoadError);
+            })
+            .catch((cause: unknown) => {
+                if (!cancelled && historyRequestRef.current === historyRequestID) setError(errorMessage(cause, "Agent 运行恢复失败"));
+            })
+            .finally(() => {
+                if (!cancelled && historyRequestRef.current === historyRequestID) {
+                    setHistoryLoading(false);
+                    setRestored(true);
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [adoptView, canvasId, client, selectThread, storage]);
+
+    const runId = view?.run.id || "";
+    const terminal = Boolean(view && terminalStatuses.has(view.state.status));
+    useEffect(() => {
+        if (!restored || !runId || terminal) {
+            setConnection("idle");
+            return;
+        }
+        setConnection("connecting");
+        return client.subscribe(runId, cursorRef.current, {
+            onOpen: () => setConnection("connected"),
+            onError: (cause) => {
+                if (cause) {
+                    setError(cause.message);
+                    setConnection("idle");
+                } else setConnection("reconnecting");
+            },
+            onEvent: (event) => {
+                if (event.sequence <= cursorRef.current) return;
+                cursorRef.current = event.sequence;
+                setEvents((current) => [...current, event].slice(-30));
+                setView((current) => {
+                    if (!current || current.run.id !== runId) return current;
+                    const next = { ...current, run: { ...current.run, status: event.payload.status, lastEventSequence: event.sequence, stateVersion: event.payload.stateVersion, stepNumber: event.payload.stepNumber }, state: event.payload };
+                    void persist(next).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
+                    return next;
+                });
+            },
+        });
+    }, [client, persist, restored, runId, terminal]);
+
+    const pendingSelection = view?.state.status === "waiting_tool" && view.state.pendingToolCall?.toolName === "canvas.read_selection" ? view.state.pendingToolCall : null;
+    useEffect(() => {
+        if (!pendingSelection || !view) return;
+        const identity = `${view.run.id}:${pendingSelection.toolCallId}:${pendingSelection.actionVersion}`;
+        if (submittedSelectionRef.current.has(identity)) return;
+        submittedSelectionRef.current.add(identity);
+        setBusy(true);
+        void client
+            .submitSelection(view.run.id, {
+                toolCallId: pendingSelection.toolCallId,
+                actionVersion: pendingSelection.actionVersion,
+                selection: { revision: canvasRevisionRef.current, nodeIds: [...selectedNodeIdsRef.current].sort() },
+            })
+            .then(adoptView)
+            .catch((cause: unknown) => setError(errorMessage(cause, "选区事实提交失败")))
+            .finally(() => setBusy(false));
+    }, [adoptView, client, pendingSelection, selectionRetry, view]);
+
+    const retrySelection = useCallback(() => {
+        if (!pendingSelection || !view) return;
+        submittedSelectionRef.current.delete(`${view.run.id}:${pendingSelection.toolCallId}:${pendingSelection.actionVersion}`);
+        setError("");
+        setSelectionRetry((value) => value + 1);
+    }, [pendingSelection, view]);
+
+    const submit = useCallback(
+        async (userMessage: string) => {
+            const message = userMessage.trim();
+            if (!message || busy || (view && !terminalStatuses.has(view.state.status))) return false;
+            setBusy(true);
+            setError("");
+            setEvents([]);
+            cursorRef.current = 0;
+            try {
+                let activeThreadId = threadIdRef.current;
+                if (!activeThreadId) {
+                    const thread = await client.createThread(canvasId);
+                    activeThreadId = thread.id;
+                    threadIdRef.current = thread.id;
+                    setThreadId(thread.id);
+                    await persist(null, thread.id);
+                }
+                const pending = pendingRunRef.current;
+                if (pending && pending.userMessage !== message) throw new Error("上次 Agent 启动结果尚未确认，请保留原指令重试");
+                const request = pending || { clientRequestId: nanoid(), userMessage: message };
+                pendingRunRef.current = request;
+                setPendingUserMessage(request.userMessage);
+                await persist(null, activeThreadId);
+                const started = await client.startRun(activeThreadId, { ...request, maxSteps: 8 });
+                pendingRunRef.current = undefined;
+                setPendingUserMessage("");
+                adoptView(started);
+                void reloadThreads();
+                return true;
+            } catch (cause) {
+                setError(errorMessage(cause, "Agent 运行启动失败"));
+                return false;
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, busy, canvasId, client, persist, reloadThreads, view],
+    );
+
+    const decideApproval = useCallback(
+        async (decision: "approved" | "rejected") => {
+            const call = view?.state.status === "waiting_approval" ? view.state.pendingToolCall : undefined;
+            if (!call || !view || busy) return;
+            setBusy(true);
+            setError("");
+            try {
+                adoptView(await client.submitApproval(view.run.id, { toolCallId: call.toolCallId, actionVersion: call.actionVersion, decision }));
+            } catch (cause) {
+                setError(errorMessage(cause, "审批提交失败"));
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, busy, client, view],
+    );
+
+    const newThread = useCallback(async () => {
+        if (view && !terminalStatuses.has(view.state.status)) return;
+        await storage.clear(canvasId);
+        threadIdRef.current = "";
+        pendingRunRef.current = undefined;
+        cursorRef.current = 0;
+        submittedSelectionRef.current.clear();
+        setThreadId("");
+        setView(null);
+        setEvents([]);
+        setError("");
+        setPendingUserMessage("");
+    }, [canvasId, storage, view]);
+
+    return useMemo(
+        () => ({
+            threadId,
+            selectedThreadId: threadId,
+            threads,
+            historyLoading,
+            historyError,
+            view,
+            events,
+            busy,
+            error,
+            connection,
+            restored,
+            terminal,
+            pendingUserMessage,
+            canRetrySelection: Boolean(pendingSelection && error),
+            submit,
+            decideApproval,
+            retrySelection,
+            newThread,
+            selectThread,
+            reloadThreads,
+        }),
+        [busy, connection, decideApproval, error, events, historyError, historyLoading, newThread, pendingSelection, pendingUserMessage, reloadThreads, restored, retrySelection, selectThread, submit, terminal, threadId, threads, view],
+    );
+}
+
+function errorMessage(cause: unknown, fallback: string) {
+    return cause instanceof Error && cause.message.trim() ? cause.message : fallback;
+}
