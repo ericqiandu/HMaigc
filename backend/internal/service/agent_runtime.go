@@ -150,9 +150,17 @@ func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimePro
 		}
 		return s.commitAgentRuntimeState(scope, state, transition)
 	}
-	evidence := agentruntime.DeliveryEvidence{}
+	finalMessage := ""
 	if decision.Final != nil {
-		evidence.FinalMessage = decision.Final.Message
+		finalMessage = decision.Final.Message
+	}
+	evidence, err := s.agentRuntimeDeliveryEvidence(scope, finalMessage)
+	if err != nil {
+		transition, transitionErr := agentruntime.Fail(state, "delivery_evidence_invalid")
+		if transitionErr != nil {
+			return nil, errors.Join(err, transitionErr)
+		}
+		return s.commitAgentRuntimeState(scope, state, transition)
 	}
 	transition, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: decision, Evidence: evidence})
 	if err != nil {
@@ -344,4 +352,6 @@ const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基�
 1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
 2. 调用工具：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read_state|canvas.read_selection|canvas.apply_ops|generation.submit|generation.wait","actionVersion":1,"arguments":{}}}
 canvas.apply_ops 的 arguments 结构是 {"baseRevision":0,"patch":{"upsertNodes":[],"deleteNodeIds":[],"upsertConnections":[],"deleteConnectionIds":[],"document":{}}}；baseRevision 必须是当前非负版本，只填写本次实际需要的 patch 字段，节点和连线必须包含稳定 id。
+generation.submit 的 arguments 结构是 {"type":"canvas_image|canvas_video|canvas_audio","prompt":"真实生成提示词","input":{"mode":"image|video|audio","config":{}}}；type 与 input.mode 必须对应，input 必须使用当前系统模型目录公开的真实任务参数，不得猜测模型、价格或默认配置。提交成功后必须保存返回的 taskId，并使用 generation.wait 等待同一任务。
+generation.wait 的 arguments 结构是 {"taskId":"generation.submit 返回的 taskId"}；只有返回 succeeded 且包含真实资产 URL 时才构成交付事实，queued 或 running 表示仍在等待，不得重复提交生成任务。
 只有真实事实足以满足交付时才能 final；需要画布或生成事实时必须先调用工具。`

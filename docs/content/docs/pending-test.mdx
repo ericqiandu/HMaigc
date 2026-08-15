@@ -4,7 +4,8 @@
 
 - 在后续 Web 桥接完成后，从个人画布与团队 editor 画布分别批准一次 `canvas.apply_ops`，确认节点修改只增加一个 revision，刷新或重复提交不会产生第二条 CanvasChange；viewer、失效团队和跨画布调用必须显式拒绝。
 - 模拟画布已经提交、Runtime 工具结果事务尚未提交时重启进程，确认恢复后沿同一 `clientMutationId` 收敛到原 committed revision；协作者抢先提交导致 revision 过期时，主 Agent 应收到 `canvas_revision_conflict` 并重新读取画布，不覆盖他人修改。
-- 当前里程碑尚未开放 Agent HTTP/SSE 与前端入口，也未接通 `generation.submit` / `generation.wait`；这些能力不得在 UI 中提前显示为可用。
+- 当前里程碑尚未开放 Agent HTTP/SSE 与前端入口；`generation.submit` / `generation.wait` 已在服务端接通真实 Task、BillingOrder 与终态资产，但在后续前端硬切和事件驱动恢复完成前，不得在 UI 中提前显示为完整可用。
+- 使用真实已定价图片、视频和音频模型分别完成一次“审批提交 → 生成中断线恢复 → 终态资产交付”，核对 Task、BillingOrder、积分流水、资产 URL 与 Agent delivery verification 全链一致；失败、取消和积分不足必须显示结构化失败，不产生伪资产或重复订单。
 
 ## 前后台视觉系统审查
 
