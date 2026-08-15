@@ -204,8 +204,8 @@ func (s *Service) ReconcileTokenBillingNow(ctx context.Context, orderID string, 
 	if err != nil {
 		return err
 	}
-	providerTaskID = strings.TrimSpace(providerTaskID)
-	if order.BillingMode != "token_usage" || providerTaskID == "" {
+	providerTaskID, taskIDErr := tokenBillingTaskID(providerTaskID)
+	if order.BillingMode != "token_usage" || taskIDErr != nil {
 		return errors.New("Token 账单核对事实不完整")
 	}
 	if err := s.repo.UpdateBillingProviderRequestID(order.ID, providerTaskID); err != nil {
@@ -221,11 +221,24 @@ func (s *Service) ReconcileTokenBillingNow(ctx context.Context, orderID string, 
 }
 
 func (s *Service) ScheduleTokenBillingReconciliation(orderID string, providerTaskID string, reason string, usage TokenUsageFact) error {
+	providerTaskID, err := tokenBillingTaskID(providerTaskID)
+	if err != nil {
+		return err
+	}
 	usageStatus, storedUsage := normalizeTokenUsageFact(usage)
 	if err := s.repo.RecordTokenBillingUsage(strings.TrimSpace(orderID), repository.TokenUsageFact{InputTokens: storedUsage.InputTokens, CachedTokens: storedUsage.CachedTokens, OutputTokens: storedUsage.OutputTokens}, usageStatus); err != nil {
 		return err
 	}
 	return s.repo.MarkTokenBillingForReconciliation(strings.TrimSpace(orderID), strings.TrimSpace(providerTaskID), reason, time.Now().Add(5*time.Second))
+}
+
+func tokenBillingTaskID(chatCompletionID string) (string, error) {
+	const prefix = "chatcmpl-"
+	chatCompletionID = strings.TrimSpace(chatCompletionID)
+	if !strings.HasPrefix(chatCompletionID, prefix) || len(chatCompletionID) == len(prefix) {
+		return "", errors.New("Token 账单任务 ID 契约无效")
+	}
+	return strings.TrimPrefix(chatCompletionID, prefix), nil
 }
 
 func (s *Service) RunTokenBillingReconciliationBatch(ctx context.Context, now time.Time, limit int) error {

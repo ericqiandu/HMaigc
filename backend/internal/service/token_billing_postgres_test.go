@@ -77,7 +77,7 @@ func TestPostgresKuaiziTokenReconciliationUsesFrozenCredential(t *testing.T) {
 	if err := svc.BeginTokenBillingRequest(order.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ScheduleTokenBillingReconciliation(order.ID, "pg-provider-task", "pending", TokenUsageFact{}); err != nil {
+	if err := svc.ScheduleTokenBillingReconciliation(order.ID, "chatcmpl-pg-provider-task", "pending", TokenUsageFact{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("next_reconcile_at", now.Add(-time.Second)).Error; err != nil {

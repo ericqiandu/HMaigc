@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
@@ -285,7 +286,7 @@ func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 	if err := svc.MarkBillingRunning(order.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{}); err != nil {
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-provider-task", TokenUsageFact{}); err != nil {
 		t.Fatal(err)
 	}
 	var stored model.BillingOrder
@@ -294,6 +295,40 @@ func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 	}
 	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingAmount != 6 || stored.ProviderBillingOrderID != "provider-order" || stored.ProviderBillingTotalTokens != 42 || stored.ProviderTaskStatus != "succeeded" || stored.ProviderBillingUnit != "fen" || stored.TokenUsageStatus != "missing" || billingCalls.Load() != 1 {
 		t.Fatalf("settled order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+}
+
+func TestKuaiziAgentProxyQueriesBillingWithTaskIDInsideChatCompletionID(t *testing.T) {
+	var queriedTaskID string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			TaskID string `json:"task_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		queriedTaskID = payload.TaskID
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-order","amount":6,"status":"succeeded","task_id":"kz-cgt-task","task_status":"succeeded","task_duration":1,"total_tokens":42,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "chat-completion-task-id", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-kz-cgt-task", TokenUsageFact{}); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if queriedTaskID != "kz-cgt-task" || stored.ProviderRequestID != "kz-cgt-task" || stored.Status != model.BillingStatusSettled {
+		t.Fatalf("queried task = %q, order = %#v", queriedTaskID, stored)
 	}
 }
 
@@ -318,7 +353,7 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 		t.Fatal(err)
 	}
 	usage := TokenUsageFact{InputTokens: 20, CachedTokens: 2, OutputTokens: 5, Available: true}
-	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", usage); err != nil {
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-provider-task", usage); err != nil {
 		t.Fatal(err)
 	}
 	var pending model.BillingOrder
@@ -357,7 +392,7 @@ func TestKuaiziAgentProxyInvalidUsageDoesNotBlockSupplierSettlement(t *testing.T
 	if err := svc.MarkBillingRunning(order.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{InputTokens: 1, CachedTokens: 2, Available: true}); err != nil {
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-provider-task", TokenUsageFact{InputTokens: 1, CachedTokens: 2, Available: true}); err != nil {
 		t.Fatal(err)
 	}
 	var stored model.BillingOrder
@@ -383,7 +418,7 @@ func TestKuaiziAgentProxyFailedBillWithAmountPersistsObservation(t *testing.T) {
 	if err := svc.MarkBillingRunning(order.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{}); err != nil {
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-provider-task", TokenUsageFact{}); err != nil {
 		t.Fatal(err)
 	}
 	var stored model.BillingOrder

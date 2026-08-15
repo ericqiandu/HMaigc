@@ -792,6 +792,15 @@ func prepareTokenBilledProxyRequest(path string, body []byte, maxOutputTokens in
 		return nil, 0, err
 	}
 	payload["max_tokens"] = limit
+	if streamRaw, exists := payload["stream"]; exists {
+		var stream bool
+		if err := json.Unmarshal(streamRaw, &stream); err != nil {
+			return nil, 0, errors.New("Token 计费请求 stream 字段无效")
+		}
+		if stream {
+			payload["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		}
+	}
 	prepared, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, err

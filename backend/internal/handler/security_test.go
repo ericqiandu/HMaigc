@@ -13,7 +13,7 @@ import (
 )
 
 func TestPrepareTokenBilledProxyRequestEnforcesOutputLimitAndCountsCompleteBody(t *testing.T) {
-	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"你好"}],"max_tokens":9999}`)
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"你好"}],"max_tokens":9999,"stream":true,"stream_options":{"include_usage":false}}`)
 	prepared, estimatedInput, err := prepareTokenBilledProxyRequest("/chat/completions", body, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +30,9 @@ func TestPrepareTokenBilledProxyRequestEnforcesOutputLimitAndCountsCompleteBody(
 	}
 	if string(payload["messages"]) != `[{"role":"user","content":"你好"}]` {
 		t.Fatalf("messages changed = %s", payload["messages"])
+	}
+	if string(payload["stream_options"]) != `{"include_usage":true}` {
+		t.Fatalf("stream_options = %s", payload["stream_options"])
 	}
 }
 
