@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,71 @@ import (
 )
 
 const CreditScale int64 = 1_000_000
+
+const (
+	microsPerCurrencyUnit       int64 = 1_000_000
+	localCreditsPerCurrencyUnit int64 = 100
+	basisPointsScale            int64 = 10_000
+)
+
+type TokenPricingSnapshot struct {
+	InputPerMillionMicros  int64 `json:"inputPerMillionMicros"`
+	CachedPerMillionMicros int64 `json:"cachedPerMillionMicros"`
+	OutputPerMillionMicros int64 `json:"outputPerMillionMicros"`
+	MaxOutputTokens        int64 `json:"maxOutputTokens"`
+}
+
+type TokenUsageFact struct {
+	InputTokens  int64
+	CachedTokens int64
+	OutputTokens int64
+}
+
+func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, error) {
+	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
+	if !managed || spec.Capability != "text" || normalizeCapability(item.Capability) != "text" {
+		return TokenPricingSnapshot{}, errors.New("Token 用量计费仅支持筷子托管文本模型")
+	}
+	if item.BillingMode != "token_usage" || item.PriceStrategy != "token" || item.UnitPriceMicrocredits != 0 || !item.PriceConfigured {
+		return TokenPricingSnapshot{}, errors.New("Token 用量计费模型配置不完整")
+	}
+	if pricing == nil || strings.ToUpper(strings.TrimSpace(pricing.Currency)) != "CNY" || pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.ExpectedOutputTokens <= 0 {
+		return TokenPricingSnapshot{}, errors.New("Token 供应商价格配置不完整")
+	}
+	return TokenPricingSnapshot{
+		InputPerMillionMicros:  pricing.InputPerMillionMicros,
+		CachedPerMillionMicros: pricing.CachedPerMillionMicros,
+		OutputPerMillionMicros: pricing.OutputPerMillionMicros,
+		MaxOutputTokens:        pricing.ExpectedOutputTokens,
+	}, nil
+}
+
+func tokenChargeMicrocredits(pricing TokenPricingSnapshot, usage TokenUsageFact, multiplierBPS int64) (int64, error) {
+	if pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.MaxOutputTokens <= 0 {
+		return 0, errors.New("Token 价格快照无效")
+	}
+	if usage.InputTokens < 0 || usage.CachedTokens < 0 || usage.OutputTokens < 0 || usage.CachedTokens > usage.InputTokens {
+		return 0, errors.New("Token 用量事实无效")
+	}
+	if multiplierBPS <= 0 {
+		return 0, errors.New("计费倍率无效")
+	}
+
+	uncachedTokens := usage.InputTokens - usage.CachedTokens
+	numerator := new(big.Int)
+	numerator.Add(numerator, new(big.Int).Mul(big.NewInt(uncachedTokens), big.NewInt(pricing.InputPerMillionMicros)))
+	numerator.Add(numerator, new(big.Int).Mul(big.NewInt(usage.CachedTokens), big.NewInt(pricing.CachedPerMillionMicros)))
+	numerator.Add(numerator, new(big.Int).Mul(big.NewInt(usage.OutputTokens), big.NewInt(pricing.OutputPerMillionMicros)))
+	numerator.Mul(numerator, big.NewInt(localCreditsPerCurrencyUnit))
+	numerator.Mul(numerator, big.NewInt(multiplierBPS))
+
+	denominator := big.NewInt(microsPerCurrencyUnit * basisPointsScale)
+	amount := new(big.Int).Quo(new(big.Int).Add(numerator, new(big.Int).Sub(denominator, big.NewInt(1))), denominator)
+	if !amount.IsInt64() {
+		return 0, errors.New("Token 计费金额溢出")
+	}
+	return amount.Int64(), nil
+}
 
 type WalletSummary struct {
 	Account model.CreditAccount       `json:"account"`
