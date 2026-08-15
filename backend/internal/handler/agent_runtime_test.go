@@ -128,6 +128,111 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 }
 
+func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(fixture.db)
+	svc := service.New(repo, t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-history-canvas")
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-other-canvas")
+
+	baseTime := time.Date(2026, time.August, 15, 1, 0, 0, 0, time.UTC)
+	olderScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", "history-thread-older", "history-run-older", "较早的任务", baseTime.Add(time.Hour))
+	newerScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", "history-thread-newer", "history-run-newer", "较新的任务", baseTime.Add(2*time.Hour))
+
+	emptyScope, err := svc.AuthorizeAgentScope(fixture.userID, "handler-agent-history-canvas", "history-thread-empty", "history-empty-probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyThread, err := repo.CreateAgentThread(emptyScope, baseTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-other-canvas", "history-thread-other-canvas", "history-run-other-canvas", "其他画布任务", baseTime.Add(3*time.Hour))
+	if err := fixture.db.Create(&model.AgentThread{
+		ID: "history-thread-other-user", TenantKind: agentruntime.TenantPersonal, TenantID: "handler-admin",
+		CreatedByUserID: "handler-admin", CanvasID: "handler-agent-history-canvas", Status: agentruntime.ThreadActive,
+		CreatedAt: baseTime.Add(4 * time.Hour), UpdatedAt: baseTime.Add(4 * time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	response := fixture.request(http.MethodGet, "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=20", "", fixture.userCookie, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("history status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Items []struct {
+				Thread     model.AgentThread
+				ActivityAt time.Time
+				LatestRun  *struct {
+					Run   model.AgentRun
+					State agentruntime.RuntimeState
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Data.Items) != 3 {
+		t.Fatalf("history item count = %d, body = %s", len(envelope.Data.Items), response.Body.String())
+	}
+	if first := envelope.Data.Items[0]; first.Thread.ID != newerScope.ThreadID || first.LatestRun == nil || first.LatestRun.Run.ID != newerScope.RunID || first.LatestRun.State.UserMessage != "较新的任务" {
+		t.Fatalf("newest item = %#v", first)
+	}
+	if second := envelope.Data.Items[1]; second.Thread.ID != olderScope.ThreadID || second.LatestRun == nil || second.LatestRun.Run.ID != olderScope.RunID || second.LatestRun.State.UserMessage != "较早的任务" {
+		t.Fatalf("older item = %#v", second)
+	}
+	empty := envelope.Data.Items[2]
+	if empty.Thread.ID != emptyThread.ID || empty.LatestRun != nil || !empty.ActivityAt.Equal(empty.Thread.UpdatedAt) {
+		t.Fatalf("empty item = %#v", empty)
+	}
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{name: "missing canvas", path: "/api/agent/threads?limit=20"},
+		{name: "zero limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=0"},
+		{name: "limit too large", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=21"},
+		{name: "decimal limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=1.5"},
+		{name: "trailing limit", path: "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=1x"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := fixture.request(http.MethodGet, test.path, "", fixture.userCookie, "")
+			if got.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", got.Code, got.Body.String())
+			}
+		})
+	}
+	if anonymous := fixture.request(http.MethodGet, "/api/agent/threads?canvasId=handler-agent-history-canvas", "", "", ""); anonymous.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, body = %s", anonymous.Code, anonymous.Body.String())
+	}
+}
+
+func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repository.Repository, actorUserID, canvasID, threadID, runID, userMessage string, now time.Time) agentruntime.Scope {
+	t.Helper()
+	scope, err := svc.AuthorizeAgentScope(actorUserID, canvasID, threadID, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateAgentRun(repository.CreateAgentRunInput{Scope: scope, ClientRequestID: "request-" + runID, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "history-model-record", ModelKey: "history-model",
+		MaxSteps: 8, ToolSchemaVersion: 1, UserMessage: userMessage, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return scope
+}
+
 func createAgentRuntimeHandlerCanvas(t *testing.T, fixture *providerAccountHandlerFixture, canvasID string) {
 	t.Helper()
 	now := time.Now().UTC()

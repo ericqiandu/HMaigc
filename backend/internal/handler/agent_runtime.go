@@ -46,6 +46,25 @@ type agentRuntimeRequest interface {
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 	agent := r.Group("/agent", agentRuntimeSecurityHeaders())
+	agent.GET("/threads", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		canvasID := strings.TrimSpace(c.Query("canvasId"))
+		limit, err := strictAgentThreadHistoryLimit(c.Query("limit"))
+		if canvasID == "" || err != nil {
+			fail(c, http.StatusBadRequest, errors.New("Agent 会话历史查询参数无效"))
+			return
+		}
+		view, err := svc.ListAgentThreads(user, canvasID, limit)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	agent.POST("/threads", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -138,6 +157,20 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+}
+
+func strictAgentThreadHistoryLimit(raw string) (int, error) {
+	if raw == "" {
+		return 20, nil
+	}
+	if strings.TrimSpace(raw) != raw {
+		return 0, errors.New("Agent 会话历史数量无效")
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > 20 {
+		return 0, errors.New("Agent 会话历史数量无效")
+	}
+	return limit, nil
 }
 
 func agentRuntimeSecurityHeaders() gin.HandlerFunc {

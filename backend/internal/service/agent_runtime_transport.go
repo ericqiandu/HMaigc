@@ -83,7 +83,14 @@ func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeV
 	if err != nil {
 		return nil, err
 	}
-	return &AgentRuntimeView{Run: *run, State: state}, nil
+	return agentRuntimeViewFromFacts(*run, state)
+}
+
+func agentRuntimeViewFromFacts(run model.AgentRun, state agentruntime.RuntimeState) (*AgentRuntimeView, error) {
+	if state.StateVersion != run.StateVersion || state.StepNumber != run.StepNumber || state.MaxSteps != run.MaxSteps || state.Status != run.Status {
+		return nil, errors.New("agent checkpoint state is inconsistent")
+	}
+	return &AgentRuntimeView{Run: run, State: state}, nil
 }
 
 func (s *Service) ReadScopedAgentEvents(actor *model.User, runID string, afterSequence int64, limit int) ([]AgentRuntimeEventView, *AgentRuntimeView, error) {
