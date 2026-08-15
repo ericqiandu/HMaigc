@@ -739,12 +739,12 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	logErr := svc.LogAPICall(log)
 	if tokenBilled {
 		if logErr != nil && log.ProviderRequestID != "" {
-			_ = svc.ScheduleTokenBillingReconciliation(billingOrderID, log.ProviderRequestID, "调用日志写入失败，账单待核对")
+			_ = svc.ScheduleTokenBillingReconciliation(billingOrderID, log.ProviderRequestID, "调用日志写入失败，账单待核对", service.TokenUsageFact{InputTokens: log.InputTokens, CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens, Available: log.UsageAvailable})
 		} else if logErr != nil {
 			_ = svc.MarkBillingUncertain(billingOrderID, "调用日志写入失败且响应缺少任务 ID")
 		} else if log.ProviderRequestID == "" {
 			_ = svc.MarkBillingUncertain(billingOrderID, "上游响应缺少可核对的任务 ID")
-		} else if err := svc.ReconcileTokenBillingNow(c.Request.Context(), billingOrderID, log.ProviderRequestID, service.TokenUsageFact{InputTokens: log.InputTokens, CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens}); err != nil {
+		} else if err := svc.ReconcileTokenBillingNow(c.Request.Context(), billingOrderID, log.ProviderRequestID, service.TokenUsageFact{InputTokens: log.InputTokens, CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens, Available: log.UsageAvailable}); err != nil {
 			_ = svc.MarkBillingUncertain(billingOrderID, "上游账单核对尚未完成")
 		}
 	} else if status == model.ApiCallStatusSucceeded {

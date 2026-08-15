@@ -436,9 +436,13 @@ type BillingOrder struct {
 	InputTokens                      int64         `json:"inputTokens"`
 	CachedTokens                     int64         `json:"cachedTokens"`
 	OutputTokens                     int64         `json:"outputTokens"`
+	TokenUsageStatus                 string        `json:"tokenUsageStatus,omitempty" gorm:"size:24"`
 	ProviderBillingOrderID           string        `json:"providerBillingOrderId,omitempty" gorm:"index;size:160"`
 	ProviderBillingAmount            int64         `json:"providerBillingAmount"`
 	ProviderBillingStatus            string        `json:"providerBillingStatus,omitempty" gorm:"index;size:32"`
+	ProviderBillingUnit              string        `json:"providerBillingUnit,omitempty" gorm:"size:16"`
+	ProviderBillingTotalTokens       int64         `json:"providerBillingTotalTokens"`
+	ProviderTaskStatus               string        `json:"providerTaskStatus,omitempty" gorm:"size:32"`
 	ProviderEndpointVersionID        string        `json:"providerEndpointVersionId,omitempty" gorm:"index;size:36"`
 	ProviderCredentialVersionID      string        `json:"providerCredentialVersionId,omitempty" gorm:"index;size:36"`
 	ReconcileAttempts                int           `json:"reconcileAttempts"`

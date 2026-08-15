@@ -19,7 +19,7 @@ func TestSettleTokenBillingConsumesActualAndReturnsDifference(t *testing.T) {
 	repo, db := openTokenBillingRepository(t)
 	order := reserveTokenBillingFixture(t, repo, db, "settle-difference")
 
-	err := repo.SettleTokenBilling(order.ID, "provider-order-1", 6, TokenUsageFact{InputTokens: 20_000, CachedTokens: 1_000, OutputTokens: 5_000}, time.Now().UTC())
+	err := repo.SettleTokenBilling(order.ID, "provider-order-1", 6, "succeeded", 25_000, TokenUsageFact{InputTokens: 20_000, CachedTokens: 1_000, OutputTokens: 5_000}, "reported", time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +57,28 @@ func TestSettleTokenBillingIsIdempotent(t *testing.T) {
 	order := reserveTokenBillingFixture(t, repo, db, "settle-idempotent")
 	usage := TokenUsageFact{InputTokens: 20_000, OutputTokens: 5_000}
 
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-2", 6, usage, time.Now().UTC()); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, "provider-order-2", 6, "succeeded", 4, usage, "reported", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-2", 6, usage, time.Now().UTC().Add(time.Second)); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, "provider-order-2", 6, "succeeded", 4, usage, "reported", time.Now().UTC().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 
 	assertTokenBillingSettlement(t, db, order.ID, 94_000_000, 0, 6_000_000, 24_000_000)
+}
+
+func TestRefundTokenBillingRejectsConflictingReplay(t *testing.T) {
+	repo, db := openTokenBillingRepository(t)
+	order := reserveTokenBillingFixture(t, repo, db, "refund-token-idempotent")
+	if err := repo.RefundTokenBilling(order.ID, "provider-refund-order", 0, "failed", 7, "上游未扣费"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RefundTokenBilling(order.ID, "provider-refund-order", 0, "failed", 7, "上游未扣费"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RefundTokenBilling(order.ID, "provider-refund-order", 0, "failed", 8, "冲突重放"); !errors.Is(err, ErrBillingStateConflict) {
+		t.Fatalf("conflicting refund replay error = %v", err)
+	}
 }
 
 func TestSettleTokenBillingRollsBackAccountLedgerAndOrderTogether(t *testing.T) {
@@ -74,7 +88,7 @@ func TestSettleTokenBillingRollsBackAccountLedgerAndOrderTogether(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-3", 6, TokenUsageFact{InputTokens: 1}, time.Now().UTC()); err == nil {
+	if err := repo.SettleTokenBilling(order.ID, "provider-order-3", 6, "succeeded", 1, TokenUsageFact{InputTokens: 1}, "reported", time.Now().UTC()); err == nil {
 		t.Fatal("settlement succeeded despite rejected order update")
 	}
 
@@ -105,7 +119,7 @@ func TestSettleTokenBillingKeepsFundsFrozenWhenActualExceedsReservation(t *testi
 	repo, db := openTokenBillingRepository(t)
 	order := reserveTokenBillingFixture(t, repo, db, "settle-over-reservation")
 
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-over", 31, TokenUsageFact{InputTokens: 1}, time.Now().UTC()); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, "provider-order-over", 31, "succeeded", 1, TokenUsageFact{InputTokens: 1}, "reported", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	var account model.CreditAccount
@@ -227,7 +241,7 @@ func TestSettleTeamTokenBillingReturnsDifferenceToTeamAccount(t *testing.T) {
 	if err := repo.ReserveBillingOrder(order); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SettleTokenBilling(order.ID, "provider-team-order", 6, TokenUsageFact{InputTokens: 1}, now); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, "provider-team-order", 6, "succeeded", 1, TokenUsageFact{InputTokens: 1}, "reported", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.First(&account, "team_id = ?", team.ID).Error; err != nil {

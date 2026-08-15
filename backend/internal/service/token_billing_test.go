@@ -255,6 +255,17 @@ func TestReserveProxyTokenBillingIdempotencyDoesNotReserveTwice(t *testing.T) {
 	}
 }
 
+func TestReserveProxyTokenBillingRejectsNonUnitMultiplier(t *testing.T) {
+	svc, _, account, channel, item, reservation := tokenReservationServiceFixture(t)
+	policyJSON := `{"signupBonusMicrocredits":0,"checkinBonusMicrocredits":0,"defaultMultiplierBasisPoints":12000,"modelMultiplierBasisPoints":{}}`
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: creditPolicySettingKey, ValueJSON: policyJSON}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ReserveProxyTokenBilling(account.UserID, channel.ID, item.ModelKey, "agent", "non-unit-multiplier", reservation); err == nil {
+		t.Fatal("non-1.0 token multiplier was accepted")
+	}
+}
+
 func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 	var billingCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -262,7 +273,7 @@ func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 			t.Fatalf("billing request = %s, ApiKey=%q", request.URL.Path, request.Header.Get("ApiKey"))
 		}
 		billingCalls.Add(1)
-		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-order","amount":6,"status":"succeeded","task_id":"provider-task","task_status":"succeeded","task_duration":1,"total_tokens":42,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+		_, _ = io.WriteString(writer, "{\"code\":0,\"data\":{\"items\":[{\"order_id\":\"provider-order\",\"amount\":6,\"status\":\"succeeded\",\"task_id\":\"provider-task\",\"task_status\":\"succeeded\",\"task_duration\":1,\"total_tokens\":42,\"created_at\":\"2026-08-15T10:00:00Z\"}]}}")
 	}))
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
@@ -281,7 +292,7 @@ func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingAmount != 6 || stored.ProviderBillingOrderID != "provider-order" || billingCalls.Load() != 1 {
+	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingAmount != 6 || stored.ProviderBillingOrderID != "provider-order" || stored.ProviderBillingTotalTokens != 42 || stored.ProviderTaskStatus != "succeeded" || stored.ProviderBillingUnit != "fen" || stored.TokenUsageStatus != "missing" || billingCalls.Load() != 1 {
 		t.Fatalf("settled order = %#v, billing calls=%d", stored, billingCalls.Load())
 	}
 }
@@ -306,8 +317,16 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 	if err := svc.MarkBillingRunning(order.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{}); err != nil {
+	usage := TokenUsageFact{InputTokens: 20, CachedTokens: 2, OutputTokens: 5, Available: true}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", usage); err != nil {
 		t.Fatal(err)
+	}
+	var pending model.BillingOrder
+	if err := db.First(&pending, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pending.TokenUsageStatus != "reported" || pending.InputTokens != 20 || pending.CachedTokens != 2 || pending.OutputTokens != 5 || pending.ProviderBillingOrderID != "provider-order" || pending.ProviderBillingStatus != "pending" || pending.ProviderBillingTotalTokens != 42 {
+		t.Fatalf("pending billing facts = %#v", pending)
 	}
 	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("next_reconcile_at", time.Now().Add(-time.Second)).Error; err != nil {
 		t.Fatal(err)
@@ -319,8 +338,60 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != model.BillingStatusSettled || billingCalls.Load() != 2 {
+	if stored.Status != model.BillingStatusSettled || stored.InputTokens != 20 || stored.CachedTokens != 2 || stored.OutputTokens != 5 || stored.TokenUsageStatus != "reported" || billingCalls.Load() != 2 {
 		t.Fatalf("reconciled order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+}
+
+func TestKuaiziAgentProxyInvalidUsageDoesNotBlockSupplierSettlement(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-order","amount":6,"status":"succeeded","task_id":"provider-task","task_status":"succeeded","task_duration":1,"total_tokens":42,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "invalid-usage", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{InputTokens: 1, CachedTokens: 2, Available: true}); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusSettled || stored.TokenUsageStatus != "invalid" || stored.InputTokens != 0 || stored.ProviderBillingAmount != 6 {
+		t.Fatalf("invalid usage settlement = %#v", stored)
+	}
+}
+
+func TestKuaiziAgentProxyFailedBillWithAmountPersistsObservation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, "{\"code\":0,\"data\":{\"items\":[{\"order_id\":\"provider-failed-order\",\"amount\":1,\"status\":\"failed\",\"task_id\":\"provider-task\",\"task_status\":\"failed\",\"task_duration\":1,\"total_tokens\":9,\"created_at\":\"2026-08-15T10:00:00Z\"}]}}")
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "failed-with-amount", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "provider-task", TokenUsageFact{}); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusUncertain || stored.ProviderBillingOrderID != "provider-failed-order" || stored.ProviderBillingAmount != 1 || stored.ProviderBillingStatus != "failed" || stored.ProviderBillingTotalTokens != 9 || stored.ProviderTaskStatus != "failed" {
+		t.Fatalf("failed bill observation = %#v", stored)
 	}
 }
 

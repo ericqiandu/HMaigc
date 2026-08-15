@@ -1,15 +1,12 @@
 package service
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -27,65 +24,6 @@ const (
 	localCreditsPerCurrencyUnit int64 = 100
 	basisPointsScale            int64 = 10_000
 )
-
-type TokenPricingSnapshot struct {
-	InputPerMillionMicros  int64 `json:"inputPerMillionMicros"`
-	CachedPerMillionMicros int64 `json:"cachedPerMillionMicros"`
-	OutputPerMillionMicros int64 `json:"outputPerMillionMicros"`
-	MaxOutputTokens        int64 `json:"maxOutputTokens"`
-}
-
-type TokenUsageFact struct {
-	InputTokens  int64
-	CachedTokens int64
-	OutputTokens int64
-}
-
-func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, error) {
-	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if !managed || spec.Capability != "text" || normalizeCapability(item.Capability) != "text" {
-		return TokenPricingSnapshot{}, errors.New("Token 用量计费仅支持筷子托管文本模型")
-	}
-	if item.BillingMode != "token_usage" || item.PriceStrategy != "token" || item.UnitPriceMicrocredits != 0 || !item.PriceConfigured {
-		return TokenPricingSnapshot{}, errors.New("Token 用量计费模型配置不完整")
-	}
-	if pricing == nil || strings.ToUpper(strings.TrimSpace(pricing.Currency)) != "CNY" || pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.ExpectedOutputTokens <= 0 {
-		return TokenPricingSnapshot{}, errors.New("Token 供应商价格配置不完整")
-	}
-	return TokenPricingSnapshot{
-		InputPerMillionMicros:  pricing.InputPerMillionMicros,
-		CachedPerMillionMicros: pricing.CachedPerMillionMicros,
-		OutputPerMillionMicros: pricing.OutputPerMillionMicros,
-		MaxOutputTokens:        pricing.ExpectedOutputTokens,
-	}, nil
-}
-
-func tokenChargeMicrocredits(pricing TokenPricingSnapshot, usage TokenUsageFact, multiplierBPS int64) (int64, error) {
-	if pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.MaxOutputTokens <= 0 {
-		return 0, errors.New("Token 价格快照无效")
-	}
-	if usage.InputTokens < 0 || usage.CachedTokens < 0 || usage.OutputTokens < 0 || usage.CachedTokens > usage.InputTokens {
-		return 0, errors.New("Token 用量事实无效")
-	}
-	if multiplierBPS <= 0 {
-		return 0, errors.New("计费倍率无效")
-	}
-
-	uncachedTokens := usage.InputTokens - usage.CachedTokens
-	numerator := new(big.Int)
-	numerator.Add(numerator, new(big.Int).Mul(big.NewInt(uncachedTokens), big.NewInt(pricing.InputPerMillionMicros)))
-	numerator.Add(numerator, new(big.Int).Mul(big.NewInt(usage.CachedTokens), big.NewInt(pricing.CachedPerMillionMicros)))
-	numerator.Add(numerator, new(big.Int).Mul(big.NewInt(usage.OutputTokens), big.NewInt(pricing.OutputPerMillionMicros)))
-	numerator.Mul(numerator, big.NewInt(localCreditsPerCurrencyUnit))
-	numerator.Mul(numerator, big.NewInt(multiplierBPS))
-
-	denominator := big.NewInt(microsPerCurrencyUnit * basisPointsScale)
-	amount := new(big.Int).Quo(new(big.Int).Add(numerator, new(big.Int).Sub(denominator, big.NewInt(1))), denominator)
-	if !amount.IsInt64() {
-		return 0, errors.New("Token 计费金额溢出")
-	}
-	return amount.Int64(), nil
-}
 
 type WalletSummary struct {
 	Account model.CreditAccount       `json:"account"`
@@ -469,127 +407,6 @@ type BillingUsage struct {
 	SuperResolutionFPS        int
 }
 
-type TokenBillingReservation struct {
-	EstimatedInputTokens int64
-	MaxOutputTokens      int64
-	Pricing              TokenPricingSnapshot
-	EndpointVersionID    string
-	CredentialVersionID  string
-}
-
-func (s *Service) ProxyTokenBillingConfig(userID string, channelID string, modelKey string) (TokenPricingSnapshot, bool, error) {
-	item, err := s.requireAccessibleChannelModel(strings.TrimSpace(userID), strings.TrimSpace(channelID), strings.TrimPrefix(strings.TrimSpace(modelKey), "models/"))
-	if err != nil {
-		return TokenPricingSnapshot{}, false, err
-	}
-	if item.BillingMode != "token_usage" {
-		return TokenPricingSnapshot{}, false, nil
-	}
-	pricing, err := s.repo.ModelPricing(item.ChannelID, item.ModelKey, "text")
-	if err != nil {
-		return TokenPricingSnapshot{}, false, err
-	}
-	snapshot, err := validateTokenUsageModelBilling(*item, pricing)
-	return snapshot, err == nil, err
-}
-
-func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
-	userID = strings.TrimSpace(userID)
-	channelID = strings.TrimSpace(channelID)
-	modelKey = strings.TrimSpace(modelKey)
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	reservation.EndpointVersionID = strings.TrimSpace(reservation.EndpointVersionID)
-	reservation.CredentialVersionID = strings.TrimSpace(reservation.CredentialVersionID)
-	if userID == "" || channelID == "" || modelKey == "" || idempotencyKey == "" || reservation.EstimatedInputTokens <= 0 || reservation.MaxOutputTokens <= 0 || reservation.EndpointVersionID == "" || reservation.CredentialVersionID == "" {
-		return nil, BadAuthRequest("Token 计费预留事实不完整")
-	}
-	item, err := s.requireAccessibleChannelModel(userID, channelID, modelKey)
-	if err != nil {
-		return nil, err
-	}
-	pricing, err := s.repo.ModelPricing(channelID, modelKey, "text")
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, BadAuthRequest("当前 Agent 模型尚未配置 Token 供应商价格")
-	}
-	if err != nil {
-		return nil, err
-	}
-	configured, err := validateTokenUsageModelBilling(*item, pricing)
-	if err != nil {
-		return nil, BadAuthRequest(err.Error())
-	}
-	if reservation.Pricing != configured || reservation.MaxOutputTokens != configured.MaxOutputTokens {
-		return nil, BadAuthRequest("Token 计费预留价格与已发布配置不一致")
-	}
-	policy, err := s.creditPolicy()
-	if err != nil {
-		return nil, err
-	}
-	multiplierBPS := policy.DefaultMultiplierBPS
-	if configuredMultiplier := policy.ModelMultiplierBPS[modelKey]; configuredMultiplier > 0 {
-		multiplierBPS = configuredMultiplier
-	}
-	amount, err := tokenChargeMicrocredits(configured, TokenUsageFact{InputTokens: reservation.EstimatedInputTokens, OutputTokens: reservation.MaxOutputTokens}, multiplierBPS)
-	if err != nil {
-		return nil, err
-	}
-	pricingJSON, err := json.Marshal(configured)
-	if err != nil {
-		return nil, err
-	}
-	teamID, err := s.billingTeamID(userID, time.Now())
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	order := &model.BillingOrder{
-		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: "proxy-token:" + idempotencyKey,
-		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: "text", Scene: truncateRunes(firstNonEmpty(strings.TrimSpace(scene), "agent"), 80),
-		BillingMode: "token_usage", PriceVersion: item.PriceVersion, MultiplierBasisPoints: multiplierBPS, Quantity: 1,
-		AmountMicrocredits: amount, ReservedAmountMicrocredits: amount, TokenPricingSnapshotJSON: string(pricingJSON),
-		EstimatedInputTokens: reservation.EstimatedInputTokens, MaxOutputTokens: reservation.MaxOutputTokens,
-		ProviderEndpointVersionID: reservation.EndpointVersionID, ProviderCredentialVersionID: reservation.CredentialVersionID,
-		Status: model.BillingStatusReserved, CreatedAt: now, UpdatedAt: now,
-	}
-	existing, lookupErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
-	if lookupErr == nil {
-		if !sameTokenBillingReservation(existing, order) {
-			return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
-		}
-		return existing, nil
-	}
-	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-		return nil, lookupErr
-	}
-	if err := s.repo.ReserveBillingOrder(order); err != nil {
-		existing, existingErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
-		if existingErr == nil {
-			if !sameTokenBillingReservation(existing, order) {
-				return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
-			}
-			return existing, nil
-		}
-		if errors.Is(err, repository.ErrInsufficientCredits) {
-			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
-		}
-		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
-			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
-		}
-		return nil, err
-	}
-	return order, nil
-}
-
-func sameTokenBillingReservation(existing *model.BillingOrder, requested *model.BillingOrder) bool {
-	return existing != nil && requested != nil &&
-		existing.BillingMode == "token_usage" && existing.UserID == requested.UserID && existing.IdempotencyKey == requested.IdempotencyKey &&
-		existing.ChannelID == requested.ChannelID && existing.ChannelModelID == requested.ChannelModelID && existing.Model == requested.Model &&
-		existing.Scene == requested.Scene && existing.PriceVersion == requested.PriceVersion && existing.MultiplierBasisPoints == requested.MultiplierBasisPoints &&
-		existing.ReservedAmountMicrocredits == requested.ReservedAmountMicrocredits && existing.TokenPricingSnapshotJSON == requested.TokenPricingSnapshotJSON &&
-		existing.EstimatedInputTokens == requested.EstimatedInputTokens && existing.MaxOutputTokens == requested.MaxOutputTokens &&
-		existing.ProviderEndpointVersionID == requested.ProviderEndpointVersionID && existing.ProviderCredentialVersionID == requested.ProviderCredentialVersionID
-}
-
 func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, usage BillingUsage) (*model.BillingOrder, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
@@ -912,90 +729,6 @@ func (s *Service) MarkBillingUncertain(orderID string, errorText string) error {
 		return nil
 	}
 	return s.repo.MarkBillingUncertain(orderID, truncateRunes(errorText, 1000))
-}
-
-func (s *Service) ReconcileTokenBillingNow(ctx context.Context, orderID string, providerTaskID string, usage TokenUsageFact) error {
-	order, err := s.repo.BillingOrder(strings.TrimSpace(orderID))
-	if err != nil {
-		return err
-	}
-	providerTaskID = strings.TrimSpace(providerTaskID)
-	if order.BillingMode != "token_usage" || providerTaskID == "" {
-		return errors.New("Token 账单核对事实不完整")
-	}
-	if err := s.repo.UpdateBillingProviderRequestID(order.ID, providerTaskID); err != nil {
-		return err
-	}
-	order.ProviderRequestID = providerTaskID
-	return s.reconcileTokenBillingOrder(ctx, order, usage, false)
-}
-
-func (s *Service) ScheduleTokenBillingReconciliation(orderID string, providerTaskID string, reason string) error {
-	return s.repo.MarkTokenBillingForReconciliation(strings.TrimSpace(orderID), strings.TrimSpace(providerTaskID), reason, time.Now().Add(5*time.Second))
-}
-
-func (s *Service) RunTokenBillingReconciliationBatch(ctx context.Context, now time.Time, limit int) error {
-	orders, err := s.repo.ClaimTokenBillingReconciliations(s.workerID, now, time.Minute, limit)
-	if err != nil {
-		return err
-	}
-	for index := range orders {
-		if err := s.reconcileTokenBillingOrder(ctx, &orders[index], TokenUsageFact{}, true); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.BillingOrder, usage TokenUsageFact, claimed bool) error {
-	runtime, err := s.resolveFrozenKuaiziBillingRuntime(order)
-	if err != nil {
-		return s.deferTokenBillingReconciliation(order, claimed, "frozen_runtime_unavailable")
-	}
-	client := NewKuaiziClient(KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), 20*time.Second))
-	fact, err := client.BillingByTaskID(ctx, runtime.BaseURL, runtime.APIKey, order.ProviderRequestID)
-	if err != nil {
-		var billingError *KuaiziBillingError
-		code := "billing_lookup_failed"
-		if errors.As(err, &billingError) {
-			code = billingError.Code
-		}
-		return s.deferTokenBillingReconciliation(order, claimed, code)
-	}
-	switch fact.Status {
-	case "pending":
-		return s.deferTokenBillingReconciliation(order, claimed, "billing_pending")
-	case "failed":
-		if fact.Amount != 0 {
-			return s.deferTokenBillingReconciliation(order, claimed, "failed_bill_has_amount")
-		}
-		return s.repo.RefundBillingOrder(order.ID, "上游账单明确失败且未扣费")
-	case "succeeded":
-		return s.repo.SettleTokenBilling(order.ID, fact.OrderID, fact.Amount, repository.TokenUsageFact{InputTokens: usage.InputTokens, CachedTokens: usage.CachedTokens, OutputTokens: usage.OutputTokens}, time.Now())
-	default:
-		return s.deferTokenBillingReconciliation(order, claimed, "billing_status_invalid")
-	}
-}
-
-func (s *Service) deferTokenBillingReconciliation(order *model.BillingOrder, claimed bool, reason string) error {
-	if claimed && order.ReconcileAttempts >= 8 {
-		return s.repo.RequireTokenBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
-	}
-	next := time.Now().Add(tokenBillingReconcileDelay(order.ReconcileAttempts))
-	if claimed {
-		return s.repo.RescheduleTokenBillingReconciliation(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason, next)
-	}
-	return s.repo.MarkTokenBillingForReconciliation(order.ID, order.ProviderRequestID, reason, next)
-}
-
-func tokenBillingReconcileDelay(attempt int) time.Duration {
-	if attempt < 0 {
-		attempt = 0
-	}
-	if attempt > 6 {
-		attempt = 6
-	}
-	return time.Duration(1<<attempt) * 5 * time.Second
 }
 
 func (s *Service) BillingFailureRequiresReview(orderID string, taskID string, err error) bool {

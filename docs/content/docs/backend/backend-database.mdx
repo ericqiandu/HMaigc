@@ -63,6 +63,8 @@
 
 `billing_orders` 包含 `price_tier_id`、`pricing_resolution` 与 `pricing_input_variant`，并继续保存 `unit_price_microcredits`、`price_version`、数量和最终金额。订单创建后使用这些快照解释历史账单，后台后续调整价格不会重算旧订单。
 
+Agent 文本模型使用同一张 `billing_orders` 的 `token_usage` 模式，不建立平行账本。订单在请求前冻结 Token 价格快照、1.0 倍率、最大输出量、服务地址版本、凭据版本与预留积分；响应后持久化本地 usage 状态（`reported`、`missing` 或 `invalid`）及输入、缓存命中、输出 Token。筷子账单核对同时保存订单号、任务号、任务状态、账单状态、计费单位 `fen`、账单总 Token 和实扣金额。`pending` 事实由带租约的 worker 继续核对且绝不重发模型请求；`failed` 的零扣费事实与积分退回在同一事务完成；`succeeded` 以筷子实扣金额为资金真源结算并释放差额。首版只允许 1.0 倍率，避免预留公式与实扣换算产生双重口径。
+
 服务启动迁移会把历史空 `price_strategy` 显式更新为 `flat`；新建和编辑模型时必须明确提交价格策略，服务端不会根据模型名称或缺失字段推测策略。
 
 ## 平台凭据版本与供应商事实
