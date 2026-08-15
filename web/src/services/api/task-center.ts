@@ -1,6 +1,8 @@
 import axios from "axios";
 
 import { generationErrorMessage } from "@/lib/generation-error";
+import { prepareGenerationTaskSubmission, taskPriceChangedQuoteFromEnvelope, TaskPriceChangedError } from "@/lib/billing/task-billing-quote";
+import { invalidateTaskBillingQuotes } from "@/lib/billing/task-billing-quote-events";
 
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type TaskBillingStatus = "reserved" | "running" | "settled" | "refunded" | "uncertain";
@@ -122,6 +124,45 @@ export type CreateTaskInput = {
     provider?: string;
     model?: string;
     input?: Record<string, unknown>;
+    quotePriceVersion?: number;
+    quoteFingerprint?: string;
+};
+
+export type TaskBillingQuoteConfig = {
+    channelId: string;
+    model: string;
+    size: string;
+    quality: string;
+    videoSeconds: string;
+    vquality: string;
+    videoSuperResolutionEnabled: boolean;
+    videoSuperResolutionResolution: string;
+    videoSuperResolutionVersion: string;
+    videoSuperResolutionFps: number;
+};
+
+export type TaskBillingQuoteRequest = {
+    type: "canvas_image" | "canvas_video";
+    operation: string;
+    batchCount: number;
+    input: {
+        mode: "image" | "video";
+        referenceVideoCount: number;
+        config: TaskBillingQuoteConfig;
+    };
+};
+
+export type TaskBillingQuote = {
+    amountMicrocredits: number;
+    perTaskAmountMicrocredits: number;
+    taskCount: number;
+    priceVersion: number;
+    billingMode: "fixed_request" | "per_second";
+    pricingResolution: string;
+    pricingInputVariant: string;
+    quantity: number;
+    enhancementAmountMicrocredits: number;
+    quoteFingerprint: string;
 };
 
 const api = axios.create({ baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api", withCredentials: true });
@@ -133,6 +174,10 @@ async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>) {
         return response.data.data;
     } catch (error) {
         if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) {
+            const currentQuote = taskPriceChangedQuoteFromEnvelope(error.response?.data);
+            if (currentQuote) {
+                throw new TaskPriceChangedError(currentQuote);
+            }
             throw new Error(error.response?.data?.msg || error.message || "请求失败");
         }
         throw error;
@@ -173,11 +218,20 @@ export function uploadAgentFile(sessionId: string, file: File) {
     return request<SessionFile>(api.post("/upload_file", formData));
 }
 
-export function createGenerationTask(input: CreateTaskInput) {
-    return request<GenerationTask>(api.post("/tasks", input)).then((task) => {
+export async function createGenerationTask(input: CreateTaskInput, options?: { expectedQuote?: TaskBillingQuote; signal?: AbortSignal }) {
+    try {
+        const submission = await prepareGenerationTaskSubmission(input, options?.expectedQuote, requestTaskBillingQuote, options?.signal);
+        const task = await request<GenerationTask>(api.post("/tasks", submission, { signal: options?.signal }));
         notifyCanvasTaskCreated(task);
         return task;
-    });
+    } catch (error) {
+        if (error instanceof TaskPriceChangedError && options?.expectedQuote) invalidateTaskBillingQuotes(options.expectedQuote.quoteFingerprint);
+        throw error;
+    }
+}
+
+export function requestTaskBillingQuote(input: TaskBillingQuoteRequest, signal?: AbortSignal) {
+    return request<TaskBillingQuote>(api.post("/billing/quotes", input, { signal }));
 }
 
 export function listGenerationTasks(limit = 30, options?: { projectId?: string; activeOnly?: boolean }) {

@@ -3,15 +3,16 @@ import { ArrowUp, AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize
 import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
+import { configuredModelMatchesCapability, defaultConfig, modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useCanvasTaskBillingQuote } from "@/hooks/use-canvas-task-billing-quote";
+import type { TaskBillingQuote } from "@/services/api/task-center";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
 import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { imageModelMetadataPatch } from "@/lib/image-model-capabilities";
+import { findImageModelCapabilities, imageModelMetadataPatch, normalizeImageConfigForModel } from "@/lib/image-model-capabilities";
 import { CanvasAudioComposerControls } from "./canvas-audio-composer-controls";
 import { CanvasAudioTextTools } from "./canvas-audio-text-tools";
 import { CanvasResourceMentionTextarea, type CanvasResourceMentionTextareaHandle } from "./canvas-resource-mention-textarea";
@@ -25,6 +26,7 @@ import { canvasResourceMentionToken, selectVideoReferenceCandidates, type Canvas
 import "./canvas-audio-composer.css";
 import "./canvas-video-composer.css";
 import "./canvas-media-composer.css";
+import { GenerationCreditQuoteBadge } from "./generation-credit-quote-badge";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -33,7 +35,7 @@ type CanvasNodePromptPanelProps = {
     isRunning: boolean;
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
-    onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, expectedQuote?: TaskBillingQuote) => void;
     onStop: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     availableReferences: CanvasResourceReference[];
@@ -79,19 +81,11 @@ export function CanvasNodePromptPanel({
     const promptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
     const expandedPromptEditorRef = useRef<CanvasResourceMentionTextareaHandle | null>(null);
     const effectiveVideoConfig = videoModelPublished ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
-    const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
-    const priceChannel = resolveModelChannel(config, config.model);
     const activeVideoReferenceCount = mentionReferences.filter((item) => item.active && item.kind === "video").length;
-    const credits = requestCreditCost({
-        channelMode: priceChannel.scope === "system" ? "remote" : "local",
-        modelCosts: priceChannel.modelCosts,
-        model: modelOptionName(config.model),
-        count: mode === "image" || mode === "video" ? generationCount : 1,
-        seconds: mode === "video" ? effectiveVideoConfig?.videoSeconds : 1,
-        quality: config.quality,
-        resolution: mode === "video" ? effectiveVideoConfig?.vquality : config.size,
-        referenceVideoCount: isVideoMode ? activeVideoReferenceCount : 0,
-    });
+    const quoteConfig = useMemo(() => (isImageMode && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, isImageMode]);
+    const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
+    const quoteReferenceVideoCount = isVideoMode && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? activeVideoReferenceCount : 0;
+    const quoteState = useCanvasTaskBillingQuote(quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, quoteReferenceVideoCount);
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoReferenceCounts = useMemo(
         () => ({
@@ -127,7 +121,7 @@ export function CanvasNodePromptPanel({
     const referenceShelfHeight = referenceShelfRows * 42;
     const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 106 : 82) : isImageMode || isAudioMode ? 76 : 58;
     const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const isSubmitDisabled = !isRunning && (!prompt.trim() || ((isImageMode || isVideoMode) && quoteState.status !== "ready"));
     const canExpandPrompt = mode === "image" || mode === "video" || mode === "audio";
     const updatePromptContentHeight = useCallback((height: number) => {
         setPromptContentHeight((current) => (Math.abs(current - height) < 1 ? current : height));
@@ -196,8 +190,8 @@ export function CanvasNodePromptPanel({
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return false;
-        onGenerate(node.id, mode, text);
+        if (!text || isRunning || ((isImageMode || isVideoMode) && quoteState.status !== "ready")) return false;
+        onGenerate(node.id, mode, text, quoteState.status === "ready" ? quoteState.quote : undefined);
         return true;
     };
 
@@ -272,7 +266,7 @@ export function CanvasNodePromptPanel({
         isAudioMode ? (
             <CanvasAudioComposerControls
                 config={config}
-                credits={credits}
+                credits={null}
                 promptLength={prompt.length}
                 isRunning={isRunning}
                 submitDisabled={isSubmitDisabled}
@@ -354,7 +348,7 @@ export function CanvasNodePromptPanel({
                         </span>
                     ) : null}
                     <span className={isImageMode ? "canvas-image-generation-cost canvas-media-meta ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost canvas-media-meta ml-auto inline-flex" : "inline-flex"}>
-                        <GenerationCostBadge credits={credits} theme={theme} />
+                        <GenerationCreditQuoteBadge state={quoteState} color={theme.node.muted} />
                     </span>
                     <Button
                         type="text"
@@ -641,16 +635,6 @@ function ReferenceThumbnail({ reference }: { reference: CanvasResourceReference 
     return (
         <span className="grid size-full place-items-center bg-black/10 text-current dark:bg-white/10">
             <Icon className="size-3.5 opacity-75" />
-        </span>
-    );
-}
-
-function GenerationCostBadge({ credits, theme }: { credits: number | null; theme: CanvasTheme }) {
-    if (credits === null) return null;
-    return (
-        <span className="inline-flex h-6 shrink-0 items-center gap-0.5 px-1 text-[11px] font-medium leading-4 tabular-nums" style={{ color: theme.node.muted }} title="本次生成消耗">
-            <CreditSymbol />
-            {credits.toLocaleString()}
         </span>
     );
 }

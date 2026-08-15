@@ -25,6 +25,7 @@ export async function executeVideoGeneration({
     generationConfig,
     generationContext,
     controller,
+    expectedQuote,
     projectId,
     setNodes,
     setConnections,
@@ -142,6 +143,7 @@ export async function executeVideoGeneration({
                     ...videoGenerationMetadata,
                 },
                 onTaskCreated: (task) => bindGenerationTask(targetId, task),
+                expectedQuote,
             });
             if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
             const video = await storeBackendGeneratedVideo(result.video);

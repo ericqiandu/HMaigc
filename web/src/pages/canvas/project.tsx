@@ -1162,7 +1162,7 @@ function InfiniteCanvasPage() {
                     onReferenceConnect={connectExistingNodes}
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
-                    onGenerate={handleGenerateNode}
+                    onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
                     onStop={confirmStopGeneration}
                     workspaceMode={workspaceMode}
                     onImageSettingsOpenChange={(open) => {
@@ -1257,9 +1257,9 @@ function InfiniteCanvasPage() {
                     onConfigChange={handleConfigNodeChange}
                     onComposerToggle={() => setDialogNodeId((current) => (current === contentNode.id ? null : contentNode.id))}
                     onStop={confirmStopGeneration}
-                    onGenerate={(nodeId) => {
+                    onGenerate={(nodeId, expectedQuote) => {
                         const target = nodesRef.current.find((item) => item.id === nodeId);
-                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "");
+                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "", { expectedQuote });
                     }}
                     workspaceMode={workspaceMode}
                 />

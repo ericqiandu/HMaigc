@@ -904,6 +904,15 @@ func clearSessionCookie(c *gin.Context) {
 }
 
 func failService(c *gin.Context, err error) {
+	var quoteChanged *service.QuoteChangedError
+	if errors.As(err, &quoteChanged) {
+		c.JSON(http.StatusConflict, gin.H{
+			"code": http.StatusConflict,
+			"data": gin.H{"errorCode": "PRICE_CHANGED", "currentQuote": quoteChanged.CurrentQuote},
+			"msg":  quoteChanged.Error(),
+		})
+		return
+	}
 	var authErr *service.AuthError
 	if errors.As(err, &authErr) {
 		fail(c, authErr.Status, errors.New(authErr.Message))

@@ -34,7 +34,7 @@ func RegisterWatermarkPolicyRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		request, err := decodeWatermarkJSON[service.UpdateWatermarkPreferenceRequest](c, watermarkPreferenceBodyLimit)
+		request, err := decodeStrictJSON[service.UpdateWatermarkPreferenceRequest](c, watermarkPreferenceBodyLimit)
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -65,7 +65,7 @@ func RegisterWatermarkPolicyRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		request, err := decodeWatermarkJSON[service.PublishWatermarkPolicyRequest](c, watermarkPublicationBodyLimit)
+		request, err := decodeStrictJSON[service.PublishWatermarkPolicyRequest](c, watermarkPublicationBodyLimit)
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -88,7 +88,7 @@ func watermarkPolicySecurityHeaders() gin.HandlerFunc {
 	}
 }
 
-func decodeWatermarkJSON[T any](c *gin.Context, limit int64) (T, error) {
+func decodeStrictJSON[T any](c *gin.Context, limit int64) (T, error) {
 	var value T
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	decoder := json.NewDecoder(c.Request.Body)

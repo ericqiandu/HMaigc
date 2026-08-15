@@ -65,14 +65,16 @@ type CreateSessionRequest struct {
 }
 
 type CreateTaskRequest struct {
-	SessionID string         `json:"sessionId"`
-	ProjectID string         `json:"projectId"`
-	Type      string         `json:"type"`
-	Operation string         `json:"operation"`
-	Prompt    string         `json:"prompt"`
-	Provider  string         `json:"provider"`
-	Model     string         `json:"model"`
-	Input     map[string]any `json:"input"`
+	SessionID         string         `json:"sessionId"`
+	ProjectID         string         `json:"projectId"`
+	Type              string         `json:"type"`
+	Operation         string         `json:"operation"`
+	Prompt            string         `json:"prompt"`
+	Provider          string         `json:"provider"`
+	Model             string         `json:"model"`
+	QuotePriceVersion int64          `json:"quotePriceVersion"`
+	QuoteFingerprint  string         `json:"quoteFingerprint"`
+	Input             map[string]any `json:"input"`
 }
 
 type SessionDetail struct {
@@ -380,6 +382,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	billingOrder, err := s.taskBillingOrder(userID, &task, normalizedInput)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateTaskBillingQuoteConfirmation(req, billingOrder); err != nil {
 		return nil, err
 	}
 	if err := s.protectTaskSecrets(normalizedInput); err != nil {
