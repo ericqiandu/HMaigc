@@ -15,7 +15,7 @@
 - Historical fixed_request orders are immutable.
 - Missing or ambiguous upstream billing facts never fall back to one credit or an estimated final charge.
 - Every real model request owns one order; idempotent replay cannot reserve or settle twice.
-- Budget: three production responsibilities, eight production files, about 800 net production lines.
+- Budget: three production responsibilities, ten production files, about 800 net production lines. The two registry/publication files are existing owners required to register deepseek-v4-flash and enforce its Agent eligibility; no parallel adapter is introduced.
 - This plan delivers the backend commercial core. Aggregated per-turn fee UI is a separate follow-up.
 
 ## File Map
@@ -26,6 +26,8 @@
 - backend/internal/repository/finance.go: atomic reserve, difference settlement, refund, and reconciliation claiming.
 - backend/internal/service/kuaizi_client.go: strict billing-list client.
 - backend/internal/service/provider_credentials.go: frozen endpoint/credential identities and exact-version resolution.
+- backend/internal/service/provider_registry.go: register the already-supported Kuaizi DeepSeek Flash model identity.
+- backend/internal/service/agent_model_setting.go: fail closed unless managed DeepSeek Agent models have complete token pricing.
 - backend/internal/handler/auth.go: persist upstream task ID before final billing.
 - backend/internal/service/service.go: bounded reconciliation worker.
 - apps/hono-api/README.md: current Agent billing architecture.
@@ -37,6 +39,8 @@
 **Files:**
 - Modify: backend/internal/model/models.go
 - Modify: backend/internal/service/channel_models.go
+- Modify: backend/internal/service/provider_registry.go
+- Modify: backend/internal/service/agent_model_setting.go
 - Test: backend/internal/service/channel_models_test.go
 - Test: backend/internal/service/token_billing_test.go
 
@@ -83,7 +87,7 @@ Allow billingMode=="token_usage" only for managed text models. Require CNY Model
 ```bash
 cd backend
 go test ./internal/service -run '^(TestKuaiziTextModelAllowsTokenUsageBilling|TestTokenUsageBillingRejectsNonTextAndMissingPrice|TestTokenChargeMicrocreditsUsesIntegerCeiling)$' -count=1
-git add internal/model/models.go internal/service/channel_models.go internal/service/channel_models_test.go internal/service/token_billing_test.go
+git add internal/model/models.go internal/service/channel_models.go internal/service/provider_registry.go internal/service/agent_model_setting.go internal/service/channel_models_test.go internal/service/token_billing_test.go
 git commit -m "feat(billing): 增加 Agent Token 计费契约"
 ```
 
@@ -295,7 +299,7 @@ Use httptest only: chat returns task ID, billing returns amount=6, and wallet sh
 
 - [ ] **Step 4: Self-review spec, diff, and budget**
 
-Verify one request=one order, no fixed fallback, upstream amount authority, no plaintext secret, frozen credential rotation safety, atomic/idempotent money, historical fixed orders unchanged, production files<=8, and net production additions about<=800. Any >50% budget overrun or new transaction owner triggers redesign.
+Verify one request=one order, no fixed fallback, upstream amount authority, no plaintext secret, frozen credential rotation safety, atomic/idempotent money, historical fixed orders unchanged, production files<=10, and net production additions about<=800. Any >50% budget overrun or new transaction owner triggers redesign.
 
 - [ ] **Step 5: One independent review and one consolidated fix wave**
 

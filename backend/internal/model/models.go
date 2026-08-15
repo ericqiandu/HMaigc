@@ -107,6 +107,7 @@ const (
 	CreditLedgerAdminGrant      CreditLedgerType = "admin_grant"
 	CreditLedgerReserve         CreditLedgerType = "reserve"
 	CreditLedgerConsume         CreditLedgerType = "consume"
+	CreditLedgerRelease         CreditLedgerType = "release"
 	CreditLedgerRefund          CreditLedgerType = "refund"
 	CreditLedgerAdminAdjust     CreditLedgerType = "admin_adjustment"
 	CreditLedgerSignupBonus     CreditLedgerType = "signup_bonus"
@@ -428,6 +429,27 @@ type BillingOrder struct {
 	EnhancementSupplierCostMinMicros int64         `json:"enhancementSupplierCostMinMicros"`
 	EnhancementSupplierCostMaxMicros int64         `json:"enhancementSupplierCostMaxMicros"`
 	EnhancementPricingSnapshotJSON   string        `json:"enhancementPricingSnapshotJson,omitempty" gorm:"type:text"`
+	ReservedAmountMicrocredits       int64         `json:"reservedAmountMicrocredits"`
+	TokenPricingSnapshotJSON         string        `json:"tokenPricingSnapshotJson,omitempty" gorm:"type:text"`
+	EstimatedInputTokens             int64         `json:"estimatedInputTokens"`
+	MaxOutputTokens                  int64         `json:"maxOutputTokens"`
+	InputTokens                      int64         `json:"inputTokens"`
+	CachedTokens                     int64         `json:"cachedTokens"`
+	OutputTokens                     int64         `json:"outputTokens"`
+	TokenUsageStatus                 string        `json:"tokenUsageStatus,omitempty" gorm:"size:24"`
+	ProviderBillingOrderID           string        `json:"providerBillingOrderId,omitempty" gorm:"index;size:160"`
+	ProviderBillingAmount            int64         `json:"providerBillingAmount"`
+	ProviderBillingStatus            string        `json:"providerBillingStatus,omitempty" gorm:"index;size:32"`
+	ProviderBillingUnit              string        `json:"providerBillingUnit,omitempty" gorm:"size:16"`
+	ProviderBillingTotalTokens       int64         `json:"providerBillingTotalTokens"`
+	ProviderTaskStatus               string        `json:"providerTaskStatus,omitempty" gorm:"size:32"`
+	ProviderEndpointVersionID        string        `json:"providerEndpointVersionId,omitempty" gorm:"index;size:36"`
+	ProviderCredentialVersionID      string        `json:"providerCredentialVersionId,omitempty" gorm:"index;size:36"`
+	ReconcileAttempts                int           `json:"reconcileAttempts"`
+	NextReconcileAt                  *time.Time    `json:"nextReconcileAt,omitempty" gorm:"index"`
+	ReconcileLeaseOwner              string        `json:"-" gorm:"size:80"`
+	ReconcileLeaseToken              string        `json:"-" gorm:"size:80"`
+	ReconcileLeaseExpiresAt          *time.Time    `json:"-" gorm:"index"`
 	Status                           BillingStatus `json:"status" gorm:"index;size:24"`
 	ProviderRequestID                string        `json:"providerRequestId,omitempty" gorm:"index;size:160"`
 	Error                            string        `json:"error,omitempty" gorm:"size:1000"`

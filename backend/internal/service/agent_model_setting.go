@@ -148,7 +148,24 @@ func (s *Service) eligibleAgentDefaultModel(id string) (*model.ChannelModel, *mo
 	if err != nil {
 		return nil, nil, err
 	}
-	if !item.Enabled || !item.PriceConfigured || item.AccessPolicy != model.ModelAccessAuthenticated || normalizeCapability(item.Capability) != "text" || item.BillingMode != "fixed_request" || item.PriceStrategy != "flat" || item.UnitPriceMicrocredits <= 0 {
+	if !item.Enabled || !item.PriceConfigured || item.AccessPolicy != model.ModelAccessAuthenticated || normalizeCapability(item.Capability) != "text" {
+		return nil, nil, errAgentDefaultModelIneligible
+	}
+	family, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
+	if managed && family == "deepseek" && spec.Capability == "text" {
+		pricing, pricingErr := s.repo.ModelPricing(item.ChannelID, item.ModelKey, "text")
+		if pricingErr != nil {
+			if errors.Is(pricingErr, gorm.ErrRecordNotFound) {
+				return nil, nil, errAgentDefaultModelIneligible
+			}
+			return nil, nil, pricingErr
+		}
+		if _, pricingErr = validateTokenUsageModelBilling(*item, pricing); pricingErr != nil {
+			return nil, nil, errAgentDefaultModelIneligible
+		}
+		return item, channel, nil
+	}
+	if item.BillingMode != "fixed_request" || item.PriceStrategy != "flat" || item.UnitPriceMicrocredits <= 0 {
 		return nil, nil, errAgentDefaultModelIneligible
 	}
 	return item, channel, nil

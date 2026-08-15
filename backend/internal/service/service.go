@@ -213,6 +213,14 @@ func (s *Service) StartWorker() {
 			dispatch()
 		}
 	}()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			_ = s.RunTokenBillingReconciliationBatch(context.Background(), time.Now(), 20)
+			<-ticker.C
+		}
+	}()
 }
 
 func (s *Service) CreateSession(userID string, req CreateSessionRequest) (*SessionDetail, error) {

@@ -599,6 +599,14 @@ func (r *Repository) BillingOrder(id string) (*model.BillingOrder, error) {
 	return &order, nil
 }
 
+func (r *Repository) BillingOrderByUserIdempotency(userID string, idempotencyKey string) (*model.BillingOrder, error) {
+	var order model.BillingOrder
+	if err := r.db.First(&order, "user_id = ? AND idempotency_key = ?", userID, idempotencyKey).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
 func (r *Repository) BillingOrdersByTaskIDs(userID string, taskIDs []string) (map[string]model.BillingOrder, error) {
 	result := make(map[string]model.BillingOrder, len(taskIDs))
 	if len(taskIDs) == 0 {

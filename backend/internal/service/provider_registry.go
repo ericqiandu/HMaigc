@@ -170,10 +170,16 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 		{
 			ProviderKind: "kuaizi",
 			Family:       "deepseek",
-			Models: []ProviderModelSpec{{
-				ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
-				UpstreamMode: "deepseek-v4-pro", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
-			}},
+			Models: []ProviderModelSpec{
+				{
+					ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash", MarketingCopy: "低成本纯文本 Agent 模型，不支持图片输入",
+					UpstreamMode: "deepseek-v4-flash", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
+				},
+				{
+					ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
+					UpstreamMode: "deepseek-v4-pro", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
+				},
+			},
 		},
 	}
 }
