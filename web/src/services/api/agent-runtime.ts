@@ -41,6 +41,18 @@ export type AgentRuntimeView = {
     state: AgentRuntimeState;
 };
 export type AgentRuntimeEvent = { sequence: number; kind: AgentRuntimeEventKind; payload: AgentRuntimeState; createdAt: string };
+export type AgentThreadHistoryItem = {
+    thread: {
+        id: string;
+        canvasId: string;
+        status: "active";
+        createdAt: string;
+        updatedAt: string;
+    };
+    activityAt: string;
+    latestRun: AgentRuntimeView | null;
+};
+export type AgentThreadHistoryView = { items: AgentThreadHistoryItem[] };
 export type AgentRuntimeHandle = { threadId: string; activeRunId?: string; lastSequence: number; pendingRun?: { clientRequestId: string; userMessage: string } };
 export type AgentRuntimeHandleStorage = {
     load: (canvasId: string) => Promise<AgentRuntimeHandle | null>;
@@ -48,6 +60,7 @@ export type AgentRuntimeHandleStorage = {
     clear: (canvasId: string) => Promise<void>;
 };
 export type AgentRuntimeClient = {
+    listThreads: (canvasId: string, limit?: number) => Promise<AgentThreadHistoryView>;
     createThread: (canvasId: string) => Promise<{ id: string; canvasId: string; status: "active" }>;
     startRun: (threadId: string, input: { clientRequestId: string; userMessage: string; maxSteps: number }) => Promise<AgentRuntimeView>;
     getRun: (runId: string) => Promise<AgentRuntimeView>;
@@ -61,6 +74,7 @@ const eventKinds = new Set<AgentRuntimeEventKind>(["run.created", "run.status_ch
 const toolNames = new Set<AgentToolName>(["canvas.read_state", "canvas.read_selection", "canvas.apply_ops", "generation.submit", "generation.wait"]);
 const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
+const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const baseURL = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").replace(/\/+$/, "");
 
 export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
@@ -96,6 +110,34 @@ export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
     return { sequence: integer(source.sequence, "event.sequence"), kind: kind as AgentRuntimeEventKind, payload: parseState(source.payload), createdAt: text(source.createdAt, "event.createdAt") };
+}
+
+export function parseAgentThreadHistory(value: unknown): AgentThreadHistoryView {
+    const root = object(value, "Agent thread history");
+    const items = array(root.items, "history.items");
+    if (items.length > 20) throw new Error("Agent 会话历史不能超过 20 项");
+    return { items: items.map((item, index) => parseAgentThreadHistoryItem(item, index)) };
+}
+
+function parseAgentThreadHistoryItem(value: unknown, index: number): AgentThreadHistoryItem {
+    const source = object(value, `history.items[${index}]`);
+    const threadSource = object(source.thread, `history.items[${index}].thread`);
+    if (threadSource.status !== "active") throw new Error(`不受支持的 Agent thread 状态: ${String(threadSource.status)}`);
+    const thread: AgentThreadHistoryItem["thread"] = {
+        id: text(threadSource.id, `history.items[${index}].thread.id`),
+        canvasId: text(threadSource.canvasId, `history.items[${index}].thread.canvasId`),
+        status: "active",
+        createdAt: isoInstant(threadSource.createdAt, `history.items[${index}].thread.createdAt`),
+        updatedAt: isoInstant(threadSource.updatedAt, `history.items[${index}].thread.updatedAt`),
+    };
+    if (!("latestRun" in source)) throw new Error(`history.items[${index}].latestRun 为必填字段`);
+    const latestRun = source.latestRun === null ? null : parseAgentRuntimeView(source.latestRun);
+    if (latestRun && latestRun.run.threadId !== thread.id) throw new Error("Agent 会话历史的最近运行归属冲突");
+    return {
+        thread,
+        activityAt: isoInstant(source.activityAt, `history.items[${index}].activityAt`),
+        latestRun,
+    };
 }
 
 function parseState(value: unknown): AgentRuntimeState {
@@ -194,6 +236,12 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
 }
 
 export const agentRuntimeClient: AgentRuntimeClient = {
+    listThreads: async (canvasId, limit = 20) => {
+        const normalizedCanvasID = canvasId.trim();
+        if (!normalizedCanvasID) throw new Error("Agent 画布标识不能为空");
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) throw new Error("Agent 会话历史数量必须在 1 到 20 之间");
+        return parseAgentThreadHistory(await request(`/agent/threads?canvasId=${encodeURIComponent(normalizedCanvasID)}&limit=${String(limit)}`));
+    },
     createThread: async (canvasId) => {
         const source = object(await request("/agent/threads", { method: "POST", body: JSON.stringify({ canvasId }) }), "Agent thread");
         if (source.status !== "active") throw new Error(`不受支持的 Agent thread 状态: ${String(source.status)}`);
@@ -272,4 +320,22 @@ function artifact(value: unknown, label: string): string {
     const kind = text(value, label);
     if (!artifactKinds.has(kind)) throw new Error(`不受支持的交付资产: ${kind}`);
     return kind;
+}
+function isoInstant(value: unknown, label: string): string {
+    const source = text(value, label);
+    const match = isoInstantPattern.exec(source);
+    const parsed = new Date(source);
+    if (
+        !match ||
+        Number.isNaN(parsed.getTime()) ||
+        parsed.getUTCFullYear() !== Number(match[1]) ||
+        parsed.getUTCMonth() + 1 !== Number(match[2]) ||
+        parsed.getUTCDate() !== Number(match[3]) ||
+        parsed.getUTCHours() !== Number(match[4]) ||
+        parsed.getUTCMinutes() !== Number(match[5]) ||
+        parsed.getUTCSeconds() !== Number(match[6])
+    ) {
+        throw new Error(`${label} 必须是 UTC ISO-8601 时间`);
+    }
+    return source;
 }

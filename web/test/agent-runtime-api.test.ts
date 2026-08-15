@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { parseAgentRuntimeEvent, parseAgentRuntimeView } from "../src/services/api/agent-runtime";
+import { agentRuntimeClient, parseAgentRuntimeEvent, parseAgentRuntimeView, parseAgentThreadHistory } from "../src/services/api/agent-runtime";
 
 const state = {
     stateVersion: 2,
@@ -86,4 +86,71 @@ test("互相冲突的运行状态事实必须显式失败", () => {
             state: { ...state, pendingToolCall: undefined },
         }),
     ).toThrow("等待审批状态");
+});
+
+const history = {
+    items: [
+        {
+            thread: {
+                id: "thread-1",
+                canvasId: "canvas-1",
+                status: "active",
+                createdAt: "2026-08-15T01:00:00Z",
+                updatedAt: "2026-08-15T01:00:00Z",
+            },
+            activityAt: "2026-08-15T02:00:00Z",
+            latestRun: view,
+        },
+        {
+            thread: {
+                id: "thread-empty",
+                canvasId: "canvas-1",
+                status: "active",
+                createdAt: "2026-08-15T00:00:00Z",
+                updatedAt: "2026-08-15T00:00:00Z",
+            },
+            activityAt: "2026-08-15T00:00:00Z",
+            latestRun: null,
+        },
+    ],
+};
+
+test("会话历史严格保留最近运行和空会话事实", () => {
+    const parsed = parseAgentThreadHistory(history);
+    expect(parsed.items[0]?.latestRun?.state.userMessage).toBe(state.userMessage);
+    expect(parsed.items[0]?.activityAt).toBe("2026-08-15T02:00:00Z");
+    expect(parsed.items[1]?.thread.id).toBe("thread-empty");
+    expect(parsed.items[1]?.latestRun).toBeNull();
+});
+
+test("会话历史拒绝状态、归属、时间、数量和必填字段冲突", () => {
+    expect(() => parseAgentThreadHistory({ items: [{ ...history.items[0], thread: { ...history.items[0]!.thread, status: "archived" } }] })).toThrow("状态");
+    expect(() =>
+        parseAgentThreadHistory({
+            items: [{ ...history.items[0], latestRun: { ...view, run: { ...view.run, threadId: "thread-other" } } }],
+        }),
+    ).toThrow("归属");
+    expect(() => parseAgentThreadHistory({ items: [{ ...history.items[0], activityAt: "2026/08/15 02:00:00" }] })).toThrow("UTC");
+    expect(() => parseAgentThreadHistory({ items: Array.from({ length: 21 }, () => history.items[1]) })).toThrow("20");
+    expect(() => parseAgentThreadHistory({})).toThrow("items");
+    expect(() => parseAgentThreadHistory({ items: [{ ...history.items[0], thread: undefined }] })).toThrow("thread");
+    const { latestRun: _latestRun, ...missingLatestRun } = history.items[0]!;
+    expect(() => parseAgentThreadHistory({ items: [missingLatestRun] })).toThrow("latestRun");
+});
+
+test("会话历史客户端编码画布标识并使用显式 limit", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+        expect(String(input)).toEndWith("/agent/threads?canvasId=canvas%20%2F%201&limit=7");
+        return new Response(JSON.stringify({ code: 0, data: history, msg: "ok" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    }) as typeof fetch;
+    try {
+        const parsed = await agentRuntimeClient.listThreads("canvas / 1", 7);
+        expect(parsed.items).toHaveLength(2);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
