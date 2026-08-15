@@ -1,12 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-    canvasAgentProjectTitle,
-    cinematicAgentProgress,
-    createCanvasAgentLaunchRequest,
-    hasCanvasAgentLaunchRecord,
-    hasPendingCinematicAgentWork,
-} from "../src/lib/canvas/canvas-agent-launch";
+import { canvasAgentProjectTitle, cinematicAgentProgress, createCanvasAgentLaunchRequest, hasCanvasAgentLaunchRecord, hasPendingCinematicAgentWork } from "../src/lib/canvas/canvas-agent-launch";
 import type { AgentSessionDetail } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasAssistantSession } from "../src/types/canvas";
 import { previewCanvasAgentOps } from "../src/lib/canvas/canvas-agent-ops";
@@ -15,14 +9,6 @@ describe("canvas agent launch", () => {
     test("normalizes the prompt and creates a privacy-safe persisted launch request", () => {
         const request = createCanvasAgentLaunchRequest({
             prompt: "  月下少女走进发光竹林  ",
-            mode: "guided",
-            models: { image: "channel-1::image-model", video: "" },
-            skills: [{
-                dir: "storyboard",
-                name: "分镜助手",
-                description: "将故事拆解为分镜。",
-                detailText: "输出镜头清单。",
-            }],
             id: "launch-1",
             createdAt: "2026-07-29T00:00:00.000Z",
         });
@@ -31,24 +17,15 @@ describe("canvas agent launch", () => {
             id: "launch-1",
             source: "home",
             prompt: "月下少女走进发光竹林",
-            mode: "guided",
-            models: { image: "channel-1::image-model", video: "" },
-            skills: [{
-                dir: "storyboard",
-                name: "分镜助手",
-                description: "将故事拆解为分镜。",
-                detailText: "输出镜头清单。",
-            }],
             createdAt: "2026-07-29T00:00:00.000Z",
         });
-        expect(() => createCanvasAgentLaunchRequest({
-            prompt: "   ",
-            mode: "automatic",
-            models: { image: "", video: "" },
-            skills: [],
-            id: "launch-2",
-            createdAt: request.createdAt,
-        })).toThrow("创作描述不能为空");
+        expect(() =>
+            createCanvasAgentLaunchRequest({
+                prompt: "   ",
+                id: "launch-2",
+                createdAt: request.createdAt,
+            }),
+        ).toThrow("创作描述不能为空");
     });
 
     test("derives a compact project title without putting the prompt in the URL", () => {
@@ -64,36 +41,74 @@ describe("canvas agent launch", () => {
             createdAt: "2026-07-29T00:00:00.000Z",
             updatedAt: "2026-07-29T00:00:00.000Z",
         };
-        expect(hasCanvasAgentLaunchRecord([{ ...baseSession, pendingBackendSession: {
-            id: "backend-1",
-            kind: "cinematic",
-            messageId: "message-1",
-            status: "pending",
-            executionMode: "guided",
-            launchRequestId: "launch-1",
-            startedAt: "2026-07-29T00:00:00.000Z",
-        } }], "launch-1")).toBe(true);
-        expect(hasCanvasAgentLaunchRecord([{ ...baseSession, messages: [{
-            id: "message-2",
-            role: "tool",
-            text: "等待确认",
-            detail: { kind: "cinematic-proposal", launchRequestId: "launch-2", status: "pending" },
-        }] }], "launch-2")).toBe(true);
+        expect(
+            hasCanvasAgentLaunchRecord(
+                [
+                    {
+                        ...baseSession,
+                        pendingBackendSession: {
+                            id: "backend-1",
+                            kind: "cinematic",
+                            messageId: "message-1",
+                            status: "pending",
+                            executionMode: "guided",
+                            launchRequestId: "launch-1",
+                            startedAt: "2026-07-29T00:00:00.000Z",
+                        },
+                    },
+                ],
+                "launch-1",
+            ),
+        ).toBe(true);
+        expect(
+            hasCanvasAgentLaunchRecord(
+                [
+                    {
+                        ...baseSession,
+                        messages: [
+                            {
+                                id: "message-2",
+                                role: "tool",
+                                text: "等待确认",
+                                detail: { kind: "cinematic-proposal", launchRequestId: "launch-2", status: "pending" },
+                            },
+                        ],
+                    },
+                ],
+                "launch-2",
+            ),
+        ).toBe(true);
         expect(hasCanvasAgentLaunchRecord([baseSession], "launch-3")).toBe(false);
-        expect(hasPendingCinematicAgentWork([{ ...baseSession, pendingBackendSession: {
-            id: "backend-2",
-            kind: "cinematic",
-            messageId: "message-3",
-            status: "pending",
-            executionMode: "automatic",
-            startedAt: "2026-07-29T00:00:00.000Z",
-        } }])).toBe(true);
-        expect(hasPendingCinematicAgentWork([{ ...baseSession, messages: [{
-            id: "message-4",
-            role: "tool",
-            text: "等待确认",
-            detail: { kind: "cinematic-proposal", status: "pending" },
-        }] }])).toBe(true);
+        expect(
+            hasPendingCinematicAgentWork([
+                {
+                    ...baseSession,
+                    pendingBackendSession: {
+                        id: "backend-2",
+                        kind: "cinematic",
+                        messageId: "message-3",
+                        status: "pending",
+                        executionMode: "automatic",
+                        startedAt: "2026-07-29T00:00:00.000Z",
+                    },
+                },
+            ]),
+        ).toBe(true);
+        expect(
+            hasPendingCinematicAgentWork([
+                {
+                    ...baseSession,
+                    messages: [
+                        {
+                            id: "message-4",
+                            role: "tool",
+                            text: "等待确认",
+                            detail: { kind: "cinematic-proposal", status: "pending" },
+                        },
+                    ],
+                },
+            ]),
+        ).toBe(true);
         expect(hasPendingCinematicAgentWork([baseSession])).toBe(false);
     });
 

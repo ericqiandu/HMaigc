@@ -13,7 +13,6 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
-import { hasPendingCinematicAgentWork } from "@/lib/canvas/canvas-agent-launch";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -226,7 +225,6 @@ function InfiniteCanvasPage() {
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
-    const [cinematicAgentEntry, setCinematicAgentEntry] = useState(false);
     const { assistantClosing, assistantMounted, assistantOpen, closeAgent, openAgent } = useCanvasAssistantVisibility();
     const { tasks: activeTasks } = useCanvasActiveTasks(projectId, projectLoaded);
 
@@ -316,11 +314,9 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded) return;
-        const hasPendingAgentWork = hasPendingCinematicAgentWork(currentProject?.chatSessions || []);
-        if (!agentLaunchRequest && !hasPendingAgentWork) return;
-        if (agentLaunchRequest) setCinematicAgentEntry(true);
+        if (!agentLaunchRequest) return;
         openAgent();
-    }, [agentLaunchRequest, currentProject?.chatSessions, openAgent, projectLoaded]);
+    }, [agentLaunchRequest, openAgent, projectLoaded]);
 
     const handleAgentLaunchHandled = useCallback(
         (launchRequestId: string) => {
@@ -482,7 +478,6 @@ function InfiniteCanvasPage() {
         handleUploadRequest,
         imageInputRef,
         openAssetsAtPosition,
-        pasteAssistantImage,
         pasteSystemClipboard,
         startUploadStatus,
         uploadStatus,
@@ -823,7 +818,7 @@ function InfiniteCanvasPage() {
         setTextEditorNodeId(node.id);
     }, []);
 
-    const { agentSnapshot, agentUndoCount, applyAgentOps, canUndoAgentOps, dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasAgentOperations({
+    const { dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasAgentOperations({
         projectId,
         domainProjectId: linkedProjectId,
         projectTitle: currentProject?.title || "未命名画布",
@@ -940,11 +935,6 @@ function InfiniteCanvasPage() {
         deleteConnection,
         deselectCanvas,
     });
-
-    const handleAssistantSessionsChange = useCallback((sessions: CanvasAssistantSession[], activeId: string | null) => {
-        setChatSessions(sessions);
-        setActiveChatId(activeId);
-    }, []);
 
     const startTitleEditing = useCallback(() => {
         setTitleDraft(currentProject?.title || "未命名画布");
@@ -1601,10 +1591,7 @@ function InfiniteCanvasPage() {
                     ) : (
                         <CanvasShortDramaEmptyState
                             onCreatePipeline={createShortDramaPipeline}
-                            onOpenAgent={() => {
-                                setCinematicAgentEntry(true);
-                                openAgent();
-                            }}
+                            onOpenAgent={openAgent}
                             onUpload={() => handleUploadRequest()}
                             onAddText={() => createNode(CanvasNodeType.Text)}
                             onAddScript={() => createNode(CanvasNodeType.Script)}
@@ -1952,23 +1939,12 @@ function InfiniteCanvasPage() {
             {assistantMounted && canEditCanvas ? (
                 <Suspense fallback={null}>
                     <CanvasAssistantPanel
-                        nodes={nodes}
+                        key={projectId}
                         selectedNodeIds={selectedNodeIds}
-                        snapshot={agentSnapshot}
                         projectId={projectId}
-                        sessions={chatSessions}
-                        activeSessionId={activeChatId}
-                        onSelectNodeIds={setSelectedNodeIds}
-                        onSessionsChange={handleAssistantSessionsChange}
-                        onApplyOps={applyAgentOps}
-                        canUndoOps={canUndoAgentOps}
-                        undoOpsCount={agentUndoCount}
-                        onUndoOps={undoAgentOps}
-                        onPasteImage={pasteAssistantImage}
+                        canvasRevision={currentProject?.revision || 0}
                         closing={assistantClosing}
                         onCollapse={closeAgent}
-                        cinematicEntry={cinematicAgentEntry}
-                        onCinematicEntryConsumed={() => setCinematicAgentEntry(false)}
                         agentLaunchRequest={agentLaunchRequest}
                         onAgentLaunchHandled={handleAgentLaunchHandled}
                     />

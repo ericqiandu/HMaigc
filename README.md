@@ -10,23 +10,24 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - `docker-compose.production.yml`：使用 PostgreSQL 和 Redis 的生产环境。
 
 仓库只保留上述两条运行路径，不再维护旧镜像部署、重复 Compose 或上游一键安装脚本。
-画布助手正在硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent 或 Codex 插件连接路径。当前服务端已具备冻结模型、计费决策循环、可恢复检查点、五类工具协调、通用交付验收，以及按持久化 sequence 续读的 REST/SSE 协议；Web 仍使用既有入口，待面板切换完成后再移除旧浏览器执行链。
+画布助手已硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent、Codex 插件连接或浏览器内模型循环。服务端负责冻结模型、决策循环、五类工具协调、通用交付验收和可恢复检查点；Web 只提交用户目标与真实选区事实、展示持久化事件并处理审批。
 
 ### 首页到 Agent 的创作链路
 
-- 首页创作框先创建真实画布项目，并把提示词与执行模式写入项目内的 `pendingAgentLaunch`；提示词不进入 URL。
-- 打开新画布后，Agent 面板只消费一次启动请求。后端会话 ID、执行模式和来源请求 ID 会随聊天会话持久化，刷新页面后继续查询同一任务，不重复创建任务。
-- `执行前确认` 模式只允许 Agent 完成方案推演；返回的画布操作会形成待确认卡片，用户批准后才写入节点并触发媒体生成。
-- `自动执行` 模式要求后端同时返回结构化画布操作和 `run_generation` 真实生成动作；前端缺少生成动作时会显式失败，不会把“节点已写入”误报为“视频已生成”。画幅、分辨率和时长通过结构化交付参数传递，媒体任务创建后由任务中心持续回写真实状态与产物。两种模式都只展示后端任务返回的真实阶段与进度，失败会明确记录且不会静默降级。
+- 首页创作框先创建真实画布项目，把提示词和参考图片节点写入项目内的 `pendingAgentLaunch`；提示词不进入 URL，首页不再预选模型、Skill 或本地执行模式。
+- 打开新画布后，Agent 面板用该请求创建或复用服务端 thread，并以持久化 `clientRequestId` 启动 run；只有取得运行事实后才消费启动请求。启动响应丢失时刷新或重试仍复用同一请求 ID，不重复创建运行。
+- 模型选择、Skill 选择、工具规划与交付判断全部由服务端 Runtime 完成。需要副作用确认时，前端展示已冻结的 `toolCallId + actionVersion + arguments`，用户批准后由后端按权限、revision CAS、计费和幂等事实执行。
+- 选区读取是唯一需要浏览器回传的当前画布事实；前端提交真实 revision 与节点 ID。图片、视频和音频生成结果只以服务端 Task、BillingOrder、Resource 和交付验收事实为准。
 
-### 单一 Agent Runtime（迁移中）
+### 单一 Agent Runtime
 
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。
 - 工具调用按 `runId + toolCallId + actionVersion` 冻结并幂等登记。`canvas.read_state`、`canvas.read_selection` 已由服务端协调；选择事实必须匹配当前画布 revision 和真实节点。
 - `canvas.apply_ops` 使用画布 revision CAS 与稳定 `clientMutationId` 幂等提交；`generation.submit` 复用正式 Task、BillingOrder、积分预留和冻结供应商版本，`generation.wait` 只接受同一运行创建的任务与真实终态资产。后台 worker 会定期核对持久化等待事实，进程中断后不依赖浏览器重复提交生成任务。
 - 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；每个模型步骤冻结该目录快照，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。
-- 正式传输入口为 `POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、审批和工具结果提交。SSE 仅发送已持久化事件；前端审批面板与旧入口硬切仍属于后续里程碑。
+- 正式传输入口为 `POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、审批和工具结果提交。SSE 仅发送已持久化事件；Web 按最后确认的 sequence 续接，未知状态、未知事件或非法 DTO 显式失败。
+- 浏览器不再调用 Agent 模型、不拼 system prompt、不维护 tool loop，也不再创建固定影视 Session。旧会话事实仅保留在历史项目数据中用于审计，不进入新运行链。
 
 ## 本地开发
 

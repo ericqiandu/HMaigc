@@ -10,12 +10,7 @@ import { nanoid } from "nanoid";
 import { canvasAgentProjectTitle, createCanvasAgentLaunchRequest } from "@/lib/canvas/canvas-agent-launch";
 import { getNodeSpec } from "@/constant/canvas";
 import type { UploadedImage } from "@/services/image-storage";
-import type {
-    CanvasAgentExecutionMode,
-    CanvasAgentGenerationModels,
-    CanvasAgentSkillSelection,
-    CanvasNodeData,
-} from "@/types/canvas";
+import type { CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
 
 let activeRemoteUserId = "";
@@ -108,13 +103,7 @@ export async function createCanvasProjectWithRemoteSync(title: string, projectId
     }
 }
 
-export async function createAgentCanvasProjectWithRemoteSync(input: {
-    prompt: string;
-    mode: CanvasAgentExecutionMode;
-    models: CanvasAgentGenerationModels;
-    skills: CanvasAgentSkillSelection[];
-    referenceImages: Array<UploadedImage & { name: string }>;
-}) {
+export async function createAgentCanvasProjectWithRemoteSync(input: { prompt: string; referenceImages: Array<UploadedImage & { name: string }> }) {
     const now = new Date().toISOString();
     const store = useCanvasStore.getState();
     const id = store.createProject(canvasAgentProjectTitle(input.prompt));
@@ -123,9 +112,6 @@ export async function createAgentCanvasProjectWithRemoteSync(input: {
         nodes: referenceNodes,
         pendingAgentLaunch: createCanvasAgentLaunchRequest({
             prompt: input.prompt,
-            mode: input.mode,
-            models: input.models,
-            skills: input.skills,
             id: nanoid(),
             createdAt: now,
         }),
