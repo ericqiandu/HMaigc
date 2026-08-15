@@ -2,12 +2,13 @@
 
 FROM golang:1.25-alpine AS backend-build
 
-ARG GOPROXY=https://proxy.golang.org,direct
 ARG APP_VERSION=dev
 ARG APP_COMMIT=unknown
-ENV GOPROXY=$GOPROXY
 
 RUN apk add --no-cache build-base
+
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=$GOPROXY
 
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
