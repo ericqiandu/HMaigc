@@ -117,4 +117,40 @@ describe("Agent default model setting", () => {
         configStore.useConfigStore.getState().mergeSystemChannels([channel], { channelId: channel.id, modelKey: "missing" });
         expect(configStore.useConfigStore.getState().agentDefaultModel).toBe("");
     });
+
+    test("session merge keeps a configured token-usage Agent model in the catalog", () => {
+        const channel: configStore.ModelChannel = {
+            id: "kuaizi-deepseek",
+            name: "筷子科技",
+            baseUrl: "/api/ai/system/kuaizi-deepseek",
+            apiKey: "system",
+            apiFormat: "openai",
+            interfaceType: "chat-completion",
+            models: ["deepseek-v4-pro"],
+            scope: "system",
+            enabled: true,
+            modelCosts: [
+                {
+                    model: "deepseek-v4-pro",
+                    displayName: "DeepSeek V4 Pro",
+                    marketingCopy: "",
+                    promotionBadge: "",
+                    estimatedDurationSeconds: 0,
+                    brandKey: "deepseek",
+                    accessPolicy: "authenticated",
+                    accessible: true,
+                    capability: "text",
+                    billingMode: "token_usage",
+                    priceStrategy: "token",
+                    unitPriceMicrocredits: 0,
+                    priceTiers: [],
+                },
+            ],
+        };
+
+        configStore.useConfigStore.setState({ config: configStore.defaultConfig, agentDefaultModel: "" });
+        configStore.useConfigStore.getState().mergeSystemChannels([channel], { channelId: channel.id, modelKey: "deepseek-v4-pro" });
+
+        expect(configStore.useConfigStore.getState().agentDefaultModel).toBe(configStore.encodeChannelModel(channel.id, "deepseek-v4-pro"));
+    });
 });

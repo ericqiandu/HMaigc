@@ -171,3 +171,16 @@ func TestEnrichAPICallLogReadsAPIMartTaskID(t *testing.T) {
 		t.Fatalf("ProviderRequestID = %q", log.ProviderRequestID)
 	}
 }
+
+func TestEnrichAPICallLogReadsStreamingChatCompletionFacts(t *testing.T) {
+	log := &model.ApiCallLog{Status: model.ApiCallStatusSucceeded, Capability: "text"}
+	body := []byte("data: {\"id\":\"chatcmpl-billing-1\",\"choices\":[{\"delta\":{\"content\":\"验收\"}}]}\n\n" +
+		"data: {\"id\":\"chatcmpl-billing-1\",\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":8,\"prompt_tokens_details\":{\"cached_tokens\":20}}}\n\n" +
+		"data: [DONE]\n\n")
+
+	(&Service{}).EnrichAPICallLog(log, body)
+
+	if log.ProviderRequestID != "chatcmpl-billing-1" || !log.UsageAvailable || log.InputTokens != 120 || log.CachedTokens != 20 || log.OutputTokens != 8 {
+		t.Fatalf("streaming billing facts = %#v", log)
+	}
+}

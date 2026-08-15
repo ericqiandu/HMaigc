@@ -446,6 +446,9 @@ export function hasSystemModelPrice(channel: ModelChannel, model: string) {
     return (
         channel.modelCosts?.some((item) => {
             if (item.model !== model) return false;
+            if (item.billingMode === "token_usage" && item.priceStrategy === "token") {
+                return item.unitPriceMicrocredits === 0;
+            }
             if (item.priceStrategy === "flat") {
                 return Number.isFinite(item.unitPriceMicrocredits) && item.unitPriceMicrocredits > 0;
             }

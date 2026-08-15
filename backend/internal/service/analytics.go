@@ -975,11 +975,11 @@ func (s *Service) estimateCallCost(log *model.ApiCallLog) {
 }
 
 func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
-	if log == nil || len(responseBody) == 0 || !json.Valid(responseBody) {
+	if log == nil || len(responseBody) == 0 {
 		return
 	}
-	var payload map[string]any
-	if json.Unmarshal(responseBody, &payload) != nil {
+	payload, ok := analyticsResponsePayload(responseBody)
+	if !ok {
 		return
 	}
 	if data, ok := payload["data"].(map[string]any); ok {
@@ -1036,6 +1036,41 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 	if log.Capability == "audio" && log.Status == model.ApiCallStatusSucceeded {
 		log.MediaCount = 1
 	}
+}
+
+func analyticsResponsePayload(responseBody []byte) (map[string]any, bool) {
+	if json.Valid(responseBody) {
+		var payload map[string]any
+		if json.Unmarshal(responseBody, &payload) == nil && payload != nil {
+			return payload, true
+		}
+		return nil, false
+	}
+	aggregated := make(map[string]any)
+	for _, line := range bytes.Split(responseBody, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if bytes.Equal(data, []byte("[DONE]")) || !json.Valid(data) {
+			continue
+		}
+		var event map[string]any
+		if json.Unmarshal(data, &event) != nil {
+			continue
+		}
+		for key, value := range event {
+			if key == "usage" {
+				aggregated[key] = value
+				continue
+			}
+			if _, exists := aggregated[key]; !exists {
+				aggregated[key] = value
+			}
+		}
+	}
+	return aggregated, len(aggregated) > 0
 }
 
 func firstInt64(values map[string]any, keys ...string) int64 {
