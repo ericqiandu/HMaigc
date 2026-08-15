@@ -118,6 +118,83 @@ func TestKuaiziBalanceMapsExplicitFailures(t *testing.T) {
 	}
 }
 
+func TestKuaiziBillingByTaskIDSendsExactContractAndReturnsFact(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/ai-open-platform-api/v1/user/billing/list" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if got := request.Header.Get("ApiKey"); got != "sentinel-key" {
+			t.Fatalf("ApiKey = %q", got)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != `{"task_id":"kz-task-1","page":1,"page_size":20}` {
+			t.Fatalf("body = %s", body)
+		}
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"kz-order-1","amount":123,"status":"succeeded","task_id":"kz-task-1","task_status":"succeeded","task_duration":12,"total_tokens":1280,"description":"sentinel-prompt","created_at":"2026-06-08T10:23:45+08:00"}],"total":1,"page":1,"page_size":20},"trace_id":"trace-billing"}`)
+	}))
+	defer server.Close()
+
+	fact, err := NewKuaiziClient(server.Client()).BillingByTaskID(context.Background(), server.URL, "sentinel-key", "kz-task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fact.OrderID != "kz-order-1" || fact.Amount != 123 || fact.Status != "succeeded" || fact.TaskID != "kz-task-1" || fact.TaskStatus != "succeeded" || fact.TaskDuration != 12 || fact.TotalTokens != 1280 || fact.TraceID != "trace-billing" {
+		t.Fatalf("billing fact = %#v", fact)
+	}
+	if fact.CreatedAt.Format(time.RFC3339) != "2026-06-08T10:23:45+08:00" {
+		t.Fatalf("created at = %s", fact.CreatedAt)
+	}
+}
+
+func TestKuaiziBillingByTaskIDRequiresOneExactValidRecord(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "not found", body: `{"code":0,"data":{"items":[],"total":0,"page":1,"page_size":20}}`, code: "billing_not_found"},
+		{name: "mismatch ignored", body: `{"code":0,"data":{"items":[{"order_id":"o","amount":1,"status":"pending","task_id":"other","task_status":"running","task_duration":0,"total_tokens":0,"created_at":"2026-06-08T10:23:45Z"}],"total":1,"page":1,"page_size":20}}`, code: "billing_not_found"},
+		{name: "ambiguous", body: `{"code":0,"data":{"items":[{"order_id":"o1","amount":1,"status":"pending","task_id":"task","task_status":"running","task_duration":0,"total_tokens":0,"created_at":"2026-06-08T10:23:45Z"},{"order_id":"o2","amount":2,"status":"succeeded","task_id":"task","task_status":"succeeded","task_duration":1,"total_tokens":2,"created_at":"2026-06-08T10:23:46Z"}],"total":2,"page":1,"page_size":20}}`, code: "billing_ambiguous"},
+		{name: "overflow amount", body: `{"code":0,"data":{"items":[{"order_id":"o","amount":9223372036854775808,"status":"succeeded","task_id":"task","task_status":"succeeded","task_duration":1,"total_tokens":2,"created_at":"2026-06-08T10:23:45Z"}]}}`, code: "invalid_response"},
+		{name: "unknown status", body: `{"code":0,"data":{"items":[{"order_id":"o","amount":1,"status":"refunded","task_id":"task","task_status":"succeeded","task_duration":1,"total_tokens":2,"created_at":"2026-06-08T10:23:45Z"}]}}`, code: "invalid_response"},
+		{name: "invalid time", body: `{"code":0,"data":{"items":[{"order_id":"o","amount":1,"status":"succeeded","task_id":"task","task_status":"succeeded","task_duration":1,"total_tokens":2,"created_at":"yesterday"}]}}`, code: "invalid_response"},
+		{name: "business rejection", body: `{"code":9001,"message":"sentinel-prompt sentinel-key","trace_id":"trace-safe"}`, code: "upstream_code_9001"},
+		{name: "trailing json", body: `{"code":0,"data":{"items":[]}} {}`, code: "invalid_response"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, closeServer := kuaiziBalanceTestClient(t, http.StatusOK, test.body, 0)
+			defer closeServer()
+			_, err := fixture.client.BillingByTaskID(context.Background(), fixture.baseURL, "sentinel-key", "task")
+			var billingError *KuaiziBillingError
+			if !errors.As(err, &billingError) || billingError.Code != test.code {
+				t.Fatalf("error = %T %v, want code %s", err, err, test.code)
+			}
+			if strings.Contains(err.Error(), "sentinel-key") || strings.Contains(err.Error(), "sentinel-prompt") {
+				t.Fatalf("error leaked upstream data: %v", err)
+			}
+		})
+	}
+}
+
+func TestKuaiziBillingByTaskIDClassifiesHTTPBeforeReadingBody(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		fixture, closeServer := kuaiziBalanceTestClient(t, status, "sentinel-body"+strings.Repeat("x", kuaiziBalanceResponseLimit), 0)
+		_, err := fixture.client.BillingByTaskID(context.Background(), fixture.baseURL, "key", "task")
+		closeServer()
+		var billingError *KuaiziBillingError
+		if !errors.As(err, &billingError) {
+			t.Fatalf("status %d error = %T %v", status, err, err)
+		}
+		if strings.Contains(err.Error(), "sentinel-body") {
+			t.Fatalf("status %d leaked body", status)
+		}
+	}
+}
+
 type kuaiziBalanceFixture struct {
 	client  *KuaiziClient
 	baseURL string
