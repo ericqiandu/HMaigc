@@ -88,6 +88,7 @@ export type ChannelModel = {
     providerCapabilities?: {
         resolutions: string[];
         inputVariants: Array<"standard" | "reference_video">;
+        supportsTokenUsageBilling?: boolean;
     };
     createdAt: string;
     updatedAt: string;

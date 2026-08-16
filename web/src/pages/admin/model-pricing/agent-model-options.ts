@@ -2,6 +2,10 @@ import type { ChannelModel } from "@/services/api/wallet";
 
 export type AgentModelCandidate = ChannelModel & { channelName: string };
 
+export function supportsTokenUsageBilling(model: Pick<ChannelModel, "providerCapabilities">) {
+    return model.providerCapabilities?.supportsTokenUsageBilling === true;
+}
+
 type TokenPricingFacts = {
     inputPerMillionMicros?: number;
     outputPerMillionMicros?: number;
@@ -9,11 +13,10 @@ type TokenPricingFacts = {
     expectedOutputTokens?: number;
 };
 
-export function pricingContractForModel(model: Pick<ChannelModel, "billingMode" | "priceStrategy" | "capability" | "modelKey" | "providerCredentialId">, pricing?: TokenPricingFacts) {
+export function pricingContractForModel(model: Pick<ChannelModel, "billingMode" | "priceStrategy" | "capability" | "providerCapabilities">, pricing?: TokenPricingFacts) {
     const completeTokenPricing =
         model.capability === "text" &&
-        Boolean(model.providerCredentialId) &&
-        model.modelKey.startsWith("deepseek-") &&
+        supportsTokenUsageBilling(model) &&
         (pricing?.inputPerMillionMicros || 0) > 0 &&
         (pricing?.outputPerMillionMicros || 0) > 0 &&
         (pricing?.cachedPerMillionMicros || 0) >= 0 &&

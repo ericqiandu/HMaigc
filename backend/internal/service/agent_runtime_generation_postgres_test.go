@@ -41,8 +41,9 @@ func TestPostgresAgentGenerationSubmitConcurrentReplayCreatesOneCommercialFact(t
 		},
 	}
 	identity := taskCreationIdentity{
-		TaskID:                agentGenerationIdentity("postgres-generation-submit"),
-		BillingIdempotencyKey: "agent-generation:" + agentGenerationIdentity("postgres-generation-submit"),
+		TaskID:                 agentGenerationIdentity("postgres-generation-submit"),
+		BillingIdempotencyKey:  "agent-generation:" + agentGenerationIdentity("postgres-generation-submit"),
+		UseCurrentBillingQuote: true,
 	}
 	services := []*Service{primary, secondary, primary, secondary, primary, secondary}
 	start := make(chan struct{})

@@ -81,8 +81,9 @@ type CreateTaskRequest struct {
 }
 
 type taskCreationIdentity struct {
-	TaskID                string
-	BillingIdempotencyKey string
+	TaskID                 string
+	BillingIdempotencyKey  string
+	UseCurrentBillingQuote bool
 }
 
 type SessionDetail struct {
@@ -425,6 +426,14 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	}
 	if identity.BillingIdempotencyKey != "" {
 		billingOrder.IdempotencyKey = identity.BillingIdempotencyKey
+	}
+	if identity.UseCurrentBillingQuote {
+		currentQuote, quoteErr := taskBillingQuoteFromOrder(billingOrder, 1)
+		if quoteErr != nil {
+			return nil, quoteErr
+		}
+		req.QuotePriceVersion = currentQuote.PriceVersion
+		req.QuoteFingerprint = currentQuote.QuoteFingerprint
 	}
 	if err := validateTaskBillingQuoteConfirmation(req, billingOrder); err != nil {
 		return nil, err

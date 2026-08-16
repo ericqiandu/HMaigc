@@ -187,6 +187,11 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if billingMode == "token_usage" && capability != "text" {
 		return nil, BadAuthRequest("只有文本模型可以按 Token 用量计费")
 	}
+	if billingMode == "token_usage" {
+		if !kuaiziModelSupportsTokenUsageBilling(modelKey) {
+			return nil, BadAuthRequest("Token 用量计费仅支持筷子托管 DeepSeek 文本模型")
+		}
+	}
 	priceStrategy := strings.TrimSpace(req.PriceStrategy)
 	if priceStrategy == "" {
 		return nil, BadAuthRequest("请选择模型价格策略")

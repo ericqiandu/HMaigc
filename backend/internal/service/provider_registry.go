@@ -224,6 +224,11 @@ func kuaiziProviderFamilyForModel(modelKey string) (string, ProviderModelSpec, b
 	return "", ProviderModelSpec{}, false
 }
 
+func kuaiziModelSupportsTokenUsageBilling(modelKey string) bool {
+	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
+	return managed && family == "deepseek" && spec.Capability == "text"
+}
+
 func validateProviderRegistryRuntime(descriptors []ProviderAdapterDescriptor) error {
 	if _, err := NewProviderRegistry(descriptors); err != nil {
 		return fmt.Errorf("validate provider adapter registry: %w", err)

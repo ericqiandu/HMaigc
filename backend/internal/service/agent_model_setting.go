@@ -151,8 +151,7 @@ func (s *Service) eligibleAgentDefaultModel(id string) (*model.ChannelModel, *mo
 	if !item.Enabled || !item.PriceConfigured || item.AccessPolicy != model.ModelAccessAuthenticated || normalizeCapability(item.Capability) != "text" {
 		return nil, nil, errAgentDefaultModelIneligible
 	}
-	family, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if managed && family == "deepseek" && spec.Capability == "text" {
+	if kuaiziModelSupportsTokenUsageBilling(item.ModelKey) {
 		pricing, pricingErr := s.repo.ModelPricing(item.ChannelID, item.ModelKey, "text")
 		if pricingErr != nil {
 			if errors.Is(pricingErr, gorm.ErrRecordNotFound) {

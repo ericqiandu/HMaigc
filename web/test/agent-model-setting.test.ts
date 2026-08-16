@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
-import { agentDefaultModelOptions, pricingContractForModel, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
+import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
 
 let configStore: typeof import("../src/stores/use-config-store");
 
@@ -62,7 +62,7 @@ describe("Agent default model setting", () => {
 
     test("complete token supplier pricing hard-cuts a text model to token billing", () => {
         expect(
-            pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro" }), {
+            pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }), {
                 inputPerMillionMicros: 3_000_000,
                 outputPerMillionMicros: 6_000_000,
                 cachedPerMillionMicros: 25_000,
@@ -79,6 +79,11 @@ describe("Agent default model setting", () => {
                 expectedOutputTokens: 8192,
             }),
         ).toEqual({ billingMode: "fixed_request", priceStrategy: "flat" });
+    });
+
+    test("uses the backend capability fact instead of inferring token billing from model text", () => {
+        expect(supportsTokenUsageBilling(candidate({ providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }))).toBe(true);
+        expect(supportsTokenUsageBilling(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: undefined }))).toBe(false);
     });
 
     test("session merge accepts only an exact model reference present in the server catalog", () => {

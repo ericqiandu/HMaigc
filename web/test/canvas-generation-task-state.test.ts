@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { convergeGenerationTaskCancellation, generationStopPlan, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot, retryBoundGenerationTask } from "../src/lib/canvas/canvas-generation-task-state";
+import { convergeGenerationTaskCancellation, freezeGenerationRequests, generationStopPlan, hasUsableGenerationTaskResult, mergeGenerationTaskSnapshot, retryBoundGenerationTask, settleGenerationStopTasks } from "../src/lib/canvas/canvas-generation-task-state";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 const canvasProjectSource = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");
+const generationOwnerSources = ["../src/pages/canvas/use-canvas-generation-executor.ts", "../src/pages/canvas/use-canvas-generation-retry.ts"].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
 
 describe("canvas generation task state", () => {
     test("collects every task bound to one running source and keeps pending local work visible", () => {
@@ -107,6 +108,39 @@ describe("canvas generation task state", () => {
         });
 
         await expect(operation).rejects.toBe(cancelError);
+    });
+
+    test("settles every cancellation even when one backend task fails", async () => {
+        const results = await settleGenerationStopTasks(
+            [
+                { targetNodeId: "child-1", taskId: "task-1" },
+                { targetNodeId: "child-2", taskId: "task-2" },
+            ],
+            async (taskId) => {
+                if (taskId === "task-1") throw new Error("取消失败");
+                return task({ id: taskId, status: "cancelled" });
+            },
+        );
+
+        expect(results).toHaveLength(2);
+        expect(results[0]?.status).toBe("rejected");
+        expect(results[1]).toMatchObject({ status: "fulfilled", value: { targetNodeId: "child-2", task: { status: "cancelled" } } });
+    });
+
+    test("freezes ownership without aborting a task creation request before its task id arrives", () => {
+        const controller = new AbortController();
+        const requests = new Map([["child-1", { targetNodeId: "child-1", runningNodeId: "source", controller }]]);
+
+        freezeGenerationRequests(requests, "source");
+
+        expect(requests.get("child-1")?.stopping).toBe(true);
+        expect(controller.signal.aborted).toBe(false);
+    });
+
+    test("keeps batch and retry ownership release inside the request registry", () => {
+        generationOwnerSources.forEach((source) => {
+            expect(source).not.toMatch(/finishGenerationRequest\([^;]+;\s*setRunningNodeId\(null\)/);
+        });
     });
 
     test("retries the bound backend task instead of creating another provider task", async () => {

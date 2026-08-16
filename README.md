@@ -24,7 +24,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。
 - 工具调用按 `runId + toolCallId + actionVersion` 冻结并幂等登记。`canvas.read_state`、`canvas.read_selection` 已由服务端协调；选择事实必须匹配当前画布 revision 和真实节点。
-- `canvas.apply_ops` 使用画布 revision CAS 与稳定 `clientMutationId` 幂等提交；`generation.submit` 复用正式 Task、BillingOrder、积分预留和冻结供应商版本，`generation.wait` 只接受同一运行创建的任务与真实终态资产。后台 worker 会定期核对持久化等待事实，进程中断后不依赖浏览器重复提交生成任务。
+- `canvas.apply_ops` 使用画布 revision CAS 与稳定 `clientMutationId` 幂等提交；`generation.submit` 在服务端按同一计价内核取得当前单任务报价并携带版本与指纹，随后复用正式 Task、BillingOrder、积分预留和冻结供应商版本，禁止绕过媒体报价校验；`generation.wait` 只接受同一运行创建的任务与真实终态资产。后台 worker 会定期核对持久化等待事实，进程中断后不依赖浏览器重复提交生成任务。
 - 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；每个模型步骤冻结该目录快照，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。
 - 正式传输入口为 `GET /api/agent/threads?canvasId=...&limit=...`、`POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、审批和工具结果提交。历史查询只投影当前用户、当前租户与当前画布最近 20 个 Thread 及各自最新 Run/checkpoint；SSE 仅发送已持久化事件。Web 对历史与本地恢复句柄分别报告错误，按最后确认的 sequence 续接，未知状态、未知事件、Run/checkpoint 冲突或非法 DTO 均显式失败。
 - 服务端历史是会话发现与跨设备恢复的权威来源；浏览器 `localForage` 只保存当前 Thread、活动 Run、事件游标或尚未确认的 `clientRequestId`，用于快速恢复和启动幂等，不构成会话事实。没有本地句柄时采用服务端最近活动会话；选择旧会话只切换观察和恢复目标，不取消服务端仍在运行的 Run。

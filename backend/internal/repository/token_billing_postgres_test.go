@@ -65,10 +65,10 @@ func TestPostgresTokenSettlementReturnsDifferenceExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	usage := TokenUsageFact{InputTokens: 20, CachedTokens: 2, OutputTokens: 5}
-	if err := repo.SettleTokenBilling(order.ID, "pg-provider-order", 6, "succeeded", 4, usage, "reported", time.Now()); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("pg-provider-order", 6, 4, usage, time.Now())); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SettleTokenBilling(order.ID, "pg-provider-order", 6, "succeeded", 4, usage, "reported", time.Now()); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("pg-provider-order", 6, 4, usage, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	assertTokenBillingSettlement(t, db, order.ID, 94_000_000, 0, 6_000_000, 24_000_000)

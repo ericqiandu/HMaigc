@@ -152,8 +152,9 @@ func (s *Service) coordinatePendingAgentGenerationSubmit(
 		Prompt:    arguments.Prompt,
 		Input:     arguments.Input,
 	}, taskCreationIdentity{
-		TaskID:                agentGenerationIdentity(record.IdempotencyKey),
-		BillingIdempotencyKey: "agent-generation:" + agentGenerationIdentity(record.IdempotencyKey),
+		TaskID:                 agentGenerationIdentity(record.IdempotencyKey),
+		BillingIdempotencyKey:  "agent-generation:" + agentGenerationIdentity(record.IdempotencyKey),
+		UseCurrentBillingQuote: true,
 	})
 	if err != nil {
 		var authErr *AuthError

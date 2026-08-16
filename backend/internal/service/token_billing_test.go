@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -295,6 +296,35 @@ func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 	}
 	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingAmount != 6 || stored.ProviderBillingOrderID != "provider-order" || stored.ProviderBillingTotalTokens != 42 || stored.ProviderTaskStatus != "succeeded" || stored.ProviderBillingUnit != "fen" || stored.TokenUsageStatus != "missing" || billingCalls.Load() != 1 {
 		t.Fatalf("settled order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+	if !strings.Contains(stored.Error, "Token 用量缺失") {
+		t.Fatalf("missing usage warning = %q", stored.Error)
+	}
+}
+
+func TestKuaiziAgentProxyPreservesUpstreamAmountAndRecordsLocalVariance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-order","amount":6,"status":"succeeded","task_id":"provider-task","task_status":"succeeded","task_duration":1,"total_tokens":25,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "variance-warning", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-provider-task", TokenUsageFact{InputTokens: 20, OutputTokens: 5, Available: true}); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusSettled || stored.AmountMicrocredits != 6_000_000 || !strings.Contains(stored.Error, "本地核算") || !strings.Contains(stored.Error, "上游实扣") {
+		t.Fatalf("variance settlement = %#v", stored)
 	}
 }
 

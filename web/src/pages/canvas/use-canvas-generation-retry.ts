@@ -90,7 +90,6 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                     setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
                 } finally {
                     finishGenerationRequest(node.id, controller);
-                    setRunningNodeId(null);
                 }
                 return;
             }
@@ -371,7 +370,6 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
             } finally {
                 finishGenerationRequest(node.id, controller);
-                setRunningNodeId(null);
             }
         },
         [activatedSkills, bindGenerationTask, connectionsRef, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, projectId, setNodes, setRunningNodeId, startGenerationRequest],

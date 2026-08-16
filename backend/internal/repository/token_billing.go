@@ -19,6 +19,17 @@ type TokenUsageFact struct {
 	OutputTokens int64
 }
 
+type TokenSettlementFact struct {
+	ProviderOrderID        string
+	ProviderAmountSubunits int64
+	ProviderTaskStatus     string
+	ProviderTotalTokens    int64
+	Usage                  TokenUsageFact
+	UsageStatus            string
+	ReconciliationWarning  string
+	SettledAt              time.Time
+}
+
 func (r *Repository) BeginTokenBillingRequest(id string, now time.Time) error {
 	result := r.db.Model(&model.BillingOrder{}).
 		Where("id = ? AND billing_mode = ? AND status = ?", strings.TrimSpace(id), "token_usage", model.BillingStatusReserved).
@@ -175,14 +186,14 @@ func truncateRepositoryText(value string, limit int) string {
 	return string(runes[:limit])
 }
 
-func (r *Repository) SettleTokenBilling(id string, providerOrderID string, providerAmountSubunits int64, providerTaskStatus string, providerTotalTokens int64, usage TokenUsageFact, usageStatus string, now time.Time) error {
-	if strings.TrimSpace(id) == "" || strings.TrimSpace(providerOrderID) == "" || providerAmountSubunits < 0 || strings.TrimSpace(providerTaskStatus) == "" || providerTotalTokens < 0 || (usageStatus != "reported" && usageStatus != "missing" && usageStatus != "invalid") || usage.InputTokens < 0 || usage.CachedTokens < 0 || usage.OutputTokens < 0 || usage.CachedTokens > usage.InputTokens {
+func (r *Repository) SettleTokenBilling(id string, fact TokenSettlementFact) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(fact.ProviderOrderID) == "" || fact.ProviderAmountSubunits < 0 || strings.TrimSpace(fact.ProviderTaskStatus) == "" || fact.ProviderTotalTokens < 0 || (fact.UsageStatus != "reported" && fact.UsageStatus != "missing" && fact.UsageStatus != "invalid") || fact.Usage.InputTokens < 0 || fact.Usage.CachedTokens < 0 || fact.Usage.OutputTokens < 0 || fact.Usage.CachedTokens > fact.Usage.InputTokens || fact.SettledAt.IsZero() {
 		return errors.New("token billing settlement facts are invalid")
 	}
-	if providerAmountSubunits > int64(^uint64(0)>>1)/providerBillingSubunitMicrocredits {
+	if fact.ProviderAmountSubunits > int64(^uint64(0)>>1)/providerBillingSubunitMicrocredits {
 		return errors.New("token billing amount overflows")
 	}
-	actualAmount := providerAmountSubunits * providerBillingSubunitMicrocredits
+	actualAmount := fact.ProviderAmountSubunits * providerBillingSubunitMicrocredits
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var order model.BillingOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
@@ -192,7 +203,7 @@ func (r *Repository) SettleTokenBilling(id string, providerOrderID string, provi
 			return ErrBillingStateConflict
 		}
 		if order.Status == model.BillingStatusSettled {
-			if order.ProviderBillingOrderID == providerOrderID && order.ProviderBillingAmount == providerAmountSubunits && order.ProviderTaskStatus == providerTaskStatus && order.ProviderBillingTotalTokens == providerTotalTokens && order.TokenUsageStatus == usageStatus && order.InputTokens == usage.InputTokens && order.CachedTokens == usage.CachedTokens && order.OutputTokens == usage.OutputTokens {
+			if order.ProviderBillingOrderID == fact.ProviderOrderID && order.ProviderBillingAmount == fact.ProviderAmountSubunits && order.ProviderTaskStatus == fact.ProviderTaskStatus && order.ProviderBillingTotalTokens == fact.ProviderTotalTokens && order.TokenUsageStatus == fact.UsageStatus && order.InputTokens == fact.Usage.InputTokens && order.CachedTokens == fact.Usage.CachedTokens && order.OutputTokens == fact.Usage.OutputTokens && order.Error == fact.ReconciliationWarning {
 				return nil
 			}
 			return ErrBillingStateConflict
@@ -206,9 +217,10 @@ func (r *Repository) SettleTokenBilling(id string, providerOrderID string, provi
 		}
 		if actualAmount > reservedAmount {
 			result := tx.Model(&model.BillingOrder{}).Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).Updates(map[string]any{
-				"status": model.BillingStatusUncertain, "provider_billing_order_id": providerOrderID, "provider_billing_amount": providerAmountSubunits,
-				"provider_billing_status": "amount_exceeds_reservation", "provider_billing_unit": "fen", "provider_billing_total_tokens": providerTotalTokens, "provider_task_status": providerTaskStatus, "token_usage_status": usageStatus, "input_tokens": usage.InputTokens, "cached_tokens": usage.CachedTokens,
-				"output_tokens": usage.OutputTokens, "error": "上游实际扣费超过预留上限", "updated_at": now,
+				"status": model.BillingStatusUncertain, "provider_billing_order_id": fact.ProviderOrderID, "provider_billing_amount": fact.ProviderAmountSubunits,
+				"provider_billing_status": "succeeded", "provider_billing_unit": "fen", "provider_billing_total_tokens": fact.ProviderTotalTokens, "provider_task_status": fact.ProviderTaskStatus, "token_usage_status": fact.UsageStatus, "input_tokens": fact.Usage.InputTokens, "cached_tokens": fact.Usage.CachedTokens,
+				"output_tokens": fact.Usage.OutputTokens, "error": "上游实际扣费超过预留上限", "next_reconcile_at": nil,
+				"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": fact.SettledAt,
 			})
 			if result.Error != nil {
 				return result.Error
@@ -219,13 +231,13 @@ func (r *Repository) SettleTokenBilling(id string, providerOrderID string, provi
 			return nil
 		}
 		if order.TeamID != "" {
-			return settleTeamTokenBillingTx(tx, &order, providerOrderID, providerAmountSubunits, actualAmount, reservedAmount, providerTaskStatus, providerTotalTokens, usage, usageStatus, now)
+			return settleTeamTokenBillingTx(tx, &order, fact, actualAmount, reservedAmount)
 		}
-		return settlePersonalTokenBillingTx(tx, &order, providerOrderID, providerAmountSubunits, actualAmount, reservedAmount, providerTaskStatus, providerTotalTokens, usage, usageStatus, now)
+		return settlePersonalTokenBillingTx(tx, &order, fact, actualAmount, reservedAmount)
 	})
 }
 
-func settlePersonalTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, providerOrderID string, providerAmountSubunits int64, actualAmount int64, reservedAmount int64, providerTaskStatus string, providerTotalTokens int64, usage TokenUsageFact, usageStatus string, now time.Time) error {
+func settlePersonalTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, fact TokenSettlementFact, actualAmount int64, reservedAmount int64) error {
 	var account model.CreditAccount
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, "user_id = ?", order.UserID).Error; err != nil {
 		return err
@@ -237,19 +249,19 @@ func settlePersonalTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, provid
 	account.AvailableMicrocredits += difference
 	account.ReservedMicrocredits -= reservedAmount
 	account.Version++
-	account.UpdatedAt = now
+	account.UpdatedAt = fact.SettledAt
 	if err := tx.Save(&account).Error; err != nil {
 		return err
 	}
-	if err := updateSettledTokenOrderTx(tx, order, providerOrderID, providerAmountSubunits, actualAmount, providerTaskStatus, providerTotalTokens, usage, usageStatus, now); err != nil {
+	if err := updateSettledTokenOrderTx(tx, order, fact, actualAmount); err != nil {
 		return err
 	}
 	consumeReference := "token:settle:" + order.ID + ":consume"
 	if err := tx.Create(&model.CreditLedgerEntry{
 		ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerConsume, AmountMicrocredits: -actualAmount,
-		ReservedDeltaMicrocredits: -actualAmount, AvailableAfterMicrocredits: account.AvailableMicrocredits,
+		ReservedDeltaMicrocredits: -actualAmount, AvailableAfterMicrocredits: account.AvailableMicrocredits - difference,
 		ReservedAfterMicrocredits: account.ReservedMicrocredits + difference, BillingOrderID: order.ID, Model: order.Model,
-		ChannelID: order.ChannelID, Scene: order.Scene, ReferenceKey: &consumeReference, CreatedAt: now,
+		ChannelID: order.ChannelID, Scene: order.Scene, ReferenceKey: &consumeReference, CreatedAt: fact.SettledAt,
 	}).Error; err != nil {
 		return err
 	}
@@ -262,11 +274,11 @@ func settlePersonalTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, provid
 		AvailableDeltaMicrocredits: difference, ReservedDeltaMicrocredits: -difference,
 		AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
 		BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene,
-		ReferenceKey: &releaseReference, CreatedAt: now,
+		ReferenceKey: &releaseReference, CreatedAt: fact.SettledAt,
 	}).Error
 }
 
-func settleTeamTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, providerOrderID string, providerAmountSubunits int64, actualAmount int64, reservedAmount int64, providerTaskStatus string, providerTotalTokens int64, usage TokenUsageFact, usageStatus string, now time.Time) error {
+func settleTeamTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, fact TokenSettlementFact, actualAmount int64, reservedAmount int64) error {
 	var account model.TeamCreditAccount
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, "team_id = ?", order.TeamID).Error; err != nil {
 		return err
@@ -278,20 +290,20 @@ func settleTeamTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, providerOr
 	account.AvailableMicrocredits += difference
 	account.ReservedMicrocredits -= reservedAmount
 	account.Version++
-	account.UpdatedAt = now
+	account.UpdatedAt = fact.SettledAt
 	if err := tx.Save(&account).Error; err != nil {
 		return err
 	}
-	if err := updateSettledTokenOrderTx(tx, order, providerOrderID, providerAmountSubunits, actualAmount, providerTaskStatus, providerTotalTokens, usage, usageStatus, now); err != nil {
+	if err := updateSettledTokenOrderTx(tx, order, fact, actualAmount); err != nil {
 		return err
 	}
 	consumeReference := "token:settle:" + order.ID + ":consume"
 	if err := tx.Create(&model.TeamCreditLedgerEntry{
 		ID: newRepositoryID(), TeamID: order.TeamID, ActorUserID: order.UserID, Type: model.CreditLedgerConsume,
 		AmountMicrocredits: -actualAmount, ReservedDeltaMicrocredits: -actualAmount,
-		AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits + difference,
+		AvailableAfterMicrocredits: account.AvailableMicrocredits - difference, ReservedAfterMicrocredits: account.ReservedMicrocredits + difference,
 		BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene,
-		ReferenceKey: &consumeReference, CreatedAt: now,
+		ReferenceKey: &consumeReference, CreatedAt: fact.SettledAt,
 	}).Error; err != nil {
 		return err
 	}
@@ -304,17 +316,17 @@ func settleTeamTokenBillingTx(tx *gorm.DB, order *model.BillingOrder, providerOr
 		AmountMicrocredits: difference, AvailableDeltaMicrocredits: difference, ReservedDeltaMicrocredits: -difference,
 		AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
 		BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene,
-		ReferenceKey: &releaseReference, CreatedAt: now,
+		ReferenceKey: &releaseReference, CreatedAt: fact.SettledAt,
 	}).Error
 }
 
-func updateSettledTokenOrderTx(tx *gorm.DB, order *model.BillingOrder, providerOrderID string, providerAmountSubunits int64, actualAmount int64, providerTaskStatus string, providerTotalTokens int64, usage TokenUsageFact, usageStatus string, now time.Time) error {
+func updateSettledTokenOrderTx(tx *gorm.DB, order *model.BillingOrder, fact TokenSettlementFact, actualAmount int64) error {
 	result := tx.Model(&model.BillingOrder{}).Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).Updates(map[string]any{
-		"status": model.BillingStatusSettled, "amount_microcredits": actualAmount, "provider_billing_order_id": providerOrderID,
-		"provider_billing_amount": providerAmountSubunits, "provider_billing_status": "succeeded", "provider_billing_unit": "fen",
-		"provider_billing_total_tokens": providerTotalTokens, "provider_task_status": providerTaskStatus, "token_usage_status": usageStatus, "input_tokens": usage.InputTokens,
-		"cached_tokens": usage.CachedTokens, "output_tokens": usage.OutputTokens, "settled_at": &now, "error": "",
-		"next_reconcile_at": nil, "reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": now,
+		"status": model.BillingStatusSettled, "amount_microcredits": actualAmount, "provider_billing_order_id": fact.ProviderOrderID,
+		"provider_billing_amount": fact.ProviderAmountSubunits, "provider_billing_status": "succeeded", "provider_billing_unit": "fen",
+		"provider_billing_total_tokens": fact.ProviderTotalTokens, "provider_task_status": fact.ProviderTaskStatus, "token_usage_status": fact.UsageStatus, "input_tokens": fact.Usage.InputTokens,
+		"cached_tokens": fact.Usage.CachedTokens, "output_tokens": fact.Usage.OutputTokens, "settled_at": &fact.SettledAt, "error": truncateRepositoryText(fact.ReconciliationWarning, 1000),
+		"next_reconcile_at": nil, "reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": fact.SettledAt,
 	})
 	if result.Error != nil {
 		return result.Error

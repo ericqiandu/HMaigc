@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"strings"
@@ -22,6 +23,8 @@ type TokenPricingSnapshot struct {
 	MaxOutputTokens        int64 `json:"maxOutputTokens"`
 }
 
+const kuaiziBillingFenMicrocredits int64 = 1_000_000
+
 type TokenUsageFact struct {
 	InputTokens  int64
 	CachedTokens int64
@@ -30,8 +33,7 @@ type TokenUsageFact struct {
 }
 
 func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, error) {
-	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if !managed || spec.Capability != "text" || normalizeCapability(item.Capability) != "text" {
+	if !kuaiziModelSupportsTokenUsageBilling(item.ModelKey) || normalizeCapability(item.Capability) != "text" {
 		return TokenPricingSnapshot{}, errors.New("Token 用量计费仅支持筷子托管文本模型")
 	}
 	if item.BillingMode != "token_usage" || item.PriceStrategy != "token" || item.UnitPriceMicrocredits != 0 || !item.PriceConfigured {
@@ -281,10 +283,43 @@ func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.B
 		}
 		return s.repo.RefundTokenBilling(order.ID, fact.OrderID, fact.Amount, fact.TaskStatus, fact.TotalTokens, "上游账单明确失败且未扣费")
 	case "succeeded":
-		return s.repo.SettleTokenBilling(order.ID, fact.OrderID, fact.Amount, fact.TaskStatus, fact.TotalTokens, repository.TokenUsageFact{InputTokens: order.InputTokens, CachedTokens: order.CachedTokens, OutputTokens: order.OutputTokens}, order.TokenUsageStatus, time.Now())
+		warning := tokenBillingReconciliationWarning(order, fact.Amount)
+		return s.repo.SettleTokenBilling(order.ID, repository.TokenSettlementFact{
+			ProviderOrderID:        fact.OrderID,
+			ProviderAmountSubunits: fact.Amount,
+			ProviderTaskStatus:     fact.TaskStatus,
+			ProviderTotalTokens:    fact.TotalTokens,
+			Usage:                  repository.TokenUsageFact{InputTokens: order.InputTokens, CachedTokens: order.CachedTokens, OutputTokens: order.OutputTokens},
+			UsageStatus:            order.TokenUsageStatus,
+			ReconciliationWarning:  warning,
+			SettledAt:              time.Now(),
+		})
 	default:
 		return s.deferTokenBillingReconciliation(order, claimed, "billing_status_invalid")
 	}
+}
+
+func tokenBillingReconciliationWarning(order *model.BillingOrder, providerAmountSubunits int64) string {
+	switch order.TokenUsageStatus {
+	case "missing":
+		return "Token 用量缺失，已按上游账单实扣"
+	case "invalid":
+		return "Token 用量无效，已按上游账单实扣"
+	case "reported":
+		var pricing TokenPricingSnapshot
+		if err := json.Unmarshal([]byte(order.TokenPricingSnapshotJSON), &pricing); err != nil {
+			return "Token 本地价格快照无效，已按上游账单实扣"
+		}
+		localAmount, err := tokenChargeMicrocredits(pricing, TokenUsageFact{InputTokens: order.InputTokens, CachedTokens: order.CachedTokens, OutputTokens: order.OutputTokens}, order.MultiplierBasisPoints)
+		if err != nil {
+			return "Token 本地核算失败，已按上游账单实扣"
+		}
+		providerAmount := providerAmountSubunits * kuaiziBillingFenMicrocredits
+		if localAmount != providerAmount {
+			return fmt.Sprintf("Token 账单差异：本地核算 %d 微积分，上游实扣 %d 微积分", localAmount, providerAmount)
+		}
+	}
+	return ""
 }
 
 func normalizeTokenUsageFact(usage TokenUsageFact) (string, TokenUsageFact) {

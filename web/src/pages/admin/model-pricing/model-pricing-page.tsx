@@ -24,7 +24,7 @@ import { useAdminContext } from "../admin-context";
 import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
-import { agentDefaultModelOptions, pricingContractForModel } from "./agent-model-options";
+import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
 import { imagePricingSpecifications, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
@@ -522,6 +522,7 @@ function PricingDrawer({
     onSave: () => void;
 }) {
     const capability = model?.capability;
+    const tokenUsageSupported = model ? supportsTokenUsageBilling(model) : false;
     const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     return (
         <Drawer
@@ -564,7 +565,7 @@ function PricingDrawer({
                             options={[
                                 { label: "按次", value: "fixed_request" },
                                 { label: "按秒", value: "per_second", disabled: capability !== "video" },
-                                { label: "按 Token", value: "token_usage", disabled: capability !== "text" },
+                                { label: "按 Token", value: "token_usage", disabled: !tokenUsageSupported },
                             ]}
                         />
                     </Form.Item>
@@ -575,7 +576,7 @@ function PricingDrawer({
                             options={[
                                 { label: "统一价格", value: "flat" },
                                 { label: "按分辨率", value: capability === "video" ? "video_resolution" : "image_resolution", disabled: capability !== "image" && capability !== "video" },
-                                { label: "Token 用量", value: "token", disabled: capability !== "text" },
+                                { label: "Token 用量", value: "token", disabled: !tokenUsageSupported },
                             ]}
                         />
                     </Form.Item>

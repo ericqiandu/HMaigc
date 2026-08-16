@@ -19,7 +19,7 @@ func TestSettleTokenBillingConsumesActualAndReturnsDifference(t *testing.T) {
 	repo, db := openTokenBillingRepository(t)
 	order := reserveTokenBillingFixture(t, repo, db, "settle-difference")
 
-	err := repo.SettleTokenBilling(order.ID, "provider-order-1", 6, "succeeded", 25_000, TokenUsageFact{InputTokens: 20_000, CachedTokens: 1_000, OutputTokens: 5_000}, "reported", time.Now().UTC())
+	err := repo.SettleTokenBilling(order.ID, settlementFact("provider-order-1", 6, 25_000, TokenUsageFact{InputTokens: 20_000, CachedTokens: 1_000, OutputTokens: 5_000}, time.Now().UTC()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +32,7 @@ func TestSettleTokenBillingConsumesActualAndReturnsDifference(t *testing.T) {
 	if stored.Status != model.BillingStatusSettled || stored.AmountMicrocredits != 6_000_000 || stored.ReservedAmountMicrocredits != 30_000_000 || stored.ProviderBillingOrderID != "provider-order-1" || stored.ProviderBillingAmount != 6 || stored.InputTokens != 20_000 || stored.CachedTokens != 1_000 || stored.OutputTokens != 5_000 {
 		t.Fatalf("settled order = %#v", stored)
 	}
+	assertTokenSettlementLedgerSnapshots(t, db, order.ID, 70_000_000, 24_000_000, 94_000_000, 0)
 }
 
 func TestBeginTokenBillingRequestAllowsExactlyOneSend(t *testing.T) {
@@ -57,10 +58,10 @@ func TestSettleTokenBillingIsIdempotent(t *testing.T) {
 	order := reserveTokenBillingFixture(t, repo, db, "settle-idempotent")
 	usage := TokenUsageFact{InputTokens: 20_000, OutputTokens: 5_000}
 
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-2", 6, "succeeded", 4, usage, "reported", time.Now().UTC()); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("provider-order-2", 6, 4, usage, time.Now().UTC())); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-2", 6, "succeeded", 4, usage, "reported", time.Now().UTC().Add(time.Second)); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("provider-order-2", 6, 4, usage, time.Now().UTC().Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,7 +89,7 @@ func TestSettleTokenBillingRollsBackAccountLedgerAndOrderTogether(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-3", 6, "succeeded", 1, TokenUsageFact{InputTokens: 1}, "reported", time.Now().UTC()); err == nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("provider-order-3", 6, 1, TokenUsageFact{InputTokens: 1}, time.Now().UTC())); err == nil {
 		t.Fatal("settlement succeeded despite rejected order update")
 	}
 
@@ -118,8 +119,16 @@ func TestSettleTokenBillingRollsBackAccountLedgerAndOrderTogether(t *testing.T) 
 func TestSettleTokenBillingKeepsFundsFrozenWhenActualExceedsReservation(t *testing.T) {
 	repo, db := openTokenBillingRepository(t)
 	order := reserveTokenBillingFixture(t, repo, db, "settle-over-reservation")
+	now := time.Now().UTC()
+	next := now.Add(time.Minute)
+	leaseExpiry := now.Add(30 * time.Second)
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Updates(map[string]any{
+		"next_reconcile_at": next, "reconcile_lease_owner": "worker-a", "reconcile_lease_token": "lease-a", "reconcile_lease_expires_at": leaseExpiry,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
-	if err := repo.SettleTokenBilling(order.ID, "provider-order-over", 31, "succeeded", 1, TokenUsageFact{InputTokens: 1}, "reported", time.Now().UTC()); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("provider-order-over", 31, 1, TokenUsageFact{InputTokens: 1}, now)); err != nil {
 		t.Fatal(err)
 	}
 	var account model.CreditAccount
@@ -133,7 +142,7 @@ func TestSettleTokenBillingKeepsFundsFrozenWhenActualExceedsReservation(t *testi
 	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != model.BillingStatusUncertain || stored.ProviderBillingStatus != "amount_exceeds_reservation" || stored.ProviderBillingAmount != 31 {
+	if stored.Status != model.BillingStatusUncertain || stored.ProviderBillingStatus != "succeeded" || stored.ProviderBillingAmount != 31 || stored.NextReconcileAt != nil || stored.ReconcileLeaseOwner != "" || stored.ReconcileLeaseToken != "" || stored.ReconcileLeaseExpiresAt != nil {
 		t.Fatalf("over-reservation order = %#v", stored)
 	}
 }
@@ -241,7 +250,7 @@ func TestSettleTeamTokenBillingReturnsDifferenceToTeamAccount(t *testing.T) {
 	if err := repo.ReserveBillingOrder(order); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SettleTokenBilling(order.ID, "provider-team-order", 6, "succeeded", 1, TokenUsageFact{InputTokens: 1}, "reported", now); err != nil {
+	if err := repo.SettleTokenBilling(order.ID, settlementFact("provider-team-order", 6, 1, TokenUsageFact{InputTokens: 1}, now)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.First(&account, "team_id = ?", team.ID).Error; err != nil {
@@ -256,6 +265,18 @@ func TestSettleTeamTokenBillingReturnsDifferenceToTeamAccount(t *testing.T) {
 	}
 	if finalLedgerCount != 2 {
 		t.Fatalf("team final ledger count = %d", finalLedgerCount)
+	}
+}
+
+func settlementFact(providerOrderID string, amount int64, totalTokens int64, usage TokenUsageFact, settledAt time.Time) TokenSettlementFact {
+	return TokenSettlementFact{
+		ProviderOrderID:        providerOrderID,
+		ProviderAmountSubunits: amount,
+		ProviderTaskStatus:     "succeeded",
+		ProviderTotalTokens:    totalTokens,
+		Usage:                  usage,
+		UsageStatus:            "reported",
+		SettledAt:              settledAt,
 	}
 }
 
@@ -316,5 +337,25 @@ func assertTokenBillingSettlement(t *testing.T, db *gorm.DB, orderID string, wan
 	}
 	if amounts[model.CreditLedgerConsume] != -wantConsumed || amounts[model.CreditLedgerRelease] != wantReleased {
 		t.Fatalf("final ledger amounts = %#v", amounts)
+	}
+}
+
+func assertTokenSettlementLedgerSnapshots(t *testing.T, db *gorm.DB, orderID string, consumeAvailable int64, consumeReserved int64, releaseAvailable int64, releaseReserved int64) {
+	t.Helper()
+	var ledgers []model.CreditLedgerEntry
+	if err := db.Where("billing_order_id = ? AND type IN ?", orderID, []model.CreditLedgerType{model.CreditLedgerConsume, model.CreditLedgerRelease}).Find(&ledgers).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, ledger := range ledgers {
+		switch ledger.Type {
+		case model.CreditLedgerConsume:
+			if ledger.AvailableAfterMicrocredits != consumeAvailable || ledger.ReservedAfterMicrocredits != consumeReserved {
+				t.Fatalf("consume ledger snapshot = %#v", ledger)
+			}
+		case model.CreditLedgerRelease:
+			if ledger.AvailableAfterMicrocredits != releaseAvailable || ledger.ReservedAfterMicrocredits != releaseReserved {
+				t.Fatalf("release ledger snapshot = %#v", ledger)
+			}
+		}
 	}
 }
