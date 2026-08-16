@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -36,6 +37,8 @@ type Service struct {
 	storageMigrationOnce sync.Once
 	sessionCreateMu      sync.Mutex
 	characterTaskMu      sync.Mutex
+	agentDriveMu         sync.Mutex
+	agentDriveCursor     string
 	siteSettingMu        sync.Mutex
 	voicePreviewGroup    singleflight.Group
 	activeCancels        map[string]context.CancelFunc
@@ -75,6 +78,11 @@ type CreateTaskRequest struct {
 	QuotePriceVersion int64          `json:"quotePriceVersion"`
 	QuoteFingerprint  string         `json:"quoteFingerprint"`
 	Input             map[string]any `json:"input"`
+}
+
+type taskCreationIdentity struct {
+	TaskID                string
+	BillingIdempotencyKey string
 }
 
 type SessionDetail struct {
@@ -182,6 +190,19 @@ func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
 }
 
 func (s *Service) StartWorker() {
+	go func() {
+		drive := func() {
+			if err := s.DriveAgentRuns(100); err != nil {
+				log.Printf("agent runtime drive failed: %v", err)
+			}
+		}
+		drive()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			drive()
+		}
+	}()
 	go func() {
 		slots := make(chan struct{}, maxChannelConcurrencyLimit)
 		dispatch := func() {
@@ -338,6 +359,24 @@ func (s *Service) SessionDetail(userID string, id string) (*SessionDetail, error
 }
 
 func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task, error) {
+	return s.createTaskWithIdentity(userID, req, taskCreationIdentity{TaskID: newID()})
+}
+
+func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, identity taskCreationIdentity) (*model.Task, error) {
+	identity.TaskID = strings.TrimSpace(identity.TaskID)
+	identity.BillingIdempotencyKey = strings.TrimSpace(identity.BillingIdempotencyKey)
+	if identity.TaskID == "" {
+		return nil, errors.New("task creation identity is invalid")
+	}
+	if identity.BillingIdempotencyKey != "" {
+		existing, existingErr := s.repo.TaskForUser(userID, identity.TaskID)
+		if existingErr == nil {
+			return s.validateIdempotentCreatedTask(existing, req, identity)
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return nil, existingErr
+		}
+	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		return nil, errors.New("prompt is required")
@@ -376,13 +415,16 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err != nil {
 		return nil, err
 	}
-	task := model.Task{ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Capability: capability, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	task := model.Task{ID: identity.TaskID, UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Capability: capability, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
 	billingOrder, err := s.taskBillingOrder(userID, &task, normalizedInput)
 	if err != nil {
 		return nil, err
+	}
+	if identity.BillingIdempotencyKey != "" {
+		billingOrder.IdempotencyKey = identity.BillingIdempotencyKey
 	}
 	if err := validateTaskBillingQuoteConfirmation(req, billingOrder); err != nil {
 		return nil, err
@@ -400,6 +442,15 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		return nil, err
 	}
 	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, activeTaskPolicy, watermarkCapability)
+	if err != nil && identity.BillingIdempotencyKey != "" {
+		existing, existingErr := s.repo.TaskForUser(userID, identity.TaskID)
+		if existingErr == nil {
+			return s.validateIdempotentCreatedTask(existing, req, identity)
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return nil, errors.Join(err, existingErr)
+		}
+	}
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
 	}
@@ -418,6 +469,21 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+func (s *Service) validateIdempotentCreatedTask(existing *model.Task, req CreateTaskRequest, identity taskCreationIdentity) (*model.Task, error) {
+	if existing == nil || existing.ID != identity.TaskID || existing.ProjectID != req.ProjectID || existing.Type != req.Type ||
+		existing.Operation != req.Operation || existing.Prompt != strings.TrimSpace(req.Prompt) || existing.BillingOrderID == "" {
+		return nil, errors.New("task creation idempotency facts conflict")
+	}
+	order, err := s.repo.BillingOrder(existing.BillingOrderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.UserID != existing.UserID || order.TaskID != existing.ID || order.IdempotencyKey != identity.BillingIdempotencyKey {
+		return nil, errors.New("task billing idempotency facts conflict")
+	}
+	return taskForOutput(*existing), nil
 }
 
 // 所有任务输入先收敛为 JSON 对象，确保计费与密钥保护不会因 Go 结构体类型不同而被绕过。
@@ -742,8 +808,11 @@ func taskMediaPreview(raw string, taskType string) (string, string) {
 		return "", ""
 	}
 	defaultKind := "image"
-	if strings.Contains(strings.ToLower(taskType), "video") {
+	lowerTaskType := strings.ToLower(taskType)
+	if strings.Contains(lowerTaskType, "video") {
 		defaultKind = "video"
+	} else if strings.Contains(lowerTaskType, "audio") {
+		defaultKind = "audio"
 	}
 	return findTaskMediaPreview(payload, defaultKind)
 }
@@ -759,7 +828,9 @@ func findTaskMediaPreview(value any, hint string) (string, string) {
 		lower := strings.ToLower(text)
 		if strings.Contains(lower, ".mp4") || strings.Contains(lower, ".webm") || strings.Contains(lower, ".mov") {
 			kind = "video"
-		} else if kind != "video" {
+		} else if strings.Contains(lower, ".mp3") || strings.Contains(lower, ".wav") || strings.Contains(lower, ".m4a") || strings.Contains(lower, ".aac") || strings.Contains(lower, ".ogg") || strings.Contains(lower, ".flac") {
+			kind = "audio"
+		} else if kind != "video" && kind != "audio" {
 			kind = "image"
 		}
 		return text, kind
@@ -770,7 +841,7 @@ func findTaskMediaPreview(value any, hint string) (string, string) {
 			}
 		}
 	case map[string]any:
-		for _, key := range []string{"images", "image", "video", "dataUrl", "url", "resultUrl", "outputUrl"} {
+		for _, key := range []string{"images", "image", "video", "audio", "dataUrl", "url", "resultUrl", "outputUrl"} {
 			child, exists := item[key]
 			if !exists {
 				continue
@@ -778,6 +849,8 @@ func findTaskMediaPreview(value any, hint string) (string, string) {
 			childHint := hint
 			if key == "video" {
 				childHint = "video"
+			} else if key == "audio" {
+				childHint = "audio"
 			} else if key == "images" || key == "image" {
 				childHint = "image"
 			}
@@ -897,6 +970,26 @@ func (s *Service) ProcessNextTask() error {
 
 func (s *Service) processClaimedTask(task *model.Task) error {
 	_ = s.log(task.UserID, task.ID, "info", "后端任务开始处理", "")
+	runID := ""
+	if task.Type == agentRuntimeModelTaskType {
+		runID, _ = agentRuntimeModelRunID(task.Operation)
+	} else if generationRunID, generationTask := agentGenerationRunID(task.Operation); generationTask {
+		runID = generationRunID
+	}
+	if runID != "" {
+		defer func() {
+			reference := repository.ActiveAgentRunReference{RunID: runID, ActorUserID: task.UserID}
+			var err error
+			if task.Type == agentRuntimeModelTaskType {
+				err = s.resumeAgentRunReference(reference)
+			} else {
+				err = s.driveAgentRunReference(reference)
+			}
+			if err != nil {
+				_ = s.log(task.UserID, task.ID, "error", "Agent 运行恢复失败", taskFailureMessage(err))
+			}
+		}()
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err
@@ -1109,6 +1202,13 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	ctx = withProviderAnalytics(ctx, s, task)
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
+	}
+	if task.Type == agentRuntimeModelTaskType {
+		text, err := s.processAgentRuntimeModelText(ctx, task)
+		if err != nil {
+			return nil, nil, err
+		}
+		return map[string]interface{}{"mode": "text", "text": text}, nil, nil
 	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)

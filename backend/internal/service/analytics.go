@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -976,6 +977,11 @@ func (s *Service) estimateCallCost(log *model.ApiCallLog) {
 
 func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 	if log == nil || len(responseBody) == 0 {
+		return
+	}
+	// 非 2xx 响应正文完全由上游控制，可能回显请求密钥、提示词或其他私密输入。
+	// HTTP 状态码已经提供了可审计的失败事实，因此禁止再从正文补充日志字段。
+	if log.StatusCode != 0 && (log.StatusCode < http.StatusOK || log.StatusCode >= http.StatusMultipleChoices) {
 		return
 	}
 	payload, ok := analyticsResponsePayload(responseBody)

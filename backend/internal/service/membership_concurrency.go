@@ -23,6 +23,7 @@ func taskConcurrencyCapability(taskType string) (string, error) {
 	case taskType == "canvas_audio",
 		taskType == "canvas_text",
 		taskType == "agent_session",
+		taskType == agentRuntimeModelTaskType,
 		taskType == "agent_storyboard",
 		taskType == "agent_storyboard_rows":
 		return taskCapabilityOther, nil

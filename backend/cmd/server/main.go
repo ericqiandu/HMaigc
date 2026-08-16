@@ -144,6 +144,7 @@ func initializeAndServe(sqlDB *sql.DB, svc *service.Service) error {
 	handler.RegisterChannelModelRoutes(api, svc)
 	handler.RegisterSystemProxyRoutes(api, svc)
 	handler.RegisterCustomRelayRoutes(api, svc)
+	handler.RegisterAgentRuntimeRoutes(api, svc)
 	handler.RegisterTaskRoutes(api, svc)
 	handler.RegisterSessionRoutes(api, svc)
 	handler.RegisterSkillRoutes(api, svc)

@@ -4,24 +4,10 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import { createAgentCanvasProjectWithRemoteSync } from "@/services/user-data-sync";
-import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { uploadImage } from "@/services/image-storage";
-import type {
-    CanvasAgentExecutionMode,
-    CanvasAgentGenerationModels,
-    CanvasAgentSkillSelection,
-} from "@/types/canvas";
-import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-composer-controls";
-import {
-    CanvasAgentSelectionSummary,
-    removeLastCanvasAgentSelection,
-} from "@/components/canvas/canvas-agent-selection-summary";
-import {
-    AgentChatComposer,
-    type CanvasAgentChatAttachment,
-} from "@/components/canvas/canvas-agent-chat-ui";
+import { AgentChatComposer, type CanvasAgentChatAttachment } from "@/components/canvas/canvas-agent-chat-ui";
 
 const MAX_REFERENCE_IMAGES = 4;
 
@@ -29,21 +15,13 @@ type HomeReferenceAttachment = CanvasAgentChatAttachment & {
     file: File;
 };
 
-const PLACEHOLDERS = [
-    '试试说"在画布上为我创建…"，生成不阻塞，随时开启下一轮对话',
-    "描述你想创作的内容，AI 帮你生成分镜",
-    "进入项目后，按 @ 可引用资产库素材",
-] as const;
+const PLACEHOLDERS = ['试试说"在画布上为我创建…"，生成不阻塞，随时开启下一轮对话', "描述你想创作的内容，AI 帮你生成分镜", "进入项目后，按 @ 可引用资产库素材"] as const;
 
 export function UpdreamHero() {
     const { message } = App.useApp();
     const navigate = useNavigate();
-    const config = useEffectiveConfig();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [value, setValue] = useState("");
-    const [executionMode, setExecutionMode] = useState<CanvasAgentExecutionMode>("guided");
-    const [models, setModels] = useState<CanvasAgentGenerationModels>({ image: "", video: "" });
-    const [selectedSkills, setSelectedSkills] = useState<CanvasAgentSkillSelection[]>([]);
     const [referenceAttachments, setReferenceAttachments] = useState<HomeReferenceAttachment[]>([]);
     const [submitting, setSubmitting] = useState(false);
     const [placeholderIndex, setPlaceholderIndex] = useState(0);
@@ -70,9 +48,12 @@ export function UpdreamHero() {
         referenceAttachmentsRef.current = referenceAttachments;
     }, [referenceAttachments]);
 
-    useEffect(() => () => {
-        referenceAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.url));
-    }, []);
+    useEffect(
+        () => () => {
+            referenceAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.url));
+        },
+        [],
+    );
 
     const addReferenceImages = (files: FileList | File[] | null) => {
         const images = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -116,9 +97,6 @@ export function UpdreamHero() {
             );
             const { id, syncError } = await createAgentCanvasProjectWithRemoteSync({
                 prompt,
-                mode: executionMode,
-                models,
-                skills: selectedSkills,
                 referenceImages,
             });
             if (syncError) {
@@ -134,9 +112,7 @@ export function UpdreamHero() {
 
     return (
         <section className="updream-hero flex flex-col items-center px-4">
-            <h1 className="updream-hero-title bg-clip-text text-center text-transparent">
-                灵感从这里开始！
-            </h1>
+            <h1 className="updream-hero-title bg-clip-text text-center text-transparent">灵感从这里开始！</h1>
 
             <div className="updream-home-agent-composer w-full max-w-[700px]">
                 <AgentChatComposer
@@ -151,36 +127,6 @@ export function UpdreamHero() {
                     onSubmit={() => void startCreating()}
                     onAddFiles={addReferenceImages}
                     onRemoveAttachment={removeReferenceImage}
-                    onDeleteBackwardAtStart={() => {
-                        const next = removeLastCanvasAgentSelection({ models, selectedSkills });
-                        if (!next) return false;
-                        setModels(next.models);
-                        setSelectedSkills(next.selectedSkills);
-                        return true;
-                    }}
-                    selectionSummary={
-                        <CanvasAgentSelectionSummary
-                            config={config}
-                            models={models}
-                            selectedSkills={selectedSkills}
-                            disabled={submitting}
-                            onModelsChange={setModels}
-                            onSkillsChange={setSelectedSkills}
-                        />
-                    }
-                    left={
-                        <CanvasAgentComposerControls
-                            config={config}
-                            disabled={submitting}
-                            models={models}
-                            selectedSkills={selectedSkills}
-                            executionMode={executionMode}
-                            placement="bottomLeft"
-                            onModelsChange={setModels}
-                            onSkillsChange={setSelectedSkills}
-                            onExecutionModeChange={setExecutionMode}
-                        />
-                    }
                 />
             </div>
         </section>

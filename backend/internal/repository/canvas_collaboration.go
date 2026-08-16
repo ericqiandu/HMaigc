@@ -283,7 +283,10 @@ func (r *Repository) CommitCanvasChange(
 
 func authorizeCanvasWrite(tx *gorm.DB, canvas *model.CanvasProject, actorUserID string, now time.Time) error {
 	if canvas.TeamID == "" {
-		return ErrCanvasWriteForbidden
+		if canvas.UserID != actorUserID {
+			return ErrCanvasWriteForbidden
+		}
+		return nil
 	}
 	var member model.TeamMember
 	if err := tx.First(&member,

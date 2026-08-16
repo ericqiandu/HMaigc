@@ -70,6 +70,19 @@ type CanvasMutationResult struct {
 	UpdatedAt        time.Time           `json:"updatedAt"`
 }
 
+type CanvasMutationConflictError struct {
+	Code    string
+	Message string
+}
+
+func (e *CanvasMutationConflictError) Error() string {
+	return e.Message
+}
+
+func (e *CanvasMutationConflictError) Unwrap() error {
+	return &AuthError{Status: http.StatusConflict, Message: e.Message}
+}
+
 func (s *Service) CanvasCollaboration(user *model.User, canvasID string) (*CanvasCollaborationState, error) {
 	project, access, err := s.canvasAccess(user.ID, canvasID)
 	if err != nil {
@@ -247,9 +260,6 @@ func (s *Service) CommitCanvasMutation(
 	if err != nil {
 		return nil, err
 	}
-	if canvas.TeamID == "" {
-		return nil, BadAuthRequest("个人画布不使用多人协作变更协议")
-	}
 	if !access.CanEdit {
 		if !access.TeamSubscriptionActive {
 			return nil, &AuthError{Status: http.StatusPaymentRequired, Message: "团队会员已失效，画布暂时为只读"}
@@ -294,10 +304,10 @@ func (s *Service) CommitCanvasMutation(
 		},
 	)
 	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
-		return nil, &AuthError{Status: http.StatusConflict, Message: "画布版本已更新，请同步最新内容后重试"}
+		return nil, &CanvasMutationConflictError{Code: "canvas_revision_conflict", Message: "画布版本已更新，请同步最新内容后重试"}
 	}
 	if errors.Is(err, repository.ErrCanvasMutationMismatch) {
-		return nil, &AuthError{Status: http.StatusConflict, Message: "客户端变更 ID 已被其他内容使用"}
+		return nil, &CanvasMutationConflictError{Code: "canvas_mutation_idempotency_conflict", Message: "客户端变更 ID 已被其他内容使用"}
 	}
 	if errors.Is(err, repository.ErrCanvasPlanInactive) {
 		return nil, &AuthError{Status: http.StatusPaymentRequired, Message: "团队会员已失效，画布暂时为只读"}

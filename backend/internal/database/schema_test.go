@@ -12,6 +12,29 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestModelsRegistersAgentRuntimeFacts(t *testing.T) {
+	registered := map[string]bool{}
+	for _, value := range Models() {
+		switch value.(type) {
+		case *model.AgentThread:
+			registered["thread"] = true
+		case *model.AgentRun:
+			registered["run"] = true
+		case *model.AgentRunEvent:
+			registered["event"] = true
+		case *model.AgentCheckpoint:
+			registered["checkpoint"] = true
+		case *model.AgentToolCall:
+			registered["tool_call"] = true
+		}
+	}
+	for _, name := range []string{"thread", "run", "event", "checkpoint", "tool_call"} {
+		if !registered[name] {
+			t.Fatalf("agent runtime model %s is not registered", name)
+		}
+	}
+}
+
 func TestWatermarkPolicySchemaCreatesTablesTaskFactsAndExactIndexes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
