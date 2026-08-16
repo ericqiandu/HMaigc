@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -10,6 +11,58 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 )
+
+func TestPrepareTokenBilledProxyRequestEnforcesOutputLimitAndCountsCompleteBody(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"你好"}],"max_tokens":9999,"stream":true,"stream_options":{"include_usage":false}}`)
+	prepared, estimatedInput, err := prepareTokenBilledProxyRequest("/chat/completions", body, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimatedInput != int64(len(prepared))+tokenBillingProtocolMarginBytes {
+		t.Fatalf("estimated input = %d", estimatedInput)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(prepared, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload["max_tokens"]) != "2048" {
+		t.Fatalf("max_tokens = %s", payload["max_tokens"])
+	}
+	if string(payload["messages"]) != `[{"role":"user","content":"你好"}]` {
+		t.Fatalf("messages changed = %s", payload["messages"])
+	}
+	if string(payload["stream_options"]) != `{"include_usage":true}` {
+		t.Fatalf("stream_options = %s", payload["stream_options"])
+	}
+}
+
+func TestPrepareTokenBilledProxyRequestRejectsUnsupportedOrInvalidPayload(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		body []byte
+		max  int64
+	}{
+		{path: "/responses", body: []byte(`{"model":"deepseek"}`), max: 10},
+		{path: "/chat/completions", body: []byte(`not-json`), max: 10},
+		{path: "/chat/completions", body: []byte(`[]`), max: 10},
+		{path: "/chat/completions", body: []byte(`{"model":"deepseek"}`), max: 0},
+	} {
+		if _, _, err := prepareTokenBilledProxyRequest(test.path, test.body, test.max); err == nil {
+			t.Fatalf("prepareTokenBilledProxyRequest(%q, %s, %d) succeeded", test.path, test.body, test.max)
+		}
+	}
+}
+
+func TestSafeProxyProviderRequestIDRejectsSecretAndUnstructuredValues(t *testing.T) {
+	if got := safeProxyProviderRequestID("kz-cgt-task_1", "sentinel-key"); got != "kz-cgt-task_1" {
+		t.Fatalf("safe ID = %q", got)
+	}
+	for _, value := range []string{"sentinel-key", "prompt with spaces", strings.Repeat("x", 161)} {
+		if got := safeProxyProviderRequestID(value, "sentinel-key"); got != "" {
+			t.Fatalf("unsafe ID %q accepted as %q", value, got)
+		}
+	}
+}
 
 func TestApplySystemProxyAuthenticationUsesManagedKuaiziApiKeyWithoutBearer(t *testing.T) {
 	request, err := http.NewRequest(http.MethodPost, "https://aiopenapi.kuaizi.cn/ai-open-platform-api/v1/chat/completions", nil)

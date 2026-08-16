@@ -14,8 +14,28 @@ import (
 )
 
 const channelVoiceCloneUploadBodyLimit = (20 << 20) + (2 << 20)
+const billingQuoteBodyLimit int64 = 64 << 10
 
 func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.POST("/billing/quotes", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		request, err := decodeStrictJSON[service.TaskBillingQuoteRequest](c, billingQuoteBodyLimit)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		quote, err := svc.QuoteTaskBilling(user.ID, request)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		ok(c, quote)
+	})
 	r.GET("/channels/:id/voices", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

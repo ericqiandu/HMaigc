@@ -1,28 +1,30 @@
-import type { CSSProperties } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
 import { Button, Segmented, Select } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { configuredModelMatchesCapability, defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
+import { configuredModelMatchesCapability, defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useCanvasTaskBillingQuote } from "@/hooks/use-canvas-task-billing-quote";
+import type { TaskBillingQuote } from "@/services/api/task-center";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { normalizeVideoConfigForModel, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { imageModelMetadataPatch } from "@/lib/image-model-capabilities";
+import { findImageModelCapabilities, imageModelMetadataPatch, normalizeImageConfigForModel } from "@/lib/image-model-capabilities";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata, CanvasVideoEditOperation, CanvasWorkspaceMode } from "@/types/canvas";
 import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
+import { GenerationCreditQuoteBadge } from "./generation-credit-quote-badge";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
     isRunning: boolean;
     inputSummary: { textCount: number; imageCount: number; videoCount: number; audioCount: number };
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
-    onGenerate: (nodeId: string) => void;
+    onGenerate: (nodeId: string, expectedQuote?: TaskBillingQuote) => void;
     onStop: (nodeId: string) => void;
     onComposerToggle: () => void;
     workspaceMode?: CanvasWorkspaceMode;
@@ -46,21 +48,13 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const mode = node.metadata?.generationMode || "image";
     const simpleMode = workspaceMode === "simple";
     const config = buildNodeConfig(globalConfig, node, mode);
-    const effectiveVideoConfig = mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
+    const videoModelPublished = mode === "video" && hasPublishedVideoModel(config);
+    const effectiveVideoConfig = videoModelPublished ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : null;
     const operationOptions = node.metadata?.videoEditOperation === "concat" ? [...videoOperationOptions, { label: "合并成片", value: "concat" as const }] : videoOperationOptions;
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(effectiveVideoConfig?.count || config.count)) || 1)));
-    const priceChannel = resolveModelChannel(config, config.model);
-    const credits = requestCreditCost({
-        channelMode: priceChannel.scope === "system" ? "remote" : "local",
-        modelCosts: priceChannel.modelCosts,
-        model: modelOptionName(config.model),
-        count: mode === "image" || mode === "video" ? count : 1,
-        seconds: mode === "video" ? effectiveVideoConfig?.videoSeconds : 1,
-        quality: config.quality,
-        resolution: mode === "video" ? effectiveVideoConfig?.vquality : config.size,
-        referenceVideoCount: mode === "video" ? inputSummary.videoCount : 0,
-    });
-    const hasPrice = credits !== null;
+    const quoteConfig = useMemo(() => (mode === "image" && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, mode]);
+    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
+    const quoteReferenceVideoCount = mode === "video" && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? inputSummary.videoCount : 0;
+    const quoteState = useCanvasTaskBillingQuote(quoteConfig, mode, mode === "video" ? node.metadata?.videoEditOperation || defaultVideoOperation(inputSummary) : mode, count, quoteReferenceVideoCount);
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
@@ -173,7 +167,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         onMissingConfig={handleMissingSystemModel}
                         fullWidth
                     />
-                    {mode === "video" ? (
+                    {mode === "video" && videoModelPublished ? (
                         <CanvasVideoSettingsPopover
                             config={config}
                             generationMode={resolveVideoGenerationMode(node.metadata)}
@@ -208,9 +202,9 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 type="primary"
                 className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
                 danger={isRunning}
-                disabled={!isRunning && !canGenerate}
+                disabled={!isRunning && (!canGenerate || ((mode === "image" || mode === "video") && quoteState.status !== "ready"))}
                 onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id))}
+                onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id, quoteState.status === "ready" ? quoteState.quote : undefined))}
             >
                 <span className="inline-flex items-center gap-1.5">
                     {isRunning ? (
@@ -221,16 +215,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         </>
                     ) : (
                         <>
-                            {hasPrice ? (
-                                <span className="inline-flex items-center gap-1">
-                                    <CreditSymbol />
-                                    {credits.toLocaleString()}
-                                </span>
-                            ) : (
-                                <span className="text-xs" title="当前渠道没有模型价格数据">
-                                    无价格
-                                </span>
-                            )}
+                            <GenerationCreditQuoteBadge state={quoteState} />
                             <Play className="size-4" />
                             <span>开始生成</span>
                         </>
@@ -289,7 +274,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
-    return mode === "video" ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
+    return mode === "video" && hasPublishedVideoModel(config) ? normalizeVideoConfigForModel(config, resolveVideoGenerationMode(node.metadata)) : config;
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {

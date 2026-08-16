@@ -2,7 +2,7 @@ import { isMiniMaxH3VideoConfig, miniMaxH3DurationOptions, miniMaxH3ResolutionOp
 import { isKlingVideoConfig, klingDurationOptions, klingRatioOptions, klingResolutionOptions, normalizeKlingDuration, normalizeKlingResolution } from "@/lib/kling-video";
 import { isSeedanceVideoConfig, normalizeResolutionToken, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { normalizeVideoDuration, normalizeVideoResolution, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
-import { modelOptionName, resolveModelRequestConfig, type AiConfig, type ProviderModelCapabilities, type WatermarkCapability } from "@/stores/use-config-store";
+import { configuredModelMatchesCapability, modelOptionName, resolveModelRequestConfig, type AiConfig, type ProviderModelCapabilities, type WatermarkCapability } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
 
 export type VideoParameterOption = Readonly<{ value: string; label: string }>;
@@ -74,6 +74,10 @@ const klingCapabilities: VideoModelCapabilities = {
         superResolution: "可灵视频使用模型原生输出，不支持独立超分任务",
     },
 };
+
+export function hasPublishedVideoModel(config: AiConfig) {
+    return configuredModelMatchesCapability(config, config.model || config.videoModel, "video");
+}
 
 export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapabilities {
     if (isKlingVideoConfig(config)) return { ...klingCapabilities, watermarkCapability: selectedModelWatermarkCapability(config) };

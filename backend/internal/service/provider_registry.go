@@ -170,10 +170,16 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 		{
 			ProviderKind: "kuaizi",
 			Family:       "deepseek",
-			Models: []ProviderModelSpec{{
-				ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
-				UpstreamMode: "deepseek-v4-pro", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
-			}},
+			Models: []ProviderModelSpec{
+				{
+					ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash", MarketingCopy: "低成本纯文本 Agent 模型，不支持图片输入",
+					UpstreamMode: "deepseek-v4-flash", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
+				},
+				{
+					ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
+					UpstreamMode: "deepseek-v4-pro", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
+				},
+			},
 		},
 	}
 }
@@ -216,6 +222,11 @@ func kuaiziProviderFamilyForModel(modelKey string) (string, ProviderModelSpec, b
 		}
 	}
 	return "", ProviderModelSpec{}, false
+}
+
+func kuaiziModelSupportsTokenUsageBilling(modelKey string) bool {
+	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
+	return managed && family == "deepseek" && spec.Capability == "text"
 }
 
 func validateProviderRegistryRuntime(descriptors []ProviderAdapterDescriptor) error {

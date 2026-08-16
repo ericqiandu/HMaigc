@@ -25,6 +25,7 @@ export async function executeImageGeneration({
     generationConfig,
     generationContext,
     controller,
+    expectedQuote,
     projectId,
     setNodes,
     setConnections,
@@ -137,6 +138,7 @@ export async function executeImageGeneration({
                     signal: controller.signal,
                     metadata: { sourceNodeId: nodeId, resolvedCharacterVersions: generationContext.resolvedCharacterVersions },
                     onTaskCreated: (task) => bindGenerationTask(targetId, task),
+                    expectedQuote,
                 });
                 const image = result.images?.[0];
                 if (!image?.dataUrl) throw new Error("后端任务没有返回图片");

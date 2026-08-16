@@ -543,7 +543,7 @@ func TestPublishKuaiziTextFamilyCreatesManagedChatChannelAndResolvesEncryptedKey
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.BaseURL != channel.BaseURL || runtime.HeaderName != "ApiKey" || runtime.APIKey != "sentinel-gpt-key" {
+	if runtime.BaseURL != channel.BaseURL || runtime.HeaderName != "ApiKey" || runtime.APIKey != "sentinel-gpt-key" || runtime.ProviderEndpointVersionID != endpoint.ID || runtime.ProviderCredentialVersionID != version.ID {
 		t.Fatalf("managed chat runtime = %#v", runtime)
 	}
 	if _, err := svc.ResolveSystemProxyRuntime(&channel, "deepseek-v4-pro"); err == nil {

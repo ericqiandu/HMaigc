@@ -51,8 +51,8 @@ export type ModelChannel = {
         accessible: boolean;
         capability: ModelCapability;
         watermarkCapability: WatermarkCapability;
-        billingMode: "fixed_request" | "per_second";
-        priceStrategy: "flat" | "image_resolution" | "video_resolution";
+        billingMode: "fixed_request" | "per_second" | "token_usage";
+        priceStrategy: "flat" | "image_resolution" | "video_resolution" | "token";
         unitPriceMicrocredits: number;
         priceTiers: Array<{
             resolution: string;
@@ -446,6 +446,9 @@ export function hasSystemModelPrice(channel: ModelChannel, model: string) {
     return (
         channel.modelCosts?.some((item) => {
             if (item.model !== model) return false;
+            if (item.billingMode === "token_usage" && item.priceStrategy === "token") {
+                return item.unitPriceMicrocredits === 0;
+            }
             if (item.priceStrategy === "flat") {
                 return Number.isFinite(item.unitPriceMicrocredits) && item.unitPriceMicrocredits > 0;
             }

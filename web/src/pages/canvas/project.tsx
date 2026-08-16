@@ -335,7 +335,7 @@ function InfiniteCanvasPage() {
     }, [linkedProjectQuery.data, projectLoaded, setNodes]);
     const canvasContext = useMemo(() => summarizeCanvasContext(nodes, selectedNodeIds, linkedProjectQuery.data?.units), [linkedProjectQuery.data?.units, nodes, selectedNodeIds]);
 
-    const { bindGenerationTask, cancelNodeTask, confirmStopGeneration, finishGenerationRequest, openNodeTaskDetails, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs } =
+    const { bindGenerationTask, cancelNodeTask, finishGenerationRequest, openNodeTaskDetails, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, stopNodeGeneration, taskDetail, taskDetailLoading, taskDetailLogs } =
         useCanvasGeneration({ projectId, domainProjectId: linkedProjectId, projectLoaded, nodes, nodesRef, setNodes });
 
     useEffect(() => {
@@ -1152,8 +1152,8 @@ function InfiniteCanvasPage() {
                     onReferenceConnect={connectExistingNodes}
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
-                    onGenerate={handleGenerateNode}
-                    onStop={confirmStopGeneration}
+                    onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
+                    onStop={stopNodeGeneration}
                     workspaceMode={workspaceMode}
                     onImageSettingsOpenChange={(open) => {
                         setNodeImageSettingsOpen(open);
@@ -1162,7 +1162,7 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [canvasResourceReferences, configInputsById, confirmStopGeneration, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, workspaceMode],
+        [canvasResourceReferences, configInputsById, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, stopNodeGeneration, workspaceMode],
     );
 
     const renderCanvasNodeContent = useCallback(
@@ -1246,10 +1246,10 @@ function InfiniteCanvasPage() {
                     inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
                     onConfigChange={handleConfigNodeChange}
                     onComposerToggle={() => setDialogNodeId((current) => (current === contentNode.id ? null : contentNode.id))}
-                    onStop={confirmStopGeneration}
-                    onGenerate={(nodeId) => {
+                    onStop={stopNodeGeneration}
+                    onGenerate={(nodeId, expectedQuote) => {
                         const target = nodesRef.current.find((item) => item.id === nodeId);
-                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "");
+                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "", { expectedQuote });
                     }}
                     workspaceMode={workspaceMode}
                 />
@@ -1259,7 +1259,6 @@ function InfiniteCanvasPage() {
             addScriptRow,
             cancelSubmittedBatchItem,
             configInputsById,
-            confirmStopGeneration,
             createAndGenerateScriptVideos,
             createScriptActionBoards,
             createScriptImageNodes,
@@ -1284,6 +1283,7 @@ function InfiniteCanvasPage() {
             retryFailedBatchItems,
             runningNodeId,
             stopRemainingBatchItems,
+            stopNodeGeneration,
             updateScriptRow,
             viewport.k,
             workspaceMode,

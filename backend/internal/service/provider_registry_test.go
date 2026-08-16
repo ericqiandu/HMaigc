@@ -61,11 +61,14 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatalf("GPT Agent model = %#v", got)
 	}
 	deepseek, ok := registry.Descriptor("kuaizi", "deepseek")
-	if !ok || len(deepseek.Models) != 1 {
+	if !ok || len(deepseek.Models) != 2 {
 		t.Fatalf("kuaizi/deepseek descriptor = %#v, exists=%v", deepseek, ok)
 	}
-	if got := deepseek.Models[0]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
-		t.Fatalf("DeepSeek Agent model = %#v", got)
+	if got := deepseek.Models[0]; got.ModelKey != "deepseek-v4-flash" || got.DisplayName != "DeepSeek V4 Flash" || got.UpstreamMode != "deepseek-v4-flash" || got.Capability != "text" || got.MarketingCopy != "低成本纯文本 Agent 模型，不支持图片输入" {
+		t.Fatalf("DeepSeek Flash Agent model = %#v", got)
+	}
+	if got := deepseek.Models[1]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
+		t.Fatalf("DeepSeek Pro Agent model = %#v", got)
 	}
 }
 

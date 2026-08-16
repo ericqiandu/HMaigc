@@ -1,0 +1,125 @@
+import type { CreateTaskInput, TaskBillingQuote, TaskBillingQuoteRequest } from "@/services/api/task-center";
+
+type QuoteConfigSource = Record<string, unknown>;
+
+type BuildTaskBillingQuoteRequestInput = {
+    mode: "image" | "video";
+    operation: string;
+    batchCount: number;
+    referenceVideoCount: number;
+    config: QuoteConfigSource;
+};
+
+export type TaskBillingQuoteLoader = (request: TaskBillingQuoteRequest, signal?: AbortSignal) => Promise<TaskBillingQuote>;
+
+export class TaskPriceChangedError extends Error {
+    readonly currentQuote: TaskBillingQuote;
+
+    constructor(currentQuote: TaskBillingQuote) {
+        super("预计积分已变化，请确认新报价后重试");
+        this.name = "TaskPriceChangedError";
+        this.currentQuote = currentQuote;
+    }
+}
+
+export function buildTaskBillingQuoteRequest({ mode, operation, batchCount, referenceVideoCount, config }: BuildTaskBillingQuoteRequestInput): TaskBillingQuoteRequest {
+    const fps = finiteNumber(config.videoSuperResolutionFps);
+    return {
+        type: mode === "image" ? "canvas_image" : "canvas_video",
+        operation,
+        batchCount,
+        input: {
+            mode,
+            referenceVideoCount,
+            config: {
+                channelId: requiredString(config.channelId, "渠道"),
+                model: requiredString(config.model, "模型"),
+                size: optionalString(config.size),
+                quality: optionalString(config.quality),
+                videoSeconds: optionalString(config.videoSeconds),
+                vquality: optionalString(config.vquality),
+                videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === true || config.videoSuperResolutionEnabled === "true",
+                videoSuperResolutionResolution: optionalString(config.videoSuperResolutionResolution),
+                videoSuperResolutionVersion: optionalString(config.videoSuperResolutionVersion),
+                videoSuperResolutionFps: fps > 0 ? fps : 0,
+            },
+        },
+    };
+}
+
+export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: TaskBillingQuote | undefined, loadQuote: TaskBillingQuoteLoader, signal?: AbortSignal): Promise<CreateTaskInput> {
+    const quoteRequest = quoteRequestFromTaskInput(input);
+    if (!quoteRequest) return input;
+
+    if (expectedQuote) {
+        return { ...input, quotePriceVersion: expectedQuote.priceVersion, quoteFingerprint: expectedQuote.quoteFingerprint };
+    }
+
+    const currentQuote = await loadQuote(quoteRequest, signal);
+    return { ...input, quotePriceVersion: currentQuote.priceVersion, quoteFingerprint: currentQuote.quoteFingerprint };
+}
+
+export function taskPriceChangedQuoteFromEnvelope(value: unknown): TaskBillingQuote | null {
+    if (!isRecord(value) || !isRecord(value.data) || value.data.errorCode !== "PRICE_CHANGED" || !isRecord(value.data.currentQuote)) return null;
+    const quote = value.data.currentQuote;
+    if (
+        typeof quote.amountMicrocredits !== "number" ||
+        typeof quote.perTaskAmountMicrocredits !== "number" ||
+        typeof quote.taskCount !== "number" ||
+        typeof quote.priceVersion !== "number" ||
+        (quote.billingMode !== "fixed_request" && quote.billingMode !== "per_second") ||
+        typeof quote.pricingResolution !== "string" ||
+        typeof quote.pricingInputVariant !== "string" ||
+        typeof quote.quantity !== "number" ||
+        typeof quote.enhancementAmountMicrocredits !== "number" ||
+        typeof quote.quoteFingerprint !== "string"
+    ) {
+        return null;
+    }
+    return {
+        amountMicrocredits: quote.amountMicrocredits,
+        perTaskAmountMicrocredits: quote.perTaskAmountMicrocredits,
+        taskCount: quote.taskCount,
+        priceVersion: quote.priceVersion,
+        billingMode: quote.billingMode,
+        pricingResolution: quote.pricingResolution,
+        pricingInputVariant: quote.pricingInputVariant,
+        quantity: quote.quantity,
+        enhancementAmountMicrocredits: quote.enhancementAmountMicrocredits,
+        quoteFingerprint: quote.quoteFingerprint,
+    };
+}
+
+function quoteRequestFromTaskInput(input: CreateTaskInput): TaskBillingQuoteRequest | null {
+    const mode = input.input?.mode;
+    if (mode !== "image" && mode !== "video") return null;
+    const config = input.input?.config;
+    if (!isRecord(config)) throw new Error("生成任务缺少可报价的模型配置");
+    const references = mode === "video" ? input.input?.referenceVideos : undefined;
+    return buildTaskBillingQuoteRequest({
+        mode,
+        operation: input.operation?.trim() || mode,
+        batchCount: 1,
+        referenceVideoCount: Array.isArray(references) ? references.length : 0,
+        config,
+    });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredString(value: unknown, label: string): string {
+    const text = optionalString(value).trim();
+    if (!text) throw new Error(`生成任务缺少${label}配置`);
+    return text;
+}
+
+function optionalString(value: unknown): string {
+    return typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
+}
+
+function finiteNumber(value: unknown): number {
+    const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+}

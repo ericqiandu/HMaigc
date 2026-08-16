@@ -141,28 +141,29 @@ type PublicChannelModelPrice struct {
 }
 
 type PublicProviderCapabilities struct {
-	ModelKey                string                    `json:"modelKey"`
-	DisplayName             string                    `json:"displayName"`
-	UpstreamMode            string                    `json:"upstreamMode"`
-	Capability              string                    `json:"capability"`
-	Resolutions             []string                  `json:"resolutions"`
-	InputVariants           []string                  `json:"inputVariants"`
-	Ratios                  []string                  `json:"ratios"`
-	Qualities               []string                  `json:"qualities"`
-	OutputCounts            []int                     `json:"outputCounts"`
-	DurationMin             int                       `json:"durationMin"`
-	DurationMax             int                       `json:"durationMax"`
-	SupportsSmartDuration   bool                      `json:"supportsSmartDuration"`
-	SupportsGeneratedAudio  bool                      `json:"supportsGeneratedAudio"`
-	WatermarkCapability     model.WatermarkCapability `json:"watermarkCapability"`
-	SupportsAudioOnly       bool                      `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames  bool                      `json:"requiresAdaptiveFrames"`
-	MaxImages               int                       `json:"maxImages"`
-	MaxVideos               int                       `json:"maxVideos"`
-	MaxAudios               int                       `json:"maxAudios"`
-	MaxVideoDurationSeconds int                       `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds int                       `json:"maxAudioDurationSeconds"`
-	Tools                   []string                  `json:"tools"`
+	ModelKey                  string                    `json:"modelKey"`
+	DisplayName               string                    `json:"displayName"`
+	UpstreamMode              string                    `json:"upstreamMode"`
+	Capability                string                    `json:"capability"`
+	Resolutions               []string                  `json:"resolutions"`
+	InputVariants             []string                  `json:"inputVariants"`
+	Ratios                    []string                  `json:"ratios"`
+	Qualities                 []string                  `json:"qualities"`
+	OutputCounts              []int                     `json:"outputCounts"`
+	DurationMin               int                       `json:"durationMin"`
+	DurationMax               int                       `json:"durationMax"`
+	SupportsSmartDuration     bool                      `json:"supportsSmartDuration"`
+	SupportsGeneratedAudio    bool                      `json:"supportsGeneratedAudio"`
+	WatermarkCapability       model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames    bool                      `json:"requiresAdaptiveFrames"`
+	MaxImages                 int                       `json:"maxImages"`
+	MaxVideos                 int                       `json:"maxVideos"`
+	MaxAudios                 int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds   int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds   int                       `json:"maxAudioDurationSeconds"`
+	Tools                     []string                  `json:"tools"`
+	SupportsTokenUsageBilling bool                      `json:"supportsTokenUsageBilling"`
 }
 
 type PublicChannelModelPriceTier struct {
@@ -826,7 +827,7 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 
 func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilities {
 	capabilities, ok := kuaiziProviderModelSpec(modelKey)
-	if !ok || (capabilities.Capability != "image" && capabilities.Capability != "video") {
+	if !ok {
 		return nil
 	}
 	inputVariants := []string{}
@@ -844,7 +845,8 @@ func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilitie
 		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
 		MaxImages:              capabilities.MaxImages, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
-		Tools: append([]string{}, capabilities.Tools...),
+		Tools:                     append([]string{}, capabilities.Tools...),
+		SupportsTokenUsageBilling: kuaiziModelSupportsTokenUsageBilling(modelKey),
 	}
 }
 

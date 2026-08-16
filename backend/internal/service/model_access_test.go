@@ -370,3 +370,28 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 		t.Fatalf("invalid presentation request mutated model: %#v", storedModel)
 	}
 }
+
+func TestSaveAdminChannelModelRejectsTokenBillingForUnmanagedTextModel(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.AdminAuditEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := model.ModelChannel{ID: "text-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "普通文本渠道", InterfaceType: model.ChannelInterfaceChatCompletion, ModelsJSON: "[]"}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db), dataDir: t.TempDir()}
+	admin := &model.User{ID: "admin-1", Role: model.UserRoleAdmin}
+	enabled := true
+	_, err = svc.SaveAdminChannelModel(admin, channel.ID, "", ChannelModelRequest{
+		ModelKey: "custom-text-model", DisplayName: "Custom Text", BrandKey: "deepseek",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
+		PriceConfigured: true, Enabled: &enabled,
+	})
+	if err == nil || !strings.Contains(err.Error(), "筷子托管") {
+		t.Fatalf("unmanaged token billing error = %v", err)
+	}
+}

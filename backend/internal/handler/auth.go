@@ -12,12 +12,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
+
+const tokenBillingProtocolMarginBytes int64 = 256
 
 func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/auth/settings", func(c *gin.Context) {
@@ -613,6 +616,19 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 		failService(c, err)
 		return
 	}
+	tokenPricing, tokenBilled, err := svc.ProxyTokenBillingConfig(user.ID, channel.ID, modelName)
+	if err != nil {
+		failService(c, err)
+		return
+	}
+	estimatedInputTokens := int64(0)
+	if tokenBilled {
+		body, estimatedInputTokens, err = prepareTokenBilledProxyRequest(path, body, tokenPricing.MaxOutputTokens)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+	}
 	billingOrderID := ""
 	query := c.Request.URL.Query()
 	for _, key := range []string{"key", "api_key", "access_token", "token"} {
@@ -639,15 +655,31 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	defer releaseChannel()
 	if c.Request.Method == http.MethodPost {
 		capability := proxyBillingCapability(channel.InterfaceType, path)
-		order, err := svc.ReserveProxyBilling(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyBillingUsage(c.GetHeader("Content-Type"), body, capability))
+		var order *model.BillingOrder
+		if tokenBilled {
+			order, err = svc.ReserveProxyTokenBilling(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), service.TokenBillingReservation{
+				EstimatedInputTokens: estimatedInputTokens, MaxOutputTokens: tokenPricing.MaxOutputTokens, Pricing: tokenPricing,
+				EndpointVersionID: runtime.ProviderEndpointVersionID, CredentialVersionID: runtime.ProviderCredentialVersionID,
+			})
+		} else {
+			order, err = svc.ReserveProxyBilling(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyBillingUsage(c.GetHeader("Content-Type"), body, capability))
+		}
 		if err != nil {
 			failService(c, err)
 			return
 		}
 		billingOrderID = order.ID
-		if err := svc.MarkBillingRunning(billingOrderID); err != nil {
-			_ = svc.RefundBilling(billingOrderID, "系统渠道请求尚未发出")
-			failService(c, err)
+		var beginBillingErr error
+		if tokenBilled {
+			beginBillingErr = svc.BeginTokenBillingRequest(billingOrderID)
+		} else {
+			beginBillingErr = svc.MarkBillingRunning(billingOrderID)
+		}
+		if beginBillingErr != nil {
+			if !tokenBilled {
+				_ = svc.RefundBilling(billingOrderID, "系统渠道请求尚未发出")
+			}
+			failService(c, beginBillingErr)
 			return
 		}
 	}
@@ -701,7 +733,21 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 		fail(c, http.StatusBadGateway, fmt.Errorf("系统渠道响应超过 %dMB 限制", policy.Request.SystemRelayResponseMB))
 		return
 	}
-	if status == model.ApiCallStatusSucceeded {
+	log := apiCallLog(user, channel, billingOrderID, c.Request.Method, path, target, body, status, statusCode, time.Since(startedAt), errorText, concurrencyLimit)
+	svc.EnrichAPICallLog(&log, responseBody)
+	log.ProviderRequestID = safeProxyProviderRequestID(log.ProviderRequestID, runtime.APIKey)
+	logErr := svc.LogAPICall(log)
+	if tokenBilled {
+		if logErr != nil && log.ProviderRequestID != "" {
+			_ = svc.ScheduleTokenBillingReconciliation(billingOrderID, log.ProviderRequestID, "调用日志写入失败，账单待核对", service.TokenUsageFact{InputTokens: log.InputTokens, CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens, Available: log.UsageAvailable})
+		} else if logErr != nil {
+			_ = svc.MarkBillingUncertain(billingOrderID, "调用日志写入失败且响应缺少任务 ID")
+		} else if log.ProviderRequestID == "" {
+			_ = svc.MarkBillingUncertain(billingOrderID, "上游响应缺少可核对的任务 ID")
+		} else if err := svc.ReconcileTokenBillingNow(c.Request.Context(), billingOrderID, log.ProviderRequestID, service.TokenUsageFact{InputTokens: log.InputTokens, CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens, Available: log.UsageAvailable}); err != nil {
+			_ = svc.MarkBillingUncertain(billingOrderID, "上游账单核对尚未完成")
+		}
+	} else if status == model.ApiCallStatusSucceeded {
 		if err := svc.SettleBilling(billingOrderID, ""); err != nil {
 			_ = svc.MarkBillingUncertain(billingOrderID, "上游成功但积分结算失败："+err.Error())
 		}
@@ -710,7 +756,6 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	} else {
 		_ = svc.RefundBilling(billingOrderID, "上游明确返回失败")
 	}
-	logSystemProxyCall(svc, apiCallLog(user, channel, billingOrderID, c.Request.Method, path, target, body, status, statusCode, time.Since(startedAt), errorText, concurrencyLimit), responseBody)
 	for _, key := range []string{"Content-Type", "Cache-Control", "Content-Disposition"} {
 		if value := resp.Header.Get(key); value != "" {
 			c.Header(key, value)
@@ -718,6 +763,49 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+}
+
+func safeProxyProviderRequestID(value string, secret string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 160 || (secret != "" && strings.Contains(value, secret)) {
+		return ""
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || strings.ContainsRune("-_.:/", character) {
+			continue
+		}
+		return ""
+	}
+	return value
+}
+
+func prepareTokenBilledProxyRequest(path string, body []byte, maxOutputTokens int64) ([]byte, int64, error) {
+	if path != "/chat/completions" || maxOutputTokens <= 0 || len(body) == 0 || !utf8.Valid(body) {
+		return nil, 0, errors.New("Token 计费请求不符合 Chat Completions 契约")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+		return nil, 0, errors.New("Token 计费请求 JSON 无效")
+	}
+	limit, err := json.Marshal(maxOutputTokens)
+	if err != nil {
+		return nil, 0, err
+	}
+	payload["max_tokens"] = limit
+	if streamRaw, exists := payload["stream"]; exists {
+		var stream bool
+		if err := json.Unmarshal(streamRaw, &stream); err != nil {
+			return nil, 0, errors.New("Token 计费请求 stream 字段无效")
+		}
+		if stream {
+			payload["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		}
+	}
+	prepared, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	return prepared, int64(len(prepared)) + tokenBillingProtocolMarginBytes, nil
 }
 
 func applySystemProxyAuthentication(request *http.Request, runtime service.SystemProxyRuntime) {
@@ -816,6 +904,15 @@ func clearSessionCookie(c *gin.Context) {
 }
 
 func failService(c *gin.Context, err error) {
+	var quoteChanged *service.QuoteChangedError
+	if errors.As(err, &quoteChanged) {
+		c.JSON(http.StatusConflict, gin.H{
+			"code": http.StatusConflict,
+			"data": gin.H{"errorCode": "PRICE_CHANGED", "currentQuote": quoteChanged.CurrentQuote},
+			"msg":  quoteChanged.Error(),
+		})
+		return
+	}
 	var authErr *service.AuthError
 	if errors.As(err, &authErr) {
 		fail(c, authErr.Status, errors.New(authErr.Message))

@@ -63,6 +63,7 @@ export type CreditPolicy = {
 export type ChannelModel = {
     id: string;
     channelId: string;
+    providerCredentialId?: string;
     modelKey: string;
     displayName: string;
     marketingCopy: string;
@@ -71,8 +72,8 @@ export type ChannelModel = {
     brandKey: ModelBrandKey;
     accessPolicy: "authenticated" | "member";
     capability: "text" | "image" | "video" | "audio";
-    billingMode: "fixed_request" | "per_second";
-    priceStrategy: "flat" | "image_resolution" | "video_resolution";
+    billingMode: "fixed_request" | "per_second" | "token_usage";
+    priceStrategy: "flat" | "image_resolution" | "video_resolution" | "token";
     unitPriceMicrocredits: number;
     priceTiers: Array<{
         id: string;
@@ -87,6 +88,7 @@ export type ChannelModel = {
     providerCapabilities?: {
         resolutions: string[];
         inputVariants: Array<"standard" | "reference_video">;
+        supportsTokenUsageBilling?: boolean;
     };
     createdAt: string;
     updatedAt: string;
@@ -190,7 +192,7 @@ export type BillingOrder = {
     model: string;
     capability: string;
     scene: string;
-    billingMode: "fixed_request" | "per_second";
+    billingMode: "fixed_request" | "per_second" | "token_usage";
     unitPriceMicrocredits: number;
     multiplierBasisPoints: number;
     quantity: number;

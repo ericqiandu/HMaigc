@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
-import { agentDefaultModelOptions, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
+import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
 
 let configStore: typeof import("../src/stores/use-config-store");
 
@@ -48,6 +48,44 @@ describe("Agent default model setting", () => {
         expect(options).toEqual([{ label: "GPT 5.5 · 筷子科技", value: valid.id }]);
     });
 
+    test("admin candidates include a complete token-usage text model", () => {
+        const tokenModel = candidate({
+            id: "deepseek-token",
+            modelKey: "deepseek-v4-pro",
+            displayName: "DeepSeek V4 Pro",
+            billingMode: "token_usage",
+            priceStrategy: "token",
+            unitPriceMicrocredits: 0,
+        });
+        expect(agentDefaultModelOptions([tokenModel])).toEqual([{ label: "DeepSeek V4 Pro · 筷子科技", value: tokenModel.id }]);
+    });
+
+    test("complete token supplier pricing hard-cuts a text model to token billing", () => {
+        expect(
+            pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }), {
+                inputPerMillionMicros: 3_000_000,
+                outputPerMillionMicros: 6_000_000,
+                cachedPerMillionMicros: 25_000,
+                expectedOutputTokens: 8192,
+            }),
+        ).toEqual({ billingMode: "token_usage", priceStrategy: "token" });
+    });
+
+    test("an unmanaged text channel keeps its published billing contract", () => {
+        expect(
+            pricingContractForModel(candidate({ providerCredentialId: undefined, modelKey: "deepseek-v4-pro" }), {
+                inputPerMillionMicros: 3_000_000,
+                outputPerMillionMicros: 6_000_000,
+                expectedOutputTokens: 8192,
+            }),
+        ).toEqual({ billingMode: "fixed_request", priceStrategy: "flat" });
+    });
+
+    test("uses the backend capability fact instead of inferring token billing from model text", () => {
+        expect(supportsTokenUsageBilling(candidate({ providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }))).toBe(true);
+        expect(supportsTokenUsageBilling(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: undefined }))).toBe(false);
+    });
+
     test("session merge accepts only an exact model reference present in the server catalog", () => {
         const channel: configStore.ModelChannel = {
             id: "agent-channel",
@@ -83,5 +121,41 @@ describe("Agent default model setting", () => {
 
         configStore.useConfigStore.getState().mergeSystemChannels([channel], { channelId: channel.id, modelKey: "missing" });
         expect(configStore.useConfigStore.getState().agentDefaultModel).toBe("");
+    });
+
+    test("session merge keeps a configured token-usage Agent model in the catalog", () => {
+        const channel: configStore.ModelChannel = {
+            id: "kuaizi-deepseek",
+            name: "筷子科技",
+            baseUrl: "/api/ai/system/kuaizi-deepseek",
+            apiKey: "system",
+            apiFormat: "openai",
+            interfaceType: "chat-completion",
+            models: ["deepseek-v4-pro"],
+            scope: "system",
+            enabled: true,
+            modelCosts: [
+                {
+                    model: "deepseek-v4-pro",
+                    displayName: "DeepSeek V4 Pro",
+                    marketingCopy: "",
+                    promotionBadge: "",
+                    estimatedDurationSeconds: 0,
+                    brandKey: "deepseek",
+                    accessPolicy: "authenticated",
+                    accessible: true,
+                    capability: "text",
+                    billingMode: "token_usage",
+                    priceStrategy: "token",
+                    unitPriceMicrocredits: 0,
+                    priceTiers: [],
+                },
+            ],
+        };
+
+        configStore.useConfigStore.setState({ config: configStore.defaultConfig, agentDefaultModel: "" });
+        configStore.useConfigStore.getState().mergeSystemChannels([channel], { channelId: channel.id, modelKey: "deepseek-v4-pro" });
+
+        expect(configStore.useConfigStore.getState().agentDefaultModel).toBe(configStore.encodeChannelModel(channel.id, "deepseek-v4-pro"));
     });
 });

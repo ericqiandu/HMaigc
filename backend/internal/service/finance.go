@@ -19,6 +19,12 @@ import (
 
 const CreditScale int64 = 1_000_000
 
+const (
+	microsPerCurrencyUnit       int64 = 1_000_000
+	localCreditsPerCurrencyUnit int64 = 100
+	basisPointsScale            int64 = 10_000
+)
+
 type WalletSummary struct {
 	Account model.CreditAccount       `json:"account"`
 	Entries []model.CreditLedgerEntry `json:"entries"`
@@ -695,6 +701,13 @@ func (s *Service) MarkBillingRunning(orderID string) error {
 		return nil
 	}
 	return s.repo.MarkBillingRunning(orderID)
+}
+
+func (s *Service) BeginTokenBillingRequest(orderID string) error {
+	if strings.TrimSpace(orderID) == "" {
+		return errors.New("Token 计费订单不存在")
+	}
+	return s.repo.BeginTokenBillingRequest(orderID, time.Now())
 }
 
 func (s *Service) SettleBilling(orderID string, providerRequestID string) error {

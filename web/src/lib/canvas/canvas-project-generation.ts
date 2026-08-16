@@ -1,4 +1,4 @@
-import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { createGenerationTask, waitForGenerationTask, type GenerationTask, type TaskBillingQuote } from "@/services/api/task-center";
 import { configuredModelMatchesCapability, defaultConfig, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { getImageBlob, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { getMediaBlob, resolveMediaUrl } from "@/services/file-storage";
@@ -27,6 +27,7 @@ export async function runBackendCanvasGenerationTask({
     signal,
     metadata,
     onTaskCreated,
+    expectedQuote,
 }: {
     projectId: string;
     nodeId: string;
@@ -40,32 +41,37 @@ export async function runBackendCanvasGenerationTask({
     signal?: AbortSignal;
     metadata?: Record<string, unknown>;
     onTaskCreated?: (task: GenerationTask) => void;
+    expectedQuote?: TaskBillingQuote;
 }) {
     const taskReferenceImages = await Promise.all(referenceImages.map(prepareBackendImageReference));
     const taskReferenceVideos = await Promise.all(referenceVideos.map((video) => mediaToBackendReference(video)));
     const taskReferenceAudios = await Promise.all(referenceAudios.map((audio) => mediaToBackendReference(audio)));
     const taskMask = mask ? await prepareBackendImageReference(mask) : undefined;
-    const task = await createGenerationTask({
-        projectId,
-        type: `canvas_${mode}`,
-        operation: resolveGenerationTaskOperation(mode, metadata?.videoEditOperation, {
-            referenceImageCount: referenceImages.length,
-            referenceVideoCount: referenceVideos.length,
-            referenceAudioCount: referenceAudios.length,
-        }),
-        prompt,
-        model: config.model,
-        input: {
-            mode,
+    const providerConfig = backendProviderConfig(config);
+    const task = await createGenerationTask(
+        {
+            projectId,
+            type: `canvas_${mode}`,
+            operation: resolveGenerationTaskOperation(mode, metadata?.videoEditOperation, {
+                referenceImageCount: referenceImages.length,
+                referenceVideoCount: referenceVideos.length,
+                referenceAudioCount: referenceAudios.length,
+            }),
             prompt,
-            config: backendProviderConfig(config),
-            referenceImages: taskReferenceImages,
-            referenceVideos: taskReferenceVideos,
-            referenceAudios: taskReferenceAudios,
-            mask: taskMask,
-            metadata: { nodeId, ...metadata },
+            model: config.model,
+            input: {
+                mode,
+                prompt,
+                config: mode === "image" || mode === "video" ? { ...providerConfig, count: "1" } : providerConfig,
+                referenceImages: taskReferenceImages,
+                referenceVideos: taskReferenceVideos,
+                referenceAudios: taskReferenceAudios,
+                mask: taskMask,
+                metadata: { nodeId, ...metadata },
+            },
         },
-    });
+        { expectedQuote, signal },
+    );
     onTaskCreated?.(task);
     const completed = await waitForGenerationTask(task.id, { signal, initialTask: task, onTaskUpdate: onTaskCreated });
     return parseBackendGenerationResult(completed);

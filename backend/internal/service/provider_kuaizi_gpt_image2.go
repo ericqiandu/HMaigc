@@ -22,6 +22,10 @@ const (
 )
 
 func runKuaiziGPTImage2Task(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	return runKuaiziGPTImage2TaskWithPollInterval(ctx, input, kuaiziGPTImage2Poll)
+}
+
+func runKuaiziGPTImage2TaskWithPollInterval(ctx context.Context, input canvasGenerationInput, pollInterval time.Duration) (map[string]interface{}, error) {
 	taskID := resumedProviderRequestID(ctx)
 	createdThisAttempt := taskID == ""
 	if taskID == "" {
@@ -46,10 +50,18 @@ func runKuaiziGPTImage2Task(ctx context.Context, input canvasGenerationInput) (m
 		return nil, err
 	}
 
+	var lastTransientPollError error
 	for deadline := providerPollingDeadline(ctx); time.Now().Before(deadline); {
 		var state map[string]interface{}
 		if err := requestKuaiziGPTImage2JSON(withProviderRequestKind(ctx, "poll"), input.Config, kuaiziGPTImage2StatusPath, map[string]string{"task_id": taskID}, &state); err != nil {
-			return nil, err
+			if !retryableKuaiziGPTImage2PollError(err) {
+				return nil, err
+			}
+			lastTransientPollError = err
+			if err := sleepContext(ctx, pollInterval); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if returnedID := strings.TrimSpace(stringField(state, "task_id")); returnedID != taskID {
 			return nil, errors.New("GPT Image 2 查询返回了不匹配的任务 ID")
@@ -75,7 +87,7 @@ func runKuaiziGPTImage2Task(ctx context.Context, input canvasGenerationInput) (m
 		case "failed":
 			return nil, fmt.Errorf("GPT Image 2 生成失败（任务 %s），请在请求日志中按任务 ID 核对上游原因", taskID)
 		case "running":
-			if err := sleepContext(ctx, kuaiziGPTImage2Poll); err != nil {
+			if err := sleepContext(ctx, pollInterval); err != nil {
 				return nil, err
 			}
 		case "":
@@ -84,7 +96,23 @@ func runKuaiziGPTImage2Task(ctx context.Context, input canvasGenerationInput) (m
 			return nil, fmt.Errorf("GPT Image 2 任务 %s 返回未知状态", taskID)
 		}
 	}
+	if lastTransientPollError != nil {
+		return nil, fmt.Errorf("GPT Image 2 生成超时（任务 %s，最后一次状态查询失败：%w）", taskID, lastTransientPollError)
+	}
 	return nil, fmt.Errorf("GPT Image 2 生成超时（任务 %s）", taskID)
+}
+
+func retryableKuaiziGPTImage2PollError(err error) bool {
+	var failure kuaiziCompatibleHTTPError
+	if !errors.As(err, &failure) {
+		return false
+	}
+	switch failure.statusCode {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func kuaiziGPTImage2CreatePayload(input canvasGenerationInput) (map[string]interface{}, error) {

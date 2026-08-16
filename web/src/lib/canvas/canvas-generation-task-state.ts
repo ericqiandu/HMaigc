@@ -14,6 +14,49 @@ type GenerationTaskRetryApi = {
 
 const terminalTaskStatuses = new Set<TaskStatus>(["succeeded", "failed", "cancelled"]);
 
+export type GenerationStopRequest = {
+    targetNodeId: string;
+    runningNodeId: string;
+    taskId?: string;
+    stopping?: boolean;
+};
+
+export type GenerationStopPlan = {
+    boundTasks: Array<{ targetNodeId: string; taskId: string }>;
+    hasLocalRequests: boolean;
+};
+
+export type GenerationStopTaskResult = PromiseSettledResult<{ targetNodeId: string; taskId: string; task: GenerationTask }>;
+
+export function generationStopPlan(requests: GenerationStopRequest[], runningNodeId: string): GenerationStopPlan {
+    const matching = requests.filter((request) => request.runningNodeId === runningNodeId);
+    return {
+        boundTasks: matching.flatMap((request) => {
+            const taskId = request.taskId?.trim();
+            return taskId ? [{ targetNodeId: request.targetNodeId, taskId }] : [];
+        }),
+        hasLocalRequests: matching.some((request) => !request.taskId?.trim()),
+    };
+}
+
+export function freezeGenerationRequests<T extends GenerationStopRequest>(requests: Map<string, T>, runningNodeId: string): T[] {
+    const frozen: T[] = [];
+    requests.forEach((request, key) => {
+        if (request.runningNodeId !== runningNodeId) return;
+        const stopping = { ...request, stopping: true };
+        requests.set(key, stopping);
+        frozen.push(stopping);
+    });
+    return frozen;
+}
+
+export function settleGenerationStopTasks(
+    bindings: GenerationStopPlan["boundTasks"],
+    settle: (taskId: string) => Promise<GenerationTask>,
+): Promise<GenerationStopTaskResult[]> {
+    return Promise.allSettled(bindings.map(async (binding) => ({ ...binding, task: await settle(binding.taskId) })));
+}
+
 export function isTerminalGenerationTask(task: Pick<GenerationTask, "status">) {
     return terminalTaskStatuses.has(task.status);
 }

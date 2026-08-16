@@ -9,7 +9,7 @@ import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
 import { generationFailureMetadata } from "@/lib/generation-error";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import type { UpdreamSkill } from "@/services/api/skills";
-import type { GenerationTask } from "@/services/api/task-center";
+import type { GenerationTask, TaskBillingQuote } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -41,6 +41,7 @@ const NODE_STATUS_ERROR = "error" as const;
 export type CanvasNodeGenerationOptions = {
     controller?: AbortController;
     waitForTaskCapacity?: boolean;
+    expectedQuote?: TaskBillingQuote;
 };
 
 export function useCanvasGenerationExecutor({
@@ -118,7 +119,6 @@ export function useCanvasGenerationExecutor({
                     setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: controller.signal.aborted ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined, errorDetails: controller.signal.aborted ? undefined : errorDetails } } : node)));
                 }
                 finishGenerationRequest(nodeId, controller);
-                setRunningNodeId(null);
                 if (!controller.signal.aborted) message.error(errorDetails);
                 return;
             }
@@ -129,14 +129,12 @@ export function useCanvasGenerationExecutor({
             if (mode === "audio" && generationContext.characterReferences.length) {
                 if (generationContext.characterReferences.length !== 1) {
                     finishGenerationRequest(nodeId, controller);
-                    setRunningNodeId(null);
                     message.error("角色配音一次只能引用一个角色卡");
                     return;
                 }
                 const voice = generationContext.resolvedCharacterVoices[0];
                 if (!voice) {
                     finishGenerationRequest(nodeId, controller);
-                    setRunningNodeId(null);
                     message.error("角色尚未绑定可用声音，无法创建角色配音任务");
                     return;
                 }
@@ -145,7 +143,6 @@ export function useCanvasGenerationExecutor({
             if (controller.signal.aborted) {
                 if (isPreparingEmptyImage) setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined } } : node)));
                 finishGenerationRequest(nodeId, controller);
-                setRunningNodeId(null);
                 return;
             }
 
@@ -153,7 +150,6 @@ export function useCanvasGenerationExecutor({
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
                 finishGenerationRequest(nodeId, controller);
-                setRunningNodeId(null);
                 return;
             }
             if (markSourceStatus) setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: statusPrompt, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } } : node)));
@@ -168,6 +164,7 @@ export function useCanvasGenerationExecutor({
                 generationConfig,
                 generationContext,
                 controller,
+                expectedQuote: options?.expectedQuote,
                 editingTextNode,
                 setNodes,
                 setConnections,
@@ -209,7 +206,6 @@ export function useCanvasGenerationExecutor({
                 setNodes((current) => current.map((node) => (node.id === nodeId || pendingNodeIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } }) : node)));
             } finally {
                 finishGenerationRequest(nodeId, controller);
-                setRunningNodeId(null);
             }
         },
         [activatedSkills, bindGenerationTask, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, connectionsRef, projectId, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, startGenerationRequest],

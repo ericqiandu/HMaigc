@@ -430,6 +430,46 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 	return &task, err
 }
 
+// ResumeTaskWithUncertainBilling 只恢复已经取得供应商任务 ID 的查询链路。
+// 它保留原计费订单、冻结运行时和 provider_request_id，确保 worker 只能继续查询而不会再次创建上游任务。
+func (r *Repository) ResumeTaskWithUncertainBilling(userID string, taskID string, policy ActiveTaskPolicy) (*model.Task, error) {
+	var task model.Task
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := enforceActiveTaskLimit(tx, userID, policy); err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ? AND user_id = ?", taskID, userID).Error; err != nil {
+			return err
+		}
+		if (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) || strings.TrimSpace(task.ProviderRequestID) == "" || strings.TrimSpace(task.BillingOrderID) == "" {
+			return ErrTaskNotRetryable
+		}
+		var order model.BillingOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ? AND user_id = ? AND task_id = ?", task.BillingOrderID, userID, task.ID).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusUncertain || strings.TrimSpace(order.ProviderRequestID) != strings.TrimSpace(task.ProviderRequestID) {
+			return ErrBillingStateConflict
+		}
+		now := time.Now()
+		updated := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status IN ? AND provider_request_id = ?", task.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}, task.ProviderRequestID).
+			Updates(map[string]any{
+				"status": model.TaskStatusQueued, "stage": "等待上游结果核对", "progress": 35, "error": "", "result_json": "",
+				"started_at": nil, "completed_at": nil, "updated_at": now, "poll_stage": "provider_resume", "next_poll_at": nil,
+				"lease_owner": "", "lease_expires_at": nil,
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrTaskNotRetryable
+		}
+		return tx.First(&task, "id = ? AND user_id = ?", task.ID, userID).Error
+	})
+	return &task, err
+}
+
 func enforceActiveTaskLimit(tx *gorm.DB, userID string, policy ActiveTaskPolicy) error {
 	if policy.Unlimited {
 		return nil
@@ -554,6 +594,14 @@ func reserveBillingOrder(tx *gorm.DB, order *model.BillingOrder) error {
 func (r *Repository) BillingOrder(id string) (*model.BillingOrder, error) {
 	var order model.BillingOrder
 	if err := r.db.First(&order, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (r *Repository) BillingOrderByUserIdempotency(userID string, idempotencyKey string) (*model.BillingOrder, error) {
+	var order model.BillingOrder
+	if err := r.db.First(&order, "user_id = ? AND idempotency_key = ?", userID, idempotencyKey).Error; err != nil {
 		return nil, err
 	}
 	return &order, nil

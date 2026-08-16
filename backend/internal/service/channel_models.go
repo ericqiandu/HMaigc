@@ -178,18 +178,32 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if billingMode == "" {
 		billingMode = "fixed_request"
 	}
-	if billingMode != "fixed_request" && billingMode != "per_second" {
-		return nil, BadAuthRequest("模型计费方式仅支持按次或按秒")
+	if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token_usage" {
+		return nil, BadAuthRequest("模型计费方式仅支持按次、按秒或 Token 用量")
 	}
 	if billingMode == "per_second" && capability != "video" {
 		return nil, BadAuthRequest("只有视频模型可以按秒计费")
+	}
+	if billingMode == "token_usage" && capability != "text" {
+		return nil, BadAuthRequest("只有文本模型可以按 Token 用量计费")
+	}
+	if billingMode == "token_usage" {
+		if !kuaiziModelSupportsTokenUsageBilling(modelKey) {
+			return nil, BadAuthRequest("Token 用量计费仅支持筷子托管 DeepSeek 文本模型")
+		}
 	}
 	priceStrategy := strings.TrimSpace(req.PriceStrategy)
 	if priceStrategy == "" {
 		return nil, BadAuthRequest("请选择模型价格策略")
 	}
-	if priceStrategy != "flat" && priceStrategy != "image_resolution" && priceStrategy != "video_resolution" {
+	if priceStrategy != "flat" && priceStrategy != "image_resolution" && priceStrategy != "video_resolution" && priceStrategy != "token" {
 		return nil, BadAuthRequest("模型价格策略无效")
+	}
+	if priceStrategy == "token" && billingMode != "token_usage" {
+		return nil, BadAuthRequest("Token 价格策略仅适用于按 Token 用量计费")
+	}
+	if billingMode == "token_usage" && priceStrategy != "token" {
+		return nil, BadAuthRequest("按 Token 用量计费必须使用 Token 价格策略")
 	}
 	if priceStrategy == "image_resolution" && (capability != "image" || billingMode != "fixed_request") {
 		return nil, BadAuthRequest("分辨率阶梯定价仅适用于按次计费的图片模型")
@@ -202,6 +216,9 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	if req.PriceConfigured && priceStrategy == "flat" && req.UnitPriceMicrocredits <= 0 {
 		return nil, BadAuthRequest("启用用户积分价格时，价格必须大于 0")
+	}
+	if billingMode == "token_usage" && req.UnitPriceMicrocredits != 0 {
+		return nil, BadAuthRequest("按 Token 用量计费不能同时配置按次积分价格")
 	}
 	item := &model.ChannelModel{ID: newID(), ChannelID: channelID, AccessPolicy: model.ModelAccessAuthenticated, Enabled: true, PriceVersion: 1}
 	var previousPricing *channelModelPricingSnapshot
