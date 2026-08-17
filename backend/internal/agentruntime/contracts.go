@@ -42,6 +42,8 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
+	CurrentToolSchemaVersion = 2
+
 	RunQueued          RunStatus = "queued"
 	RunRunning         RunStatus = "running"
 	RunWaitingApproval RunStatus = "waiting_approval"

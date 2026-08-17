@@ -10,42 +10,29 @@ const (
 	ToolRiskCost  ToolRiskLevel = "L2"
 )
 
-type ToolExecutionLocation string
-
-const (
-	ToolExecutionServer     ToolExecutionLocation = "server"
-	ToolExecutionClientFact ToolExecutionLocation = "client_fact"
-	ToolExecutionClient     ToolExecutionLocation = "client"
-)
-
 type ToolPolicy struct {
 	Name             ToolName
 	RiskLevel        ToolRiskLevel
 	RequiredAccess   AccessLevel
 	ApprovalRequired bool
-	Execution        ToolExecutionLocation
 }
 
 func ToolPolicyFor(name ToolName) (ToolPolicy, bool) {
 	switch name {
-	case ToolCanvasReadState:
-		return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer, Execution: ToolExecutionServer}, true
-	case ToolCanvasReadSelection:
-		return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer, Execution: ToolExecutionClientFact}, true
-	case ToolCanvasApplyOps:
-		return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor, ApprovalRequired: true, Execution: ToolExecutionClient}, true
-	case ToolGenerationSubmit:
-		return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor, ApprovalRequired: true, Execution: ToolExecutionServer}, true
-	case ToolGenerationWait:
-		return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer, Execution: ToolExecutionServer}, true
+	case ToolSkillLoad:
+		return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
+	case ToolProductionPlan:
+		return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
+	case ToolProductionRender:
+		return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor, ApprovalRequired: true}, true
+	case ToolCanvasCommit:
+		return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
 	default:
 		return ToolPolicy{}, false
 	}
 }
 
 func ApprovalRequiredFor(policy ToolPolicy, mode ExecutionMode) bool {
-	if !policy.ApprovalRequired {
-		return false
-	}
-	return !(mode == ExecutionAutomatic && policy.Name == ToolCanvasApplyOps && policy.RiskLevel == ToolRiskWrite && policy.Execution == ToolExecutionClient)
+	_ = mode
+	return policy.ApprovalRequired
 }

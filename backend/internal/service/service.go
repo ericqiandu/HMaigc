@@ -37,8 +37,8 @@ type Service struct {
 	storageMigrationOnce      sync.Once
 	sessionCreateMu           sync.Mutex
 	characterTaskMu           sync.Mutex
-	agentDriveMu              sync.Mutex
-	agentDriveCursor          string
+	agentRecoveryMu           sync.Mutex
+	agentRecoveryCursor       string
 	siteSettingMu             sync.Mutex
 	voicePreviewGroup         singleflight.Group
 	activeCancels             map[string]context.CancelFunc
@@ -85,6 +85,7 @@ type taskCreationIdentity struct {
 	TaskID                 string
 	BillingIdempotencyKey  string
 	UseCurrentBillingQuote bool
+	TypedInputJSON         json.RawMessage
 }
 
 type SessionDetail struct {
@@ -193,16 +194,12 @@ func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
 
 func (s *Service) StartWorker() {
 	go func() {
-		drive := func() {
-			if err := s.DriveAgentRuns(100); err != nil {
-				log.Printf("agent runtime drive failed: %v", err)
-			}
-		}
-		drive()
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			drive()
+			if err := s.RecoverStaleAgentRuns(time.Now().UTC(), 100); err != nil {
+				log.Printf("agent runtime stale recovery failed: %v", err)
+			}
 		}
 	}()
 	go func() {
@@ -382,6 +379,14 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		return nil, errors.New("prompt is required")
+	}
+	if len(identity.TypedInputJSON) > 0 {
+		if req.Input != nil || !json.Valid(identity.TypedInputJSON) {
+			return nil, errors.New("typed task input facts are invalid")
+		}
+		if err := json.Unmarshal(identity.TypedInputJSON, &req.Input); err != nil {
+			return nil, errors.New("typed task input facts are invalid")
+		}
 	}
 	normalizedInput, err := normalizeTaskInput(req.Input)
 	if err != nil {
@@ -983,18 +988,17 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	runID := ""
 	if task.Type == agentRuntimeModelTaskType {
 		runID, _ = agentRuntimeModelRunID(task.Operation)
-	} else if generationRunID, generationTask := agentGenerationRunID(task.Operation); generationTask {
-		runID = generationRunID
+	} else if productionRunID, productionTask := agentProductionRenderRunID(task.Operation); productionTask {
+		runID = productionRunID
 	}
 	if runID != "" {
 		defer func() {
 			reference := repository.ActiveAgentRunReference{RunID: runID, ActorUserID: task.UserID}
-			var err error
+			wakeup := agentWakeGenerationTaskFinished
 			if task.Type == agentRuntimeModelTaskType {
-				err = s.resumeAgentRunReference(reference)
-			} else {
-				err = s.driveAgentRunReference(reference)
+				wakeup = agentWakeModelTaskFinished
 			}
+			err := s.advanceAgentRunReference(reference, wakeup)
 			if err != nil {
 				_ = s.log(task.UserID, task.ID, "error", "Agent 运行恢复失败", taskFailureMessage(err))
 			}

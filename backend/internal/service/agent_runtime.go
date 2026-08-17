@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -32,7 +34,9 @@ func agentRuntimeModelRunID(operation string) (string, bool) {
 	return runID, runID != ""
 }
 
-const agentRuntimeToolSchemaVersion = 1
+const agentRuntimeVersion = 1
+const agentRuntimePolicyVersion = 1
+const agentRuntimeMaxSteps = 24
 
 type StartAgentRuntimeInput struct {
 	Context         context.Context
@@ -58,6 +62,7 @@ type agentRuntimeModelTaskInput struct {
 type agentRuntimeModelContext struct {
 	RunID            string                              `json:"runId"`
 	CanvasID         string                              `json:"canvasId"`
+	CanvasRevision   int64                               `json:"canvasRevision"`
 	StepNumber       int                                 `json:"stepNumber"`
 	MaxSteps         int                                 `json:"maxSteps"`
 	UserMessage      string                              `json:"userMessage"`
@@ -67,7 +72,9 @@ type agentRuntimeModelContext struct {
 	DecisionFeedback *agentruntime.ModelDecisionFeedback `json:"decisionFeedback,omitempty"`
 	PreviousMessage  string                              `json:"previousMessage,omitempty"`
 	Configuration    agentruntime.RunConfiguration       `json:"configuration"`
+	LoadedSkillDirs  []string                            `json:"loadedSkillDirs,omitempty"`
 	CallableModels   []agentRuntimeCallableModelFact     `json:"callableModels"`
+	ProductionPlan   *agentRuntimeProductionPlanFact     `json:"productionPlan,omitempty"`
 }
 
 func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntimeProgress, error) {
@@ -79,7 +86,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if !input.Scope.CanMutateCanvas() {
 		return nil, Forbidden("当前用户没有执行 Agent 的画布权限")
 	}
-	if input.ClientRequestID == "" || input.UserMessage == "" || len(input.UserMessage) > 64*1024 || input.MaxSteps < 1 || input.MaxSteps > 24 {
+	if input.ClientRequestID == "" || input.UserMessage == "" || len(input.UserMessage) > 64*1024 {
 		return nil, BadAuthRequest("Agent 请求事实无效")
 	}
 	record, err := s.repo.CreateAgentRun(repository.CreateAgentRunInput{
@@ -102,7 +109,8 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 		}
 		initialized, initializeErr := s.repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 			Scope: scope, ModelRecordID: selected.ID, ModelKey: selected.ModelKey,
-			MaxSteps: input.MaxSteps, ToolSchemaVersion: agentRuntimeToolSchemaVersion,
+			MaxSteps: agentRuntimeMaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+			RuntimeVersion: agentRuntimeVersion, PolicyVersion: agentRuntimePolicyVersion,
 			UserMessage: input.UserMessage, Configuration: configuration, Now: time.Now().UTC(),
 		})
 		if initializeErr != nil {
@@ -114,7 +122,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if err != nil {
 		return nil, err
 	}
-	if state.UserMessage != input.UserMessage || state.MaxSteps != input.MaxSteps || !agentRuntimeConfigurationMatchesInput(state.Configuration, input.Configuration) {
+	if state.UserMessage != input.UserMessage || state.MaxSteps != agentRuntimeMaxSteps || !agentRuntimeConfigurationMatchesInput(state.Configuration, input.Configuration) {
 		return nil, errors.New("agent runtime request facts conflict")
 	}
 	switch state.Status {
@@ -124,19 +132,22 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	default:
 		return nil, errors.New("agent runtime status is invalid")
 	}
-	task, err := s.ensureAgentRuntimeModelTask(scope, run, state)
-	if err != nil {
-		return nil, err
-	}
-	return &AgentRuntimeProgress{Run: run, State: state, ModelTask: taskForOutput(*task)}, nil
+	return s.advanceAgentRun(scope, agentWakeRunStarted)
 }
 
 func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimeProgress, error) {
+	return s.advanceAgentRun(scope, agentWakeStaleRecovery)
+}
+
+func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntimeProgress, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
 	if !scope.CanMutateCanvas() {
 		return nil, Forbidden("当前用户没有继续执行 Agent 的画布权限")
+	}
+	if err := s.reconcileSucceededProductionArtifacts(scope); err != nil {
+		return nil, err
 	}
 	run, err := s.repo.AgentRunForScope(scope)
 	if err != nil {
@@ -153,6 +164,8 @@ func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimePro
 	task, err := s.repo.TaskForUser(scope.ActorUserID, taskID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		task, err = s.ensureAgentRuntimeModelTask(scope, *run, state)
+	} else if err == nil && (task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning) {
+		task, err = s.validateAgentRuntimeModelTask(scope, task, *run, state)
 	}
 	if err != nil {
 		return nil, err
@@ -216,6 +229,63 @@ func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimePro
 			return progress, nil
 		case !errors.Is(lookupErr, gorm.ErrRecordNotFound):
 			return nil, lookupErr
+		}
+		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender {
+			if state.ExpectedDelivery != nil && !state.ExpectedDelivery.Equal(decision.ToolCall.ExpectedDelivery) {
+				transition, rejectErr := agentruntime.RejectModelDecision(state, agentruntime.ModelDecisionFeedback{
+					Code: "delivery_contract_changed", Reason: "expectedDelivery must exactly match the contract frozen by the first model decision",
+				})
+				if rejectErr != nil {
+					return nil, rejectErr
+				}
+				progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
+				if commitErr != nil {
+					return nil, commitErr
+				}
+				if progress.State.Status == agentruntime.RunRunning {
+					nextTask, taskErr := s.ensureAgentRuntimeModelTask(scope, progress.Run, progress.State)
+					if taskErr != nil {
+						return nil, taskErr
+					}
+					progress.ModelTask = taskForOutput(*nextTask)
+				}
+				return progress, nil
+			}
+			frozenContext, contextErr := frozenAgentRuntimeModelContext(scope, state, task.Prompt)
+			if contextErr != nil {
+				return nil, contextErr
+			}
+			frozenArguments, freezeErr := s.freezeAgentProductionRenderArguments(scope, frozenContext.CallableModels, decision.ToolCall.Arguments)
+			if freezeErr != nil {
+				failureCode, repairable := agentProductionRenderFailureCode(freezeErr)
+				if !repairable {
+					return nil, freezeErr
+				}
+				output, marshalErr := json.Marshal(map[string]string{"reason": freezeErr.Error()})
+				if marshalErr != nil {
+					return nil, marshalErr
+				}
+				transition, rejectErr := agentruntime.RejectToolDecision(state, agentruntime.ToolDecisionFailure{
+					Call: *decision.ToolCall, Class: agentruntime.ToolFailureAgentRepairable,
+					ErrorCode: failureCode, Output: output,
+				})
+				if rejectErr != nil {
+					return nil, rejectErr
+				}
+				progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
+				if commitErr != nil {
+					return nil, commitErr
+				}
+				if progress.State.Status == agentruntime.RunRunning {
+					nextTask, taskErr := s.ensureAgentRuntimeModelTask(scope, progress.Run, progress.State)
+					if taskErr != nil {
+						return nil, taskErr
+					}
+					progress.ModelTask = taskForOutput(*nextTask)
+				}
+				return progress, nil
+			}
+			decision.ToolCall.Arguments = frozenArguments
 		}
 	}
 	finalMessage := ""
@@ -413,17 +483,46 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 	if err := validateFrozenAgentRuntimeModelPrompt(scope, state, prompt); err != nil {
 		return nil, err
 	}
-	expectedInput, err := json.Marshal(agentRuntimeModelTaskInput{
+	expectedInput := agentRuntimeModelTaskInput{
 		Mode: "text", Prompt: prompt,
 		Config: providerConfig{ChannelID: order.ChannelID, Model: run.ModelKey, SystemPrompt: agentRuntimeSystemPrompt, MaxOutputTokens: order.MaxOutputTokens, JSONOutput: true},
-	})
-	if err != nil {
-		return nil, err
 	}
-	if task.Prompt != prompt || task.InputJSON != string(expectedInput) {
+	decoder := json.NewDecoder(bytes.NewBufferString(task.InputJSON))
+	decoder.DisallowUnknownFields()
+	var actualInput agentRuntimeModelTaskInput
+	if err := decoder.Decode(&actualInput); err != nil {
 		return nil, errors.New("agent runtime model task input facts conflict")
 	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("agent runtime model task input facts conflict")
+	}
+	if task.Prompt != prompt || actualInput != expectedInput {
+		return nil, fmt.Errorf(
+			"agent runtime model task input facts conflict: task=%s status=%s step=%d mode=%t prompt=%t channel=%t model=%t system=%t max_output=%t json=%t empty_provider=%t",
+			task.ID,
+			task.Status,
+			state.StepNumber,
+			actualInput.Mode == expectedInput.Mode,
+			actualInput.Prompt == expectedInput.Prompt,
+			actualInput.Config.ChannelID == expectedInput.Config.ChannelID,
+			actualInput.Config.Model == expectedInput.Config.Model,
+			actualInput.Config.SystemPrompt == expectedInput.Config.SystemPrompt,
+			actualInput.Config.MaxOutputTokens == expectedInput.Config.MaxOutputTokens,
+			actualInput.Config.JSONOutput == expectedInput.Config.JSONOutput,
+			agentRuntimeProviderConfigHasOnlyModelFacts(actualInput.Config),
+		)
+	}
 	return task, nil
+}
+
+func agentRuntimeProviderConfigHasOnlyModelFacts(config providerConfig) bool {
+	config.ChannelID = ""
+	config.Model = ""
+	config.SystemPrompt = ""
+	config.MaxOutputTokens = 0
+	config.JSONOutput = false
+	return config == (providerConfig{})
 }
 
 func agentRuntimeModelTaskID(runID string, step int) string {
@@ -437,12 +536,15 @@ func agentRuntimeBillingKey(runID string, step int) string {
 
 const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基于真实运行事实自主理解用户意图，不使用固定工作流或默认路由。
 你每次只能返回一个 JSON 对象，禁止 Markdown 和额外文本：
-1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
-2. 调用工具：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read_state|canvas.read_selection|canvas.apply_ops|generation.submit|generation.wait","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
+1. 直接交付示例：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+2. 调用工具示例：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"skill.load|production.plan|production.render|canvas.commit","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"mixed","targetCanvasId":"...","requiredArtifacts":["image","video","canvas_revision"],"completionCriteria":[{"fact":"final_message"},{"fact":"canvas_revision"},{"fact":"artifact","artifact":"image"},{"fact":"artifact","artifact":"video"}]}}}
+expectedDelivery 的 completionCriteria 只允许三种精确结构：{"fact":"final_message"}、{"fact":"canvas_revision"}、{"fact":"artifact","artifact":"image|video|audio|text|canvas_revision"}。fact 为 final_message 或 canvas_revision 时必须省略 artifact；只有 fact 为 artifact 时才必须提供 artifact。禁止给未声明字段或把联合候选字符串作为实际值。
 首次决策必须根据用户目标声明 expectedDelivery；Runtime 会立即冻结该合同。之后每个工具调用与 final 都必须逐字段复用同一 expectedDelivery，禁止在工具失败、审批拒绝或证据不足后把资产/画布交付降级成文字回答。
 每次新的工具调用必须使用从未出现过的 toolCallId；包括重试同一个工具时也必须生成新的 toolCallId，禁止复用历史 toolCallId + actionVersion。
-canvas.read_state 的 arguments 结构是 {} 或 {"expectedRevision":0}；画布身份已由运行作用域冻结，禁止填写 canvasId 或其他字段。canvas.read_selection 的 arguments 必须是 {}。
-canvas.apply_ops 的 arguments 结构是 {"baseRevision":0,"patch":{"upsertNodes":[],"deleteNodeIds":[],"upsertConnections":[],"deleteConnectionIds":[],"document":{}}}；baseRevision 必须是当前非负版本，只填写本次实际需要的 patch 字段，节点和连线必须包含稳定 id。
-generation.submit 的 arguments 结构是 {"type":"canvas_image|canvas_video|canvas_audio","prompt":"真实生成提示词","input":{"mode":"image|video|audio","config":{}}}；type 与 input.mode 必须对应，input.config 只能使用本轮 callableModels 中同一条记录公开的 channelId、model 与能力参数，不得猜测模型、价格或默认配置。图片生成 config 必须使用规范字段，例如 {"channelId":"...","model":"...","size":"16:9","count":"1","transparentBackground":"false"}，禁止使用 ratio 或 resolution。quality 不是公共必填字段；只有所选 callableModels 记录的 providerCapabilities.qualities 列出非空候选时，才可从候选中选择并填写，否则必须省略 quality，禁止使用示例值或默认值。提交成功后必须保存返回的 taskId，并使用 generation.wait 等待同一任务。
-generation.wait 的 arguments 结构是 {"taskId":"generation.submit 返回的 taskId"}；只有返回 succeeded 且包含真实资产 URL 时才构成交付事实，queued 或 running 表示仍在等待，不得重复提交生成任务。
+显式选择的 Skill 只会先提供目录、名称、描述与版本；必须通过 skill.load 的 {"dir":"已选目录"} 加载冻结说明后才能 final。
+production.plan 用于持久化版本化剧本与镜头计划，不触发媒体扣费。新建计划时 arguments 精确结构是 {"planKey":"","baseVersion":0,"draft":{"title":"...","targetDurationMs":10000,"script":"...","shots":[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"...","imagePrompt":"...","videoPrompt":"...","dependencies":[]}]}}；禁止添加未声明字段。所有镜头 durationMs 之和必须等于 targetDurationMs，order 必须从 1 连续递增，dependencies 只能引用更早的 shotKey。更新计划时必须复用已返回的 planKey，并把 baseVersion 设为当前 planVersion，同时仍传完整 draft。
+production.plan 成功结果会返回 planKey、planVersion 与 artifacts；每个 artifact 都包含 artifactId、kind、shotKey、status。后续必须按 kind 选择对应 artifactId；计划内容未变化时禁止重复新建 production.plan。
+运行事实中的 productionPlan 是当前 run 的活动计划与 Artifact Ledger 快照；它存在时必须复用其中的 planKey、planVersion、shots 和 artifactId/status 从失败处继续，除非确实要修改剧本或镜头内容，否则禁止再调用 production.plan。
+production.render 每次只生成一个计划 Artifact。分镜图 arguments 精确结构是 {"planKey":"...","planVersion":1,"artifactId":"<storyboard_image artifactId>","generationModel":{"channelId":"...","model":"..."},"imageConfig":{"size":"16:9","count":1}}；视频 arguments 精确结构是 {"planKey":"...","planVersion":1,"artifactId":"<video_clip artifactId>","generationModel":{"channelId":"...","model":"..."},"videoConfig":{"durationSeconds":10,"quality":"720p","generateAudio":true}}。generationModel 与全部参数值必须来自所选 callableModels 的 providerCapabilities：图片 size 只能使用 ratios，count 只能使用 outputCounts；qualities 为空时必须省略 quality，非空时 quality 只能取其中之一；视频 quality 只能使用 resolutions，时长必须落在 durationMin 到 durationMax，generateAudio=true 仅可用于 supportsGeneratedAudio=true。imageConfig 与 videoConfig 必须二选一。需要生成付费媒体时必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval；禁止用 final 消息代替扣费确认。
+canvas.commit 只接受版本化计划的确定性投影；arguments 结构是 {"planKey":"...","planVersion":1,"baseRevision":0,"artifactIds":["..."]}，artifactIds 必须完整覆盖该计划，画布版本冲突必须重新读取真实事实后发起新的工具调用。
 只有真实事实足以满足交付时才能 final；需要画布或生成事实时必须先调用工具。`

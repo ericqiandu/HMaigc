@@ -17,12 +17,12 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 		t.Fatalf("final decision = %#v", decision)
 	}
 
-	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{"revision":3},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"plan-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	decision, err = agentruntime.ParseModelDecision(toolJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Kind != agentruntime.DecisionToolCall || decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolCanvasReadState {
+	if decision.Kind != agentruntime.DecisionToolCall || decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolProductionPlan {
 		t.Fatalf("tool decision = %#v", decision)
 	}
 }
@@ -33,6 +33,8 @@ func TestParseModelDecisionFailsClosed(t *testing.T) {
 		"unknown field":         `{"kind":"final","extra":true,"final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
 		"two documents":         `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}} {}`,
 		"unknown tool":          `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"shell.exec","actionVersion":1,"arguments":{}}}`,
+		"retired canvas tool":   `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
+		"retired generation":    `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"generation.submit","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
 		"missing criteria":      `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer"}}}`,
 		"both payloads":         `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}},"toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`,
 		"invalid arguments":     `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":null}}`,

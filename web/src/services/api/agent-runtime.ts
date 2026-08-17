@@ -2,7 +2,11 @@ import { localForageStorage } from "@/lib/localforage-storage";
 
 export type AgentRunStatus = "queued" | "running" | "waiting_approval" | "waiting_tool" | "succeeded" | "failed" | "cancelled";
 export type AgentRuntimeEventKind = "run.created" | "run.status_changed" | "model.delta" | "model.rejected" | "tool.call" | "approval.required" | "approval.decided" | "tool.started" | "tool.result" | "checkpoint.saved" | "run.completed" | "run.failed";
-export type AgentToolName = "canvas.read_state" | "canvas.read_selection" | "canvas.apply_ops" | "generation.submit" | "generation.wait";
+export type AgentToolName =
+    | "skill.load"
+    | "production.plan"
+    | "production.render"
+    | "canvas.commit";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
 export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact";
 
@@ -83,13 +87,17 @@ export type AgentRuntimeClient = {
     startRun: (threadId: string, input: { clientRequestId: string; userMessage: string; maxSteps: number; configuration: AgentRuntimeStartConfiguration }) => Promise<AgentRuntimeView>;
     getRun: (runId: string) => Promise<AgentRuntimeView>;
     submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected" }) => Promise<AgentRuntimeView>;
-    submitSelection: (runId: string, input: { toolCallId: string; actionVersion: number; selection: { revision: number; nodeIds: string[] } }) => Promise<AgentRuntimeView>;
     subscribe: (runId: string, afterSequence: number, handlers: { onOpen?: () => void; onEvent: (event: AgentRuntimeEvent) => void; onError: (error?: Error) => void }) => () => void;
 };
 
 const runStatuses = new Set<AgentRunStatus>(["queued", "running", "waiting_approval", "waiting_tool", "succeeded", "failed", "cancelled"]);
 const eventKinds = new Set<AgentRuntimeEventKind>(["run.created", "run.status_changed", "model.delta", "model.rejected", "tool.call", "approval.required", "approval.decided", "tool.started", "tool.result", "checkpoint.saved", "run.completed", "run.failed"]);
-const toolNames = new Set<AgentToolName>(["canvas.read_state", "canvas.read_selection", "canvas.apply_ops", "generation.submit", "generation.wait"]);
+const toolNames = new Set<AgentToolName>([
+    "skill.load",
+    "production.plan",
+    "production.render",
+    "canvas.commit",
+]);
 const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
@@ -340,7 +348,6 @@ export const agentRuntimeClient: AgentRuntimeClient = {
     startRun: async (threadId, input) => parseAgentRuntimeView(await request(`/agent/threads/${encodeURIComponent(threadId)}/runs`, { method: "POST", body: JSON.stringify(input) })),
     getRun: async (runId) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}`)),
     submitApproval: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/approvals`, { method: "POST", body: JSON.stringify(input) })),
-    submitSelection: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/tool-results`, { method: "POST", body: JSON.stringify(input) })),
     subscribe: (runId, afterSequence, handlers) => {
         const stream = new EventSource(`${baseURL}/agent/runs/${encodeURIComponent(runId)}/events?afterSequence=${afterSequence}`, { withCredentials: true });
         stream.onopen = () => handlers.onOpen?.();

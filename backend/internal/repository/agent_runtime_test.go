@@ -65,7 +65,7 @@ func TestCreateAgentRunIsIdempotentWithinThread(t *testing.T) {
 	}
 }
 
-func TestActiveAgentRunsAfterUsesPrimaryKeyCursorWithoutStarvation(t *testing.T) {
+func TestStaleAgentRunsAfterSelectsOnlyOldActiveRunsWithPrimaryKeyCursor(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	now := time.Now().UTC()
 	for index, runID := range []string{"active-run-a", "active-run-b", "active-run-c"} {
@@ -79,11 +79,14 @@ func TestActiveAgentRunsAfterUsesPrimaryKeyCursorWithoutStarvation(t *testing.T)
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", "active-run-b").Update("status", agentruntime.RunWaitingApproval).Error; err != nil {
 		t.Fatal(err)
 	}
-	first, err := repo.ActiveAgentRunsAfter("", 1)
+	if err := db.Model(&model.AgentRun{}).Where("id IN ?", []string{"active-run-a", "active-run-c"}).Update("updated_at", now.Add(-2*time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.StaleAgentRunsAfter("", now.Add(-time.Minute), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := repo.ActiveAgentRunsAfter(first[0].RunID, 1)
+	second, err := repo.StaleAgentRunsAfter(first[0].RunID, now.Add(-time.Minute), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,6 +308,8 @@ func openAgentRuntimeRepositorySQLite(t *testing.T) (*Repository, *gorm.DB) {
 		&model.AgentRunEvent{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},
+		&model.AgentProductionPlanVersion{},
+		&model.AgentProductionArtifact{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +332,7 @@ func openAgentRuntimeRepositorySQLiteFile(t *testing.T) (*Repository, *gorm.DB) 
 	}
 	sqlDB.SetMaxOpenConns(16)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {

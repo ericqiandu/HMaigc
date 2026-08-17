@@ -105,14 +105,11 @@ test("输入框选择的动态生成模型随本次 Agent 运行提交", async (
     });
 });
 
-test("单一运行链回传真实选区、等待审批并展示验收后的最终消息", async () => {
+test("单一运行链等待付费审批并展示验收后的最终消息", async () => {
     const calls: string[] = [];
-    const selectionView = runtimeView("waiting_tool", {
-        pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {}, expectedDelivery: answerDelivery() },
-    });
     const approvalView = runtimeView("waiting_approval", {
         stateVersion: 3,
-        pendingToolCall: { toolCallId: "apply-1", toolName: "canvas.apply_ops", actionVersion: 2, arguments: { baseRevision: 7, patch: { upsertNodes: [] } }, expectedDelivery: answerDelivery() },
+        pendingToolCall: { toolCallId: "render-1", toolName: "production.render", actionVersion: 2, arguments: { planKey: "plan-1", planVersion: 1, artifactId: "artifact-1" }, expectedDelivery: answerDelivery() },
     });
     const completedView = runtimeView("succeeded", {
         stateVersion: 4,
@@ -129,13 +126,9 @@ test("单一运行链回传真实选区、等待审批并展示验收后的最�
         },
         startRun: async (_threadId, input) => {
             calls.push(`start:${input.userMessage}`);
-            return selectionView;
-        },
-        getRun: async () => selectionView,
-        submitSelection: async (_runId, input) => {
-            calls.push(`selection:${input.selection.revision}:${input.selection.nodeIds.join(",")}`);
             return approvalView;
         },
+        getRun: async () => approvalView,
         submitApproval: async (_runId, input) => {
             calls.push(`approval:${input.decision}:${input.toolCallId}:${input.actionVersion}`);
             return completedView;
@@ -156,12 +149,12 @@ test("单一运行链回传真实选区、等待审批并展示验收后的最�
     expect(button("发送").disabled).toBe(false);
     await act(async () => button("发送").click());
     await settle();
-    expect(calls).toEqual(["create-thread", "start:整理当前画布", "selection:7:node-a,node-b"]);
+    expect(calls).toEqual(["create-thread", "start:整理当前画布"]);
     expect(document.body.textContent).toContain("等待确认");
-    expect(document.body.textContent).toContain("canvas.apply_ops");
+    expect(document.body.textContent).toContain("production.render");
     await act(async () => button("批准执行").click());
     await settle();
-    expect(calls.at(-1)).toBe("approval:approved:apply-1:2");
+    expect(calls.at(-1)).toBe("approval:approved:render-1:2");
     expect(document.body.textContent).toContain("画布整理已经完成。");
     expect(document.body.textContent).toContain("交付已验收");
 });
@@ -182,7 +175,6 @@ test("刷新时从持久句柄恢复运行并从已确认游标续接事件", as
             calls.push(`resume:${runId}`);
             return runningView;
         },
-        submitSelection: async () => runningView,
         submitApproval: async () => runningView,
         subscribe: (_runId, afterSequence) => {
             calls.push(`subscribe:${afterSequence}`);
@@ -210,7 +202,6 @@ test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () 
             return runningView;
         },
         getRun: async () => runningView,
-        submitSelection: async () => runningView,
         submitApproval: async () => runningView,
         subscribe: () => () => undefined,
     };
@@ -240,7 +231,6 @@ test("启动恢复再次失败时还原原指令并允许复用同一请求身�
             return completedView;
         },
         getRun: async () => completedView,
-        submitSelection: async () => completedView,
         submitApproval: async () => completedView,
         subscribe: () => () => undefined,
     };
@@ -267,7 +257,6 @@ test("切换画布时先清空上一画布的运行事实", async () => {
         createThread: async (canvasId) => ({ id: `thread-${canvasId}`, canvasId, status: "active" }),
         startRun: async () => oldView,
         getRun: async () => oldView,
-        submitSelection: async () => oldView,
         submitApproval: async () => oldView,
         subscribe: () => () => undefined,
     };
@@ -310,7 +299,6 @@ test("首页已确认的创作请求只提交一次并在成功后消费", async
             return completedView;
         },
         getRun: async () => completedView,
-        submitSelection: async () => completedView,
         submitApproval: async () => completedView,
         subscribe: () => () => undefined,
     };
@@ -328,37 +316,6 @@ test("首页已确认的创作请求只提交一次并在成功后消费", async
         onAgentLaunchHandled: (id: string) => calls.push(`handled:${id}`),
     });
     expect(calls).toEqual(["start:生成东方幻想短片", "handled:launch-1"]);
-});
-
-test("选区事实提交失败后提供显式重试而不是伪装继续", async () => {
-    let attempts = 0;
-    const selectionView = runtimeView("waiting_tool", { pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {}, expectedDelivery: answerDelivery() } });
-    const runningView = runtimeView("running", { stateVersion: 3, stepNumber: 2, pendingToolCall: undefined });
-    const storage: AgentRuntimeHandleStorage = {
-        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 1 }),
-        save: async () => undefined,
-        clear: async () => undefined,
-    };
-    const client: AgentRuntimeClient = {
-        listThreads: async () => ({ items: [] }),
-        createThread: async () => ({ id: "thread-1", canvasId: "canvas-1", status: "active" }),
-        startRun: async () => selectionView,
-        getRun: async () => selectionView,
-        submitSelection: async () => {
-            attempts += 1;
-            if (attempts === 1) throw new Error("选区版本冲突");
-            return runningView;
-        },
-        submitApproval: async () => runningView,
-        subscribe: () => () => undefined,
-    };
-    await mount(client, storage);
-    expect(document.body.textContent).toContain("选区版本冲突");
-    expect(attempts).toBe(1);
-    await act(async () => button("重试选区提交").click());
-    await settle();
-    expect(attempts).toBe(2);
-    expect(document.body.textContent).not.toContain("选区版本冲突");
 });
 
 test("没有本地句柄时采用服务端最近运行并保存恢复身份", async () => {
@@ -570,7 +527,6 @@ function runtimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntimeCli
         createThread: async (canvasId) => ({ id: "thread-1", canvasId, status: "active" }),
         startRun: async () => running,
         getRun: async () => running,
-        submitSelection: async () => running,
         submitApproval: async () => running,
         subscribe: () => () => undefined,
         ...patch,

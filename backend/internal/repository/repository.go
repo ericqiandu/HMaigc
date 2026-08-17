@@ -255,6 +255,40 @@ func (r *Repository) TaskForUser(userID string, id string) (*model.Task, error) 
 	return &task, nil
 }
 
+func (r *Repository) AttachSucceededTaskResource(userID string, taskID string, expectedResultJSON string, nextResultJSON string) (*model.Task, error) {
+	var task model.Task
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ? AND user_id = ?", taskID, userID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.TaskStatusSucceeded {
+			return ErrTaskCompletionStateConflict
+		}
+		if task.ResultJSON == nextResultJSON {
+			return nil
+		}
+		if task.ResultJSON != expectedResultJSON {
+			return ErrTaskCompletionStateConflict
+		}
+		result := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ? AND result_json = ?", task.ID, task.UserID, model.TaskStatusSucceeded, expectedResultJSON).
+			Select("result_json", "updated_at").
+			Updates(model.Task{ResultJSON: nextResultJSON, UpdatedAt: time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrTaskCompletionStateConflict
+		}
+		task.ResultJSON = nextResultJSON
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 func (r *Repository) ActiveTaskCountForUser(userID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error

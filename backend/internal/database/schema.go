@@ -88,6 +88,8 @@ func Models() []any {
 		&model.CanvasChange{},
 		&model.AgentThread{},
 		&model.AgentRun{},
+		&model.AgentProductionPlanVersion{},
+		&model.AgentProductionArtifact{},
 		&model.AgentRunEvent{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},

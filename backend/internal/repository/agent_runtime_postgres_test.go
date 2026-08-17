@@ -310,7 +310,7 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "读取当前画布",
+		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -321,8 +321,8 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasReadState,
-			ActionVersion: 1, Arguments: []byte(`{}`),
+			ToolCallID: "call-read-state", ToolName: agentruntime.ToolProductionPlan,
+			ActionVersion: 1, Arguments: []byte(`{"planKey":"plan-pg"}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 		},
 	}})
 	if err != nil {
@@ -391,7 +391,7 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, firstRepo, scope)
 	if _, err := firstRepo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "修改当前画布",
+		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -403,8 +403,9 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
-			Arguments: []byte(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"node-pg"}]}}`),
+			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+			Arguments:        []byte(`{"planKey":"plan-pg","planVersion":1,"baseRevision":7,"artifactIds":["artifact-pg"]}`),
+			ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})
 	if err != nil {
@@ -413,22 +414,13 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	if err := firstRepo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
-		ToolCallID: "call-pg-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
+	started, err := agentruntime.BeginToolExecution(requested.State, agentruntime.ToolExecution{
 		ToolCallID: "call-pg-apply", ActionVersion: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := firstRepo.CommitAgentRuntimeTransition(scope, approved.State, started, time.Now().UTC()); err != nil {
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, started, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -504,7 +496,7 @@ func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, New(db), scope)
 	input := InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "agent-model-record", ModelKey: "gpt-5.5",
-		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取画布并给出下一步",
+		MaxSteps: 6, ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取画布并给出下一步",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}
 	start := make(chan struct{})
@@ -549,6 +541,73 @@ func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	input.ModelKey = "different-model"
 	if _, err := New(secondDB).InitializeAgentRun(input); !errors.Is(err, ErrAgentRuntimeInitializationConflict) {
 		t.Fatalf("PostgreSQL conflicting replay = %v", err)
+	}
+}
+
+func TestPostgresAgentProductionPlanVersionCASAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := openSecondAgentPostgresConnection(t, db)
+	firstRepo, secondRepo := New(db), New(secondDB)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, firstRepo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := firstRepo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "postgres-production-plan", BaseVersion: 0,
+		Draft: twoShotProductionPlanDraft("基础版本"), Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wait sync.WaitGroup
+	for index, candidate := range []*Repository{firstRepo, secondRepo} {
+		index, candidate := index, candidate
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := candidate.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+				Scope: scope, RunID: scope.RunID, PlanKey: "postgres-production-plan", BaseVersion: 1,
+				Draft: twoShotProductionPlanDraft(fmt.Sprintf("并发版本 %d", index+1)), Now: now.Add(time.Second),
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+
+	succeeded, conflicted := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrAgentProductionPlanVersionConflict):
+			conflicted++
+		default:
+			t.Fatalf("PostgreSQL production plan append error = %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("PostgreSQL production plan CAS: succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
+	var plans int64
+	var artifacts int64
+	if err := db.Model(&model.AgentProductionPlanVersion{}).Where("plan_key = ?", "postgres-production-plan").Count(&plans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_key = ?", "postgres-production-plan").Count(&artifacts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if plans != 2 || artifacts != 10 {
+		t.Fatalf("PostgreSQL production plan facts: plans=%d artifacts=%d", plans, artifacts)
 	}
 }
 

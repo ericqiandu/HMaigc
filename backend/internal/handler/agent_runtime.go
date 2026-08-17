@@ -43,14 +43,8 @@ type submitAgentApprovalRequest struct {
 	Decision      agentruntime.ToolApprovalDecision `json:"decision"`
 }
 
-type submitAgentToolResultRequest struct {
-	ToolCallID    string                             `json:"toolCallId"`
-	ActionVersion int                                `json:"actionVersion"`
-	Selection     *service.AgentCanvasSelectionFacts `json:"selection,omitempty"`
-}
-
 type agentRuntimeRequest interface {
-	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentToolResultRequest
+	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest
 }
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
@@ -150,26 +144,6 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		view, err := svc.SubmitScopedAgentApproval(user, c.Param("runId"), service.AgentToolApprovalSubmission{
 			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Decision: request.Decision,
-		})
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, view)
-	})
-	agent.POST("/runs/:runId/tool-results", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var request submitAgentToolResultRequest
-		if err := decodeStrictAgentRequest(c, &request); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		view, err := svc.SubmitScopedAgentToolResult(user, c.Param("runId"), service.CoordinateAgentToolInput{
-			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Selection: request.Selection,
 		})
 		if err != nil {
 			failService(c, err)

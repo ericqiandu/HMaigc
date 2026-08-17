@@ -15,7 +15,7 @@ func TestRunAPIMartImageTaskSubmitsAndPolls(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	var received apimartImageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer test-key" {
+		if strings.HasPrefix(request.URL.Path, "/v1/") && request.Header.Get("Authorization") != "Bearer test-key" {
 			t.Fatalf("Authorization = %q", request.Header.Get("Authorization"))
 		}
 		switch request.URL.Path {
@@ -30,7 +30,10 @@ func TestRunAPIMartImageTaskSubmitsAndPolls(t *testing.T) {
 				t.Fatalf("language = %q", request.URL.Query().Get("language"))
 			}
 			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"code":200,"data":{"status":"completed","result":{"images":[{"url":["https://cdn.example.com/result.png"]}]}}}`))
+			_, _ = response.Write([]byte(`{"code":200,"data":{"status":"completed","result":{"images":[{"url":["` + serverURLFromRequest(request) + `/result.png"]}]}}}`))
+		case "/result.png":
+			response.Header().Set("Content-Type", "image/png")
+			_, _ = response.Write([]byte("apimart-image"))
 		default:
 			http.NotFound(response, request)
 		}
@@ -58,9 +61,13 @@ func TestRunAPIMartImageTaskSubmitsAndPolls(t *testing.T) {
 		t.Fatalf("request image_urls = %#v", received.ImageURLs)
 	}
 	images, ok := result["images"].([]map[string]string)
-	if !ok || len(images) != 1 || images[0]["dataUrl"] != "https://cdn.example.com/result.png" {
+	if !ok || len(images) != 1 || !strings.HasPrefix(images[0]["dataUrl"], "data:image/png;base64,") || images[0]["mimeType"] != "image/png" {
 		t.Fatalf("result images = %#v", result["images"])
 	}
+}
+
+func serverURLFromRequest(request *http.Request) string {
+	return "http://" + request.Host
 }
 
 func TestRunAPIMartImageTaskReturnsProviderFailure(t *testing.T) {

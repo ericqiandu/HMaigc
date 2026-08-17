@@ -21,16 +21,15 @@ const (
 type ToolName string
 
 const (
-	ToolCanvasReadState     ToolName = "canvas.read_state"
-	ToolCanvasReadSelection ToolName = "canvas.read_selection"
-	ToolCanvasApplyOps      ToolName = "canvas.apply_ops"
-	ToolGenerationSubmit    ToolName = "generation.submit"
-	ToolGenerationWait      ToolName = "generation.wait"
+	ToolSkillLoad        ToolName = "skill.load"
+	ToolProductionPlan   ToolName = "production.plan"
+	ToolProductionRender ToolName = "production.render"
+	ToolCanvasCommit     ToolName = "canvas.commit"
 )
 
 func (name ToolName) Valid() bool {
 	switch name {
-	case ToolCanvasReadState, ToolCanvasReadSelection, ToolCanvasApplyOps, ToolGenerationSubmit, ToolGenerationWait:
+	case ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit:
 		return true
 	default:
 		return false
@@ -72,6 +71,9 @@ func ParseModelDecision(payload []byte) (ModelDecision, error) {
 	}
 	if err := decision.Validate(); err != nil {
 		return ModelDecision{}, err
+	}
+	if decision.ToolCall != nil && !decision.ToolCall.ToolName.Valid() {
+		return ModelDecision{}, errors.New("agent tool call identity is invalid")
 	}
 	return decision, nil
 }

@@ -28,7 +28,7 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 		t.Fatalf("repairable transition = %#v", repairable)
 	}
 
-	tool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-1", ToolName: agentruntime.ToolCanvasReadState, ActionVersion: 1, Arguments: []byte(`{}`), ExpectedDelivery: answer}}
+	tool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-1", ToolName: agentruntime.ToolSkillLoad, ActionVersion: 1, Arguments: []byte(`{}`), ExpectedDelivery: answer}}
 	waiting, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: tool})
 	if err != nil {
 		t.Fatal(err)
@@ -37,13 +37,65 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 		t.Fatalf("tool transition = %#v", waiting)
 	}
 
-	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1, Arguments: []byte(`{"baseRevision":3,"ops":[]}`), ExpectedDelivery: answer}}
+	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1, Arguments: []byte(`{"baseRevision":3,"ops":[]}`), ExpectedDelivery: answer}}
 	waitingApproval, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: writeTool})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if waitingApproval.State.Status != agentruntime.RunWaitingApproval || waitingApproval.State.PendingToolCall == nil {
 		t.Fatalf("approval transition = %#v", waitingApproval)
+	}
+}
+
+func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
+	answer := agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}}
+	base := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 6, Status: agentruntime.RunQueued,
+		UserMessage: "使用已选 Skill 规划短剧",
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionAutomatic,
+			Skills: []agentruntime.SkillSelection{{
+				Dir: "storyboard-director", Name: "分镜导演", Description: "拆解镜头",
+				Instructions: "先建立可执行镜头计划。", Version: 7,
+			}},
+		},
+	}
+	final := agentruntime.ModelDecision{Kind: agentruntime.DecisionFinal, Final: &agentruntime.FinalDecision{Message: "已完成", ExpectedDelivery: answer}}
+	rejected, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: final, Evidence: agentruntime.DeliveryEvidence{FinalMessage: "已完成"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.State.Status != agentruntime.RunRunning || rejected.State.DecisionFeedback == nil || rejected.State.DecisionFeedback.Code != "required_skill_not_loaded" {
+		t.Fatalf("unloaded skill final = %#v", rejected.State)
+	}
+
+	load := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+		ToolCallID: "load-storyboard", ToolName: agentruntime.ToolSkillLoad, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"dir":"storyboard-director"}`), ExpectedDelivery: answer,
+	}}
+	waiting, err := agentruntime.Advance(rejected.State, agentruntime.RuntimeInput{Decision: load})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.State.Status != agentruntime.RunWaitingTool {
+		t.Fatalf("skill load state = %#v", waiting.State)
+	}
+	loaded, err := agentruntime.ResolveTool(waiting.State, agentruntime.ToolResolution{
+		ToolCallID: "load-storyboard", ActionVersion: 1, Succeeded: true,
+		Output: json.RawMessage(`{"dir":"storyboard-director","name":"分镜导演","version":7,"instructions":"先建立可执行镜头计划。"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.State.LoadedSkillDirs) != 1 || loaded.State.LoadedSkillDirs[0] != "storyboard-director" {
+		t.Fatalf("loaded skill dirs = %#v", loaded.State.LoadedSkillDirs)
+	}
+	completed, err := agentruntime.Advance(loaded.State, agentruntime.RuntimeInput{Decision: final, Evidence: agentruntime.DeliveryEvidence{FinalMessage: "已完成"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State.Status != agentruntime.RunSucceeded {
+		t.Fatalf("loaded skill final = %#v", completed.State)
 	}
 }
 
@@ -66,7 +118,7 @@ func TestAdvanceRuntimeFreezesExpectedDeliveryAndRejectsFinalDowngrade(t *testin
 	firstDecision := agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "read-canvas", ToolName: agentruntime.ToolCanvasReadState, ActionVersion: 1,
+			ToolCallID: "read-canvas", ToolName: agentruntime.ToolSkillLoad, ActionVersion: 1,
 			Arguments: json.RawMessage(`{}`), ExpectedDelivery: generatedImage,
 		},
 	}
@@ -104,17 +156,17 @@ func TestAdvanceRuntimeFreezesExpectedDeliveryAndRejectsFinalDowngrade(t *testin
 	}
 }
 
-func TestExecutionModeOnlyBypassesApprovalForReversibleCanvasWrites(t *testing.T) {
+func TestProductionRenderApprovalCannotBeBypassedByExecutionMode(t *testing.T) {
 	answer := agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}}
-	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-write", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1, Arguments: []byte(`{"baseRevision":3,"ops":[]}`), ExpectedDelivery: answer}}
-	costTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-cost", ToolName: agentruntime.ToolGenerationSubmit, ActionVersion: 1, Arguments: []byte(`{"model":"image"}`), ExpectedDelivery: answer}}
+	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-write", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1, Arguments: []byte(`{"planKey":"plan-1","planVersion":1,"baseRevision":3}`), ExpectedDelivery: answer}}
+	costTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-cost", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1, Arguments: []byte(`{"model":"image"}`), ExpectedDelivery: answer}}
 
 	guided := agentruntime.RuntimeState{StateVersion: 1, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "修改画布", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}}
 	guidedWrite, err := agentruntime.Advance(guided, agentruntime.RuntimeInput{Decision: writeTool})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if guidedWrite.State.Status != agentruntime.RunWaitingApproval {
+	if guidedWrite.State.Status != agentruntime.RunWaitingTool {
 		t.Fatalf("guided write state = %s", guidedWrite.State.Status)
 	}
 
@@ -153,7 +205,7 @@ func TestResolveToolPreservesModelStepAndAdvancesStateVersion(t *testing.T) {
 		StateVersion: 2, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingTool,
 		UserMessage: "读取当前画布", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 		PendingToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-1", ToolName: agentruntime.ToolCanvasReadState,
+			ToolCallID: "call-1", ToolName: agentruntime.ToolCanvasCommit,
 			ActionVersion: 1, Arguments: []byte(`{}`),
 		},
 	}
@@ -177,7 +229,7 @@ func TestResolveToolOnFinalStepRecordsResultAndTerminates(t *testing.T) {
 		StateVersion: 9, StepNumber: 8, MaxSteps: 8, Status: agentruntime.RunWaitingTool,
 		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 		PendingToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "last-tool", ToolName: agentruntime.ToolGenerationWait, ActionVersion: 1, Arguments: json.RawMessage(`{"taskId":"task-1"}`),
+			ToolCallID: "last-tool", ToolName: agentruntime.ToolSkillLoad, ActionVersion: 1, Arguments: json.RawMessage(`{"taskId":"task-1"}`),
 		},
 	}
 	transition, err := agentruntime.ResolveTool(current, agentruntime.ToolResolution{
@@ -196,7 +248,7 @@ func TestBeginToolExecutionPersistsRunningInterruptionWithoutConsumingModelStep(
 		StateVersion: 3, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingTool,
 		UserMessage: "在画布中增加标题节点", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 		PendingToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasApplyOps,
+			ToolCallID: "call-apply", ToolName: agentruntime.ToolProductionRender,
 			ActionVersion: 2, Arguments: json.RawMessage(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"title-node"}]}}`),
 		},
 	}
@@ -226,7 +278,7 @@ func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
 		StateVersion: 2, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingApproval,
 		UserMessage: "生成一张图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 		PendingToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-generate", ToolName: agentruntime.ToolGenerationSubmit,
+			ToolCallID: "call-generate", ToolName: agentruntime.ToolProductionRender,
 			ActionVersion: 2, Arguments: []byte(`{"model":"image"}`),
 		},
 	}
@@ -260,7 +312,7 @@ func TestRejectFinalStepApprovalTerminatesWithoutExecutingTool(t *testing.T) {
 		StateVersion: 9, StepNumber: 8, MaxSteps: 8, Status: agentruntime.RunWaitingApproval,
 		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 		PendingToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "last-generation", ToolName: agentruntime.ToolGenerationSubmit, ActionVersion: 1, Arguments: json.RawMessage(`{"type":"canvas_image"}`),
+			ToolCallID: "last-generation", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1, Arguments: json.RawMessage(`{"type":"canvas_image"}`),
 		},
 	}
 	transition, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
@@ -279,7 +331,7 @@ func TestApproveFinalStepApprovalTerminatesWithoutExecutingTool(t *testing.T) {
 		StateVersion: 9, StepNumber: 8, MaxSteps: 8, Status: agentruntime.RunWaitingApproval,
 		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 		PendingToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "last-generation", ToolName: agentruntime.ToolGenerationSubmit, ActionVersion: 1, Arguments: json.RawMessage(`{"type":"canvas_image"}`),
+			ToolCallID: "last-generation", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1, Arguments: json.RawMessage(`{"type":"canvas_image"}`),
 		},
 	}
 	transition, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
@@ -327,7 +379,7 @@ func TestAdvanceRuntimeRejectsNewToolCallOnFinalModelStep(t *testing.T) {
 		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 	}
 	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-		ToolCallID: "last-step-generation", ToolName: agentruntime.ToolGenerationSubmit, ActionVersion: 1,
+		ToolCallID: "last-step-generation", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
 		Arguments: json.RawMessage(`{"type":"canvas_image"}`), ExpectedDelivery: answer,
 	}}
 	transition, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})

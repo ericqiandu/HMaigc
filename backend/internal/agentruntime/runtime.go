@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
+	"sort"
 	"strings"
 )
 
@@ -24,6 +26,7 @@ type RuntimeState struct {
 	FailureCode        string                 `json:"failureCode,omitempty"`
 	UserMessage        string                 `json:"userMessage"`
 	Configuration      RunConfiguration       `json:"configuration"`
+	LoadedSkillDirs    []string               `json:"loadedSkillDirs,omitempty"`
 }
 
 type GenerationModelSelection struct {
@@ -74,8 +77,9 @@ type RuntimeInput struct {
 }
 
 type RuntimeTransition struct {
-	State      RuntimeState
-	EventKinds []EventKind
+	State            RuntimeState
+	EventKinds       []EventKind
+	RejectedToolCall *ToolCallDecision
 }
 
 type ToolResolution struct {
@@ -227,6 +231,19 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	}
 
 	final := input.Decision.Final
+	if missing := missingRequiredSkillDirs(next.Configuration.Skills, next.LoadedSkillDirs); len(missing) > 0 {
+		next.FinalMessage = ""
+		next.DecisionFeedback = &ModelDecisionFeedback{
+			Code: "required_skill_not_loaded", Reason: "load every explicitly selected skill before final delivery",
+		}
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunFailed}}, nil
+		}
+		next.Status = RunRunning
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunStatusChanged}}, nil
+	}
 	verification := VerifyDelivery(final.ExpectedDelivery, input.Evidence)
 	next.Verification = &verification
 	next.FinalMessage = final.Message
@@ -343,6 +360,13 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 		ToolCallID: resolution.ToolCallID, ActionVersion: resolution.ActionVersion,
 		Succeeded: resolution.Succeeded, Output: append(json.RawMessage(nil), output...), ErrorCode: resolution.ErrorCode,
 	}
+	if resolution.Succeeded && current.PendingToolCall.ToolName == ToolSkillLoad {
+		loaded, err := resolvedSkillDir(current.Configuration.Skills, resolution.Output)
+		if err != nil {
+			return RuntimeTransition{}, err
+		}
+		next.LoadedSkillDirs = appendLoadedSkillDir(next.LoadedSkillDirs, loaded)
+	}
 	if next.StepNumber >= next.MaxSteps {
 		next.Status = RunFailed
 		next.FailureCode = "step_budget_exhausted"
@@ -457,11 +481,87 @@ func validateRuntimeState(state RuntimeState) error {
 			return err
 		}
 	}
+	if err := validateLoadedSkillDirs(state.Configuration.Skills, state.LoadedSkillDirs); err != nil {
+		return err
+	}
 	return nil
 }
 
 func validModelDecisionFeedbackCode(code string) bool {
-	return code == "model_decision_invalid" || code == "delivery_contract_changed"
+	return code == "model_decision_invalid" || code == "delivery_contract_changed" || code == "required_skill_not_loaded"
+}
+
+type resolvedSkillLoad struct {
+	Dir          string `json:"dir"`
+	Name         string `json:"name"`
+	Version      int    `json:"version"`
+	Instructions string `json:"instructions"`
+}
+
+func resolvedSkillDir(selected []SkillSelection, output json.RawMessage) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder.DisallowUnknownFields()
+	var result resolvedSkillLoad
+	if err := decoder.Decode(&result); err != nil {
+		return "", errors.New("agent skill load result is invalid")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return "", errors.New("agent skill load result is invalid")
+	}
+	result.Dir = strings.TrimSpace(result.Dir)
+	result.Name = strings.TrimSpace(result.Name)
+	result.Instructions = strings.TrimSpace(result.Instructions)
+	for _, skill := range selected {
+		if skill.Dir == result.Dir && skill.Name == result.Name && skill.Version == result.Version && skill.Instructions == result.Instructions {
+			return result.Dir, nil
+		}
+	}
+	return "", errors.New("agent skill load result conflicts with frozen selection")
+}
+
+func appendLoadedSkillDir(current []string, dir string) []string {
+	next := append([]string(nil), current...)
+	for _, loaded := range next {
+		if loaded == dir {
+			return next
+		}
+	}
+	next = append(next, dir)
+	sort.Strings(next)
+	return next
+}
+
+func missingRequiredSkillDirs(selected []SkillSelection, loaded []string) []string {
+	loadedSet := make(map[string]struct{}, len(loaded))
+	for _, dir := range loaded {
+		loadedSet[dir] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, skill := range selected {
+		if _, ok := loadedSet[skill.Dir]; !ok {
+			missing = append(missing, skill.Dir)
+		}
+	}
+	return missing
+}
+
+func validateLoadedSkillDirs(selected []SkillSelection, loaded []string) error {
+	selectedSet := make(map[string]struct{}, len(selected))
+	for _, skill := range selected {
+		selectedSet[skill.Dir] = struct{}{}
+	}
+	previous := ""
+	for _, dir := range loaded {
+		if strings.TrimSpace(dir) != dir || dir == "" || (previous != "" && dir <= previous) {
+			return errors.New("agent runtime loaded skill facts are invalid")
+		}
+		if _, ok := selectedSet[dir]; !ok {
+			return errors.New("agent runtime loaded skill facts conflict with configuration")
+		}
+		previous = dir
+	}
+	return nil
 }
 
 func ValidateRunConfiguration(configuration RunConfiguration) error {

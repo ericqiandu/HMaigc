@@ -9,7 +9,7 @@ const state = {
     status: "waiting_approval",
     pendingToolCall: {
         toolCallId: "tool-1",
-        toolName: "canvas.apply_ops",
+        toolName: "production.render",
         actionVersion: 3,
         arguments: { baseRevision: 7, patch: { upsertNodes: [] } },
         expectedDelivery: { kind: "canvas_change", targetCanvasId: "canvas-1", completionCriteria: [{ fact: "canvas_revision", artifact: "canvas_revision" }] },
@@ -53,6 +53,24 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             createdAt: "2026-08-15T00:00:01Z",
         }),
     ).toEqual({ sequence: 4, kind: "approval.required", payload: state, createdAt: "2026-08-15T00:00:01Z" });
+});
+
+test.each(["skill.load", "production.plan", "production.render", "canvas.commit"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
+    const productionState = {
+        ...state,
+        status: "waiting_tool",
+        pendingToolCall: {
+            ...state.pendingToolCall,
+            toolName,
+        },
+    };
+    const productionView = {
+        ...view,
+        run: { ...view.run, status: "waiting_tool" },
+        state: productionState,
+    };
+
+    expect(parseAgentRuntimeView(productionView).state.pendingToolCall?.toolName).toBe(toolName);
 });
 
 test("模型决策拒绝事件保留结构化自修事实", () => {

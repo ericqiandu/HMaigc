@@ -135,18 +135,6 @@ func (s *Service) SubmitScopedAgentApproval(actor *model.User, runID string, inp
 	return agentRuntimeView(progress), nil
 }
 
-func (s *Service) SubmitScopedAgentToolResult(actor *model.User, runID string, input CoordinateAgentToolInput) (*AgentRuntimeView, error) {
-	scope, err := s.scopeForAgentRun(actor, runID)
-	if err != nil {
-		return nil, err
-	}
-	progress, err := s.CoordinatePendingAgentTool(scope, input)
-	if err != nil {
-		return nil, err
-	}
-	return agentRuntimeView(progress), nil
-}
-
 func (s *Service) agentThreadForActor(actorUserID string, threadID string) (*model.AgentThread, error) {
 	thread, err := s.repo.AgentThreadForActor(strings.TrimSpace(threadID), strings.TrimSpace(actorUserID))
 	if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -2,23 +2,29 @@
 
 ## Agent Runtime 作用域与恢复事实
 
-单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改与真实生成任务协调；前端入口和事件流仍未开放。五张表职责如下：
+单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改、真实生成任务协调与版本化影视生产计划。七张核心表职责如下：
 
 - `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
-- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态和最后事件序号；`thread_id + client_request_id` 唯一；
+- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态、最后事件序号及冻结的 runtime/policy/tool schema 版本；`thread_id + client_request_id` 唯一；
 - `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
 - `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
 - `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。
+- `agent_production_plan_versions` 以 `plan_key + version` 唯一追加不可变的生产计划版本，并绑定完整 Scope、来源 run、基础版本、剧本和总时长；同一基础版本只允许一个事实胜出；
+- `agent_production_artifacts` 以 `plan_key + plan_version + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
 
 Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
 
 服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。
 
-Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。首次初始化会同时冻结用户原始请求、步数预算、默认模型记录、模型 Key 与工具 schema 版本，并原子创建首个事件和 checkpoint；不同事实复用同一 run 必须冲突。恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。
+Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。首次初始化会同时冻结用户原始请求、步数预算、默认模型记录、模型 Key、runtime 版本、policy 版本与工具 schema 版本，并原子创建首个事件和 checkpoint；不同事实复用同一 run 必须冲突。历史投影必须保留三类版本事实，恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。
 
-工具状态转换使用独立 `state_version`，不会伪增模型 `step_number`。`canvas.read_state` 与 `canvas.read_selection` 每次执行都重新校验完整 Scope、当前权限和 revision；`canvas.apply_ops` 在批准后先持久化 `tool.started` 与 `started_at`，再以 `runId + toolCallId + actionVersion` 派生唯一 `clientMutationId`，复用 `CanvasChange` 的 revision CAS 与幂等事务。个人画布所有者和团队有效 editor/manager 走同一增量 mutation 协议；画布已提交但 Runtime 结果事务中断时，重试只读取同一 CanvasChange 并补齐工具结果，不重复增加 revision。revision 冲突和参数错误作为结构化工具失败回灌主 Agent，权限撤销或基础设施错误保持显式失败，不伪装成成功。
+已选 Skill 的完整说明不常驻首轮 prompt。`skill.load` 只能读取当前 run 已冻结的精确目录与版本，成功结果把目录写入 checkpoint 的有序 `loadedSkillDirs`；最终交付若仍有选定 Skill 未加载，Runtime 以可修复事实回灌同一执行链。`production.plan` 只追加计划版本和 Artifact Ledger：脚本 Artifact 立即完成，逐镜头图片与视频保持 planned，不创建媒体 Task、BillingOrder 或积分预留。相同事实重放必须返回原版本，内容冲突或并发争用必须显式失败。
 
-`generation.submit` 在完整 Scope 和 L2 审批后复用现有 `CreateTask` 商业入口，并以 `runId + toolCallId + actionVersion` 派生稳定 Task 与 Billing 幂等身份；重复协调、进程中断和 PostgreSQL 并发重放只允许形成一个 Task、一个 BillingOrder 和一次积分预留。`generation.wait` 只读取当前用户、当前画布、当前 run operation 的同一任务；queued/running 保持等待，失败和取消显式回灌，只有 succeeded 且结果中存在真实媒体 URL 才写入交付证据。Runtime 最终验收从已持久化的成功工具结果构造 canvas revision 与资产事实，不能用模型文本代替真实交付。
+工具状态转换使用独立 `state_version`，不会伪增模型 `step_number`。模型只能选择 `skill.load`、`production.plan`、`production.render`、`canvas.commit` 四个高层工具；旧画布读写与生成提交/等待工具已从 schema、执行器和生产源码硬切删除。数据库启动迁移只读检查全部非终态 run 的 `tool_schema_version`；存在旧版本时拒绝启动并报告首个冲突 run，既不改写 checkpoint，也不取消、退款或接管旧版本所有权，终态历史 run 则继续保留用于审计。`canvas.commit` 只从同 Scope 的活动计划、完整 Artifact Ledger 与已就绪 Resource 构造确定性画布投影，再以 `runId + toolCallId + actionVersion` 派生唯一 `clientMutationId`，复用 `CanvasChange` 的 revision CAS 与幂等事务。个人画布所有者和团队有效 editor/manager 走同一协议；画布已提交但 Artifact 回填中断时，重试只读取同一 CanvasChange 并补齐绑定，不重复增加 revision。revision 冲突和参数错误作为结构化工具失败回灌主 Agent，权限撤销或基础设施错误保持显式失败，不伪装成成功。
+
+`production.render` 在完整 Scope 和 L2 审批后复用正式 Task 商业入口，并以 run、计划版本、Artifact、attempt 派生稳定 Task 与 Billing 幂等身份；重复协调、进程中断和 PostgreSQL 并发重放只允许形成一个 Task、一个 BillingOrder 和一次积分预留。审批前的能力校验与报价严格读取作出决策的模型任务 prompt 内冻结的可调用模型目录，不重新读取可能已变化的在线目录。参数、能力、报价或 Artifact 状态不合法时，仓储在同一状态转换中登记失败 ToolCall 与 ToolResult，保留结构化原因供下一模型步骤修正，不制造媒体商业事实。媒体 queued/running 时等待真实任务事件唤醒；失败和取消显式回灌，只有 succeeded 且已形成 Resource 与 Artifact Ledger 事实才写入交付证据。Runtime 最终验收不能用模型文本代替真实资产或画布 revision。
+
+run 只由一个事件驱动协调器推进：创建 run、模型任务终结、审批决定、媒体任务终结都会唤醒同一入口；一次唤醒最多执行固定数量的状态转换，遇到未完成任务、付费审批或终态即停止。后台不再高频盲扫所有 run，只以分钟级游标查询超过恢复阈值的活动记录，并通过跨实例协调锁补偿进程中断；恢复仍消费同一 checkpoint、ToolCall、Task 和 Billing 幂等事实，不创建平行运行路径。
 
 每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version。`token_usage` 模型在同一创建事务内冻结 Token 价格、输入上界和商业最大输出量，worker 先提交不可重复发送边界，再把相同最大输出量写入真实请求，响应事实持久化后才核对筷子账单。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；决策结构非法时保存受控的 `model_decision_invalid` 反馈并在同一有界 run 内创建下一模型步骤修正，达到步骤上限才终结，禁止文本提取、默认决策或模型降级。上游请求失败仍显式终结 run；所有已成功发出的 Token 请求继续按原账单核对，禁止误退款或重复调用。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
 

@@ -42,10 +42,30 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 		}
 		encoded, _ := json.Marshal(body)
 		if body.Model != "gpt-5.5" || body.ResponseFormat.Type != "json_object" || len(body.Messages) != 2 ||
-			!strings.Contains(body.Messages[0].Content, "canvas.read_state") ||
-			!strings.Contains(body.Messages[0].Content, `"size":"16:9"`) ||
-			!strings.Contains(body.Messages[0].Content, "providerCapabilities.qualities") ||
-			strings.Contains(body.Messages[0].Content, `"quality":"medium"`) ||
+			!strings.Contains(body.Messages[0].Content, "production.plan") ||
+			!strings.Contains(body.Messages[0].Content, `"planKey":"","baseVersion":0`) ||
+			!strings.Contains(body.Messages[0].Content, `"targetDurationMs":10000`) ||
+			!strings.Contains(body.Messages[0].Content, `"shotKey":"shot-1"`) ||
+			!strings.Contains(body.Messages[0].Content, `"imagePrompt":"..."`) ||
+			!strings.Contains(body.Messages[0].Content, `"videoPrompt":"..."`) ||
+			!strings.Contains(body.Messages[0].Content, "所有镜头 durationMs 之和必须等于 targetDurationMs") ||
+			!strings.Contains(body.Messages[0].Content, "禁止添加未声明字段") ||
+			!strings.Contains(body.Messages[0].Content, "fact 为 final_message 或 canvas_revision 时必须省略 artifact") ||
+			!strings.Contains(body.Messages[0].Content, `{"fact":"artifact","artifact":"image"}`) ||
+			!strings.Contains(body.Messages[0].Content, "production.render") ||
+			!strings.Contains(body.Messages[0].Content, `"artifactId":"<storyboard_image artifactId>"`) ||
+			!strings.Contains(body.Messages[0].Content, `"imageConfig":{"size":"16:9","count":1}`) ||
+			strings.Contains(body.Messages[0].Content, `"quality":"high"`) ||
+			!strings.Contains(body.Messages[0].Content, "qualities 为空时必须省略 quality") ||
+			!strings.Contains(body.Messages[0].Content, "参数值必须来自所选 callableModels 的 providerCapabilities") ||
+			!strings.Contains(body.Messages[0].Content, `"artifactId":"<video_clip artifactId>"`) ||
+			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"quality":"720p","generateAudio":true}`) ||
+			!strings.Contains(body.Messages[0].Content, "必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval") ||
+			!strings.Contains(body.Messages[0].Content, "禁止用 final 消息代替扣费确认") ||
+			!strings.Contains(body.Messages[0].Content, "禁止重复新建 production.plan") ||
+			!strings.Contains(body.Messages[0].Content, "canvas.commit") ||
+			strings.Contains(body.Messages[0].Content, "generation.submit") ||
+			strings.Contains(body.Messages[0].Content, "canvas.apply_ops") ||
 			!strings.Contains(body.Messages[0].Content, "每次新的工具调用必须使用从未出现过的 toolCallId") ||
 			strings.Contains(string(encoded), "runtime-secret-key") {
 			t.Errorf("model request = %s", encoded)
@@ -265,7 +285,7 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if first.State.Status != agentruntime.RunQueued || first.State.StepNumber != 0 || first.State.UserMessage != input.UserMessage {
 		t.Fatalf("initial runtime = %#v", first)
 	}
-	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != 1 {
+	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion || first.Run.RuntimeVersion != agentRuntimeVersion || first.Run.PolicyVersion != agentRuntimePolicyVersion {
 		t.Fatalf("frozen run model = %#v", first.Run)
 	}
 	if first.ModelTask == nil || first.ModelTask.Status != model.TaskStatusQueued || first.ModelTask.Type != agentRuntimeModelTaskType || first.ModelTask.Model != fixture.channelModel.ModelKey {
@@ -629,4 +649,26 @@ func agentRuntimeServiceScope() agentruntime.Scope {
 
 func guidedAgentRuntimeConfigurationInput() AgentRuntimeConfigurationInput {
 	return AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionGuided}
+}
+
+func createAgentRuntimeImageModel(t *testing.T, db *gorm.DB, fixture agentRuntimeServiceFixture) {
+	t.Helper()
+	now := time.Now().UTC()
+	channel := model.ModelChannel{
+		ID: "runtime-image-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Agent Image",
+		APIFormat: "openai", InterfaceType: model.ChannelInterfaceOpenAIImage, ModelsJSON: `["kz_gpt_image2"]`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	channelModel := model.ChannelModel{
+		ID: "runtime-image-model", ChannelID: channel.ID, ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
+		ProviderCredentialID: fixture.credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "image",
+		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channelModel).Error; err != nil {
+		t.Fatal(err)
+	}
 }

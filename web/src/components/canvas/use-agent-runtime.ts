@@ -17,13 +17,11 @@ const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 
 type UseAgentRuntimeInput = {
     canvasId: string;
-    canvasRevision: number;
-    selectedNodeIds: Set<string>;
     client?: AgentRuntimeClient;
     storage?: AgentRuntimeHandleStorage;
 };
 
-export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, client = agentRuntimeClient, storage = agentRuntimeHandleStorage }: UseAgentRuntimeInput) {
+export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage }: UseAgentRuntimeInput) {
     const [threadId, setThreadId] = useState("");
     const [view, setView] = useState<AgentRuntimeView | null>(null);
     const [events, setEvents] = useState<AgentRuntimeEvent[]>([]);
@@ -33,24 +31,13 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
     const [restored, setRestored] = useState(false);
     const [pendingUserMessage, setPendingUserMessage] = useState("");
     const [pendingConfiguration, setPendingConfiguration] = useState<AgentRuntimeStartConfiguration | null>(null);
-    const [selectionRetry, setSelectionRetry] = useState(0);
     const [threads, setThreads] = useState<AgentThreadHistoryItem[]>([]);
     const [historyLoading, setHistoryLoading] = useState(true);
     const [historyError, setHistoryError] = useState("");
     const cursorRef = useRef(0);
     const threadIdRef = useRef("");
     const pendingRunRef = useRef<AgentRuntimeHandle["pendingRun"]>(undefined);
-    const submittedSelectionRef = useRef(new Set<string>());
-    const selectedNodeIdsRef = useRef(selectedNodeIds);
-    const canvasRevisionRef = useRef(canvasRevision);
     const historyRequestRef = useRef(0);
-
-    useEffect(() => {
-        selectedNodeIdsRef.current = selectedNodeIds;
-    }, [selectedNodeIds]);
-    useEffect(() => {
-        canvasRevisionRef.current = canvasRevision;
-    }, [canvasRevision]);
 
     const persist = useCallback(
         async (nextView: AgentRuntimeView | null, nextThreadId = threadIdRef.current) => {
@@ -78,7 +65,6 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             threadIdRef.current = item.thread.id;
             pendingRunRef.current = undefined;
             cursorRef.current = item.latestRun && !terminalStatuses.has(item.latestRun.state.status) ? item.latestRun.run.lastEventSequence : 0;
-            submittedSelectionRef.current.clear();
             setThreadId(item.thread.id);
             setView(item.latestRun);
             setEvents([]);
@@ -111,7 +97,6 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         threadIdRef.current = "";
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
-        submittedSelectionRef.current.clear();
         setThreadId("");
         setView(null);
         setEvents([]);
@@ -205,31 +190,6 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         });
     }, [client, persist, restored, runId, terminal]);
 
-    const pendingSelection = view?.state.status === "waiting_tool" && view.state.pendingToolCall?.toolName === "canvas.read_selection" ? view.state.pendingToolCall : null;
-    useEffect(() => {
-        if (!pendingSelection || !view) return;
-        const identity = `${view.run.id}:${pendingSelection.toolCallId}:${pendingSelection.actionVersion}`;
-        if (submittedSelectionRef.current.has(identity)) return;
-        submittedSelectionRef.current.add(identity);
-        setBusy(true);
-        void client
-            .submitSelection(view.run.id, {
-                toolCallId: pendingSelection.toolCallId,
-                actionVersion: pendingSelection.actionVersion,
-                selection: { revision: canvasRevisionRef.current, nodeIds: [...selectedNodeIdsRef.current].sort() },
-            })
-            .then(adoptView)
-            .catch((cause: unknown) => setError(errorMessage(cause, "选区事实提交失败")))
-            .finally(() => setBusy(false));
-    }, [adoptView, client, pendingSelection, selectionRetry, view]);
-
-    const retrySelection = useCallback(() => {
-        if (!pendingSelection || !view) return;
-        submittedSelectionRef.current.delete(`${view.run.id}:${pendingSelection.toolCallId}:${pendingSelection.actionVersion}`);
-        setError("");
-        setSelectionRetry((value) => value + 1);
-    }, [pendingSelection, view]);
-
     const submit = useCallback(
         async (userMessage: string, configuration: AgentRuntimeStartConfiguration) => {
             const message = userMessage.trim();
@@ -296,7 +256,6 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         threadIdRef.current = "";
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
-        submittedSelectionRef.current.clear();
         setThreadId("");
         setView(null);
         setEvents([]);
@@ -321,10 +280,8 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             terminal,
             pendingUserMessage,
             pendingConfiguration,
-            canRetrySelection: Boolean(pendingSelection && error),
             submit,
             decideApproval,
-            retrySelection,
             newThread,
             selectThread,
             reloadThreads,
@@ -339,11 +296,9 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             historyLoading,
             newThread,
             pendingConfiguration,
-            pendingSelection,
             pendingUserMessage,
             reloadThreads,
             restored,
-            retrySelection,
             selectThread,
             submit,
             terminal,

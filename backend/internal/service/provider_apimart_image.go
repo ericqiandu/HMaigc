@@ -110,7 +110,10 @@ func runAPIMartImageTask(ctx context.Context, input canvasGenerationInput) (map[
 		}
 		switch strings.ToLower(strings.TrimSpace(task.Data.Status)) {
 		case "completed":
-			images := apimartCompletedImages(task)
+			images, materializeErr := apimartCompletedImages(ctx, task)
+			if materializeErr != nil {
+				return nil, materializeErr
+			}
 			if len(images) == 0 {
 				return nil, errors.New("APIMart 图片任务已完成但未返回可用图片")
 			}
@@ -388,16 +391,25 @@ func greatestCommonDivisor(left int, right int) int {
 	return left
 }
 
-func apimartCompletedImages(task apimartImageTaskResponse) []map[string]string {
+func apimartCompletedImages(ctx context.Context, task apimartImageTaskResponse) ([]map[string]string, error) {
 	images := make([]map[string]string, 0)
 	for _, item := range task.Data.Result.Images {
 		for _, imageURL := range item.URL {
-			if strings.TrimSpace(imageURL) != "" {
-				images = append(images, map[string]string{"dataUrl": strings.TrimSpace(imageURL)})
+			imageURL = strings.TrimSpace(imageURL)
+			if imageURL == "" {
+				continue
 			}
+			data, mimeType, err := getExternalBinary(withProviderRequestKind(ctx, "download"), imageURL)
+			if err != nil {
+				return nil, fmt.Errorf("APIMart 图片任务已完成但结果下载失败：%w", err)
+			}
+			if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+				return nil, fmt.Errorf("APIMart 图片任务返回非图片结果：%s", mimeType)
+			}
+			images = append(images, map[string]string{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType})
 		}
 	}
-	return images
+	return images, nil
 }
 
 func apimartResponseMessage(message string, msg string) string {

@@ -45,7 +45,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
     const [configurationError, setConfigurationError] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
-    const runtime = useAgentRuntime({ canvasId: projectId, canvasRevision, selectedNodeIds, client: runtimeClient, storage: runtimeStorage });
+    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage });
     const active = Boolean(runtime.view && !runtime.terminal);
     const { prompt, generationModels: agentModels, skillSelections: selectedSkills, executionMode } = draft;
     const setPrompt = useCallback((value: SetStateAction<string>) => setDraft((current) => ({ ...current, prompt: typeof value === "function" ? value(current.prompt) : value })), []);
@@ -217,11 +217,6 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                             <CircleAlert className="canvas-agent-runtime-error-icon" />
                             <div className="canvas-agent-runtime-error-content">
                                 <span className="canvas-agent-runtime-error-copy">{configurationError || runtime.error}</span>
-                                {runtime.canRetrySelection ? (
-                                    <Button className="canvas-agent-runtime-error-retry" size="small" onClick={runtime.retrySelection}>
-                                        重试选区提交
-                                    </Button>
-                                ) : null}
                             </div>
                         </div>
                     ) : null}

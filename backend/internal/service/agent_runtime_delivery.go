@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/agentruntime"
+	"infinite-canvas/backend/internal/model"
 )
 
 func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMessage string) (agentruntime.DeliveryEvidence, error) {
@@ -20,8 +21,8 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 			continue
 		}
 		switch agentruntime.ToolName(call.ToolName) {
-		case agentruntime.ToolCanvasApplyOps:
-			var result agentCanvasApplyOpsResult
+		case agentruntime.ToolCanvasCommit:
+			var result agentProductionCanvasCommitResult
 			if err := json.Unmarshal([]byte(call.OutputJSON), &result); err != nil || result.CanvasID != scope.CanvasID || result.CommittedRevision < 1 || strings.TrimSpace(result.ClientMutationID) == "" {
 				return agentruntime.DeliveryEvidence{}, errors.New("agent canvas delivery evidence is invalid")
 			}
@@ -29,20 +30,29 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 				evidence.CanvasID = result.CanvasID
 				evidence.CanvasRevision = result.CommittedRevision
 			}
-		case agentruntime.ToolGenerationWait:
-			var result agentGenerationWaitResult
-			if err := json.Unmarshal([]byte(call.OutputJSON), &result); err != nil || result.TaskID == "" || result.Status != "succeeded" || len(result.Artifacts) == 0 {
+		case agentruntime.ToolProductionRender:
+			var result agentProductionRenderResult
+			if err := json.Unmarshal([]byte(call.OutputJSON), &result); err != nil || result.ArtifactID == "" || result.ArtifactStatus != model.AgentProductionArtifactSucceeded || result.ResourceID == "" {
 				return agentruntime.DeliveryEvidence{}, errors.New("agent generation delivery evidence is invalid")
 			}
-			for _, artifact := range result.Artifacts {
-				if !artifact.Kind.Valid() || artifact.Kind == agentruntime.ArtifactCanvasRevision || strings.TrimSpace(artifact.URL) == "" {
-					return agentruntime.DeliveryEvidence{}, errors.New("agent generation artifact evidence is invalid")
-				}
-				key := string(artifact.Kind) + "\x00" + artifact.URL
-				if !seenArtifacts[key] {
-					evidence.Artifacts = append(evidence.Artifacts, artifact)
-					seenArtifacts[key] = true
-				}
+			resource, err := s.productionResourceForScope(scope, result.ResourceID)
+			if err != nil || resource.Status != model.ResourceStatusReady {
+				return agentruntime.DeliveryEvidence{}, errors.New("agent generation resource evidence is invalid")
+			}
+			kind := agentruntime.ArtifactKind("")
+			switch result.ArtifactKind {
+			case model.AgentProductionArtifactStoryboardImage:
+				kind = agentruntime.ArtifactImage
+			case model.AgentProductionArtifactVideoClip:
+				kind = agentruntime.ArtifactVideo
+			default:
+				return agentruntime.DeliveryEvidence{}, errors.New("agent generation artifact kind is invalid")
+			}
+			artifact := agentruntime.DeliveryArtifact{Kind: kind, URL: "/api/resources/" + resource.ID + "/file"}
+			key := string(artifact.Kind) + "\x00" + artifact.URL
+			if !seenArtifacts[key] {
+				evidence.Artifacts = append(evidence.Artifacts, artifact)
+				seenArtifacts[key] = true
 			}
 		}
 	}

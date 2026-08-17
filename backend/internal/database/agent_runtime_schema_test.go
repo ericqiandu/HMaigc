@@ -21,11 +21,16 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"idx_agent_runs_thread_client_request": `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
-		"idx_agent_run_events_run_sequence":    `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
-		"idx_agent_checkpoints_run_sequence":   `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
-		"idx_agent_tool_calls_action":          `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
-		"idx_agent_threads_scope":              `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
+		"idx_agent_runs_thread_client_request":           `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
+		"idx_agent_run_events_run_sequence":              `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
+		"idx_agent_checkpoints_run_sequence":             `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
+		"idx_agent_tool_calls_action":                    `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
+		"idx_agent_threads_scope":                        `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
+		"idx_agent_production_plan_versions_key_version": `CREATE UNIQUE INDEX idx_agent_production_plan_versions_key_version ON agent_production_plan_versions(plan_key, version)`,
+		"idx_agent_production_artifacts_plan_shot_kind":  `CREATE UNIQUE INDEX idx_agent_production_artifacts_plan_shot_kind ON agent_production_artifacts(plan_key, plan_version, shot_key, kind)`,
+		"idx_agent_production_artifacts_task":            `CREATE UNIQUE INDEX idx_agent_production_artifacts_task ON agent_production_artifacts(task_id) WHERE task_id <> ''`,
+		"idx_agent_production_artifacts_billing":         `CREATE UNIQUE INDEX idx_agent_production_artifacts_billing ON agent_production_artifacts(billing_order_id) WHERE billing_order_id <> ''`,
+		"idx_agent_production_artifacts_resource":        `CREATE UNIQUE INDEX idx_agent_production_artifacts_resource ON agent_production_artifacts(resource_id) WHERE resource_id <> ''`,
 	}
 	for name, expected := range want {
 		var actual string
@@ -95,6 +100,41 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsLegacyDuplicateFacts(t *testing
 	}
 }
 
+func TestEnsureAgentRuntimeIntegritySchemaRejectsIncompatibleActiveRunWithoutMutation(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	run := model.AgentRun{
+		ID: "run-old-active", ThreadID: "thread-old", ActorUserID: "user-old", ClientRequestID: "request-old",
+		Status: agentruntime.RunWaitingTool, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := EnsureAgentRuntimeIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "run_id=run-old-active") || !strings.Contains(err.Error(), "required=2") {
+		t.Fatalf("incompatible active run error = %v", err)
+	}
+	var stored model.AgentRun
+	if err := db.First(&stored, "id = ?", run.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != run.Status || stored.ToolSchemaVersion != run.ToolSchemaVersion {
+		t.Fatalf("incompatible run changed during fail-close validation: %#v", stored)
+	}
+
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", run.ID).Update("status", agentruntime.RunCancelled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("terminal historical run should not block the current runtime: %v", err)
+	}
+}
+
 func TestMigrateSchemaAddsAgentRuntimeWithoutChangingCanvasFacts(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/agent-additive.db"), &gorm.Config{})
 	if err != nil {
@@ -125,15 +165,23 @@ func TestMigrateSchemaAddsAgentRuntimeWithoutChangingCanvasFacts(t *testing.T) {
 	if err := MigrateSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []any{&model.AgentThread{}, &model.AgentRun{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}} {
+	for _, table := range []string{"agent_threads", "agent_runs", "agent_run_events", "agent_checkpoints", "agent_tool_calls"} {
 		if !db.Migrator().HasTable(table) {
-			t.Fatalf("missing additive agent runtime table for %T", table)
+			t.Fatalf("missing additive agent runtime table %s", table)
 		}
 	}
-	for _, column := range []string{"state_version"} {
+	for _, table := range []string{"agent_production_plan_versions", "agent_production_artifacts"} {
+		if !db.Migrator().HasTable(table) {
+			t.Fatalf("missing additive agent production table %s", table)
+		}
+	}
+	for _, column := range []string{"state_version", "runtime_version", "policy_version"} {
 		if !db.Migrator().HasColumn(&model.AgentRun{}, column) {
 			t.Fatalf("missing additive agent_runs column %s", column)
 		}
+	}
+	if !db.Migrator().HasColumn(&model.AgentProductionPlanVersion{}, "domain_project_id") {
+		t.Fatal("missing additive agent production plan domain_project_id column")
 	}
 	for _, column := range []string{"risk_level", "required_access", "approval_required", "approval_decision", "approval_by_user_id", "approval_decided_at", "idempotency_key", "started_at"} {
 		if !db.Migrator().HasColumn(&model.AgentToolCall{}, column) {

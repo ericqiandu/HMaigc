@@ -84,7 +84,7 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "frozen-agent-model", ModelKey: "agent-model",
-		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取事件",
+		MaxSteps: 6, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取事件",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repo
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "history-model-record", ModelKey: "history-model",
-		MaxSteps: 8, ToolSchemaVersion: 1, UserMessage: userMessage,
+		MaxSteps: 8, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: userMessage,
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)

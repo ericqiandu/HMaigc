@@ -58,10 +58,13 @@ func TestAgentRuntimeFreezesSelectedGenerationModelAndSkillInstructions(t *testi
 		t.Fatal(err)
 	}
 	promptContext := decodeAgentRuntimePromptContextForTest(t, stored.Prompt)
+	if promptContext.CanvasRevision != 7 {
+		t.Fatalf("canvas revision = %d, want 7", promptContext.CanvasRevision)
+	}
 	if len(promptContext.CallableModels) != 1 || promptContext.CallableModels[0].Model != "kz_gpt_image2" {
 		t.Fatalf("selected callable models = %#v", promptContext.CallableModels)
 	}
-	if len(promptContext.Configuration.Skills) != 1 || promptContext.Configuration.Skills[0].Instructions != "先读取画布事实，再输出可执行分镜。" {
+	if len(promptContext.Configuration.Skills) != 1 || promptContext.Configuration.Skills[0].Instructions != "" || strings.Contains(stored.Prompt, "先读取画布事实，再输出可执行分镜。") {
 		t.Fatalf("selected skill prompt facts = %#v", promptContext.Configuration.Skills)
 	}
 }
@@ -156,8 +159,11 @@ func TestAgentRuntimeFreezesCallableMediaModelFactsWithoutProviderSecrets(t *tes
 }
 
 type agentRuntimePromptContextForTest struct {
-	Configuration  agentruntime.RunConfiguration `json:"configuration"`
-	CallableModels []struct {
+	CanvasRevision  int64                           `json:"canvasRevision"`
+	Configuration   agentruntime.RunConfiguration   `json:"configuration"`
+	LoadedSkillDirs []string                        `json:"loadedSkillDirs"`
+	ProductionPlan  *agentRuntimeProductionPlanFact `json:"productionPlan"`
+	CallableModels  []struct {
 		ChannelID             string                      `json:"channelId"`
 		Model                 string                      `json:"model"`
 		Capability            string                      `json:"capability"`
