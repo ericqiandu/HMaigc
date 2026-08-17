@@ -26,29 +26,30 @@ import (
 )
 
 type Service struct {
-	repo                 *repository.Repository
-	dataDir              string
-	cancelMu             sync.Mutex
-	registrationMu       sync.Mutex
-	emailCodeMu          sync.Mutex
-	redeemBatchMu        sync.Mutex
-	storageMu            sync.Mutex
-	storageMigrationMu   sync.Mutex
-	storageMigrationOnce sync.Once
-	sessionCreateMu      sync.Mutex
-	characterTaskMu      sync.Mutex
-	agentDriveMu         sync.Mutex
-	agentDriveCursor     string
-	siteSettingMu        sync.Mutex
-	voicePreviewGroup    singleflight.Group
-	activeCancels        map[string]context.CancelFunc
-	pendingStorage       map[string]int64
-	pendingTeamStorage   map[string]int64
-	coordinator          *runtimeCoordinator
-	runtimeErr           error
-	workerID             string
-	operationsClient     opsprotocol.Client
-	mediaDurationProbe   mediaDurationProbe
+	repo                      *repository.Repository
+	dataDir                   string
+	cancelMu                  sync.Mutex
+	registrationMu            sync.Mutex
+	emailCodeMu               sync.Mutex
+	redeemBatchMu             sync.Mutex
+	storageMu                 sync.Mutex
+	storageMigrationMu        sync.Mutex
+	storageMigrationOnce      sync.Once
+	sessionCreateMu           sync.Mutex
+	characterTaskMu           sync.Mutex
+	agentDriveMu              sync.Mutex
+	agentDriveCursor          string
+	siteSettingMu             sync.Mutex
+	voicePreviewGroup         singleflight.Group
+	activeCancels             map[string]context.CancelFunc
+	pendingStorage            map[string]int64
+	pendingTeamStorage        map[string]int64
+	coordinator               *runtimeCoordinator
+	runtimeErr                error
+	workerID                  string
+	operationsClient          opsprotocol.Client
+	mediaDurationProbe        mediaDurationProbe
+	agentRuntimeSkillResolver func(context.Context, string, string) (*UpdreamSkill, error)
 }
 
 const taskWorkerConcurrency = 3
@@ -1028,6 +1029,14 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	defer s.unregisterActiveTask(task.ID)
 
 	reconcilingCancellation := task.Status == model.TaskStatusCancelled
+	tokenBilledTask := false
+	if strings.TrimSpace(task.BillingOrderID) != "" {
+		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
+		if orderErr != nil {
+			return orderErr
+		}
+		tokenBilledTask = order.BillingMode == "token_usage"
+	}
 	if !reconcilingCancellation {
 		task.Stage = "调用生成模型"
 		task.Progress = 35
@@ -1043,15 +1052,27 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			}
 		}
 		if !billingAlreadyUncertain {
-			if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
+			var billingStartErr error
+			if tokenBilledTask {
+				billingStartErr = s.BeginTokenBillingRequest(task.BillingOrderID)
+			} else {
+				billingStartErr = s.MarkBillingRunning(task.BillingOrderID)
+			}
+			if billingStartErr != nil {
 				task.Status = model.TaskStatusFailed
 				task.Stage = "计费准备失败"
-				task.Error = taskFailureMessage(err)
+				task.Error = taskFailureMessage(billingStartErr)
 				task.CompletedAt = ptr(time.Now())
-				if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
-					return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+				action := repository.FailedTaskBillingRefund
+				reason := "计费准备失败，上游请求未发出"
+				if tokenBilledTask {
+					action = repository.FailedTaskBillingUncertain
+					reason = "Token 请求发送边界冲突，禁止重复调用上游"
 				}
-				return err
+				if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, action, reason); finalizeErr != nil {
+					return errors.Join(billingStartErr, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+				}
+				return billingStartErr
 			}
 		}
 	}
@@ -1160,7 +1181,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			_ = s.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
 		}
 	}
-	if err := s.SettleBilling(task.BillingOrderID, ""); err != nil {
+	if err := s.settleCompletedTaskBilling(ctx, task.BillingOrderID); err != nil {
 		_ = s.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
 		_ = s.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
 	}
@@ -1213,11 +1234,18 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 		return s.processStoryboardRowsTask(ctx, task)
 	}
 	if task.Type == agentRuntimeModelTaskType {
-		text, err := s.processAgentRuntimeModelText(ctx, task)
+		result, err := s.processAgentRuntimeModelText(ctx, task)
 		if err != nil {
 			return nil, nil, err
 		}
-		return map[string]interface{}{"mode": "text", "text": text}, nil, nil
+		output := map[string]interface{}{"mode": result.Mode}
+		if result.Text != "" {
+			output["text"] = result.Text
+		}
+		if result.DecisionFeedback != nil {
+			output["decisionFeedback"] = result.DecisionFeedback
+		}
+		return output, nil, nil
 	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)

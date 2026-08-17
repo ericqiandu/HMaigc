@@ -1,0 +1,56 @@
+.canvas-submit-button.ant-btn {
+    display: inline-flex !important;
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    flex: 0 0 32px;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: var(--foreground) !important;
+    color: var(--background) !important;
+    box-shadow: none !important;
+}
+
+.canvas-submit-button.ant-btn:hover:not(:disabled),
+.canvas-submit-button.ant-btn:active:not(:disabled) {
+    background: color-mix(in srgb, var(--foreground) 86%, transparent) !important;
+    color: var(--background) !important;
+}
+
+.canvas-submit-button.ant-btn:focus-visible {
+    outline: 2px solid var(--tc-color-accent-blue, #60a5fa) !important;
+    outline-offset: 2px;
+}
+
+.canvas-submit-button--stop.ant-btn,
+.canvas-submit-button--stop.ant-btn:hover,
+.canvas-submit-button--stop.ant-btn:active {
+    background: var(--status-danger) !important;
+    color: #ffffff !important;
+}
+
+.canvas-submit-button.ant-btn:disabled {
+    background: color-mix(in srgb, var(--foreground) 48%, transparent) !important;
+    color: color-mix(in srgb, var(--background) 76%, transparent) !important;
+    opacity: 1;
+}
+
+.canvas-submit-button-icon {
+    width: 14px;
+    height: 14px;
+}
+
+.canvas-submit-button-stop-icon {
+    width: 11px;
+    height: 11px;
+    fill: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .canvas-submit-button--loading .canvas-submit-button-icon {
+        animation: none !important;
+    }
+}

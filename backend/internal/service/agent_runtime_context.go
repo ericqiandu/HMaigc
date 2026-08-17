@@ -30,6 +30,10 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	if err != nil {
 		return "", err
 	}
+	models, err = filterAgentRuntimeCallableModels(models, state.Configuration.GenerationModels)
+	if err != nil {
+		return "", err
+	}
 	return encodeAgentRuntimeModelPrompt(scope, state, models)
 }
 
@@ -85,8 +89,8 @@ func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.
 	context := agentRuntimeModelContext{
 		RunID: scope.RunID, CanvasID: scope.CanvasID, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
-		Verification: state.Verification, LastToolResult: state.LastToolResult, PreviousMessage: state.FinalMessage,
-		CallableModels: models,
+		Verification: state.Verification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
+		Configuration: state.Configuration, CallableModels: models,
 	}
 	encoded, err := json.Marshal(context)
 	if err != nil {

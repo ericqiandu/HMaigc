@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Square, UserRound, Video } from "lucide-react";
+import { AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2, UserRound, Video } from "lucide-react";
 import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -14,6 +14,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { findImageModelCapabilities, imageModelMetadataPatch, normalizeImageConfigForModel } from "@/lib/image-model-capabilities";
 import { CanvasAudioComposerControls } from "./canvas-audio-composer-controls";
+import { CanvasSubmitButton } from "./canvas-submit-button";
 import { CanvasAudioTextTools } from "./canvas-audio-text-tools";
 import { CanvasResourceMentionTextarea, type CanvasResourceMentionTextareaHandle } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -282,18 +283,12 @@ export function CanvasNodePromptPanel({
                 <span className="min-w-0 truncate px-2 text-[11px] leading-4" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
-                <Button
-                    type="text"
-                    className="!inline-flex !h-8 shrink-0 !items-center !gap-1 !rounded-md !px-2.5 !text-[11px] !font-medium"
-                    danger={isRunning}
+                <CanvasSubmitButton
+                    state={isRunning ? "stop" : "ready"}
                     disabled={isSubmitDisabled}
-                    style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.node.activeStroke, color: isSubmitDisabled ? theme.node.faint : isRunning ? "#ffffff" : theme.canvas.background }}
                     onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                    aria-label={isRunning ? "停止生成" : "生成"}
-                >
-                    {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
-                    {isRunning ? "停止" : "生成"}
-                </Button>
+                    ariaLabel={isRunning ? "停止生成" : "生成"}
+                />
             </div>
         ) : (
             <div className={`canvas-media-controls-row flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
@@ -350,17 +345,12 @@ export function CanvasNodePromptPanel({
                     <span className={isImageMode ? "canvas-image-generation-cost canvas-media-meta ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost canvas-media-meta ml-auto inline-flex" : "inline-flex"}>
                         <GenerationCreditQuoteBadge state={quoteState} color={theme.node.muted} />
                     </span>
-                    <Button
-                        type="text"
-                        className="canvas-node-submit-button canvas-media-control !inline-flex !h-8 !w-8 shrink-0 !items-center !justify-center !rounded-lg !border-0 !p-0 !shadow-none"
-                        danger={isRunning}
+                    <CanvasSubmitButton
+                        state={isRunning ? "stop" : "ready"}
                         disabled={isSubmitDisabled}
-                        style={{ background: isSubmitDisabled ? theme.toolbar.itemHover : isRunning ? theme.accent.danger : theme.accent.primary, borderColor: "transparent", color: isSubmitDisabled ? theme.node.faint : "#ffffff" }}
                         onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                        aria-label={isRunning ? "停止生成" : "生成"}
-                    >
-                        {isRunning ? <Square className="size-2.5 fill-current" /> : <ArrowUp className="size-3" />}
-                    </Button>
+                        ariaLabel={isRunning ? "停止生成" : "生成"}
+                    />
                 </div>
             </div>
         );

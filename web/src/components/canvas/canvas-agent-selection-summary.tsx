@@ -15,24 +15,6 @@ type CanvasAgentSelectionSummaryProps = {
     onSkillsChange: (skills: CanvasAgentSkillSelection[]) => void;
 };
 
-type CanvasAgentSelectionState = {
-    models: CanvasAgentGenerationModels;
-    selectedSkills: CanvasAgentSkillSelection[];
-};
-
-export function removeLastCanvasAgentSelection({ models, selectedSkills }: CanvasAgentSelectionState): CanvasAgentSelectionState | null {
-    if (selectedSkills.length) {
-        return { models, selectedSkills: selectedSkills.slice(0, -1) };
-    }
-    if (models.video) {
-        return { models: { ...models, video: "" }, selectedSkills };
-    }
-    if (models.image) {
-        return { models: { ...models, image: "" }, selectedSkills };
-    }
-    return null;
-}
-
 export function CanvasAgentSelectionSummary({ config, models, selectedSkills, disabled, onModelsChange, onSkillsChange }: CanvasAgentSelectionSummaryProps) {
     const hasSelections = Boolean(models.image || models.video || selectedSkills.length);
     if (!hasSelections) return null;

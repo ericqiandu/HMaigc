@@ -42,3 +42,10 @@ func ToolPolicyFor(name ToolName) (ToolPolicy, bool) {
 		return ToolPolicy{}, false
 	}
 }
+
+func ApprovalRequiredFor(policy ToolPolicy, mode ExecutionMode) bool {
+	if !policy.ApprovalRequired {
+		return false
+	}
+	return !(mode == ExecutionAutomatic && policy.Name == ToolCanvasApplyOps && policy.RiskLevel == ToolRiskWrite && policy.Execution == ToolExecutionClient)
+}

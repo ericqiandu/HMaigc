@@ -19,7 +19,7 @@ export async function applyUserSession(payload: AuthSessionPayload) {
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         await Promise.all([useCanvasStore.persist.rehydrate(), useAssetStore.persist.rehydrate(), useConfigStore.persist.rehydrate()]);
         // Zustand 在目标 scope 没有快照时会保留旧内存，必须显式恢复该 scope 的空状态。
-        if (!persistedCanvas) useCanvasStore.setState({ projects: [] });
+        if (!persistedCanvas) useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
         if (!persistedAssets) useAssetStore.setState({ assets: [] });
         if (!persistedConfig) {
             // 只有首次配置缺失时才生成能力推荐；已有配置中的空数组代表用户明确清空。

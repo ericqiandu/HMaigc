@@ -17,7 +17,7 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 		t.Fatalf("final decision = %#v", decision)
 	}
 
-	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{"revision":3}}}`)
+	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{"revision":3},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	decision, err = agentruntime.ParseModelDecision(toolJSON)
 	if err != nil {
 		t.Fatal(err)
@@ -29,13 +29,14 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 
 func TestParseModelDecisionFailsClosed(t *testing.T) {
 	cases := map[string]string{
-		"unknown decision":  `{"kind":"route"}`,
-		"unknown field":     `{"kind":"final","extra":true,"final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
-		"two documents":     `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}} {}`,
-		"unknown tool":      `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"shell.exec","actionVersion":1,"arguments":{}}}`,
-		"missing criteria":  `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer"}}}`,
-		"both payloads":     `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}},"toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`,
-		"invalid arguments": `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":null}}`,
+		"unknown decision":      `{"kind":"route"}`,
+		"unknown field":         `{"kind":"final","extra":true,"final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
+		"two documents":         `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}} {}`,
+		"unknown tool":          `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"shell.exec","actionVersion":1,"arguments":{}}}`,
+		"missing criteria":      `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer"}}}`,
+		"both payloads":         `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}},"toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`,
+		"invalid arguments":     `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":null}}`,
+		"missing tool delivery": `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`,
 	}
 	for name, payload := range cases {
 		t.Run(name, func(t *testing.T) {

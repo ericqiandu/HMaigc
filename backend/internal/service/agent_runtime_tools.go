@@ -57,7 +57,7 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	if state.PendingToolCall == nil {
 		return nil, errors.New("agent approval tool facts are missing")
 	}
-	_, policy, err := s.frozenAgentToolCall(scope, state.PendingToolCall, agentruntime.ToolCallWaitingApproval)
+	_, policy, err := s.frozenAgentToolCall(scope, state.PendingToolCall, agentruntime.ToolCallWaitingApproval, state.Configuration.ExecutionMode)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (s *Service) CoordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 	if state.PendingToolStarted {
 		expectedStatus = agentruntime.ToolCallRunning
 	}
-	record, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus)
+	record, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus, state.Configuration.ExecutionMode)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +148,9 @@ func (s *Service) CoordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		return nil, errors.New("agent tool executor is not connected")
 	}
 	if err != nil {
+		if call.ToolName == agentruntime.ToolCanvasReadState || call.ToolName == agentruntime.ToolCanvasReadSelection {
+			return s.resolvePendingAgentToolFailure(scope, state, call, "canvas_read_invalid")
+		}
 		return nil, err
 	}
 	transition, err := agentruntime.ResolveTool(state, agentruntime.ToolResolution{
@@ -196,7 +199,7 @@ func (s *Service) agentRuntimeProgressForCurrentState(scope agentruntime.Scope, 
 	return s.resumeAgentRuntimeModelAfterTool(scope, progress)
 }
 
-func (s *Service) frozenAgentToolCall(scope agentruntime.Scope, call *agentruntime.ToolCallDecision, expectedStatus agentruntime.ToolCallStatus) (*model.AgentToolCall, agentruntime.ToolPolicy, error) {
+func (s *Service) frozenAgentToolCall(scope agentruntime.Scope, call *agentruntime.ToolCallDecision, expectedStatus agentruntime.ToolCallStatus, executionMode agentruntime.ExecutionMode) (*model.AgentToolCall, agentruntime.ToolPolicy, error) {
 	if call == nil {
 		return nil, agentruntime.ToolPolicy{}, errors.New("agent tool facts are missing")
 	}
@@ -205,13 +208,23 @@ func (s *Service) frozenAgentToolCall(scope agentruntime.Scope, call *agentrunti
 		return nil, agentruntime.ToolPolicy{}, err
 	}
 	policy, ok := agentruntime.ToolPolicyFor(call.ToolName)
+	approvalRequired := agentruntime.ApprovalRequiredFor(policy, executionMode)
 	if !ok || record.ToolName != string(call.ToolName) || record.Status != expectedStatus ||
 		record.RiskLevel != policy.RiskLevel || record.RequiredAccess != policy.RequiredAccess ||
-		record.ApprovalRequired != policy.ApprovalRequired || record.InputJSON != string(call.Arguments) ||
+		record.ApprovalRequired != approvalRequired || !equalAgentToolArguments(record.InputJSON, call.Arguments) ||
 		record.IdempotencyKey != scope.RunID+":"+call.ToolCallID+":"+strconv.Itoa(call.ActionVersion) {
 		return nil, agentruntime.ToolPolicy{}, errors.New("agent tool frozen facts conflict")
 	}
 	return record, policy, nil
+}
+
+func equalAgentToolArguments(stored string, current json.RawMessage) bool {
+	var storedCompact bytes.Buffer
+	var currentCompact bytes.Buffer
+	if json.Compact(&storedCompact, []byte(stored)) != nil || json.Compact(&currentCompact, current) != nil {
+		return false
+	}
+	return bytes.Equal(storedCompact.Bytes(), currentCompact.Bytes())
 }
 
 func authorizeAgentToolScope(scope agentruntime.Scope, project *model.CanvasProject, access CanvasAccessView, required agentruntime.AccessLevel) error {
@@ -308,7 +321,7 @@ func (s *Service) coordinatePendingAgentCanvasMutation(
 			}
 			return s.agentRuntimeProgressForCurrentState(scope, state)
 		}
-		record, _, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallRunning)
+		record, _, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallRunning, state.Configuration.ExecutionMode)
 		if err != nil {
 			return nil, err
 		}
@@ -390,9 +403,23 @@ func (s *Service) resolvePendingAgentToolFailure(
 	call *agentruntime.ToolCallDecision,
 	failureCode string,
 ) (*AgentRuntimeProgress, error) {
+	return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{})
+}
+
+func (s *Service) resolvePendingAgentToolFailureWithOutput(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	call *agentruntime.ToolCallDecision,
+	failureCode string,
+	outputValue map[string]string,
+) (*AgentRuntimeProgress, error) {
+	output, err := json.Marshal(outputValue)
+	if err != nil {
+		return nil, err
+	}
 	resolved, err := agentruntime.ResolveTool(state, agentruntime.ToolResolution{
 		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
-		Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: failureCode,
+		Succeeded: false, Output: output, ErrorCode: failureCode,
 	})
 	if err != nil {
 		return nil, err

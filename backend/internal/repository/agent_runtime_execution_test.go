@@ -19,7 +19,8 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	now := time.Now().UTC()
 	input := InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-record-1", ModelKey: "gpt-5.5",
-		MaxSteps: 4, ToolSchemaVersion: 1, UserMessage: "请根据当前画布继续完成任务", Now: now,
+		MaxSteps: 4, ToolSchemaVersion: 1, UserMessage: "请根据当前画布继续完成任务",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}
 	initialized, err := repo.InitializeAgentRun(input)
 	if err != nil {
@@ -71,7 +72,8 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "读取当前画布", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, UserMessage: "读取当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +83,7 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
 		ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasReadState,
-		ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`),
+		ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 	}}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
 	if err != nil {
@@ -128,7 +130,8 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "修改当前画布", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, UserMessage: "修改当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +143,7 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
-			Arguments: []byte(`{"baseRevision":7,"patch":{"deleteNodeIds":["obsolete"]}}`),
+			Arguments: []byte(`{"baseRevision":7,"patch":{"deleteNodeIds":["obsolete"]}}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})
 	if err != nil {
@@ -189,7 +192,8 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "生成一张图片", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, UserMessage: "生成一张图片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +204,7 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: "call-generate", ToolName: agentruntime.ToolGenerationSubmit,
-			ActionVersion: 1, Arguments: []byte(`{"prompt":"test"}`),
+			ActionVersion: 1, Arguments: []byte(`{"prompt":"test"}`), ExpectedDelivery: repositoryTestImageDelivery(),
 		},
 	}})
 	if err != nil {
@@ -224,6 +228,29 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	}
 	if call.Status != agentruntime.ToolCallPending || call.ApprovalDecision != agentruntime.ToolApprovalApproved || call.ApprovalByUserID != scope.ActorUserID || call.ApprovalDecidedAt == nil {
 		t.Fatalf("approved call = %#v", call)
+	}
+}
+
+func repositoryTestAnswerDelivery() agentruntime.ExpectedDelivery {
+	return agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+}
+
+func repositoryTestCanvasDelivery() agentruntime.ExpectedDelivery {
+	return agentruntime.ExpectedDelivery{
+		Kind: agentruntime.DeliveryCanvasChange, TargetCanvasID: "agent-canvas-1",
+		RequiredArtifacts:  []agentruntime.ArtifactKind{agentruntime.ArtifactCanvasRevision},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasRevision}},
+	}
+}
+
+func repositoryTestImageDelivery() agentruntime.ExpectedDelivery {
+	return agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts:  []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactImage}},
 	}
 }
 

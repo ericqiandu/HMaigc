@@ -190,7 +190,6 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
     onOpenAssets: () => void;
     onOpenProjectCharacters: () => void;
 }) {
-    const colorTheme = useThemeStore((state) => state.theme);
     const simpleMode = workspaceMode === "simple";
     const nodeCommands: CanvasCreateCommand[] = [
         { id: "text", label: "文本", icon: <Type />, onClick: onAddText },
@@ -215,7 +214,7 @@ function AddNodeMenu({ x, theme, workspaceMode, isProjectLinked, onAddText, onCh
     ];
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: aceternityMotion.duration.instant }} className="pointer-events-auto absolute bottom-[124px] z-40 w-[196px] max-w-[calc(100vw-24px)] -translate-x-1/2 sm:bottom-[64px]" style={{ left: x || "50%" }}>
-            <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="canvas-overlay-panel canvas-create-panel aceternity-floating-panel hide-scrollbar max-h-[calc(100vh-56px)] overflow-x-hidden overflow-y-auto border p-2 backdrop-blur-2xl" style={{ background: colorTheme === "dark" ? "#262626" : "#ffffff", borderColor: colorTheme === "dark" ? "#363636" : "#e5e7eb", color: theme.node.text, boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.10)" }} onWheel={(event) => event.stopPropagation()}>
+            <SpotlightSurface spotlightColor={theme.toolbar.itemHover} initial={{ y: 6, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 4, scale: 0.98 }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="canvas-overlay-panel canvas-command-menu canvas-create-panel aceternity-floating-panel hide-scrollbar max-h-[calc(100vh-56px)] overflow-x-hidden overflow-y-auto backdrop-blur-2xl" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
                 <CanvasCreateCommandSections nodeCommands={nodeCommands} resourceCommands={resourceCommands} />
             </SpotlightSurface>
         </motion.div>

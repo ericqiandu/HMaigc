@@ -70,6 +70,8 @@ type providerConfig struct {
 	AudioChannel                   string `json:"audioChannel"`
 	AudioInstructions              string `json:"audioInstructions"`
 	SystemPrompt                   string `json:"systemPrompt"`
+	MaxOutputTokens                int64  `json:"maxOutputTokens,omitempty"`
+	JSONOutput                     bool   `json:"jsonOutput,omitempty"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
@@ -96,6 +98,12 @@ type imageResponse struct {
 
 type providerError struct {
 	Message string `json:"message"`
+}
+
+type kuaiziChatCompletionResult struct {
+	Text              string
+	ProviderRequestID string
+	Usage             TokenUsageFact
 }
 
 type providerHTTPError struct {
@@ -618,34 +626,69 @@ func runChatCompletionsTextTask(ctx context.Context, input canvasGenerationInput
 }
 
 func runKuaiziChatCompletionsTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	result, err := runKuaiziChatCompletion(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"mode": "text", "text": result.Text}, nil
+}
+
+func runKuaiziChatCompletion(ctx context.Context, input canvasGenerationInput) (kuaiziChatCompletionResult, error) {
 	var payload map[string]interface{}
+	data, _, err := kuaiziChatCompletionsRequestBody(input)
+	if err != nil {
+		return kuaiziChatCompletionResult{}, err
+	}
+	req, err := http.NewRequestWithContext(withKuaiziRequest(ctx), http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
+	if err != nil {
+		return kuaiziChatCompletionResult{}, err
+	}
+	req.Header.Set("ApiKey", input.Config.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	if err := doJSON(req, &payload); err != nil {
+		return kuaiziChatCompletionResult{}, err
+	}
+	text := extractChatCompletionText(payload)
+	if text == "" {
+		return kuaiziChatCompletionResult{}, errors.New("文本接口没有返回内容")
+	}
+	result := kuaiziChatCompletionResult{Text: text, ProviderRequestID: strings.TrimSpace(stringField(payload, "id"))}
+	if usage, ok := payload["usage"].(map[string]interface{}); ok {
+		result.Usage = TokenUsageFact{
+			InputTokens: firstInt64(usage, "input_tokens", "prompt_tokens"), OutputTokens: firstInt64(usage, "output_tokens", "completion_tokens"), Available: true,
+		}
+		if details, detailsOK := usage["input_tokens_details"].(map[string]interface{}); detailsOK {
+			result.Usage.CachedTokens = firstInt64(details, "cached_tokens")
+		}
+		if details, detailsOK := usage["prompt_tokens_details"].(map[string]interface{}); detailsOK && result.Usage.CachedTokens == 0 {
+			result.Usage.CachedTokens = firstInt64(details, "cached_tokens")
+		}
+	}
+	return result, nil
+}
+
+func kuaiziChatCompletionsRequestBody(input canvasGenerationInput) ([]byte, int64, error) {
 	messages := []map[string]interface{}{}
 	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
 		messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
 	}
 	userContent, err := textChatContent(input)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	messages = append(messages, map[string]interface{}{"role": "user", "content": userContent})
-	data, err := json.Marshal(map[string]interface{}{"model": input.Config.Model, "messages": messages})
+	bodyFields := map[string]interface{}{"model": input.Config.Model, "messages": messages}
+	if input.Config.JSONOutput {
+		bodyFields["response_format"] = map[string]string{"type": "json_object"}
+	}
+	body, err := json.Marshal(bodyFields)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	req, err := http.NewRequestWithContext(withKuaiziRequest(ctx), http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
-	if err != nil {
-		return nil, err
+	if input.Config.MaxOutputTokens <= 0 {
+		return body, 0, nil
 	}
-	req.Header.Set("ApiKey", input.Config.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	if err := doJSON(req, &payload); err != nil {
-		return nil, err
-	}
-	text := extractChatCompletionText(payload)
-	if text == "" {
-		return nil, errors.New("文本接口没有返回内容")
-	}
-	return map[string]interface{}{"mode": "text", "text": text}, nil
+	return PrepareTokenBilledChatRequest(body, input.Config.MaxOutputTokens)
 }
 
 func textResponseInput(input canvasGenerationInput) (interface{}, error) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -13,9 +14,11 @@ import (
 )
 
 type StartScopedAgentRunInput struct {
+	Context         context.Context
 	ClientRequestID string
 	UserMessage     string
 	MaxSteps        int
+	Configuration   AgentRuntimeConfigurationInput
 }
 
 type AgentRuntimeView struct {
@@ -58,7 +61,8 @@ func (s *Service) StartScopedAgentRun(actor *model.User, threadID string, input 
 		return nil, err
 	}
 	progress, err := s.StartAgentRuntime(StartAgentRuntimeInput{
-		Scope: scope, ClientRequestID: input.ClientRequestID, UserMessage: input.UserMessage, MaxSteps: input.MaxSteps,
+		Context: input.Context, Scope: scope, ClientRequestID: input.ClientRequestID,
+		UserMessage: input.UserMessage, MaxSteps: input.MaxSteps, Configuration: input.Configuration,
 	})
 	if err != nil {
 		return nil, err

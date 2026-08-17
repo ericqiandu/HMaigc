@@ -124,6 +124,9 @@ func (s *Service) coordinatePendingAgentGenerationSubmit(
 	if err != nil {
 		return s.resolvePendingAgentToolFailure(scope, state, call, "generation_request_invalid")
 	}
+	if err := validateAgentGenerationSubmitContract(state.Configuration, arguments); err != nil {
+		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "generation_request_invalid", map[string]string{"reason": err.Error()})
+	}
 	if !state.PendingToolStarted {
 		started, beginErr := agentruntime.BeginToolExecution(state, agentruntime.ToolExecution{
 			ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
@@ -140,7 +143,7 @@ func (s *Service) coordinatePendingAgentGenerationSubmit(
 			state.PendingToolCall.ToolCallID != call.ToolCallID || state.PendingToolCall.ActionVersion != call.ActionVersion || !state.PendingToolStarted {
 			return s.agentGenerationCompletedToolProgress(scope, state, call)
 		}
-		record, _, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallRunning)
+		record, _, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallRunning, state.Configuration.ExecutionMode)
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +166,11 @@ func (s *Service) coordinatePendingAgentGenerationSubmit(
 			if authErr.Status == http.StatusServiceUnavailable {
 				failureCode = "generation_unavailable"
 			}
-			return s.resolvePendingAgentToolFailure(scope, state, call, failureCode)
+			reason := strings.TrimSpace(authErr.Message)
+			if len([]rune(reason)) > 240 {
+				reason = string([]rune(reason)[:240])
+			}
+			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": reason})
 		}
 		return nil, err
 	}
@@ -197,6 +204,58 @@ func (s *Service) coordinatePendingAgentGenerationSubmit(
 		return nil, err
 	}
 	return s.agentGenerationCompletedToolProgress(scope, progress.State, call)
+}
+
+func validateAgentGenerationSubmitContract(configuration agentruntime.RunConfiguration, arguments agentGenerationSubmitArguments) error {
+	config, ok := arguments.Input["config"].(map[string]interface{})
+	if !ok {
+		return errors.New("generation config must be an object")
+	}
+	channelID, channelOK := config["channelId"].(string)
+	modelKey, modelOK := config["model"].(string)
+	channelID = strings.TrimSpace(channelID)
+	modelKey = strings.TrimSpace(modelKey)
+	if !channelOK || !modelOK || channelID == "" || modelKey == "" {
+		return errors.New("generation config requires channelId and model")
+	}
+	switch arguments.Type {
+	case "canvas_image":
+		selection := configuration.GenerationModels.Image
+		if selection == nil || channelID != selection.ChannelID || modelKey != selection.Model {
+			return errors.New("image generation must use the frozen selected model")
+		}
+		allowed := map[string]struct{}{
+			"channelId": {}, "model": {}, "size": {}, "quality": {}, "count": {}, "transparentBackground": {},
+		}
+		for field := range config {
+			if _, exists := allowed[field]; !exists {
+				return errors.New("image generation config contains an unsupported field")
+			}
+		}
+		for _, field := range []string{"size", "count"} {
+			value, valid := config[field].(string)
+			if !valid || strings.TrimSpace(value) == "" {
+				return errors.New("image generation config requires size and count strings")
+			}
+		}
+		if value, exists := config["quality"]; exists {
+			quality, valid := value.(string)
+			if !valid || strings.TrimSpace(quality) == "" {
+				return errors.New("image generation config quality must be a non-empty string when provided")
+			}
+		}
+	case "canvas_video":
+		selection := configuration.GenerationModels.Video
+		if selection == nil || channelID != selection.ChannelID || modelKey != selection.Model {
+			return errors.New("video generation must use the frozen selected model")
+		}
+	case "canvas_audio":
+		// Audio has no composer-level frozen selection yet; its formal task
+		// contract remains the authoritative validator.
+	default:
+		return errors.New("generation task type is invalid")
+	}
+	return nil
 }
 
 func (s *Service) agentGenerationCompletedToolProgress(scope agentruntime.Scope, state agentruntime.RuntimeState, call *agentruntime.ToolCallDecision) (*AgentRuntimeProgress, error) {

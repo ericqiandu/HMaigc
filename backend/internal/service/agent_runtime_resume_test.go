@@ -22,7 +22,7 @@ func TestAgentRuntimeRepairCreatesExactlyOneNextModelTask(t *testing.T) {
 	server, calls := newAgentRuntimeDecisionServer(t, decision)
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-repair", UserMessage: "生成一张图片", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-repair", UserMessage: "生成一张图片", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	started, err := svc.StartAgentRuntime(input)
 	if err != nil {
 		t.Fatal(err)
@@ -62,10 +62,10 @@ func TestAgentRuntimeRepairCreatesExactlyOneNextModelTask(t *testing.T) {
 
 func TestAgentRuntimeToolDecisionWaitsWithoutSubmittingAnotherModelTask(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
-	server, calls := newAgentRuntimeDecisionServer(t, decision)
+	server, calls := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-tool", UserMessage: "读取画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-tool", UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +92,51 @@ func TestAgentRuntimeToolDecisionWaitsWithoutSubmittingAnotherModelTask(t *testi
 	}
 }
 
-func TestDriveAgentRunsResumesModelDecisionAndExecutesServerTool(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-drive-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
-	server, calls := newAgentRuntimeDecisionServer(t, decision)
+func TestAgentRuntimeRepairsReusedToolIdentityWithoutRepositoryConflict(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
+	decision = agentRuntimeToolDecisionWithDelivery(t, decision, agentRuntimeTestAnswerDelivery())
+	server := newAgentRuntimeDecisionSequenceServer(t, decision, decision)
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-drive-tool", UserMessage: "读取画布", MaxSteps: 4}
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-reused-tool-identity", UserMessage: "读取两次画布", MaxSteps: 5, Configuration: guidedAgentRuntimeConfigurationInput()}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.StepNumber != 2 || progress.State.LastToolResult == nil ||
+		progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "tool_identity_reused" || progress.ModelTask == nil {
+		t.Fatalf("reused tool identity repair = %#v", progress)
+	}
+	var toolCallCount int64
+	if err := db.Model(&model.AgentToolCall{}).Where("run_id = ? AND tool_call_id = ? AND action_version = ?", scope.RunID, "call-read-state", 1).Count(&toolCallCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 1 {
+		t.Fatalf("reused tool identity persisted %d records", toolCallCount)
+	}
+}
+
+func TestDriveAgentRunsResumesModelDecisionAndExecutesServerTool(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-drive-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
+	server, calls := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-drive-tool", UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -124,13 +162,90 @@ func TestDriveAgentRunsResumesModelDecisionAndExecutesServerTool(t *testing.T) {
 	}
 }
 
+func TestDriveAgentRunsTerminatesRunWhenNextModelReservationHasInsufficientCredits(t *testing.T) {
+	decision := `{"kind":"final","final":{"message":"需要先生成图片。","expectedDelivery":{"kind":"generated_asset","requiredArtifacts":["image"],"completionCriteria":[{"fact":"artifact","artifact":"image"}]}}}`
+	server, calls := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "client-drive-insufficient-credits", UserMessage: "生成一张图片", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", scope.ActorUserID).Update("available_microcredits", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatalf("drive insufficient-credit run: %v", err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunFailed || state.FailureCode != "insufficient_credits" {
+		t.Fatalf("insufficient-credit run state = %#v", state)
+	}
+	var taskCount int64
+	var billingCount int64
+	if err := db.Model(&model.Task{}).Where("user_id = ? AND type = ?", scope.ActorUserID, agentRuntimeModelTaskType).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("user_id = ? AND scene = ?", scope.ActorUserID, "agent_runtime_model").Count(&billingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 1 || billingCount != 1 || calls.Load() != 1 {
+		t.Fatalf("insufficient-credit facts: tasks=%d billings=%d calls=%d", taskCount, billingCount, calls.Load())
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatalf("replay terminal run: %v", err)
+	}
+}
+
+func TestDriveAgentRunsRecordsInvalidReadArgumentsAndLetsModelRepair(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-invalid-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{"canvasId":"runtime-canvas"}}}`
+	server, calls := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-invalid-read-tool", UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DriveAgentRuns(10); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "canvas_read_invalid" || progress.ModelTask == nil {
+		t.Fatalf("repair progress = %#v", progress)
+	}
+	record, err := svc.repo.AgentToolCallForScope(input.Scope, "call-invalid-read-state", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != agentruntime.ToolCallFailed || record.ErrorCode != "canvas_read_invalid" || calls.Load() != 1 {
+		t.Fatalf("failed read facts = %#v calls=%d", record, calls.Load())
+	}
+}
+
 func TestDriveAgentRunsTerminatesRunAfterCanvasAccessIsRevoked(t *testing.T) {
-	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"tool_call","toolCall":{"toolCallId":"call-revoked-selection","toolName":"canvas.read_selection","actionVersion":1,"arguments":{}}}`)
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"tool_call","toolCall":{"toolCallId":"call-revoked-selection","toolName":"canvas.read_selection","actionVersion":1,"arguments":{}}}`, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-revoked-scope", UserMessage: "读取事实", MaxSteps: 4}); err != nil {
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-revoked-scope", UserMessage: "读取事实", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ProcessNextTask(); err != nil {
@@ -183,7 +298,7 @@ func TestCoordinatePendingAgentReadToolsReauthorizesCanvasAndResumesModel(t *tes
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			server, _ := newAgentRuntimeDecisionServer(t, testCase.decision)
+			server, _ := newAgentRuntimeDecisionServer(t, testCase.decision, agentRuntimeTestAnswerDelivery())
 			defer server.Close()
 			svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 			now := time.Now().UTC()
@@ -195,7 +310,7 @@ func TestCoordinatePendingAgentReadToolsReauthorizesCanvasAndResumesModel(t *tes
 			if err := db.Save(&project).Error; err != nil {
 				t.Fatal(err)
 			}
-			input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-" + strings.ReplaceAll(testCase.name, " ", "-"), UserMessage: "读取画布", MaxSteps: 4}
+			input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-" + strings.ReplaceAll(testCase.name, " ", "-"), UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 			if _, err := svc.StartAgentRuntime(input); err != nil {
 				t.Fatal(err)
 			}
@@ -236,12 +351,15 @@ func TestCoordinatePendingAgentReadToolsReauthorizesCanvasAndResumesModel(t *tes
 }
 
 func TestSubmitAgentToolApprovalRequiresExactFrozenIdentity(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply","toolName":"canvas.apply_ops","actionVersion":3,"arguments":{"baseRevision":7,"ops":[]}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply","toolName":"canvas.apply_ops","actionVersion":3,"arguments":{
+		"baseRevision": 7,
+		"ops": []
+	}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-approval", UserMessage: "修改画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-approval", UserMessage: "修改画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +372,11 @@ func TestSubmitAgentToolApprovalRequiresExactFrozenIdentity(t *testing.T) {
 	}
 	if waiting.State.Status != agentruntime.RunWaitingApproval {
 		t.Fatalf("approval state = %#v", waiting.State)
+	}
+	if err := db.Model(&model.AgentToolCall{}).
+		Where("run_id = ? AND tool_call_id = ? AND action_version = ?", input.Scope.RunID, "call-apply", 3).
+		Update("input_json", "{\n  \"baseRevision\": 7,\n  \"ops\": []\n}").Error; err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Model(&model.CanvasProject{}).Where("id = ?", input.Scope.CanvasID).Update("user_id", "another-user").Error; err != nil {
 		t.Fatal(err)
@@ -293,12 +416,12 @@ func TestSubmitAgentToolApprovalRequiresExactFrozenIdentity(t *testing.T) {
 
 func TestCoordinatePendingAgentCanvasMutationCommitsFrozenPatchAndResumesModel(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply-title","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"agent-title","type":"text","data":{"text":"第一幕"}}]}}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-agent-canvas-write", UserMessage: "在画布加入第一幕标题", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-agent-canvas-write", UserMessage: "在画布加入第一幕标题", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -355,14 +478,56 @@ func TestCoordinatePendingAgentCanvasMutationCommitsFrozenPatchAndResumesModel(t
 	}
 }
 
-func TestCoordinatePendingAgentCanvasMutationReportsRevisionConflictForModelRepair(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-stale-apply","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"stale-node","type":"text"}]}}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+func TestCoordinatePendingAgentCanvasMutationAutomaticModeUsesEffectiveApprovalPolicy(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-auto-apply-title","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"agent-auto-title","type":"text","data":{"text":"自动模式标题"}}]}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-stale-agent-write", UserMessage: "增加节点", MaxSteps: 4}
+	input := StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "client-agent-auto-canvas-write", UserMessage: "在画布加入自动模式标题", MaxSteps: 4,
+		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.State.Status != agentruntime.RunWaitingTool || waiting.State.PendingToolCall == nil {
+		t.Fatalf("automatic write state = %#v", waiting.State)
+	}
+	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "call-auto-apply-title", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded {
+		t.Fatalf("automatic canvas mutation progress = %#v", progress)
+	}
+	project, err := svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Revision != 8 || !strings.Contains(project.PayloadJSON, `"id":"agent-auto-title"`) {
+		t.Fatalf("automatic canvas mutation project = %#v", project)
+	}
+}
+
+func TestCoordinatePendingAgentCanvasMutationReportsRevisionConflictForModelRepair(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-stale-apply","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"stale-node","type":"text"}]}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-stale-agent-write", UserMessage: "增加节点", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -417,12 +582,12 @@ func TestCoordinatePendingAgentCanvasMutationReportsRevisionConflictForModelRepa
 
 func TestCoordinatePendingAgentCanvasMutationRecoversAfterCommittedCanvasBeforeToolResult(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-crash-recovery","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"patch":{"upsertNodes":[{"id":"recovered-node","type":"text"}]}}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-agent-crash-recovery", UserMessage: "增加可恢复节点", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-agent-crash-recovery", UserMessage: "增加可恢复节点", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -493,12 +658,12 @@ func TestCoordinatePendingAgentCanvasMutationRecoversAfterCommittedCanvasBeforeT
 
 func TestCoordinatePendingAgentCanvasMutationRejectsLegacyOpsShapeWithoutCompatibilityPath(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-legacy-ops","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"ops":[]}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-legacy-agent-ops", UserMessage: "修改画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-legacy-agent-ops", UserMessage: "修改画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +699,7 @@ func TestCoordinatePendingAgentCanvasMutationRejectsLegacyOpsShapeWithoutCompati
 
 func TestCoordinatePendingAgentToolRejectsRevokedCanvasAccess(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-read-state","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	now := time.Now().UTC()
@@ -544,7 +709,7 @@ func TestCoordinatePendingAgentToolRejectsRevokedCanvasAccess(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-revoked", UserMessage: "读取画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-revoked", UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -585,11 +750,11 @@ func createAgentRuntimeCanvas(t *testing.T, db *gorm.DB) {
 
 func TestConcurrentAgentToolApprovalDoesNotAcknowledgeOppositeDecision(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-apply","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{"baseRevision":7,"ops":[]}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestCanvasDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-approval-race", UserMessage: "修改画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-approval-race", UserMessage: "修改画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +822,7 @@ func TestConcurrentAgentRuntimeResumeCommitsOneTerminalTransition(t *testing.T) 
 	server, calls := newAgentRuntimeDecisionServer(t, decision)
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-concurrent", UserMessage: "给出答案", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-concurrent", UserMessage: "给出答案", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -696,8 +861,14 @@ func TestConcurrentAgentRuntimeResumeCommitsOneTerminalTransition(t *testing.T) 
 	}
 }
 
-func newAgentRuntimeDecisionServer(t *testing.T, decision string) (*httptest.Server, *atomic.Int32) {
+func newAgentRuntimeDecisionServer(t *testing.T, decision string, expected ...agentruntime.ExpectedDelivery) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	if len(expected) > 1 {
+		t.Fatal("test decision accepts at most one expected delivery")
+	}
+	if len(expected) == 1 {
+		decision = agentRuntimeToolDecisionWithDelivery(t, decision, expected[0])
+	}
 	if _, err := agentruntime.ParseModelDecision([]byte(decision)); err != nil {
 		t.Fatalf("invalid test decision: %v", err)
 	}
@@ -713,6 +884,58 @@ func newAgentRuntimeDecisionServer(t *testing.T, decision string) (*httptest.Ser
 		}
 	}))
 	return server, calls
+}
+
+func agentRuntimeToolDecisionWithDelivery(t *testing.T, payload string, expected agentruntime.ExpectedDelivery) string {
+	t.Helper()
+	var envelope struct {
+		Kind     agentruntime.DecisionKind `json:"kind"`
+		ToolCall struct {
+			ToolCallID    string                `json:"toolCallId"`
+			ToolName      agentruntime.ToolName `json:"toolName"`
+			ActionVersion int                   `json:"actionVersion"`
+			Arguments     json.RawMessage       `json:"arguments"`
+		} `json:"toolCall"`
+	}
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		t.Fatalf("decode test tool decision: %v", err)
+	}
+	decision := agentruntime.ModelDecision{
+		Kind: envelope.Kind,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: envelope.ToolCall.ToolCallID, ToolName: envelope.ToolCall.ToolName,
+			ActionVersion: envelope.ToolCall.ActionVersion, Arguments: envelope.ToolCall.Arguments,
+			ExpectedDelivery: expected,
+		},
+	}
+	encoded, err := json.Marshal(decision)
+	if err != nil {
+		t.Fatalf("encode test tool decision: %v", err)
+	}
+	return string(encoded)
+}
+
+func agentRuntimeTestAnswerDelivery() agentruntime.ExpectedDelivery {
+	return agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+}
+
+func agentRuntimeTestImageDelivery() agentruntime.ExpectedDelivery {
+	return agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts:  []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactImage}},
+	}
+}
+
+func agentRuntimeTestCanvasDelivery() agentruntime.ExpectedDelivery {
+	return agentruntime.ExpectedDelivery{
+		Kind: agentruntime.DeliveryCanvasChange, TargetCanvasID: "runtime-canvas",
+		RequiredArtifacts:  []agentruntime.ArtifactKind{agentruntime.ArtifactCanvasRevision},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasRevision}},
+	}
 }
 
 type agentRuntimeChatResponse struct {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -34,10 +35,12 @@ func agentRuntimeModelRunID(operation string) (string, bool) {
 const agentRuntimeToolSchemaVersion = 1
 
 type StartAgentRuntimeInput struct {
+	Context         context.Context
 	Scope           agentruntime.Scope
 	ClientRequestID string
 	UserMessage     string
 	MaxSteps        int
+	Configuration   AgentRuntimeConfigurationInput
 }
 
 type AgentRuntimeProgress struct {
@@ -53,16 +56,18 @@ type agentRuntimeModelTaskInput struct {
 }
 
 type agentRuntimeModelContext struct {
-	RunID            string                             `json:"runId"`
-	CanvasID         string                             `json:"canvasId"`
-	StepNumber       int                                `json:"stepNumber"`
-	MaxSteps         int                                `json:"maxSteps"`
-	UserMessage      string                             `json:"userMessage"`
-	ExpectedDelivery *agentruntime.ExpectedDelivery     `json:"expectedDelivery,omitempty"`
-	Verification     *agentruntime.DeliveryVerification `json:"deliveryVerification,omitempty"`
-	LastToolResult   *agentruntime.ToolResult           `json:"lastToolResult,omitempty"`
-	PreviousMessage  string                             `json:"previousMessage,omitempty"`
-	CallableModels   []agentRuntimeCallableModelFact    `json:"callableModels"`
+	RunID            string                              `json:"runId"`
+	CanvasID         string                              `json:"canvasId"`
+	StepNumber       int                                 `json:"stepNumber"`
+	MaxSteps         int                                 `json:"maxSteps"`
+	UserMessage      string                              `json:"userMessage"`
+	ExpectedDelivery *agentruntime.ExpectedDelivery      `json:"expectedDelivery,omitempty"`
+	Verification     *agentruntime.DeliveryVerification  `json:"deliveryVerification,omitempty"`
+	LastToolResult   *agentruntime.ToolResult            `json:"lastToolResult,omitempty"`
+	DecisionFeedback *agentruntime.ModelDecisionFeedback `json:"decisionFeedback,omitempty"`
+	PreviousMessage  string                              `json:"previousMessage,omitempty"`
+	Configuration    agentruntime.RunConfiguration       `json:"configuration"`
+	CallableModels   []agentRuntimeCallableModelFact     `json:"callableModels"`
 }
 
 func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntimeProgress, error) {
@@ -87,6 +92,10 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	scope.RunID = record.Run.ID
 	run := record.Run
 	if run.MaxSteps == 0 {
+		configuration, resolveErr := s.resolveAgentRuntimeConfiguration(input.Context, input.Scope.ActorUserID, input.Configuration)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
 		selected, selectErr := s.agentRuntimeDefaultModel()
 		if selectErr != nil {
 			return nil, selectErr
@@ -94,7 +103,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 		initialized, initializeErr := s.repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 			Scope: scope, ModelRecordID: selected.ID, ModelKey: selected.ModelKey,
 			MaxSteps: input.MaxSteps, ToolSchemaVersion: agentRuntimeToolSchemaVersion,
-			UserMessage: input.UserMessage, Now: time.Now().UTC(),
+			UserMessage: input.UserMessage, Configuration: configuration, Now: time.Now().UTC(),
 		})
 		if initializeErr != nil {
 			return nil, initializeErr
@@ -105,7 +114,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if err != nil {
 		return nil, err
 	}
-	if state.UserMessage != input.UserMessage || state.MaxSteps != input.MaxSteps {
+	if state.UserMessage != input.UserMessage || state.MaxSteps != input.MaxSteps || !agentRuntimeConfigurationMatchesInput(state.Configuration, input.Configuration) {
 		return nil, errors.New("agent runtime request facts conflict")
 	}
 	switch state.Status {
@@ -160,11 +169,54 @@ func (s *Service) ResumeAgentRuntime(scope agentruntime.Scope) (*AgentRuntimePro
 	}
 	decision, err := parseAgentRuntimeModelTaskResult(task.ResultJSON)
 	if err != nil {
+		var rejected *agentRuntimeModelDecisionRejectedError
+		if errors.As(err, &rejected) {
+			transition, rejectErr := agentruntime.RejectModelDecision(state, rejected.feedback)
+			if rejectErr != nil {
+				return nil, rejectErr
+			}
+			progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
+			if commitErr != nil {
+				return nil, commitErr
+			}
+			if progress.State.Status == agentruntime.RunRunning {
+				nextTask, taskErr := s.ensureAgentRuntimeModelTask(scope, progress.Run, progress.State)
+				if taskErr != nil {
+					return nil, taskErr
+				}
+				progress.ModelTask = taskForOutput(*nextTask)
+			}
+			return progress, nil
+		}
 		transition, transitionErr := agentruntime.Fail(state, "model_decision_invalid")
 		if transitionErr != nil {
 			return nil, errors.Join(err, transitionErr)
 		}
 		return s.commitAgentRuntimeState(scope, state, transition)
+	}
+	if decision.ToolCall != nil {
+		_, lookupErr := s.repo.AgentToolCallForScope(scope, decision.ToolCall.ToolCallID, decision.ToolCall.ActionVersion)
+		switch {
+		case lookupErr == nil:
+			transition, rejectErr := agentruntime.RejectReusedToolIdentity(state, *decision.ToolCall)
+			if rejectErr != nil {
+				return nil, rejectErr
+			}
+			progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
+			if commitErr != nil {
+				return nil, commitErr
+			}
+			if progress.State.Status == agentruntime.RunRunning {
+				nextTask, taskErr := s.ensureAgentRuntimeModelTask(scope, progress.Run, progress.State)
+				if taskErr != nil {
+					return nil, taskErr
+				}
+				progress.ModelTask = taskForOutput(*nextTask)
+			}
+			return progress, nil
+		case !errors.Is(lookupErr, gorm.ErrRecordNotFound):
+			return nil, lookupErr
+		}
 	}
 	finalMessage := ""
 	if decision.Final != nil {
@@ -256,7 +308,31 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err != nil {
 		return nil, err
 	}
-	config := providerConfig{ChannelID: item.ChannelID, Model: item.ModelKey, SystemPrompt: agentRuntimeSystemPrompt}
+	config := providerConfig{ChannelID: item.ChannelID, Model: item.ModelKey, SystemPrompt: agentRuntimeSystemPrompt, JSONOutput: true}
+	tokenPricing, tokenBilled, err := s.ProxyTokenBillingConfig(scope.ActorUserID, item.ChannelID, item.ModelKey)
+	if err != nil {
+		return nil, err
+	}
+	var tokenReservation TokenBillingReservation
+	if tokenBilled {
+		channel, channelErr := s.repo.SystemChannel(item.ChannelID)
+		if channelErr != nil {
+			return nil, channelErr
+		}
+		runtime, runtimeErr := s.ResolveSystemProxyRuntime(channel, item.ModelKey)
+		if runtimeErr != nil {
+			return nil, runtimeErr
+		}
+		config.MaxOutputTokens = tokenPricing.MaxOutputTokens
+		_, estimatedInputTokens, requestErr := kuaiziChatCompletionsRequestBody(canvasGenerationInput{Mode: "text", Prompt: prompt, Config: config})
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		tokenReservation = TokenBillingReservation{
+			TaskID: taskID, EstimatedInputTokens: estimatedInputTokens, MaxOutputTokens: tokenPricing.MaxOutputTokens, Pricing: tokenPricing,
+			EndpointVersionID: runtime.ProviderEndpointVersionID, CredentialVersionID: runtime.ProviderCredentialVersionID,
+		}
+	}
 	encodedInput, err := json.Marshal(agentRuntimeModelTaskInput{Mode: "text", Prompt: prompt, Config: config})
 	if err != nil {
 		return nil, err
@@ -278,7 +354,12 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err := s.ensureTaskProjectActive(scope.ActorUserID, scope.CanvasID); err != nil {
 		return nil, err
 	}
-	order, err := s.newBillingOrder(scope.ActorUserID, task.ID, agentRuntimeBillingKey(scope.RunID, state.StepNumber), item.ChannelID, item.ModelKey, "text", "agent_runtime_model", BillingUsage{Quantity: 1})
+	var order *model.BillingOrder
+	if tokenBilled {
+		order, err = s.newTokenBillingOrder(scope.ActorUserID, item.ChannelID, item.ModelKey, "agent_runtime_model", agentRuntimeBillingKey(scope.RunID, state.StepNumber), tokenReservation)
+	} else {
+		order, err = s.newBillingOrder(scope.ActorUserID, task.ID, agentRuntimeBillingKey(scope.RunID, state.StepNumber), item.ChannelID, item.ModelKey, "text", "agent_runtime_model", BillingUsage{Quantity: 1})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -297,10 +378,10 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 		return s.validateAgentRuntimeModelTask(scope, existing, run, state)
 	}
 	if errors.Is(err, repository.ErrInsufficientCredits) {
-		return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
+		return nil, errors.Join(BadAuthRequest(creditInsufficientMessage(order.TeamID)), err)
 	}
 	if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
-		return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
+		return nil, errors.Join(BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度"), err)
 	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) || errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		return nil, BadAuthRequest("当前 Agent 任务并发额度已用尽，请等待已有任务完成")
@@ -319,7 +400,11 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 	if err != nil {
 		return nil, err
 	}
-	if order.UserID != run.ActorUserID || order.TaskID != task.ID || order.IdempotencyKey != agentRuntimeBillingKey(run.ID, state.StepNumber) ||
+	expectedBillingKey := agentRuntimeBillingKey(run.ID, state.StepNumber)
+	if order.BillingMode == "token_usage" {
+		expectedBillingKey = "proxy-token:" + expectedBillingKey
+	}
+	if order.UserID != run.ActorUserID || order.TaskID != task.ID || order.IdempotencyKey != expectedBillingKey ||
 		order.ChannelModelID != run.ModelRecordID || order.Model != run.ModelKey || order.Capability != "text" ||
 		order.Scene != "agent_runtime_model" || order.Quantity != 1 || order.AmountMicrocredits <= 0 {
 		return nil, errors.New("agent runtime billing facts conflict")
@@ -330,7 +415,7 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 	}
 	expectedInput, err := json.Marshal(agentRuntimeModelTaskInput{
 		Mode: "text", Prompt: prompt,
-		Config: providerConfig{ChannelID: order.ChannelID, Model: run.ModelKey, SystemPrompt: agentRuntimeSystemPrompt},
+		Config: providerConfig{ChannelID: order.ChannelID, Model: run.ModelKey, SystemPrompt: agentRuntimeSystemPrompt, MaxOutputTokens: order.MaxOutputTokens, JSONOutput: true},
 	})
 	if err != nil {
 		return nil, err
@@ -353,8 +438,11 @@ func agentRuntimeBillingKey(runID string, step int) string {
 const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基于真实运行事实自主理解用户意图，不使用固定工作流或默认路由。
 你每次只能返回一个 JSON 对象，禁止 Markdown 和额外文本：
 1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
-2. 调用工具：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read_state|canvas.read_selection|canvas.apply_ops|generation.submit|generation.wait","actionVersion":1,"arguments":{}}}
+2. 调用工具：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read_state|canvas.read_selection|canvas.apply_ops|generation.submit|generation.wait","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer|canvas_change|generated_asset|mixed","targetCanvasId":"...","requiredArtifacts":["image|video|audio|text|canvas_revision"],"completionCriteria":[{"fact":"final_message|canvas_revision|artifact","artifact":"image|video|audio|text|canvas_revision"}]}}}
+首次决策必须根据用户目标声明 expectedDelivery；Runtime 会立即冻结该合同。之后每个工具调用与 final 都必须逐字段复用同一 expectedDelivery，禁止在工具失败、审批拒绝或证据不足后把资产/画布交付降级成文字回答。
+每次新的工具调用必须使用从未出现过的 toolCallId；包括重试同一个工具时也必须生成新的 toolCallId，禁止复用历史 toolCallId + actionVersion。
+canvas.read_state 的 arguments 结构是 {} 或 {"expectedRevision":0}；画布身份已由运行作用域冻结，禁止填写 canvasId 或其他字段。canvas.read_selection 的 arguments 必须是 {}。
 canvas.apply_ops 的 arguments 结构是 {"baseRevision":0,"patch":{"upsertNodes":[],"deleteNodeIds":[],"upsertConnections":[],"deleteConnectionIds":[],"document":{}}}；baseRevision 必须是当前非负版本，只填写本次实际需要的 patch 字段，节点和连线必须包含稳定 id。
-generation.submit 的 arguments 结构是 {"type":"canvas_image|canvas_video|canvas_audio","prompt":"真实生成提示词","input":{"mode":"image|video|audio","config":{}}}；type 与 input.mode 必须对应，input.config 只能使用本轮 callableModels 中同一条记录公开的 channelId、model 与能力参数，不得猜测模型、价格或默认配置。提交成功后必须保存返回的 taskId，并使用 generation.wait 等待同一任务。
+generation.submit 的 arguments 结构是 {"type":"canvas_image|canvas_video|canvas_audio","prompt":"真实生成提示词","input":{"mode":"image|video|audio","config":{}}}；type 与 input.mode 必须对应，input.config 只能使用本轮 callableModels 中同一条记录公开的 channelId、model 与能力参数，不得猜测模型、价格或默认配置。图片生成 config 必须使用规范字段，例如 {"channelId":"...","model":"...","size":"16:9","count":"1","transparentBackground":"false"}，禁止使用 ratio 或 resolution。quality 不是公共必填字段；只有所选 callableModels 记录的 providerCapabilities.qualities 列出非空候选时，才可从候选中选择并填写，否则必须省略 quality，禁止使用示例值或默认值。提交成功后必须保存返回的 taskId，并使用 generation.wait 等待同一任务。
 generation.wait 的 arguments 结构是 {"taskId":"generation.submit 返回的 taskId"}；只有返回 succeeded 且包含真实资产 URL 时才构成交付事实，queued 或 running 表示仍在等待，不得重复提交生成任务。
 只有真实事实足以满足交付时才能 final；需要画布或生成事实时必须先调用工具。`

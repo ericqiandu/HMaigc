@@ -6,6 +6,7 @@ import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
 import type { AgentRuntimeClient, AgentRuntimeHandle, AgentRuntimeHandleStorage, AgentRuntimeView, AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
+import { defaultConfig, encodeChannelModel, useConfigStore, type ModelChannel } from "../src/stores/use-config-store";
 
 let Panel: typeof import("../src/components/canvas/canvas-assistant-panel").CanvasAssistantPanel;
 let createRoot: (container: Element | DocumentFragment) => Root;
@@ -21,16 +22,97 @@ afterEach(async () => {
     root = null;
     document.body.replaceChildren();
     window.localStorage.clear();
+    useConfigStore.setState({ config: defaultConfig, agentDefaultModel: "" });
+});
+
+test("单一运行内核保留原有紧凑 Agent 对话框视觉外壳", async () => {
+    await mount(runtimeClient());
+
+    const panel = document.querySelector(".canvas-agent-shell");
+    const composer = document.querySelector(".canvas-agent-composer");
+    const textarea = document.querySelector<HTMLTextAreaElement>("textarea");
+
+    expect(panel?.classList.contains("canvas-agent-shell")).toBe(true);
+    expect(document.body.textContent).toContain("Agent 画布助手");
+    expect(document.body.textContent).toContain("搭建短剧工作流");
+    expect(document.body.textContent).not.toContain("从目标开始");
+    expect(composer).not.toBeNull();
+    expect(textarea?.placeholder).toBe("描述你想让 Agent 如何操作画布");
+    expect(document.querySelector(".canvas-agent-runtime-subtitle")).toBeNull();
+    expect(button("选择模型")).not.toBeNull();
+    expect(button("Skills")).not.toBeNull();
+    expect(button("生成模式")).not.toBeNull();
+    expect(button("添加图片")).not.toBeNull();
+    expect(button("发送").classList.contains("canvas-submit-button")).toBe(true);
+});
+
+test("生成模式菜单使用紧凑且符合真实审批边界的说明", async () => {
+    await mount(runtimeClient());
+
+    await act(async () => button("生成模式").click());
+    await settle();
+
+    const modeMenu = document.querySelector<HTMLElement>('section[aria-label="生成模式"]');
+    if (!modeMenu) throw new Error("未找到生成模式菜单");
+    expect(modeMenu.textContent).toContain("手动模式");
+    expect(modeMenu.textContent).toContain("每次生成前询问");
+    expect(modeMenu.textContent).toContain("自动模式");
+    expect(modeMenu.textContent).toContain("可逆操作自动执行，付费前确认");
+    expect(modeMenu.textContent).not.toContain("完全自动生成");
+    const modeButtons = modeMenu.querySelectorAll<HTMLButtonElement>("button");
+    expect(modeButtons).toHaveLength(2);
+    expect(modeButtons[0]?.querySelector(".lucide-hand")).not.toBeNull();
+    expect(modeButtons[1]?.querySelector(".lucide-cpu")).not.toBeNull();
+    expect(modeButtons[1]?.querySelector(".lucide-refresh-cw")).toBeNull();
+});
+
+test("Agent 工作区提供受控宽度的语义分隔条", async () => {
+    await mount(runtimeClient(), undefined, { width: 432, onResizeStart: () => undefined });
+
+    const separator = document.querySelector<HTMLElement>('[role="separator"][aria-orientation="vertical"]');
+    expect(separator).not.toBeNull();
+    expect(separator?.getAttribute("aria-valuemin")).toBe("320");
+    expect(separator?.getAttribute("aria-valuemax")).toBe("560");
+    expect(separator?.getAttribute("aria-valuenow")).toBe("432");
+    expect(separator?.getAttribute("aria-label")).toBe("调整 Agent 面板宽度");
+    expect(separator?.tabIndex).toBe(0);
+});
+
+test("输入框选择的动态生成模型随本次 Agent 运行提交", async () => {
+    const imageModel = encodeChannelModel("channel-image", "gpt-image-2");
+    useConfigStore.setState({
+        config: { ...defaultConfig, channels: [imageChannel()], models: [imageModel], imageModels: [imageModel], imageModel },
+    });
+    let submittedConfiguration: Parameters<AgentRuntimeClient["startRun"]>[1]["configuration"] | null = null;
+    const client = runtimeClient({
+        startRun: async (_threadId, input) => {
+            submittedConfiguration = input.configuration;
+            return runtimeView("running", { userMessage: input.userMessage, configuration: { generationModels: input.configuration.generationModels, skills: [], attachments: [], executionMode: input.configuration.executionMode } });
+        },
+    });
+    await mount(client);
+    await act(async () => button("选择模型").click());
+    await settle();
+    await act(async () => button("GPT Image 2").click());
+    await setPrompt("生成一张分镜图");
+    await act(async () => button("发送").click());
+    await settle();
+    expect(submittedConfiguration).toEqual({
+        generationModels: { image: { channelId: "channel-image", model: "gpt-image-2" } },
+        skillDirs: [],
+        attachments: [],
+        executionMode: "guided",
+    });
 });
 
 test("单一运行链回传真实选区、等待审批并展示验收后的最终消息", async () => {
     const calls: string[] = [];
     const selectionView = runtimeView("waiting_tool", {
-        pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {} },
+        pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {}, expectedDelivery: answerDelivery() },
     });
     const approvalView = runtimeView("waiting_approval", {
         stateVersion: 3,
-        pendingToolCall: { toolCallId: "apply-1", toolName: "canvas.apply_ops", actionVersion: 2, arguments: { baseRevision: 7, patch: { upsertNodes: [] } } },
+        pendingToolCall: { toolCallId: "apply-1", toolName: "canvas.apply_ops", actionVersion: 2, arguments: { baseRevision: 7, patch: { upsertNodes: [] } }, expectedDelivery: answerDelivery() },
     });
     const completedView = runtimeView("succeeded", {
         stateVersion: 4,
@@ -68,8 +150,10 @@ test("单一运行链回传真实选区、等待审批并展示验收后的最�
     await act(async () => {
         valueSetter.call(textarea, "整理当前画布");
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        textarea.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    expect(textarea.value).toBe("整理当前画布");
+    expect(button("选择模型").disabled).toBe(false);
+    expect(button("发送").disabled).toBe(false);
     await act(async () => button("发送").click());
     await settle();
     expect(calls).toEqual(["create-thread", "start:整理当前画布", "selection:7:node-a,node-b"]);
@@ -114,7 +198,7 @@ test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () 
     const calls: string[] = [];
     const runningView = runtimeView("running", { stateVersion: 2, stepNumber: 1, userMessage: "生成三镜头短片" });
     const storage: AgentRuntimeHandleStorage = {
-        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片" } }),
+        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片", configuration: emptyConfiguration() } }),
         save: async () => undefined,
         clear: async () => undefined,
     };
@@ -143,7 +227,7 @@ test("启动恢复再次失败时还原原指令并允许复用同一请求身�
         verification: { status: "satisfied", rationale: "ok" },
     });
     const storage: AgentRuntimeHandleStorage = {
-        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片" } }),
+        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片", configuration: emptyConfiguration() } }),
         save: async () => undefined,
         clear: async () => undefined,
     };
@@ -199,6 +283,8 @@ test("切换画布时先清空上一画布的运行事实", async () => {
                 canvasRevision: 7,
                 selectedNodeIds: new Set<string>(),
                 closing: false,
+                width: 400,
+                onResizeStart: () => undefined,
                 onCollapse: () => undefined,
                 runtimeClient: client,
                 runtimeStorage: storage,
@@ -229,7 +315,16 @@ test("首页已确认的创作请求只提交一次并在成功后消费", async
         subscribe: () => () => undefined,
     };
     await mount(client, undefined, {
-        agentLaunchRequest: { id: "launch-1", source: "home", prompt: "生成东方幻想短片", createdAt: "2026-08-15T00:00:00Z" },
+        agentLaunchRequest: {
+            id: "launch-1",
+            source: "home",
+            prompt: "生成东方幻想短片",
+            attachments: [],
+            generationModels: { image: "", video: "" },
+            skillDirs: [],
+            executionMode: "guided",
+            createdAt: "2026-08-15T00:00:00Z",
+        },
         onAgentLaunchHandled: (id: string) => calls.push(`handled:${id}`),
     });
     expect(calls).toEqual(["start:生成东方幻想短片", "handled:launch-1"]);
@@ -237,7 +332,7 @@ test("首页已确认的创作请求只提交一次并在成功后消费", async
 
 test("选区事实提交失败后提供显式重试而不是伪装继续", async () => {
     let attempts = 0;
-    const selectionView = runtimeView("waiting_tool", { pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {} } });
+    const selectionView = runtimeView("waiting_tool", { pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {}, expectedDelivery: answerDelivery() } });
     const runningView = runtimeView("running", { stateVersion: 3, stepNumber: 2, pendingToolCall: undefined });
     const storage: AgentRuntimeHandleStorage = {
         load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 1 }),
@@ -376,6 +471,9 @@ async function mount(client: AgentRuntimeClient, storage?: AgentRuntimeHandleSto
                     canvasRevision: 7,
                     selectedNodeIds: new Set(["node-a", "node-b"]),
                     closing: false,
+                    width: 400,
+                    onResizeStart: () => undefined,
+                    onResizeKeyDown: () => undefined,
                     onCollapse: () => undefined,
                     runtimeClient: client,
                     runtimeStorage: storage,
@@ -394,6 +492,7 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], patch: Partial
         maxSteps: 8,
         status,
         userMessage: "整理当前画布",
+        configuration: { generationModels: {}, skills: [], attachments: [], executionMode: "guided" },
         ...(status === "succeeded"
             ? {
                   expectedDelivery: { kind: "answer" as const, completionCriteria: [{ fact: "final_message" }] },
@@ -420,6 +519,47 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], patch: Partial
             ...runPatch,
         },
         state,
+    };
+}
+
+function answerDelivery(): NonNullable<AgentRuntimeView["state"]["expectedDelivery"]> {
+    return { kind: "answer", completionCriteria: [{ fact: "final_message" }] };
+}
+
+function emptyConfiguration() {
+    return { generationModels: {}, skillDirs: [], attachments: [], executionMode: "guided" as const };
+}
+
+function imageChannel(): ModelChannel {
+    return {
+        id: "channel-image",
+        name: "图片模型渠道",
+        baseUrl: "/api/ai/system/channel-image",
+        apiKey: "system",
+        apiFormat: "openai",
+        interfaceType: "openai-image",
+        models: ["gpt-image-2"],
+        scope: "system",
+        enabled: true,
+        hasApiKey: true,
+        modelCosts: [
+            {
+                model: "gpt-image-2",
+                displayName: "GPT Image 2",
+                marketingCopy: "分镜图生成",
+                promotionBadge: "",
+                estimatedDurationSeconds: 20,
+                brandKey: "openai",
+                accessPolicy: "authenticated",
+                accessible: true,
+                capability: "image",
+                watermarkCapability: "not_applicable",
+                billingMode: "fixed_request",
+                priceStrategy: "flat",
+                unitPriceMicrocredits: 1,
+                priceTiers: [],
+            },
+        ],
     };
 }
 
@@ -453,7 +593,6 @@ async function setPrompt(value: string) {
     await act(async () => {
         valueSetter.call(textarea, value);
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        textarea.dispatchEvent(new Event("change", { bubbles: true }));
     });
 }
 

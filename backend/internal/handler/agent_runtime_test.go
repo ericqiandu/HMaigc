@@ -52,7 +52,7 @@ func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testi
 		t.Fatalf("thread facts = %#v", envelope.Data)
 	}
 
-	failedRun := fixture.request(http.MethodPost, "/api/agent/threads/"+envelope.Data.ID+"/runs", `{"clientRequestId":"request-1","userMessage":"生成一张图片","maxSteps":6}`, fixture.userCookie, "")
+	failedRun := fixture.request(http.MethodPost, "/api/agent/threads/"+envelope.Data.ID+"/runs", `{"clientRequestId":"request-1","userMessage":"生成一张图片","maxSteps":6,"configuration":{"generationModels":{},"skillDirs":[],"attachments":[],"executionMode":"guided"}}`, fixture.userCookie, "")
 	if failedRun.Code != http.StatusServiceUnavailable || !strings.Contains(failedRun.Body.String(), "Agent 模型") {
 		t.Fatalf("missing model status = %d, body = %s", failedRun.Code, failedRun.Body.String())
 	}
@@ -84,7 +84,8 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "frozen-agent-model", ModelKey: "agent-model",
-		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取事件", Now: time.Now().UTC(),
+		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取事件",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,8 @@ func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repo
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "history-model-record", ModelKey: "history-model",
-		MaxSteps: 8, ToolSchemaVersion: 1, UserMessage: userMessage, Now: now,
+		MaxSteps: 8, ToolSchemaVersion: 1, UserMessage: userMessage,
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
 	}

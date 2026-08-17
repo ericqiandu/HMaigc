@@ -26,6 +26,15 @@ type startAgentRunRequest struct {
 	ClientRequestID string `json:"clientRequestId"`
 	UserMessage     string `json:"userMessage"`
 	MaxSteps        int    `json:"maxSteps"`
+	Configuration   struct {
+		GenerationModels agentruntime.GenerationModelSelections `json:"generationModels"`
+		SkillDirs        []string                               `json:"skillDirs"`
+		Attachments      []struct {
+			ResourceID string `json:"resourceId"`
+			Name       string `json:"name"`
+		} `json:"attachments"`
+		ExecutionMode agentruntime.ExecutionMode `json:"executionMode"`
+	} `json:"configuration"`
 }
 
 type submitAgentApprovalRequest struct {
@@ -94,8 +103,19 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
+		attachments := make([]service.AgentRuntimeResourceInput, 0, len(request.Configuration.Attachments))
+		for _, attachment := range request.Configuration.Attachments {
+			attachments = append(attachments, service.AgentRuntimeResourceInput{ResourceID: attachment.ResourceID, Name: attachment.Name})
+		}
 		view, err := svc.StartScopedAgentRun(user, c.Param("threadId"), service.StartScopedAgentRunInput{
-			ClientRequestID: request.ClientRequestID, UserMessage: request.UserMessage, MaxSteps: request.MaxSteps,
+			Context: c.Request.Context(), ClientRequestID: request.ClientRequestID,
+			UserMessage: request.UserMessage, MaxSteps: request.MaxSteps,
+			Configuration: service.AgentRuntimeConfigurationInput{
+				GenerationModels: request.Configuration.GenerationModels,
+				SkillDirs:        request.Configuration.SkillDirs,
+				Attachments:      attachments,
+				ExecutionMode:    request.Configuration.ExecutionMode,
+			},
 		})
 		if err != nil {
 			failService(c, err)

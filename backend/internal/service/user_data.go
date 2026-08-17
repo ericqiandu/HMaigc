@@ -263,15 +263,12 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	project, access, err := s.canvasAccess(userID, id)
+	_, access, err := s.canvasAccess(userID, id)
 	if err != nil {
 		return err
 	}
 	if !access.CanManage {
 		return Forbidden("当前用户不能删除该画布")
-	}
-	if err := s.repo.DeleteCanvasShare(project.UserID, id); err != nil {
-		return err
 	}
 	return s.repo.DeleteCanvasProjectWithCollaboration(id)
 }

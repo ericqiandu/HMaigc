@@ -155,17 +155,6 @@
     color: rgba(15, 23, 42, 0.9) !important;
 }
 
-.updream-home-page .canvas-agent-composer-submit.ant-btn:disabled {
-    background: rgba(15, 23, 42, 0.24) !important;
-    color: rgba(15, 23, 42, 0.68) !important;
-    opacity: 1;
-}
-
-.updream-home-page .canvas-agent-composer-submit.ant-btn:not(:disabled) {
-    background: #172033 !important;
-    color: #ffffff !important;
-}
-
 .updream-home-page .updream-skills-title {
     color: #172033;
 }
@@ -268,17 +257,6 @@
 .dark .updream-home-page .canvas-agent-composer-picker-trigger--active.ant-btn {
     background: rgba(255, 255, 255, 0.08) !important;
     color: rgba(255, 255, 255, 0.9) !important;
-}
-
-.dark .updream-home-page .canvas-agent-composer-submit.ant-btn:disabled {
-    background: rgba(255, 255, 255, 0.56) !important;
-    color: rgba(11, 15, 20, 0.78) !important;
-    opacity: 1;
-}
-
-.dark .updream-home-page .canvas-agent-composer-submit.ant-btn:not(:disabled) {
-    background: #ffffff !important;
-    color: #000000 !important;
 }
 
 .dark .updream-home-page .updream-skills-title {

@@ -10,18 +10,62 @@ import (
 const maxRuntimeSteps = 24
 
 type RuntimeState struct {
-	StateVersion       int                   `json:"stateVersion"`
-	StepNumber         int                   `json:"stepNumber"`
-	MaxSteps           int                   `json:"maxSteps"`
-	Status             RunStatus             `json:"status"`
-	ExpectedDelivery   *ExpectedDelivery     `json:"expectedDelivery,omitempty"`
-	Verification       *DeliveryVerification `json:"verification,omitempty"`
-	PendingToolCall    *ToolCallDecision     `json:"pendingToolCall,omitempty"`
-	PendingToolStarted bool                  `json:"pendingToolStarted,omitempty"`
-	LastToolResult     *ToolResult           `json:"lastToolResult,omitempty"`
-	FinalMessage       string                `json:"finalMessage,omitempty"`
-	FailureCode        string                `json:"failureCode,omitempty"`
-	UserMessage        string                `json:"userMessage"`
+	StateVersion       int                    `json:"stateVersion"`
+	StepNumber         int                    `json:"stepNumber"`
+	MaxSteps           int                    `json:"maxSteps"`
+	Status             RunStatus              `json:"status"`
+	ExpectedDelivery   *ExpectedDelivery      `json:"expectedDelivery,omitempty"`
+	Verification       *DeliveryVerification  `json:"verification,omitempty"`
+	PendingToolCall    *ToolCallDecision      `json:"pendingToolCall,omitempty"`
+	PendingToolStarted bool                   `json:"pendingToolStarted,omitempty"`
+	LastToolResult     *ToolResult            `json:"lastToolResult,omitempty"`
+	DecisionFeedback   *ModelDecisionFeedback `json:"decisionFeedback,omitempty"`
+	FinalMessage       string                 `json:"finalMessage,omitempty"`
+	FailureCode        string                 `json:"failureCode,omitempty"`
+	UserMessage        string                 `json:"userMessage"`
+	Configuration      RunConfiguration       `json:"configuration"`
+}
+
+type GenerationModelSelection struct {
+	ChannelID string `json:"channelId"`
+	Model     string `json:"model"`
+}
+
+type GenerationModelSelections struct {
+	Image *GenerationModelSelection `json:"image,omitempty"`
+	Video *GenerationModelSelection `json:"video,omitempty"`
+}
+
+type SkillSelection struct {
+	Dir          string `json:"dir"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
+	Version      int    `json:"version"`
+}
+
+type ExecutionMode string
+
+const (
+	ExecutionGuided    ExecutionMode = "guided"
+	ExecutionAutomatic ExecutionMode = "automatic"
+)
+
+type ResourceAttachment struct {
+	ResourceID string `json:"resourceId"`
+	Name       string `json:"name"`
+	MIMEType   string `json:"mimeType"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
+}
+
+// RunConfiguration is an immutable snapshot of the user's explicit composer choices.
+// The server resolves and validates it before the first billed model task is created.
+type RunConfiguration struct {
+	GenerationModels GenerationModelSelections `json:"generationModels"`
+	Skills           []SkillSelection          `json:"skills"`
+	Attachments      []ResourceAttachment      `json:"attachments"`
+	ExecutionMode    ExecutionMode             `json:"executionMode"`
 }
 
 type RuntimeInput struct {
@@ -53,6 +97,11 @@ type ToolResult struct {
 	Succeeded     bool            `json:"succeeded"`
 	Output        json.RawMessage `json:"output"`
 	ErrorCode     string          `json:"errorCode,omitempty"`
+}
+
+type ModelDecisionFeedback struct {
+	Code   string `json:"code"`
+	Reason string `json:"reason"`
 }
 
 type ToolApprovalDecision string
@@ -122,23 +171,55 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	if err := input.Decision.Validate(); err != nil {
 		return RuntimeTransition{}, err
 	}
+	var decisionExpected ExpectedDelivery
+	if input.Decision.ToolCall != nil {
+		decisionExpected = input.Decision.ToolCall.ExpectedDelivery
+	} else {
+		decisionExpected = input.Decision.Final.ExpectedDelivery
+	}
 	next := current
 	next.StateVersion++
 	next.StepNumber++
+	if current.ExpectedDelivery == nil {
+		frozen := decisionExpected
+		next.ExpectedDelivery = &frozen
+	} else if !current.ExpectedDelivery.Equal(decisionExpected) {
+		next.Status = RunRunning
+		next.PendingToolCall = nil
+		next.PendingToolStarted = false
+		next.Verification = nil
+		next.DecisionFeedback = &ModelDecisionFeedback{
+			Code: "delivery_contract_changed", Reason: "expectedDelivery must exactly match the contract frozen by the first model decision",
+		}
+		next.FinalMessage = ""
+		next.FailureCode = ""
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunFailed}}, nil
+		}
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunStatusChanged}}, nil
+	}
 	next.PendingToolCall = nil
 	next.PendingToolStarted = false
 	next.LastToolResult = nil
+	next.DecisionFeedback = nil
 	next.Verification = nil
 	next.FailureCode = ""
 
 	if input.Decision.Kind == DecisionToolCall {
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+		}
 		policy, ok := ToolPolicyFor(input.Decision.ToolCall.ToolName)
 		if !ok {
 			return RuntimeTransition{}, errors.New("agent tool policy is unavailable")
 		}
 		next.Status = RunWaitingTool
 		next.PendingToolCall = input.Decision.ToolCall
-		if policy.ApprovalRequired {
+		if ApprovalRequiredFor(policy, current.Configuration.ExecutionMode) {
 			next.Status = RunWaitingApproval
 			return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolCall, EventApprovalRequired, EventRunStatusChanged}}, nil
 		}
@@ -147,7 +228,6 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 
 	final := input.Decision.Final
 	verification := VerifyDelivery(final.ExpectedDelivery, input.Evidence)
-	next.ExpectedDelivery = &final.ExpectedDelivery
 	next.Verification = &verification
 	next.FinalMessage = final.Message
 	switch verification.Status {
@@ -169,6 +249,67 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	default:
 		return RuntimeTransition{}, errors.New("delivery verification status is invalid")
 	}
+}
+
+// RejectModelDecision feeds a structurally invalid model decision back into
+// the same bounded run so the Agent can correct itself without hiding the error.
+func RejectModelDecision(current RuntimeState, feedback ModelDecisionFeedback) (RuntimeTransition, error) {
+	if err := validateAdvancingState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	feedback.Code = strings.TrimSpace(feedback.Code)
+	feedback.Reason = strings.TrimSpace(feedback.Reason)
+	if !validModelDecisionFeedbackCode(feedback.Code) || feedback.Reason == "" || len(feedback.Reason) > 240 {
+		return RuntimeTransition{}, errors.New("agent model decision feedback is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.StepNumber++
+	next.Status = RunRunning
+	next.PendingToolCall = nil
+	next.PendingToolStarted = false
+	next.DecisionFeedback = &feedback
+	next.Verification = nil
+	next.FinalMessage = ""
+	next.FailureCode = ""
+	if next.StepNumber >= next.MaxSteps {
+		next.Status = RunFailed
+		next.FailureCode = "step_budget_exhausted"
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunFailed}}, nil
+	}
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunStatusChanged}}, nil
+}
+
+// RejectReusedToolIdentity turns a model's reused tool identity into an
+// explicit repair fact without attempting to persist a duplicate tool call.
+func RejectReusedToolIdentity(current RuntimeState, call ToolCallDecision) (RuntimeTransition, error) {
+	if err := validateAdvancingState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	decision := ModelDecision{Kind: DecisionToolCall, ToolCall: &call}
+	if err := decision.Validate(); err != nil {
+		return RuntimeTransition{}, err
+	}
+	next := current
+	next.StateVersion++
+	next.StepNumber++
+	next.PendingToolCall = nil
+	next.PendingToolStarted = false
+	next.Verification = nil
+	next.FinalMessage = ""
+	next.FailureCode = ""
+	next.DecisionFeedback = nil
+	next.LastToolResult = &ToolResult{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		Succeeded: false, Output: json.RawMessage(`{"reason":"toolCallId and actionVersion were already used"}`), ErrorCode: "tool_identity_reused",
+	}
+	if next.StepNumber >= next.MaxSteps {
+		next.Status = RunFailed
+		next.FailureCode = "step_budget_exhausted"
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunFailed}}, nil
+	}
+	next.Status = RunRunning
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunStatusChanged}}, nil
 }
 
 func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransition, error) {
@@ -201,6 +342,11 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 	next.LastToolResult = &ToolResult{
 		ToolCallID: resolution.ToolCallID, ActionVersion: resolution.ActionVersion,
 		Succeeded: resolution.Succeeded, Output: append(json.RawMessage(nil), output...), ErrorCode: resolution.ErrorCode,
+	}
+	if next.StepNumber >= next.MaxSteps {
+		next.Status = RunFailed
+		next.FailureCode = "step_budget_exhausted"
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunFailed}}, nil
 	}
 	return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunStatusChanged}}, nil
 }
@@ -237,6 +383,17 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 	next.StateVersion++
 	switch approval.Decision {
 	case ToolApprovalApproved:
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.PendingToolCall = nil
+			next.PendingToolStarted = false
+			next.FailureCode = "step_budget_exhausted"
+			next.LastToolResult = &ToolResult{
+				ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
+				Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "step_budget_exhausted",
+			}
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}}, nil
+		}
 		next.Status = RunWaitingTool
 		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}}, nil
 	case ToolApprovalRejected:
@@ -246,6 +403,11 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 		next.LastToolResult = &ToolResult{
 			ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
+		}
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}}, nil
 		}
 	default:
 		return RuntimeTransition{}, errors.New("agent tool approval decision is invalid")
@@ -278,6 +440,79 @@ func validateRuntimeState(state RuntimeState) error {
 	}
 	if strings.TrimSpace(state.UserMessage) == "" || len(state.UserMessage) > 64*1024 {
 		return errors.New("agent runtime user message is invalid")
+	}
+	if err := ValidateRunConfiguration(state.Configuration); err != nil {
+		return err
+	}
+	if state.DecisionFeedback != nil {
+		feedback := *state.DecisionFeedback
+		feedback.Code = strings.TrimSpace(feedback.Code)
+		feedback.Reason = strings.TrimSpace(feedback.Reason)
+		if !validModelDecisionFeedbackCode(feedback.Code) || feedback.Reason == "" || len(feedback.Reason) > 240 {
+			return errors.New("agent model decision feedback is invalid")
+		}
+	}
+	if state.ExpectedDelivery != nil {
+		if err := state.ExpectedDelivery.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validModelDecisionFeedbackCode(code string) bool {
+	return code == "model_decision_invalid" || code == "delivery_contract_changed"
+}
+
+func ValidateRunConfiguration(configuration RunConfiguration) error {
+	if configuration.ExecutionMode != ExecutionGuided && configuration.ExecutionMode != ExecutionAutomatic {
+		return errors.New("agent runtime execution mode is invalid")
+	}
+	for _, selection := range []*GenerationModelSelection{configuration.GenerationModels.Image, configuration.GenerationModels.Video} {
+		if selection == nil {
+			continue
+		}
+		selection.ChannelID = strings.TrimSpace(selection.ChannelID)
+		selection.Model = strings.TrimSpace(selection.Model)
+		if selection.ChannelID == "" || len(selection.ChannelID) > 80 || selection.Model == "" || len(selection.Model) > 120 {
+			return errors.New("agent runtime generation model selection is invalid")
+		}
+	}
+	if len(configuration.Skills) > 8 {
+		return errors.New("agent runtime skill selection is invalid")
+	}
+	previousDir := ""
+	totalInstructions := 0
+	for _, skill := range configuration.Skills {
+		skill.Dir = strings.TrimSpace(skill.Dir)
+		skill.Name = strings.TrimSpace(skill.Name)
+		skill.Description = strings.TrimSpace(skill.Description)
+		skill.Instructions = strings.TrimSpace(skill.Instructions)
+		if skill.Dir == "" || len(skill.Dir) > 120 || skill.Name == "" || len(skill.Name) > 160 ||
+			len(skill.Description) > 4*1024 || skill.Instructions == "" || len(skill.Instructions) > 32*1024 ||
+			skill.Version < 0 || (previousDir != "" && skill.Dir <= previousDir) {
+			return errors.New("agent runtime skill selection is invalid")
+		}
+		previousDir = skill.Dir
+		totalInstructions += len(skill.Instructions)
+	}
+	if totalInstructions > 64*1024 {
+		return errors.New("agent runtime skill selection is invalid")
+	}
+	if len(configuration.Attachments) > 4 {
+		return errors.New("agent runtime attachment selection is invalid")
+	}
+	previousResourceID := ""
+	for _, attachment := range configuration.Attachments {
+		attachment.ResourceID = strings.TrimSpace(attachment.ResourceID)
+		attachment.Name = strings.TrimSpace(attachment.Name)
+		attachment.MIMEType = strings.TrimSpace(attachment.MIMEType)
+		if attachment.ResourceID == "" || len(attachment.ResourceID) > 80 || attachment.Name == "" || len(attachment.Name) > 240 ||
+			!strings.HasPrefix(attachment.MIMEType, "image/") || len(attachment.MIMEType) > 120 || attachment.Width < 0 || attachment.Height < 0 ||
+			(previousResourceID != "" && attachment.ResourceID <= previousResourceID) {
+			return errors.New("agent runtime attachment selection is invalid")
+		}
+		previousResourceID = attachment.ResourceID
 	}
 	return nil
 }

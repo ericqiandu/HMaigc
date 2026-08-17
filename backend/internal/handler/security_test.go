@@ -14,11 +14,11 @@ import (
 
 func TestPrepareTokenBilledProxyRequestEnforcesOutputLimitAndCountsCompleteBody(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"你好"}],"max_tokens":9999,"stream":true,"stream_options":{"include_usage":false}}`)
-	prepared, estimatedInput, err := prepareTokenBilledProxyRequest("/chat/completions", body, 2048)
+	prepared, estimatedInput, err := service.PrepareTokenBilledChatRequest(body, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if estimatedInput != int64(len(prepared))+tokenBillingProtocolMarginBytes {
+	if estimatedInput != int64(len(prepared))+256 {
 		t.Fatalf("estimated input = %d", estimatedInput)
 	}
 	var payload map[string]json.RawMessage
@@ -47,8 +47,11 @@ func TestPrepareTokenBilledProxyRequestRejectsUnsupportedOrInvalidPayload(t *tes
 		{path: "/chat/completions", body: []byte(`[]`), max: 10},
 		{path: "/chat/completions", body: []byte(`{"model":"deepseek"}`), max: 0},
 	} {
-		if _, _, err := prepareTokenBilledProxyRequest(test.path, test.body, test.max); err == nil {
-			t.Fatalf("prepareTokenBilledProxyRequest(%q, %s, %d) succeeded", test.path, test.body, test.max)
+		if test.path != "/chat/completions" {
+			continue
+		}
+		if _, _, err := service.PrepareTokenBilledChatRequest(test.body, test.max); err == nil {
+			t.Fatalf("PrepareTokenBilledChatRequest(%s, %d) succeeded", test.body, test.max)
 		}
 	}
 }

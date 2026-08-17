@@ -12,8 +12,15 @@ const state = {
         toolName: "canvas.apply_ops",
         actionVersion: 3,
         arguments: { baseRevision: 7, patch: { upsertNodes: [] } },
+        expectedDelivery: { kind: "canvas_change", targetCanvasId: "canvas-1", completionCriteria: [{ fact: "canvas_revision", artifact: "canvas_revision" }] },
     },
     userMessage: "整理当前画布",
+    configuration: {
+        generationModels: { image: { channelId: "channel-image", model: "gpt-image-2" } },
+        skills: [{ dir: "storyboard", name: "分镜", description: "生成分镜", instructions: "按镜头输出", version: 1 }],
+        attachments: [{ resourceId: "resource-1", name: "参考图.png", mimeType: "image/png", width: 1024, height: 1024 }],
+        executionMode: "automatic",
+    },
 };
 
 const view = {
@@ -46,6 +53,52 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             createdAt: "2026-08-15T00:00:01Z",
         }),
     ).toEqual({ sequence: 4, kind: "approval.required", payload: state, createdAt: "2026-08-15T00:00:01Z" });
+});
+
+test("模型决策拒绝事件保留结构化自修事实", () => {
+    const repairState = {
+        ...state,
+        status: "running",
+        pendingToolCall: undefined,
+        decisionFeedback: { code: "model_decision_invalid", reason: "answer delivery facts are inconsistent" },
+    };
+    expect(
+        parseAgentRuntimeEvent({
+            sequence: 5,
+            kind: "model.rejected",
+            payload: repairState,
+            createdAt: "2026-08-15T00:00:02Z",
+        }),
+    ).toEqual({ sequence: 5, kind: "model.rejected", payload: repairState, createdAt: "2026-08-15T00:00:02Z" });
+});
+
+test("交付合同漂移事件保留冻结合同修复事实", () => {
+    const repairState = {
+        ...state,
+        status: "running",
+        pendingToolCall: undefined,
+        expectedDelivery: {
+            kind: "generated_asset",
+            requiredArtifacts: ["image"],
+            completionCriteria: [{ fact: "artifact", artifact: "image" }],
+        },
+        decisionFeedback: { code: "delivery_contract_changed", reason: "expectedDelivery must remain frozen" },
+    };
+    expect(
+        parseAgentRuntimeEvent({
+            sequence: 6,
+            kind: "model.rejected",
+            payload: repairState,
+            createdAt: "2026-08-15T00:00:03Z",
+        }),
+    ).toEqual({ sequence: 6, kind: "model.rejected", payload: repairState, createdAt: "2026-08-15T00:00:03Z" });
+});
+
+test("运行配置缺少附件或执行模式时显式拒绝而不是插入默认值", () => {
+    const { executionMode: _executionMode, ...withoutMode } = state.configuration;
+    expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutMode } })).toThrow("executionMode");
+    const { attachments: _attachments, ...withoutAttachments } = state.configuration;
+    expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutAttachments } })).toThrow("attachments");
 });
 
 test("未知运行状态与事件类型显式失败", () => {

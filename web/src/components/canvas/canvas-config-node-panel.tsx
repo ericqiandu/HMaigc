@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
-import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
-import { Button, Segmented, Select } from "antd";
+import { Image as ImageIcon, MessageSquare, Music2, Settings2, Video } from "lucide-react";
+import { Segmented, Select } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { configuredModelMatchesCapability, defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -18,6 +18,7 @@ import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata, CanvasVideoEditOperation, CanvasWorkspaceMode } from "@/types/canvas";
 import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
 import { GenerationCreditQuoteBadge } from "./generation-credit-quote-badge";
+import { CanvasSubmitButton } from "./canvas-submit-button";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -198,30 +199,15 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 </div>
             )}
 
-            <Button
-                type="primary"
-                className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
-                danger={isRunning}
-                disabled={!isRunning && (!canGenerate || ((mode === "image" || mode === "video") && quoteState.status !== "ready"))}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id, quoteState.status === "ready" ? quoteState.quote : undefined))}
-            >
-                <span className="inline-flex items-center gap-1.5">
-                    {isRunning ? (
-                        <>
-                            <LoaderCircle className="size-4 animate-spin" />
-                            <Square className="size-3.5 fill-current" />
-                            <span>停止</span>
-                        </>
-                    ) : (
-                        <>
-                            <GenerationCreditQuoteBadge state={quoteState} />
-                            <Play className="size-4" />
-                            <span>开始生成</span>
-                        </>
-                    )}
-                </span>
-            </Button>
+            <div className="canvas-config-submit-row mt-auto flex items-center justify-end gap-1.5" onMouseDown={(event) => event.stopPropagation()}>
+                {isRunning ? null : <GenerationCreditQuoteBadge state={quoteState} />}
+                <CanvasSubmitButton
+                    state={isRunning ? "stop" : "ready"}
+                    disabled={!isRunning && (!canGenerate || ((mode === "image" || mode === "video") && quoteState.status !== "ready"))}
+                    ariaLabel={isRunning ? "停止生成" : "生成"}
+                    onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id, quoteState.status === "ready" ? quoteState.quote : undefined))}
+                />
+            </div>
         </div>
     );
 }

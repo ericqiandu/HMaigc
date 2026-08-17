@@ -124,6 +124,15 @@ func (s *Service) driveAgentRun(scope agentruntime.Scope) error {
 			return nil
 		}
 		if err != nil {
+			failureCode := agentRuntimeNonRetryableDriveFailureCode(err)
+			if failureCode != "" {
+				transition, transitionErr := agentruntime.Terminate(view.State, failureCode)
+				if transitionErr != nil {
+					return errors.Join(err, transitionErr)
+				}
+				_, commitErr := s.commitAgentRuntimeState(scope, view.State, transition)
+				return commitErr
+			}
 			return err
 		}
 		if progress == nil || progress.ModelTask != nil || agentRuntimeRunTerminal(progress.State.Status) || progress.State.StateVersion == previousVersion {
@@ -131,6 +140,17 @@ func (s *Service) driveAgentRun(scope agentruntime.Scope) error {
 		}
 	}
 	return errors.New("agent runtime drive transition limit exceeded")
+}
+
+func agentRuntimeNonRetryableDriveFailureCode(err error) string {
+	switch {
+	case errors.Is(err, repository.ErrInsufficientCredits):
+		return "insufficient_credits"
+	case errors.Is(err, repository.ErrTeamMemberCreditLimit):
+		return "team_credit_limit_reached"
+	default:
+		return ""
+	}
 }
 
 func agentRuntimeRunTerminal(status agentruntime.RunStatus) bool {

@@ -58,6 +58,39 @@ func TestValidateSyncedPayloadRejectsNestedInlineMedia(t *testing.T) {
 	}
 }
 
+func TestDeleteUserCanvasProjectRollsBackShareWhenProjectDeleteFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.CanvasProject{}, &model.CanvasShare{}, &model.CanvasChange{}, &model.CanvasCollaborator{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	project := &model.CanvasProject{ID: "canvas-delete-rollback", UserID: "user-1", Title: "待删除画布", PayloadJSON: `{"id":"canvas-delete-rollback","title":"待删除画布"}`, CreatedAt: now, UpdatedAt: now}
+	share := &model.CanvasShare{ID: "share-delete-rollback", UserID: "user-1", ProjectID: project.ID, TokenHash: "share-delete-rollback-hash", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(share).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TRIGGER reject_canvas_delete BEFORE DELETE ON canvas_projects BEGIN SELECT RAISE(ABORT, 'forced canvas delete failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(repository.New(db), t.TempDir())
+	if err := svc.DeleteUserCanvasProject("user-1", project.ID); err == nil {
+		t.Fatal("DeleteUserCanvasProject() error = nil, want forced transaction failure")
+	}
+	if err := db.First(&model.CanvasProject{}, "id = ?", project.ID).Error; err != nil {
+		t.Fatalf("canvas project must remain after rollback: %v", err)
+	}
+	if err := db.First(&model.CanvasShare{}, "id = ?", share.ID).Error; err != nil {
+		t.Fatalf("canvas share must remain after rollback: %v", err)
+	}
+}
+
 func TestDeleteUserAssetDeletesExclusiveOSSObject(t *testing.T) {
 	deleteRequests := make(chan string, 1)
 	server := useAssetDeletionOSSServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 
-import { agentRuntimeClient, agentRuntimeHandleStorage, type AgentRuntimeClient, type AgentRuntimeEvent, type AgentRuntimeHandle, type AgentRuntimeHandleStorage, type AgentRuntimeView, type AgentThreadHistoryItem } from "@/services/api/agent-runtime";
+import {
+    agentRuntimeClient,
+    agentRuntimeHandleStorage,
+    type AgentRuntimeClient,
+    type AgentRuntimeEvent,
+    type AgentRuntimeHandle,
+    type AgentRuntimeHandleStorage,
+    type AgentRuntimeStartConfiguration,
+    type AgentRuntimeView,
+    type AgentThreadHistoryItem,
+} from "@/services/api/agent-runtime";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 
@@ -22,6 +32,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
     const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "reconnecting">("idle");
     const [restored, setRestored] = useState(false);
     const [pendingUserMessage, setPendingUserMessage] = useState("");
+    const [pendingConfiguration, setPendingConfiguration] = useState<AgentRuntimeStartConfiguration | null>(null);
     const [selectionRetry, setSelectionRetry] = useState(0);
     const [threads, setThreads] = useState<AgentThreadHistoryItem[]>([]);
     const [historyLoading, setHistoryLoading] = useState(true);
@@ -74,6 +85,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             setError("");
             setConnection("idle");
             setPendingUserMessage("");
+            setPendingConfiguration(null);
             void persist(item.latestRun, item.thread.id).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
         },
         [persist],
@@ -106,6 +118,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         setError("");
         setConnection("idle");
         setPendingUserMessage("");
+        setPendingConfiguration(null);
         setRestored(false);
         setThreads([]);
         setHistoryLoading(true);
@@ -126,10 +139,12 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                     cursorRef.current = handle.lastSequence;
                     setThreadId(handle.threadId);
                     setPendingUserMessage(handle.pendingRun.userMessage);
+                    setPendingConfiguration(handle.pendingRun.configuration);
                     const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: 8 });
                     if (cancelled || historyRequestRef.current !== historyRequestID) return;
                     pendingRunRef.current = undefined;
                     setPendingUserMessage("");
+                    setPendingConfiguration(null);
                     adoptView(resumed);
                     return;
                 }
@@ -216,7 +231,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
     }, [pendingSelection, view]);
 
     const submit = useCallback(
-        async (userMessage: string) => {
+        async (userMessage: string, configuration: AgentRuntimeStartConfiguration) => {
             const message = userMessage.trim();
             if (!message || busy || (view && !terminalStatuses.has(view.state.status))) return false;
             setBusy(true);
@@ -233,14 +248,18 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                     await persist(null, thread.id);
                 }
                 const pending = pendingRunRef.current;
-                if (pending && pending.userMessage !== message) throw new Error("上次 Agent 启动结果尚未确认，请保留原指令重试");
-                const request = pending || { clientRequestId: nanoid(), userMessage: message };
+                if (pending && (pending.userMessage !== message || !sameStartConfiguration(pending.configuration, configuration))) {
+                    throw new Error("上次 Agent 启动结果尚未确认，请保留原指令、模型与 Skills 重试");
+                }
+                const request = pending || { clientRequestId: nanoid(), userMessage: message, configuration };
                 pendingRunRef.current = request;
                 setPendingUserMessage(request.userMessage);
+                setPendingConfiguration(request.configuration);
                 await persist(null, activeThreadId);
                 const started = await client.startRun(activeThreadId, { ...request, maxSteps: 8 });
                 pendingRunRef.current = undefined;
                 setPendingUserMessage("");
+                setPendingConfiguration(null);
                 adoptView(started);
                 void reloadThreads();
                 return true;
@@ -283,6 +302,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         setEvents([]);
         setError("");
         setPendingUserMessage("");
+        setPendingConfiguration(null);
     }, [canvasId, storage, view]);
 
     return useMemo(
@@ -300,6 +320,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             restored,
             terminal,
             pendingUserMessage,
+            pendingConfiguration,
             canRetrySelection: Boolean(pendingSelection && error),
             submit,
             decideApproval,
@@ -308,10 +329,45 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             selectThread,
             reloadThreads,
         }),
-        [busy, connection, decideApproval, error, events, historyError, historyLoading, newThread, pendingSelection, pendingUserMessage, reloadThreads, restored, retrySelection, selectThread, submit, terminal, threadId, threads, view],
+        [
+            busy,
+            connection,
+            decideApproval,
+            error,
+            events,
+            historyError,
+            historyLoading,
+            newThread,
+            pendingConfiguration,
+            pendingSelection,
+            pendingUserMessage,
+            reloadThreads,
+            restored,
+            retrySelection,
+            selectThread,
+            submit,
+            terminal,
+            threadId,
+            threads,
+            view,
+        ],
     );
 }
 
 function errorMessage(cause: unknown, fallback: string) {
     return cause instanceof Error && cause.message.trim() ? cause.message : fallback;
+}
+
+function sameStartConfiguration(left: AgentRuntimeStartConfiguration, right: AgentRuntimeStartConfiguration) {
+    return (
+        left.generationModels.image?.channelId === right.generationModels.image?.channelId &&
+        left.generationModels.image?.model === right.generationModels.image?.model &&
+        left.generationModels.video?.channelId === right.generationModels.video?.channelId &&
+        left.generationModels.video?.model === right.generationModels.video?.model &&
+        left.skillDirs.length === right.skillDirs.length &&
+        left.skillDirs.every((dir, index) => dir === right.skillDirs[index]) &&
+        left.executionMode === right.executionMode &&
+        left.attachments.length === right.attachments.length &&
+        left.attachments.every((attachment, index) => attachment.resourceId === right.attachments[index]?.resourceId && attachment.name === right.attachments[index]?.name)
+    );
 }

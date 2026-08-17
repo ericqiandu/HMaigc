@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BookOpenCheck, ChevronRight, Clock3, FileText, Image as ImageIcon, LoaderCircle, Lock, Maximize2, Music2, Play, RefreshCw, Replace, Square, Star, TriangleAlert, Video } from "lucide-react";
+import { BookOpenCheck, ChevronRight, Clock3, FileText, Image as ImageIcon, LoaderCircle, Lock, Maximize2, RefreshCw, Replace, Square, Star, TriangleAlert } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
@@ -12,6 +12,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasTextDraftEditor, type CanvasTextDraftEditorHandle } from "./canvas-text-draft-editor";
+import { CanvasMediaNodeContent } from "./canvas-media-node-content";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
 import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -787,70 +788,11 @@ function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchExpanded
 }
 
 function VideoNodeContent({ node, theme, reduceMediaEffects }: NodeContentRendererProps) {
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const playWhenReadyRef = useRef(false);
-    const { url, loading, load } = useNodeResourceUrl(node, false);
-    useEffect(() => {
-        if (!url || !playWhenReadyRef.current) return;
-        playWhenReadyRef.current = false;
-        void videoRef.current?.play().catch(() => undefined);
-    }, [url]);
-    if (!node.metadata?.content) return <CanvasNodeEmptyState icon={<Video className="size-5" />} title="空视频节点" theme={theme} />;
-    if (!url) {
-        return (
-            <DeferredMediaLoad
-                icon={loading ? <LoaderCircle className="size-5 animate-spin" /> : <Play className="size-5 fill-current" />}
-                label={loading ? "正在缓存视频" : "加载并缓存视频"}
-                disabled={loading}
-                onClick={() => {
-                    playWhenReadyRef.current = true;
-                    void load();
-                }}
-            />
-        );
-    }
-    return <video ref={videoRef} src={url} controls preload={reduceMediaEffects ? "none" : "metadata"} className="h-full w-full bg-black object-contain" data-canvas-no-zoom />;
+    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={Boolean(reduceMediaEffects)} />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
-    const audioRef = useRef<HTMLAudioElement>(null);
-    const playWhenReadyRef = useRef(false);
-    const { url, loading, load } = useNodeResourceUrl(node, false);
-    useEffect(() => {
-        if (!url || !playWhenReadyRef.current) return;
-        playWhenReadyRef.current = false;
-        void audioRef.current?.play().catch(() => undefined);
-    }, [url]);
-    if (!node.metadata?.content) return <CanvasNodeEmptyState icon={<Music2 className="size-5" />} title="空音频节点" description="输入文字生成音频" theme={theme} />;
-    if (!url) {
-        return (
-            <DeferredMediaLoad
-                icon={loading ? <LoaderCircle className="size-5 animate-spin" /> : <Play className="size-5 fill-current" />}
-                label={loading ? "正在缓存音频" : "加载并缓存音频"}
-                disabled={loading}
-                onClick={() => {
-                    playWhenReadyRef.current = true;
-                    void load();
-                }}
-            />
-        );
-    }
-    return (
-        <div className="canvas-audio-node-player">
-            <div className="canvas-audio-node-player-copy">
-                <span className="canvas-audio-node-player-icon">
-                    <Music2 className="canvas-audio-node-player-wave size-4" />
-                </span>
-                <span className="canvas-audio-node-player-title">{audioNodeTitle(node)}</span>
-            </div>
-            <audio ref={audioRef} src={url} controls preload="metadata" className="canvas-audio-node-player-control" data-canvas-no-zoom />
-        </div>
-    );
-}
-
-function audioNodeTitle(node: CanvasNodeData) {
-    const title = node.title?.trim();
-    return !title || title.toLocaleLowerCase() === "audio" ? "音频节点" : title;
+    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={false} />;
 }
 
 function ImageContent({
@@ -896,29 +838,6 @@ function ImageContent({
                 )}
             </div>
         </BatchFrame>
-    );
-}
-
-function DeferredMediaLoad({ icon, label, disabled, onClick }: { icon: ReactNode; label: string; disabled: boolean; onClick: () => void }) {
-    return (
-        <button
-            type="button"
-            data-canvas-no-zoom
-            className="canvas-node-deferred-load"
-            disabled={disabled}
-            aria-label={label}
-            onClick={(event) => {
-                event.stopPropagation();
-                onClick();
-            }}
-            onMouseDown={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-        >
-            <span className="canvas-node-state-icon" aria-hidden="true">
-                {icon}
-            </span>
-            <span className="canvas-node-state-title">{label}</span>
-        </button>
     );
 }
 

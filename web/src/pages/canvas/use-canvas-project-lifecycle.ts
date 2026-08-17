@@ -6,8 +6,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { hydrateAssistantImages, hydrateCanvasImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { normalizeVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
 import { listActivatedSkills, type UpdreamSkill } from "@/services/api/skills";
-import { deleteRemoteCanvasProject } from "@/services/api/user-data";
-import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
+import { createCanvasProjectWithRemoteSync, deleteCanvasProjectsWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, CanvasNodeMetadata, ViewportTransform } from "@/types/canvas";
 import type { CanvasHistorySnapshot } from "./use-canvas-history";
@@ -71,7 +70,6 @@ export function useCanvasProjectLifecycle({
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
     const renameProject = useCanvasStore((state) => state.renameProject);
-    const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const [activatedSkills, setActivatedSkills] = useState<UpdreamSkill[]>([]);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -174,19 +172,15 @@ export function useCanvasProjectLifecycle({
     }, [message, navigate]);
 
     const deleteCurrentProject = useCallback(() => {
-        const finishDelete = () => {
-            deleteProjects([projectId]);
+        void deleteCanvasProjectsWithRemoteSync([projectId]).then((result) => {
+            if (result.failures.length > 0) {
+                message.error(result.failures[0]?.reason || "画布删除失败");
+                return;
+            }
             cleanupAssetImages();
             navigate("/canvas");
-        };
-        if (currentProject?.teamId) {
-            void deleteRemoteCanvasProject(projectId)
-                .then(finishDelete)
-                .catch((error) => message.error(error instanceof Error ? `删除团队画布失败：${error.message}` : "删除团队画布失败"));
-            return;
-        }
-        finishDelete();
-    }, [cleanupAssetImages, currentProject?.teamId, deleteProjects, message, navigate, projectId]);
+        });
+    }, [cleanupAssetImages, message, navigate, projectId]);
 
     const renameCurrentProject = useCallback((title: string) => {
         renameProject(projectId, title);

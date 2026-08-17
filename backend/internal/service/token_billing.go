@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -23,13 +24,48 @@ type TokenPricingSnapshot struct {
 	MaxOutputTokens        int64 `json:"maxOutputTokens"`
 }
 
-const kuaiziBillingFenMicrocredits int64 = 1_000_000
+const (
+	kuaiziBillingFenMicrocredits    int64 = 1_000_000
+	tokenBillingProtocolMarginBytes int64 = 256
+)
 
 type TokenUsageFact struct {
 	InputTokens  int64
 	CachedTokens int64
 	OutputTokens int64
 	Available    bool
+}
+
+// PrepareTokenBilledChatRequest freezes the commercial output ceiling in the
+// exact request body and returns a conservative UTF-8 byte upper bound for
+// input-token reservation.
+func PrepareTokenBilledChatRequest(body []byte, maxOutputTokens int64) ([]byte, int64, error) {
+	if maxOutputTokens <= 0 || len(body) == 0 || !utf8.Valid(body) {
+		return nil, 0, errors.New("Token 计费请求不符合 Chat Completions 契约")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+		return nil, 0, errors.New("Token 计费请求 JSON 无效")
+	}
+	limit, err := json.Marshal(maxOutputTokens)
+	if err != nil {
+		return nil, 0, err
+	}
+	payload["max_tokens"] = limit
+	if streamRaw, exists := payload["stream"]; exists {
+		var stream bool
+		if err := json.Unmarshal(streamRaw, &stream); err != nil {
+			return nil, 0, errors.New("Token 计费请求 stream 字段无效")
+		}
+		if stream {
+			payload["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		}
+	}
+	prepared, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	return prepared, int64(len(prepared)) + tokenBillingProtocolMarginBytes, nil
 }
 
 func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, error) {
@@ -78,6 +114,7 @@ func tokenChargeMicrocredits(pricing TokenPricingSnapshot, usage TokenUsageFact,
 }
 
 type TokenBillingReservation struct {
+	TaskID               string
 	EstimatedInputTokens int64
 	MaxOutputTokens      int64
 	Pricing              TokenPricingSnapshot
@@ -102,10 +139,45 @@ func (s *Service) ProxyTokenBillingConfig(userID string, channelID string, model
 }
 
 func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
+	order, err := s.newTokenBillingOrder(userID, channelID, modelKey, scene, idempotencyKey, reservation)
+	if err != nil {
+		return nil, err
+	}
+	existing, lookupErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
+	if lookupErr == nil {
+		if !sameTokenBillingReservation(existing, order) {
+			return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
+		}
+		return existing, nil
+	}
+	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		return nil, lookupErr
+	}
+	if err := s.repo.ReserveBillingOrder(order); err != nil {
+		existing, existingErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
+		if existingErr == nil {
+			if !sameTokenBillingReservation(existing, order) {
+				return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
+			}
+			return existing, nil
+		}
+		if errors.Is(err, repository.ErrInsufficientCredits) {
+			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
+		}
+		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
+			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
+		}
+		return nil, err
+	}
+	return order, nil
+}
+
+func (s *Service) newTokenBillingOrder(userID string, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)
 	modelKey = strings.TrimSpace(modelKey)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	reservation.TaskID = strings.TrimSpace(reservation.TaskID)
 	reservation.EndpointVersionID = strings.TrimSpace(reservation.EndpointVersionID)
 	reservation.CredentialVersionID = strings.TrimSpace(reservation.CredentialVersionID)
 	if userID == "" || channelID == "" || modelKey == "" || idempotencyKey == "" || reservation.EstimatedInputTokens <= 0 || reservation.MaxOutputTokens <= 0 || reservation.EndpointVersionID == "" || reservation.CredentialVersionID == "" {
@@ -154,7 +226,7 @@ func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, mode
 	}
 	now := time.Now()
 	order := &model.BillingOrder{
-		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: "proxy-token:" + idempotencyKey,
+		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: "proxy-token:" + idempotencyKey, TaskID: reservation.TaskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: "text", Scene: truncateRunes(firstNonEmpty(strings.TrimSpace(scene), "agent"), 80),
 		BillingMode: "token_usage", PriceVersion: item.PriceVersion, MultiplierBasisPoints: multiplierBPS, Quantity: 1,
 		AmountMicrocredits: amount, ReservedAmountMicrocredits: amount, TokenPricingSnapshotJSON: string(pricingJSON),
@@ -162,38 +234,12 @@ func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, mode
 		ProviderEndpointVersionID: reservation.EndpointVersionID, ProviderCredentialVersionID: reservation.CredentialVersionID,
 		Status: model.BillingStatusReserved, CreatedAt: now, UpdatedAt: now,
 	}
-	existing, lookupErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
-	if lookupErr == nil {
-		if !sameTokenBillingReservation(existing, order) {
-			return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
-		}
-		return existing, nil
-	}
-	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-		return nil, lookupErr
-	}
-	if err := s.repo.ReserveBillingOrder(order); err != nil {
-		existing, existingErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
-		if existingErr == nil {
-			if !sameTokenBillingReservation(existing, order) {
-				return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
-			}
-			return existing, nil
-		}
-		if errors.Is(err, repository.ErrInsufficientCredits) {
-			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
-		}
-		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
-			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
-		}
-		return nil, err
-	}
 	return order, nil
 }
 
 func sameTokenBillingReservation(existing *model.BillingOrder, requested *model.BillingOrder) bool {
 	return existing != nil && requested != nil &&
-		existing.BillingMode == "token_usage" && existing.UserID == requested.UserID && existing.IdempotencyKey == requested.IdempotencyKey &&
+		existing.BillingMode == "token_usage" && existing.UserID == requested.UserID && existing.IdempotencyKey == requested.IdempotencyKey && existing.TaskID == requested.TaskID &&
 		existing.ChannelID == requested.ChannelID && existing.ChannelModelID == requested.ChannelModelID && existing.Model == requested.Model &&
 		existing.Scene == requested.Scene && existing.PriceVersion == requested.PriceVersion && existing.MultiplierBasisPoints == requested.MultiplierBasisPoints &&
 		existing.ReservedAmountMicrocredits == requested.ReservedAmountMicrocredits && existing.TokenPricingSnapshotJSON == requested.TokenPricingSnapshotJSON &&
@@ -222,9 +268,29 @@ func (s *Service) ReconcileTokenBillingNow(ctx context.Context, orderID string, 
 	return s.reconcileTokenBillingOrder(ctx, order, false)
 }
 
+func (s *Service) settleCompletedTaskBilling(ctx context.Context, orderID string) error {
+	if strings.TrimSpace(orderID) == "" {
+		return nil
+	}
+	order, err := s.repo.BillingOrder(orderID)
+	if err != nil {
+		return err
+	}
+	if order.BillingMode != "token_usage" {
+		return s.SettleBilling(order.ID, order.ProviderRequestID)
+	}
+	if strings.TrimSpace(order.ProviderRequestID) == "" {
+		return errors.New("Token 账单缺少可核对的上游任务 ID")
+	}
+	return s.reconcileTokenBillingOrder(ctx, order, false)
+}
+
 func (s *Service) ScheduleTokenBillingReconciliation(orderID string, providerTaskID string, reason string, usage TokenUsageFact) error {
 	providerTaskID, err := tokenBillingTaskID(providerTaskID)
 	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdateBillingProviderRequestID(strings.TrimSpace(orderID), providerTaskID); err != nil {
 		return err
 	}
 	usageStatus, storedUsage := normalizeTokenUsageFact(usage)

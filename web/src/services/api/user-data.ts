@@ -21,13 +21,25 @@ export type RemoteUserDataSummary = {
     updatedAt: string;
 };
 
+export class UserDataRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "UserDataRequestError";
+    }
+}
+
 async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>) {
     try {
         const response = await promise;
         if (response.data.code !== 0) throw new Error(response.data.msg || "请求失败");
         return response.data.data;
     } catch (error) {
-        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) throw new Error(error.response?.data?.msg || error.message || "请求失败");
+        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) {
+            throw new UserDataRequestError(error.response?.data?.msg || error.message || "请求失败", error.response?.status);
+        }
         throw error;
     }
 }

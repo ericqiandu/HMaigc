@@ -20,7 +20,7 @@ Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快�
 
 `generation.submit` 在完整 Scope 和 L2 审批后复用现有 `CreateTask` 商业入口，并以 `runId + toolCallId + actionVersion` 派生稳定 Task 与 Billing 幂等身份；重复协调、进程中断和 PostgreSQL 并发重放只允许形成一个 Task、一个 BillingOrder 和一次积分预留。`generation.wait` 只读取当前用户、当前画布、当前 run operation 的同一任务；queued/running 保持等待，失败和取消显式回灌，只有 succeeded 且结果中存在真实媒体 URL 才写入交付证据。Runtime 最终验收从已持久化的成功工具结果构造 canvas revision 与资产事实，不能用模型文本代替真实交付。
 
-每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version，worker 才能在请求边界解密 Key。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；Task 失败或决策非法会显式终结 run，repairable 结果只创建唯一下一步任务，工具决策停在 `waiting_tool`。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
+每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version。`token_usage` 模型在同一创建事务内冻结 Token 价格、输入上界和商业最大输出量，worker 先提交不可重复发送边界，再把相同最大输出量写入真实请求，响应事实持久化后才核对筷子账单。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；决策结构非法时保存受控的 `model_decision_invalid` 反馈并在同一有界 run 内创建下一模型步骤修正，达到步骤上限才终结，禁止文本提取、默认决策或模型降级。上游请求失败仍显式终结 run；所有已成功发出的 Token 请求继续按原账单核对，禁止误退款或重复调用。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
 
 ## 历史资源 OSS 迁移
 

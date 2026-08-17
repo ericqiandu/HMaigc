@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -43,8 +44,7 @@ func TestRunAPIMartImageTaskSubmitsAndPolls(t *testing.T) {
 			APIKey:        "test-key",
 			Model:         "gemini-3.1-flash-image-preview",
 			InterfaceType: "apimart-image",
-			Size:          "1920x1080",
-			Quality:       "high",
+			Size:          "3840x2160",
 		},
 		ReferenceImages: []providerMedia{{ID: "reference-1", DataURL: testReferenceImageDataURL}},
 	})
@@ -121,7 +121,7 @@ func TestAPIMartGPTImageOneRequestUsesQualityAndTransparency(t *testing.T) {
 	}
 }
 
-func TestAPIMartGPTImageTwoRequestUsesLowercaseResolution(t *testing.T) {
+func TestAPIMartGPTImageTwoRequestUsesConfiguredResolutionWithoutQualityProxy(t *testing.T) {
 	profile, err := apimartImageProfile("gpt-image-2")
 	if err != nil {
 		t.Fatalf("profile error = %v", err)
@@ -129,9 +129,8 @@ func TestAPIMartGPTImageTwoRequestUsesLowercaseResolution(t *testing.T) {
 	request, err := apimartImageRequestFromInput(canvasGenerationInput{
 		Prompt: "电影海报",
 		Config: providerConfig{
-			Model:   "gpt-image-2",
-			Size:    "3840x2160",
-			Quality: "high",
+			Model: "gpt-image-2",
+			Size:  "3840x2160",
 		},
 	}, profile)
 	if err != nil {
@@ -139,6 +138,20 @@ func TestAPIMartGPTImageTwoRequestUsesLowercaseResolution(t *testing.T) {
 	}
 	if request.Size != "16:9" || request.Resolution != "4k" || request.Quality != "" {
 		t.Fatalf("request output settings = %#v", request)
+	}
+}
+
+func TestAPIMartGPTImageTwoRejectsDimensionsOutsidePublishedResolutionContract(t *testing.T) {
+	profile, err := apimartImageProfile("gpt-image-2")
+	if err != nil {
+		t.Fatalf("profile error = %v", err)
+	}
+	_, err = apimartImageRequestFromInput(canvasGenerationInput{
+		Prompt: "电影海报",
+		Config: providerConfig{Model: "gpt-image-2", Size: "1920x1080"},
+	}, profile)
+	if err == nil || !strings.Contains(err.Error(), "不属于后台发布的分辨率契约") {
+		t.Fatalf("request error = %v", err)
 	}
 }
 

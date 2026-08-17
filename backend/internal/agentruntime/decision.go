@@ -49,10 +49,11 @@ type FinalDecision struct {
 }
 
 type ToolCallDecision struct {
-	ToolCallID    string          `json:"toolCallId"`
-	ToolName      ToolName        `json:"toolName"`
-	ActionVersion int             `json:"actionVersion"`
-	Arguments     json.RawMessage `json:"arguments"`
+	ToolCallID       string           `json:"toolCallId"`
+	ToolName         ToolName         `json:"toolName"`
+	ActionVersion    int              `json:"actionVersion"`
+	Arguments        json.RawMessage  `json:"arguments"`
+	ExpectedDelivery ExpectedDelivery `json:"expectedDelivery"`
 }
 
 func ParseModelDecision(payload []byte) (ModelDecision, error) {
@@ -95,10 +96,18 @@ func (decision ModelDecision) Validate() error {
 		if call.ToolCallID == "" || len(call.ToolCallID) > 120 || !call.ToolName.Valid() || call.ActionVersion < 1 {
 			return errors.New("agent tool call identity is invalid")
 		}
+		if err := call.ExpectedDelivery.Validate(); err != nil {
+			return err
+		}
 		arguments := bytes.TrimSpace(call.Arguments)
 		if len(arguments) == 0 || bytes.Equal(arguments, []byte("null")) || arguments[0] != '{' || !json.Valid(arguments) {
 			return errors.New("agent tool call arguments are invalid")
 		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, arguments); err != nil {
+			return errors.New("agent tool call arguments are invalid")
+		}
+		call.Arguments = append(call.Arguments[:0], compact.Bytes()...)
 		return nil
 	default:
 		return errors.New("agent model decision kind is invalid")

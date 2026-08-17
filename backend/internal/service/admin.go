@@ -756,7 +756,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				Capability: item.Capability, WatermarkCapability: watermarkCapability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
-				ProviderCapabilities: publicProviderModelCapabilities(item.ModelKey),
+				ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, item.ModelKey),
 			})
 		}
 	}
@@ -825,7 +825,10 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 	return true
 }
 
-func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilities {
+func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, modelKey string) *PublicProviderCapabilities {
+	if interfaceType == model.ChannelInterfaceAPIMartImage {
+		return publicAPIMartImageCapabilities(modelKey)
+	}
 	capabilities, ok := kuaiziProviderModelSpec(modelKey)
 	if !ok {
 		return nil
@@ -847,6 +850,25 @@ func publicProviderModelCapabilities(modelKey string) *PublicProviderCapabilitie
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
 		Tools:                     append([]string{}, capabilities.Tools...),
 		SupportsTokenUsageBilling: kuaiziModelSupportsTokenUsageBilling(modelKey),
+	}
+}
+
+func publicAPIMartImageCapabilities(modelKey string) *PublicProviderCapabilities {
+	profile, err := apimartImageProfile(modelKey)
+	if err != nil {
+		return nil
+	}
+	qualities := []string{}
+	if profile.supportsQuality {
+		qualities = []string{"low", "medium", "high"}
+	}
+	return &PublicProviderCapabilities{
+		ModelKey: modelKey, DisplayName: profile.label, UpstreamMode: modelKey, Capability: "image",
+		Resolutions: append([]string{}, profile.resolutions...), InputVariants: []string{},
+		Ratios: apimartPublishedAspectRatios(profile), Qualities: qualities, OutputCounts: []int{1},
+		WatermarkCapability: model.WatermarkCapabilityUnsupported,
+		MaxImages:           profile.maxReferenceImages,
+		Tools:               []string{},
 	}
 }
 

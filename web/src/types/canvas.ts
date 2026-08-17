@@ -333,6 +333,10 @@ export type CanvasAgentLaunchRequest = {
     id: string;
     source: "home";
     prompt: string;
+    attachments: Array<{ resourceId: string; name: string }>;
+    generationModels: CanvasAgentGenerationModels;
+    skillDirs: string[];
+    executionMode: CanvasAgentExecutionMode;
     createdAt: string;
 };
 

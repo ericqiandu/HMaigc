@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 import type { CanvasAgentExecutionMode } from "@/types/canvas";
 
 const modes: Array<{ value: CanvasAgentExecutionMode; label: string; description: string }> = [
-    { value: "guided", label: "手动模式", description: "Agent 在每次生成前询问" },
-    { value: "automatic", label: "自动模式", description: "Agent 完全自动生成" },
+    { value: "guided", label: "手动模式", description: "每次生成前询问" },
+    { value: "automatic", label: "自动模式", description: "可逆操作自动执行，付费前确认" },
 ];
 
 export function CanvasAgentModeMenu({

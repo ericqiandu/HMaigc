@@ -12,15 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
-
-const tokenBillingProtocolMarginBytes int64 = 256
 
 func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/auth/settings", func(c *gin.Context) {
@@ -623,7 +620,11 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	estimatedInputTokens := int64(0)
 	if tokenBilled {
-		body, estimatedInputTokens, err = prepareTokenBilledProxyRequest(path, body, tokenPricing.MaxOutputTokens)
+		if path != "/chat/completions" {
+			fail(c, http.StatusBadRequest, errors.New("Token 计费请求不符合 Chat Completions 契约"))
+			return
+		}
+		body, estimatedInputTokens, err = service.PrepareTokenBilledChatRequest(body, tokenPricing.MaxOutputTokens)
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -777,35 +778,6 @@ func safeProxyProviderRequestID(value string, secret string) string {
 		return ""
 	}
 	return value
-}
-
-func prepareTokenBilledProxyRequest(path string, body []byte, maxOutputTokens int64) ([]byte, int64, error) {
-	if path != "/chat/completions" || maxOutputTokens <= 0 || len(body) == 0 || !utf8.Valid(body) {
-		return nil, 0, errors.New("Token 计费请求不符合 Chat Completions 契约")
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
-		return nil, 0, errors.New("Token 计费请求 JSON 无效")
-	}
-	limit, err := json.Marshal(maxOutputTokens)
-	if err != nil {
-		return nil, 0, err
-	}
-	payload["max_tokens"] = limit
-	if streamRaw, exists := payload["stream"]; exists {
-		var stream bool
-		if err := json.Unmarshal(streamRaw, &stream); err != nil {
-			return nil, 0, errors.New("Token 计费请求 stream 字段无效")
-		}
-		if stream {
-			payload["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-		}
-	}
-	prepared, err := json.Marshal(payload)
-	if err != nil {
-		return nil, 0, err
-	}
-	return prepared, int64(len(prepared)) + tokenBillingProtocolMarginBytes, nil
 }
 
 func applySystemProxyAuthentication(request *http.Request, runtime service.SystemProxyRuntime) {

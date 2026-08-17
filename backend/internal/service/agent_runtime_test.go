@@ -1,9 +1,11 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,7 +28,10 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			t.Errorf("ApiKey = %q", request.Header.Get("ApiKey"))
 		}
 		var body struct {
-			Model    string `json:"model"`
+			Model          string `json:"model"`
+			ResponseFormat struct {
+				Type string `json:"type"`
+			} `json:"response_format"`
 			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
@@ -36,7 +41,13 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			t.Error(err)
 		}
 		encoded, _ := json.Marshal(body)
-		if body.Model != "gpt-5.5" || len(body.Messages) != 2 || !strings.Contains(body.Messages[0].Content, "canvas.read_state") || strings.Contains(string(encoded), "runtime-secret-key") {
+		if body.Model != "gpt-5.5" || body.ResponseFormat.Type != "json_object" || len(body.Messages) != 2 ||
+			!strings.Contains(body.Messages[0].Content, "canvas.read_state") ||
+			!strings.Contains(body.Messages[0].Content, `"size":"16:9"`) ||
+			!strings.Contains(body.Messages[0].Content, "providerCapabilities.qualities") ||
+			strings.Contains(body.Messages[0].Content, `"quality":"medium"`) ||
+			!strings.Contains(body.Messages[0].Content, "每次新的工具调用必须使用从未出现过的 toolCallId") ||
+			strings.Contains(string(encoded), "runtime-secret-key") {
 			t.Errorf("model request = %s", encoded)
 		}
 		decision := `{"kind":"final","final":{"message":"我会先读取画布事实再给出建议。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
@@ -59,7 +70,7 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 	}))
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-complete", UserMessage: "告诉我下一步", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-complete", UserMessage: "告诉我下一步", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	started, err := svc.StartAgentRuntime(input)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +143,7 @@ func TestAgentRuntimeModelFailureTerminatesWithoutRetryOrDoubleCharge(t *testing
 	}))
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-failed", UserMessage: "读取画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-failed", UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	started, err := svc.StartAgentRuntime(input)
 	if err != nil {
 		t.Fatal(err)
@@ -195,11 +206,57 @@ func TestAgentRuntimeModelFailureTerminatesWithoutRetryOrDoubleCharge(t *testing
 	}
 }
 
+func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: `{"kind":"final","final":{"message":"已完成","expectedDelivery":{"kind":"answer","requiredArtifacts":["image"],"completionCriteria":[{"fact":"artifact","artifact":"image"}]}}}`}}}}
+		if err := json.NewEncoder(writer).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+
+	svc, _, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-invalid-decision-repair",
+		UserMessage: "生成一张图片", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	started, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatalf("invalid model decision must remain a repairable runtime fact: %v", err)
+	}
+
+	progress, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.StepNumber != 1 || progress.ModelTask == nil {
+		t.Fatalf("repairable runtime = %#v", progress)
+	}
+	nextTask, err := svc.repo.TaskForUser(input.Scope.ActorUserID, progress.ModelTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(nextTask.Prompt, `"code":"model_decision_invalid"`) ||
+		!strings.Contains(nextTask.Prompt, `"reason":"answer delivery facts are inconsistent"`) {
+		t.Fatalf("next model prompt lacks structured repair facts: %s", nextTask.Prompt)
+	}
+	if started.ModelTask == nil || nextTask.ID == started.ModelTask.ID {
+		t.Fatalf("repair reused the failed model step: started=%#v next=%#v", started.ModelTask, nextTask)
+	}
+}
+
 func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
 	input := StartAgentRuntimeInput{
 		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-1",
 		UserMessage: "读取当前画布并告诉我下一步", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
 	}
 	first, err := svc.StartAgentRuntime(input)
 	if err != nil {
@@ -258,6 +315,11 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if _, err := svc.StartAgentRuntime(changed); err == nil || !strings.Contains(err.Error(), "request facts conflict") {
 		t.Fatalf("changed idempotent request error = %v", err)
 	}
+	changedMode := input
+	changedMode.Configuration.ExecutionMode = agentruntime.ExecutionAutomatic
+	if _, err := svc.StartAgentRuntime(changedMode); err == nil || !strings.Contains(err.Error(), "request facts conflict") {
+		t.Fatalf("changed execution mode replay error = %v", err)
+	}
 	if err := db.Model(&model.Task{}).Where("id = ?", first.ModelTask.ID).Update("input_json", `{}`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -266,12 +328,175 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	}
 }
 
+func TestStartAgentRuntimeCreatesTokenBilledFrozenModelTask(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	_, pricing := configureTokenBilledAgentFixture(t, svc, db, fixture)
+
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-token-billing",
+		UserMessage: "读取当前画布并告诉我下一步", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	started, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.ModelTask == nil {
+		t.Fatal("token-billed Agent task was not created")
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantKey := "proxy-token:" + agentRuntimeBillingKey(input.Scope.RunID, 0)
+	if order.BillingMode != "token_usage" || order.IdempotencyKey != wantKey || order.Status != model.BillingStatusReserved {
+		t.Fatalf("token billing identity = %#v", order)
+	}
+	if order.EstimatedInputTokens <= int64(len(input.UserMessage)) || order.MaxOutputTokens != pricing.ExpectedOutputTokens || order.TokenPricingSnapshotJSON == "" {
+		t.Fatalf("token billing reservation = %#v", order)
+	}
+	if order.ProviderEndpointVersionID != fixture.endpoint.ID || order.ProviderCredentialVersionID != fixture.version.ID || order.AmountMicrocredits <= 0 {
+		t.Fatalf("token billing frozen runtime = %#v", order)
+	}
+	if started.ModelTask.ProviderEndpointVersionID != order.ProviderEndpointVersionID || started.ModelTask.ProviderCredentialVersionID != order.ProviderCredentialVersionID {
+		t.Fatalf("task/order runtime mismatch: task=%#v order=%#v", started.ModelTask, order)
+	}
+}
+
+func TestAgentRuntimeTokenBillingSettlesFromProviderUsageAndBill(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var chatCalls atomic.Int32
+	var billingCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/ai-open-platform-api/v1/chat/completions":
+			chatCalls.Add(1)
+			var body struct {
+				Model     string `json:"model"`
+				MaxTokens int64  `json:"max_tokens"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Model != "deepseek-v4-flash" || body.MaxTokens != 50_000 {
+				t.Errorf("chat request = %#v", body)
+			}
+			decision := `{"kind":"final","final":{"message":"已完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+			_, _ = writer.Write([]byte(`{"id":"chatcmpl-runtime-token-task","choices":[{"message":{"content":` + strconv.Quote(decision) + `}}],"usage":{"prompt_tokens":30,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":5}}}`))
+		case kuaiziBillingPath:
+			billingCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"order_id":"provider-order-1","amount":1,"status":"succeeded","task_id":"runtime-token-task","task_status":"succeeded","task_duration":1,"total_tokens":40,"created_at":"2026-08-16T08:00:00Z"}]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-token-settlement",
+		UserMessage: "告诉我下一步", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	started, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var credits model.CreditAccount
+	if err := db.First(&credits, "user_id = ?", input.Scope.ActorUserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if chatCalls.Load() != 1 || billingCalls.Load() != 1 {
+		t.Fatalf("provider calls: chat=%d billing=%d", chatCalls.Load(), billingCalls.Load())
+	}
+	if order.Status != model.BillingStatusSettled || order.AmountMicrocredits != 1_000_000 || order.ProviderBillingOrderID != "provider-order-1" || order.ProviderRequestID != "runtime-token-task" {
+		t.Fatalf("settled token bill = %#v", order)
+	}
+	if order.InputTokens != 30 || order.CachedTokens != 5 || order.OutputTokens != 10 || order.ProviderBillingTotalTokens != 40 {
+		t.Fatalf("settled token usage = %#v", order)
+	}
+	if credits.AvailableMicrocredits != 999_000_000 || credits.ReservedMicrocredits != 0 {
+		t.Fatalf("settled credits = %#v", credits)
+	}
+}
+
+func TestAgentRuntimeInvalidDecisionDoesNotRefundSuccessfulTokenCall(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var chatCalls atomic.Int32
+	var billingCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/ai-open-platform-api/v1/chat/completions":
+			chatCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"id":"chatcmpl-invalid-decision-task","choices":[{"message":{"content":"not-json"}}],"usage":{"prompt_tokens":20,"completion_tokens":3}}`))
+		case kuaiziBillingPath:
+			billingCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"order_id":"provider-order-invalid-decision","amount":1,"status":"succeeded","task_id":"invalid-decision-task","task_status":"succeeded","task_duration":1,"total_tokens":23,"created_at":"2026-08-16T08:00:00Z"}]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-invalid-token-decision",
+		UserMessage: "告诉我下一步", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	started, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatalf("invalid Agent decision must remain repairable after the paid request succeeds: %v", err)
+	}
+	var task model.Task
+	var order model.BillingOrder
+	if err := db.First(&task, "id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&order, "task_id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusSucceeded || order.Status != model.BillingStatusSettled {
+		t.Fatalf("repairable decision facts: task=%#v order=%#v", task, order)
+	}
+	progress, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.DecisionFeedback == nil || progress.ModelTask == nil {
+		t.Fatalf("invalid paid decision was not returned to the same runtime: %#v", progress)
+	}
+	if err := svc.RunTokenBillingReconciliationBatch(context.Background(), time.Now().Add(time.Minute), 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&order, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != model.BillingStatusSettled || order.AmountMicrocredits != 1_000_000 || chatCalls.Load() != 1 || billingCalls.Load() != 1 {
+		t.Fatalf("reconciled failed decision: order=%#v chat=%d billing=%d", order, chatCalls.Load(), billingCalls.Load())
+	}
+}
+
 func TestStartAgentRuntimeFailsBeforeBillingWithoutConfiguredModel(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	if err := db.Where("key = ?", agentDefaultModelSettingKey).Delete(&model.SystemSetting{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-no-model", UserMessage: "读取画布", MaxSteps: 4}
+	input := StartAgentRuntimeInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-no-model", UserMessage: "读取画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "尚未配置") {
 		t.Fatalf("unconfigured Agent model error = %v", err)
 	}
@@ -357,10 +582,51 @@ func newAgentRuntimeServiceFixture(t *testing.T, endpointURL string) (*Service, 
 	return svc, db, fixture
 }
 
+func configureTokenBilledAgentFixture(t *testing.T, svc *Service, db *gorm.DB, fixture agentRuntimeServiceFixture) (model.ChannelModel, model.ModelPricing) {
+	t.Helper()
+	now := time.Now().UTC()
+	channel := model.ModelChannel{
+		ID: deterministicKuaiziChatChannelID("deepseek"), Scope: model.ChannelScopeSystem, Enabled: true,
+		Name: "Agent DeepSeek", APIFormat: "openai", InterfaceType: model.ChannelInterfaceChatCompletion,
+		ModelsJSON: `["deepseek-v4-flash"]`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	item := model.ChannelModel{
+		ID: "runtime-token-agent-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
+		ProviderCredentialID: fixture.credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "text",
+		BillingMode: "token_usage", PriceStrategy: "token", UnitPriceMicrocredits: 0, PriceConfigured: true, Enabled: true,
+		PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	pricing := model.ModelPricing{
+		ID: "runtime-token-pricing", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
+		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", "runtime-user").Update("available_microcredits", int64(1_000_000_000)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateAgentDefaultModelSetting(providerAdmin(), UpdateAgentDefaultModelRequest{ChannelModelID: item.ID}); err != nil {
+		t.Fatal(err)
+	}
+	return item, pricing
+}
+
 func agentRuntimeServiceScope() agentruntime.Scope {
 	return agentruntime.Scope{
 		TenantKind: agentruntime.TenantPersonal, TenantID: "runtime-user", ActorUserID: "runtime-user",
 		CanvasID: "runtime-canvas", ThreadID: "runtime-thread", RunID: "runtime-run",
 		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
 	}
+}
+
+func guidedAgentRuntimeConfigurationInput() AgentRuntimeConfigurationInput {
+	return AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionGuided}
 }

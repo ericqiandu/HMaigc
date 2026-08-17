@@ -11,6 +11,7 @@ import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
+import { resizeViewportAroundCenter } from "@/lib/canvas/canvas-agent-dock";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
@@ -58,6 +59,7 @@ import { useCanvasConnectionController } from "./use-canvas-connection-controlle
 import { useCanvasCollaboration } from "./use-canvas-collaboration";
 import { useCanvasAgentOperations } from "./use-canvas-agent-operations";
 import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility";
+import { useCanvasAgentDock } from "@/components/canvas/use-canvas-agent-dock";
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
 import { useCanvasStyleWorkflow } from "./use-canvas-style-workflow";
 import { useCanvasDirector } from "./use-canvas-director";
@@ -174,6 +176,7 @@ function InfiniteCanvasPage() {
     const projectId = params.id || "";
     const containerRef = useRef<HTMLDivElement>(null);
     const didInitialCenterRef = useRef(false);
+    const observedViewportSizeRef = useRef<{ width: number; height: number } | null>(null);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const config = useConfigStore((state) => state.config);
@@ -226,6 +229,7 @@ function InfiniteCanvasPage() {
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const { assistantClosing, assistantMounted, assistantOpen, closeAgent, openAgent } = useCanvasAssistantVisibility();
+    const { width: assistantWidth, startResize: startAssistantResize, resizeByKeyboard: resizeAssistantByKeyboard } = useCanvasAgentDock();
     const { tasks: activeTasks } = useCanvasActiveTasks(projectId, projectLoaded);
 
     useEffect(() => {
@@ -238,6 +242,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         didInitialCenterRef.current = false;
+        observedViewportSizeRef.current = null;
     }, [projectId]);
 
     useEffect(() => {
@@ -372,7 +377,15 @@ function InfiniteCanvasPage() {
                         setViewport(readable);
                     }
                 }
+            } else {
+                const previousSize = observedViewportSizeRef.current;
+                if (previousSize && (previousSize.width !== viewportSize.width || previousSize.height !== viewportSize.height)) {
+                    const resized = resizeViewportAroundCenter(viewportRef.current, previousSize, viewportSize);
+                    viewportRef.current = resized;
+                    setViewport(resized);
+                }
             }
+            observedViewportSizeRef.current = viewportSize;
         };
 
         updateSize();
@@ -1944,6 +1957,9 @@ function InfiniteCanvasPage() {
                         projectId={projectId}
                         canvasRevision={currentProject?.revision || 0}
                         closing={assistantClosing}
+                        width={assistantWidth}
+                        onResizeStart={startAssistantResize}
+                        onResizeKeyDown={resizeAssistantByKeyboard}
                         onCollapse={closeAgent}
                         agentLaunchRequest={agentLaunchRequest}
                         onAgentLaunchHandled={handleAgentLaunchHandled}

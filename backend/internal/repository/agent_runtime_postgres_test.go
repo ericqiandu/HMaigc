@@ -310,7 +310,8 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "读取当前画布", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, UserMessage: "读取当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +391,8 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, firstRepo, scope)
 	if _, err := firstRepo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "修改当前画布", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, UserMessage: "修改当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +504,8 @@ func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, New(db), scope)
 	input := InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "agent-model-record", ModelKey: "gpt-5.5",
-		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取画布并给出下一步", Now: time.Now().UTC(),
+		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取画布并给出下一步",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}
 	start := make(chan struct{})
 	results := make(chan *InitializedAgentRun, 2)

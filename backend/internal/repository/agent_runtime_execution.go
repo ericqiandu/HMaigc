@@ -25,6 +25,7 @@ type InitializeAgentRunInput struct {
 	MaxSteps          int
 	ToolSchemaVersion int
 	UserMessage       string
+	Configuration     agentruntime.RunConfiguration
 	Now               time.Time
 }
 
@@ -54,9 +55,12 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 		input.MaxSteps < 1 || input.MaxSteps > 24 || input.ToolSchemaVersion < 1 || input.UserMessage == "" || len(input.UserMessage) > 64*1024 || input.Now.IsZero() {
 		return nil, errors.New("agent runtime initialization boundary is invalid")
 	}
+	if err := agentruntime.ValidateRunConfiguration(input.Configuration); err != nil {
+		return nil, err
+	}
 	state := agentruntime.RuntimeState{
 		StateVersion: 1, StepNumber: 0, MaxSteps: input.MaxSteps,
-		Status: agentruntime.RunQueued, UserMessage: input.UserMessage,
+		Status: agentruntime.RunQueued, UserMessage: input.UserMessage, Configuration: input.Configuration,
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
@@ -234,15 +238,16 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 		if !ok {
 			return errors.New("agent tool policy is unavailable")
 		}
+		approvalRequired := agentruntime.ApprovalRequiredFor(policy, next.Configuration.ExecutionMode)
 		status := agentruntime.ToolCallPending
-		if policy.ApprovalRequired {
+		if approvalRequired {
 			status = agentruntime.ToolCallWaitingApproval
 		}
 		call := model.AgentToolCall{
 			ID:    agentFactID("tool", runID, next.PendingToolCall.ToolCallID, strconv.Itoa(next.PendingToolCall.ActionVersion)),
 			RunID: runID, ToolCallID: next.PendingToolCall.ToolCallID, ActionVersion: next.PendingToolCall.ActionVersion,
 			ToolName: string(next.PendingToolCall.ToolName), Status: status,
-			RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: policy.ApprovalRequired,
+			RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: approvalRequired,
 			IdempotencyKey: runID + ":" + next.PendingToolCall.ToolCallID + ":" + strconv.Itoa(next.PendingToolCall.ActionVersion),
 			InputJSON:      string(next.PendingToolCall.Arguments), OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
 		}

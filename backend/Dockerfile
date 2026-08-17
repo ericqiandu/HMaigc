@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
+ARG APK_REPOSITORY=https://dl-cdn.alpinelinux.org/alpine
+
 FROM golang:1.25-alpine AS backend-build
 
 ARG APP_VERSION=dev
 ARG APP_COMMIT=unknown
+ARG APK_REPOSITORY
 
-RUN apk add --no-cache build-base
+RUN sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${APK_REPOSITORY}#g" /etc/apk/repositories \
+    && apk add --no-cache build-base
 
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=$GOPROXY
@@ -21,7 +25,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go 
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates ffmpeg tzdata wget \
+ARG APK_REPOSITORY
+
+RUN sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${APK_REPOSITORY}#g" /etc/apk/repositories \
+    && apk add --no-cache ca-certificates ffmpeg tzdata wget \
     && addgroup -S -g 101 app \
     && adduser -S -u 100 -G app app
 

@@ -17,14 +17,14 @@ import (
 )
 
 func TestAgentGenerationSubmitCreatesOneBilledTaskAcrossReplay(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-generate-image","toolName":"generation.submit","actionVersion":1,"arguments":{"type":"canvas_image","prompt":"生成一张雨夜街道图片","input":{"mode":"image","config":{"channelId":"runtime-image-channel","model":"kz_gpt_image2","quality":"medium","size":"1:1","resolution":"1K","count":1}}}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-generate-image","toolName":"generation.submit","actionVersion":1,"arguments":{"type":"canvas_image","prompt":"生成一张雨夜街道图片","input":{"mode":"image","config":{"channelId":"runtime-image-channel","model":"kz_gpt_image2","quality":"medium","size":"1:1","count":"1"}}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 	defer server.Close()
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	createAgentRuntimeImageModel(t, db, fixture)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-submit", UserMessage: "生成一张雨夜街道图片", MaxSteps: 6}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-submit", UserMessage: "生成一张雨夜街道图片", MaxSteps: 6, Configuration: guidedImageAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -86,15 +86,46 @@ func TestAgentGenerationSubmitCreatesOneBilledTaskAcrossReplay(t *testing.T) {
 	}
 }
 
+func TestAgentGenerationSubmitCommonContractAllowsProviderSpecificQualityOmission(t *testing.T) {
+	configuration := agentruntime.RunConfiguration{
+		GenerationModels: agentruntime.GenerationModelSelections{Image: &agentruntime.GenerationModelSelection{
+			ChannelID: "runtime-apimart-image-channel",
+			Model:     "gpt-image-2",
+		}},
+	}
+	arguments := agentGenerationSubmitArguments{
+		Type:   "canvas_image",
+		Prompt: "生成一张冰镇可乐产品图",
+		Input: map[string]interface{}{
+			"config": map[string]interface{}{
+				"channelId":             "runtime-apimart-image-channel",
+				"model":                 "gpt-image-2",
+				"size":                  "16:9",
+				"count":                 "1",
+				"transparentBackground": "false",
+			},
+		},
+	}
+
+	if err := validateAgentGenerationSubmitContract(configuration, arguments); err != nil {
+		t.Fatalf("provider-neutral generation contract rejected omitted quality: %v", err)
+	}
+
+	arguments.Input["config"].(map[string]interface{})["quality"] = ""
+	if err := validateAgentGenerationSubmitContract(configuration, arguments); err == nil {
+		t.Fatal("provider-neutral generation contract accepted an explicitly empty quality")
+	}
+}
+
 func TestAgentGenerationSubmitRecoversAfterCommercialCommitBeforeToolResult(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-generate-recover","toolName":"generation.submit","actionVersion":1,"arguments":{"type":"canvas_image","prompt":"生成可恢复图片","input":{"mode":"image","config":{"channelId":"runtime-image-channel","model":"kz_gpt_image2","quality":"medium","size":"1:1","resolution":"1K","count":1}}}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-generate-recover","toolName":"generation.submit","actionVersion":1,"arguments":{"type":"canvas_image","prompt":"生成可恢复图片","input":{"mode":"image","config":{"channelId":"runtime-image-channel","model":"kz_gpt_image2","quality":"medium","size":"1:1","count":"1"}}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 	defer server.Close()
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	createAgentRuntimeImageModel(t, db, fixture)
 	scope := agentRuntimeServiceScope()
-	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-recover", UserMessage: "生成可恢复图片", MaxSteps: 6}); err != nil {
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-recover", UserMessage: "生成可恢复图片", MaxSteps: 6, Configuration: guidedImageAgentRuntimeConfigurationInput()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ProcessNextTask(); err != nil {
@@ -166,12 +197,12 @@ func TestAgentGenerationSubmitRecoversAfterCommercialCommitBeforeToolResult(t *t
 
 func TestAgentGenerationWaitPersistsUntilRealTerminalAsset(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-wait-image","toolName":"generation.wait","actionVersion":1,"arguments":{"taskId":"agent-generation-task"}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-wait", UserMessage: "等待图片生成完成", MaxSteps: 6}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-wait", UserMessage: "等待图片生成完成", MaxSteps: 6, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -240,14 +271,14 @@ func TestAgentGenerationWaitPersistsUntilRealTerminalAsset(t *testing.T) {
 
 func TestAgentRuntimeFinalDeliveryUsesPersistedGenerationEvidence(t *testing.T) {
 	server := newAgentRuntimeDecisionSequenceServer(t,
-		`{"kind":"tool_call","toolCall":{"toolCallId":"call-wait-delivery","toolName":"generation.wait","actionVersion":1,"arguments":{"taskId":"delivery-generation-task"}}}`,
+		agentRuntimeToolDecisionWithDelivery(t, `{"kind":"tool_call","toolCall":{"toolCallId":"call-wait-delivery","toolName":"generation.wait","actionVersion":1,"arguments":{"taskId":"delivery-generation-task"}}}`, agentRuntimeTestImageDelivery()),
 		`{"kind":"final","final":{"message":"图片已生成。","expectedDelivery":{"kind":"generated_asset","requiredArtifacts":["image"],"completionCriteria":[{"fact":"artifact","artifact":"image"}]}}}`,
 	)
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-delivery", UserMessage: "生成并交付图片", MaxSteps: 6}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-generation-delivery", UserMessage: "生成并交付图片", MaxSteps: 6, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -287,12 +318,12 @@ func TestAgentRuntimeFinalDeliveryUsesPersistedGenerationEvidence(t *testing.T) 
 
 func TestAgentGenerationSubmitRejectsUnknownContractWithoutBilling(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-invalid-generate","toolName":"generation.submit","actionVersion":1,"arguments":{"request":{"type":"canvas_image"},"prompt":"图片","input":{"mode":"image"}}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-invalid-generation", UserMessage: "生成图片", MaxSteps: 6}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-invalid-generation", UserMessage: "生成图片", MaxSteps: 6, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -326,14 +357,56 @@ func TestAgentGenerationSubmitRejectsUnknownContractWithoutBilling(t *testing.T)
 	}
 }
 
+func TestAgentGenerationSubmitRejectsNonCanonicalImageConfigWithoutBilling(t *testing.T) {
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-invalid-image-config","toolName":"generation.submit","actionVersion":1,"arguments":{"type":"canvas_image","prompt":"图片","input":{"mode":"image","config":{"channelId":"runtime-image-channel","model":"kz_gpt_image2","ratio":"16:9","resolution":"2K","quality":"high"}}}}}`
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
+	defer server.Close()
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	createAgentRuntimeImageModel(t, db, fixture)
+	scope := agentRuntimeServiceScope()
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-invalid-image-config", UserMessage: "生成图片", MaxSteps: 6, Configuration: guidedImageAgentRuntimeConfigurationInput()}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitAgentToolApproval(scope, AgentToolApprovalSubmission{
+		ToolCallID: "call-invalid-image-config", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: waiting.State.PendingToolCall.ToolCallID, ActionVersion: waiting.State.PendingToolCall.ActionVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "generation_request_invalid" {
+		t.Fatalf("invalid image config result = %#v", progress.State.LastToolResult)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Where("user_id = ? AND type = ?", scope.ActorUserID, "canvas_image").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("invalid image config created %d tasks", count)
+	}
+}
+
 func TestAgentGenerationWaitRejectsTaskOutsideCurrentRun(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-wait-foreign","toolName":"generation.wait","actionVersion":1,"arguments":{"taskId":"foreign-generation-task"}}}`
-	server, _ := newAgentRuntimeDecisionServer(t, decision)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
-	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-foreign-generation", UserMessage: "等待生成", MaxSteps: 6}
+	input := StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-foreign-generation", UserMessage: "等待生成", MaxSteps: 6, Configuration: guidedAgentRuntimeConfigurationInput()}
 	if _, err := svc.StartAgentRuntime(input); err != nil {
 		t.Fatal(err)
 	}
@@ -374,12 +447,12 @@ func TestAgentGenerationWaitNeverTurnsFailureIntoArtifact(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			decision := `{"kind":"tool_call","toolCall":{"toolCallId":"call-wait-no-artifact","toolName":"generation.wait","actionVersion":1,"arguments":{"taskId":"generation-no-artifact"}}}`
-			server, _ := newAgentRuntimeDecisionServer(t, decision)
+			server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 			defer server.Close()
 			svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 			createAgentRuntimeCanvas(t, db)
 			scope := agentRuntimeServiceScope()
-			if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-wait-no-artifact", UserMessage: "等待生成", MaxSteps: 6}); err != nil {
+			if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{Scope: scope, ClientRequestID: "client-wait-no-artifact", UserMessage: "等待生成", MaxSteps: 6, Configuration: guidedAgentRuntimeConfigurationInput()}); err != nil {
 				t.Fatal(err)
 			}
 			now := time.Now().UTC()
@@ -404,6 +477,61 @@ func TestAgentGenerationWaitNeverTurnsFailureIntoArtifact(t *testing.T) {
 				t.Fatalf("wait failure = %#v", progress.State.LastToolResult)
 			}
 		})
+	}
+}
+
+func TestAgentRuntimeCannotDowngradeFailedAssetDeliveryToAnswer(t *testing.T) {
+	imageDelivery := agentRuntimeTestImageDelivery()
+	server := newAgentRuntimeDecisionSequenceServer(t,
+		agentRuntimeToolDecisionWithDelivery(t, `{"kind":"tool_call","toolCall":{"toolCallId":"wait-failed-image","toolName":"generation.wait","actionVersion":1,"arguments":{"taskId":"failed-image-task"}}}`, imageDelivery),
+		`{"kind":"final","final":{"message":"图片生成失败。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
+	)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "client-failed-image-contract", UserMessage: "生成一张图片",
+		MaxSteps: 6, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Create(&model.Task{
+		ID: "failed-image-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Type: "canvas_image", Capability: "image", Status: model.TaskStatusFailed,
+		Operation: agentGenerationOperation(scope.RunID), CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID:    waiting.State.PendingToolCall.ToolCallID,
+		ActionVersion: waiting.State.PendingToolCall.ActionVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State.LastToolResult == nil || failed.State.LastToolResult.ErrorCode != "generation_failed" || failed.ModelTask == nil {
+		t.Fatalf("failed generation progress = %#v", failed)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	rejected, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.State.Status != agentruntime.RunRunning || rejected.State.DecisionFeedback == nil ||
+		rejected.State.DecisionFeedback.Code != "delivery_contract_changed" || rejected.State.ExpectedDelivery == nil ||
+		rejected.State.ExpectedDelivery.Kind != agentruntime.DeliveryGeneratedAsset || rejected.State.FinalMessage != "" || rejected.ModelTask == nil {
+		t.Fatalf("downgraded delivery progress = %#v", rejected)
 	}
 }
 
@@ -458,5 +586,14 @@ func createAgentRuntimeImageModel(t *testing.T, db *gorm.DB, fixture agentRuntim
 	}
 	if err := db.Create(&channelModel).Error; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func guidedImageAgentRuntimeConfigurationInput() AgentRuntimeConfigurationInput {
+	return AgentRuntimeConfigurationInput{
+		ExecutionMode: agentruntime.ExecutionGuided,
+		GenerationModels: agentruntime.GenerationModelSelections{Image: &agentruntime.GenerationModelSelection{
+			ChannelID: "runtime-image-channel", Model: "kz_gpt_image2",
+		}},
 	}
 }

@@ -328,6 +328,10 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		if err := freezeProviderTaskRuntimeTx(tx, task, order.ChannelModelID); err != nil {
 			return err
 		}
+		if order.BillingMode == "token_usage" &&
+			(order.TaskID != task.ID || order.ProviderEndpointVersionID != task.ProviderEndpointVersionID || order.ProviderCredentialVersionID != task.ProviderCredentialVersionID) {
+			return errors.New("token billing runtime does not match frozen task runtime")
+		}
 		if err := freezeTaskWatermarkTx(tx, task, watermark); err != nil {
 			return err
 		}

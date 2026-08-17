@@ -7,7 +7,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
-        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+        APK_REPOSITORY: ${APK_REPOSITORY:-https://mirrors.tuna.tsinghua.edu.cn/alpine}
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
     environment:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
@@ -20,6 +21,7 @@ services:
       CANVAS_REGISTRATION_ENABLED: ${CANVAS_REGISTRATION_ENABLED:-false}
       CANVAS_ALLOW_PRIVATE_UPSTREAMS: ${CANVAS_ALLOW_PRIVATE_UPSTREAMS:-false}
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
+      CANVAS_KUAIZI_PROXY_URL: ${CANVAS_KUAIZI_PROXY_URL:-http://host.docker.internal:7897}
       CANVAS_ENVIRONMENT: ${CANVAS_ENVIRONMENT:-development}
       CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       GIN_MODE: release
