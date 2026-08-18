@@ -69,30 +69,23 @@ const SKILLS: readonly Skill[] = [
     },
 ] as const;
 
-function UpdreamSkillCard({ skill, siteName }: { skill: Skill; siteName: string }) {
+function UpdreamSkillCard({ skill, siteName, priority }: { skill: Skill; siteName: string; priority: boolean }) {
     return (
         <Link to="/skills" className="updream-skill-link block">
-            <article
-                className="updream-skill-card relative h-[176px] cursor-pointer rounded-[18px] p-5 pr-[152px] transition-transform duration-300 hover:-translate-y-1"
-                style={{ background: skill.gradient }}
-            >
+            <article className="updream-skill-card relative h-[176px] cursor-pointer rounded-[18px] p-5 pr-[152px] transition-transform duration-300 hover:-translate-y-1" style={{ background: skill.gradient }}>
                 <div className="updream-skill-heading flex items-center gap-2.5">
                     <span className="updream-skill-mark flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-white/30 bg-white/20 text-white backdrop-blur-sm">
                         <Zap className="updream-skill-mark-icon size-4 fill-current" />
                     </span>
                     <div className="updream-skill-meta min-w-0">
-                        <h3 className="updream-skill-title truncate text-[15px] font-semibold leading-5 text-white">
-                            {skill.title}
-                        </h3>
+                        <h3 className="updream-skill-title truncate text-[15px] font-semibold leading-5 text-white">{skill.title}</h3>
                         <p className="updream-skill-author mt-0.5 flex items-center gap-1 text-[11px] text-white/75">
                             <BadgeCheck className="updream-skill-verified size-3" />
                             {skill.author === "官方" ? `${siteName} 官方` : skill.author}
                         </p>
                     </div>
                 </div>
-                <p className="updream-skill-description mt-3 line-clamp-2 text-[12px] leading-[1.6] text-white/85">
-                    {skill.description}
-                </p>
+                <p className="updream-skill-description mt-3 line-clamp-2 text-[12px] leading-[1.6] text-white/85">{skill.description}</p>
                 <p className="updream-skill-uses absolute bottom-4 left-5 flex items-center gap-1.5 text-[11px] text-white/75">
                     使用次数
                     <Zap className="updream-skill-uses-icon size-[11px] fill-current" />
@@ -101,6 +94,8 @@ function UpdreamSkillCard({ skill, siteName }: { skill: Skill; siteName: string 
                 <img
                     src={skill.thumbnail}
                     alt={skill.title}
+                    fetchPriority={priority ? "high" : "auto"}
+                    loading={priority ? "eager" : "lazy"}
                     className="updream-skill-thumbnail absolute right-5 top-5 h-[160px] w-[128px] rounded-xl object-cover shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
                 />
             </article>
@@ -113,6 +108,7 @@ export function UpdreamSkillsSection() {
 
     return (
         <section className="updream-skills mx-auto w-full max-w-[1408px] px-4 pb-24 sm:px-8">
+            <link rel="preload" as="image" href={skill1} fetchPriority="high" />
             <div className="updream-skills-heading mb-5 flex items-center justify-between">
                 <h2 className="updream-skills-title text-[20px] font-semibold text-white">官方精选技能</h2>
                 <Link to="/skills" className="updream-skills-all flex items-center gap-0.5 text-[13px] text-white/45 transition-colors hover:text-white/80">
@@ -121,8 +117,8 @@ export function UpdreamSkillsSection() {
                 </Link>
             </div>
             <div className="updream-skills-grid grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
-                {SKILLS.map((skill) => (
-                    <UpdreamSkillCard key={skill.title} skill={skill} siteName={settings.siteName} />
+                {SKILLS.map((skill, index) => (
+                    <UpdreamSkillCard key={skill.title} skill={skill} siteName={settings.siteName} priority={index === 0} />
                 ))}
             </div>
         </section>
