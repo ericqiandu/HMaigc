@@ -65,7 +65,11 @@ export CANVAS_REQUIRE_INTEGRATION_TESTS=1
 
 cd "$repo_root/backend"
 if ((${#required_tests[@]} > 0)); then
-	available_tests="$(go test ./internal/database ./internal/repository ./internal/service -list "$run_pattern")"
+	list_pattern="$run_pattern"
+	if [[ "$run_all" == true ]]; then
+		list_pattern='.'
+	fi
+	available_tests="$(go test ./internal/database ./internal/repository ./internal/service -list "$list_pattern")"
 	for required_test in "${required_tests[@]}"; do
 		if ! grep -Fxq "$required_test" <<<"$available_tests"; then
 			echo "required Go test not found: $required_test" >&2

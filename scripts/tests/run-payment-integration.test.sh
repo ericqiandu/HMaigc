@@ -24,7 +24,7 @@ docker() {
 
 go() {
 	if [[ " $* " == *' -list '* ]]; then
-		printf '%s\n' TestPostgresWatermarkPublicationSerializesConcurrentVersions TestPostgresWatermarkPreferenceAndConsentRollbackTogether TestPostgresTaskCreateFreezesWatermarkWithBillingAndProviderRuntime TestPostgresTaskCreateRollsBackWhenWatermarkLogFails TestPostgresWatermarkTaskFreezeAllowsConcurrentReaders
+		printf '%s\n' TestFullSuiteRequired TestPostgresWatermarkPublicationSerializesConcurrentVersions TestPostgresWatermarkPreferenceAndConsentRollbackTogether TestPostgresTaskCreateFreezesWatermarkWithBillingAndProviderRuntime TestPostgresTaskCreateRollsBackWhenWatermarkLogFails TestPostgresWatermarkTaskFreezeAllowsConcurrentReaders
 		return
 	fi
 	printf '%s\n' "$PWD" >"$PAYMENT_RUNNER_CAPTURE/working-directory"
@@ -39,7 +39,7 @@ export -f docker go
 
 all_capture="$test_root/all"
 mkdir -p "$all_capture"
-PAYMENT_RUNNER_CAPTURE="$all_capture" bash "$runner" --all
+PAYMENT_RUNNER_CAPTURE="$all_capture" bash "$runner" --all --require TestFullSuiteRequired
 
 mapfile -t all_arguments <"$all_capture/go-arguments"
 expected_all_arguments=(
