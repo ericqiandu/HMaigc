@@ -108,7 +108,6 @@ export function UpdreamSkillsSection() {
 
     return (
         <section className="updream-skills mx-auto w-full max-w-[1408px] px-4 pb-24 sm:px-8">
-            <link rel="preload" as="image" href={skill1} fetchPriority="high" />
             <div className="updream-skills-heading mb-5 flex items-center justify-between">
                 <h2 className="updream-skills-title text-[20px] font-semibold text-white">官方精选技能</h2>
                 <Link to="/skills" className="updream-skills-all flex items-center gap-0.5 text-[13px] text-white/45 transition-colors hover:text-white/80">

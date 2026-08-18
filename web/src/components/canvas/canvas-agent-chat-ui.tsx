@@ -277,6 +277,7 @@ export function AgentChatComposer({
                     {selectionSummary}
                     <textarea
                         value={prompt}
+                        aria-label="输入 Agent 指令"
                         onInput={(event) => onPromptChange(event.currentTarget.value)}
                         onPaste={(event) => {
                             if (!onAddFiles) return;
@@ -329,12 +330,7 @@ export function AgentChatComposer({
                         ) : null}
                         {left}
                     </div>
-                    <CanvasSubmitButton
-                        state={sending ? "loading" : "ready"}
-                        disabled={!canSubmit}
-                        onClick={() => void onSubmit()}
-                        ariaLabel={sending ? "正在发送" : "发送"}
-                    />
+                    <CanvasSubmitButton state={sending ? "loading" : "ready"} disabled={!canSubmit} onClick={() => void onSubmit()} ariaLabel={sending ? "正在发送" : "发送"} />
                 </div>
             </div>
         </div>
