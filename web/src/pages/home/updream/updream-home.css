@@ -79,7 +79,7 @@
 }
 
 .updream-hero {
-    min-height: 632px;
+    min-height: max(632px, 100svh);
     padding-top: 315px;
 }
 
