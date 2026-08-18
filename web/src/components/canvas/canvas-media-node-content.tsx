@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Music2, RefreshCw, Video } from "lucide-react";
 
+import { canvasMediaPlaybackUrl } from "@/lib/canvas-media-playback";
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
@@ -71,11 +71,6 @@ export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects }: Canv
     }
 
     return <video key={playbackAttempt} src={playbackUrl} controls playsInline preload={reduceMediaEffects ? "none" : "metadata"} className="h-full w-full bg-black object-contain" data-canvas-no-zoom onError={() => setPlaybackFailed(true)} />;
-}
-
-export function canvasMediaPlaybackUrl(node: CanvasNodeData) {
-    const resourceId = resourceIdFromStorageKey(node.metadata?.storageKey);
-    return resourceId ? resourceFileUrl(resourceId) : node.metadata?.content || "";
 }
 
 function audioNodeTitle(node: CanvasNodeData) {
