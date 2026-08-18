@@ -40,3 +40,4 @@ jobs:
           name: lighthouse-reports
           path: web/.lighthouseci
           if-no-files-found: ignore
+          include-hidden-files: true
