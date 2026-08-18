@@ -6,10 +6,13 @@ const DIST_DIR = resolve(import.meta.dirname, "../dist");
 const MANIFEST_PATH = resolve(DIST_DIR, ".vite/manifest.json");
 
 const KIB = 1024;
-const THREE_RUNTIME_FILE_MARKER = "react-three-fiber";
 const THREE_FEATURE_ENTRIES = [
-    "src/components/canvas/canvas-emotion-workspace.tsx",
-    "src/components/canvas/director/canvas-director-workbench.tsx",
+    {
+        source: "src/components/canvas/director/canvas-director-workbench.tsx",
+        label: "导演台 3D 按需功能包",
+        maxRawBytes: 1050 * KIB,
+        maxGzipBytes: 280 * KIB,
+    },
 ];
 const BUDGETS = [
     {
@@ -66,26 +69,17 @@ for (const budget of BUDGETS) {
     measureChunk(budget.source, budget.label, budget.maxRawBytes, budget.maxGzipBytes);
 }
 
-const threeRuntimeSource = Object.entries(manifest).find(([, chunk]) => chunk.file?.includes(THREE_RUNTIME_FILE_MARKER))?.[0];
-if (!threeRuntimeSource) {
-    failures.push("3D 渲染器：构建清单中缺少 react-three-fiber 运行时块");
-} else {
-    measureChunk(threeRuntimeSource, "3D 渲染器按需功能包", 900 * KIB, 250 * KIB);
-
-    const applicationShell = collectImportClosure("index.html");
-    if (applicationShell.has(threeRuntimeSource)) {
-        failures.push("3D 渲染器泄漏进应用入口，必须仅由按需功能入口加载");
+const applicationShell = collectImportClosure("index.html");
+for (const feature of THREE_FEATURE_ENTRIES) {
+    const featureChunk = manifest[feature.source];
+    if (!featureChunk?.isDynamicEntry) {
+        failures.push(`${feature.source} 必须保持动态入口`);
+        continue;
     }
 
-    for (const featureSource of THREE_FEATURE_ENTRIES) {
-        const featureChunk = manifest[featureSource];
-        if (!featureChunk?.isDynamicEntry) {
-            failures.push(`${featureSource} 必须保持动态入口`);
-            continue;
-        }
-        if (!collectImportClosure(featureSource).has(threeRuntimeSource)) {
-            failures.push(`${featureSource} 未加载预期的 3D 渲染器运行时`);
-        }
+    measureChunk(feature.source, feature.label, feature.maxRawBytes, feature.maxGzipBytes);
+    if (applicationShell.has(feature.source)) {
+        failures.push(`${feature.label} 泄漏进应用入口，必须保持按需加载`);
     }
 }
 

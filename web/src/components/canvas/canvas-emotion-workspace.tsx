@@ -20,6 +20,7 @@ import {
 } from "@/lib/canvas/canvas-emotion";
 import { detectCanvasFaces } from "@/lib/canvas/canvas-face-detection";
 import { subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
+import { imageToDataUrl } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -34,7 +35,8 @@ type CanvasEmotionWorkspaceProps = {
 };
 
 export function CanvasEmotionWorkspace({ node, viewport, containerRef, onClose, onConfirm }: CanvasEmotionWorkspaceProps) {
-    const dataUrl = node.metadata?.content || "";
+    const contentUrl = node.metadata?.content || "";
+    const [dataUrl, setDataUrl] = useState("");
     const [status, setStatus] = useState<WorkspaceStatus>("detecting");
     const [faces, setFaces] = useState<CanvasFaceBox[]>([]);
     const [characters, setCharacters] = useState<CanvasEmotionCharacter[]>([]);
@@ -53,8 +55,22 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, onClose, 
         setCharacters([]);
         setActiveCharacterId("");
         setPreset(neutralEmotionPreset);
-        void detectCanvasFaces(dataUrl, controller.signal)
-            .then((result) => {
+        setDataUrl("");
+        void (async () => {
+            let resolvedDataUrl = "";
+            try {
+                resolvedDataUrl = await imageToDataUrl({ url: contentUrl, storageKey: node.metadata?.storageKey });
+                if (!resolvedDataUrl) throw new Error("无法读取情绪编辑源图片");
+                if (controller.signal.aborted) throw new DOMException("人脸识别已取消", "AbortError");
+                setDataUrl(resolvedDataUrl);
+            } catch (reason) {
+                if (reason instanceof DOMException && reason.name === "AbortError") return;
+                setStatus("error");
+                setError(reason instanceof Error ? reason.message : "无法读取情绪编辑源图片");
+                return;
+            }
+            try {
+                const result = await detectCanvasFaces(resolvedDataUrl, controller.signal);
                 setImageSize({ width: result.imageWidth, height: result.imageHeight });
                 setFaces(result.faces);
                 if (result.faces.length) {
@@ -63,14 +79,14 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, onClose, 
                 }
                 setStatus("error");
                 setError("未识别到清晰人脸，请手动框选");
-            })
-            .catch((reason) => {
+            } catch (reason) {
                 if (reason instanceof DOMException && reason.name === "AbortError") return;
                 setStatus("error");
                 setError(reason instanceof Error ? `${reason.message}，请手动框选` : "人脸识别失败，请手动框选");
-            });
+            }
+        })();
         return () => controller.abort();
-    }, [dataUrl]);
+    }, [contentUrl, node.metadata?.storageKey]);
 
     const selectFace = (face: CanvasFaceBox) => {
         const existing = characters.find((character) => sameFace(character.faceBox, face));
@@ -105,6 +121,7 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, onClose, 
                 ...params,
                 label: preset.label,
                 prompt: buildEmotionPrompt(params, artifacts.editRegion),
+                fullSourceDataUrl: dataUrl,
                 sourceDataUrl: artifacts.sourceDataUrl,
                 maskDataUrl: artifacts.maskDataUrl,
                 characterDataUrl: artifacts.characterDataUrl,
@@ -118,7 +135,7 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, onClose, 
         }
     };
 
-    if (!portalTarget || !dataUrl) return null;
+    if (!portalTarget || !contentUrl) return null;
     const activeCharacter = characters.find((character) => character.id === activeCharacterId);
     return createPortal(
         <>

@@ -38,9 +38,6 @@ export default defineConfig({
     },
     build: {
         manifest: true,
-        // The Three renderer is isolated behind dynamic 3D workbench and
-        // emotion-workspace entries. Its dedicated production budget is
-        // enforced by scripts/check-bundle-budget.mjs.
         chunkSizeWarningLimit: 900,
     },
 });

@@ -188,7 +188,7 @@ func defaultMembershipStorefrontSetting() MembershipStorefrontSetting {
 			{Icon: "✦", Text: "Happy Horse 1.1 限时 4 折"},
 		},
 		CommonFeatures:    []string{"去除品牌水印 商用无忧", "会员专享无限次加速", "登录每日赠送 20 积分", "训练专属权益"},
-		ExclusiveFeatures: []string{"全能视频 Agent", "3D 导演台", "脚本策划", "智能分镜（Kling 3.0/O3）", "9/4/25 宫格生成", "宫格切分", "镜头聚焦", "多模态主体库", "视频剪辑", "720 度全景"},
+		ExclusiveFeatures: []string{"全能视频 Agent", "3D 导演台", "脚本策划", "智能分镜（Kling 3.0/O3）", "9/4/25 宫格生成", "宫格切分", "镜头聚焦", "多模态主体库", "视频剪辑"},
 		PlanHighlights: []MembershipStorefrontPlanHighlight{
 			{Tier: "origin", Images: "6,000 张图片", Videos: "187 个视频"},
 			{Tier: "pro", Images: "18,400 张图片", Videos: "575 个视频"},
