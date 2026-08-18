@@ -21,16 +21,16 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"idx_agent_runs_thread_client_request":           `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
-		"idx_agent_run_events_run_sequence":              `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
-		"idx_agent_checkpoints_run_sequence":             `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
-		"idx_agent_tool_calls_action":                    `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
-		"idx_agent_threads_scope":                        `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
-		"idx_agent_production_plan_versions_key_version": `CREATE UNIQUE INDEX idx_agent_production_plan_versions_key_version ON agent_production_plan_versions(plan_key, version)`,
-		"idx_agent_production_artifacts_plan_shot_kind":  `CREATE UNIQUE INDEX idx_agent_production_artifacts_plan_shot_kind ON agent_production_artifacts(plan_key, plan_version, shot_key, kind)`,
-		"idx_agent_production_artifacts_task":            `CREATE UNIQUE INDEX idx_agent_production_artifacts_task ON agent_production_artifacts(task_id) WHERE task_id <> ''`,
-		"idx_agent_production_artifacts_billing":         `CREATE UNIQUE INDEX idx_agent_production_artifacts_billing ON agent_production_artifacts(billing_order_id) WHERE billing_order_id <> ''`,
-		"idx_agent_production_artifacts_resource":        `CREATE UNIQUE INDEX idx_agent_production_artifacts_resource ON agent_production_artifacts(resource_id) WHERE resource_id <> ''`,
+		"idx_agent_runs_thread_client_request":                 `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
+		"idx_agent_run_events_run_sequence":                    `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
+		"idx_agent_checkpoints_run_sequence":                   `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
+		"idx_agent_tool_calls_action":                          `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
+		"idx_agent_threads_scope":                              `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
+		"idx_agent_production_plan_versions_scope_key_version": `CREATE UNIQUE INDEX idx_agent_production_plan_versions_scope_key_version ON agent_production_plan_versions(tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version)`,
+		"idx_agent_production_artifacts_version_shot_kind":     `CREATE UNIQUE INDEX idx_agent_production_artifacts_version_shot_kind ON agent_production_artifacts(plan_version_id, shot_key, kind)`,
+		"idx_agent_production_artifacts_task":                  `CREATE UNIQUE INDEX idx_agent_production_artifacts_task ON agent_production_artifacts(task_id) WHERE task_id <> ''`,
+		"idx_agent_production_artifacts_billing":               `CREATE UNIQUE INDEX idx_agent_production_artifacts_billing ON agent_production_artifacts(billing_order_id) WHERE billing_order_id <> ''`,
+		"idx_agent_production_artifacts_resource":              `CREATE UNIQUE INDEX idx_agent_production_artifacts_resource ON agent_production_artifacts(resource_id) WHERE resource_id <> ''`,
 	}
 	for name, expected := range want {
 		var actual string
@@ -39,6 +39,33 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 		}
 		if compactSQL(actual) != compactSQL(expected) {
 			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
+		}
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaReplacesLegacyGlobalProductionIndexes(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE UNIQUE INDEX idx_agent_production_plan_versions_key_version ON agent_production_plan_versions(plan_key, version)`,
+		`CREATE UNIQUE INDEX idx_agent_production_artifacts_plan_shot_kind ON agent_production_artifacts(plan_key, plan_version, shot_key, kind)`,
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, legacyIndex := range legacyAgentProductionIndexes {
+		var count int64
+		if err := db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", legacyIndex).Scan(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("legacy index %s still exists", legacyIndex)
 		}
 	}
 }

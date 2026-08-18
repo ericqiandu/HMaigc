@@ -148,6 +148,38 @@ func TestAgentProductionPlanReadIsScopeIsolated(t *testing.T) {
 	}
 }
 
+func TestAgentProductionPlanIdentityIsScopedAcrossTenants(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	firstScope := repositoryAgentScope()
+	secondScope := repositoryAgentScope()
+	secondScope.TenantID = "agent-user-2"
+	secondScope.ActorUserID = "agent-user-2"
+	secondScope.CanvasID = "agent-canvas-2"
+	secondScope.ThreadID = "agent-thread-2"
+	secondScope.RunID = "agent-run-2"
+	createAgentRunForTest(t, repo, firstScope)
+	createAgentRunForTest(t, repo, secondScope)
+
+	first, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{Scope: firstScope, RunID: firstScope.RunID, PlanKey: "shared-plan-key", BaseVersion: 0, Draft: twoShotProductionPlanDraft("租户一"), Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{Scope: secondScope, RunID: secondScope.RunID, PlanKey: "shared-plan-key", BaseVersion: 0, Draft: twoShotProductionPlanDraft("租户二"), Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Plan.ID == second.Plan.ID || first.Artifacts[0].ID == second.Artifacts[0].ID {
+		t.Fatalf("cross-tenant production identities collided: first=%s second=%s", first.Plan.ID, second.Plan.ID)
+	}
+	var planCount int64
+	if err := db.Model(&model.AgentProductionPlanVersion{}).Where("plan_key = ? AND version = 1", "shared-plan-key").Count(&planCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if planCount != 2 {
+		t.Fatalf("scoped plan count = %d, want 2", planCount)
+	}
+}
+
 func TestActiveAgentProductionPlanForThreadFollowsThreadAndScope(t *testing.T) {
 	repo, _ := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()

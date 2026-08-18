@@ -42,12 +42,12 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 		createSQL: `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
 	},
 	{
-		name: "idx_agent_production_plan_versions_key_version", table: "agent_production_plan_versions", columns: "plan_key,version", unique: true,
-		createSQL: `CREATE UNIQUE INDEX idx_agent_production_plan_versions_key_version ON agent_production_plan_versions(plan_key, version)`,
+		name: "idx_agent_production_plan_versions_scope_key_version", table: "agent_production_plan_versions", columns: "tenant_kind,tenant_id,domain_project_id,canvas_id,plan_key,version", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_production_plan_versions_scope_key_version ON agent_production_plan_versions(tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version)`,
 	},
 	{
-		name: "idx_agent_production_artifacts_plan_shot_kind", table: "agent_production_artifacts", columns: "plan_key,plan_version,shot_key,kind", unique: true,
-		createSQL: `CREATE UNIQUE INDEX idx_agent_production_artifacts_plan_shot_kind ON agent_production_artifacts(plan_key, plan_version, shot_key, kind)`,
+		name: "idx_agent_production_artifacts_version_shot_kind", table: "agent_production_artifacts", columns: "plan_version_id,shot_key,kind", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_production_artifacts_version_shot_kind ON agent_production_artifacts(plan_version_id, shot_key, kind)`,
 	},
 	{
 		name: "idx_agent_production_artifacts_task", table: "agent_production_artifacts", columns: "task_id", predicate: "task_id <> ''", unique: true,
@@ -61,6 +61,11 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 		name: "idx_agent_production_artifacts_resource", table: "agent_production_artifacts", columns: "resource_id", predicate: "resource_id <> ''", unique: true,
 		createSQL: `CREATE UNIQUE INDEX idx_agent_production_artifacts_resource ON agent_production_artifacts(resource_id) WHERE resource_id <> ''`,
 	},
+}
+
+var legacyAgentProductionIndexes = []string{
+	"idx_agent_production_plan_versions_key_version",
+	"idx_agent_production_artifacts_plan_shot_kind",
 }
 
 // EnsureAgentRuntimeIntegritySchema creates only missing indexes after proving existing definitions and rows are safe.
@@ -85,6 +90,11 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 		for _, specification := range missing {
 			if err := tx.Exec(specification.createSQL).Error; err != nil {
 				return fmt.Errorf("create agent runtime integrity index %s: %w", specification.name, err)
+			}
+		}
+		for _, legacyIndex := range legacyAgentProductionIndexes {
+			if err := tx.Exec(`DROP INDEX IF EXISTS ` + legacyIndex).Error; err != nil {
+				return fmt.Errorf("drop legacy agent production index %s: %w", legacyIndex, err)
 			}
 		}
 		return nil
@@ -190,6 +200,8 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		Second string `gorm:"column:second_value"`
 		Third  string `gorm:"column:third_value"`
 		Fourth string `gorm:"column:fourth_value"`
+		Fifth  string `gorm:"column:fifth_value"`
+		Sixth  string `gorm:"column:sixth_value"`
 		Count  int64  `gorm:"column:count"`
 	}
 	checks := []struct {
@@ -199,15 +211,15 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		groupSQL  string
 		label     string
 	}{
-		{"agent_runs", "thread_id AS first_value, client_request_id AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "", "thread_id, client_request_id", "agent run request"},
-		{"agent_run_events", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "", "run_id, sequence", "agent run event"},
-		{"agent_checkpoints", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "", "run_id, sequence", "agent checkpoint"},
-		{"agent_tool_calls", "run_id AS first_value, tool_call_id AS second_value, CAST(action_version AS TEXT) AS third_value, '' AS fourth_value, COUNT(*) AS count", "", "run_id, tool_call_id, action_version", "agent tool action"},
-		{"agent_production_plan_versions", "plan_key AS first_value, CAST(version AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "", "plan_key, version", "agent production plan version"},
-		{"agent_production_artifacts", "plan_key AS first_value, CAST(plan_version AS TEXT) AS second_value, shot_key AS third_value, kind AS fourth_value, COUNT(*) AS count", "", "plan_key, plan_version, shot_key, kind", "agent production artifact"},
-		{"agent_production_artifacts", "task_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "task_id <> ''", "task_id", "agent production task"},
-		{"agent_production_artifacts", "billing_order_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "billing_order_id <> ''", "billing_order_id", "agent production billing order"},
-		{"agent_production_artifacts", "resource_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, COUNT(*) AS count", "resource_id <> ''", "resource_id", "agent production resource"},
+		{"agent_runs", "thread_id AS first_value, client_request_id AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "thread_id, client_request_id", "agent run request"},
+		{"agent_run_events", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent run event"},
+		{"agent_checkpoints", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent checkpoint"},
+		{"agent_tool_calls", "run_id AS first_value, tool_call_id AS second_value, CAST(action_version AS TEXT) AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, tool_call_id, action_version", "agent tool action"},
+		{"agent_production_plan_versions", "tenant_kind AS first_value, tenant_id AS second_value, domain_project_id AS third_value, canvas_id AS fourth_value, plan_key AS fifth_value, CAST(version AS TEXT) AS sixth_value, COUNT(*) AS count", "", "tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version", "agent production plan version"},
+		{"agent_production_artifacts", "plan_version_id AS first_value, shot_key AS second_value, kind AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "plan_version_id, shot_key, kind", "agent production artifact"},
+		{"agent_production_artifacts", "task_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "task_id <> ''", "task_id", "agent production task"},
+		{"agent_production_artifacts", "billing_order_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "billing_order_id <> ''", "billing_order_id", "agent production billing order"},
+		{"agent_production_artifacts", "resource_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "resource_id <> ''", "resource_id", "agent production resource"},
 	}
 	for _, check := range checks {
 		var conflict duplicate
@@ -225,7 +237,7 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 			return result.Error
 		}
 		if result.RowsAffected > 0 {
-			return fmt.Errorf("%s facts conflict: scope=%s/%s/%s/%s rows=%d", check.label, conflict.First, conflict.Second, conflict.Third, conflict.Fourth, conflict.Count)
+			return fmt.Errorf("%s facts conflict: scope=%s/%s/%s/%s/%s/%s rows=%d", check.label, conflict.First, conflict.Second, conflict.Third, conflict.Fourth, conflict.Fifth, conflict.Sixth, conflict.Count)
 		}
 	}
 	return nil

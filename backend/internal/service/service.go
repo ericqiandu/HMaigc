@@ -239,7 +239,9 @@ func (s *Service) StartWorker() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			_ = s.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now(), 20)
+			if err := s.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now(), 20); err != nil {
+				log.Printf("event=kuaizi_billing_reconciliation_batch_failed error=%q", err.Error())
+			}
 			<-ticker.C
 		}
 	}()

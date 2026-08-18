@@ -92,7 +92,7 @@ func (r *Repository) AppendAgentProductionPlanVersion(input AppendAgentProductio
 	}
 	nextVersion := input.BaseVersion + 1
 	plan := model.AgentProductionPlanVersion{
-		ID:      agentFactID("production-plan", input.PlanKey, strconv.Itoa(nextVersion)),
+		ID:      agentFactID("production-plan", string(input.Scope.TenantKind), input.Scope.TenantID, input.Scope.DomainProjectID, input.Scope.CanvasID, input.PlanKey, strconv.Itoa(nextVersion)),
 		PlanKey: input.PlanKey, TenantKind: input.Scope.TenantKind, TenantID: input.Scope.TenantID, DomainProjectID: input.Scope.DomainProjectID,
 		CanvasID: input.Scope.CanvasID, CreatedByRunID: input.RunID, Version: nextVersion,
 		Status: model.AgentProductionPlanActive, Title: strings.TrimSpace(input.Draft.Title),
@@ -410,7 +410,7 @@ func productionArtifactsForPlan(plan model.AgentProductionPlanVersion, shots []a
 	artifacts := make([]model.AgentProductionArtifact, 0, 1+len(shots)*2)
 	appendArtifact := func(shotKey string, kind model.AgentProductionArtifactKind, status model.AgentProductionArtifactStatus) {
 		artifacts = append(artifacts, model.AgentProductionArtifact{
-			ID:      agentFactID("production-artifact", plan.PlanKey, strconv.Itoa(plan.Version), shotKey, string(kind)),
+			ID:      agentFactID("production-artifact", plan.ID, shotKey, string(kind)),
 			PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
 			ShotKey: shotKey, Kind: kind, Status: status, CreatedAt: now, UpdatedAt: now,
 		})
