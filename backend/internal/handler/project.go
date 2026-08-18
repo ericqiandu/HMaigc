@@ -158,6 +158,18 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"updated": true})
 	})
+	r.DELETE("/projects/:id/permissions/:userId", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if err := svc.ClearProjectCollaborator(user, c.Param("id"), c.Param("userId")); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"deleted": true})
+	})
 	r.POST("/projects/:id/units", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

@@ -37,6 +37,7 @@ func RegisterTeamRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
+		req.IdempotencyKey = c.GetHeader("Idempotency-Key")
 		team, err := svc.CreateTeam(user, req)
 		if err != nil {
 			failService(c, err)
@@ -110,6 +111,19 @@ func RegisterTeamRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, member)
+	})
+	r.POST("/teams/:id/invitations/:invitationId/regenerate", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.RegenerateTeamInvitation(user, c.Param("id"), c.Param("invitationId"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
 	})
 	r.POST("/team-invitations/:id/accept", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

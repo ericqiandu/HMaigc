@@ -53,8 +53,8 @@ describe("会员订单请求幂等契约", () => {
         let persistedIdentity: MembershipOrderRequestIdentity | null = null;
         const team: Team = { id: "team-created", ownerUserId: "user-1", name: "新团队", status: "active", createdAt: "2026-08-09T00:00:00Z", updatedAt: "2026-08-09T00:00:00Z" };
         const dependencies = {
-            createTeam: async () => {
-                events.push("team-created");
+            createTeam: async (_name, idempotencyKey) => {
+                events.push(`team-created:${idempotencyKey}`);
                 return team;
             },
             persistResolvedTeamID: (teamID: string) => {
@@ -72,7 +72,7 @@ describe("会员订单请求幂等契约", () => {
         };
 
         await submitMembershipOrderRequest({ planId: "team-plan", seats: 3 }, "新团队", true, null, "request-key", dependencies);
-        expect(events).toEqual(["team-created", "team-persisted:team-created", 'identity-persisted:{"planId":"team-plan","teamId":"team-created","seats":3}', "order-request:team-created:request-key"]);
+        expect(events).toEqual(["team-created:team-create:request-key", "team-persisted:team-created", 'identity-persisted:{"planId":"team-plan","teamId":"team-created","seats":3}', "order-request:team-created:request-key"]);
         expect(persistedTeamID).toBe("team-created");
 
         events.length = 0;

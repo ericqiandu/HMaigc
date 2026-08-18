@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -123,10 +124,45 @@ func (s *Service) UpdateProjectCollaborator(user *model.User, projectID string, 
 		return Forbidden("团队所有者必须保留项目管理权限")
 	}
 	now := time.Now()
-	return s.repo.SaveProjectCollaborator(&model.ProjectCollaborator{
+	metadata, err := json.Marshal(struct {
+		ProjectID string                  `json:"projectId"`
+		Role      model.ProjectAccessRole `json:"role"`
+	}{ProjectID: project.ID, Role: req.Role})
+	if err != nil {
+		return err
+	}
+	audit := newTeamAuditEvent(project.TeamID, user.ID, "project.collaborator_updated", string(metadata), now)
+	audit.TargetUserID = target.UserID
+	return s.repo.SaveProjectCollaboratorWithAudit(&model.ProjectCollaborator{
 		ID: newID(), ProjectID: project.ID, UserID: target.UserID, Role: req.Role,
 		CreatedAt: now, UpdatedAt: now,
-	})
+	}, audit)
+}
+
+func (s *Service) ClearProjectCollaborator(user *model.User, projectID string, targetUserID string) error {
+	project, err := s.repo.ProjectManageableForUser(user.ID, strings.TrimSpace(projectID), time.Now())
+	if err != nil {
+		return err
+	}
+	if project.TeamID == "" {
+		return BadAuthRequest("个人项目不支持团队成员权限")
+	}
+	target, err := s.repo.TeamMemberForUser(project.TeamID, strings.TrimSpace(targetUserID))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &AuthError{Status: http.StatusNotFound, Message: "目标用户不是当前团队成员"}
+	}
+	if err != nil {
+		return err
+	}
+	metadata, err := json.Marshal(struct {
+		ProjectID string `json:"projectId"`
+	}{ProjectID: project.ID})
+	if err != nil {
+		return err
+	}
+	audit := newTeamAuditEvent(project.TeamID, user.ID, "project.collaborator_inherited", string(metadata), time.Now())
+	audit.TargetUserID = target.UserID
+	return s.repo.DeleteProjectCollaboratorWithAudit(project.ID, target.UserID, audit)
 }
 
 func defaultProjectRole(role model.TeamMemberRole) model.ProjectAccessRole {

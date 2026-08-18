@@ -17,6 +17,20 @@ async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promi
 
 export type TeamRole = "owner" | "admin" | "member";
 
+export type TeamCapabilities = {
+    canRenameTeam: boolean;
+    canManageSubscription: boolean;
+    canInviteMembers: boolean;
+    inviteRoles: Array<Exclude<TeamRole, "owner">>;
+    canManageMemberRoles: boolean;
+    canManageMemberCreditLimits: boolean;
+    canRemoveMembers: boolean;
+    canLeaveTeam: boolean;
+    canManageProjects: boolean;
+    canUploadSharedAssets: boolean;
+    canViewAudit: boolean;
+};
+
 export type Team = {
     id: string;
     ownerUserId: string;
@@ -43,6 +57,7 @@ export type TeamSubscription = {
 export type TeamSummary = {
     team: Team;
     currentRole: TeamRole;
+    capabilities: TeamCapabilities;
     seatUsed: number;
     invitationSeatReserved: number;
     subscription?: TeamSubscription;
@@ -61,6 +76,7 @@ export type TeamMember = {
     displayName: string;
     monthlyCreditLimitMicrocredits: number;
     monthlyUsedMicrocredits: number;
+    canRemove: boolean;
     createdAt: string;
     updatedAt: string;
 };
@@ -80,6 +96,12 @@ export type TeamResource = {
     error: string;
     createdAt: string;
     updatedAt: string;
+};
+
+export type TeamResourceReference = {
+    resource: TeamResource & { kind: "image" | "video" | "audio"; status: "ready" };
+    fileURL: string;
+    title: string;
 };
 
 export type TeamInvitation = {
@@ -132,8 +154,17 @@ export function getTeamDetail(teamId: string) {
     return request<TeamDetail>(api.get(`/teams/${encodeURIComponent(teamId)}`));
 }
 
-export function createTeam(name: string) {
-    return request<Team>(api.post("/teams", { name }));
+export function teamCreationRequest(name: string, idempotencyKey: string) {
+    return {
+        data: { name },
+        headers: { "Idempotency-Key": idempotencyKey },
+        method: "post" as const,
+        url: "/teams",
+    };
+}
+
+export function createTeam(name: string, idempotencyKey: string) {
+    return request<Team>(api.request(teamCreationRequest(name, idempotencyKey)));
 }
 
 export function renameTeam(teamId: string, name: string) {
@@ -142,6 +173,10 @@ export function renameTeam(teamId: string, name: string) {
 
 export function createTeamInvitation(teamId: string, input: { email: string; role: Exclude<TeamRole, "owner"> }) {
     return request<{ invitation: TeamInvitation; acceptToken: string }>(api.post(`/teams/${encodeURIComponent(teamId)}/invitations`, input));
+}
+
+export function regenerateTeamInvitation(teamId: string, invitationId: string) {
+    return request<{ invitation: TeamInvitation; acceptToken: string }>(api.post(`/teams/${encodeURIComponent(teamId)}/invitations/${encodeURIComponent(invitationId)}/regenerate`, {}));
 }
 
 export function acceptTeamInvitationById(invitationId: string) {
@@ -162,6 +197,7 @@ export function updateTeamMemberPolicy(
     input: {
         role: Exclude<TeamRole, "owner">;
         monthlyCreditLimitMicrocredits?: number;
+        expectedUpdatedAt: string;
     },
 ) {
     return request<{ updated: boolean }>(api.patch(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(memberId)}`, input));

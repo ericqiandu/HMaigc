@@ -14,6 +14,7 @@ type TeamDetailPanelProps = {
     onRoleChange: (member: TeamMember, role: Exclude<TeamRole, "owner">) => void;
     onCreditLimitChange: (member: TeamMember) => void;
     onRemove: (member: TeamMember) => void;
+    onRegenerateInvitation: (invitationId: string) => void;
     onRevokeInvitation: (invitationId: string) => void;
     onTeamChanged: () => Promise<void>;
 };
@@ -28,6 +29,7 @@ const auditLabels: Record<string, string> = {
     "team.created": "创建了团队",
     "team.renamed": "修改了团队名称",
     "invitation.created": "发出了成员邀请",
+    "invitation.regenerated": "重新生成了邀请链接",
     "invitation.accepted": "接受邀请并加入团队",
     "invitation.revoked": "撤销了成员邀请",
     "member.role_updated": "调整了成员角色",
@@ -36,9 +38,9 @@ const auditLabels: Record<string, string> = {
     "member.left": "退出了团队",
 };
 
-export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchase, onLeave, onRoleChange, onCreditLimitChange, onRemove, onRevokeInvitation, onTeamChanged }: TeamDetailPanelProps) {
+export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchase, onLeave, onRoleChange, onCreditLimitChange, onRemove, onRegenerateInvitation, onRevokeInvitation, onTeamChanged }: TeamDetailPanelProps) {
     const { summary } = detail;
-    const canManage = summary.currentRole === "owner" || summary.currentRole === "admin";
+    const { capabilities } = summary;
     const occupiedSeats = summary.seatUsed + summary.invitationSeatReserved;
 
     return (
@@ -48,7 +50,7 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                     <div className="team-detail-title-row flex min-w-0 items-center gap-2">
                         <h2 className="team-detail-title truncate text-xl font-semibold tracking-[-0.025em]">{summary.team.name}</h2>
                         <Tag className="team-detail-role-tag m-0 border-0 bg-foreground/[.055] text-foreground/60">{roleLabels[summary.currentRole]}</Tag>
-                        {summary.currentRole === "owner" ? (
+                        {capabilities.canRenameTeam ? (
                             <Tooltip className="team-rename-tooltip" title="修改团队名称">
                                 <Button className="team-rename-button" type="text" size="small" icon={<Pencil className="team-rename-icon size-3.5" />} onClick={onRename} aria-label="修改团队名称" />
                             </Tooltip>
@@ -57,17 +59,17 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                     <p className="team-detail-description mt-1 text-xs leading-5 text-foreground/48">成员、邀请和权限变更均保留审计记录。</p>
                 </div>
                 <div className="team-detail-actions flex shrink-0 flex-wrap gap-2">
-                    {canManage ? (
+                    {capabilities.canInviteMembers ? (
                         <Button className="team-invite-button" type="primary" icon={<MailPlus className="team-invite-icon size-4" />} disabled={!summary.subscription} onClick={onInvite}>
                             邀请成员
                         </Button>
                     ) : null}
-                    {summary.currentRole === "owner" ? (
+                    {capabilities.canManageSubscription ? (
                         <Button className="team-plan-button" onClick={onPurchase}>
                             {summary.subscription ? "管理套餐" : "开通团队会员"}
                         </Button>
                     ) : null}
-                    {summary.currentRole !== "owner" ? (
+                    {capabilities.canLeaveTeam ? (
                         <Button className="team-leave-button" danger icon={<DoorOpen className="team-leave-icon size-4" />} onClick={onLeave}>
                             退出团队
                         </Button>
@@ -88,7 +90,7 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                         <div className="team-subscription-notice-title text-sm font-medium">团队尚未开通有效套餐</div>
                         <div className="team-subscription-notice-description mt-1 text-xs text-foreground/48">开通后才能邀请成员；邀请会立即预留一个席位。</div>
                     </div>
-                    {summary.currentRole === "owner" ? (
+                    {capabilities.canManageSubscription ? (
                         <Button className="team-subscription-notice-button" type="primary" onClick={onPurchase}>
                             选择团队套餐
                         </Button>
@@ -106,7 +108,7 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                 <div className="team-member-list mt-3 divide-y divide-border/55 bg-foreground/[.02]">
                     {detail.members.map((member) => {
                         const isOwner = member.role === "owner";
-                        const canRemove = !isOwner && (summary.currentRole === "owner" || (summary.currentRole === "admin" && member.role === "member"));
+                        const canRemove = capabilities.canRemoveMembers && member.canRemove;
                         return (
                             <article className="team-member-row flex min-h-16 items-center gap-3 px-3 py-2.5 sm:px-4" key={member.id}>
                                 <span className="team-member-avatar grid size-9 shrink-0 place-items-center rounded-full bg-foreground/[.065] text-xs font-semibold text-foreground/65">
@@ -123,15 +125,12 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                                     </div>
                                 </div>
                                 <div className="team-member-actions flex shrink-0 items-center gap-1.5">
-                                    {summary.currentRole === "owner" && !isOwner ? (
+                                    {capabilities.canManageMemberRoles && !isOwner ? (
                                         <Select
                                             className="team-member-role-select w-[92px]"
                                             size="small"
                                             value={member.role === "admin" ? "admin" : "member"}
-                                            options={[
-                                                { label: roleLabels.admin, value: "admin" },
-                                                { label: roleLabels.member, value: "member" },
-                                            ]}
+                                            options={capabilities.inviteRoles.map((role) => ({ label: roleLabels[role], value: role }))}
                                             loading={busyKey === `role:${member.id}`}
                                             disabled={busyKey !== ""}
                                             onChange={(role: Exclude<TeamRole, "owner">) => onRoleChange(member, role)}
@@ -140,7 +139,7 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                                     ) : (
                                         <span className="team-member-role-label text-xs text-foreground/48">{roleLabels[member.role]}</span>
                                     )}
-                                    {summary.currentRole === "owner" && !isOwner ? (
+                                    {capabilities.canManageMemberCreditLimits && !isOwner ? (
                                         <Tooltip className="team-member-credit-tooltip" title="设置成员月度积分额度">
                                             <Button
                                                 className="team-member-credit-button"
@@ -175,7 +174,7 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                 </div>
             </section>
 
-            {canManage ? (
+            {capabilities.canInviteMembers ? (
                 <section className="team-invitations-section mt-7">
                     <div className="team-section-heading">
                         <h3 className="team-section-title text-sm font-semibold">待接受邀请</h3>
@@ -192,17 +191,29 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                                             {roleLabels[invitation.role]} · {formatDateTime(invitation.expiresAt)} 失效
                                         </div>
                                     </div>
-                                    <Button
-                                        className="team-invitation-revoke-button"
-                                        type="text"
-                                        danger
-                                        size="small"
-                                        loading={busyKey === `revoke:${invitation.id}`}
-                                        disabled={busyKey !== "" && busyKey !== `revoke:${invitation.id}`}
-                                        onClick={() => onRevokeInvitation(invitation.id)}
-                                    >
-                                        撤销
-                                    </Button>
+                                    <div className="team-invitation-actions flex items-center gap-1">
+                                        <Button
+                                            className="team-invitation-regenerate-button"
+                                            type="text"
+                                            size="small"
+                                            loading={busyKey === `regenerate:${invitation.id}`}
+                                            disabled={busyKey !== "" && busyKey !== `regenerate:${invitation.id}`}
+                                            onClick={() => onRegenerateInvitation(invitation.id)}
+                                        >
+                                            重新生成
+                                        </Button>
+                                        <Button
+                                            className="team-invitation-revoke-button"
+                                            type="text"
+                                            danger
+                                            size="small"
+                                            loading={busyKey === `revoke:${invitation.id}`}
+                                            disabled={busyKey !== "" && busyKey !== `revoke:${invitation.id}`}
+                                            onClick={() => onRevokeInvitation(invitation.id)}
+                                        >
+                                            撤销
+                                        </Button>
+                                    </div>
                                 </article>
                             ))
                         ) : (
@@ -212,35 +223,37 @@ export function TeamDetailPanel({ detail, busyKey, onInvite, onRename, onPurchas
                 </section>
             ) : null}
 
-            <TeamCommercialPanel detail={detail} canManage={canManage} onTeamChanged={onTeamChanged} />
+            <TeamCommercialPanel detail={detail} onTeamChanged={onTeamChanged} />
 
-            <section className="team-audit-section mt-7 pb-8">
-                <div className="team-section-heading">
-                    <h3 className="team-section-title text-sm font-semibold">最近动态</h3>
-                    <p className="team-section-description mt-1 text-xs text-foreground/45">团队关键写操作的事实记录。</p>
-                </div>
-                <div className="team-audit-list mt-3 divide-y divide-border/55">
-                    {detail.auditEvents.length ? (
-                        detail.auditEvents.map((event) => (
-                            <div className="team-audit-row flex items-start gap-3 py-3" key={event.id}>
-                                <span className="team-audit-icon grid size-7 shrink-0 place-items-center rounded-full bg-foreground/[.05]">
-                                    <ShieldCheck className="team-audit-shield size-3.5 text-foreground/45" />
-                                </span>
-                                <div className="team-audit-copy min-w-0 flex-1">
-                                    <div className="team-audit-message text-xs text-foreground/72">
-                                        <span className="team-audit-actor font-medium text-foreground">{event.actorName}</span>
-                                        <span className="team-audit-action ml-1">{auditLabels[event.action] || event.action}</span>
-                                        {event.targetName ? <span className="team-audit-target"> · {event.targetName}</span> : null}
+            {capabilities.canViewAudit ? (
+                <section className="team-audit-section mt-7 pb-8">
+                    <div className="team-section-heading">
+                        <h3 className="team-section-title text-sm font-semibold">最近动态</h3>
+                        <p className="team-section-description mt-1 text-xs text-foreground/45">团队关键写操作的事实记录。</p>
+                    </div>
+                    <div className="team-audit-list mt-3 divide-y divide-border/55">
+                        {detail.auditEvents.length ? (
+                            detail.auditEvents.map((event) => (
+                                <div className="team-audit-row flex items-start gap-3 py-3" key={event.id}>
+                                    <span className="team-audit-icon grid size-7 shrink-0 place-items-center rounded-full bg-foreground/[.05]">
+                                        <ShieldCheck className="team-audit-shield size-3.5 text-foreground/45" />
+                                    </span>
+                                    <div className="team-audit-copy min-w-0 flex-1">
+                                        <div className="team-audit-message text-xs text-foreground/72">
+                                            <span className="team-audit-actor font-medium text-foreground">{event.actorName}</span>
+                                            <span className="team-audit-action ml-1">{auditLabels[event.action] || event.action}</span>
+                                            {event.targetName ? <span className="team-audit-target"> · {event.targetName}</span> : null}
+                                        </div>
+                                        <div className="team-audit-time mt-1 text-[10px] text-foreground/36">{formatDateTime(event.createdAt)}</div>
                                     </div>
-                                    <div className="team-audit-time mt-1 text-[10px] text-foreground/36">{formatDateTime(event.createdAt)}</div>
                                 </div>
-                            </div>
-                        ))
-                    ) : (
-                        <div className="team-audit-empty py-6 text-center text-xs text-foreground/38">暂无团队动态</div>
-                    )}
-                </div>
-            </section>
+                            ))
+                        ) : (
+                            <div className="team-audit-empty py-6 text-center text-xs text-foreground/38">暂无团队动态</div>
+                        )}
+                    </div>
+                </section>
+            ) : null}
         </section>
     );
 }

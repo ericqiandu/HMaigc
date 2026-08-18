@@ -168,6 +168,8 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     assetId?: string;
+    teamResourceId?: string;
+    teamResourceTeamId?: string;
     assetTags?: string[];
     assetCategory?: "character" | "environment" | "wardrobe" | "prop" | "weapon" | "style" | "other";
     workflowKind?: CanvasWorkflowKind;

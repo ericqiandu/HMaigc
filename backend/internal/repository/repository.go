@@ -752,6 +752,39 @@ func (r *Repository) SaveResource(resource *model.Resource) error {
 	return r.db.Save(resource).Error
 }
 
+func (r *Repository) SaveTeamResourceWithAudit(resource *model.Resource, audit *model.TeamAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(resource).Error; err != nil {
+			return err
+		}
+		return tx.Create(audit).Error
+	})
+}
+
+func (r *Repository) SaveTeamResourceFailureWithAudit(resource *model.Resource, audit *model.TeamAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var existing model.Resource
+		err := tx.First(&existing, "id = ?", resource.ID).Error
+		switch {
+		case err == nil:
+			if existing.UserID != resource.UserID || existing.TeamID != resource.TeamID {
+				return errors.New("team resource failure fact scope conflict")
+			}
+			resource.CreatedAt = existing.CreatedAt
+			if err := tx.Save(resource).Error; err != nil {
+				return err
+			}
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			if err := tx.Create(resource).Error; err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+		return tx.Create(audit).Error
+	})
+}
+
 func (r *Repository) ResourceForUser(userID string, id string) (*model.Resource, error) {
 	var resource model.Resource
 	if err := r.db.First(&resource, "id = ? AND user_id = ?", id, userID).Error; err != nil {
@@ -791,7 +824,7 @@ func (r *Repository) TeamResources(teamID string, limit int) ([]model.Resource, 
 		limit = 200
 	}
 	var resources []model.Resource
-	err := r.db.Where("team_id = ? AND status <> ?", teamID, model.ResourceStatusDeleted).
+	err := r.db.Where("team_id = ? AND status = ?", teamID, model.ResourceStatusReady).
 		Order("created_at desc").Limit(limit).Find(&resources).Error
 	return resources, err
 }

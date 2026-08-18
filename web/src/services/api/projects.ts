@@ -228,6 +228,10 @@ export function updateProjectPermission(projectId: string, userId: string, role:
     return request<{ updated: boolean }>(api.put(`/projects/${encodeURIComponent(projectId)}/permissions/${encodeURIComponent(userId)}`, { role }));
 }
 
+export function clearProjectCollaborator(projectId: string, userId: string) {
+    return request<{ deleted: boolean }>(api.delete(`/projects/${encodeURIComponent(projectId)}/permissions/${encodeURIComponent(userId)}`));
+}
+
 export function createProjectUnit(projectId: string, input: { kind: string; title: string; sourceText?: string; position?: number }) {
     return request<{ unit: ProjectUnit }>(api.post(`/projects/${encodeURIComponent(projectId)}/units`, input));
 }

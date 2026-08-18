@@ -232,7 +232,7 @@ func TestTeamPurchaseGrantsTeamCreditsAndMemberEntitlement(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, owner, member := createCommercialTestUsers(t, db)
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "商业制作团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("商业制作团队"))
 	if err != nil {
 		t.Fatal(err)
 	}

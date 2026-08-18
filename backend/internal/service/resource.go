@@ -204,6 +204,10 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 }
 
 func (s *Service) storeScopedResourceWithIdentity(resourceID string, userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker) (*model.Resource, error) {
+	return s.storeScopedResourceWithIdentityAndAudit(resourceID, userID, teamID, kind, fileName, mimeType, size, width, height, body, nil)
+}
+
+func (s *Service) storeScopedResourceWithIdentityAndAudit(resourceID string, userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker, successAudit *model.TeamAuditEvent) (*model.Resource, error) {
 	now := time.Now()
 	kind = normalizeResourceKind(kind, mimeType)
 	durationMs, err := s.authoritativeMediaDuration(kind, body)
@@ -294,7 +298,12 @@ func (s *Service) storeScopedResourceWithIdentity(resourceID string, userID stri
 	}
 	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
-	if err := s.repo.SaveResource(&resource); err != nil {
+	if successAudit != nil {
+		err = s.repo.SaveTeamResourceWithAudit(&resource, successAudit)
+	} else {
+		err = s.repo.SaveResource(&resource)
+	}
+	if err != nil {
 		return nil, err
 	}
 	s.recordActivity(userID, "resource", 1)

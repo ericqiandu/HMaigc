@@ -2,12 +2,14 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +23,7 @@ func TestTeamCreditReservationEnforcesMemberMonthlyLimitAndRefundsAtomically(t *
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "commercial-credit-owner", "credit-owner@example.com")
 	member := createTeamTestUser(t, db, "commercial-credit-member", "credit-member@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "积分管控团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("积分管控团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,7 @@ func TestTeamCreditReservationEnforcesMemberMonthlyLimitAndRefundsAtomically(t *
 func TestTeamSummaryUsesPurchasedEntitlementSnapshot(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "commercial-snapshot-owner", "snapshot-owner@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "快照权益团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("快照权益团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +111,7 @@ func TestProjectPermissionsUseTeamDefaultsAndClearOverridesOnDetach(t *testing.T
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "commercial-project-owner", "project-owner@example.com")
 	member := createTeamTestUser(t, db, "commercial-project-member", "project-member@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "项目权限团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("项目权限团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,12 +164,84 @@ func TestProjectPermissionsUseTeamDefaultsAndClearOverridesOnDetach(t *testing.T
 	}
 }
 
+func TestProjectPermissionOverrideCanReturnToInheritedRole(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "project-inherit-owner", "project-inherit-owner@example.com")
+	member := createTeamTestUser(t, db, "project-inherit-member", "project-inherit-member@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("权限继承团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateTeamTestSubscription(t, db, team, owner, 4)
+	now := time.Now()
+	if err := db.Create(&model.TeamMember{ID: newID(), TeamID: team.ID, UserID: member.ID, Role: model.TeamMemberRoleMember, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := &model.Project{ID: newID(), UserID: owner.ID, TeamID: team.ID, Name: "权限继承项目", Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateProjectCollaborator(owner, project.ID, member.ID, UpdateProjectCollaboratorRequest{Role: model.ProjectAccessViewer}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ClearProjectCollaborator(owner, project.ID, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	var auditCount int64
+	if err := db.Model(&model.TeamAuditEvent{}).
+		Where("team_id = ? AND target_user_id = ? AND action IN ?", team.ID, member.ID, []string{"project.collaborator_updated", "project.collaborator_inherited"}).
+		Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 2 {
+		t.Fatalf("project permission audit count = %d, want 2", auditCount)
+	}
+	overview, err := svc.ProjectAccessOverview(owner, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, access := range overview.Members {
+		if access.UserID == member.ID {
+			if access.Explicit || access.Role != model.ProjectAccessEditor {
+				t.Fatalf("member access = %#v, want inherited editor", access)
+			}
+			return
+		}
+	}
+	t.Fatal("member access missing")
+}
+
+func TestTeamProjectCreatorCannotBypassEffectiveTeamRole(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "project-scope-owner", "project-scope-owner@example.com")
+	creator := createTeamTestUser(t, db, "project-scope-creator", "project-scope-creator@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("项目创建者权限团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateTeamTestSubscription(t, db, team, owner, 4)
+	now := time.Now()
+	if err := db.Create(&model.TeamMember{ID: newID(), TeamID: team.ID, UserID: creator.ID, Role: model.TeamMemberRoleMember, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := &model.Project{ID: newID(), UserID: creator.ID, TeamID: team.ID, Name: "成员创建的团队项目", Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.repo.ProjectEditableForUser(creator.ID, project.ID, now); err != nil {
+		t.Fatalf("team member creator should retain inherited editor permission: %v", err)
+	}
+	if _, err := svc.repo.ProjectManageableForUser(creator.ID, project.ID, now); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("team member creator management error = %v, want record not found", err)
+	}
+}
+
 func TestTeamSharedAssetIsStoredInTeamScopeAndIsolatedFromNonMembers(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "commercial-asset-owner", "asset-owner@example.com")
 	member := createTeamTestUser(t, db, "commercial-asset-member", "asset-member@example.com")
 	outsider := createTeamTestUser(t, db, "commercial-asset-outsider", "asset-outsider@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "共享资产团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("共享资产团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,13 +253,40 @@ func TestTeamSharedAssetIsStoredInTeamScopeAndIsolatedFromNonMembers(t *testing.
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc.UploadTeamResource(member.ID, team.ID, multipartFileHeader(t, "member.png", "not-an-image"), "image", 0, 0); err == nil {
+		t.Fatal("ordinary member unexpectedly uploaded a team resource")
+	} else {
+		requireAuthStatus(t, err, http.StatusForbidden)
+	}
 	header := multipartFileHeader(t, "reference.txt", "team reference")
 	resource, err := svc.UploadTeamResource(owner.ID, team.ID, header, "reference", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	failedResource := &model.Resource{
+		ID:        newID(),
+		UserID:    owner.ID,
+		TeamID:    team.ID,
+		Kind:      "image",
+		Status:    model.ResourceStatusFailed,
+		Provider:  "local",
+		MimeType:  "image/png",
+		Error:     "upload failed",
+		CreatedAt: now.Add(time.Second),
+		UpdatedAt: now.Add(time.Second),
+	}
+	if err := db.Create(failedResource).Error; err != nil {
+		t.Fatal(err)
+	}
 	if resource.TeamID != team.ID || resource.UserID != owner.ID || resource.Status != model.ResourceStatusReady {
 		t.Fatalf("unexpected team resource: %#v", resource)
+	}
+	var uploadAuditCount int64
+	if err := db.Model(&model.TeamAuditEvent{}).Where("team_id = ? AND action = ?", team.ID, "resource.uploaded").Count(&uploadAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if uploadAuditCount != 1 {
+		t.Fatalf("resource upload audit count = %d, want 1", uploadAuditCount)
 	}
 	resources, err := svc.TeamResources(member.ID, team.ID, 20)
 	if err != nil {
@@ -208,6 +309,38 @@ func TestTeamSharedAssetIsStoredInTeamScopeAndIsolatedFromNonMembers(t *testing.
 	}
 	if _, err := svc.TeamResources(outsider.ID, team.ID, 20); err == nil {
 		t.Fatal("non-member unexpectedly read team assets")
+	}
+}
+
+func TestTeamSharedAssetFailurePersistsResourceAndAuditFact(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "failed-asset-owner", "failed-asset-owner@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("失败资产事实团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateTeamTestSubscription(t, db, team, owner, 3)
+	svc.mediaDurationProbe = func(_ context.Context, _ io.Reader) (int64, error) {
+		return 0, errors.New("probe unavailable")
+	}
+	header := multipartFileHeader(t, "failed.mp4", "not-a-real-video")
+	header.Header.Set("Content-Type", "video/mp4")
+	if _, err := svc.UploadTeamResource(owner.ID, team.ID, header, "video", 0, 0); err == nil {
+		t.Fatal("invalid video unexpectedly uploaded")
+	}
+	var failed model.Resource
+	if err := db.Where("team_id = ? AND status = ?", team.ID, model.ResourceStatusFailed).First(&failed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failed.ID == "" || failed.Error == "" || failed.Provider != "unresolved" {
+		t.Fatalf("failed resource fact = %#v", failed)
+	}
+	var audit model.TeamAuditEvent
+	if err := db.Where("team_id = ? AND action = ?", team.ID, "resource.upload_failed").First(&audit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(audit.MetadataJSON, failed.ID) {
+		t.Fatalf("failure audit metadata %q does not reference resource %s", audit.MetadataJSON, failed.ID)
 	}
 }
 

@@ -1,38 +1,18 @@
-import { App, Button, Input, InputNumber, Modal, Select, Skeleton } from "antd";
+import { Alert, App, Button, Input, InputNumber, Modal, Select, Skeleton } from "antd";
 import { Check, ChevronRight, Copy, Mail, Plus, RefreshCw, UsersRound } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
-import {
-    acceptTeamInvitationById,
-    acceptTeamInvitationByToken,
-    createTeam,
-    createTeamInvitation,
-    getTeamDetail,
-    getTeamWorkspace,
-    leaveTeam,
-    removeTeamMember,
-    renameTeam,
-    revokeTeamInvitation,
-    updateTeamMemberPolicy,
-    type TeamDetail,
-    type TeamMember,
-    type TeamRole,
-    type TeamWorkspace,
-} from "@/services/api/teams";
+import { type TeamMember, type TeamRole } from "@/services/api/teams";
 import { TeamDetailPanel, TeamPlaceholder } from "./team-detail-panel";
+import { useTeamCommands } from "./use-team-commands";
+import { useTeamWorkspaceController } from "./use-team-workspace-controller";
 
 export default function TeamsPage() {
     const { message, modal } = App.useApp();
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
-    const [workspace, setWorkspace] = useState<TeamWorkspace | null>(null);
-    const [activeTeamId, setActiveTeamId] = useState("");
-    const [detail, setDetail] = useState<TeamDetail | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [detailLoading, setDetailLoading] = useState(false);
-    const [busyKey, setBusyKey] = useState("");
     const [createOpen, setCreateOpen] = useState(false);
     const [createName, setCreateName] = useState("");
     const [renameOpen, setRenameOpen] = useState(false);
@@ -44,85 +24,61 @@ export default function TeamsPage() {
     const [copied, setCopied] = useState(false);
     const [creditLimitMember, setCreditLimitMember] = useState<TeamMember | null>(null);
     const [creditLimit, setCreditLimit] = useState<number>(0);
-    const workspaceRequest = useRef(0);
-    const detailRequest = useRef(0);
     const inviteTokenHandled = useRef(false);
+    const createCommandKey = useRef("");
 
-    const loadWorkspace = useCallback(
-        async (preferredTeamId?: string) => {
-            const sequence = ++workspaceRequest.current;
-            setLoading(true);
-            try {
-                const next = await getTeamWorkspace();
-                if (sequence !== workspaceRequest.current) return;
-                setWorkspace(next);
-                setActiveTeamId((current) => {
-                    const candidate = preferredTeamId || current;
-                    if (candidate && next.teams.some((item) => item.team.id === candidate)) return candidate;
-                    return next.teams[0]?.team.id || "";
-                });
-            } catch (error) {
-                if (sequence === workspaceRequest.current) message.error(error instanceof Error ? error.message : "读取团队空间失败");
-            } finally {
-                if (sequence === workspaceRequest.current) setLoading(false);
-            }
-        },
-        [message],
-    );
+    const openCreateDialog = () => {
+        createCommandKey.current = crypto.randomUUID();
+        setCreateOpen(true);
+    };
 
-    const loadDetail = useCallback(
-        async (teamId: string) => {
-            if (!teamId) {
-                setDetail(null);
-                return;
-            }
-            const sequence = ++detailRequest.current;
-            setDetailLoading(true);
-            try {
-                const next = await getTeamDetail(teamId);
-                if (sequence === detailRequest.current) setDetail(next);
-            } catch (error) {
-                if (sequence === detailRequest.current) {
-                    setDetail(null);
-                    message.error(error instanceof Error ? error.message : "读取团队详情失败");
-                }
-            } finally {
-                if (sequence === detailRequest.current) setDetailLoading(false);
-            }
+    const closeCreateDialog = () => {
+        createCommandKey.current = "";
+        setCreateOpen(false);
+    };
+
+    const activeTeamId = searchParams.get("teamId") || "";
+    const setActiveTeamId = useCallback(
+        (teamId: string) => {
+            setSearchParams(
+                (current) => {
+                    const next = new URLSearchParams(current);
+                    if (teamId) next.set("teamId", teamId);
+                    else next.delete("teamId");
+                    return next;
+                },
+                { replace: true },
+            );
         },
-        [message],
+        [setSearchParams],
     );
+    const controller = useTeamWorkspaceController({ teamId: activeTeamId, setTeamId: setActiveTeamId });
+    const { workspace, detail, reloadWorkspace: loadWorkspace, reloadDetail: loadDetail } = controller;
+    const loading = controller.workspaceStatus === "loading";
+    const detailLoading = controller.detailStatus === "loading";
 
     const reloadActiveTeam = useCallback(async () => {
         await Promise.all([loadWorkspace(activeTeamId), loadDetail(activeTeamId)]);
     }, [activeTeamId, loadDetail, loadWorkspace]);
-
-    useEffect(() => {
-        void loadWorkspace();
-    }, [loadWorkspace]);
-
-    useEffect(() => {
-        void loadDetail(activeTeamId);
-    }, [activeTeamId, loadDetail]);
+    const commands = useTeamCommands({ activeTeamId, reloadActiveTeam, reloadWorkspace: loadWorkspace });
+    const busyKey = commands.busyKey;
 
     useEffect(() => {
         const token = searchParams.get("invite");
         if (!token || inviteTokenHandled.current) return;
         inviteTokenHandled.current = true;
-        setBusyKey("accept:token");
-        void acceptTeamInvitationByToken(token)
+        void commands
+            .acceptInvitationToken(token)
             .then(async () => {
                 const next = new URLSearchParams(searchParams);
                 next.delete("invite");
                 setSearchParams(next, { replace: true });
                 message.success("已加入团队");
-                await loadWorkspace();
             })
             .catch((error: unknown) => {
                 message.error(error instanceof Error ? error.message : "接受团队邀请失败");
-            })
-            .finally(() => setBusyKey(""));
-    }, [loadWorkspace, message, searchParams, setSearchParams]);
+            });
+    }, [commands, message, searchParams, setSearchParams]);
 
     const submitCreate = async () => {
         const name = createName.trim();
@@ -130,17 +86,13 @@ export default function TeamsPage() {
             message.error("请输入团队名称");
             return;
         }
-        setBusyKey("create");
         try {
-            const team = await createTeam(name);
-            setCreateOpen(false);
+            await commands.create(name, createCommandKey.current);
+            closeCreateDialog();
             setCreateName("");
-            await loadWorkspace(team.id);
             message.success("团队已创建");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "创建团队失败");
-        } finally {
-            setBusyKey("");
         }
     };
 
@@ -150,16 +102,12 @@ export default function TeamsPage() {
             message.error("请输入团队名称");
             return;
         }
-        setBusyKey("rename");
         try {
-            await renameTeam(activeTeamId, name);
+            await commands.rename(name);
             setRenameOpen(false);
-            await reloadActiveTeam();
             message.success("团队名称已更新");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "修改团队名称失败");
-        } finally {
-            setBusyKey("");
         }
     };
 
@@ -169,18 +117,14 @@ export default function TeamsPage() {
             message.error("请输入成员邮箱");
             return;
         }
-        setBusyKey("invite");
         try {
-            const result = await createTeamInvitation(activeTeamId, { email, role: inviteRole });
+            const result = await commands.invite(email, inviteRole);
             const link = `${window.location.origin}/teams?invite=${encodeURIComponent(result.acceptToken)}`;
             setInviteLink(link);
             setCopied(false);
-            await reloadActiveTeam();
             message.success("邀请已创建并预留席位");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "创建邀请失败");
-        } finally {
-            setBusyKey("");
         }
     };
 
@@ -199,29 +143,36 @@ export default function TeamsPage() {
     };
 
     const acceptInvitation = async (invitationId: string) => {
-        setBusyKey(`accept:${invitationId}`);
         try {
-            await acceptTeamInvitationById(invitationId);
-            await loadWorkspace();
+            await commands.acceptInvitation(invitationId);
             message.success("已加入团队");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "接受邀请失败");
-        } finally {
-            setBusyKey("");
+        }
+    };
+
+    const regenerateInvitation = async (invitationId: string) => {
+        if (!activeTeamId) return;
+        try {
+            const result = await commands.regenerateInvitation(invitationId);
+            setInviteEmail(result.invitation.email);
+            setInviteRole(result.invitation.role === "admin" ? "admin" : "member");
+            setInviteLink(`${window.location.origin}/teams?invite=${encodeURIComponent(result.acceptToken)}`);
+            setCopied(false);
+            setInviteOpen(true);
+            message.success("邀请链接已重新生成，旧链接已失效");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "重新生成邀请失败");
         }
     };
 
     const changeRole = async (member: TeamMember, role: Exclude<TeamRole, "owner">) => {
         if (!activeTeamId) return;
-        setBusyKey(`role:${member.id}`);
         try {
-            await updateTeamMemberPolicy(activeTeamId, member.id, { role });
-            await reloadActiveTeam();
+            await commands.updateMember(member, role);
             message.success("成员角色已更新");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "更新成员角色失败");
-        } finally {
-            setBusyKey("");
         }
     };
 
@@ -231,19 +182,12 @@ export default function TeamsPage() {
             message.error("成员月度积分额度不能小于 0");
             return;
         }
-        setBusyKey(`credit-limit:${creditLimitMember.id}`);
         try {
-            await updateTeamMemberPolicy(activeTeamId, creditLimitMember.id, {
-                role: creditLimitMember.role === "admin" ? "admin" : "member",
-                monthlyCreditLimitMicrocredits: Math.round(creditLimit * 1_000_000),
-            });
+            await commands.updateMember(creditLimitMember, creditLimitMember.role === "admin" ? "admin" : "member", Math.round(creditLimit * 1_000_000));
             setCreditLimitMember(null);
-            await reloadActiveTeam();
             message.success("成员月度积分额度已更新");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "更新成员积分额度失败");
-        } finally {
-            setBusyKey("");
         }
     };
 
@@ -255,16 +199,12 @@ export default function TeamsPage() {
             okButtonProps: { danger: true },
             cancelText: "取消",
             onOk: async () => {
-                setBusyKey(`remove:${member.id}`);
                 try {
-                    await removeTeamMember(activeTeamId, member.id);
-                    await reloadActiveTeam();
+                    await commands.removeMember(member.id);
                     message.success("成员已移出团队");
                 } catch (error) {
                     message.error(error instanceof Error ? error.message : "移除成员失败");
                     throw error;
-                } finally {
-                    setBusyKey("");
                 }
             },
         });
@@ -278,16 +218,12 @@ export default function TeamsPage() {
             okButtonProps: { danger: true },
             cancelText: "取消",
             onOk: async () => {
-                setBusyKey(`revoke:${invitationId}`);
                 try {
-                    await revokeTeamInvitation(activeTeamId, invitationId);
-                    await reloadActiveTeam();
+                    await commands.revokeInvitation(invitationId);
                     message.success("邀请已撤销");
                 } catch (error) {
                     message.error(error instanceof Error ? error.message : "撤销邀请失败");
                     throw error;
-                } finally {
-                    setBusyKey("");
                 }
             },
         });
@@ -301,17 +237,12 @@ export default function TeamsPage() {
             okButtonProps: { danger: true },
             cancelText: "取消",
             onOk: async () => {
-                setBusyKey("leave");
                 try {
-                    await leaveTeam(activeTeamId);
-                    setDetail(null);
-                    await loadWorkspace();
+                    await commands.leave();
                     message.success("已退出团队");
                 } catch (error) {
                     message.error(error instanceof Error ? error.message : "退出团队失败");
                     throw error;
-                } finally {
-                    setBusyKey("");
                 }
             },
         });
@@ -329,12 +260,29 @@ export default function TeamsPage() {
                         <Button className="teams-refresh-button" icon={<RefreshCw className="teams-refresh-icon size-4" />} loading={loading} onClick={() => void reloadActiveTeam()}>
                             刷新
                         </Button>
-                        <Button className="teams-create-button" icon={<Plus className="teams-create-icon size-4" />} onClick={() => setCreateOpen(true)}>
+                        <Button className="teams-create-button" icon={<Plus className="teams-create-icon size-4" />} onClick={openCreateDialog}>
                             新建团队
                         </Button>
                     </div>
                 }
             />
+
+            {controller.workspaceError ? (
+                <Alert
+                    className="teams-workspace-error mt-5"
+                    type="error"
+                    showIcon
+                    message="团队空间加载失败"
+                    description={controller.workspaceError}
+                    action={
+                        <Button className="teams-workspace-error-retry" size="small" onClick={() => void controller.reloadWorkspace()}>
+                            重试
+                        </Button>
+                    }
+                />
+            ) : null}
+
+            {commands.commandError ? <Alert className="teams-command-error mt-3" type="error" showIcon closable message="团队操作失败" description={commands.commandError} onClose={commands.clearCommandError} /> : null}
 
             {workspace?.incomingInvitations.length ? (
                 <section className="incoming-team-invitations mt-5 bg-[var(--workspace-accent)]/[.07] px-4 py-3">
@@ -382,7 +330,7 @@ export default function TeamsPage() {
                                     type="button"
                                     key={item.team.id}
                                     aria-current={selected ? "page" : undefined}
-                                    onClick={() => setActiveTeamId(item.team.id)}
+                                    onClick={() => controller.selectTeam(item.team.id)}
                                 >
                                     <span className={`team-navigation-icon grid size-8 shrink-0 place-items-center rounded-md ${selected ? "bg-background/12" : "bg-foreground/[.055]"}`}>
                                         <UsersRound className="team-navigation-users-icon size-4" />
@@ -402,7 +350,7 @@ export default function TeamsPage() {
                         <div className="teams-navigation-empty px-2 py-8 text-center">
                             <UsersRound className="teams-navigation-empty-icon mx-auto size-7 text-foreground/20" />
                             <div className="teams-navigation-empty-title mt-2 text-xs font-medium">还没有团队</div>
-                            <button className="teams-navigation-empty-action mt-2 text-xs text-[var(--workspace-accent)]" type="button" onClick={() => setCreateOpen(true)}>
+                            <button className="teams-navigation-empty-action mt-2 text-xs text-[var(--workspace-accent)]" type="button" onClick={openCreateDialog}>
                                 创建第一个团队
                             </button>
                         </div>
@@ -410,7 +358,20 @@ export default function TeamsPage() {
                 </aside>
 
                 <main className="teams-detail-content min-w-0 flex-1 px-4 py-5 sm:px-6">
-                    {detailLoading && !detail ? (
+                    {controller.detailError ? (
+                        <Alert
+                            className="teams-detail-error"
+                            type="error"
+                            showIcon
+                            message="团队详情加载失败"
+                            description={controller.detailError}
+                            action={
+                                <Button className="teams-detail-error-retry" size="small" onClick={() => void controller.reloadDetail()}>
+                                    重试
+                                </Button>
+                            }
+                        />
+                    ) : detailLoading && !detail ? (
                         <Skeleton className="teams-detail-skeleton" active paragraph={{ rows: 8 }} />
                     ) : detail ? (
                         <TeamDetailPanel
@@ -435,6 +396,7 @@ export default function TeamsPage() {
                                 setCreditLimit(member.monthlyCreditLimitMicrocredits / 1_000_000);
                             }}
                             onRemove={confirmRemove}
+                            onRegenerateInvitation={(invitationId) => void regenerateInvitation(invitationId)}
                             onRevokeInvitation={confirmRevoke}
                             onTeamChanged={reloadActiveTeam}
                         />
@@ -444,7 +406,7 @@ export default function TeamsPage() {
                 </main>
             </div>
 
-            <Modal className="team-create-modal" title="新建团队" open={createOpen} okText="创建团队" cancelText="取消" confirmLoading={busyKey === "create"} onOk={() => void submitCreate()} onCancel={() => setCreateOpen(false)} destroyOnHidden>
+            <Modal className="team-create-modal" title="新建团队" open={createOpen} okText="创建团队" cancelText="取消" confirmLoading={busyKey === "create"} onOk={() => void submitCreate()} onCancel={closeCreateDialog} destroyOnHidden>
                 <label className="team-create-field block pt-2">
                     <span className="team-create-label text-xs font-medium text-foreground/68">团队名称</span>
                     <Input className="team-create-input mt-2" value={createName} maxLength={80} placeholder="例如：弘梦创作团队" autoFocus onChange={(event) => setCreateName(event.target.value)} onPressEnter={() => void submitCreate()} />
@@ -514,7 +476,10 @@ export default function TeamsPage() {
                             <Select
                                 className="team-invite-role-select mt-2 w-full"
                                 value={inviteRole}
-                                options={[{ label: "成员 · 使用团队会员权益", value: "member" }, ...(activeSummary?.currentRole === "owner" ? [{ label: "管理员 · 可邀请和移除普通成员", value: "admin" as const }] : [])]}
+                                options={(activeSummary?.capabilities.inviteRoles ?? []).map((role) => ({
+                                    label: role === "admin" ? "管理员 · 可邀请和移除普通成员" : "成员 · 使用团队会员权益",
+                                    value: role,
+                                }))}
                                 onChange={(role: Exclude<TeamRole, "owner">) => setInviteRole(role)}
                             />
                         </label>

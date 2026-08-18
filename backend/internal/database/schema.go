@@ -180,6 +180,9 @@ func MigrateSchema(db *gorm.DB) error {
 		if err := EnsurePaymentIntegritySchema(tx); err != nil {
 			return err
 		}
+		if err := EnsureTeamIntegritySchema(tx); err != nil {
+			return err
+		}
 		if err := EnsureProviderIntegritySchema(tx); err != nil {
 			return err
 		}

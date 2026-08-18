@@ -65,6 +65,9 @@ func newMembershipTestService(t *testing.T) (*Service, *gorm.DB) {
 	if err := database.EnsurePaymentIntegritySchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsureTeamIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
 	return &Service{repo: repository.New(db), dataDir: t.TempDir()}, db
 }
 
@@ -744,7 +747,7 @@ func TestTeamMemberReceivesTeamSubscriptionSnapshotEntitlement(t *testing.T) {
 	if err := db.Create([]*model.User{owner, member}).Error; err != nil {
 		t.Fatal(err)
 	}
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "商业创作团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("商业创作团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -807,7 +810,7 @@ func TestTeamMembershipRequiresOwnedTeamAndValidSeatRange(t *testing.T) {
 	if _, err := svc.CreateMembershipOrder(user, CreateMembershipOrderRequest{PlanID: plan.ID, Seats: 1}, "team-missing-id-order"); err == nil {
 		t.Fatal("team order with too few seats unexpectedly succeeded")
 	}
-	team, err := svc.CreateTeam(user, CreateTeamRequest{Name: "短剧制作团队"})
+	team, err := svc.CreateTeam(user, teamCreateRequest("短剧制作团队"))
 	if err != nil {
 		t.Fatal(err)
 	}

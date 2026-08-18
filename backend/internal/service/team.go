@@ -20,7 +20,8 @@ import (
 const teamInvitationLifetime = 7 * 24 * time.Hour
 
 type CreateTeamRequest struct {
-	Name string `json:"name"`
+	Name           string `json:"name"`
+	IdempotencyKey string `json:"-"`
 }
 
 type RenameTeamRequest struct {
@@ -44,6 +45,7 @@ type AcceptTeamInvitationRequest struct {
 type UpdateTeamMemberRequest struct {
 	Role                           model.TeamMemberRole `json:"role"`
 	MonthlyCreditLimitMicrocredits *int64               `json:"monthlyCreditLimitMicrocredits"`
+	ExpectedUpdatedAt              time.Time            `json:"expectedUpdatedAt"`
 }
 
 type TeamSubscriptionView struct {
@@ -63,6 +65,7 @@ type TeamSubscriptionView struct {
 type TeamSummary struct {
 	Team                   model.Team            `json:"team"`
 	CurrentRole            model.TeamMemberRole  `json:"currentRole"`
+	Capabilities           TeamCapabilities      `json:"capabilities"`
 	SeatUsed               int                   `json:"seatUsed"`
 	InvitationSeatReserved int                   `json:"invitationSeatReserved"`
 	Subscription           *TeamSubscriptionView `json:"subscription,omitempty"`
@@ -71,11 +74,16 @@ type TeamSummary struct {
 	StorageUsedBytes       int64                 `json:"storageUsedBytes"`
 }
 
+type TeamMemberView struct {
+	repository.TeamMemberRecord
+	CanRemove bool `json:"canRemove"`
+}
+
 type TeamDetail struct {
-	Summary     TeamSummary                   `json:"summary"`
-	Members     []repository.TeamMemberRecord `json:"members"`
-	Invitations []model.TeamInvitation        `json:"invitations"`
-	AuditEvents []repository.TeamAuditRecord  `json:"auditEvents"`
+	Summary     TeamSummary                  `json:"summary"`
+	Members     []TeamMemberView             `json:"members"`
+	Invitations []model.TeamInvitation       `json:"invitations"`
+	AuditEvents []repository.TeamAuditRecord `json:"auditEvents"`
 }
 
 type TeamWorkspace struct {
@@ -88,9 +96,15 @@ func (s *Service) CreateTeam(user *model.User, req CreateTeamRequest) (*model.Te
 	if err != nil {
 		return nil, err
 	}
+	idempotencyKey, err := normalizeTeamCreationIdempotencyKey(req.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	requestHash := sha256.Sum256([]byte(name))
 	now := time.Now()
 	team := &model.Team{
-		ID: newID(), OwnerUserID: user.ID, Name: name,
+		ID: newID(), OwnerUserID: user.ID, CreationIdempotencyKey: idempotencyKey,
+		CreationRequestHash: hex.EncodeToString(requestHash[:]), Name: name,
 		Status: model.TeamStatusActive, CreatedAt: now, UpdatedAt: now,
 	}
 	owner := &model.TeamMember{
@@ -105,10 +119,14 @@ func (s *Service) CreateTeam(user *model.User, req CreateTeamRequest) (*model.Te
 		return nil, err
 	}
 	audit := newTeamAuditEvent(team.ID, user.ID, "team.created", string(metadata), now)
-	if err := s.repo.CreateTeamWithAudit(team, owner, audit); err != nil {
+	resolved, err := s.repo.CreateTeamIdempotent(team, owner, audit)
+	if errors.Is(err, repository.ErrTeamCreationConflict) {
+		return nil, Conflict("幂等键已用于不同的团队创建请求")
+	}
+	if err != nil {
 		return nil, err
 	}
-	return team, nil
+	return resolved, nil
 }
 
 func (s *Service) TeamWorkspace(user *model.User) (*TeamWorkspace, error) {
@@ -126,6 +144,7 @@ func (s *Service) TeamWorkspace(user *model.User) (*TeamWorkspace, error) {
 				Status: record.Status, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 			},
 			CurrentRole:            record.CurrentRole,
+			Capabilities:           BuildTeamCapabilities(record.CurrentRole, false, false),
 			SeatUsed:               record.SeatUsed,
 			InvitationSeatReserved: record.InvitationSeatReserved,
 			AvailableMicrocredits:  record.AvailableMicrocredits,
@@ -147,6 +166,7 @@ func (s *Service) TeamWorkspace(user *model.User) (*TeamWorkspace, error) {
 				SharedAssetsEnabled: entitlement.SharedAssetsEnabled, ProjectPermissionsEnabled: entitlement.ProjectPermissionsEnabled,
 				InvoicingEnabled: entitlement.InvoicingEnabled, CommercialUseEnabled: entitlement.CommercialUseEnabled,
 			}
+			summary.Capabilities = BuildTeamCapabilities(record.CurrentRole, entitlement.SharedAssetsEnabled, entitlement.ProjectPermissionsEnabled)
 		}
 		summaries = append(summaries, summary)
 	}
@@ -157,7 +177,9 @@ func (s *Service) TeamWorkspace(user *model.User) (*TeamWorkspace, error) {
 			return nil, err
 		}
 	}
-	return &TeamWorkspace{Teams: summaries, IncomingInvitations: incoming}, nil
+	workspace := &TeamWorkspace{Teams: summaries, IncomingInvitations: incoming}
+	normalizeTeamWorkspaceCollections(workspace)
+	return workspace, nil
 }
 
 func (s *Service) TeamDetail(user *model.User, teamID string) (*TeamDetail, error) {
@@ -188,10 +210,23 @@ func (s *Service) TeamDetail(user *model.User, teamID string) (*TeamDetail, erro
 			return nil, err
 		}
 	}
-	return &TeamDetail{
-		Summary: *summary, Members: members,
+	memberViews := make([]TeamMemberView, 0, len(members))
+	for _, member := range members {
+		memberViews = append(memberViews, TeamMemberView{TeamMemberRecord: member, CanRemove: canRemoveTeamMember(actor.Role, member.Role)})
+	}
+	detail := &TeamDetail{
+		Summary: *summary, Members: memberViews,
 		Invitations: invitations, AuditEvents: auditEvents,
-	}, nil
+	}
+	normalizeTeamDetailCollections(detail)
+	return detail, nil
+}
+
+func canRemoveTeamMember(actorRole model.TeamMemberRole, targetRole model.TeamMemberRole) bool {
+	if targetRole == model.TeamMemberRoleOwner {
+		return false
+	}
+	return actorRole == model.TeamMemberRoleOwner || (actorRole == model.TeamMemberRoleAdmin && targetRole == model.TeamMemberRoleMember)
 }
 
 func (s *Service) RenameTeam(user *model.User, teamID string, req RenameTeamRequest) (*model.Team, error) {
@@ -278,6 +313,36 @@ func (s *Service) CreateTeamInvitation(user *model.User, teamID string, req Crea
 			return nil, &AuthError{Status: http.StatusConflict, Message: "团队席位已满，请先升级席位数"}
 		case errors.Is(err, repository.ErrTeamMemberAlreadyActive):
 			return nil, &AuthError{Status: http.StatusConflict, Message: "该用户已经是团队成员"}
+		case errors.Is(err, repository.ErrTeamInvitationAlreadyExists):
+			return nil, Conflict("该邮箱已有邀请记录，请显式重新生成邀请链接")
+		default:
+			return nil, err
+		}
+	}
+	return &CreateTeamInvitationResult{Invitation: *invitation, AcceptToken: rawToken}, nil
+}
+
+func (s *Service) RegenerateTeamInvitation(user *model.User, teamID string, invitationID string) (*CreateTeamInvitationResult, error) {
+	team, actor, err := s.teamAccess(user.ID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	if !canManageTeam(actor.Role) {
+		return nil, Forbidden("当前角色不能重新生成团队邀请")
+	}
+	rawToken, tokenHash, err := newTeamInvitationToken()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	audit := newTeamAuditEvent(team.ID, user.ID, "invitation.regenerated", "{}", now)
+	invitation, err := s.repo.RegenerateTeamInvitation(team.ID, strings.TrimSpace(invitationID), user.ID, tokenHash, now.Add(teamInvitationLifetime), audit, now)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrTeamInvitationNotPending):
+			return nil, Conflict("只有仍有效的待处理邀请可以重新生成")
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			return nil, &AuthError{Status: http.StatusNotFound, Message: "团队邀请不存在"}
 		default:
 			return nil, err
 		}
@@ -338,6 +403,9 @@ func (s *Service) UpdateTeamMember(user *model.User, teamID string, memberID str
 	if req.Role != model.TeamMemberRoleAdmin && req.Role != model.TeamMemberRoleMember {
 		return BadAuthRequest("成员角色无效")
 	}
+	if req.ExpectedUpdatedAt.IsZero() {
+		return BadAuthRequest("成员更新版本不能为空")
+	}
 	monthlyLimit := int64(0)
 	if req.MonthlyCreditLimitMicrocredits != nil {
 		monthlyLimit = *req.MonthlyCreditLimitMicrocredits
@@ -361,7 +429,7 @@ func (s *Service) UpdateTeamMember(user *model.User, teamID string, memberID str
 	if target.Role == req.Role && target.MonthlyCreditLimitMicrocredits == monthlyLimit {
 		return BadAuthRequest("成员角色和月度积分额度均未变化")
 	}
-	now := time.Now()
+	now := nextTeamMutationTime(target.UpdatedAt)
 	metadata, err := json.Marshal(struct {
 		PreviousRole                           model.TeamMemberRole `json:"previousRole"`
 		Role                                   model.TeamMemberRole `json:"role"`
@@ -372,7 +440,21 @@ func (s *Service) UpdateTeamMember(user *model.User, teamID string, memberID str
 		return err
 	}
 	audit := newTeamAuditEvent(team.ID, user.ID, "member.policy_updated", string(metadata), now)
-	return s.repo.UpdateTeamMemberPolicy(team.ID, memberID, req.Role, monthlyLimit, audit, now)
+	audit.TargetUserID = target.UserID
+	err = s.repo.UpdateTeamMemberPolicy(team.ID, memberID, req.Role, monthlyLimit, req.ExpectedUpdatedAt, audit, now)
+	if errors.Is(err, repository.ErrTeamMemberVersionConflict) {
+		return Conflict("团队成员信息已被其他操作更新，请刷新后重试")
+	}
+	return err
+}
+
+func nextTeamMutationTime(previous time.Time) time.Time {
+	now := time.Now()
+	minimum := previous.Add(time.Microsecond)
+	if now.Before(minimum) {
+		return minimum
+	}
+	return now
 }
 
 func (s *Service) RemoveTeamMember(user *model.User, teamID string, memberID string) error {
@@ -463,7 +545,8 @@ func (s *Service) teamSummary(team model.Team, role model.TeamMemberRole, now ti
 	}
 	summary := &TeamSummary{
 		Team: team, CurrentRole: role,
-		SeatUsed: len(members), InvitationSeatReserved: len(invitations),
+		Capabilities: BuildTeamCapabilities(role, false, false),
+		SeatUsed:     len(members), InvitationSeatReserved: len(invitations),
 	}
 	subscription, err := s.repo.ActiveTeamSubscription(team.ID, now)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -483,6 +566,7 @@ func (s *Service) teamSummary(team model.Team, role model.TeamMemberRole, now ti
 		SharedAssetsEnabled: entitlement.SharedAssetsEnabled, ProjectPermissionsEnabled: entitlement.ProjectPermissionsEnabled,
 		InvoicingEnabled: entitlement.InvoicingEnabled, CommercialUseEnabled: entitlement.CommercialUseEnabled,
 	}
+	summary.Capabilities = BuildTeamCapabilities(role, entitlement.SharedAssetsEnabled, entitlement.ProjectPermissionsEnabled)
 	account, err := s.repo.TeamCreditAccount(team.ID)
 	if err != nil {
 		return nil, err
@@ -502,6 +586,19 @@ func normalizeTeamName(value string) (string, error) {
 		return "", BadAuthRequest("团队名称不能为空且最多 80 个字符")
 	}
 	return name, nil
+}
+
+func normalizeTeamCreationIdempotencyKey(value string) (string, error) {
+	key := strings.TrimSpace(value)
+	if key == "" || len(key) > 128 {
+		return "", BadAuthRequest("创建团队需要 1 到 128 字节的幂等键")
+	}
+	for _, character := range key {
+		if character < 0x21 || character > 0x7e {
+			return "", BadAuthRequest("团队创建幂等键只能包含可见 ASCII 字符")
+		}
+	}
+	return key, nil
 }
 
 func canManageTeam(role model.TeamMemberRole) bool {

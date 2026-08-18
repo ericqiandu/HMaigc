@@ -72,7 +72,7 @@ func TestCanvasCollaborationPermissionAndMutationLifecycle(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "canvas-owner", "canvas-owner@example.com")
 	member := createTeamTestUser(t, db, "canvas-member", "canvas-member@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "协作制作组"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("协作制作组"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestCanvasCollaborationResourceAccessIsLimitedToReferencedResources(t *test
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "canvas-resource-owner", "canvas-resource-owner@example.com")
 	member := createTeamTestUser(t, db, "canvas-resource-member", "canvas-resource-member@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "素材协作组"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("素材协作组"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestCanvasCollaborationResourceAccessIsLimitedToReferencedResources(t *test
 func TestCanvasCollaborationRejectsDanglingConnectionAndExpiredSubscriptionWrites(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "canvas-owner-b", "canvas-owner-b@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "协作边界组"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("协作边界组"))
 	if err != nil {
 		t.Fatal(err)
 	}
