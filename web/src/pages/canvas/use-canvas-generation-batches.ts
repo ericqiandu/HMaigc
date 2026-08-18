@@ -16,7 +16,7 @@ import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-p
 const SCHEDULER_INTERVAL_MS = 2_000;
 const MAX_BATCH_HISTORY = 20;
 
-type BatchTarget = Pick<CanvasGenerationBatchItem, "rowId" | "nodeId">;
+type BatchTarget = Pick<CanvasGenerationBatchItem, "rowId" | "nodeId" | "quotePriceVersion" | "quoteFingerprint">;
 
 type UseCanvasGenerationBatchesOptions = {
     projectId: string;
@@ -191,7 +191,15 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
                 const controller = new AbortController();
                 controllersRef.current.set(key, controller);
                 updateBatch(batch.sourceNodeId, batch.id, (current) => withUpdatedItem(current, item.id, { status: "submitting", errorDetails: undefined }));
-                void handleGenerateNode(node.id, generationMode, prompt, { controller, waitForTaskCapacity: true }).finally(() => {
+                const expectedQuote = typeof item.quotePriceVersion === "number" && item.quoteFingerprint
+                    ? { priceVersion: item.quotePriceVersion, quoteFingerprint: item.quoteFingerprint }
+                    : undefined;
+                if (!expectedQuote) {
+                    controllersRef.current.delete(key);
+                    updateBatch(batch.sourceNodeId, batch.id, (current) => withUpdatedItem(current, item.id, { status: "failed", errorDetails: "生成任务缺少已确认报价" }));
+                    continue;
+                }
+                void handleGenerateNode(node.id, generationMode, prompt, { controller, waitForTaskCapacity: true, expectedQuote }).finally(() => {
                     controllersRef.current.delete(key);
                     reconcileBatches();
                 });

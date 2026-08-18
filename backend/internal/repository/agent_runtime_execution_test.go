@@ -312,6 +312,104 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	}
 }
 
+func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "重试失败镜头",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "refunded-retry-plan", BaseVersion: 0,
+		Draft: agentruntime.ProductionPlanDraft{
+			Title: "退款后重试", TargetDurationMS: 1_000, Script: "镜头",
+			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "镜头", ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{}}},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := firstProductionArtifact(t, plan.Artifacts, "shot-1", model.AgentProductionArtifactStoryboardImage)
+	task := model.Task{
+		ID: "refunded-retry-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Type: "canvas_image", Capability: "image", Status: model.TaskStatusFailed,
+		BillingOrderID: "refunded-retry-order", CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: scope.ActorUserID, TaskID: task.ID,
+		IdempotencyKey: "refunded-retry-order-key", Status: model.BillingStatusRefunded,
+		AmountMicrocredits: 100, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("id = ?", artifact.ID).
+		Updates(map[string]any{
+			"status": model.AgentProductionArtifactFailed, "attempt": 1,
+			"task_id": task.ID, "billing_order_id": order.ID, "last_error_code": "production_generation_failed",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	rawArguments, err := json.Marshal(agentruntime.ProductionRenderArguments{
+		PlanKey: plan.Plan.PlanKey, PlanVersion: plan.Plan.Version, ArtifactID: artifact.ID, Attempt: 1,
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "image-channel", Model: "image-model"},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Quality: "medium", Count: 1},
+		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
+			AmountMicrocredits: 100, PerTaskAmountMicrocredits: 100, PriceVersion: 1,
+			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "refunded-retry-quote",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-refunded-retry", ToolName: agentruntime.ToolProductionRender,
+			ActionVersion: 1, Arguments: rawArguments, ExpectedDelivery: repositoryTestImageDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.AgentProductionArtifact
+	if err := db.First(&stored, "id = ?", artifact.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.AgentProductionArtifactAwaitingApproval || stored.Attempt != 1 || stored.TaskID != "" || stored.BillingOrderID != "" || stored.ResourceID != "" {
+		t.Fatalf("prepared retry artifact = %#v", stored)
+	}
+	var oldTask model.Task
+	var oldOrder model.BillingOrder
+	if err := db.First(&oldTask, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&oldOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if oldTask.Status != model.TaskStatusFailed || oldOrder.Status != model.BillingStatusRefunded {
+		t.Fatalf("historical commercial facts changed: task=%s billing=%s", oldTask.Status, oldOrder.Status)
+	}
+}
+
 func repositoryTestAnswerDelivery() agentruntime.ExpectedDelivery {
 	return agentruntime.ExpectedDelivery{
 		Kind:               agentruntime.DeliveryAnswer,

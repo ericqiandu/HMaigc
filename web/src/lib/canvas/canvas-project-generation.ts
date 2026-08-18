@@ -1,4 +1,4 @@
-import { createGenerationTask, waitForGenerationTask, type GenerationTask, type TaskBillingQuote } from "@/services/api/task-center";
+import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { configuredModelMatchesCapability, defaultConfig, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { getImageBlob, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { getMediaBlob, resolveMediaUrl } from "@/services/file-storage";
@@ -8,6 +8,7 @@ import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { imageMetadata, parseBackendGenerationResult } from "@/lib/canvas/canvas-generation-task-sync";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
+import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -41,7 +42,7 @@ export async function runBackendCanvasGenerationTask({
     signal?: AbortSignal;
     metadata?: Record<string, unknown>;
     onTaskCreated?: (task: GenerationTask) => void;
-    expectedQuote?: TaskBillingQuote;
+    expectedQuote?: ConfirmedTaskBillingQuote;
 }) {
     const taskReferenceImages = await Promise.all(referenceImages.map(prepareBackendImageReference));
     const taskReferenceVideos = await Promise.all(referenceVideos.map((video) => mediaToBackendReference(video)));

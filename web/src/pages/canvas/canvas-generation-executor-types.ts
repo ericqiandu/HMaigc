@@ -1,7 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
 
 import type { NodeGenerationContext } from "@/components/canvas/canvas-node-generation";
-import type { GenerationTask, TaskBillingQuote } from "@/services/api/task-center";
+import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
+import type { GenerationTask } from "@/services/api/task-center";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -26,7 +27,7 @@ export type CanvasGenerationExecution = CanvasGenerationExecutorDependencies & {
     generationConfig: AiConfig;
     generationContext: NodeGenerationContext;
     controller: AbortController;
-    expectedQuote?: TaskBillingQuote;
+    expectedQuote?: ConfirmedTaskBillingQuote;
     editingTextNode: boolean;
     registerPendingNodeIds: (nodeIds: string[]) => void;
 };

@@ -147,12 +147,19 @@ func TestSettleTokenBillingKeepsFundsFrozenWhenActualExceedsReservation(t *testi
 	}
 }
 
-func TestClaimTokenBillingReconciliationsLeasesDueOrders(t *testing.T) {
+func TestClaimKuaiziBillingReconciliationsLeasesDueOrders(t *testing.T) {
 	repo, db := openTokenBillingRepository(t)
 	now := time.Now().UTC()
+	if err := db.Create(&model.ProviderAccount{ID: "reconcile-account", ProviderKind: "kuaizi", Name: "Kuaizi", Enabled: true, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ProviderEndpointVersion{ID: "reconcile-endpoint", ProviderAccountID: "reconcile-account", BaseURL: "https://example.com", Status: "active", Version: 1, CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
 	due := model.BillingOrder{
 		ID: "reconcile-due", UserID: "token-user", IdempotencyKey: "reconcile-due", BillingMode: "token_usage",
 		Status: model.BillingStatusRunning, AmountMicrocredits: 30_000_000, ReservedAmountMicrocredits: 30_000_000,
+		ProviderEndpointVersionID: "reconcile-endpoint", ProviderCredentialVersionID: "reconcile-key",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&due).Error; err != nil {
@@ -162,23 +169,23 @@ func TestClaimTokenBillingReconciliationsLeasesDueOrders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claimed, err := repo.ClaimTokenBillingReconciliations("worker-a", now, time.Minute, 10)
+	claimed, err := repo.ClaimKuaiziBillingReconciliations("worker-a", now, time.Minute, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(claimed) != 1 || claimed[0].ID != due.ID || claimed[0].ReconcileLeaseOwner != "worker-a" || claimed[0].ReconcileLeaseToken == "" || claimed[0].ReconcileAttempts != 1 {
 		t.Fatalf("claimed orders = %#v", claimed)
 	}
-	if second, err := repo.ClaimTokenBillingReconciliations("worker-b", now, time.Minute, 10); err != nil || len(second) != 0 {
+	if second, err := repo.ClaimKuaiziBillingReconciliations("worker-b", now, time.Minute, 10); err != nil || len(second) != 0 {
 		t.Fatalf("second claim = %#v, %v", second, err)
 	}
-	if err := repo.RescheduleTokenBillingReconciliation(due.ID, "worker-a", "wrong-token", "still pending", now.Add(time.Minute)); err == nil {
+	if err := repo.RescheduleKuaiziBillingReconciliation(due.ID, "worker-a", "wrong-token", "still pending", now.Add(time.Minute)); err == nil {
 		t.Fatal("stale reconciliation token rescheduled order")
 	}
-	if err := repo.RescheduleTokenBillingReconciliation(due.ID, "worker-a", claimed[0].ReconcileLeaseToken, "still pending", now.Add(time.Minute)); err != nil {
+	if err := repo.RescheduleKuaiziBillingReconciliation(due.ID, "worker-a", claimed[0].ReconcileLeaseToken, "still pending", now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if immediate, err := repo.ClaimTokenBillingReconciliations("worker-b", now, time.Minute, 10); err != nil || len(immediate) != 0 {
+	if immediate, err := repo.ClaimKuaiziBillingReconciliations("worker-b", now, time.Minute, 10); err != nil || len(immediate) != 0 {
 		t.Fatalf("future order reclaimed early = %#v, %v", immediate, err)
 	}
 }

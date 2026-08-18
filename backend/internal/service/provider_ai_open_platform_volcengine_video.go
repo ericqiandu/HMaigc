@@ -17,10 +17,24 @@ type KuaiziCompatibleCreateError struct{ err error }
 func (failure *KuaiziCompatibleCreateError) Error() string { return failure.err.Error() }
 func (failure *KuaiziCompatibleCreateError) Unwrap() error { return failure.err }
 
-type kuaiziCompatibleHTTPError struct{ statusCode int }
+type kuaiziCompatibleHTTPError struct {
+	statusCode int
+	code       string
+	message    string
+}
 
 func (failure kuaiziCompatibleHTTPError) Error() string {
-	return fmt.Sprintf("AI 开放平台火山兼容接口返回 HTTP %d", failure.statusCode)
+	prefix := fmt.Sprintf("AI 开放平台火山兼容接口返回 HTTP %d", failure.statusCode)
+	if failure.code != "" && failure.message != "" {
+		return fmt.Sprintf("%s（%s）：%s", prefix, failure.code, failure.message)
+	}
+	if failure.code != "" {
+		return fmt.Sprintf("%s（%s）", prefix, failure.code)
+	}
+	if failure.message != "" {
+		return prefix + "：" + failure.message
+	}
+	return prefix
 }
 
 const (
@@ -272,7 +286,7 @@ func requestAIOpenPlatformVolcengineJSON(
 		}
 		requestBody = bytes.NewReader(data)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, requestBody)
+	request, err := http.NewRequestWithContext(withProviderStructuredErrors(ctx), method, endpoint, requestBody)
 	if err != nil {
 		return err
 	}
@@ -284,7 +298,8 @@ func requestAIOpenPlatformVolcengineJSON(
 	if err := doJSON(request, target); err != nil {
 		var httpErr providerHTTPError
 		if errors.As(err, &httpErr) {
-			return kuaiziCompatibleHTTPError{statusCode: httpErr.StatusCode}
+			code, message := providerHTTPFailureDetails(httpErr.Body, apiKey)
+			return kuaiziCompatibleHTTPError{statusCode: httpErr.StatusCode, code: code, message: message}
 		}
 		message := strings.ReplaceAll(err.Error(), apiKey, "[REDACTED]")
 		return fmt.Errorf("AI 开放平台火山兼容接口请求失败：%s", message)

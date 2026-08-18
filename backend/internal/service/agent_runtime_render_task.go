@@ -50,6 +50,12 @@ func (s *Service) ensureProductionArtifactTask(
 	artifact model.AgentProductionArtifact,
 ) (*model.Task, *model.BillingOrder, error) {
 	if artifact.TaskID != "" {
+		if artifact.Attempt == arguments.Attempt {
+			if err := s.validatePreviousProductionAttemptForRetry(scope, artifact); err != nil {
+				return nil, nil, err
+			}
+			return nil, nil, newAgentProductionRenderInputError("production_artifact_conflict", "retry approval did not detach the previous production attempt")
+		}
 		task, err := s.repo.TaskForUser(scope.ActorUserID, artifact.TaskID)
 		if err != nil {
 			return nil, nil, err
@@ -156,7 +162,8 @@ func (s *Service) productionStoryboardResource(scope agentruntime.Scope, argumen
 	}
 	for _, artifact := range artifacts {
 		if artifact.ShotKey != videoArtifact.ShotKey || artifact.Kind != model.AgentProductionArtifactStoryboardImage ||
-			artifact.Status != model.AgentProductionArtifactSucceeded || artifact.ResourceID == "" {
+			(artifact.Status != model.AgentProductionArtifactSucceeded && artifact.Status != model.AgentProductionArtifactCommitted) ||
+			artifact.ResourceID == "" {
 			continue
 		}
 		resource, err := s.productionResourceForScope(scope, artifact.ResourceID)

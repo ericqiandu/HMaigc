@@ -304,7 +304,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, service.BadAuthRequest("画布 ID 与请求路径不一致"))
 			return
 		}
-		project, err := svc.UpsertUserCanvasProject(user.ID, req.Project)
+		project, err := svc.CreateUserCanvasProject(user.ID, req.Project)
 		if err != nil {
 			failService(c, err)
 			return

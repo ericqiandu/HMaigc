@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { generationErrorMessage } from "@/lib/generation-error";
-import { prepareGenerationTaskSubmission, taskPriceChangedQuoteFromEnvelope, TaskPriceChangedError } from "@/lib/billing/task-billing-quote";
+import { prepareGenerationTaskSubmission, taskPriceChangedQuoteFromEnvelope, TaskPriceChangedError, type ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { invalidateTaskBillingQuotes } from "@/lib/billing/task-billing-quote-events";
 
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -218,7 +218,7 @@ export function uploadAgentFile(sessionId: string, file: File) {
     return request<SessionFile>(api.post("/upload_file", formData));
 }
 
-export async function createGenerationTask(input: CreateTaskInput, options?: { expectedQuote?: TaskBillingQuote; signal?: AbortSignal }) {
+export async function createGenerationTask(input: CreateTaskInput, options?: { expectedQuote?: ConfirmedTaskBillingQuote; signal?: AbortSignal }) {
     try {
         const submission = await prepareGenerationTaskSubmission(input, options?.expectedQuote, requestTaskBillingQuote, options?.signal);
         const task = await request<GenerationTask>(api.post("/tasks", submission, { signal: options?.signal }));

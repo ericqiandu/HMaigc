@@ -63,6 +63,9 @@ func (s *Service) coordinatePendingAgentProductionRender(
 		if errors.Is(err, errProductionPrerequisiteAssetMissing) {
 			return s.failProductionRender(scope, state, call, *artifact, "production_prerequisite_missing", map[string]string{"reason": err.Error()})
 		}
+		if failureCode, ok := agentProductionRenderFailureCode(err); ok {
+			return s.failProductionRender(scope, state, call, *artifact, failureCode, map[string]string{"reason": err.Error()})
+		}
 		return nil, err
 	}
 	artifact, err = s.bindProductionArtifactTask(scope, arguments, *artifact, *task, *order)

@@ -104,7 +104,11 @@ func ConfigurePool(db *gorm.DB) error {
 		sqlDB.SetMaxIdleConns(10)
 		return nil
 	}
-	sqlDB.SetMaxOpenConns(8)
-	sqlDB.SetMaxIdleConns(4)
+	// SQLite permits only one writer. A multi-connection pool lets a read
+	// transaction race a task/resource write and fail immediately while
+	// upgrading to a write transaction, even with busy_timeout configured.
+	// Local deployments use SQLite; production concurrency uses PostgreSQL.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	return nil
 }

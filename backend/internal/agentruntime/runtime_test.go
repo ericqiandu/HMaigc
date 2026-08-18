@@ -233,13 +233,45 @@ func TestResolveToolOnFinalStepRecordsResultAndTerminates(t *testing.T) {
 		},
 	}
 	transition, err := agentruntime.ResolveTool(current, agentruntime.ToolResolution{
-		ToolCallID: "last-tool", ActionVersion: 1, Succeeded: false, Output: json.RawMessage(`{"status":"failed"}`), ErrorCode: "generation_failed",
+		ToolCallID: "last-tool", ActionVersion: 1, Succeeded: false, Output: json.RawMessage(`{"status":"failed"}`),
+		ErrorCode: "generation_failed", FailureClass: agentruntime.ToolFailureAgentRepairable,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if transition.State.Status != agentruntime.RunFailed || transition.State.FailureCode != "step_budget_exhausted" || transition.State.LastToolResult == nil {
 		t.Fatalf("final-step resolution = %#v", transition.State)
+	}
+}
+
+func TestResolveToolTerminalFailureEndsRunBeforeStepBudget(t *testing.T) {
+	answer := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	current := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 2, MaxSteps: 8, Status: agentruntime.RunWaitingTool,
+		UserMessage:   "继续执行生产计划",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "repeat-plan", ToolName: agentruntime.ToolProductionPlan, ActionVersion: 1,
+			Arguments: json.RawMessage(`{"planKey":"plan-1"}`), ExpectedDelivery: answer,
+		},
+		ExpectedDelivery: &answer,
+	}
+	transition, err := agentruntime.ResolveTool(current, agentruntime.ToolResolution{
+		ToolCallID: "repeat-plan", ActionVersion: 1, Succeeded: false,
+		Output:    json.RawMessage(`{"reason":"same deterministic failure repeated"}`),
+		ErrorCode: "production_plan_version_conflict", FailureClass: agentruntime.ToolFailureTerminal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunFailed || transition.State.FailureCode != "production_plan_version_conflict" {
+		t.Fatalf("terminal tool failure state = %#v", transition.State)
+	}
+	if len(transition.EventKinds) != 2 || transition.EventKinds[1] != agentruntime.EventRunFailed {
+		t.Fatalf("terminal tool failure events = %#v", transition.EventKinds)
 	}
 }
 

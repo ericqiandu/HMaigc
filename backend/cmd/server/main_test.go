@@ -85,6 +85,15 @@ func TestAllowedOriginRejectsWildcard(t *testing.T) {
 	}
 }
 
+func TestWebSocketOriginPatternsReuseValidatedCORSOrigins(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_CORS_ORIGINS", "http://localhost:3000, http://127.0.0.1:3000,*,https://example.com/path")
+	patterns := websocketOriginPatterns()
+	if len(patterns) != 2 || patterns[0] != "http://localhost:3000" || patterns[1] != "http://127.0.0.1:3000" {
+		t.Fatalf("websocket origin patterns = %#v", patterns)
+	}
+}
+
 func TestAllowedOriginRequiresConfiguredProductionHTTPSOrigin(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "production")
 	t.Setenv("CANVAS_CORS_ORIGINS", "https://canvas.example.com")

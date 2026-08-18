@@ -88,6 +88,7 @@ type ToolResolution struct {
 	Succeeded     bool
 	Output        json.RawMessage
 	ErrorCode     string
+	FailureClass  ToolFailureClass
 }
 
 type ToolExecution struct {
@@ -348,8 +349,14 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 	if resolution.Succeeded && resolution.ErrorCode != "" {
 		return RuntimeTransition{}, errors.New("successful agent tool result cannot have an error code")
 	}
+	if resolution.Succeeded && resolution.FailureClass != "" {
+		return RuntimeTransition{}, errors.New("successful agent tool result cannot have a failure class")
+	}
 	if !resolution.Succeeded && !validFailureCode(resolution.ErrorCode) {
 		return RuntimeTransition{}, errors.New("failed agent tool result requires an error code")
+	}
+	if !resolution.Succeeded && resolution.FailureClass != ToolFailureAgentRepairable && resolution.FailureClass != ToolFailureTerminal {
+		return RuntimeTransition{}, errors.New("failed agent tool result requires a failure class")
 	}
 	next := current
 	next.StateVersion++
@@ -366,6 +373,11 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 			return RuntimeTransition{}, err
 		}
 		next.LoadedSkillDirs = appendLoadedSkillDir(next.LoadedSkillDirs, loaded)
+	}
+	if !resolution.Succeeded && resolution.FailureClass == ToolFailureTerminal {
+		next.Status = RunFailed
+		next.FailureCode = resolution.ErrorCode
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunFailed}}, nil
 	}
 	if next.StepNumber >= next.MaxSteps {
 		next.Status = RunFailed

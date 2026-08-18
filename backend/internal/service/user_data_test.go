@@ -58,6 +58,97 @@ func TestValidateSyncedPayloadRejectsNestedInlineMedia(t *testing.T) {
 	}
 }
 
+func TestCreateUserCanvasProjectRejectsLegacyOverwriteAfterRevisionedMutation(t *testing.T) {
+	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	owner := &model.User{ID: "runtime-user"}
+	original := json.RawMessage(`{
+		"id":"canvas-create-only",
+		"title":"Agent 生产画布",
+		"createdAt":"2026-08-18T00:00:00Z",
+		"updatedAt":"2026-08-18T00:00:00Z",
+		"nodes":[],"connections":[],"chatSessions":[],"activeChatId":null,
+		"backgroundMode":"lines","showImageInfo":false,
+		"viewport":{"x":0,"y":0,"k":1},"directorScenes":[]
+	}`)
+	if _, err := svc.CreateUserCanvasProject(owner.ID, original); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CommitCanvasMutation(owner, "canvas-create-only", CanvasMutationRequest{
+		BaseRevision: 0, ClientMutationID: "agent-commit",
+		Patch: CanvasMutationPatch{UpsertNodes: []json.RawMessage{json.RawMessage(`{"id":"agent-video","type":"video","title":"成片","position":{"x":0,"y":0},"width":420,"height":236}`)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyEmpty := json.RawMessage(`{
+		"id":"canvas-create-only",
+		"title":"Agent 生产画布",
+		"createdAt":"2026-08-18T00:00:00Z",
+		"updatedAt":"2026-08-18T00:01:00Z",
+		"nodes":[],"connections":[],"chatSessions":[],"activeChatId":null,
+		"backgroundMode":"lines","showImageInfo":false,
+		"viewport":{"x":0,"y":0,"k":1},"directorScenes":[]
+	}`)
+	_, err := svc.CreateUserCanvasProject(owner.ID, legacyEmpty)
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != http.StatusConflict {
+		t.Fatalf("legacy overwrite error = %v, want HTTP 409", err)
+	}
+	stored, err := svc.repo.CanvasProject("canvas-create-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Nodes []json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(stored.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Revision != 1 || len(payload.Nodes) != 1 {
+		t.Fatalf("stored canvas revision=%d nodes=%d, want revision=1 nodes=1", stored.Revision, len(payload.Nodes))
+	}
+}
+
+func TestCreateUserCanvasProjectReturnsConflictWhenConcurrentCreateWins(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	const canvasID = "canvas-create-race"
+	callbackName := "test:insert-concurrent-canvas"
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "canvas_projects" {
+			return
+		}
+		project, ok := tx.Statement.Dest.(*model.CanvasProject)
+		if !ok || project.ID != canvasID {
+			return
+		}
+		result := tx.Session(&gorm.Session{NewDB: true}).Exec(
+			`INSERT INTO canvas_projects (id, user_id, title, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			project.ID, project.UserID, "concurrent winner", project.PayloadJSON, project.CreatedAt, project.UpdatedAt,
+		)
+		if result.Error != nil {
+			tx.AddError(result.Error)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Create().Remove(callbackName) })
+
+	raw := json.RawMessage(`{
+		"id":"canvas-create-race",
+		"title":"并发创建画布",
+		"createdAt":"2026-08-18T00:00:00Z",
+		"updatedAt":"2026-08-18T00:00:00Z",
+		"nodes":[],"connections":[],"chatSessions":[],"activeChatId":null,
+		"backgroundMode":"lines","showImageInfo":false,
+		"viewport":{"x":0,"y":0,"k":1},"directorScenes":[]
+	}`)
+	_, err := svc.CreateUserCanvasProject("runtime-user", raw)
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != http.StatusConflict {
+		t.Fatalf("concurrent create error = %v, want HTTP 409", err)
+	}
+}
+
 func TestDeleteUserCanvasProjectRollsBackShareWhenProjectDeleteFails(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

@@ -19,6 +19,7 @@ var errAgentRuntimeProductionRenderInput = errors.New("agent production render a
 type agentProductionRenderInputError struct {
 	code   string
 	reason string
+	class  agentruntime.ToolFailureClass
 }
 
 func (err *agentProductionRenderInputError) Error() string {
@@ -30,15 +31,24 @@ func (err *agentProductionRenderInputError) Unwrap() error {
 }
 
 func newAgentProductionRenderInputError(code string, reason string) error {
-	return &agentProductionRenderInputError{code: code, reason: reason}
+	return &agentProductionRenderInputError{code: code, reason: reason, class: agentruntime.ToolFailureAgentRepairable}
+}
+
+func newTerminalAgentProductionRenderInputError(code string, reason string) error {
+	return &agentProductionRenderInputError{code: code, reason: reason, class: agentruntime.ToolFailureTerminal}
 }
 
 func agentProductionRenderFailureCode(err error) (string, bool) {
+	code, _, ok := agentProductionRenderFailureDetails(err)
+	return code, ok
+}
+
+func agentProductionRenderFailureDetails(err error) (string, agentruntime.ToolFailureClass, bool) {
 	var inputErr *agentProductionRenderInputError
 	if !errors.As(err, &inputErr) {
-		return "", false
+		return "", "", false
 	}
-	return inputErr.code, true
+	return inputErr.code, inputErr.class, true
 }
 
 type agentProductionRenderRequest struct {
@@ -79,6 +89,11 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if artifact == nil || (artifact.Status != model.AgentProductionArtifactPlanned && artifact.Status != model.AgentProductionArtifactFailed) {
 		return nil, newAgentProductionRenderInputError("production_artifact_conflict", "artifact is unavailable in a renderable state")
 	}
+	if artifact.Status == model.AgentProductionArtifactFailed {
+		if err := s.validatePreviousProductionAttemptForRetry(scope, *artifact); err != nil {
+			return nil, err
+		}
+	}
 	callable, err := productionRenderCallableModel(callableModels, request.GenerationModel, artifact.Kind)
 	if err != nil {
 		return nil, err
@@ -106,6 +121,33 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 		},
 	}
 	return json.Marshal(frozen)
+}
+
+func (s *Service) validatePreviousProductionAttemptForRetry(scope agentruntime.Scope, artifact model.AgentProductionArtifact) error {
+	if artifact.TaskID == "" && artifact.BillingOrderID == "" && artifact.ResourceID == "" {
+		return nil
+	}
+	if artifact.TaskID == "" || artifact.BillingOrderID == "" || artifact.ResourceID != "" {
+		return newAgentProductionRenderInputError("production_artifact_conflict", "previous production attempt facts are incomplete or already contain a resource")
+	}
+	task, err := s.repo.TaskForUser(scope.ActorUserID, artifact.TaskID)
+	if err != nil {
+		return err
+	}
+	order, err := s.repo.BillingOrder(artifact.BillingOrderID)
+	if err != nil {
+		return err
+	}
+	if task.BillingOrderID != order.ID || order.UserID != scope.ActorUserID || order.TaskID != task.ID {
+		return newAgentProductionRenderInputError("production_artifact_conflict", "previous production attempt commercial facts conflict")
+	}
+	if order.Status == model.BillingStatusReserved || order.Status == model.BillingStatusRunning || order.Status == model.BillingStatusUncertain {
+		return newTerminalAgentProductionRenderInputError("production_previous_billing_unresolved", "previous production attempt billing is not resolved")
+	}
+	if order.Status != model.BillingStatusRefunded || (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) {
+		return newAgentProductionRenderInputError("production_artifact_conflict", "previous production attempt is not retryable")
+	}
+	return nil
 }
 
 func productionRenderCallableModel(models []agentRuntimeCallableModelFact, selection agentruntime.GenerationModelSelection, kind model.AgentProductionArtifactKind) (agentRuntimeCallableModelFact, error) {

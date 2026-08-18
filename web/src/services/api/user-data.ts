@@ -68,7 +68,7 @@ export function getRemoteCanvasProject(id: string) {
     return request<{ project: CanvasProject }>(api.get(`/canvas-projects/${encodeURIComponent(id)}`));
 }
 
-export function upsertRemoteCanvasProject(project: CanvasProject) {
+export function createRemoteCanvasProject(project: CanvasProject) {
     return request<{ project: RemoteUserDataSummary }>(api.put(`/canvas-projects/${encodeURIComponent(project.id)}`, { project }));
 }
 

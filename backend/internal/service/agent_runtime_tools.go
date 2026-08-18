@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -207,12 +208,110 @@ func (s *Service) frozenAgentToolCall(scope agentruntime.Scope, call *agentrunti
 }
 
 func equalAgentToolArguments(stored string, current json.RawMessage) bool {
-	var storedCompact bytes.Buffer
-	var currentCompact bytes.Buffer
-	if json.Compact(&storedCompact, []byte(stored)) != nil || json.Compact(&currentCompact, current) != nil {
+	storedCanonical, err := canonicalAgentJSON([]byte(stored))
+	if err != nil {
 		return false
 	}
-	return bytes.Equal(storedCompact.Bytes(), currentCompact.Bytes())
+	currentCanonical, err := canonicalAgentJSON(current)
+	return err == nil && bytes.Equal(storedCanonical, currentCanonical)
+}
+
+func canonicalAgentJSON(value []byte) ([]byte, error) {
+	value = bytes.TrimSpace(value)
+	if len(value) == 0 || !json.Valid(value) {
+		return nil, errors.New("agent JSON is invalid")
+	}
+	switch value[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(value, &object); err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(object))
+		for key := range object {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var buffer bytes.Buffer
+		buffer.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				buffer.WriteByte(',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return nil, err
+			}
+			encodedValue, err := canonicalAgentJSON(object[key])
+			if err != nil {
+				return nil, err
+			}
+			buffer.Write(encodedKey)
+			buffer.WriteByte(':')
+			buffer.Write(encodedValue)
+		}
+		buffer.WriteByte('}')
+		return buffer.Bytes(), nil
+	case '[':
+		var array []json.RawMessage
+		if err := json.Unmarshal(value, &array); err != nil {
+			return nil, err
+		}
+		var buffer bytes.Buffer
+		buffer.WriteByte('[')
+		for index := range array {
+			if index > 0 {
+				buffer.WriteByte(',')
+			}
+			encodedValue, err := canonicalAgentJSON(array[index])
+			if err != nil {
+				return nil, err
+			}
+			buffer.Write(encodedValue)
+		}
+		buffer.WriteByte(']')
+		return buffer.Bytes(), nil
+	default:
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, value); err != nil {
+			return nil, err
+		}
+		return compact.Bytes(), nil
+	}
+}
+
+func (s *Service) rejectedToolFailureClass(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	call *agentruntime.ToolCallDecision,
+	failureCode string,
+	currentOutput json.RawMessage,
+	initial agentruntime.ToolFailureClass,
+) (agentruntime.ToolFailureClass, error) {
+	if initial == agentruntime.ToolFailureTerminal || state.LastToolResult == nil ||
+		state.LastToolResult.Succeeded || state.LastToolResult.ErrorCode != failureCode {
+		return initial, nil
+	}
+	previous, err := s.repo.AgentToolCallForScope(
+		scope,
+		state.LastToolResult.ToolCallID,
+		state.LastToolResult.ActionVersion,
+	)
+	if err != nil {
+		return "", err
+	}
+	if previous.Status != agentruntime.ToolCallFailed || previous.ErrorCode != failureCode {
+		return "", errors.New("agent repeated tool failure facts conflict")
+	}
+	if !equalAgentToolArguments(previous.OutputJSON, state.LastToolResult.Output) {
+		return "", errors.New("agent repeated tool failure output facts conflict")
+	}
+	if call != nil && previous.ToolName == string(call.ToolName) &&
+		equalAgentToolArguments(previous.InputJSON, call.Arguments) &&
+		equalAgentToolArguments(previous.OutputJSON, currentOutput) {
+		return agentruntime.ToolFailureTerminal, nil
+	}
+	return initial, nil
 }
 
 func authorizeAgentToolScope(scope agentruntime.Scope, project *model.CanvasProject, access CanvasAccessView, required agentruntime.AccessLevel) error {
@@ -285,9 +384,20 @@ func (s *Service) resolvePendingAgentToolFailureWithOutput(
 	if err != nil {
 		return nil, err
 	}
+	failureClass, err := s.rejectedToolFailureClass(
+		scope,
+		state,
+		call,
+		failureCode,
+		output,
+		agentruntime.ToolFailureAgentRepairable,
+	)
+	if err != nil {
+		return nil, err
+	}
 	resolved, err := agentruntime.ResolveTool(state, agentruntime.ToolResolution{
 		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
-		Succeeded: false, Output: output, ErrorCode: failureCode,
+		Succeeded: false, Output: output, ErrorCode: failureCode, FailureClass: failureClass,
 	})
 	if err != nil {
 		return nil, err

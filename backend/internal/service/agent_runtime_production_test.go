@@ -186,6 +186,256 @@ func TestProductionRenderCapabilitiesRejectUnsupportedQualityBeforeApproval(t *t
 	}
 }
 
+func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	plan := model.AgentProductionPlanVersion{
+		ID: "retry-unresolved-plan-version", PlanKey: "retry-unresolved-plan",
+		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, CreatedByRunID: scope.RunID, Version: 1,
+		Status: model.AgentProductionPlanActive, Title: "待核账重试", TargetDurationMS: 5_000,
+		Script: "鲜橙入水。", ShotsJSON: `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙入水","imagePrompt":"鲜橙特写","videoPrompt":"水花慢镜头","dependencies":[]}]`,
+		ExpectedDeliveryJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+	}
+	task := model.Task{
+		ID: "retry-unresolved-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Type: "canvas_image", Capability: "image", Status: model.TaskStatusFailed,
+		BillingOrderID: "retry-unresolved-order", CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: scope.ActorUserID, TaskID: task.ID,
+		IdempotencyKey: "retry-unresolved-order-key", Status: model.BillingStatusUncertain,
+		AmountMicrocredits: 10_000_000, CreatedAt: now, UpdatedAt: now,
+	}
+	artifact := model.AgentProductionArtifact{
+		ID: "retry-unresolved-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID,
+		PlanVersion: plan.Version, ShotKey: "shot-1", Kind: model.AgentProductionArtifactStoryboardImage,
+		Status: model.AgentProductionArtifactFailed, Attempt: 1,
+		TaskID: task.ID, BillingOrderID: order.ID, LastErrorCode: "production_generation_failed",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	for _, value := range []any{&plan, &task, &order, &artifact} {
+		if err := db.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := svc.freezeAgentProductionRenderArguments(scope, nil, json.RawMessage(`{
+		"planKey":"retry-unresolved-plan",
+		"planVersion":1,
+		"artifactId":"retry-unresolved-artifact",
+		"generationModel":{"channelId":"image-channel","model":"image-model"},
+		"imageConfig":{"size":"1:1","quality":"medium","count":1}
+	}`))
+	code, class, ok := agentProductionRenderFailureDetails(err)
+	if !ok || code != "production_previous_billing_unresolved" {
+		t.Fatalf("retry freeze error = %v code=%q, want production_previous_billing_unresolved", err, code)
+	}
+	if class != agentruntime.ToolFailureTerminal {
+		t.Fatalf("retry freeze failure class = %q, want terminal", class)
+	}
+}
+
+func TestProductionRenderLegacyApprovedRetryDoesNotReuseUnresolvedTask(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "legacy-retry-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Type: "canvas_video", Capability: "video", Status: model.TaskStatusFailed,
+		BillingOrderID: "legacy-retry-order", CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: scope.ActorUserID, TaskID: task.ID,
+		IdempotencyKey: "legacy-retry-order-key", Status: model.BillingStatusUncertain,
+		AmountMicrocredits: 10_000_000, CreatedAt: now, UpdatedAt: now,
+	}
+	for _, value := range []any{&task, &order} {
+		if err := db.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifact := model.AgentProductionArtifact{
+		ID: "legacy-retry-artifact", Status: model.AgentProductionArtifactAwaitingApproval,
+		Kind: model.AgentProductionArtifactVideoClip, Attempt: 1,
+		TaskID: task.ID, BillingOrderID: order.ID,
+	}
+	call := model.AgentToolCall{IdempotencyKey: "legacy-retry-call"}
+	arguments := agentruntime.ProductionRenderArguments{
+		ArtifactID: artifact.ID, Attempt: 1,
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "video-model"},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 10, Quality: "720p"},
+	}
+
+	_, _, err := svc.ensureProductionArtifactTask(scope, &call, arguments, artifact)
+	code, ok := agentProductionRenderFailureCode(err)
+	if !ok || code != "production_previous_billing_unresolved" {
+		t.Fatalf("legacy retry task error = %v code=%q, want production_previous_billing_unresolved", err, code)
+	}
+	var taskCount int64
+	if err := db.Model(&model.Task{}).Where("operation = ?", "production_render:"+scope.RunID).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 0 {
+		t.Fatalf("legacy retry created %d new production tasks, want 0", taskCount)
+	}
+}
+
+func TestRepeatedDeterministicToolFailureBecomesTerminal(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "repeat-failure-loop-guard", UserMessage: "执行计划", MaxSteps: 8,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := json.RawMessage(`{"planKey":"plan-1","baseVersion":0}`)
+	previous := model.AgentToolCall{
+		ID: "previous-repeat-failure", RunID: started.Run.ID, ToolCallID: "plan-call-1", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolProductionPlan), Status: agentruntime.ToolCallFailed,
+		InputJSON: string(arguments), OutputJSON: `{"reason":"version conflict"}`,
+		ErrorCode: "production_plan_version_conflict", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := db.Create(&previous).Error; err != nil {
+		t.Fatal(err)
+	}
+	state := started.State
+	state.LastToolResult = &agentruntime.ToolResult{
+		ToolCallID: previous.ToolCallID, ActionVersion: previous.ActionVersion,
+		Succeeded: false, ErrorCode: previous.ErrorCode, Output: json.RawMessage(previous.OutputJSON),
+	}
+	next := &agentruntime.ToolCallDecision{
+		ToolCallID: "plan-call-2", ToolName: agentruntime.ToolProductionPlan, ActionVersion: 1,
+		Arguments: arguments, ExpectedDelivery: agentRuntimeTestCanvasDelivery(),
+	}
+
+	class, err := svc.rejectedToolFailureClass(
+		scope,
+		state,
+		next,
+		previous.ErrorCode,
+		json.RawMessage(previous.OutputJSON),
+		agentruntime.ToolFailureAgentRepairable,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if class != agentruntime.ToolFailureTerminal {
+		t.Fatalf("repeated failure class = %q, want terminal", class)
+	}
+}
+
+func TestRepeatedToolFailureWithDifferentEvidenceRemainsRepairable(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "different-failure-evidence", UserMessage: "执行计划", MaxSteps: 8,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := model.AgentToolCall{
+		ID: "previous-different-evidence", RunID: started.Run.ID, ToolCallID: "plan-call-1", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolProductionPlan), Status: agentruntime.ToolCallFailed,
+		InputJSON:  `{"baseVersion":0,"planKey":"plan-1"}`,
+		OutputJSON: `{"reason":"version conflict at revision 1"}`,
+		ErrorCode:  "production_plan_version_conflict", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := db.Create(&previous).Error; err != nil {
+		t.Fatal(err)
+	}
+	state := started.State
+	state.LastToolResult = &agentruntime.ToolResult{
+		ToolCallID: previous.ToolCallID, ActionVersion: previous.ActionVersion,
+		Succeeded: false, ErrorCode: previous.ErrorCode, Output: json.RawMessage(previous.OutputJSON),
+	}
+	next := &agentruntime.ToolCallDecision{
+		ToolCallID: "plan-call-2", ToolName: agentruntime.ToolProductionPlan, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"planKey":"plan-1","baseVersion":0}`),
+		ExpectedDelivery: agentRuntimeTestCanvasDelivery(),
+	}
+
+	class, err := svc.rejectedToolFailureClass(
+		scope,
+		state,
+		next,
+		previous.ErrorCode,
+		json.RawMessage(`{"reason":"version conflict at revision 2"}`),
+		agentruntime.ToolFailureAgentRepairable,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if class != agentruntime.ToolFailureAgentRepairable {
+		t.Fatalf("different failure evidence class = %q, want agent_repairable", class)
+	}
+}
+
+func TestAgentToolArgumentsCompareJSONSemantically(t *testing.T) {
+	if !equalAgentToolArguments(
+		`{"baseVersion":0,"plan":{"title":"sample","shots":[1,2]}}`,
+		json.RawMessage(`{"plan":{"shots":[1,2],"title":"sample"},"baseVersion":0}`),
+	) {
+		t.Fatal("semantically equal tool arguments were treated as different")
+	}
+}
+
+func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	plan := model.AgentProductionPlanVersion{
+		ID: "committed-storyboard-plan-version", PlanKey: "committed-storyboard-plan",
+		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, CreatedByRunID: scope.RunID, Version: 1,
+		Status: model.AgentProductionPlanActive, Title: "已提交分镜仍可生成视频", TargetDurationMS: 10_000,
+		Script: "分镜已落入画布。", ShotsJSON: `[]`, ExpectedDeliveryJSON: `{}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	resource := model.Resource{
+		ID: "committed-storyboard-resource", UserID: scope.ActorUserID, Kind: "image",
+		Status: model.ResourceStatusReady, MimeType: "image/png", ObjectKey: "production/shot-1.png",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	storyboard := model.AgentProductionArtifact{
+		ID: "committed-storyboard-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID,
+		PlanVersion: plan.Version, ShotKey: "shot-1", Kind: model.AgentProductionArtifactStoryboardImage,
+		Status: model.AgentProductionArtifactCommitted, Attempt: 1, CanvasNodeID: "storyboard-node",
+		ResourceID: resource.ID, CreatedAt: now, UpdatedAt: now,
+	}
+	video := model.AgentProductionArtifact{
+		ID: "awaiting-video-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID,
+		PlanVersion: plan.Version, ShotKey: storyboard.ShotKey, Kind: model.AgentProductionArtifactVideoClip,
+		Status: model.AgentProductionArtifactAwaitingApproval, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&storyboard).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&video).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := svc.productionStoryboardResource(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version,
+	}, video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ID != resource.ID {
+		t.Fatalf("resolved storyboard resource = %s", resolved.ID)
+	}
+}
+
 func TestProductionGenerationFailureOutputIncludesTaskReason(t *testing.T) {
 	output := productionGenerationFailureOutput(model.Task{ID: "task-image", Error: "APIMart GPT Image 2 不支持图片质量 high"})
 	if output["taskId"] != "task-image" || output["reason"] != "APIMart GPT Image 2 不支持图片质量 high" {
@@ -549,6 +799,28 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 	}
 	if modelTaskCount != 2 {
 		t.Fatalf("corrective model task replay count = %d, want 2", modelTaskCount)
+	}
+
+	decision = agentRuntimeToolDecisionWithDelivery(t,
+		`{"kind":"tool_call","toolCall":{"toolCallId":"render-repair-2","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","quality":"ultra","count":1}}}}`,
+		agentRuntimeTestImageDelivery(),
+	)
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Status != agentruntime.RunFailed || terminal.LastToolResult == nil ||
+		terminal.LastToolResult.ErrorCode != "generation_parameter_unsupported" {
+		t.Fatalf("repeated render preparation failure = %#v", terminal)
+	}
+	if err := db.Model(&model.AgentToolCall{}).Where("run_id = ?", scope.RunID).Count(&toolCallCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 2 {
+		t.Fatalf("repeated render tool call count = %d, want 2", toolCallCount)
 	}
 }
 

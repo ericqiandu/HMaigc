@@ -7,9 +7,10 @@ import { buildGenerationConfig, isGenerationCanceled, supportsVideoReferenceAudi
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
 import { generationFailureMetadata } from "@/lib/generation-error";
+import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import type { UpdreamSkill } from "@/services/api/skills";
-import type { GenerationTask, TaskBillingQuote } from "@/services/api/task-center";
+import type { GenerationTask } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -41,7 +42,7 @@ const NODE_STATUS_ERROR = "error" as const;
 export type CanvasNodeGenerationOptions = {
     controller?: AbortController;
     waitForTaskCapacity?: boolean;
-    expectedQuote?: TaskBillingQuote;
+    expectedQuote?: ConfirmedTaskBillingQuote;
 };
 
 export function useCanvasGenerationExecutor({

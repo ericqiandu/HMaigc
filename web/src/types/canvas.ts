@@ -89,6 +89,8 @@ export type CanvasGenerationBatchItem = {
     retryCount: number;
     errorDetails?: string;
     costUncertain?: boolean;
+    quotePriceVersion?: number;
+    quoteFingerprint?: string;
 };
 
 export type CanvasGenerationBatch = {

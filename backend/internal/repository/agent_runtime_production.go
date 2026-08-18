@@ -146,7 +146,7 @@ func (r *Repository) AppendAgentProductionPlanVersion(input AppendAgentProductio
 			}
 		}
 		if err := tx.Create(&plan).Error; err != nil {
-			if isAgentProductionPlanConstraintError(err) {
+			if isUniqueConstraintError(err) {
 				return ErrAgentProductionPlanVersionConflict
 			}
 			return err
@@ -490,7 +490,7 @@ func keepProductionFact(current string, incoming string) string {
 	return current
 }
 
-func isAgentProductionPlanConstraintError(err error) bool {
+func isUniqueConstraintError(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "unique constraint") || strings.Contains(message, "duplicate key")
 }

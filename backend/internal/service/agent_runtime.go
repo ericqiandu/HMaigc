@@ -257,16 +257,27 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 			}
 			frozenArguments, freezeErr := s.freezeAgentProductionRenderArguments(scope, frozenContext.CallableModels, decision.ToolCall.Arguments)
 			if freezeErr != nil {
-				failureCode, repairable := agentProductionRenderFailureCode(freezeErr)
-				if !repairable {
+				failureCode, failureClass, classified := agentProductionRenderFailureDetails(freezeErr)
+				if !classified {
 					return nil, freezeErr
 				}
 				output, marshalErr := json.Marshal(map[string]string{"reason": freezeErr.Error()})
 				if marshalErr != nil {
 					return nil, marshalErr
 				}
+				failureClass, classErr := s.rejectedToolFailureClass(
+					scope,
+					state,
+					decision.ToolCall,
+					failureCode,
+					output,
+					failureClass,
+				)
+				if classErr != nil {
+					return nil, classErr
+				}
 				transition, rejectErr := agentruntime.RejectToolDecision(state, agentruntime.ToolDecisionFailure{
-					Call: *decision.ToolCall, Class: agentruntime.ToolFailureAgentRepairable,
+					Call: *decision.ToolCall, Class: failureClass,
 					ErrorCode: failureCode, Output: output,
 				})
 				if rejectErr != nil {

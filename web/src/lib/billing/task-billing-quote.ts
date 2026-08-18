@@ -11,6 +11,7 @@ type BuildTaskBillingQuoteRequestInput = {
 };
 
 export type TaskBillingQuoteLoader = (request: TaskBillingQuoteRequest, signal?: AbortSignal) => Promise<TaskBillingQuote>;
+export type ConfirmedTaskBillingQuote = Pick<TaskBillingQuote, "priceVersion" | "quoteFingerprint">;
 
 export class TaskPriceChangedError extends Error {
     readonly currentQuote: TaskBillingQuote;
@@ -47,7 +48,7 @@ export function buildTaskBillingQuoteRequest({ mode, operation, batchCount, refe
     };
 }
 
-export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: TaskBillingQuote | undefined, loadQuote: TaskBillingQuoteLoader, signal?: AbortSignal): Promise<CreateTaskInput> {
+export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: ConfirmedTaskBillingQuote | undefined, loadQuote: TaskBillingQuoteLoader, signal?: AbortSignal): Promise<CreateTaskInput> {
     const quoteRequest = quoteRequestFromTaskInput(input);
     if (!quoteRequest) return input;
 

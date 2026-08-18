@@ -13,6 +13,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrAgentRuntimeStepConflict = errors.New("agent runtime step conflict")
@@ -377,7 +378,8 @@ func persistProductionRenderAwaitingApproval(db *gorm.DB, scope agentruntime.Sco
 		arguments.PriceVersion < 0 || arguments.Quantity <= 0 || strings.TrimSpace(arguments.BillingMode) == "" || strings.TrimSpace(arguments.QuoteFingerprint) == "" {
 		return errors.New("frozen production render arguments are incomplete")
 	}
-	result := db.Model(&model.AgentProductionArtifact{}).
+	var current model.AgentProductionArtifact
+	query := db.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where(`id = ? AND plan_key = ? AND plan_version = ? AND attempt = ? AND status IN (?, ?)
 			AND EXISTS (
 				SELECT 1 FROM agent_production_plan_versions
@@ -388,9 +390,37 @@ func persistProductionRenderAwaitingApproval(db *gorm.DB, scope agentruntime.Sco
 			arguments.ArtifactID, arguments.PlanKey, arguments.PlanVersion, arguments.Attempt,
 			model.AgentProductionArtifactPlanned, model.AgentProductionArtifactFailed,
 			scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID, model.AgentProductionPlanActive).
-		Select("status", "last_error_code", "updated_at").
+		Take(&current)
+	if query.Error != nil {
+		if errors.Is(query.Error, gorm.ErrRecordNotFound) {
+			return ErrAgentProductionArtifactConflict
+		}
+		return query.Error
+	}
+
+	base := db.Model(&model.AgentProductionArtifact{}).
+		Where("id = ? AND status = ? AND attempt = ?", current.ID, current.Status, current.Attempt)
+	if current.Status == model.AgentProductionArtifactFailed && (current.TaskID != "" || current.BillingOrderID != "" || current.ResourceID != "") {
+		if current.TaskID == "" || current.BillingOrderID == "" || current.ResourceID != "" {
+			return ErrAgentProductionArtifactConflict
+		}
+		base = base.Where(`EXISTS (
+				SELECT 1 FROM tasks
+				 WHERE tasks.id = agent_production_artifacts.task_id
+				   AND tasks.user_id = ? AND tasks.billing_order_id = agent_production_artifacts.billing_order_id
+				   AND tasks.status IN (?, ?)
+			) AND EXISTS (
+				SELECT 1 FROM billing_orders
+				 WHERE billing_orders.id = agent_production_artifacts.billing_order_id
+				   AND billing_orders.user_id = ? AND billing_orders.task_id = agent_production_artifacts.task_id
+				   AND billing_orders.status = ?
+			)`,
+			scope.ActorUserID, model.TaskStatusFailed, model.TaskStatusCancelled,
+			scope.ActorUserID, model.BillingStatusRefunded)
+	}
+	result := base.Select("status", "task_id", "billing_order_id", "resource_id", "last_error_code", "updated_at").
 		Updates(productionRenderApprovalUpdate{
-			Status: model.AgentProductionArtifactAwaitingApproval, LastErrorCode: "", UpdatedAt: now,
+			Status: model.AgentProductionArtifactAwaitingApproval, TaskID: "", BillingOrderID: "", ResourceID: "", LastErrorCode: "", UpdatedAt: now,
 		})
 	if result.Error != nil {
 		return result.Error
@@ -402,9 +432,12 @@ func persistProductionRenderAwaitingApproval(db *gorm.DB, scope agentruntime.Sco
 }
 
 type productionRenderApprovalUpdate struct {
-	Status        model.AgentProductionArtifactStatus `gorm:"column:status"`
-	LastErrorCode string                              `gorm:"column:last_error_code"`
-	UpdatedAt     time.Time                           `gorm:"column:updated_at"`
+	Status         model.AgentProductionArtifactStatus `gorm:"column:status"`
+	TaskID         string                              `gorm:"column:task_id"`
+	BillingOrderID string                              `gorm:"column:billing_order_id"`
+	ResourceID     string                              `gorm:"column:resource_id"`
+	LastErrorCode  string                              `gorm:"column:last_error_code"`
+	UpdatedAt      time.Time                           `gorm:"column:updated_at"`
 }
 
 func persistProductionRenderApprovalFailure(db *gorm.DB, scope agentruntime.Scope, raw json.RawMessage, failureCode string, now time.Time) error {

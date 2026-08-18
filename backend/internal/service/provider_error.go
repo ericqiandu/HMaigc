@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -8,6 +9,8 @@ import (
 const contentModerationErrorCode = "sensitive_words_detected"
 
 const contentModerationRetryMessage = "内容审核未通过，请修改提示词后重新生成；原任务不能直接重试"
+
+const maxProviderFailureBodyBytes = 64 << 10
 
 // 只提取供应商明确返回的错误码和短消息，避免把完整响应或用户输入复制到调用日志。
 func providerFailureDetails(payload map[string]any) (string, string) {
@@ -36,6 +39,27 @@ func providerFailureDetails(payload map[string]any) (string, string) {
 		}
 	}
 	return code, truncateRunes(message, 500)
+}
+
+// providerHTTPFailureDetails 只读取供应商声明的短错误码与消息，不保留原始错误响应。
+func providerHTTPFailureDetails(body string, secrets ...string) (string, string) {
+	data := []byte(strings.TrimSpace(body))
+	if len(data) == 0 || len(data) > maxProviderFailureBodyBytes || !json.Valid(data) {
+		return "", ""
+	}
+	var payload map[string]any
+	if json.Unmarshal(data, &payload) != nil || payload == nil {
+		return "", ""
+	}
+	code, message := providerFailureDetails(payload)
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if secret != "" {
+			code = strings.ReplaceAll(code, secret, "[REDACTED]")
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
+	return truncateRunes(code, 80), truncateRunes(message, 500)
 }
 
 func normalizedProviderErrorCode(value any) string {

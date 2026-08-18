@@ -1,6 +1,6 @@
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl } from "@/services/image-storage";
-import { deleteRemoteAsset, deleteRemoteCanvasProject, getRemoteAsset, getRemoteCanvasProject, listRemoteAssets, listRemoteCanvasProjects, upsertRemoteAsset, upsertRemoteCanvasProject, type RemoteUserDataSummary } from "@/services/api/user-data";
+import { createRemoteCanvasProject, deleteRemoteAsset, deleteRemoteCanvasProject, getRemoteAsset, getRemoteCanvasProject, listRemoteAssets, listRemoteCanvasProjects, upsertRemoteAsset, type RemoteUserDataSummary } from "@/services/api/user-data";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -14,6 +14,7 @@ import { createCanvasProjectDeletionService, type CanvasProjectDeletionResult } 
 import type { UploadedImage } from "@/services/image-storage";
 import type { CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
+import { remoteCanvasCreationRequired } from "@/lib/canvas/canvas-persistence-policy";
 
 let activeRemoteUserId = "";
 let applyingRemoteState = false;
@@ -252,7 +253,9 @@ async function saveRemoteUserDataBatch() {
         const currentProjects = canvasState.projects;
         const currentAssets = useAssetStore.getState().assets;
         const pendingDeletionIds = new Set(canvasState.pendingDeletionIds);
-        const dirtyProjects = currentProjects.filter((item) => !item.teamId && !pendingDeletionIds.has(item.id) && remoteProjectVersions.get(item.id) !== item.updatedAt);
+        const dirtyProjects = currentProjects.filter((item) =>
+            !pendingDeletionIds.has(item.id) && remoteCanvasCreationRequired(remoteProjectVersions, item.id),
+        );
         const dirtyAssets = currentAssets.filter((item) => remoteAssetVersions.get(item.id) !== item.updatedAt);
         const deletedAssetIds = missingIds(remoteAssetVersions, currentAssets);
         if (!dirtyProjects.length && !dirtyAssets.length && !deletedAssetIds.length) return;
@@ -265,7 +268,7 @@ async function saveRemoteUserDataBatch() {
         applyingRemoteState = false;
         // SQLite 和接口频控都要求写入保持有界；逐项提交还能准确记录已完成版本。
         for (const project of projects) {
-            await upsertRemoteCanvasProject(project);
+            await createRemoteCanvasProject(project);
             remoteProjectVersions.set(project.id, project.updatedAt);
         }
         for (const asset of assets) {

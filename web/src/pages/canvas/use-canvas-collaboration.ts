@@ -23,6 +23,7 @@ import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-s
 import { removeRetiredCanvasNodes } from "@/lib/canvas/canvas-retired-content-migration";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
+import { canvasUsesRevisionedMutations } from "@/lib/canvas/canvas-persistence-policy";
 
 export type CanvasCollaborationConnectionStatus = "personal" | "connecting" | "online" | "reconnecting" | "readonly" | "error";
 
@@ -67,7 +68,7 @@ export function useCanvasCollaboration({
 }: UseCanvasCollaborationOptions) {
     const { message } = App.useApp();
     const updateProject = useCanvasStore((state) => state.updateProject);
-    const enabled = Boolean(projectLoaded && project?.teamId);
+    const enabled = canvasUsesRevisionedMutations(projectLoaded, project?.id);
     const [access, setAccess] = useState<CanvasAccess | null>(null);
     const [status, setStatus] = useState<CanvasCollaborationConnectionStatus>(enabled ? "connecting" : "personal");
     const [presenceByConnection, setPresenceByConnection] = useState<Record<string, CanvasPresence>>({});

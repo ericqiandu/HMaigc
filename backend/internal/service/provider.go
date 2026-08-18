@@ -114,6 +114,7 @@ type providerHTTPError struct {
 
 type providerAnalyticsKey struct{}
 type kuaiziRequestKey struct{}
+type providerStructuredErrorKey struct{}
 
 type providerAnalyticsContext struct {
 	Service                    *Service
@@ -190,6 +191,10 @@ func withProviderAsyncCreate(ctx context.Context) context.Context {
 
 func withKuaiziRequest(ctx context.Context) context.Context {
 	return context.WithValue(ctx, kuaiziRequestKey{}, struct{}{})
+}
+
+func withProviderStructuredErrors(ctx context.Context) context.Context {
+	return context.WithValue(ctx, providerStructuredErrorKey{}, struct{}{})
 }
 
 func (e providerHTTPError) Error() string {
@@ -1323,10 +1328,11 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 	}
 	status := model.ApiCallStatusSucceeded
 	errorText := ""
+	errorCode := ""
 	if requestErr != nil || statusCode < 200 || statusCode >= 300 {
 		status = model.ApiCallStatusFailed
 		if requestErr != nil {
-			errorText = safeProviderLogError(requestErr)
+			errorCode, errorText = safeProviderLogFailure(req, requestErr)
 		}
 	}
 	if requestErr == nil && statusCode >= 200 && statusCode < 300 && len(responseBody) > 0 {
@@ -1356,7 +1362,7 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
 		PricingSpecification: metadata.PricingSpecification, InputCharacterCount: metadata.InputCharacterCount, InputImageCount: metadata.InputImageCount,
 		InputVideoCount: metadata.InputVideoCount, InputVideoDurationMs: metadata.InputVideoDurationMs, InputVideoDurationComplete: metadata.InputVideoDurationComplete,
-		Error: errorText, ConcurrencyLimit: metadata.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
+		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: metadata.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
 	}
 	channelSlotFailure := false
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {
@@ -1403,12 +1409,32 @@ func miniMaxBusinessError(payload map[string]interface{}) (string, string) {
 	return strconv.FormatInt(code, 10), stringField(baseResponse, "status_msg")
 }
 
-func safeProviderLogError(err error) string {
+func safeProviderLogFailure(req *http.Request, err error) (string, string) {
 	var httpErr providerHTTPError
 	if errors.As(err, &httpErr) {
-		return fmt.Sprintf("上游 HTTP %d", httpErr.StatusCode)
+		if req != nil {
+			if _, allowed := req.Context().Value(providerStructuredErrorKey{}).(struct{}); allowed {
+				code, message := providerHTTPFailureDetails(httpErr.Body, providerRequestSecrets(req)...)
+				if message != "" {
+					return code, fmt.Sprintf("上游 HTTP %d：%s", httpErr.StatusCode, message)
+				}
+				return code, fmt.Sprintf("上游 HTTP %d", httpErr.StatusCode)
+			}
+		}
+		return "", fmt.Sprintf("上游 HTTP %d", httpErr.StatusCode)
 	}
-	return truncateRunes(err.Error(), 500)
+	return "", truncateRunes(err.Error(), 500)
+}
+
+func providerRequestSecrets(req *http.Request) []string {
+	if req == nil {
+		return nil
+	}
+	authorization := strings.TrimSpace(req.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+		authorization = strings.TrimSpace(authorization[len("Bearer "):])
+	}
+	return []string{authorization, strings.TrimSpace(req.Header.Get("ApiKey"))}
 }
 
 func providerRequestKind(method string, path string) string {

@@ -48,6 +48,29 @@ func TestOpenSQLiteUsesPortableJournalMode(t *testing.T) {
 	}
 }
 
+func TestConfigurePoolSerializesSQLiteWriters(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open sqlite database: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close sqlite database: %v", err)
+		}
+	})
+
+	if err := ConfigurePool(db); err != nil {
+		t.Fatalf("configure sqlite pool: %v", err)
+	}
+	if got := sqlDB.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("sqlite MaxOpenConnections = %d, want 1", got)
+	}
+}
+
 func TestParameterizedLoggingDropsSensitiveQueryValues(t *testing.T) {
 	t.Parallel()
 

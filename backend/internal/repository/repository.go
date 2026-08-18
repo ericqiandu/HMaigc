@@ -13,6 +13,7 @@ import (
 )
 
 var ErrDailyUploadLimitExceeded = errors.New("daily upload limit exceeded")
+var ErrCanvasProjectConflict = errors.New("canvas project conflict")
 
 type Repository struct {
 	db *gorm.DB
@@ -459,20 +460,24 @@ func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Resu
 		if task.BillingOrderID == "" {
 			return nil
 		}
+		var order model.BillingOrder
+		orderQuery := tx.Where("id = ?", task.BillingOrderID)
+		if r.Dialect() == "postgres" {
+			orderQuery = orderQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := orderQuery.First(&order).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusUncertain {
+			return ErrBillingStateConflict
+		}
 		billingUpdate := tx.Model(&model.BillingOrder{}).
-			Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
-			Updates(map[string]any{"status": model.BillingStatusUncertain, "error": billingError, "updated_at": time.Now()})
+			Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).
+			Updates(uncertainBillingUpdates(order, billingError, time.Now()))
 		if billingUpdate.Error != nil {
 			return billingUpdate.Error
 		}
-		if billingUpdate.RowsAffected == 1 {
-			return nil
-		}
-		var order model.BillingOrder
-		if err := tx.Select("status").First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
-			return err
-		}
-		if order.Status != model.BillingStatusUncertain {
+		if billingUpdate.RowsAffected != 1 {
 			return ErrBillingStateConflict
 		}
 		return nil
@@ -869,14 +874,12 @@ func (r *Repository) CanvasProjectForUser(userID string, id string) (*model.Canv
 	return &project, nil
 }
 
-func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
-	result := r.db.Model(&model.CanvasProject{}).
-		Where("id = ? AND user_id = ?", project.ID, project.UserID).
-		Updates(map[string]any{"project_id": project.ProjectID, "title": project.Title, "payload_json": project.PayloadJSON, "updated_at": project.UpdatedAt})
-	if result.Error != nil || result.RowsAffected > 0 {
-		return result.Error
+func (r *Repository) CreateCanvasProject(project *model.CanvasProject) error {
+	err := r.db.Create(project).Error
+	if err != nil && isUniqueConstraintError(err) {
+		return ErrCanvasProjectConflict
 	}
-	return r.db.Create(project).Error
+	return err
 }
 
 func (r *Repository) DeleteCanvasProject(userID string, id string) error {

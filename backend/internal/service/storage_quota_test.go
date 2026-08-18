@@ -143,11 +143,11 @@ func TestSaveCancelledTaskResultKeepsCancelledStatusAndPersistsAssetFact(t *test
 	if err := db.AutoMigrate(&model.SystemSetting{}, &model.Task{}, &model.Result{}, &model.Asset{}, &model.CanvasProject{}, &model.Session{}, &model.Message{}, &model.TaskLog{}, &model.ApiCallLog{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled, BillingOrderID: "billing", InputJSON: `{"mode":"video","secret":"removed"}`}
+	task := model.Task{ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled, BillingOrderID: "billing", ProviderRequestID: "provider-task", InputJSON: `{"mode":"video","secret":"removed"}`}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.BillingOrder{ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID, Status: model.BillingStatusRunning}).Error; err != nil {
+	if err := db.Create(&model.BillingOrder{ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID, BillingMode: "per_second", Status: model.BillingStatusRunning, ProviderRequestID: task.ProviderRequestID, ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{repo: repository.New(db)}
@@ -170,7 +170,7 @@ func TestSaveCancelledTaskResultKeepsCancelledStatusAndPersistsAssetFact(t *test
 	if err := db.First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if order.Status != model.BillingStatusUncertain || order.Error != "费用待核对" {
+	if order.Status != model.BillingStatusUncertain || order.Error != "费用待核对" || order.NextReconcileAt == nil {
 		t.Fatalf("cancelled billing = %#v", order)
 	}
 }

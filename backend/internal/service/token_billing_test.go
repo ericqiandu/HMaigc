@@ -396,7 +396,7 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("next_reconcile_at", time.Now().Add(-time.Second)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RunTokenBillingReconciliationBatch(context.Background(), time.Now(), 10); err != nil {
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now(), 10); err != nil {
 		t.Fatal(err)
 	}
 	var stored model.BillingOrder
@@ -405,6 +405,229 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 	}
 	if stored.Status != model.BillingStatusSettled || stored.InputTokens != 20 || stored.CachedTokens != 2 || stored.OutputTokens != 5 || stored.TokenUsageStatus != "reported" || billingCalls.Load() != 2 {
 		t.Fatalf("reconciled order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+}
+
+func TestKuaiziMediaBillWithFrozenRuntimeSettlesFromSupplierFact(t *testing.T) {
+	var billingCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		billingCalls.Add(1)
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-media-order","amount":2,"status":"succeeded","task_id":"provider-media-task","task_status":"succeeded","task_duration":10,"total_tokens":0,"created_at":"2026-08-18T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db := openProviderCredentialService(t)
+	reservation := TokenBillingReservation{EndpointVersionID: "media-endpoint-v1", CredentialVersionID: "media-key-v1"}
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-media-key")
+	now := time.Now().UTC()
+	account := model.CreditAccount{UserID: "media-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.BillingOrder{
+		ID: "media-order", UserID: account.UserID, IdempotencyKey: "media-order", BillingMode: "per_second",
+		Model: "doubao-seedance-2-0-260128", AmountMicrocredits: 10_000_000, Status: model.BillingStatusReserved,
+		ProviderRequestID: "provider-media-task", ProviderEndpointVersionID: reservation.EndpointVersionID,
+		ProviderCredentialVersionID: reservation.CredentialVersionID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := svc.repo.ReserveBillingOrder(&order); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Updates(map[string]any{
+		"status": model.BillingStatusUncertain, "next_reconcile_at": now.Add(-time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), now, 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingOrderID != "provider-media-order" || stored.ProviderBillingAmount != 2 || stored.ProviderBillingStatus != "succeeded" || stored.NextReconcileAt != nil || stored.ReconcileLeaseOwner != "" || stored.ReconcileLeaseToken != "" || stored.ReconcileLeaseExpiresAt != nil || billingCalls.Load() != 1 {
+		t.Fatalf("reconciled media order = %#v, billing calls=%d", stored, billingCalls.Load())
+	}
+	if err := db.First(&account, "user_id = ?", account.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits != 90_000_000 || account.ReservedMicrocredits != 0 {
+		t.Fatalf("media account = %#v", account)
+	}
+}
+
+func TestKuaiziMediaContradictorySucceededBillRequiresManualReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-media-contradiction","amount":2,"status":"succeeded","task_id":"provider-media-task","task_status":"failed","task_duration":10,"total_tokens":0,"created_at":"2026-08-18T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db := openProviderCredentialService(t)
+	reservation := TokenBillingReservation{EndpointVersionID: "contradiction-media-endpoint-v1", CredentialVersionID: "contradiction-media-key-v1"}
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-contradiction-media-key")
+	now := time.Now().UTC()
+	account := model.CreditAccount{UserID: "contradiction-media-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.BillingOrder{
+		ID: "contradiction-media-order", UserID: account.UserID, IdempotencyKey: "contradiction-media-order", BillingMode: "per_second",
+		Model: "doubao-seedance-2-0-260128", AmountMicrocredits: 10_000_000, Status: model.BillingStatusReserved,
+		ProviderRequestID: "provider-media-task", ProviderEndpointVersionID: reservation.EndpointVersionID,
+		ProviderCredentialVersionID: reservation.CredentialVersionID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := svc.repo.ReserveBillingOrder(&order); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Updates(map[string]any{
+		"status": model.BillingStatusUncertain, "next_reconcile_at": now.Add(-time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), now, 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusUncertain || stored.ProviderBillingStatus != "requires_review" || stored.ReconcileLeaseOwner != "" || stored.ReconcileLeaseToken != "" || stored.ReconcileLeaseExpiresAt != nil {
+		t.Fatalf("contradictory media order = %#v", stored)
+	}
+	if stored.ProviderBillingOrderID != "provider-media-contradiction" || stored.ProviderBillingAmount != 2 || stored.ProviderTaskStatus != "failed" {
+		t.Fatalf("contradictory media observation = %#v", stored)
+	}
+	if err := db.First(&account, "user_id = ?", account.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits != 90_000_000 || account.ReservedMicrocredits != 10_000_000 {
+		t.Fatalf("contradictory media account changed = %#v", account)
+	}
+}
+
+func TestKuaiziMediaProviderOrderChangeRequiresManualReviewWithoutOverwritingFacts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-media-new","amount":2,"status":"succeeded","task_id":"provider-media-task","task_status":"succeeded","task_duration":10,"total_tokens":0,"created_at":"2026-08-18T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db := openProviderCredentialService(t)
+	reservation := TokenBillingReservation{EndpointVersionID: "changed-media-endpoint-v1", CredentialVersionID: "changed-media-key-v1"}
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-changed-media-key")
+	now := time.Now().UTC()
+	account := model.CreditAccount{UserID: "changed-media-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.BillingOrder{
+		ID: "changed-media-order", UserID: account.UserID, IdempotencyKey: "changed-media-order", BillingMode: "per_second",
+		Model: "doubao-seedance-2-0-260128", AmountMicrocredits: 10_000_000, Status: model.BillingStatusReserved,
+		ProviderRequestID: "provider-media-task", ProviderBillingOrderID: "provider-media-original",
+		ProviderBillingAmount: 1, ProviderBillingStatus: "pending", ProviderTaskStatus: "running",
+		ProviderEndpointVersionID: reservation.EndpointVersionID, ProviderCredentialVersionID: reservation.CredentialVersionID,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := svc.repo.ReserveBillingOrder(&order); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Updates(map[string]any{
+		"status": model.BillingStatusUncertain, "next_reconcile_at": now.Add(-time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), now, 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusUncertain || stored.ProviderBillingStatus != "requires_review" || stored.ProviderBillingOrderID != "provider-media-original" || stored.ProviderBillingAmount != 1 || stored.ProviderTaskStatus != "running" {
+		t.Fatalf("changed provider order facts = %#v", stored)
+	}
+}
+
+func TestKuaiziTokenContradictorySucceededBillRequiresManualReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-token-contradiction","amount":6,"status":"succeeded","task_id":"provider-token-task","task_status":"failed","task_duration":1,"total_tokens":42,"created_at":"2026-08-18T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-contradiction-token-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "contradictory-token-bill", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileTokenBillingNow(context.Background(), order.ID, "chatcmpl-provider-token-task", TokenUsageFact{InputTokens: 20, OutputTokens: 5, Available: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("next_reconcile_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now(), 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusUncertain || stored.ProviderBillingStatus != "requires_review" || stored.ProviderBillingOrderID != "provider-token-contradiction" || stored.ProviderTaskStatus != "failed" || stored.ProviderBillingTotalTokens != 42 {
+		t.Fatalf("contradictory token order = %#v", stored)
+	}
+	if err := db.First(&account, "user_id = ?", account.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits+account.ReservedMicrocredits != 100_000_000 || account.ReservedMicrocredits != order.AmountMicrocredits {
+		t.Fatalf("contradictory token account changed = %#v", account)
+	}
+}
+
+func TestKuaiziMediaFailedUnbilledFactRefundsReservation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-media-failed","amount":0,"status":"failed","task_id":"provider-media-task","task_status":"failed","task_duration":0,"total_tokens":0,"created_at":"2026-08-18T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db := openProviderCredentialService(t)
+	reservation := TokenBillingReservation{EndpointVersionID: "failed-media-endpoint-v1", CredentialVersionID: "failed-media-key-v1"}
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-failed-media-key")
+	now := time.Now().UTC()
+	account := model.CreditAccount{UserID: "failed-media-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.BillingOrder{
+		ID: "failed-media-order", UserID: account.UserID, IdempotencyKey: "failed-media-order", BillingMode: "fixed_request",
+		Model: "kz_gpt_image2", AmountMicrocredits: 1_000_000, Status: model.BillingStatusReserved,
+		ProviderRequestID: "provider-media-task", ProviderEndpointVersionID: reservation.EndpointVersionID,
+		ProviderCredentialVersionID: reservation.CredentialVersionID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := svc.repo.ReserveBillingOrder(&order); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Updates(map[string]any{
+		"status": model.BillingStatusUncertain, "next_reconcile_at": now.Add(-time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), now, 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusRefunded || stored.ProviderBillingOrderID != "provider-media-failed" || stored.ProviderBillingAmount != 0 || stored.ProviderBillingStatus != "failed" || stored.NextReconcileAt != nil || stored.ReconcileLeaseOwner != "" || stored.ReconcileLeaseToken != "" || stored.ReconcileLeaseExpiresAt != nil {
+		t.Fatalf("refunded media order = %#v", stored)
+	}
+	if err := db.First(&account, "user_id = ?", account.UserID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableMicrocredits != 100_000_000 || account.ReservedMicrocredits != 0 {
+		t.Fatalf("refunded media account = %#v", account)
 	}
 }
 

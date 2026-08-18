@@ -500,7 +500,7 @@ func TestAgentRuntimeInvalidDecisionDoesNotRefundSuccessfulTokenCall(t *testing.
 	if progress.State.Status != agentruntime.RunRunning || progress.State.DecisionFeedback == nil || progress.ModelTask == nil {
 		t.Fatalf("invalid paid decision was not returned to the same runtime: %#v", progress)
 	}
-	if err := svc.RunTokenBillingReconciliationBatch(context.Background(), time.Now().Add(time.Minute), 10); err != nil {
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now().Add(time.Minute), 10); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.First(&order, "id = ?", order.ID).Error; err != nil {

@@ -23,10 +23,11 @@ import (
 )
 
 type canvasCollaborationHub struct {
-	svc      *service.Service
-	mu       sync.RWMutex
-	clients  map[string]map[*canvasRealtimeClient]struct{}
-	useRedis bool
+	svc            *service.Service
+	mu             sync.RWMutex
+	clients        map[string]map[*canvasRealtimeClient]struct{}
+	useRedis       bool
+	originPatterns []string
 }
 
 type canvasRealtimeClient struct {
@@ -78,8 +79,11 @@ type canvasClientMessage struct {
 	Presence *canvasClientPresence          `json:"presence,omitempty"`
 }
 
-func RegisterCanvasCollaborationRoutes(r *gin.RouterGroup, svc *service.Service) error {
-	hub := &canvasCollaborationHub{svc: svc, clients: map[string]map[*canvasRealtimeClient]struct{}{}}
+func RegisterCanvasCollaborationRoutes(r *gin.RouterGroup, svc *service.Service, originPatterns []string) error {
+	hub := &canvasCollaborationHub{
+		svc: svc, clients: map[string]map[*canvasRealtimeClient]struct{}{},
+		originPatterns: append([]string(nil), originPatterns...),
+	}
 	_, useRedis, err := svc.SubscribeCanvasCollaborationEvents(context.Background(), hub.broadcast)
 	if err != nil {
 		return err
@@ -254,10 +258,6 @@ func (h *canvasCollaborationHub) serveSocket(c *gin.Context) {
 		failService(c, err)
 		return
 	}
-	if state.Access.TeamID == "" {
-		fail(c, http.StatusBadRequest, service.BadAuthRequest("个人画布不使用多人实时协作"))
-		return
-	}
 	publicUser, err := h.svc.PublicAuthUser(user)
 	if err != nil {
 		failService(c, err)
@@ -270,6 +270,7 @@ func (h *canvasCollaborationHub) serveSocket(c *gin.Context) {
 	}
 	conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{
 		CompressionMode: websocket.CompressionContextTakeover,
+		OriginPatterns:  h.originPatterns,
 	})
 	if err != nil {
 		log.Printf("canvas collaboration websocket accept failed canvas=%s user=%s: %v", canvasID, user.ID, err)

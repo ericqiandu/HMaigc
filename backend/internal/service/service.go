@@ -239,7 +239,7 @@ func (s *Service) StartWorker() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			_ = s.RunTokenBillingReconciliationBatch(context.Background(), time.Now(), 20)
+			_ = s.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now(), 20)
 			<-ticker.C
 		}
 	}()
