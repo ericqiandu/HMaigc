@@ -9,8 +9,8 @@
 - `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
 - `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
 - `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。
-- `agent_production_plan_versions` 以 `plan_key + version` 唯一追加不可变的生产计划版本，并绑定完整 Scope、来源 run、基础版本、剧本和总时长；同一基础版本只允许一个事实胜出；
-- `agent_production_artifacts` 以 `plan_key + plan_version + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
+- `agent_production_plan_versions` 以 `tenant_kind + tenant_id + domain_project_id + canvas_id + plan_key + version` 唯一追加不可变的生产计划版本，并绑定来源 run、基础版本、剧本和总时长；相同业务键可在不同租户和画布独立存在，同一 Scope 的同一基础版本只允许一个事实胜出；
+- `agent_production_artifacts` 以 `plan_version_id + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
 
 Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
 
@@ -139,13 +139,13 @@ Agent 文本模型使用同一张 `billing_orders` 的 `token_usage` 模式，�
 
 团队能力由成员关系、订阅快照、团队积分、共享资产、项目权限和开票状态共同组成：
 
-- `teams` 保存团队所有者、名称与启停状态；
-- `team_members` 保存成员角色、有效状态和成员月度积分额度，`owner` 角色不可转移、降级或移除；
-- `team_invitations` 保存邀请邮箱、角色、有效期和凭证哈希。原始邀请凭证只在创建成功时返回一次，数据库不保存明文；
-- `team_audit_events` 追加记录创建团队、重命名、邀请、接受、撤销、角色与积分额度调整、成员移除和主动退出等写操作；
+- `teams` 保存团队所有者、名称、启停状态、创建幂等键与请求摘要；同一用户重复提交同一创建请求只返回唯一完整团队事实，请求摘要冲突会显式失败；
+- `team_members` 保存成员角色、有效状态、成员月度积分额度和并发更新版本，`owner` 角色不可转移、降级或移除；角色与额度修改使用版本比较交换，避免并发覆盖；
+- `team_invitations` 保存邀请邮箱、角色、有效期和凭证哈希。同一团队与邮箱最多存在一条 pending 邀请；原始邀请凭证只在创建或管理员明确重新生成成功时返回一次，数据库不保存明文；查询、创建、撤销与重新生成都会先在团队锁内将过期邀请持久化为 expired；
+- `team_audit_events` 追加记录创建团队、重命名、邀请、接受、撤销、角色与积分额度调整、成员移除、主动退出、共享资产上传成功或失败，以及项目权限覆盖等写操作；
 - `team_credit_accounts` 是团队可用积分和预留积分的唯一余额真源；
 - `team_credit_ledger_entries` 追加记录团队套餐到账、任务预留、结算消费和退款，并以 `actor_user_id` 归因到实际调用成员；
-- `resources.team_id` 将共享文件归属到团队空间，读取必须经过有效团队成员校验；
+- `resources.team_id` 将共享文件归属到团队空间，读取必须经过有效团队成员校验；上传开始前先分配稳定资源 ID，成功和失败事实都与对应审计在同一事务持久化；
 - `projects.team_id` 表示团队项目归属，`project_collaborators` 保存项目级 `viewer`、`editor`、`manager` 权限覆盖；
 - `invoice_requests` 保存会员订单的开票申请、处理结果、发票号码和 HTTPS 文件地址，同一会员订单只能申请一次。
 
@@ -175,6 +175,6 @@ AI 水印规则不写入 `system_settings.site`。`policy_publication_heads` 为
 
 “无限任务”只取消套餐层面的排队数量拒绝，不取消全局 Worker 与渠道安全并发限制。团队存储额度由套餐字节字段配置，不在前端写死；上传会同时校验单文件、用户日上传和团队总存储额度。
 
-团队角色默认映射为项目权限：所有者、管理员为 `manager`，普通成员为 `editor`；项目覆盖可降为 `viewer`。团队项目写入要求有效团队订阅，读取保留给有效成员以保证订阅到期后的数据可访问。项目移出团队或删除时会事务性清理项目权限覆盖，避免旧团队权限泄漏到新归属。
+团队角色默认映射为项目权限：所有者、管理员为 `manager`，普通成员为 `editor`；项目覆盖可降为 `viewer`。团队项目创建者不会绕过团队角色与订阅状态取得额外管理权限。团队项目写入要求有效团队订阅，读取保留给有效成员以保证订阅到期后的数据可访问。项目权限覆盖变更与审计同事务提交；项目移出团队或删除时会事务性清理项目权限覆盖，避免旧团队权限泄漏到新归属。
 
 `invoice_requests` 只表示可审计的开票业务状态，不伪造税务结果。标记 `issued` 时必须由后台填写真实发票号码和 HTTPS 文件地址；重复处理使用条件更新拒绝。真实电子发票仍需由税务系统或后续接入的开票服务商生成。
