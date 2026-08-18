@@ -3,6 +3,7 @@ import { useState } from "react";
 import { staticAssetURL } from "@/lib/static-assets";
 
 const heroVideoURL = staticAssetURL("/videos/hero.mp4");
+const heroPosterURL = staticAssetURL("/videos/hero-poster.svg");
 
 export function UpdreamVideoBackground() {
     const [loadFailed, setLoadFailed] = useState(false);
@@ -16,6 +17,7 @@ export function UpdreamVideoBackground() {
                 muted
                 playsInline
                 preload="metadata"
+                poster={heroPosterURL}
                 onCanPlay={() => setLoadFailed(false)}
                 onError={() => setLoadFailed(true)}
             >
