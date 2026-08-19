@@ -176,7 +176,7 @@ export default function SiteSettingsPage() {
     return (
         <AdminPageFrame
             title="站点与品牌"
-            description="管理站点名称、品牌标识、首页运营横幅、底部版权与网站备案"
+            description="管理站点名称、首页主口号、品牌标识、运营横幅、底部版权与网站备案"
             actions={
                 setting ? (
                     <Button
@@ -208,7 +208,7 @@ export default function SiteSettingsPage() {
                             <AdminSettingsSwitchPanel
                                 icon={<ImageIcon className="site-settings-brand-icon size-4" />}
                                 title="品牌信息"
-                                description="站点名称会同步到浏览器标题与主要品牌入口，Logo 会用于首页、登录页和后台。"
+                                description="站点名称与主口号会同步到公开首页，Logo 会用于首页、登录页和后台。"
                                 status={
                                     <Tag className="site-settings-brand-status" color={setting?.logoUrl ? "success" : "default"}>
                                         {setting?.logoUrl ? "自定义 Logo" : "内置 Logo"}
@@ -226,6 +226,17 @@ export default function SiteSettingsPage() {
                                         ]}
                                     >
                                         <Input className="site-settings-name-input" maxLength={40} showCount placeholder="例如：HMaigc" />
+                                    </Form.Item>
+                                    <Form.Item
+                                        className="site-settings-home-hero-slogan-field mb-0"
+                                        name="homeHeroSlogan"
+                                        label="首页主口号"
+                                        rules={[
+                                            { required: true, whitespace: true, message: "请输入首页主口号" },
+                                            { max: 40, message: "首页主口号不能超过 40 个字符" },
+                                        ]}
+                                    >
+                                        <Input className="site-settings-home-hero-slogan-input" maxLength={40} showCount placeholder="例如：让算力更有想象力！" />
                                     </Form.Item>
                                     <div className="site-settings-logo-control">
                                         <span className="site-settings-logo-label mb-2 block text-sm text-foreground/85">站点 Logo</span>
@@ -489,6 +500,7 @@ export default function SiteSettingsPage() {
 function toFormValues(setting: SiteSettings): UpdateSiteSettingsInput {
     return {
         siteName: setting.siteName,
+        homeHeroSlogan: setting.homeHeroSlogan,
         footerCopyright: setting.footerCopyright,
         icpRegistrationNumber: setting.icpRegistrationNumber,
         icpRegistrationUrl: setting.icpRegistrationUrl,
@@ -518,6 +530,7 @@ function siteSettingsInputEqual(left: UpdateSiteSettingsInput, right: UpdateSite
 function normalizeSiteSettingsInput(input: UpdateSiteSettingsInput): UpdateSiteSettingsInput {
     return {
         siteName: input.siteName.trim(),
+        homeHeroSlogan: input.homeHeroSlogan.trim(),
         footerCopyright: input.footerCopyright?.trim() || "",
         icpRegistrationNumber: input.icpRegistrationNumber?.trim() || "",
         icpRegistrationUrl: input.icpRegistrationUrl?.trim() || "",

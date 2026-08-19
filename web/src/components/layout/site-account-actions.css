@@ -60,6 +60,92 @@
     color: var(--credit-accent);
 }
 
+.site-account-popover {
+    color: var(--text-primary);
+    font-family: var(--font-family-sans);
+}
+
+.site-account-popover :where(.ant-popover-container, .ant-popover-inner) {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-lg) !important;
+}
+
+.site-account-popover :where(.ant-popover-content, .ant-popover-inner-content) {
+    color: inherit;
+    font-family: inherit;
+}
+
+.site-account-popover .ant-popover-arrow::before {
+    background: var(--bg-surface) !important;
+}
+
+.site-account-menu {
+    width: 244px;
+    padding: var(--space-1) 0;
+    color: var(--text-primary);
+    font-family: var(--font-family-sans);
+}
+
+.site-account-display-name {
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    line-height: 20px;
+    font-weight: var(--font-semibold);
+}
+
+.site-account-username,
+.site-account-balance-label {
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    line-height: 17px;
+    font-weight: var(--font-regular);
+}
+
+.site-account-balance-row {
+    background: var(--bg-hover);
+}
+
+.site-account-balance-number {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: var(--font-semibold);
+}
+
+.site-account-menu-link,
+.site-account-theme,
+.site-account-logout {
+    min-height: 32px;
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: var(--font-regular);
+}
+
+.site-account-menu-link,
+.site-account-logout {
+    border-radius: var(--radius-xs);
+}
+
+.site-account-menu-link,
+.site-account-theme {
+    color: var(--text-secondary);
+}
+
+.site-account-menu-link:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.site-account-menu-icon,
+.site-account-logout-icon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+}
+
 .site-account-upgrade:focus-visible,
 .site-account-auth:focus-visible,
 .site-account-notifications:focus-visible,
@@ -93,6 +179,12 @@
     .site-account-pill,
     .referral-reward-trigger {
         min-width: 44px;
+        min-height: 44px;
+    }
+
+    .site-account-menu-link,
+    .site-account-theme,
+    .site-account-logout {
         min-height: 44px;
     }
 }

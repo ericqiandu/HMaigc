@@ -28,6 +28,7 @@ const (
 	siteLegalHTMLMaxLen            = 256 << 10
 	siteRecordNoMaxLen             = 100
 	siteRecordURLMaxLen            = 500
+	siteHomeHeroSloganMaxLen       = 40
 	siteBannerLabelMaxLen          = 20
 	siteBannerTextMaxLen           = 200
 	siteBannerActionMaxLen         = 20
@@ -47,6 +48,7 @@ var ErrSiteMarketingImageNotConfigured = errors.New("营销弹窗图片尚未配
 
 type SiteSettingRequest struct {
 	SiteName                         string `json:"siteName"`
+	HomeHeroSlogan                   string `json:"homeHeroSlogan"`
 	FooterCopyright                  string `json:"footerCopyright"`
 	ICPRegistrationNumber            string `json:"icpRegistrationNumber"`
 	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
@@ -76,6 +78,7 @@ type LegalContentSettingRequest struct {
 
 type PublicSiteSetting struct {
 	SiteName                         string `json:"siteName"`
+	HomeHeroSlogan                   string `json:"homeHeroSlogan"`
 	LogoURL                          string `json:"logoUrl"`
 	FooterCopyright                  string `json:"footerCopyright"`
 	ICPRegistrationNumber            string `json:"icpRegistrationNumber"`
@@ -107,6 +110,7 @@ type PublicSiteSetting struct {
 
 type siteSettingValue struct {
 	SiteName                         string `json:"siteName"`
+	HomeHeroSlogan                   string `json:"homeHeroSlogan"`
 	LogoFile                         string `json:"logoFile"`
 	LogoMimeType                     string `json:"logoMimeType"`
 	FooterCopyright                  string `json:"footerCopyright"`
@@ -174,6 +178,7 @@ func (s *Service) UpdateSiteSetting(actor *model.User, req SiteSettingRequest) (
 	}
 	next := siteSettingValue{
 		SiteName:                         strings.TrimSpace(req.SiteName),
+		HomeHeroSlogan:                   strings.TrimSpace(req.HomeHeroSlogan),
 		LogoFile:                         current.LogoFile,
 		LogoMimeType:                     current.LogoMimeType,
 		FooterCopyright:                  strings.TrimSpace(req.FooterCopyright),
@@ -530,6 +535,7 @@ func (s *Service) saveSiteSetting(actor *model.User, current *model.SystemSettin
 func defaultSiteSetting() siteSettingValue {
 	return siteSettingValue{
 		SiteName:                "HMaigc",
+		HomeHeroSlogan:          "让算力更有想象力！",
 		FooterCopyright:         fmt.Sprintf("© %d HMaigc. 保留所有权利。", time.Now().Year()),
 		HomeBannerEnabled:       true,
 		HomeBannerLabel:         "招募中",
@@ -543,6 +549,10 @@ func validateSiteSetting(value siteSettingValue) error {
 	nameLength := len([]rune(strings.TrimSpace(value.SiteName)))
 	if nameLength < 1 || nameLength > 40 {
 		return errors.New("站点名称必须是 1-40 个字符")
+	}
+	homeHeroSloganLength := len([]rune(strings.TrimSpace(value.HomeHeroSlogan)))
+	if homeHeroSloganLength < 1 || homeHeroSloganLength > siteHomeHeroSloganMaxLen {
+		return fmt.Errorf("首页主口号必须是 1-%d 个字符", siteHomeHeroSloganMaxLen)
 	}
 	if len([]rune(value.FooterCopyright)) > 200 {
 		return errors.New("底部版权不能超过 200 个字符")
@@ -750,11 +760,29 @@ func validateLegalRichTextAttributeValue(label string, tag string, key string, v
 		if tag != "p" && tag != "h1" && tag != "h2" && tag != "h3" {
 			return fmt.Errorf("%s包含不支持的对齐位置", label)
 		}
-		if value != "text-align: left" && value != "text-align: center" && value != "text-align: right" && value != "text-align: justify" {
+		if !isSupportedLegalTextAlignmentStyle(value) {
 			return fmt.Errorf("%s包含不支持的文本对齐样式", label)
 		}
 	}
 	return nil
+}
+
+func isSupportedLegalTextAlignmentStyle(value string) bool {
+	declaration := strings.TrimSpace(value)
+	declaration = strings.TrimSpace(strings.TrimSuffix(declaration, ";"))
+	if declaration == "" || strings.Contains(declaration, ";") {
+		return false
+	}
+	property, alignment, found := strings.Cut(declaration, ":")
+	if !found || strings.TrimSpace(property) != "text-align" {
+		return false
+	}
+	switch strings.TrimSpace(alignment) {
+	case "left", "center", "right", "justify":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateSiteRecordURL(label string, rawURL string) error {
@@ -784,6 +812,7 @@ func validateSiteBannerAction(label string, actionLabel string, rawURL string) e
 func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) PublicSiteSetting {
 	result := PublicSiteSetting{
 		SiteName:                         value.SiteName,
+		HomeHeroSlogan:                   value.HomeHeroSlogan,
 		FooterCopyright:                  value.FooterCopyright,
 		ICPRegistrationNumber:            value.ICPRegistrationNumber,
 		ICPRegistrationURL:               value.ICPRegistrationURL,

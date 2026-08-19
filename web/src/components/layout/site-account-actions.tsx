@@ -63,7 +63,7 @@ export function SiteAccountActions(): JSX.Element {
                     <span className="site-account-member-label hidden sm:inline">{membershipAction.label}</span>
                 </Link>
                 <Popover
-                    className="site-account-popover"
+                    rootClassName="site-account-popover"
                     trigger="click"
                     placement="bottomRight"
                     open={menuOpen}
@@ -120,32 +120,32 @@ function AccountMenu({
     logout: () => void;
 }) {
     return (
-        <div className="site-account-menu w-[244px] py-1">
+        <div className="site-account-menu">
             <div className="site-account-summary flex items-center gap-3 px-1 pb-3">
                 <SiteUserAvatar user={user} className="size-9" />
                 <div className="site-account-summary-copy min-w-0 flex-1">
-                    <div className="site-account-display-name truncate text-sm font-semibold">{user.displayName || user.username}</div>
-                    <div className="site-account-username mt-0.5 truncate text-[11px] text-foreground/45">@{user.username}</div>
+                    <div className="site-account-display-name truncate">{user.displayName || user.username}</div>
+                    <div className="site-account-username mt-0.5 truncate">@{user.username}</div>
                 </div>
             </div>
-            <div className="site-account-balance-row mb-2 flex items-center justify-between bg-foreground/[.045] px-3 py-2.5">
-                <span className="site-account-balance-label text-xs text-foreground/55">可用创作积分</span>
-                <span className="site-account-balance-number text-xs font-semibold tabular-nums">{balance}</span>
+            <div className="site-account-balance-row mb-2 flex items-center justify-between px-3 py-2.5">
+                <span className="site-account-balance-label">可用创作积分</span>
+                <span className="site-account-balance-number tabular-nums">{balance}</span>
             </div>
             <nav className="site-account-menu-nav py-1" aria-label="账户菜单">
-                <AccountMenuLink to="/wallet" icon={<Coins className="site-account-menu-icon size-4" />} label="积分中心" onNavigate={close} />
+                <AccountMenuLink to="/wallet" icon={<Coins className="site-account-menu-icon" />} label="积分中心" onNavigate={close} />
                 <AccountMenuLink to="/membership" icon={<MembershipIcon className="site-account-menu-icon size-4" />} label={membershipAction.label} onNavigate={close} />
-                <AccountMenuButton icon={<UserPlus className="site-account-menu-icon size-4" />} label="邀请好友" onClick={invite} />
-                <AccountMenuLink to="/settings" icon={<Settings2 className="site-account-menu-icon size-4" />} label="账户设置" onNavigate={close} />
-                <AccountMenuButton icon={<Stamp className="site-account-menu-icon size-4" />} label="AI 水印设置" onClick={openWatermark} />
-                {user.role === "admin" ? <AccountMenuLink to="/admin" icon={<ShieldCheck className="site-account-menu-icon size-4" />} label="管理后台" onNavigate={close} /> : null}
+                <AccountMenuButton icon={<UserPlus className="site-account-menu-icon" />} label="邀请好友" onClick={invite} />
+                <AccountMenuLink to="/settings" icon={<Settings2 className="site-account-menu-icon" />} label="账户设置" onNavigate={close} />
+                <AccountMenuButton icon={<Stamp className="site-account-menu-icon" />} label="AI 水印设置" onClick={openWatermark} />
+                {user.role === "admin" ? <AccountMenuLink to="/admin" icon={<ShieldCheck className="site-account-menu-icon" />} label="管理后台" onNavigate={close} /> : null}
             </nav>
-            <div className="site-account-theme flex h-10 items-center px-2">
-                <span className="site-account-theme-label flex-1 text-xs text-foreground/65">深色模式</span>
+            <div className="site-account-theme flex items-center px-2">
+                <span className="site-account-theme-label flex-1">深色模式</span>
                 <Switch className="site-account-theme-switch" size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
             </div>
-            <button type="button" className="site-account-logout flex h-9 w-full items-center gap-2 px-2 text-xs transition-colors" onClick={logOut}>
-                <LogOut className="site-account-logout-icon size-4" aria-hidden />
+            <button type="button" className="site-account-logout flex w-full items-center gap-2 px-2 transition-colors" onClick={logOut}>
+                <LogOut className="site-account-logout-icon" aria-hidden />
                 <span className="site-account-logout-label">退出登录</span>
             </button>
         </div>
@@ -154,7 +154,7 @@ function AccountMenu({
 
 function AccountMenuLink({ to, icon, label, onNavigate }: { to: string; icon: ReactNode; label: string; onNavigate: () => void }) {
     return (
-        <Link to={to} onClick={onNavigate} className="site-account-menu-link flex h-9 items-center gap-2.5 px-2 text-xs text-foreground/62 transition-colors hover:bg-foreground/[.055] hover:text-foreground">
+        <Link to={to} onClick={onNavigate} className="site-account-menu-link flex items-center gap-2.5 px-2 transition-colors">
             {icon}
             <span className="site-account-menu-label flex-1">{label}</span>
         </Link>
@@ -163,7 +163,7 @@ function AccountMenuLink({ to, icon, label, onNavigate }: { to: string; icon: Re
 
 function AccountMenuButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
     return (
-        <button type="button" onClick={onClick} className="site-account-menu-link flex h-9 w-full items-center gap-2.5 px-2 text-left text-xs text-foreground/62 transition-colors hover:bg-foreground/[.055] hover:text-foreground">
+        <button type="button" onClick={onClick} className="site-account-menu-link flex w-full items-center gap-2.5 px-2 text-left transition-colors">
             {icon}
             <span className="site-account-menu-label flex-1">{label}</span>
         </button>

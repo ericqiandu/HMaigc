@@ -13,6 +13,7 @@ import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-co
 import { CanvasAgentSelectionSummary } from "@/components/canvas/canvas-agent-selection-summary";
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection, type CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
 import { useEffectiveConfig } from "@/stores/use-config-store";
+import { useSiteSettings } from "@/components/site/site-settings-provider";
 
 const MAX_REFERENCE_IMAGES = 4;
 
@@ -20,6 +21,7 @@ const PLACEHOLDERS = ['试试说"在画布上为我创建…"，生成不阻塞�
 
 export function UpdreamHero() {
     const { message } = App.useApp();
+    const { settings } = useSiteSettings();
     const navigate = useNavigate();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
@@ -119,7 +121,7 @@ export function UpdreamHero() {
 
     return (
         <section className="updream-hero flex flex-col items-center px-4">
-            <h1 className="updream-hero-title bg-clip-text text-center text-transparent">灵感从这里开始！</h1>
+            <h1 className="updream-hero-title bg-clip-text text-center text-transparent">{settings.homeHeroSlogan}</h1>
 
             <div className="updream-home-agent-composer w-full max-w-[700px]">
                 <AgentChatComposer

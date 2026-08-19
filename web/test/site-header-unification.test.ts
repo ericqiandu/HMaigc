@@ -227,10 +227,28 @@ describe("site header unification", () => {
         expect(styles).toContain("gap: var(--space-2)");
         expect(styles).toContain("padding-right: var(--space-3)");
         expect(styles).toContain("padding-left: var(--space-3)");
-        expect(styles).not.toMatch(/\b(?:6|13)px\b/);
-        expect(styles).not.toContain("box-shadow:");
+        expect(styles).not.toMatch(/\b6px\b/);
         expect(styles).not.toContain("#172033");
         expect(styles).not.toContain("#ffffff");
+    });
+
+    test("shared account popover owns one typography and interaction contract", async () => {
+        const source = await sharedAccount.text();
+        const styles = await sharedAccountStyles.text();
+
+        expect(source).toContain('rootClassName="site-account-popover"');
+        expect(source).not.toContain("text-sm font-semibold");
+        expect(source).not.toContain("text-[11px]");
+        expect(source).not.toContain("text-xs");
+        expect(source).not.toContain("h-9");
+        expect(source).not.toContain("h-10");
+
+        expect(styles).toMatch(/\.site-account-menu\s*\{[^}]*font-family:\s*var\(--font-family-sans\)/);
+        expect(styles).toMatch(/\.site-account-display-name\s*\{[^}]*font-size:\s*var\(--text-sm\)[^}]*line-height:\s*20px[^}]*font-weight:\s*var\(--font-semibold\)/);
+        expect(styles).toMatch(/\.site-account-username,\s*\n\.site-account-balance-label\s*\{[^}]*font-size:\s*var\(--text-xs\)[^}]*line-height:\s*17px[^}]*font-weight:\s*var\(--font-regular\)/);
+        expect(styles).toMatch(/\.site-account-balance-number\s*\{[^}]*font-size:\s*13px[^}]*line-height:\s*20px[^}]*font-weight:\s*var\(--font-semibold\)/);
+        expect(styles).toMatch(/\.site-account-menu-link,\s*\n\.site-account-theme,\s*\n\.site-account-logout\s*\{[^}]*min-height:\s*32px[^}]*font-size:\s*13px[^}]*line-height:\s*20px[^}]*font-weight:\s*var\(--font-regular\)/);
+        expect(styles).toMatch(/\.site-account-menu-icon,\s*\n\.site-account-logout-icon\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/);
     });
 
     test("shared header and account menu interactions use one semantic focus-visible ring", async () => {
