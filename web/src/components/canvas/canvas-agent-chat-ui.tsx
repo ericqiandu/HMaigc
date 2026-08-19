@@ -278,6 +278,7 @@ export function AgentChatComposer({
                     <textarea
                         value={prompt}
                         aria-label="输入 Agent 指令"
+                        disabled={disabled || sending}
                         onInput={(event) => onPromptChange(event.currentTarget.value)}
                         onPaste={(event) => {
                             if (!onAddFiles) return;

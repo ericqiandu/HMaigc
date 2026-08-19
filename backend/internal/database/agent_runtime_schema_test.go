@@ -136,7 +136,7 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsIncompatibleActiveRunWithoutMut
 	now := time.Now().UTC()
 	run := model.AgentRun{
 		ID: "run-old-active", ThreadID: "thread-old", ActorUserID: "user-old", ClientRequestID: "request-old",
-		Status: agentruntime.RunWaitingTool, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
+		Status: agentruntime.RunWaitingInput, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {

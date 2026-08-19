@@ -20,6 +20,7 @@ const (
 	agentWakeRunStarted             agentRunWakeup = "run_started"
 	agentWakeModelTaskFinished      agentRunWakeup = "model_task_finished"
 	agentWakeApprovalDecided        agentRunWakeup = "approval_decided"
+	agentWakeClarificationAnswered  agentRunWakeup = "clarification_answered"
 	agentWakeGenerationTaskFinished agentRunWakeup = "generation_task_finished"
 	agentWakeStaleRecovery          agentRunWakeup = "stale_recovery"
 )
@@ -69,7 +70,7 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 			if agentRuntimeRunTerminal(progress.State.Status) || progress.State.StateVersion == previousVersion {
 				return progress, nil
 			}
-		case agentruntime.RunWaitingApproval, agentruntime.RunSucceeded, agentruntime.RunFailed, agentruntime.RunCancelled:
+		case agentruntime.RunWaitingInput, agentruntime.RunWaitingApproval, agentruntime.RunSucceeded, agentruntime.RunFailed, agentruntime.RunCancelled:
 			return s.agentRuntimeProgressForCurrentState(scope, view.State)
 		default:
 			return nil, errors.New("agent runtime status is invalid")
@@ -99,7 +100,7 @@ func (s *Service) handleAgentRunAdvanceError(scope agentruntime.Scope, _ agentru
 
 func validateAgentRunWakeup(wakeup agentRunWakeup) error {
 	switch wakeup {
-	case agentWakeRunStarted, agentWakeModelTaskFinished, agentWakeApprovalDecided, agentWakeGenerationTaskFinished, agentWakeStaleRecovery:
+	case agentWakeRunStarted, agentWakeModelTaskFinished, agentWakeApprovalDecided, agentWakeClarificationAnswered, agentWakeGenerationTaskFinished, agentWakeStaleRecovery:
 		return nil
 	default:
 		return errors.New("agent runtime wakeup is invalid")

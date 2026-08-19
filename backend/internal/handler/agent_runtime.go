@@ -43,8 +43,15 @@ type submitAgentApprovalRequest struct {
 	Decision      agentruntime.ToolApprovalDecision `json:"decision"`
 }
 
+type submitAgentClarificationResponseRequest struct {
+	ExpectedStateVersion int                                   `json:"expectedStateVersion"`
+	QuestionID           string                                `json:"questionId"`
+	Answer               agentruntime.ClarificationAnswerInput `json:"answer"`
+	Complete             bool                                  `json:"complete"`
+}
+
 type agentRuntimeRequest interface {
-	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest
+	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentClarificationResponseRequest
 }
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
@@ -151,6 +158,45 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+	agent.POST("/runs/:runId/clarifications/:requestId/responses", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request submitAgentClarificationResponseRequest
+		if err := decodeStrictAgentRequest(c, &request); err != nil {
+			failAgentClarification(c, &service.AgentClarificationError{
+				Status: http.StatusBadRequest, ErrorCode: "agent_clarification_invalid", Message: err.Error(),
+			})
+			return
+		}
+		view, err := svc.SubmitScopedAgentClarificationResponse(user, c.Param("runId"), c.Param("requestId"), agentruntime.ClarificationResponseSubmission{
+			ExpectedStateVersion: request.ExpectedStateVersion, QuestionID: request.QuestionID,
+			Answer: request.Answer, Complete: request.Complete,
+		})
+		if err != nil {
+			if failAgentClarification(c, err) {
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
+}
+
+func failAgentClarification(c *gin.Context, err error) bool {
+	var clarificationErr *service.AgentClarificationError
+	if !errors.As(err, &clarificationErr) {
+		return false
+	}
+	data := gin.H{"errorCode": clarificationErr.ErrorCode}
+	if clarificationErr.LatestStateVersion > 0 {
+		data["latestStateVersion"] = clarificationErr.LatestStateVersion
+	}
+	c.JSON(clarificationErr.Status, gin.H{"code": clarificationErr.Status, "data": data, "msg": clarificationErr.Message})
+	return true
 }
 
 func strictAgentThreadHistoryLimit(raw string) (int, error) {

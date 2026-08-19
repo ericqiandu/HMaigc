@@ -66,6 +66,7 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 	state := agentruntime.RuntimeState{
 		StateVersion: 1, StepNumber: 0, MaxSteps: input.MaxSteps,
 		Status: agentruntime.RunQueued, UserMessage: input.UserMessage, Configuration: input.Configuration,
+		ClarificationHistory: []agentruntime.CompletedClarification{},
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {

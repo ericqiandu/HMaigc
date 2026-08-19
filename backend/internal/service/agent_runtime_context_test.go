@@ -158,12 +158,61 @@ func TestAgentRuntimeFreezesCallableMediaModelFactsWithoutProviderSecrets(t *tes
 	}
 }
 
+func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	state := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 1, MaxSteps: 6, Status: agentruntime.RunRunning,
+		UserMessage: "生成汽车广告剧本", ExpectedDelivery: &delivery,
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+		ClarificationHistory: []agentruntime.CompletedClarification{{
+			Request: agentruntime.ClarificationDecision{
+				RequestID: "clarify-car-ad",
+				Questions: []agentruntime.ClarificationQuestion{{
+					ID: "duration", Prompt: "广告时长是多少？", Type: agentruntime.ClarificationSingleChoice,
+					Options: []agentruntime.ClarificationOption{{ID: "15s", Label: "15 秒"}, {ID: "30s", Label: "30 秒"}},
+				}},
+				ExpectedDelivery: delivery,
+			},
+			Answers:              []agentruntime.ClarificationAnswer{{QuestionID: "duration", SelectedOptionIDs: []string{"30s"}}},
+			CompletionQuestionID: "duration", CompletionExpectedStateVersion: 3,
+		}},
+	}
+	prompt, err := encodeAgentRuntimeModelPrompt(agentRuntimeServiceScope(), state, 11, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, prompt)
+	if len(context.ClarificationHistory) != 1 || context.ClarificationHistory[0].Request.RequestID != "clarify-car-ad" {
+		t.Fatalf("clarification history = %#v", context.ClarificationHistory)
+	}
+	if len(context.ClarificationHistory[0].Answers) != 1 || context.ClarificationHistory[0].Answers[0].SelectedOptionIDs[0] != "30s" {
+		t.Fatalf("clarification answers = %#v", context.ClarificationHistory[0].Answers)
+	}
+}
+
+func TestAgentRuntimeSystemPromptDeclaresStructuredClarificationDecision(t *testing.T) {
+	for _, required := range []string{
+		`"kind":"clarification_request"`,
+		`"requestId":"..."`,
+		`"type":"single_choice|multi_choice|free_text"`,
+		"仅当完成用户目标所需事实确实缺失时才允许追问",
+	} {
+		if !strings.Contains(agentRuntimeSystemPrompt, required) {
+			t.Fatalf("agent runtime system prompt is missing %q", required)
+		}
+	}
+}
+
 type agentRuntimePromptContextForTest struct {
-	CanvasRevision  int64                           `json:"canvasRevision"`
-	Configuration   agentruntime.RunConfiguration   `json:"configuration"`
-	LoadedSkillDirs []string                        `json:"loadedSkillDirs"`
-	ProductionPlan  *agentRuntimeProductionPlanFact `json:"productionPlan"`
-	CallableModels  []struct {
+	CanvasRevision       int64                                 `json:"canvasRevision"`
+	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
+	LoadedSkillDirs      []string                              `json:"loadedSkillDirs"`
+	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory"`
+	ProductionPlan       *agentRuntimeProductionPlanFact       `json:"productionPlan"`
+	CallableModels       []struct {
 		ChannelID             string                      `json:"channelId"`
 		Model                 string                      `json:"model"`
 		Capability            string                      `json:"capability"`
@@ -174,7 +223,7 @@ type agentRuntimePromptContextForTest struct {
 
 func decodeAgentRuntimePromptContextForTest(t *testing.T, prompt string) agentRuntimePromptContextForTest {
 	t.Helper()
-	const prefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
+	prefix := agentRuntimeModelPromptPrefix
 	if !strings.HasPrefix(prompt, prefix) {
 		t.Fatalf("agent prompt prefix is invalid: %q", prompt)
 	}

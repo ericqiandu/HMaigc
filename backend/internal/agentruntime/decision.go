@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 const modelDecisionLimit = 128 * 1024
@@ -14,8 +15,9 @@ const finalMessageLimit = 32 * 1024
 type DecisionKind string
 
 const (
-	DecisionFinal    DecisionKind = "final"
-	DecisionToolCall DecisionKind = "tool_call"
+	DecisionFinal                DecisionKind = "final"
+	DecisionToolCall             DecisionKind = "tool_call"
+	DecisionClarificationRequest DecisionKind = "clarification_request"
 )
 
 type ToolName string
@@ -37,9 +39,10 @@ func (name ToolName) Valid() bool {
 }
 
 type ModelDecision struct {
-	Kind     DecisionKind      `json:"kind"`
-	Final    *FinalDecision    `json:"final,omitempty"`
-	ToolCall *ToolCallDecision `json:"toolCall,omitempty"`
+	Kind          DecisionKind           `json:"kind"`
+	Final         *FinalDecision         `json:"final,omitempty"`
+	ToolCall      *ToolCallDecision      `json:"toolCall,omitempty"`
+	Clarification *ClarificationDecision `json:"clarification,omitempty"`
 }
 
 type FinalDecision struct {
@@ -53,6 +56,33 @@ type ToolCallDecision struct {
 	ActionVersion    int              `json:"actionVersion"`
 	Arguments        json.RawMessage  `json:"arguments"`
 	ExpectedDelivery ExpectedDelivery `json:"expectedDelivery"`
+}
+
+type ClarificationQuestionType string
+
+const (
+	ClarificationSingleChoice ClarificationQuestionType = "single_choice"
+	ClarificationMultiChoice  ClarificationQuestionType = "multi_choice"
+	ClarificationFreeText     ClarificationQuestionType = "free_text"
+)
+
+type ClarificationOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type ClarificationQuestion struct {
+	ID                string                    `json:"id"`
+	Prompt            string                    `json:"prompt"`
+	Type              ClarificationQuestionType `json:"type"`
+	Options           []ClarificationOption     `json:"options,omitempty"`
+	AllowCustomAnswer bool                      `json:"allowCustomAnswer,omitempty"`
+}
+
+type ClarificationDecision struct {
+	RequestID        string                  `json:"requestId"`
+	Questions        []ClarificationQuestion `json:"questions"`
+	ExpectedDelivery ExpectedDelivery        `json:"expectedDelivery"`
 }
 
 func ParseModelDecision(payload []byte) (ModelDecision, error) {
@@ -81,7 +111,7 @@ func ParseModelDecision(payload []byte) (ModelDecision, error) {
 func (decision ModelDecision) Validate() error {
 	switch decision.Kind {
 	case DecisionFinal:
-		if decision.Final == nil || decision.ToolCall != nil {
+		if decision.Final == nil || decision.ToolCall != nil || decision.Clarification != nil {
 			return errors.New("agent final decision payload is invalid")
 		}
 		decision.Final.Message = strings.TrimSpace(decision.Final.Message)
@@ -90,7 +120,7 @@ func (decision ModelDecision) Validate() error {
 		}
 		return decision.Final.ExpectedDelivery.Validate()
 	case DecisionToolCall:
-		if decision.ToolCall == nil || decision.Final != nil {
+		if decision.ToolCall == nil || decision.Final != nil || decision.Clarification != nil {
 			return errors.New("agent tool decision payload is invalid")
 		}
 		call := decision.ToolCall
@@ -111,7 +141,73 @@ func (decision ModelDecision) Validate() error {
 		}
 		call.Arguments = append(call.Arguments[:0], compact.Bytes()...)
 		return nil
+	case DecisionClarificationRequest:
+		if decision.Clarification == nil || decision.Final != nil || decision.ToolCall != nil {
+			return errors.New("agent clarification decision payload is invalid")
+		}
+		return decision.Clarification.Validate()
 	default:
 		return errors.New("agent model decision kind is invalid")
 	}
+}
+
+func (decision *ClarificationDecision) Validate() error {
+	decision.RequestID = strings.TrimSpace(decision.RequestID)
+	if !boundedDecisionText(decision.RequestID, 120) || len(decision.Questions) < 1 || len(decision.Questions) > 3 {
+		return errors.New("agent clarification identity is invalid")
+	}
+	if err := decision.ExpectedDelivery.Validate(); err != nil {
+		return err
+	}
+	questionIDs := make(map[string]struct{}, len(decision.Questions))
+	for index := range decision.Questions {
+		question := &decision.Questions[index]
+		question.ID = strings.TrimSpace(question.ID)
+		question.Prompt = strings.TrimSpace(question.Prompt)
+		if !boundedDecisionText(question.ID, 120) || !boundedDecisionText(question.Prompt, 240) {
+			return errors.New("agent clarification question is invalid")
+		}
+		if _, exists := questionIDs[question.ID]; exists {
+			return errors.New("agent clarification question identity is duplicated")
+		}
+		questionIDs[question.ID] = struct{}{}
+		if err := question.validateOptions(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (question *ClarificationQuestion) validateOptions() error {
+	switch question.Type {
+	case ClarificationSingleChoice, ClarificationMultiChoice:
+		if len(question.Options) < 2 || len(question.Options) > 6 {
+			return errors.New("agent clarification choice options are invalid")
+		}
+	case ClarificationFreeText:
+		if len(question.Options) != 0 || question.AllowCustomAnswer {
+			return errors.New("agent clarification free text options are invalid")
+		}
+		return nil
+	default:
+		return errors.New("agent clarification question type is invalid")
+	}
+	optionIDs := make(map[string]struct{}, len(question.Options))
+	for index := range question.Options {
+		option := &question.Options[index]
+		option.ID = strings.TrimSpace(option.ID)
+		option.Label = strings.TrimSpace(option.Label)
+		if !boundedDecisionText(option.ID, 120) || !boundedDecisionText(option.Label, 80) {
+			return errors.New("agent clarification option is invalid")
+		}
+		if _, exists := optionIDs[option.ID]; exists {
+			return errors.New("agent clarification option identity is duplicated")
+		}
+		optionIDs[option.ID] = struct{}{}
+	}
+	return nil
+}
+
+func boundedDecisionText(value string, limit int) bool {
+	return value != "" && utf8.ValidString(value) && utf8.RuneCountInString(value) <= limit
 }

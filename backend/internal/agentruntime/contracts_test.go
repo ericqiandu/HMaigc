@@ -87,6 +87,7 @@ func TestRuntimeStatusSetsRejectUnknownValues(t *testing.T) {
 	for _, status := range []agentruntime.RunStatus{
 		agentruntime.RunQueued,
 		agentruntime.RunRunning,
+		agentruntime.RunWaitingInput,
 		agentruntime.RunWaitingApproval,
 		agentruntime.RunWaitingTool,
 		agentruntime.RunSucceeded,
@@ -135,6 +136,9 @@ func TestEventKindSetRejectsUnknownValues(t *testing.T) {
 		agentruntime.EventRunStatusChanged,
 		agentruntime.EventModelDelta,
 		agentruntime.EventModelRejected,
+		agentruntime.EventClarificationRequested,
+		agentruntime.EventClarificationAnswerSaved,
+		agentruntime.EventClarificationResponded,
 		agentruntime.EventToolCall,
 		agentruntime.EventApprovalRequired,
 		agentruntime.EventApprovalDecided,

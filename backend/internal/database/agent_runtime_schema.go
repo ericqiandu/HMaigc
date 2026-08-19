@@ -348,6 +348,7 @@ func rejectIncompatibleActiveAgentRuns(db *gorm.DB) error {
 	activeStatuses := []agentruntime.RunStatus{
 		agentruntime.RunQueued,
 		agentruntime.RunRunning,
+		agentruntime.RunWaitingInput,
 		agentruntime.RunWaitingApproval,
 		agentruntime.RunWaitingTool,
 	}

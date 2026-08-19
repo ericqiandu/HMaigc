@@ -95,6 +95,9 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	if loaded.StateVersion != 1 || loaded.StepNumber != 0 || loaded.Status != agentruntime.RunQueued || loaded.UserMessage != input.UserMessage {
 		t.Fatalf("initial checkpoint = %#v", loaded)
 	}
+	if loaded.ClarificationHistory == nil {
+		t.Fatal("clarification history must serialize as an explicit empty array")
+	}
 	history, err := repo.AgentThreadHistory(scope, 1)
 	if err != nil {
 		t.Fatal(err)

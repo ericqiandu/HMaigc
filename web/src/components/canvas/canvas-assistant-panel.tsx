@@ -17,7 +17,8 @@ import { AgentChatComposer } from "./canvas-agent-chat-ui";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
-import { useAgentRuntime } from "./use-agent-runtime";
+import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
+import { agentRuntimeStatusLabel, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 240;
@@ -44,6 +45,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
     const [draft, setDraft] = useState(createEmptyCanvasAgentDraft);
     const [configurationError, setConfigurationError] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
+    const [clarificationHistoryOpen, setClarificationHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
     const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage });
     const active = Boolean(runtime.view && !runtime.terminal);
@@ -212,7 +214,11 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                     ) : (
                         <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />
                     )}
-                    {runtime.error || configurationError ? (
+                    {!historyOpen && runtime.view?.state.clarificationHistory.length ? (
+                        <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} />
+                    ) : null}
+                    {!historyOpen && runtime.view?.state.status === "waiting_input" ? <AgentClarificationStatus /> : null}
+                    {(runtime.error && runtime.view?.state.status !== "waiting_input") || configurationError ? (
                         <div className="canvas-agent-runtime-error" role="alert">
                             <CircleAlert className="canvas-agent-runtime-error-icon" />
                             <div className="canvas-agent-runtime-error-content">
@@ -224,6 +230,12 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                         <AgentApprovalCard state={runtime.view.state} busy={runtime.busy} muted={theme.node.muted} onDecision={(decision) => void runtime.decideApproval(decision)} />
                     ) : null}
                 </section>
+
+                <div className="canvas-agent-runtime-interaction">
+                    {!historyOpen && runtime.view?.state.status === "waiting_input" && runtime.view.state.pendingClarification ? (
+                        <AgentClarificationPanel pending={runtime.view.state.pendingClarification} history={[]} busy={runtime.busy} error={runtime.error} onRespond={runtime.submitClarificationResponse} />
+                    ) : null}
+                </div>
 
                 <AgentChatComposer
                     prompt={prompt}
@@ -324,7 +336,7 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
 }
 
 function AgentRunContent({ state, events, connection, muted }: { state: AgentRuntimeState; events: AgentRuntimeEvent[]; connection: string; muted: string }) {
-    const status = runtimeStatus(state.status);
+    const status = agentRuntimeStatusLabel(state.status);
     const lastEvents = useMemo(() => events.slice(-8), [events]);
     return (
         <div className="canvas-agent-runtime-run">
@@ -429,9 +441,6 @@ function ToolResult({ state, muted }: { state: AgentRuntimeState; muted: string 
 function isTerminal(status: AgentRuntimeState["status"]) {
     return status === "succeeded" || status === "failed" || status === "cancelled";
 }
-function runtimeStatus(status: AgentRuntimeState["status"]) {
-    return ({ queued: "已排队", running: "正在执行", waiting_approval: "等待确认", waiting_tool: "正在调用工具", succeeded: "已完成", failed: "已失败", cancelled: "已取消" } satisfies Record<AgentRuntimeState["status"], string>)[status];
-}
 function eventLabel(kind: AgentRuntimeEvent["kind"]) {
     return (
         {
@@ -439,6 +448,9 @@ function eventLabel(kind: AgentRuntimeEvent["kind"]) {
             "run.status_changed": "运行状态更新",
             "model.delta": "模型输出已持久化",
             "model.rejected": "模型决策正在自修",
+            "clarification.requested": "Agent 发起询问",
+            "clarification.answer_saved": "回答已保存",
+            "clarification.responded": "询问已完成",
             "tool.call": "工具调用已冻结",
             "approval.required": "需要用户确认",
             "approval.decided": "审批已记录",

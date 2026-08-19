@@ -133,6 +133,7 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
             calls.push(`approval:${input.decision}:${input.toolCallId}:${input.actionVersion}`);
             return completedView;
         },
+        submitClarificationResponse: async () => completedView,
         subscribe: () => () => undefined,
     };
     await mount(client);
@@ -176,6 +177,7 @@ test("刷新时从持久句柄恢复运行并从已确认游标续接事件", as
             return runningView;
         },
         submitApproval: async () => runningView,
+        submitClarificationResponse: async () => runningView,
         subscribe: (_runId, afterSequence) => {
             calls.push(`subscribe:${afterSequence}`);
             return () => undefined;
@@ -203,6 +205,7 @@ test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () 
         },
         getRun: async () => runningView,
         submitApproval: async () => runningView,
+        submitClarificationResponse: async () => runningView,
         subscribe: () => () => undefined,
     };
     await mount(client, storage);
@@ -232,6 +235,7 @@ test("启动恢复再次失败时还原原指令并允许复用同一请求身�
         },
         getRun: async () => completedView,
         submitApproval: async () => completedView,
+        submitClarificationResponse: async () => completedView,
         subscribe: () => () => undefined,
     };
     await mount(client, storage);
@@ -258,6 +262,7 @@ test("切换画布时先清空上一画布的运行事实", async () => {
         startRun: async () => oldView,
         getRun: async () => oldView,
         submitApproval: async () => oldView,
+        submitClarificationResponse: async () => oldView,
         subscribe: () => () => undefined,
     };
     const host = document.createElement("div");
@@ -300,6 +305,7 @@ test("首页已确认的创作请求只提交一次并在成功后消费", async
         },
         getRun: async () => completedView,
         submitApproval: async () => completedView,
+        submitClarificationResponse: async () => completedView,
         subscribe: () => () => undefined,
     };
     await mount(client, undefined, {
@@ -414,6 +420,36 @@ test("新运行启动后刷新历史且刷新失败不污染运行状态", async
     expect(document.body.textContent).toContain("历史刷新失败");
 });
 
+test("询问状态在输入框上方显示结构化卡片并保留运行配置入口", async () => {
+    const waiting = runtimeView("waiting_input", {
+        stateVersion: 4,
+        expectedDelivery: answerDelivery(),
+        pendingClarification: {
+            request: {
+                requestId: "clarification-1",
+                expectedDelivery: answerDelivery(),
+                questions: [{ id: "question-1", prompt: "广告时长大概多长？", type: "single_choice", options: [{ id: "15s", label: "15 秒" }, { id: "30s", label: "30 秒" }], allowCustomAnswer: false }],
+            },
+            answers: [],
+        },
+    });
+    const client = runtimeClient({ listThreads: async () => ({ items: [historyItem("thread-1", waiting, "2026-08-15T04:00:00Z")] }) });
+    await mount(client);
+
+    expect(document.body.textContent).toContain("询问中");
+    expect(document.body.textContent).not.toContain("正在执行");
+    expect(document.body.textContent).toContain("广告时长大概多长？");
+    expect(document.querySelector(".agent-clarification-section")).not.toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-interaction > .agent-clarification-section")).not.toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-content .agent-clarification-section")).toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-content > .agent-clarification-live")).not.toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-interaction .agent-clarification-live")).toBeNull();
+    expect(button("选择模型")).not.toBeNull();
+    expect(button("Skills")).not.toBeNull();
+    expect(button("生成模式")).not.toBeNull();
+    expect(document.querySelector<HTMLTextAreaElement>(".canvas-agent-composer-textarea")?.disabled).toBe(true);
+});
+
 async function mount(client: AgentRuntimeClient, storage?: AgentRuntimeHandleStorage, extra: Record<string, unknown> = {}) {
     const host = document.createElement("div");
     document.body.append(host);
@@ -448,6 +484,7 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], patch: Partial
         stepNumber: 1,
         maxSteps: 8,
         status,
+        clarificationHistory: [],
         userMessage: "整理当前画布",
         configuration: { generationModels: {}, skills: [], attachments: [], executionMode: "guided" },
         ...(status === "succeeded"
@@ -528,6 +565,7 @@ function runtimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntimeCli
         startRun: async () => running,
         getRun: async () => running,
         submitApproval: async () => running,
+        submitClarificationResponse: async () => running,
         subscribe: () => () => undefined,
         ...patch,
     };

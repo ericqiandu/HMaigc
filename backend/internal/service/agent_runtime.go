@@ -60,21 +60,22 @@ type agentRuntimeModelTaskInput struct {
 }
 
 type agentRuntimeModelContext struct {
-	RunID            string                              `json:"runId"`
-	CanvasID         string                              `json:"canvasId"`
-	CanvasRevision   int64                               `json:"canvasRevision"`
-	StepNumber       int                                 `json:"stepNumber"`
-	MaxSteps         int                                 `json:"maxSteps"`
-	UserMessage      string                              `json:"userMessage"`
-	ExpectedDelivery *agentruntime.ExpectedDelivery      `json:"expectedDelivery,omitempty"`
-	Verification     *agentruntime.DeliveryVerification  `json:"deliveryVerification,omitempty"`
-	LastToolResult   *agentruntime.ToolResult            `json:"lastToolResult,omitempty"`
-	DecisionFeedback *agentruntime.ModelDecisionFeedback `json:"decisionFeedback,omitempty"`
-	PreviousMessage  string                              `json:"previousMessage,omitempty"`
-	Configuration    agentruntime.RunConfiguration       `json:"configuration"`
-	LoadedSkillDirs  []string                            `json:"loadedSkillDirs,omitempty"`
-	CallableModels   []agentRuntimeCallableModelFact     `json:"callableModels"`
-	ProductionPlan   *agentRuntimeProductionPlanFact     `json:"productionPlan,omitempty"`
+	RunID                string                                `json:"runId"`
+	CanvasID             string                                `json:"canvasId"`
+	CanvasRevision       int64                                 `json:"canvasRevision"`
+	StepNumber           int                                   `json:"stepNumber"`
+	MaxSteps             int                                   `json:"maxSteps"`
+	UserMessage          string                                `json:"userMessage"`
+	ExpectedDelivery     *agentruntime.ExpectedDelivery        `json:"expectedDelivery,omitempty"`
+	Verification         *agentruntime.DeliveryVerification    `json:"deliveryVerification,omitempty"`
+	LastToolResult       *agentruntime.ToolResult              `json:"lastToolResult,omitempty"`
+	DecisionFeedback     *agentruntime.ModelDecisionFeedback   `json:"decisionFeedback,omitempty"`
+	PreviousMessage      string                                `json:"previousMessage,omitempty"`
+	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
+	LoadedSkillDirs      []string                              `json:"loadedSkillDirs,omitempty"`
+	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory,omitempty"`
+	CallableModels       []agentRuntimeCallableModelFact       `json:"callableModels"`
+	ProductionPlan       *agentRuntimeProductionPlanFact       `json:"productionPlan,omitempty"`
 }
 
 func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntimeProgress, error) {
@@ -126,7 +127,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 		return nil, errors.New("agent runtime request facts conflict")
 	}
 	switch state.Status {
-	case agentruntime.RunSucceeded, agentruntime.RunFailed, agentruntime.RunCancelled, agentruntime.RunWaitingApproval, agentruntime.RunWaitingTool:
+	case agentruntime.RunSucceeded, agentruntime.RunFailed, agentruntime.RunCancelled, agentruntime.RunWaitingInput, agentruntime.RunWaitingApproval, agentruntime.RunWaitingTool:
 		return &AgentRuntimeProgress{Run: run, State: state}, nil
 	case agentruntime.RunQueued, agentruntime.RunRunning:
 	default:
@@ -157,7 +158,7 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 	if err != nil {
 		return nil, err
 	}
-	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled || state.Status == agentruntime.RunWaitingApproval || state.Status == agentruntime.RunWaitingTool {
+	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled || state.Status == agentruntime.RunWaitingInput || state.Status == agentruntime.RunWaitingApproval || state.Status == agentruntime.RunWaitingTool {
 		return &AgentRuntimeProgress{Run: *run, State: state}, nil
 	}
 	taskID := agentRuntimeModelTaskID(scope.RunID, state.StepNumber)
@@ -548,7 +549,9 @@ func agentRuntimeBillingKey(runID string, step int) string {
 const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基于真实运行事实自主理解用户意图，不使用固定工作流或默认路由。
 你每次只能返回一个 JSON 对象，禁止 Markdown 和额外文本：
 1. 直接交付示例：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
-2. 调用工具示例：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"skill.load|production.plan|production.render|canvas.commit","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"mixed","targetCanvasId":"...","requiredArtifacts":["image","video","canvas_revision"],"completionCriteria":[{"fact":"final_message"},{"fact":"canvas_revision"},{"fact":"artifact","artifact":"image"},{"fact":"artifact","artifact":"video"}]}}}
+2. 结构化追问示例：{"kind":"clarification_request","clarification":{"requestId":"...","questions":[{"id":"...","prompt":"...","type":"single_choice|multi_choice|free_text","options":[{"id":"...","label":"..."}],"allowCustomAnswer":false}],"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+3. 调用工具示例：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"skill.load|production.plan|production.render|canvas.commit","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"mixed","targetCanvasId":"...","requiredArtifacts":["image","video","canvas_revision"],"completionCriteria":[{"fact":"final_message"},{"fact":"canvas_revision"},{"fact":"artifact","artifact":"image"},{"fact":"artifact","artifact":"video"}]}}}
+仅当完成用户目标所需事实确实缺失时才允许追问；每次 1 至 3 个问题。single_choice 与 multi_choice 必须提供 2 至 6 个 options，free_text 必须省略 options 且 allowCustomAnswer=false。每个新的 requestId 必须唯一；用户已完成的问答会出现在 clarificationHistory 中，必须把它们作为真实事实继续执行，禁止重复询问已回答的问题。
 expectedDelivery 的 completionCriteria 只允许三种精确结构：{"fact":"final_message"}、{"fact":"canvas_revision"}、{"fact":"artifact","artifact":"image|video|audio|text|canvas_revision"}。fact 为 final_message 或 canvas_revision 时必须省略 artifact；只有 fact 为 artifact 时才必须提供 artifact。禁止给未声明字段或把联合候选字符串作为实际值。
 首次决策必须根据用户目标声明 expectedDelivery；Runtime 会立即冻结该合同。之后每个工具调用与 final 都必须逐字段复用同一 expectedDelivery，禁止在工具失败、审批拒绝或证据不足后把资产/画布交付降级成文字回答。
 每次新的工具调用必须使用从未出现过的 toolCallId；包括重试同一个工具时也必须生成新的 toolCallId，禁止复用历史 toolCallId + actionVersion。

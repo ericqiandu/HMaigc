@@ -129,3 +129,41 @@ func TestAdvanceAgentRunExecutesFreeSkillOnceAndCreatesOneNextModelTask(t *testi
 		t.Fatalf("coordinator skill side effects: tasks=%d tools=%d modelCalls=%d", taskCount, toolCount, calls.Load())
 	}
 }
+
+func TestAdvanceAgentRunPausesAtStructuredClarification(t *testing.T) {
+	decision := `{"kind":"clarification_request","clarification":{"requestId":"clarify-ad","questions":[{"id":"duration","prompt":"广告时长是多少？","type":"single_choice","options":[{"id":"15s","label":"15 秒"},{"id":"30s","label":"30 秒"}]}],"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	server, calls := newAgentRuntimeDecisionServer(t, decision)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "coordinator-clarification", UserMessage: "生成汽车广告剧本",
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.advanceAgentRun(scope, agentWakeModelTaskFinished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunWaitingInput || progress.State.PendingClarification == nil || progress.ModelTask != nil {
+		t.Fatalf("clarification progress = %#v", progress)
+	}
+	if progress.Run.ID != started.Run.ID {
+		t.Fatalf("clarification run = %q, want %q", progress.Run.ID, started.Run.ID)
+	}
+	if progress.State.PendingClarification.Request.RequestID != "clarify-ad" || calls.Load() != 1 {
+		t.Fatalf("clarification facts = %#v, calls = %d", progress.State.PendingClarification, calls.Load())
+	}
+	var taskCount int64
+	if err := db.Model(&model.Task{}).Where("user_id = ? AND type = ?", scope.ActorUserID, agentRuntimeModelTaskType).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("clarification created %d model tasks, want 1", taskCount)
+	}
+}

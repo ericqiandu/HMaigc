@@ -11,7 +11,7 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-const agentRuntimeModelPromptPrefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
+const agentRuntimeModelPromptPrefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付、发起结构化追问或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
 
 type agentRuntimeCallableModelFact struct {
 	ChannelID             string                        `json:"channelId"`
@@ -131,7 +131,7 @@ func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
 		Verification: state.Verification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
 		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableModels: models,
-		ProductionPlan: productionPlan,
+		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), ProductionPlan: productionPlan,
 	}
 	encoded, err := json.Marshal(context)
 	if err != nil {

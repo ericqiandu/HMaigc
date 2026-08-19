@@ -7,6 +7,7 @@ const state = {
     stepNumber: 1,
     maxSteps: 8,
     status: "waiting_approval",
+    clarificationHistory: [],
     pendingToolCall: {
         toolCallId: "tool-1",
         toolName: "production.render",
@@ -74,10 +75,10 @@ test.each(["skill.load", "production.plan", "production.render", "canvas.commit"
 });
 
 test("模型决策拒绝事件保留结构化自修事实", () => {
+    const { pendingToolCall: _pendingToolCall, ...stateWithoutPendingTool } = state;
     const repairState = {
-        ...state,
+        ...stateWithoutPendingTool,
         status: "running",
-        pendingToolCall: undefined,
         decisionFeedback: { code: "model_decision_invalid", reason: "answer delivery facts are inconsistent" },
     };
     expect(
@@ -90,11 +91,22 @@ test("模型决策拒绝事件保留结构化自修事实", () => {
     ).toEqual({ sequence: 5, kind: "model.rejected", payload: repairState, createdAt: "2026-08-15T00:00:02Z" });
 });
 
+test.each(["required_skill_not_loaded", "clarification_identity_reused"])("Agent Runtime DTO 接受后端自修反馈 %s", (code) => {
+    const { pendingToolCall: _pendingToolCall, ...stateWithoutPendingTool } = state;
+    const parsed = parseAgentRuntimeView({
+        ...view,
+        run: { ...view.run, status: "running" },
+        state: { ...stateWithoutPendingTool, status: "running", decisionFeedback: { code, reason: "repair required" } },
+    });
+
+    expect(parsed.state.decisionFeedback?.code).toBe(code);
+});
+
 test("交付合同漂移事件保留冻结合同修复事实", () => {
+    const { pendingToolCall: _pendingToolCall, ...stateWithoutPendingTool } = state;
     const repairState = {
-        ...state,
+        ...stateWithoutPendingTool,
         status: "running",
-        pendingToolCall: undefined,
         expectedDelivery: {
             kind: "generated_asset",
             requiredArtifacts: ["image"],
@@ -221,6 +233,151 @@ test("会话历史客户端编码画布标识并使用显式 limit", async () =>
     try {
         const parsed = await agentRuntimeClient.listThreads("canvas / 1", 7);
         expect(parsed.items).toHaveLength(2);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+const clarificationRequest = {
+    requestId: "vehicle-ad-brief",
+    questions: [
+        {
+            id: "style",
+            prompt: "广告的核心风格是什么？",
+            type: "multi_choice",
+            options: [
+                { id: "luxury", label: "豪华感" },
+                { id: "performance", label: "性能激情" },
+            ],
+            allowCustomAnswer: true,
+        },
+        { id: "brand", prompt: "车型与品牌是什么？", type: "free_text" },
+    ],
+    expectedDelivery: { kind: "answer", completionCriteria: [{ fact: "final_message" }] },
+};
+
+const waitingInputState = {
+    ...state,
+    status: "waiting_input",
+    pendingToolCall: undefined,
+    expectedDelivery: clarificationRequest.expectedDelivery,
+    pendingClarification: {
+        request: clarificationRequest,
+        answers: [{ questionId: "style", selectedOptionIds: ["luxury"], customText: "都市夜景", skipped: false }],
+    },
+    clarificationHistory: [
+        {
+            request: { ...clarificationRequest, requestId: "earlier-brief", questions: [clarificationRequest.questions[1]] },
+            answers: [{ questionId: "brand", selectedOptionIds: [], customText: "BMW X5", skipped: false }],
+            completionQuestionId: "brand",
+            completionExpectedStateVersion: 2,
+        },
+    ],
+};
+
+test("结构化追问 DTO 保留 pending、历史与三类持久事件", () => {
+    const parsed = parseAgentRuntimeView({
+        ...view,
+        run: { ...view.run, status: "waiting_input" },
+        state: waitingInputState,
+    });
+    expect(parsed.state.pendingClarification?.request.questions[0]?.options.map((option) => option.id)).toEqual(["luxury", "performance"]);
+    expect(parsed.state.pendingClarification?.answers[0]?.customText).toBe("都市夜景");
+    expect(parsed.state.clarificationHistory[0]?.answers[0]?.customText).toBe("BMW X5");
+    for (const kind of ["clarification.requested", "clarification.answer_saved", "clarification.responded"] as const) {
+        expect(parseAgentRuntimeEvent({ sequence: 7, kind, payload: waitingInputState, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
+    }
+});
+
+test("结构化追问 DTO 拒绝未知类型、重复身份、非法答案和未知字段", () => {
+    const parseWaiting = (pendingClarification: unknown) =>
+        parseAgentRuntimeView({
+            ...view,
+            run: { ...view.run, status: "waiting_input" },
+            state: { ...waitingInputState, pendingClarification },
+        });
+    expect(() =>
+        parseWaiting({
+            request: { ...clarificationRequest, questions: [{ ...clarificationRequest.questions[0], type: "ranking" }] },
+            answers: [],
+        }),
+    ).toThrow("问题类型");
+    expect(() =>
+        parseWaiting({
+            request: { ...clarificationRequest, questions: [clarificationRequest.questions[0], clarificationRequest.questions[0]] },
+            answers: [],
+        }),
+    ).toThrow("重复");
+    expect(() =>
+        parseWaiting({
+            request: clarificationRequest,
+            answers: [{ questionId: "style", selectedOptionIds: ["unknown"], customText: "", skipped: false }],
+        }),
+    ).toThrow("选项");
+    expect(() =>
+        parseWaiting({
+            request: { ...clarificationRequest, questions: [{ ...clarificationRequest.questions[0], debug: true }] },
+            answers: [],
+        }),
+    ).toThrow("未知字段");
+    expect(() =>
+        parseWaiting({
+            request: clarificationRequest,
+        }),
+    ).toThrow("answers");
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            state: { ...view.state, clarificationHistory: undefined },
+        }),
+    ).toThrow("clarificationHistory");
+});
+
+test("waiting_input 与 pending clarification 必须保持一致", () => {
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            run: { ...view.run, status: "waiting_input" },
+            state: { ...waitingInputState, pendingClarification: undefined },
+        }),
+    ).toThrow("追问");
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            run: { ...view.run, status: "running" },
+            state: { ...waitingInputState, status: "running" },
+        }),
+    ).toThrow("追问");
+});
+
+test("追问回答客户端编码路径并保留 409 结构化错误", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = (async (input, init) => {
+        requestCount += 1;
+        expect(String(input)).toEndWith("/agent/runs/run%20%2F1/clarifications/request%20%2F1/responses");
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({
+            expectedStateVersion: 4,
+            questionId: "style",
+            answer: { selectedOptionIds: ["luxury"], customText: "", skipped: false },
+            complete: false,
+        });
+        return new Response(
+            JSON.stringify({ code: 409, data: { errorCode: "agent_clarification_conflict", latestStateVersion: 5 }, msg: "问题已更新" }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+        );
+    }) as typeof fetch;
+    try {
+        await expect(
+            agentRuntimeClient.submitClarificationResponse("run /1", "request /1", {
+                expectedStateVersion: 4,
+                questionId: "style",
+                answer: { selectedOptionIds: ["luxury"], customText: "", skipped: false },
+                complete: false,
+            }),
+        ).rejects.toEqual(expect.objectContaining({ name: "AgentRuntimeRequestError", status: 409, code: "agent_clarification_conflict", latestStateVersion: 5 }));
+        expect(requestCount).toBe(1);
     } finally {
         globalThis.fetch = originalFetch;
     }

@@ -12,21 +12,23 @@ import (
 const maxRuntimeSteps = 24
 
 type RuntimeState struct {
-	StateVersion       int                    `json:"stateVersion"`
-	StepNumber         int                    `json:"stepNumber"`
-	MaxSteps           int                    `json:"maxSteps"`
-	Status             RunStatus              `json:"status"`
-	ExpectedDelivery   *ExpectedDelivery      `json:"expectedDelivery,omitempty"`
-	Verification       *DeliveryVerification  `json:"verification,omitempty"`
-	PendingToolCall    *ToolCallDecision      `json:"pendingToolCall,omitempty"`
-	PendingToolStarted bool                   `json:"pendingToolStarted,omitempty"`
-	LastToolResult     *ToolResult            `json:"lastToolResult,omitempty"`
-	DecisionFeedback   *ModelDecisionFeedback `json:"decisionFeedback,omitempty"`
-	FinalMessage       string                 `json:"finalMessage,omitempty"`
-	FailureCode        string                 `json:"failureCode,omitempty"`
-	UserMessage        string                 `json:"userMessage"`
-	Configuration      RunConfiguration       `json:"configuration"`
-	LoadedSkillDirs    []string               `json:"loadedSkillDirs,omitempty"`
+	StateVersion         int                      `json:"stateVersion"`
+	StepNumber           int                      `json:"stepNumber"`
+	MaxSteps             int                      `json:"maxSteps"`
+	Status               RunStatus                `json:"status"`
+	ExpectedDelivery     *ExpectedDelivery        `json:"expectedDelivery,omitempty"`
+	Verification         *DeliveryVerification    `json:"verification,omitempty"`
+	PendingToolCall      *ToolCallDecision        `json:"pendingToolCall,omitempty"`
+	PendingToolStarted   bool                     `json:"pendingToolStarted,omitempty"`
+	PendingClarification *PendingClarification    `json:"pendingClarification,omitempty"`
+	ClarificationHistory []CompletedClarification `json:"clarificationHistory"`
+	LastToolResult       *ToolResult              `json:"lastToolResult,omitempty"`
+	DecisionFeedback     *ModelDecisionFeedback   `json:"decisionFeedback,omitempty"`
+	FinalMessage         string                   `json:"finalMessage,omitempty"`
+	FailureCode          string                   `json:"failureCode,omitempty"`
+	UserMessage          string                   `json:"userMessage"`
+	Configuration        RunConfiguration         `json:"configuration"`
+	LoadedSkillDirs      []string                 `json:"loadedSkillDirs,omitempty"`
 }
 
 type GenerationModelSelection struct {
@@ -166,6 +168,7 @@ func Terminate(current RuntimeState, failureCode string) (RuntimeTransition, err
 	}
 	next.PendingToolCall = nil
 	next.PendingToolStarted = false
+	next.PendingClarification = nil
 	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
 }
 
@@ -179,6 +182,8 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	var decisionExpected ExpectedDelivery
 	if input.Decision.ToolCall != nil {
 		decisionExpected = input.Decision.ToolCall.ExpectedDelivery
+	} else if input.Decision.Clarification != nil {
+		decisionExpected = input.Decision.Clarification.ExpectedDelivery
 	} else {
 		decisionExpected = input.Decision.Final.ExpectedDelivery
 	}
@@ -211,6 +216,28 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	next.DecisionFeedback = nil
 	next.Verification = nil
 	next.FailureCode = ""
+	next.PendingClarification = nil
+
+	if input.Decision.Kind == DecisionClarificationRequest {
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+		}
+		if _, reused := completedClarificationByRequestID(next.ClarificationHistory, input.Decision.Clarification.RequestID); reused {
+			next.Status = RunRunning
+			next.DecisionFeedback = &ModelDecisionFeedback{
+				Code: "clarification_identity_reused", Reason: "clarification requestId was already completed and must not be reused",
+			}
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventModelRejected, EventRunStatusChanged}}, nil
+		}
+		next.Status = RunWaitingInput
+		next.PendingClarification = &PendingClarification{
+			Request: cloneClarificationDecision(*input.Decision.Clarification),
+			Answers: []ClarificationAnswer{},
+		}
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventClarificationRequested, EventRunStatusChanged}}, nil
+	}
 
 	if input.Decision.Kind == DecisionToolCall {
 		if next.StepNumber >= next.MaxSteps {
@@ -471,8 +498,14 @@ func validateRuntimeState(state RuntimeState) error {
 	if state.StateVersion < 1 || state.StepNumber < 0 || state.MaxSteps < 1 || state.MaxSteps > maxRuntimeSteps || state.StepNumber > state.MaxSteps {
 		return errors.New("agent runtime state boundary is invalid")
 	}
+	if !state.Status.Valid() {
+		return errors.New("agent runtime status is invalid")
+	}
 	if state.PendingToolStarted && (state.Status != RunWaitingTool || state.PendingToolCall == nil) {
 		return errors.New("agent runtime tool execution state is invalid")
+	}
+	if err := validateClarificationState(state); err != nil {
+		return err
 	}
 	if strings.TrimSpace(state.UserMessage) == "" || len(state.UserMessage) > 64*1024 {
 		return errors.New("agent runtime user message is invalid")
@@ -500,7 +533,43 @@ func validateRuntimeState(state RuntimeState) error {
 }
 
 func validModelDecisionFeedbackCode(code string) bool {
-	return code == "model_decision_invalid" || code == "delivery_contract_changed" || code == "required_skill_not_loaded"
+	return code == "model_decision_invalid" || code == "delivery_contract_changed" || code == "required_skill_not_loaded" || code == "clarification_identity_reused"
+}
+
+func validateClarificationState(state RuntimeState) error {
+	if state.Status == RunWaitingInput {
+		if state.PendingClarification == nil || state.PendingToolCall != nil || state.PendingToolStarted {
+			return errors.New("agent runtime clarification state is invalid")
+		}
+	} else if state.PendingClarification != nil {
+		return errors.New("agent runtime clarification state is invalid")
+	}
+	requestIDs := make(map[string]struct{}, len(state.ClarificationHistory))
+	for _, completed := range state.ClarificationHistory {
+		if err := validateCompletedClarification(completed); err != nil {
+			return err
+		}
+		if _, duplicated := requestIDs[completed.Request.RequestID]; duplicated {
+			return errors.New("agent runtime clarification history is duplicated")
+		}
+		requestIDs[completed.Request.RequestID] = struct{}{}
+		if state.ExpectedDelivery == nil || !state.ExpectedDelivery.Equal(completed.Request.ExpectedDelivery) {
+			return errors.New("agent runtime clarification delivery contract is invalid")
+		}
+	}
+	if state.PendingClarification != nil {
+		pending := state.PendingClarification
+		if err := validateClarificationRecord(pending.Request, pending.Answers, false); err != nil {
+			return err
+		}
+		if _, reused := requestIDs[pending.Request.RequestID]; reused {
+			return errors.New("agent runtime clarification identity is reused")
+		}
+		if state.ExpectedDelivery == nil || !state.ExpectedDelivery.Equal(pending.Request.ExpectedDelivery) {
+			return errors.New("agent runtime clarification delivery contract is invalid")
+		}
+	}
+	return nil
 }
 
 type resolvedSkillLoad struct {

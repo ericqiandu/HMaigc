@@ -4,6 +4,8 @@ import { nanoid } from "nanoid";
 import {
     agentRuntimeClient,
     agentRuntimeHandleStorage,
+    AgentRuntimeRequestError,
+    type AgentClarificationAnswerInput,
     type AgentRuntimeClient,
     type AgentRuntimeEvent,
     type AgentRuntimeHandle,
@@ -14,6 +16,21 @@ import {
 } from "@/services/api/agent-runtime";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
+
+const statusLabels: Record<AgentRuntimeView["state"]["status"], string> = {
+    queued: "准备中",
+    running: "思考中",
+    waiting_input: "询问中",
+    waiting_approval: "等待确认",
+    waiting_tool: "执行中",
+    succeeded: "已完成",
+    failed: "已失败",
+    cancelled: "已取消",
+};
+
+export function agentRuntimeStatusLabel(status: AgentRuntimeView["state"]["status"]) {
+    return statusLabels[status];
+}
 
 type UseAgentRuntimeInput = {
     canvasId: string;
@@ -250,6 +267,42 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         [adoptView, busy, client, view],
     );
 
+    const submitClarificationResponse = useCallback(
+        async (input: { requestId: string; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => {
+            const pending = view?.state.status === "waiting_input" ? view.state.pendingClarification : undefined;
+            if (!view || !pending) throw new Error("当前 Agent 运行未处于询问状态");
+            if (pending.request.requestId !== input.requestId) throw new Error("当前问题身份已更新，请核对后重试");
+            if (busy) return false;
+            setBusy(true);
+            setError("");
+            try {
+                const next = await client.submitClarificationResponse(view.run.id, pending.request.requestId, {
+                    expectedStateVersion: view.state.stateVersion,
+                    questionId: input.questionId,
+                    answer: input.answer,
+                    complete: input.complete,
+                });
+                adoptView(next);
+                return true;
+            } catch (cause) {
+                if (cause instanceof AgentRuntimeRequestError && cause.status === 409) {
+                    try {
+                        adoptView(await client.getRun(view.run.id));
+                        setError("问题已在其他页面更新，请核对后重试");
+                    } catch (refreshCause) {
+                        setError(errorMessage(refreshCause, "追问状态刷新失败，请重新打开当前会话"));
+                    }
+                    return false;
+                }
+                setError(errorMessage(cause, "追问回答提交失败"));
+                return false;
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, busy, client, view],
+    );
+
     const newThread = useCallback(async () => {
         if (view && !terminalStatuses.has(view.state.status)) return;
         await storage.clear(canvasId);
@@ -281,6 +334,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             pendingUserMessage,
             pendingConfiguration,
             submit,
+            submitClarificationResponse,
             decideApproval,
             newThread,
             selectThread,
@@ -301,6 +355,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             restored,
             selectThread,
             submit,
+            submitClarificationResponse,
             terminal,
             threadId,
             threads,
