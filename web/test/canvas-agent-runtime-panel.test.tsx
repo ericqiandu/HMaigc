@@ -5,7 +5,7 @@ import { afterEach, beforeAll, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
-import type { AgentRuntimeClient, AgentRuntimeHandle, AgentRuntimeHandleStorage, AgentRuntimeView, AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
+import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandle, AgentRuntimeHandleStorage, AgentRuntimeView, AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
 import { defaultConfig, encodeChannelModel, useConfigStore, type ModelChannel } from "../src/stores/use-config-store";
 
 let Panel: typeof import("../src/components/canvas/canvas-assistant-panel").CanvasAssistantPanel;
@@ -64,6 +64,63 @@ test("生成模式菜单使用紧凑且符合真实审批边界的说明", async
     expect(modeButtons[0]?.querySelector(".lucide-hand")).not.toBeNull();
     expect(modeButtons[1]?.querySelector(".lucide-cpu")).not.toBeNull();
     expect(modeButtons[1]?.querySelector(".lucide-refresh-cw")).toBeNull();
+});
+
+test("启动运行前先等待当前画布提交完成", async () => {
+    const calls: string[] = [];
+    const client = runtimeClient({
+        startRun: async () => {
+            calls.push("start-run");
+            return runtimeView("running");
+        },
+    });
+    await mount(client, undefined, {
+        onBeforeRun: async () => {
+            calls.push("flush-canvas");
+        },
+    });
+    await setPrompt("整理当前画布");
+    await act(async () => button("发送").click());
+    await settle();
+    expect(calls).toEqual(["flush-canvas", "start-run"]);
+});
+
+test("运行事件逐条交给当前画布刷新链路", async () => {
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    const received: AgentRuntimeEvent[] = [];
+    const running = runtimeView("running", { stateVersion: 3, stepNumber: 2 });
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 2 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        getRun: async () => running,
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+    await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
+    const event: AgentRuntimeEvent = {
+        sequence: 3,
+        kind: "tool.result",
+        payload: {
+            ...running.state,
+            stateVersion: 4,
+            lastToolResult: {
+                toolCallId: "canvas-commit-1",
+                actionVersion: 1,
+                succeeded: true,
+                output: { canvasId: "canvas-1", committedRevision: 8 },
+            },
+        },
+        createdAt: "2026-08-19T00:00:00Z",
+    };
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+    await act(async () => handlers?.onEvent(event));
+    await settle();
+    expect(received).toEqual([event]);
 });
 
 test("Agent 工作区提供受控宽度的语义分隔条", async () => {

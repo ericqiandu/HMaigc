@@ -36,9 +36,10 @@ type UseAgentRuntimeInput = {
     canvasId: string;
     client?: AgentRuntimeClient;
     storage?: AgentRuntimeHandleStorage;
+    onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
 };
 
-export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage }: UseAgentRuntimeInput) {
+export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeEvent }: UseAgentRuntimeInput) {
     const [threadId, setThreadId] = useState("");
     const [view, setView] = useState<AgentRuntimeView | null>(null);
     const [events, setEvents] = useState<AgentRuntimeEvent[]>([]);
@@ -55,6 +56,11 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     const threadIdRef = useRef("");
     const pendingRunRef = useRef<AgentRuntimeHandle["pendingRun"]>(undefined);
     const historyRequestRef = useRef(0);
+    const onRuntimeEventRef = useRef(onRuntimeEvent);
+
+    useEffect(() => {
+        onRuntimeEventRef.current = onRuntimeEvent;
+    }, [onRuntimeEvent]);
 
     const persist = useCallback(
         async (nextView: AgentRuntimeView | null, nextThreadId = threadIdRef.current) => {
@@ -197,6 +203,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 if (event.sequence <= cursorRef.current) return;
                 cursorRef.current = event.sequence;
                 setEvents((current) => [...current, event].slice(-30));
+                onRuntimeEventRef.current?.(event);
                 setView((current) => {
                     if (!current || current.run.id !== runId) return current;
                     const next = { ...current, run: { ...current.run, status: event.payload.status, lastEventSequence: event.sequence, stateVersion: event.payload.stateVersion, stepNumber: event.payload.stepNumber }, state: event.payload };

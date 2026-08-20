@@ -10,6 +10,7 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { agentCanvasCommittedRevision } from "@/lib/canvas/canvas-agent-runtime-event";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
 import { resizeViewportAroundCenter } from "@/lib/canvas/canvas-agent-dock";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
@@ -39,6 +40,7 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { getProject } from "@/services/api/projects";
+import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasCollaborationPresenceButton, CanvasRemotePresenceLayer } from "@/components/canvas/canvas-collaboration-presence";
 import { CanvasScriptEditor, CanvasScriptNodeContent, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
@@ -438,6 +440,19 @@ function InfiniteCanvasPage() {
     });
     const canEditCanvas = collaboration.access?.canEdit ?? (currentProject?.teamId ? Boolean(currentProject.canEdit) : true);
     const canManageCanvas = collaboration.access?.canManage ?? (currentProject?.teamId ? Boolean(currentProject.canManage) : true);
+    const prepareAgentRun = useCallback(async () => {
+        await collaboration.flushPendingChanges();
+    }, [collaboration.flushPendingChanges]);
+    const handleAgentToolResult = useCallback(
+        (event: AgentRuntimeEvent) => {
+            const revision = agentCanvasCommittedRevision(event, projectId);
+            if (revision === undefined) return;
+            void collaboration.refreshRemoteState(revision).catch((cause: unknown) => {
+                message.error(cause instanceof Error ? `Agent 画布结果刷新失败：${cause.message}` : "Agent 画布结果刷新失败");
+            });
+        },
+        [collaboration.refreshRemoteState, message, projectId],
+    );
     const handleCollaborationPointerMove = useCallback(
         (event: React.PointerEvent<HTMLElement>) => {
             const now = performance.now();
@@ -1963,6 +1978,8 @@ function InfiniteCanvasPage() {
                         onCollapse={closeAgent}
                         agentLaunchRequest={agentLaunchRequest}
                         onAgentLaunchHandled={handleAgentLaunchHandled}
+                        onBeforeRun={prepareAgentRun}
+                        onRuntimeEvent={handleAgentToolResult}
                     />
                 </Suspense>
             ) : null}

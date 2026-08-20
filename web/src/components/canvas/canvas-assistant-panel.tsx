@@ -34,11 +34,13 @@ type CanvasAssistantPanelProps = {
     onCollapse: () => void;
     agentLaunchRequest?: CanvasAgentLaunchRequest;
     onAgentLaunchHandled?: (launchRequestId: string) => void;
+    onBeforeRun?: () => Promise<void>;
+    onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     runtimeClient?: AgentRuntimeClient;
     runtimeStorage?: AgentRuntimeHandleStorage;
 };
 
-export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeIds, closing, width, onResizeStart, onResizeKeyDown, onCollapse, agentLaunchRequest, onAgentLaunchHandled, runtimeClient, runtimeStorage }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeIds, closing, width, onResizeStart, onResizeKeyDown, onCollapse, agentLaunchRequest, onAgentLaunchHandled, onBeforeRun, onRuntimeEvent, runtimeClient, runtimeStorage }: CanvasAssistantPanelProps) {
     const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
@@ -47,7 +49,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
     const [historyOpen, setHistoryOpen] = useState(false);
     const [clarificationHistoryOpen, setClarificationHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
-    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage });
+    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage, onRuntimeEvent });
     const active = Boolean(runtime.view && !runtime.terminal);
     const { prompt, generationModels: agentModels, skillSelections: selectedSkills, executionMode } = draft;
     const setPrompt = useCallback((value: SetStateAction<string>) => setDraft((current) => ({ ...current, prompt: typeof value === "function" ? value(current.prompt) : value })), []);
@@ -80,12 +82,19 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
         const launchSkills = agentLaunchRequest.skillDirs.map((dir) => ({ dir, name: dir, description: "", detailText: "" }));
         const launchAttachments = agentLaunchRequest.attachments.map((attachment) => ({ id: attachment.resourceId, resourceId: attachment.resourceId, name: attachment.name, url: resourceFileUrl(attachment.resourceId) }));
         setDraft({ prompt: agentLaunchRequest.prompt, generationModels: launchModels, skillSelections: launchSkills, attachments: launchAttachments, executionMode: agentLaunchRequest.executionMode });
-        void runtime.submit(agentLaunchRequest.prompt, buildStartConfiguration(launchModels, launchSkills, launchAttachments, agentLaunchRequest.executionMode)).then((submitted) => {
-            if (!submitted) return;
-            setDraft((current) => ({ ...current, prompt: "", attachments: [] }));
-            onAgentLaunchHandled?.(agentLaunchRequest.id);
-        });
-    }, [agentLaunchRequest, onAgentLaunchHandled, runtime.restored, runtime.submit]);
+        void (async () => {
+            try {
+                await onBeforeRun?.();
+                const submitted = await runtime.submit(agentLaunchRequest.prompt, buildStartConfiguration(launchModels, launchSkills, launchAttachments, agentLaunchRequest.executionMode));
+                if (!submitted) return;
+                setDraft((current) => ({ ...current, prompt: "", attachments: [] }));
+                onAgentLaunchHandled?.(agentLaunchRequest.id);
+            } catch (cause) {
+                launchAttemptRef.current = "";
+                setConfigurationError(cause instanceof Error ? cause.message : "当前画布同步失败，Agent 未启动");
+            }
+        })();
+    }, [agentLaunchRequest, onAgentLaunchHandled, onBeforeRun, runtime.restored, runtime.submit]);
 
     const submit = async () => {
         let configuration: AgentRuntimeStartConfiguration;
@@ -94,6 +103,12 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
             setConfigurationError("");
         } catch (cause) {
             setConfigurationError(cause instanceof Error ? cause.message : "Agent 运行配置无效");
+            return;
+        }
+        try {
+            await onBeforeRun?.();
+        } catch (cause) {
+            setConfigurationError(cause instanceof Error ? cause.message : "当前画布同步失败，Agent 未启动");
             return;
         }
         if (!(await runtime.submit(prompt, configuration))) return;
