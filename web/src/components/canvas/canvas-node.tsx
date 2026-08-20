@@ -4,6 +4,7 @@ import { BookOpenCheck, ChevronRight, Clock3, FileText, Image as ImageIcon, Load
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
+import { useSharedSecondNow } from "@/hooks/use-shared-second-clock";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { formatBytes } from "@/lib/image-utils";
@@ -492,14 +493,9 @@ function LoadingContent({ node, theme, onCancelTask, onOpenTaskDetails }: Pick<N
 }
 
 function useTaskElapsed(createdAt?: string) {
-    const [, setTick] = useState(0);
-    useEffect(() => {
-        if (!createdAt) return;
-        const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
-        return () => window.clearInterval(timer);
-    }, [createdAt]);
+    const now = useSharedSecondNow(Boolean(createdAt));
     if (!createdAt) return "刚刚";
-    const seconds = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
+    const seconds = Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 1000));
     if (seconds < 60) return `${seconds}秒`;
     const minutes = Math.floor(seconds / 60);
     return minutes < 60 ? `${minutes}分${seconds % 60}秒` : `${Math.floor(minutes / 60)}时${minutes % 60}分`;
