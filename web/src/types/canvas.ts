@@ -330,7 +330,6 @@ export type CanvasAgentSkillSelection = {
     dir: string;
     name: string;
     description: string;
-    detailText: string;
 };
 
 export type CanvasAgentLaunchRequest = {

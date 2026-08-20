@@ -1,11 +1,5 @@
 import { localForageStorage } from "@/lib/localforage-storage";
-import {
-    parseClarificationHistory,
-    parsePendingClarification,
-    type AgentClarificationAnswerInput,
-    type AgentCompletedClarification,
-    type AgentPendingClarification,
-} from "./agent-clarification";
+import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
 import { array, flag, integer, object, text } from "./strict-contract";
 
 export type {
@@ -20,12 +14,23 @@ export type {
 } from "./agent-clarification";
 
 export type AgentRunStatus = "queued" | "running" | "waiting_input" | "waiting_approval" | "waiting_tool" | "succeeded" | "failed" | "cancelled";
-export type AgentRuntimeEventKind = "run.created" | "run.status_changed" | "model.delta" | "model.rejected" | "clarification.requested" | "clarification.answer_saved" | "clarification.responded" | "tool.call" | "approval.required" | "approval.decided" | "tool.started" | "tool.result" | "checkpoint.saved" | "run.completed" | "run.failed";
-export type AgentToolName =
-    | "skill.load"
-    | "production.plan"
-    | "production.render"
-    | "canvas.commit";
+export type AgentRuntimeEventKind =
+    | "run.created"
+    | "run.status_changed"
+    | "model.delta"
+    | "model.rejected"
+    | "clarification.requested"
+    | "clarification.answer_saved"
+    | "clarification.responded"
+    | "tool.call"
+    | "approval.required"
+    | "approval.decided"
+    | "tool.started"
+    | "tool.result"
+    | "checkpoint.saved"
+    | "run.completed"
+    | "run.failed";
+export type AgentToolName = "skill.load" | "production.plan" | "production.render" | "canvas.commit";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
 export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact";
 
@@ -43,7 +48,7 @@ export type AgentRuntimeResourceReference = { resourceId: string; name: string }
 export type AgentRuntimeFrozenResource = AgentRuntimeResourceReference & { mimeType: string; width?: number; height?: number };
 export type AgentRuntimeExecutionMode = "guided" | "automatic";
 export type AgentRuntimeStartConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skillDirs: string[]; attachments: AgentRuntimeResourceReference[]; executionMode: AgentRuntimeExecutionMode };
-export type AgentRuntimeSkillSelection = { dir: string; name: string; description: string; instructions: string; version: number };
+export type AgentRuntimeSkillSelection = { dir: string; name: string; description: string; instructions: string; version: number; checksum: string };
 export type AgentRuntimeRunConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skills: AgentRuntimeSkillSelection[]; attachments: AgentRuntimeFrozenResource[]; executionMode: AgentRuntimeExecutionMode };
 export type AgentRuntimeState = {
     stateVersion: number;
@@ -113,13 +118,24 @@ export type AgentRuntimeClient = {
 };
 
 const runStatuses = new Set<AgentRunStatus>(["queued", "running", "waiting_input", "waiting_approval", "waiting_tool", "succeeded", "failed", "cancelled"]);
-const eventKinds = new Set<AgentRuntimeEventKind>(["run.created", "run.status_changed", "model.delta", "model.rejected", "clarification.requested", "clarification.answer_saved", "clarification.responded", "tool.call", "approval.required", "approval.decided", "tool.started", "tool.result", "checkpoint.saved", "run.completed", "run.failed"]);
-const toolNames = new Set<AgentToolName>([
-    "skill.load",
-    "production.plan",
-    "production.render",
-    "canvas.commit",
+const eventKinds = new Set<AgentRuntimeEventKind>([
+    "run.created",
+    "run.status_changed",
+    "model.delta",
+    "model.rejected",
+    "clarification.requested",
+    "clarification.answer_saved",
+    "clarification.responded",
+    "tool.call",
+    "approval.required",
+    "approval.decided",
+    "tool.started",
+    "tool.result",
+    "checkpoint.saved",
+    "run.completed",
+    "run.failed",
 ]);
+const toolNames = new Set<AgentToolName>(["skill.load", "production.plan", "production.render", "canvas.commit"]);
 const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
@@ -231,12 +247,17 @@ function parseRunConfiguration(value: unknown): AgentRuntimeRunConfiguration {
     const models = parseGenerationModelSelections(source.generationModels, "state.configuration.generationModels");
     const skills = array(source.skills, "state.configuration.skills").map((item, index) => {
         const skill = object(item, `state.configuration.skills[${index}]`);
+        const checksum = text(skill.checksum, `state.configuration.skills[${index}].checksum`);
+        if (checksum.length !== 64 || Array.from(checksum).some((character) => !"0123456789abcdef".includes(character))) {
+            throw new Error(`state.configuration.skills[${index}].checksum 必须是 64 位小写 SHA-256`);
+        }
         return {
             dir: text(skill.dir, `state.configuration.skills[${index}].dir`),
             name: text(skill.name, `state.configuration.skills[${index}].name`),
             description: text(skill.description, `state.configuration.skills[${index}].description`, true),
             instructions: text(skill.instructions, `state.configuration.skills[${index}].instructions`),
             version: integer(skill.version, `state.configuration.skills[${index}].version`, true),
+            checksum,
         };
     });
     const attachments = array(source.attachments, "state.configuration.attachments").map((item, index) => parseFrozenResource(item, `state.configuration.attachments[${index}]`));
@@ -357,12 +378,7 @@ function parseToolResult(value: unknown): NonNullable<AgentRuntimeState["lastToo
 
 function parseDecisionFeedback(value: unknown): NonNullable<AgentRuntimeState["decisionFeedback"]> {
     const source = object(value, "decisionFeedback");
-    if (
-        source.code !== "model_decision_invalid" &&
-        source.code !== "delivery_contract_changed" &&
-        source.code !== "required_skill_not_loaded" &&
-        source.code !== "clarification_identity_reused"
-    ) {
+    if (source.code !== "model_decision_invalid" && source.code !== "delivery_contract_changed" && source.code !== "required_skill_not_loaded" && source.code !== "clarification_identity_reused") {
         throw new Error(`不受支持的 Agent 决策反馈: ${String(source.code)}`);
     }
     return { code: source.code, reason: text(source.reason, "decisionFeedback.reason") };

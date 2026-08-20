@@ -47,8 +47,9 @@ func TestAgentRuntimeSkillLoadExposesFrozenInstructionsOnNextStep(t *testing.T) 
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
-	svc.agentRuntimeSkillResolver = func(_ context.Context, userID string, dir string) (*UpdreamSkill, error) {
-		return &UpdreamSkill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: "冻结的 Skill 执行说明。", Version: 9}, nil
+	svc.agentRuntimeSkillResolver = func(_ context.Context, userID string, dir string) (*Skill, error) {
+		instructions := "冻结的 Skill 执行说明。"
+		return &Skill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: instructions, Version: 9, Checksum: agentRuntimeTestSkillChecksum(instructions)}, nil
 	}
 	scope := agentRuntimeServiceScope()
 	input := StartAgentRuntimeInput{

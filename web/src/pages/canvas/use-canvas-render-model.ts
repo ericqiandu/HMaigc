@@ -6,7 +6,7 @@ import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
-import type { UpdreamSkill } from "@/services/api/skills";
+import type { PlatformSkill } from "@/services/api/skills";
 import type { Asset, ImageAsset } from "@/stores/use-asset-store";
 import type { DirectorScene } from "@/types/director";
 import { CanvasNodeType, type CanvasConnection, type CanvasMediaPerformanceMode, type CanvasNodeData, type ContextMenuState, type ViewportTransform } from "@/types/canvas";
@@ -24,7 +24,7 @@ type UseCanvasRenderModelOptions = {
     hoveredNodeId: string | null;
     dragPreview: DragPreview;
     collapsingBatchIds: Set<string>;
-    activatedSkills: UpdreamSkill[];
+    activatedSkills: PlatformSkill[];
     directorScenes?: DirectorScene[];
     toolbarNodeId: string | null;
     infoNodeId: string | null;

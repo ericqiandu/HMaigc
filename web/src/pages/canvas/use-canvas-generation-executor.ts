@@ -9,7 +9,7 @@ import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
 import { generationFailureMetadata } from "@/lib/generation-error";
 import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
-import type { UpdreamSkill } from "@/services/api/skills";
+import type { PlatformSkill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
@@ -21,7 +21,7 @@ import { executeTextGeneration } from "./canvas-text-generation-executor";
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
     domainProjectId?: string;
-    activatedSkills: UpdreamSkill[];
+    activatedSkills: PlatformSkill[];
     nodesRef: { current: CanvasNodeData[] };
     connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;

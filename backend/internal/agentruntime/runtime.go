@@ -2,6 +2,8 @@ package agentruntime
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -47,6 +49,7 @@ type SkillSelection struct {
 	Description  string `json:"description"`
 	Instructions string `json:"instructions"`
 	Version      int    `json:"version"`
+	Checksum     string `json:"checksum"`
 }
 
 type ExecutionMode string
@@ -262,7 +265,7 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	if missing := missingRequiredSkillDirs(next.Configuration.Skills, next.LoadedSkillDirs); len(missing) > 0 {
 		next.FinalMessage = ""
 		next.DecisionFeedback = &ModelDecisionFeedback{
-			Code: "required_skill_not_loaded", Reason: "load every explicitly selected skill before final delivery",
+			Code: "required_skill_not_loaded", Reason: "load the missing selected skills before final delivery: " + strings.Join(missing, ", "),
 		}
 		if next.StepNumber >= next.MaxSteps {
 			next.Status = RunFailed
@@ -669,9 +672,14 @@ func ValidateRunConfiguration(configuration RunConfiguration) error {
 		skill.Name = strings.TrimSpace(skill.Name)
 		skill.Description = strings.TrimSpace(skill.Description)
 		skill.Instructions = strings.TrimSpace(skill.Instructions)
+		skill.Checksum = strings.TrimSpace(skill.Checksum)
+		checksum, checksumError := hex.DecodeString(skill.Checksum)
+		expectedChecksum := sha256.Sum256([]byte(skill.Instructions))
 		if skill.Dir == "" || len(skill.Dir) > 120 || skill.Name == "" || len(skill.Name) > 160 ||
 			len(skill.Description) > 4*1024 || skill.Instructions == "" || len(skill.Instructions) > 32*1024 ||
-			skill.Version < 0 || (previousDir != "" && skill.Dir <= previousDir) {
+			skill.Version <= 0 || checksumError != nil || len(checksum) != sha256.Size || skill.Checksum != strings.ToLower(skill.Checksum) ||
+			!bytes.Equal(checksum, expectedChecksum[:]) ||
+			(previousDir != "" && skill.Dir <= previousDir) {
 			return errors.New("agent runtime skill selection is invalid")
 		}
 		previousDir = skill.Dir

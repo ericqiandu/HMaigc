@@ -5,7 +5,7 @@ import { useNavigate } from "react-router";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { hydrateAssistantImages, hydrateCanvasImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { normalizeVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
-import { listActivatedSkills, type UpdreamSkill } from "@/services/api/skills";
+import { listActivatedSkills, type PlatformSkill } from "@/services/api/skills";
 import { createCanvasProjectWithRemoteSync, deleteCanvasProjectsWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, CanvasNodeMetadata, ViewportTransform } from "@/types/canvas";
@@ -71,7 +71,7 @@ export function useCanvasProjectLifecycle({
     const updateProject = useCanvasStore((state) => state.updateProject);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
-    const [activatedSkills, setActivatedSkills] = useState<UpdreamSkill[]>([]);
+    const [activatedSkills, setActivatedSkills] = useState<PlatformSkill[]>([]);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {

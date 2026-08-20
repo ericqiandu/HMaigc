@@ -49,7 +49,7 @@ type Service struct {
 	workerID                  string
 	operationsClient          opsprotocol.Client
 	mediaDurationProbe        mediaDurationProbe
-	agentRuntimeSkillResolver func(context.Context, string, string) (*UpdreamSkill, error)
+	agentRuntimeSkillResolver func(context.Context, string, string) (*Skill, error)
 }
 
 const taskWorkerConcurrency = 3

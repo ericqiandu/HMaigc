@@ -1,7 +1,10 @@
 package agentruntime_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentruntime"
@@ -56,7 +59,7 @@ func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
 			ExecutionMode: agentruntime.ExecutionAutomatic,
 			Skills: []agentruntime.SkillSelection{{
 				Dir: "storyboard-director", Name: "分镜导演", Description: "拆解镜头",
-				Instructions: "先建立可执行镜头计划。", Version: 7,
+				Instructions: "先建立可执行镜头计划。", Version: 7, Checksum: testSkillChecksum("先建立可执行镜头计划。"),
 			}},
 		},
 	}
@@ -67,6 +70,9 @@ func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
 	}
 	if rejected.State.Status != agentruntime.RunRunning || rejected.State.DecisionFeedback == nil || rejected.State.DecisionFeedback.Code != "required_skill_not_loaded" {
 		t.Fatalf("unloaded skill final = %#v", rejected.State)
+	}
+	if rejected.State.DecisionFeedback.Reason != "load the missing selected skills before final delivery: storyboard-director" {
+		t.Fatalf("unloaded skill feedback = %#v", rejected.State.DecisionFeedback)
 	}
 
 	load := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
@@ -96,6 +102,31 @@ func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
 	}
 	if completed.State.Status != agentruntime.RunSucceeded {
 		t.Fatalf("loaded skill final = %#v", completed.State)
+	}
+}
+
+func TestAgentRuntimeSkillFeedbackNamesOnlyTheMissingSelection(t *testing.T) {
+	answer := agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}}
+	base := agentruntime.RuntimeState{
+		StateVersion: 3, StepNumber: 2, MaxSteps: 6, Status: agentruntime.RunRunning,
+		UserMessage: "使用已选 Skill 规划广告短剧",
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionAutomatic,
+			Skills: []agentruntime.SkillSelection{
+				{Dir: "commercial-film-director", Name: "商业广告导演", Instructions: "建立广告诉求。", Version: 1, Checksum: testSkillChecksum("建立广告诉求。")},
+				{Dir: "short-drama-director", Name: "短剧总导演", Instructions: "建立短剧计划。", Version: 3, Checksum: testSkillChecksum("建立短剧计划。")},
+			},
+		},
+		LoadedSkillDirs: []string{"short-drama-director"},
+	}
+	final := agentruntime.ModelDecision{Kind: agentruntime.DecisionFinal, Final: &agentruntime.FinalDecision{Message: "已完成", ExpectedDelivery: answer}}
+
+	rejected, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: final, Evidence: agentruntime.DeliveryEvidence{FinalMessage: "已完成"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.State.DecisionFeedback == nil || rejected.State.DecisionFeedback.Reason != "load the missing selected skills before final delivery: commercial-film-director" {
+		t.Fatalf("missing skill feedback = %#v", rejected.State.DecisionFeedback)
 	}
 }
 
@@ -198,6 +229,29 @@ func TestRunConfigurationRejectsMissingModeAndInvalidAttachmentFacts(t *testing.
 	}); err == nil {
 		t.Fatal("attachment without mime type was accepted")
 	}
+	if err := agentruntime.ValidateRunConfiguration(agentruntime.RunConfiguration{
+		ExecutionMode: agentruntime.ExecutionGuided,
+		Skills: []agentruntime.SkillSelection{{
+			Dir: "director", Name: "导演", Instructions: "执行导演技能。", Version: 1,
+			Checksum: strings.Repeat("z", 64),
+		}},
+	}); err == nil {
+		t.Fatal("skill selection with a non-SHA-256 checksum was accepted")
+	}
+	if err := agentruntime.ValidateRunConfiguration(agentruntime.RunConfiguration{
+		ExecutionMode: agentruntime.ExecutionGuided,
+		Skills: []agentruntime.SkillSelection{{
+			Dir: "director", Name: "导演", Instructions: "执行导演技能。", Version: 1,
+			Checksum: testSkillChecksum("另一份技能指令。"),
+		}},
+	}); err == nil {
+		t.Fatal("skill selection with a checksum for different instructions was accepted")
+	}
+}
+
+func testSkillChecksum(instructions string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(instructions)))
+	return hex.EncodeToString(digest[:])
 }
 
 func TestResolveToolPreservesModelStepAndAdvancesStateVersion(t *testing.T) {

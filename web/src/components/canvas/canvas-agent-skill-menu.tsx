@@ -3,12 +3,7 @@ import { Check, ExternalLink, LoaderCircle, Search, Wrench } from "lucide-react"
 import { Link } from "react-router";
 
 import { cn } from "@/lib/utils";
-import {
-    listActivatedSkills,
-    listCommunitySkills,
-    listFavoriteSkills,
-    type UpdreamSkill,
-} from "@/services/api/skills";
+import { listActivatedSkills, listSkillsCatalog, listFavoriteSkills, type PlatformSkill } from "@/services/api/skills";
 import { toCanvasAgentSkillSelection } from "@/lib/canvas/canvas-agent-composer-context";
 import type { CanvasAgentSkillSelection } from "@/types/canvas";
 
@@ -20,16 +15,10 @@ const scopeOptions: Array<{ value: SkillScope; label: string }> = [
     { value: "mine", label: "我的" },
 ];
 
-export function CanvasAgentSkillMenu({
-    selectedSkills,
-    onChange,
-}: {
-    selectedSkills: CanvasAgentSkillSelection[];
-    onChange: (skills: CanvasAgentSkillSelection[]) => void;
-}) {
+export function CanvasAgentSkillMenu({ selectedSkills, onChange }: { selectedSkills: CanvasAgentSkillSelection[]; onChange: (skills: CanvasAgentSkillSelection[]) => void }) {
     const [scope, setScope] = useState<SkillScope>("general");
     const [query, setQuery] = useState("");
-    const [skills, setSkills] = useState<UpdreamSkill[]>([]);
+    const [skills, setSkills] = useState<PlatformSkill[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
@@ -61,12 +50,8 @@ export function CanvasAgentSkillMenu({
         return skills.filter((skill) => `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(normalized));
     }, [query, skills]);
 
-    const toggleSkill = (skill: UpdreamSkill) => {
-        onChange(
-            selectedDirs.has(skill.dir)
-                ? selectedSkills.filter((item) => item.dir !== skill.dir)
-                : [...selectedSkills, toCanvasAgentSkillSelection(skill)],
-        );
+    const toggleSkill = (skill: PlatformSkill) => {
+        onChange(selectedDirs.has(skill.dir) ? selectedSkills.filter((item) => item.dir !== skill.dir) : [...selectedSkills, toCanvasAgentSkillSelection(skill)]);
     };
 
     return (
@@ -81,27 +66,14 @@ export function CanvasAgentSkillMenu({
             <div className="canvas-agent-skill-toolbar">
                 <div className="canvas-agent-skill-tabs" role="tablist" aria-label="Skill 范围">
                     {scopeOptions.map((option) => (
-                        <button
-                            key={option.value}
-                            type="button"
-                            role="tab"
-                            aria-selected={scope === option.value}
-                            className={cn("canvas-agent-skill-tab", scope === option.value && "canvas-agent-skill-tab--active")}
-                            onClick={() => setScope(option.value)}
-                        >
+                        <button key={option.value} type="button" role="tab" aria-selected={scope === option.value} className={cn("canvas-agent-skill-tab", scope === option.value && "canvas-agent-skill-tab--active")} onClick={() => setScope(option.value)}>
                             {option.label}
                         </button>
                     ))}
                 </div>
                 <label className="canvas-agent-skill-search">
                     <Search className="canvas-agent-skill-search-icon" aria-hidden="true" />
-                    <input
-                        className="canvas-agent-skill-search-input"
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        placeholder="搜索 Skill"
-                        aria-label="搜索 Skill"
-                    />
+                    <input className="canvas-agent-skill-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Skill" aria-label="搜索 Skill" />
                 </label>
             </div>
             <div className="canvas-agent-skill-list thin-scrollbar">
@@ -118,13 +90,7 @@ export function CanvasAgentSkillMenu({
                     visibleSkills.map((skill) => {
                         const selected = selectedDirs.has(skill.dir);
                         return (
-                            <button
-                                key={skill.dir}
-                                type="button"
-                                className={cn("canvas-agent-skill-row", selected && "canvas-agent-skill-row--selected")}
-                                aria-pressed={selected}
-                                onClick={() => toggleSkill(skill)}
-                            >
+                            <button key={skill.dir} type="button" className={cn("canvas-agent-skill-row", selected && "canvas-agent-skill-row--selected")} aria-pressed={selected} onClick={() => toggleSkill(skill)}>
                                 <span className="canvas-agent-skill-icon">
                                     <Wrench className="canvas-agent-skill-icon-glyph" aria-hidden="true" />
                                 </span>
@@ -152,5 +118,5 @@ export function CanvasAgentSkillMenu({
 async function loadSkills(scope: SkillScope) {
     if (scope === "favorites") return (await listFavoriteSkills()).skills;
     if (scope === "mine") return (await listActivatedSkills()).skills;
-    return (await listCommunitySkills({ page: 1, page_size: 60, sort: "hot" })).skills;
+    return (await listSkillsCatalog({ page: 1, page_size: 60 })).skills;
 }

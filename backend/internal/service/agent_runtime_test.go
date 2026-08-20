@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -649,6 +651,11 @@ func agentRuntimeServiceScope() agentruntime.Scope {
 
 func guidedAgentRuntimeConfigurationInput() AgentRuntimeConfigurationInput {
 	return AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionGuided}
+}
+
+func agentRuntimeTestSkillChecksum(instructions string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(instructions)))
+	return hex.EncodeToString(digest[:])
 }
 
 func createAgentRuntimeImageModel(t *testing.T, db *gorm.DB, fixture agentRuntimeServiceFixture) {

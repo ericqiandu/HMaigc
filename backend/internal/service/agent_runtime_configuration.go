@@ -41,8 +41,8 @@ func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUse
 	}
 	resolver := s.agentRuntimeSkillResolver
 	if resolver == nil {
-		resolver = func(resolveContext context.Context, userID string, dir string) (*UpdreamSkill, error) {
-			return s.CommunitySkillDetail(resolveContext, userID, dir)
+		resolver = func(resolveContext context.Context, userID string, dir string) (*Skill, error) {
+			return s.SkillDetail(resolveContext, userID, dir)
 		}
 	}
 	skills := make([]agentruntime.SkillSelection, 0, len(normalized.SkillDirs))
@@ -56,7 +56,7 @@ func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUse
 		}
 		skills = append(skills, agentruntime.SkillSelection{
 			Dir: dir, Name: strings.TrimSpace(skill.Name), Description: strings.TrimSpace(skill.Description),
-			Instructions: strings.TrimSpace(skill.DetailText), Version: skill.Version,
+			Instructions: strings.TrimSpace(skill.DetailText), Version: skill.Version, Checksum: strings.TrimSpace(skill.Checksum),
 		})
 	}
 	attachments := make([]agentruntime.ResourceAttachment, 0, len(normalized.Attachments))

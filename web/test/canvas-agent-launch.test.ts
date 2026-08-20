@@ -14,7 +14,7 @@ describe("canvas agent launch", () => {
                 prompt: "  月下少女走进发光竹林  ",
                 attachments: [{ id: "attachment-1", name: "竹林.png", url: "/api/resources/resource-1/file", resourceId: "resource-1" }],
                 generationModels: { image: "channel-image::gpt-image-2", video: "" },
-                skillSelections: [{ dir: "skills/storyboard", name: "分镜", description: "", detailText: "" }],
+                skillSelections: [{ dir: "skills/storyboard", name: "分镜", description: "" }],
                 executionMode: "automatic",
             },
         });
@@ -190,7 +190,7 @@ function requestToDraft(request: ReturnType<typeof createCanvasAgentLaunchReques
         prompt: request.prompt,
         attachments: request.attachments.map((attachment) => ({ id: attachment.resourceId, name: attachment.name, url: `/api/resources/${attachment.resourceId}/file`, resourceId: attachment.resourceId })),
         generationModels: request.generationModels,
-        skillSelections: request.skillDirs.map((dir) => ({ dir, name: dir, description: "", detailText: "" })),
+        skillSelections: request.skillDirs.map((dir) => ({ dir, name: dir, description: "" })),
         executionMode: request.executionMode,
     };
 }

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection } from "../src/lib/canvas/canvas-agent-draft";
 
-const skillA = { dir: "skills/storyboard", name: "分镜", description: "", detailText: "" };
-const skillB = { dir: "skills/video", name: "视频", description: "", detailText: "" };
+const skillA = { dir: "skills/storyboard", name: "分镜", description: "" };
+const skillB = { dir: "skills/video", name: "视频", description: "" };
 
 test("共享 Agent 草稿不隐式选择模型且默认采用手动确认模式", () => {
     expect(createEmptyCanvasAgentDraft()).toEqual({

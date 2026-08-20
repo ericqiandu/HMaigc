@@ -62,6 +62,8 @@ func Models() []any {
 		&model.SystemSetting{},
 		&model.UserOSSSetting{},
 		&model.UserDailyUploadUsage{},
+		&model.Skill{},
+		&model.SkillVersion{},
 		&model.UserSkillState{},
 		&model.Resource{},
 		&model.StorageMigrationJob{},
@@ -116,6 +118,12 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := MigrateBaseSchema(tx); err != nil {
+			return err
+		}
+		if err := migrateAgentRuntimeSkillChecksums(tx); err != nil {
+			return err
+		}
+		if err := seedFirstPartySkills(tx); err != nil {
 			return err
 		}
 		if err := backfillProviderDefaults(tx); err != nil {

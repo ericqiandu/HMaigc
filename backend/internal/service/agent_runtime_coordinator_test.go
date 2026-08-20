@@ -88,8 +88,9 @@ func TestAdvanceAgentRunExecutesFreeSkillOnceAndCreatesOneNextModelTask(t *testi
 	server, calls := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*UpdreamSkill, error) {
-		return &UpdreamSkill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: "冻结说明", Version: 1}, nil
+	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*Skill, error) {
+		instructions := "冻结说明"
+		return &Skill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: instructions, Version: 1, Checksum: agentRuntimeTestSkillChecksum(instructions)}, nil
 	}
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{

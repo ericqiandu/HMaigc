@@ -18,7 +18,7 @@ const state = {
     userMessage: "整理当前画布",
     configuration: {
         generationModels: { image: { channelId: "channel-image", model: "gpt-image-2" } },
-        skills: [{ dir: "storyboard", name: "分镜", description: "生成分镜", instructions: "按镜头输出", version: 1 }],
+        skills: [{ dir: "storyboard", name: "分镜", description: "生成分镜", instructions: "按镜头输出", version: 1, checksum: "a".repeat(64) }],
         attachments: [{ resourceId: "resource-1", name: "参考图.png", mimeType: "image/png", width: 1024, height: 1024 }],
         executionMode: "automatic",
     },
@@ -129,6 +129,17 @@ test("运行配置缺少附件或执行模式时显式拒绝而不是插入默�
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutMode } })).toThrow("executionMode");
     const { attachments: _attachments, ...withoutAttachments } = state.configuration;
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutAttachments } })).toThrow("attachments");
+});
+
+test("运行配置缺少已冻结 Skill 校验值时显式拒绝", () => {
+    const [skill] = state.configuration.skills;
+    const { checksum: _checksum, ...withoutChecksum } = skill;
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            state: { ...state, configuration: { ...state.configuration, skills: [withoutChecksum] } },
+        }),
+    ).toThrow("checksum");
 });
 
 test("未知运行状态与事件类型显式失败", () => {
@@ -363,10 +374,7 @@ test("追问回答客户端编码路径并保留 409 结构化错误", async () 
             answer: { selectedOptionIds: ["luxury"], customText: "", skipped: false },
             complete: false,
         });
-        return new Response(
-            JSON.stringify({ code: 409, data: { errorCode: "agent_clarification_conflict", latestStateVersion: 5 }, msg: "问题已更新" }),
-            { status: 409, headers: { "Content-Type": "application/json" } },
-        );
+        return new Response(JSON.stringify({ code: 409, data: { errorCode: "agent_clarification_conflict", latestStateVersion: 5 }, msg: "问题已更新" }), { status: 409, headers: { "Content-Type": "application/json" } });
     }) as typeof fetch;
     try {
         await expect(

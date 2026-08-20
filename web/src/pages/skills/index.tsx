@@ -1,45 +1,36 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { App, Button, Collapse, Drawer, Input, Select, Skeleton } from "antd";
-import { Check, Flame, Heart, RefreshCw, Search, ShieldCheck, Sparkles, Star, UserRound, Zap } from "lucide-react";
+import { App, Button, Collapse, Drawer, Input, Skeleton } from "antd";
+import { Check, Heart, Search, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
-import { CollectionGrid, ListToolbar, PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
-import { WorkspaceState } from "@/components/layout/workspace-state";
+import { PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
+import { WorkspaceErrorState, WorkspaceState } from "@/components/layout/workspace-state";
 import { renderSkillPrompt } from "@/lib/canvas/canvas-skill-mentions";
-import { activateSkill, deactivateSkill, favoriteSkill, getCommunitySkill, listActivatedSkills, listCommunitySkills, listFavoriteSkills, skillImageUrl, unfavoriteSkill, type UpdreamSkill, type UpdreamSkillSort } from "@/services/api/skills";
+import { activateSkill, deactivateSkill, favoriteSkill, getSkill, listActivatedSkills, listFavoriteSkills, listSkillsCatalog, skillImageUrl, unfavoriteSkill, type PlatformSkill } from "@/services/api/skills";
 
-type SkillTab = "featured" | "all" | "activated" | "favorites";
+import { SkillCoverFallback, SkillMarketCard, SkillMarketSkeleton } from "./skill-market-card";
+import "./skills-workspace.css";
+
+type SkillTab = "all" | "activated" | "favorites";
 
 const PAGE_SIZE = 20;
-const tabOptions: { label: string; value: SkillTab }[] = [
-    { label: "官方精选技能", value: "featured" },
-    { label: "全部技能", value: "all" },
-    { label: "已激活", value: "activated" },
-    { label: "我的收藏", value: "favorites" },
-];
-const sortOptions: { label: string; value: UpdreamSkillSort }[] = [
-    { label: "热门", value: "hot" },
-    { label: "高分", value: "top_rated" },
-    { label: "最新", value: "new" },
-];
-
 export default function SkillsPage() {
     const { message } = App.useApp();
-    const [tab, setTab] = useState<SkillTab>("featured");
-    const [sort, setSort] = useState<UpdreamSkillSort>("hot");
+    const [tab, setTab] = useState<SkillTab>("all");
     const [category, setCategory] = useState("all");
     const [categories, setCategories] = useState<string[]>([]);
     const [search, setSearch] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(PAGE_SIZE);
-    const [skills, setSkills] = useState<UpdreamSkill[]>([]);
+    const [skills, setSkills] = useState<PlatformSkill[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
-    const [activeSkill, setActiveSkill] = useState<UpdreamSkill | null>(null);
+    const [activeSkill, setActiveSkill] = useState<PlatformSkill | null>(null);
     const [mutatingDir, setMutatingDir] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
-    const isPagedTab = tab === "featured" || tab === "all";
+    const isPagedTab = tab === "all";
 
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 260);
@@ -49,15 +40,15 @@ export default function SkillsPage() {
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
+        setLoadError(null);
         const request =
             tab === "activated"
                 ? listActivatedSkills().then(({ skills }) => ({ skills, total: skills.length, page: 1, page_size: skills.length || pageSize, categories: [] as string[] }))
                 : tab === "favorites"
                   ? listFavoriteSkills().then(({ skills }) => ({ skills, total: skills.length, page: 1, page_size: skills.length || pageSize, categories: [] as string[] }))
-                  : listCommunitySkills({
+                  : listSkillsCatalog({
                         page,
                         page_size: pageSize,
-                        sort: tab === "featured" ? "hot" : sort,
                         search: debouncedSearch,
                         categories: category === "all" ? undefined : [category],
                     });
@@ -73,7 +64,7 @@ export default function SkillsPage() {
                 if (cancelled) return;
                 setSkills([]);
                 setTotal(0);
-                message.error(error instanceof Error ? error.message : "技能加载失败");
+                setLoadError(error instanceof Error ? error.message : "技能加载失败");
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -81,7 +72,7 @@ export default function SkillsPage() {
         return () => {
             cancelled = true;
         };
-    }, [category, debouncedSearch, message, page, pageSize, reloadKey, sort, tab]);
+    }, [category, debouncedSearch, page, pageSize, reloadKey, tab]);
 
     const visibleSkills = useMemo(() => {
         if (isPagedTab || !debouncedSearch) return skills;
@@ -91,11 +82,11 @@ export default function SkillsPage() {
     const displayedSkills = isPagedTab ? visibleSkills : visibleSkills.slice((page - 1) * pageSize, page * pageSize);
     const displayedTotal = isPagedTab ? total : visibleSkills.length;
 
-    const openSkill = async (skill: UpdreamSkill) => {
+    const openSkill = async (skill: PlatformSkill) => {
         setActiveSkill(skill);
         setDetailLoading(true);
         try {
-            const result = await getCommunitySkill(skill.dir);
+            const result = await getSkill(skill.dir);
             setActiveSkill(result.skill);
             patchSkill(result.skill);
         } catch (error) {
@@ -105,7 +96,7 @@ export default function SkillsPage() {
         }
     };
 
-    const patchSkill = (next: UpdreamSkill) => {
+    const patchSkill = (next: PlatformSkill) => {
         setSkills((items) =>
             items.flatMap((item) => {
                 if (item.dir !== next.dir) return [item];
@@ -118,7 +109,7 @@ export default function SkillsPage() {
         setActiveSkill((current) => (current?.dir === next.dir ? mergeSkill(current, next) : current));
     };
 
-    const toggleActivation = async (skill: UpdreamSkill) => {
+    const toggleActivation = async (skill: PlatformSkill) => {
         setMutatingDir(skill.dir);
         try {
             const result = skill.activated ? await deactivateSkill(skill.dir) : await activateSkill(skill.dir);
@@ -131,7 +122,7 @@ export default function SkillsPage() {
         }
     };
 
-    const toggleFavorite = async (skill: UpdreamSkill) => {
+    const toggleFavorite = async (skill: PlatformSkill) => {
         setMutatingDir(skill.dir);
         try {
             const result = skill.liked ? await unfavoriteSkill(skill.dir) : await favoriteSkill(skill.dir);
@@ -144,105 +135,120 @@ export default function SkillsPage() {
         }
     };
 
-    const refresh = () => {
-        setPage(1);
-        setDebouncedSearch(search.trim());
-        setReloadKey((value) => value + 1);
-    };
-
     return (
         <>
-            <WorkspacePage grid layout="collection" className="skills-workspace-page">
-                <PageHeader
-                    title="技能库"
-                    description="浏览 HMaigc 技能，管理激活与收藏。"
-                    meta={<span className="skills-page-count text-xs text-foreground/45" aria-live="polite">{loading ? "正在加载技能" : `${displayedTotal} 个技能`}</span>}
-                    actions={
-                        <Button className="skills-page-refresh-button" icon={<RefreshCw className="skills-page-refresh-icon size-4" />} loading={loading} onClick={refresh}>
-                            刷新
-                        </Button>
-                    }
-                />
-                <ListToolbar
-                    active={Boolean(search || category !== "all" || tab !== "featured" || sort !== "hot")}
-                    onReset={() => {
-                        setSearch("");
-                        setDebouncedSearch("");
-                        setCategory("all");
-                        setTab("featured");
-                        setSort("hot");
-                        setPage(1);
-                    }}
-                >
+            <WorkspacePage layout="collection" className="skills-workspace-page">
+                <header className="skills-market-header">
+                    <nav className="skills-market-tabs" aria-label="技能范围">
+                        <button
+                            type="button"
+                            className={`skills-market-tab ${tab !== "activated" ? "skills-market-tab--active" : ""}`}
+                            aria-current={tab !== "activated" ? "page" : undefined}
+                            onClick={() => {
+                                setTab("all");
+                                setCategory("all");
+                                setPage(1);
+                            }}
+                        >
+                            技能广场
+                        </button>
+                        <button
+                            type="button"
+                            className={`skills-market-tab ${tab === "activated" ? "skills-market-tab--active" : ""}`}
+                            aria-current={tab === "activated" ? "page" : undefined}
+                            onClick={() => {
+                                setTab("activated");
+                                setCategory("all");
+                                setPage(1);
+                            }}
+                        >
+                            我的技能
+                        </button>
+                    </nav>
+                </header>
+
+                <div className="skills-market-toolbar">
+                    <div className="skills-market-filters" aria-label="技能分类">
+                        {tab !== "activated" ? (
+                            <>
+                                <button
+                                    type="button"
+                                    className={`skills-market-filter ${tab === "all" && category === "all" ? "skills-market-filter--active" : ""}`}
+                                    onClick={() => {
+                                        setTab("all");
+                                        setCategory("all");
+                                        setPage(1);
+                                    }}
+                                >
+                                    全部
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`skills-market-filter ${tab === "favorites" ? "skills-market-filter--active" : ""}`}
+                                    onClick={() => {
+                                        setTab("favorites");
+                                        setCategory("all");
+                                        setPage(1);
+                                    }}
+                                >
+                                    我的收藏
+                                </button>
+                                {categories.map((value) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        className={`skills-market-filter ${tab === "all" && category === value ? "skills-market-filter--active" : ""}`}
+                                        onClick={() => {
+                                            setTab("all");
+                                            setCategory(value);
+                                            setPage(1);
+                                        }}
+                                    >
+                                        {value}
+                                    </button>
+                                ))}
+                            </>
+                        ) : (
+                            <span className="skills-market-activated-label">已激活并可由 Agent 调用的技能</span>
+                        )}
+                    </div>
                     <Input
                         allowClear
-                        className="app-list-search"
-                        prefix={<Search className="size-4 text-foreground/40" />}
+                        className="skills-market-search"
+                        prefix={<Search className="skills-market-search-icon" />}
                         value={search}
-                        placeholder="搜索技能或作者"
+                        placeholder="搜索技能"
+                        aria-label="搜索技能或作者"
                         onChange={(event) => {
                             setPage(1);
                             setSearch(event.target.value);
                         }}
                     />
-                    <Select
-                        className="w-44"
-                        value={tab}
-                        options={tabOptions}
-                        onChange={(value) => {
-                            setTab(value);
-                            setPage(1);
-                        }}
-                    />
-                    {isPagedTab ? (
-                        <Select
-                            className="w-32"
-                            disabled={tab === "featured"}
-                            value={tab === "featured" ? "hot" : sort}
-                            options={sortOptions}
-                            onChange={(value) => {
-                                setSort(value);
-                                setPage(1);
-                            }}
-                        />
-                    ) : null}
-                </ListToolbar>
+                </div>
 
-                {isPagedTab && categories.length ? (
-                    <div className="skills-category-list thin-scrollbar flex gap-1 overflow-x-auto border-b border-border/70 py-2" aria-label="技能分类">
-                        {["all", ...categories].map((value) => (
-                            <button
-                                key={value}
-                                type="button"
-                                className={`skills-category-option h-7 shrink-0 rounded px-2.5 text-xs transition-colors ${category === value ? "bg-foreground text-background" : "text-foreground/55 hover:bg-foreground/[.05] hover:text-foreground"}`}
-                                onClick={() => {
-                                    setCategory(value);
-                                    setPage(1);
-                                }}
-                            >
-                                {value === "all" ? "全部分类" : value}
-                            </button>
+                {loadError ? (
+                    <div className="skills-market-error">
+                        <WorkspaceErrorState description={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
+                    </div>
+                ) : loading ? (
+                    <SkillMarketSkeleton />
+                ) : displayedSkills.length ? (
+                    <div className="skills-market-grid">
+                        {displayedSkills.map((skill) => (
+                            <SkillMarketCard key={skill.dir} skill={skill} loading={mutatingDir === skill.dir} onOpen={() => openSkill(skill)} onActivate={() => toggleActivation(skill)} onFavorite={() => toggleFavorite(skill)} />
                         ))}
                     </div>
-                ) : null}
-
-                {loading ? (
-                    <SkillSkeleton />
-                ) : displayedSkills.length ? (
-                    <CollectionGrid className="skills-collection-grid sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
-                        {displayedSkills.map((skill) => (
-                            <SkillCard key={skill.dir} skill={skill} loading={mutatingDir === skill.dir} onOpen={() => openSkill(skill)} onActivate={() => toggleActivation(skill)} onFavorite={() => toggleFavorite(skill)} />
-                        ))}
-                    </CollectionGrid>
                 ) : (
-                    <WorkspaceState icon="skills" title="暂无匹配技能" description="换一个关键词、分类或技能范围继续查找。" />
+                    <div className="skills-market-empty">
+                        <WorkspaceState icon="skills" title="暂无匹配技能" description="换一个关键词、分类或技能范围继续查找。" />
+                    </div>
                 )}
 
                 <PaginationBar
                     current={page}
                     pageSize={pageSize}
                     total={displayedTotal}
-                    pageSizeOptions={[20, 40, 80]}
+                    pageSizeOptions={[20, 40, 60]}
                     onChange={(nextPage, nextPageSize) => {
                         setPage(nextPageSize !== pageSize ? 1 : nextPage);
                         setPageSize(nextPageSize);
@@ -255,64 +261,6 @@ export default function SkillsPage() {
     );
 }
 
-function SkillCard({ skill, loading, onOpen, onActivate, onFavorite }: { skill: UpdreamSkill; loading: boolean; onOpen: () => void; onActivate: () => void; onFavorite: () => void }) {
-    return (
-        <article className="app-collection-card group h-full">
-            <button type="button" className="block w-full text-left" onClick={onOpen}>
-                <div className="relative aspect-[16/10] overflow-hidden bg-stone-100 dark:bg-stone-900">
-                    {skill.cover_url ? <img src={skillImageUrl(skill.cover_url)} alt="" className="h-full w-full object-cover" /> : <SkillCoverFallback skill={skill} />}
-                    <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-                        <span className="rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 backdrop-blur dark:bg-stone-950/80 dark:text-stone-200">{featuredLabel(skill.featured_label)}</span>
-                        {skill.activated ? <span className="rounded bg-emerald-600/90 px-1.5 py-0.5 text-[10px] font-medium text-white">已激活</span> : null}
-                    </div>
-                </div>
-                <div className="p-3">
-                    <div className="flex items-start justify-between gap-2">
-                        <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{skill.name}</h2>
-                        <span className="shrink-0 text-[10px] text-stone-400">V{skill.version || "-"}</span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-stone-500 dark:text-stone-400">
-                        {skill.uploader_avatar ? <img src={skillImageUrl(skill.uploader_avatar)} alt="" className="size-4 rounded-full object-cover" /> : <UserRound className="size-3.5" />}
-                        <span className="truncate">{skillUploaderLabel(skill.uploader_name)}</span>
-                    </div>
-                    <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-stone-600 dark:text-stone-300">{skill.description || "暂无简介"}</p>
-                    {skill.categories?.length ? (
-                        <div className="mt-2 flex gap-1 overflow-hidden">
-                            {skill.categories.slice(0, 3).map((item) => (
-                                <span key={item} className="shrink-0 rounded bg-foreground/[.055] px-1.5 py-0.5 text-[10px] text-foreground/50">
-                                    {item}
-                                </span>
-                            ))}
-                        </div>
-                    ) : null}
-                </div>
-            </button>
-            <div className="border-t border-stone-100 px-3 py-2.5 dark:border-stone-800">
-                <div className="mb-2 flex items-center gap-3 text-[10px] text-stone-500 dark:text-stone-400">
-                    <span className="inline-flex items-center gap-1">
-                        <Zap className="size-3" />
-                        {formatCount(skill.usage_count || 0)}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                        <Star className="size-3" />
-                        {skill.avg_rating ? skill.avg_rating.toFixed(1) : "-"}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                        <Heart className="size-3" />
-                        {formatCount(skill.like_count || 0)}
-                    </span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button className="flex-1" loading={loading} type={skill.activated ? "default" : "primary"} icon={skill.activated ? <Check className="size-4" /> : <Zap className="size-4" />} onClick={onActivate}>
-                        {skill.activated ? "已激活" : "激活"}
-                    </Button>
-                    <Button className="!w-10" loading={loading} icon={<Heart className={`size-4 ${skill.liked ? "fill-current text-rose-500" : ""}`} />} onClick={onFavorite} aria-label={skill.liked ? "取消收藏" : "收藏"} />
-                </div>
-            </div>
-        </article>
-    );
-}
-
 function SkillDetailModal({
     skill,
     loading,
@@ -321,12 +269,12 @@ function SkillDetailModal({
     onActivate,
     onFavorite,
 }: {
-    skill: UpdreamSkill | null;
+    skill: PlatformSkill | null;
     loading: boolean;
     mutating: boolean;
     onClose: () => void;
-    onActivate: (skill: UpdreamSkill) => void;
-    onFavorite: (skill: UpdreamSkill) => void;
+    onActivate: (skill: PlatformSkill) => void;
+    onFavorite: (skill: PlatformSkill) => void;
 }) {
     const injectedPrompt = skill ? renderSkillPrompt(skill) : "";
 
@@ -344,12 +292,6 @@ function SkillDetailModal({
                         <Button loading={mutating} icon={<Heart className={`size-4 ${skill.liked ? "fill-current text-rose-500" : ""}`} />} onClick={() => onFavorite(skill)}>
                             收藏
                         </Button>
-                    </div>
-                    <div className="grid grid-cols-4 divide-x divide-border border-y border-border py-3 text-center">
-                        <SkillMetric icon={<Flame className="size-3.5" />} label="热度" value={formatCount(skill.hot_score || 0)} />
-                        <SkillMetric icon={<Zap className="size-3.5" />} label="使用" value={formatCount(skill.usage_count || 0)} />
-                        <SkillMetric icon={<Heart className="size-3.5" />} label="收藏" value={formatCount(skill.like_count || 0)} />
-                        <SkillMetric icon={<Star className="size-3.5" />} label="评分" value={skill.avg_rating ? skill.avg_rating.toFixed(1) : "-"} />
                     </div>
                     {loading ? (
                         <Skeleton active paragraph={{ rows: 14 }} />
@@ -376,12 +318,13 @@ function SkillDetailModal({
                                         children: (
                                             <div className="space-y-0 text-sm">
                                                 <DetailRow label="目录" value={skill.dir} />
-                                                <DetailRow label="图标标识" value={skill.icon_url || "-"} />
+                                                <DetailRow label="图标标识" value={skill.icon || "-"} />
                                                 <DetailRow label="版本" value={`V${skill.version || "-"}`} />
-                                                <DetailRow label="上传者 ID" value={String(skill.uploader_id ?? "-")} />
-                                                <DetailRow label="审核状态" value={skill.review_status || "-"} />
-                                                <DetailRow label="共享范围" value={skill.share_scope || "-"} />
-                                                <DetailRow label="更新时间" value={formatDate(skill.mtime)} />
+                                                <DetailRow label="校验值" value={skill.checksum} />
+                                                <DetailRow label="来源" value={skill.source_kind === "original" ? "平台原创" : "授权改编"} />
+                                                <DetailRow label="授权" value={skill.source_license || "-"} />
+                                                <DetailRow label="发布状态" value={skill.status === "published" ? "已发布" : skill.status} />
+                                                <DetailRow label="发布时间" value={formatDate(skill.published_at)} />
                                             </div>
                                         ),
                                     },
@@ -409,46 +352,7 @@ function DetailPanel({ icon, title, children }: { icon: ReactNode; title: string
 
 function skillUploaderLabel(uploaderName: string | undefined) {
     const normalizedName = uploaderName?.trim();
-    if (!normalizedName) return "未知作者";
-    if (!normalizedName.toLowerCase().startsWith("updream")) return normalizedName;
-    return `HMaigc${normalizedName.slice("updream".length)}`;
-}
-
-function SkillSkeleton() {
-    return (
-        <CollectionGrid>
-            {Array.from({ length: 8 }).map((_, index) => (
-                <div key={index} className="app-collection-card p-3">
-                    <Skeleton.Image active className="!h-36 !w-full !rounded-md" />
-                    <Skeleton active paragraph={{ rows: 3 }} className="mt-4" />
-                </div>
-            ))}
-        </CollectionGrid>
-    );
-}
-
-function SkillCoverFallback({ skill }: { skill: UpdreamSkill }) {
-    return (
-        <div className="flex h-full min-h-40 w-full flex-col justify-between bg-stone-100 p-4 text-stone-900 dark:bg-stone-900 dark:text-stone-100">
-            <Sparkles className="size-6 text-stone-400" />
-            <div>
-                <div className="text-xs font-semibold uppercase text-stone-500">{skill.icon_url || "skill"}</div>
-                <div className="mt-1 line-clamp-2 text-lg font-semibold leading-6">{skill.name}</div>
-            </div>
-        </div>
-    );
-}
-
-function SkillMetric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-    return (
-        <div className="min-w-0 px-2">
-            <div className="flex items-center justify-center gap-1 text-stone-400">
-                {icon}
-                <span className="text-sm font-semibold text-stone-950 dark:text-stone-100">{value}</span>
-            </div>
-            <div className="mt-0.5 text-[10px] text-stone-500">{label}</div>
-        </div>
-    );
+    return normalizedName || "HMaigc";
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
@@ -462,21 +366,8 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     );
 }
 
-function mergeSkill(current: UpdreamSkill, next: UpdreamSkill) {
-    return { ...current, ...next, detail_content: next.detail_content || current.detail_content };
-}
-
-function featuredLabel(label?: string) {
-    if (label === "rising") return "上升";
-    if (label === "new") return "新";
-    if (label === "featured") return "精选";
-    return label || "精选";
-}
-
-function formatCount(value: number) {
-    if (value >= 10000) return `${(value / 10000).toFixed(1)}w`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
-    return String(value);
+function mergeSkill(current: PlatformSkill, next: PlatformSkill) {
+    return { ...current, ...next };
 }
 
 function formatDate(value?: string) {

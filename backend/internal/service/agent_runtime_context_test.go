@@ -7,8 +7,41 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentruntime"
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/skillcatalog"
 )
+
+func TestAgentRuntimeFreezesSeededFirstPartySkillVersion(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), agentRuntimeServiceScope().ActorUserID, AgentRuntimeConfigurationInput{
+		SkillDirs: []string{"short-drama-director"}, ExecutionMode: agentruntime.ExecutionAutomatic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	builtins, err := skillcatalog.Builtins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected skillcatalog.BuiltinSkill
+	for _, builtin := range builtins {
+		if builtin.Dir == "short-drama-director" {
+			expected = builtin
+			break
+		}
+	}
+	if len(configuration.Skills) != 1 {
+		t.Fatalf("frozen seeded skills = %#v", configuration.Skills)
+	}
+	frozen := configuration.Skills[0]
+	if frozen.Dir != expected.Dir || frozen.Version != expected.Version || frozen.Instructions != expected.Instructions || frozen.Checksum != expected.Checksum {
+		t.Fatalf("frozen seeded skill = %#v; expected version=%d checksum=%s", frozen, expected.Version, expected.Checksum)
+	}
+}
 
 func TestAgentRuntimeFreezesSelectedGenerationModelAndSkillInstructions(t *testing.T) {
 	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","requiredArtifacts":["text"],"completionCriteria":[{"fact":"final_message"}]}}}`)
@@ -18,11 +51,12 @@ func TestAgentRuntimeFreezesSelectedGenerationModelAndSkillInstructions(t *testi
 	if err := db.Create(&model.Resource{ID: "runtime-reference-image", UserID: agentRuntimeServiceScope().ActorUserID, Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Width: 1280, Height: 720}).Error; err != nil {
 		t.Fatal(err)
 	}
-	svc.agentRuntimeSkillResolver = func(_ context.Context, userID string, dir string) (*UpdreamSkill, error) {
+	svc.agentRuntimeSkillResolver = func(_ context.Context, userID string, dir string) (*Skill, error) {
 		if userID != agentRuntimeServiceScope().ActorUserID || dir != "storyboard-director" {
 			t.Fatalf("unexpected skill lookup: user=%q dir=%q", userID, dir)
 		}
-		return &UpdreamSkill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: "先读取画布事实，再输出可执行分镜。", Version: 7}, nil
+		instructions := "先读取画布事实，再输出可执行分镜。"
+		return &Skill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: instructions, Version: 7, Checksum: agentRuntimeTestSkillChecksum(instructions)}, nil
 	}
 	input := StartAgentRuntimeInput{
 		Scope: agentRuntimeServiceScope(), ClientRequestID: "context-selection-request",
