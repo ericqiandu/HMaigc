@@ -22,7 +22,7 @@ import {
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage, emotionGenerationSize } from "@/lib/canvas/canvas-emotion";
 import { captureVideoLastFrame } from "@/lib/canvas/canvas-video-frame";
-import { mergeVideos, type MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
+import type { MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
 import { VIDEO_COMPOSITION_NODE_SIZE } from "@/lib/canvas/canvas-video-composition";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedVideo } from "@/services/api/video";
@@ -227,6 +227,7 @@ export function useCanvasMediaTools({
             setNodes(nextNodes);
         }
         try {
+            const { mergeVideos } = await import("@/lib/canvas/canvas-video-merge");
             const blob = await mergeVideos(videos.map((node, index) => ({
                 id: node.id,
                 url: node.metadata?.content,
