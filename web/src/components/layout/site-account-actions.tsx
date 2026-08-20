@@ -125,7 +125,9 @@ function AccountMenu({
                 <SiteUserAvatar user={user} className="size-9" />
                 <div className="site-account-summary-copy min-w-0 flex-1">
                     <div className="site-account-display-name truncate">{user.displayName || user.username}</div>
-                    <div className="site-account-username mt-0.5 truncate">@{user.username}</div>
+                    <div className="site-account-username truncate" title={`用户 ID：${user.publicId}`}>
+                        ID:{user.publicId}
+                    </div>
                 </div>
             </div>
             <div className="site-account-balance-row mb-2 flex items-center justify-between px-3 py-2.5">

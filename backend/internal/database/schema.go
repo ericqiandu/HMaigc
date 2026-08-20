@@ -10,6 +10,7 @@ import (
 func Models() []any {
 	return []any{
 		&model.User{},
+		&model.UserPublicIdentity{},
 		&model.AuthSession{},
 		&model.UserIdentity{},
 		&model.OAuthState{},
@@ -118,6 +119,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := MigrateBaseSchema(tx); err != nil {
+			return err
+		}
+		if err := EnsureUserPublicIdentitySchema(tx); err != nil {
 			return err
 		}
 		if err := migrateAgentRuntimeSkillChecksums(tx); err != nil {

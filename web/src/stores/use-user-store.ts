@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 export type LocalUser = {
     id: string;
+    publicId: number;
     username: string;
     email?: string;
     displayName: string;

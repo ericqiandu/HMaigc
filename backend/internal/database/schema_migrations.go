@@ -54,6 +54,46 @@ func MigrateBaseSchema(db *gorm.DB) error {
 	return nil
 }
 
+// EnsureUserPublicIdentitySchema creates and backfills the UUID-to-short-number mapping.
+// Existing users are assigned deterministically by creation time; conflict handling
+// makes concurrent startup and repeated migrations safe without rewriting an ID.
+func EnsureUserPublicIdentitySchema(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.AutoMigrate(&model.UserPublicIdentity{}); err != nil {
+			return fmt.Errorf("创建用户公开数字 ID 表: %w", err)
+		}
+		type userRow struct {
+			ID string
+		}
+		var users []userRow
+		if err := tx.Model(&model.User{}).
+			Select("id").
+			Where("NOT EXISTS (?)", tx.Model(&model.UserPublicIdentity{}).
+				Select("1").
+				Where("user_public_identities.user_id = users.id"),
+			).
+			Order("created_at asc, id asc").
+			Find(&users).Error; err != nil {
+			return fmt.Errorf("查询缺少公开数字 ID 的用户: %w", err)
+		}
+		if len(users) == 0 {
+			return nil
+		}
+		identities := make([]model.UserPublicIdentity, 0, len(users))
+		now := time.Now()
+		for _, user := range users {
+			identities = append(identities, model.UserPublicIdentity{UserID: user.ID, CreatedAt: now})
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}},
+			DoNothing: true,
+		}).CreateInBatches(&identities, 500).Error; err != nil {
+			return fmt.Errorf("补齐用户公开数字 ID: %w", err)
+		}
+		return nil
+	})
+}
+
 // prepareLegacyPaymentNulls 是运行时旧库的数据准备阶段，不属于跨库复制前的基础结构创建。
 func prepareLegacyPaymentNulls(db *gorm.DB) error {
 	for _, field := range paymentRequiredStringFields {

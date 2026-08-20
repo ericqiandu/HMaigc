@@ -51,6 +51,34 @@ func TestCreateUserRegistrationPersistsBindingAndConsumesVerificationAtomically(
 	if err := db.First(&account, "user_id = ?", user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
+	var publicIdentity model.UserPublicIdentity
+	if err := db.First(&publicIdentity, "user_id = ?", user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if publicIdentity.PublicID() < 10_000 || publicIdentity.PublicID() > 99_999 {
+		t.Fatalf("registration assigned invalid public ID %d", publicIdentity.PublicID())
+	}
+}
+
+func TestCreateUserRegistrationContinuesFromFiveToSixDigitPublicIDs(t *testing.T) {
+	repo, db := newReferralRepositoryTest(t)
+	now := time.Now()
+	if err := db.Create(&model.UserPublicIdentity{Number: 90_000, UserID: "last-five-digit-user", CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{ID: "overflow-user", Username: "overflow-user", Status: model.UserStatusActive, CreatedAt: now}
+	profile := model.ReferralProfile{UserID: user.ID, Code: "OVERFLOW1", CreatedAt: now, UpdatedAt: now}
+
+	if err := repo.CreateUserRegistration(UserRegistration{User: &user, ReferralProfile: &profile}); err != nil {
+		t.Fatal(err)
+	}
+	var identity model.UserPublicIdentity
+	if err := db.First(&identity, "user_id = ?", user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if identity.PublicID() != 100_000 {
+		t.Fatalf("public ID after 99999 = %d, want 100000", identity.PublicID())
+	}
 }
 
 func TestCreateUserRegistrationRollsBackVerificationWhenProfileCodeConflicts(t *testing.T) {
@@ -89,6 +117,13 @@ func TestCreateUserRegistrationRollsBackVerificationWhenProfileCodeConflicts(t *
 	if userCount != 0 {
 		t.Fatal("user remained after registration rollback")
 	}
+	var publicIdentityCount int64
+	if err := db.Model(&model.UserPublicIdentity{}).Where("user_id = ?", user.ID).Count(&publicIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if publicIdentityCount != 0 {
+		t.Fatal("public identity remained after registration rollback")
+	}
 }
 
 func newReferralRepositoryTest(t *testing.T) (*Repository, *gorm.DB) {
@@ -98,7 +133,7 @@ func newReferralRepositoryTest(t *testing.T) (*Repository, *gorm.DB) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&model.User{}, &model.UserIdentity{}, &model.EmailVerificationCode{},
+		&model.User{}, &model.UserPublicIdentity{}, &model.UserIdentity{}, &model.EmailVerificationCode{},
 		&model.ReferralProfile{}, &model.ReferralRelationship{},
 		&model.CreditAccount{},
 	); err != nil {

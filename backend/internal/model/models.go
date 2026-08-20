@@ -182,6 +182,20 @@ type User struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
+const UserPublicIDBase uint64 = 9_999
+
+// UserPublicIdentity maps the internal UUID to a stable, human-facing numeric ID.
+// Number is database-assigned so concurrent registrations cannot collide.
+type UserPublicIdentity struct {
+	Number    uint64    `json:"-" gorm:"primaryKey;autoIncrement"`
+	UserID    string    `json:"userId" gorm:"not null;size:36;uniqueIndex"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (identity UserPublicIdentity) PublicID() uint64 {
+	return UserPublicIDBase + identity.Number
+}
+
 type AuthSession struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string    `json:"userId" gorm:"index;size:36"`
