@@ -113,6 +113,11 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
 }
 
 describe("MiniMax H3 视频能力", () => {
+    test("新视频节点默认使用 16:9 与 720P", () => {
+        const normalized = normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-fast-260128"), "text");
+        expect(normalized).toMatchObject({ size: "16:9", vquality: "720p" });
+    });
+
     test("后台未发布视频模型时不进入视频能力解析", () => {
         expect(hasPublishedVideoModel(defaultConfig)).toBe(false);
     });

@@ -76,6 +76,9 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
 };
 
 describe("图片模型能力驱动参数", () => {
+    test("新图片节点默认使用 16:9 横屏比例", () => {
+        expect(defaultConfig.size).toBe("16:9");
+    });
 
     test("Seedream 按后台发布的像素预算派生 2K 与 3K 尺寸", () => {
         const resolutionPixels = { "2K": 4_194_304, "3K": 9_437_184 };

@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
+import { DEFAULT_MEDIA_ASPECT_RATIO, DEFAULT_VIDEO_RESOLUTION } from "@/lib/generation-defaults";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import type { ModelBrandKey } from "@/lib/model-brands";
 
@@ -164,7 +165,7 @@ export const defaultConfig: AiConfig = {
     audioChannel: "1",
     audioInstructions: "",
     videoSeconds: "6",
-    vquality: "720",
+    vquality: DEFAULT_VIDEO_RESOLUTION,
     videoGenerateAudio: "true",
     videoSuperResolutionEnabled: "false",
     videoSuperResolutionResolution: "1080p",
@@ -178,7 +179,7 @@ export const defaultConfig: AiConfig = {
     textModels: [],
     audioModels: [],
     quality: "auto",
-    size: "1:1",
+    size: DEFAULT_MEDIA_ASPECT_RATIO,
     transparentBackground: "false",
     count: "1",
     canvasImageCount: "1",
