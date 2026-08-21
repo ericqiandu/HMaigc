@@ -999,7 +999,11 @@ func (s *Service) estimateCallCost(log *model.ApiCallLog) {
 		log.Currency = pricing.Currency
 		return
 	}
-	if usageTier != nil {
+	usageCostFactAvailable := log.Billable
+	if pricing.PerMediaMicros > 0 {
+		usageCostFactAvailable = log.MediaCount > 0
+	}
+	if usageTier != nil && usageCostFactAvailable {
 		adjustment, adjustmentErr := calculateMediaInputUsageAdjustment(
 			usageTier.UsageMetric, int64(log.InputImageCount), usageTier.IncludedQuantity, usageTier.SupplierCostMicros,
 		)
@@ -1086,6 +1090,8 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 			log.MediaCount = len(data)
 		} else if images, ok := payload["images"].([]any); ok {
 			log.MediaCount = len(images)
+		} else if imageURLs, ok := payload["image_urls"].([]any); ok {
+			log.MediaCount = len(imageURLs)
 		}
 	}
 	if log.Capability == "audio" && log.Status == model.ApiCallStatusSucceeded {
