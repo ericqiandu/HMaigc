@@ -82,11 +82,16 @@ func (r *Repository) AppendAgentProductionPlanVersion(input AppendAgentProductio
 	if err != nil {
 		return nil, fmt.Errorf("encode production plan shots: %w", err)
 	}
+	referencesJSON, err := json.Marshal(input.Draft.References)
+	if err != nil {
+		return nil, fmt.Errorf("encode production plan references: %w", err)
+	}
 	expectedDeliveryJSON, err := json.Marshal(struct {
 		Scripts          int `json:"scripts"`
+		ReferenceImages  int `json:"referenceImages"`
 		StoryboardImages int `json:"storyboardImages"`
 		VideoClips       int `json:"videoClips"`
-	}{Scripts: 1, StoryboardImages: len(input.Draft.Shots), VideoClips: len(input.Draft.Shots)})
+	}{Scripts: 1, ReferenceImages: len(input.Draft.References), StoryboardImages: len(input.Draft.Shots), VideoClips: len(input.Draft.Shots)})
 	if err != nil {
 		return nil, fmt.Errorf("encode production plan delivery: %w", err)
 	}
@@ -97,10 +102,10 @@ func (r *Repository) AppendAgentProductionPlanVersion(input AppendAgentProductio
 		CanvasID: input.Scope.CanvasID, CreatedByRunID: input.RunID, Version: nextVersion,
 		Status: model.AgentProductionPlanActive, Title: strings.TrimSpace(input.Draft.Title),
 		TargetDurationMS: input.Draft.TargetDurationMS, Script: input.Draft.Script,
-		ShotsJSON: string(shotsJSON), ExpectedDeliveryJSON: string(expectedDeliveryJSON),
+		ReferencesJSON: string(referencesJSON), ShotsJSON: string(shotsJSON), ExpectedDeliveryJSON: string(expectedDeliveryJSON),
 		CreatedAt: input.Now, UpdatedAt: input.Now,
 	}
-	expectedArtifacts := productionArtifactsForPlan(plan, input.Draft.Shots, input.Now)
+	expectedArtifacts := productionArtifactsForPlan(plan, input.Draft.References, input.Draft.Shots, input.Now)
 
 	record := AgentProductionPlanRecord{}
 	err = r.db.Transaction(func(tx *gorm.DB) error {
@@ -170,6 +175,7 @@ func sameAgentProductionPlanContent(current model.AgentProductionPlanVersion, ex
 		current.TenantKind == expected.TenantKind && current.TenantID == expected.TenantID && current.DomainProjectID == expected.DomainProjectID && current.CanvasID == expected.CanvasID &&
 		current.CreatedByRunID == expected.CreatedByRunID && current.Status == model.AgentProductionPlanActive &&
 		current.Title == expected.Title && current.TargetDurationMS == expected.TargetDurationMS && current.Script == expected.Script &&
+		current.ReferencesJSON == expected.ReferencesJSON &&
 		current.ShotsJSON == expected.ShotsJSON && current.ExpectedDeliveryJSON == expected.ExpectedDeliveryJSON
 }
 
@@ -192,7 +198,8 @@ func sameAgentProductionArtifactIdentities(current []model.AgentProductionArtifa
 	for _, artifact := range current {
 		expectedArtifact, ok := expectedByID[artifact.ID]
 		if !ok || artifact.PlanKey != expectedArtifact.PlanKey || artifact.PlanVersionID != expectedArtifact.PlanVersionID ||
-			artifact.PlanVersion != expectedArtifact.PlanVersion || artifact.ShotKey != expectedArtifact.ShotKey || artifact.Kind != expectedArtifact.Kind {
+			artifact.PlanVersion != expectedArtifact.PlanVersion || artifact.ReferenceKey != expectedArtifact.ReferenceKey ||
+			artifact.ShotKey != expectedArtifact.ShotKey || artifact.Kind != expectedArtifact.Kind {
 			return false
 		}
 	}
@@ -406,19 +413,22 @@ func verifyAgentRunScope(db *gorm.DB, scope agentruntime.Scope) error {
 	return nil
 }
 
-func productionArtifactsForPlan(plan model.AgentProductionPlanVersion, shots []agentruntime.ShotPlanDraft, now time.Time) []model.AgentProductionArtifact {
-	artifacts := make([]model.AgentProductionArtifact, 0, 1+len(shots)*2)
-	appendArtifact := func(shotKey string, kind model.AgentProductionArtifactKind, status model.AgentProductionArtifactStatus) {
+func productionArtifactsForPlan(plan model.AgentProductionPlanVersion, references []agentruntime.ReferenceAssetDraft, shots []agentruntime.ShotPlanDraft, now time.Time) []model.AgentProductionArtifact {
+	artifacts := make([]model.AgentProductionArtifact, 0, 1+len(references)+len(shots)*2)
+	appendArtifact := func(referenceKey string, shotKey string, kind model.AgentProductionArtifactKind, status model.AgentProductionArtifactStatus) {
 		artifacts = append(artifacts, model.AgentProductionArtifact{
-			ID:      agentFactID("production-artifact", plan.ID, shotKey, string(kind)),
+			ID:      agentFactID("production-artifact", plan.ID, referenceKey, shotKey, string(kind)),
 			PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
-			ShotKey: shotKey, Kind: kind, Status: status, CreatedAt: now, UpdatedAt: now,
+			ReferenceKey: referenceKey, ShotKey: shotKey, Kind: kind, Status: status, CreatedAt: now, UpdatedAt: now,
 		})
 	}
-	appendArtifact("", model.AgentProductionArtifactScript, model.AgentProductionArtifactSucceeded)
+	appendArtifact("", "", model.AgentProductionArtifactScript, model.AgentProductionArtifactSucceeded)
+	for _, reference := range references {
+		appendArtifact(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage, model.AgentProductionArtifactPlanned)
+	}
 	for _, shot := range shots {
-		appendArtifact(shot.ShotKey, model.AgentProductionArtifactStoryboardImage, model.AgentProductionArtifactPlanned)
-		appendArtifact(shot.ShotKey, model.AgentProductionArtifactVideoClip, model.AgentProductionArtifactPlanned)
+		appendArtifact("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage, model.AgentProductionArtifactPlanned)
+		appendArtifact("", shot.ShotKey, model.AgentProductionArtifactVideoClip, model.AgentProductionArtifactPlanned)
 	}
 	return artifacts
 }

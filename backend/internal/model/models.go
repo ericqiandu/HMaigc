@@ -578,6 +578,16 @@ type SystemSetting struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// DataMigration records completion of one-way historical data normalization.
+// A record is trusted only after CompletedAt is committed in the same transaction
+// as the migrated facts.
+type DataMigration struct {
+	ID          string     `json:"id" gorm:"primaryKey;size:160"`
+	CompletedAt *time.Time `json:"completedAt"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
 type UserOSSSetting struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string    `json:"userId" gorm:"index;size:36;index:idx_user_oss_settings_user_created,priority:1"`

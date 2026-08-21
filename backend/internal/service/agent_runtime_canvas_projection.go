@@ -89,6 +89,10 @@ func buildProductionCanvasPatch(
 	artifacts []model.AgentProductionArtifact,
 	resources map[string]model.Resource,
 ) (CanvasMutationPatch, []productionCanvasBinding, error) {
+	var references []agentruntime.ReferenceAssetDraft
+	if err := json.Unmarshal([]byte(plan.ReferencesJSON), &references); err != nil {
+		return CanvasMutationPatch{}, nil, fmt.Errorf("decode production references: %w", err)
+	}
 	var shots []agentruntime.ShotPlanDraft
 	if err := json.Unmarshal([]byte(plan.ShotsJSON), &shots); err != nil {
 		return CanvasMutationPatch{}, nil, fmt.Errorf("decode production shots: %w", err)
@@ -101,21 +105,28 @@ func buildProductionCanvasPatch(
 		if artifact.PlanKey != plan.PlanKey || artifact.PlanVersionID != plan.ID || artifact.PlanVersion != plan.Version {
 			return CanvasMutationPatch{}, nil, errors.New("production canvas artifact scope conflict")
 		}
-		role := productionArtifactRole(artifact.ShotKey, artifact.Kind)
+		role := productionArtifactRole(artifact.ReferenceKey, artifact.ShotKey, artifact.Kind)
 		if _, exists := artifactsByRole[role]; exists {
 			return CanvasMutationPatch{}, nil, errors.New("production canvas artifact role is duplicated")
 		}
 		artifactsByRole[role] = artifact
 	}
-	script, exists := artifactsByRole[productionArtifactRole("", model.AgentProductionArtifactScript)]
+	script, exists := artifactsByRole[productionArtifactRole("", "", model.AgentProductionArtifactScript)]
 	if !exists {
 		return CanvasMutationPatch{}, nil, errors.New("production canvas script artifact is missing")
 	}
 
 	orderedArtifacts := []model.AgentProductionArtifact{script}
+	for _, reference := range references {
+		artifact, referenceExists := artifactsByRole[productionArtifactRole(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage)]
+		if !referenceExists {
+			return CanvasMutationPatch{}, nil, errors.New("production canvas reference artifact is missing")
+		}
+		orderedArtifacts = append(orderedArtifacts, artifact)
+	}
 	for _, shot := range shots {
-		image, imageExists := artifactsByRole[productionArtifactRole(shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
-		video, videoExists := artifactsByRole[productionArtifactRole(shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+		image, imageExists := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
+		video, videoExists := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
 		if !imageExists || !videoExists {
 			return CanvasMutationPatch{}, nil, errors.New("production canvas shot artifacts are incomplete")
 		}
@@ -132,17 +143,30 @@ func buildProductionCanvasPatch(
 		nodeByArtifact[artifact.ID] = nodeID
 		bindings = append(bindings, productionCanvasBinding{ArtifactID: artifact.ID, NodeID: nodeID})
 	}
+	referenceNodeByKey := make(map[string]string, len(references))
+	for _, reference := range references {
+		artifact := artifactsByRole[productionArtifactRole(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage)]
+		referenceNodeByKey[reference.ReferenceKey] = nodeByArtifact[artifact.ID]
+	}
 
 	rows := make([]productionCanvasStoryboardRow, 0, len(shots))
 	for _, shot := range shots {
-		image := artifactsByRole[productionArtifactRole(shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
-		video := artifactsByRole[productionArtifactRole(shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+		image := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
+		video := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+		shotReferenceNodeIDs := make([]string, 0, len(shot.ReferenceKeys))
+		for _, referenceKey := range shot.ReferenceKeys {
+			nodeID, referenceExists := referenceNodeByKey[referenceKey]
+			if !referenceExists {
+				return CanvasMutationPatch{}, nil, errors.New("production canvas shot reference is missing")
+			}
+			shotReferenceNodeIDs = append(shotReferenceNodeIDs, nodeID)
+		}
 		rows = append(rows, productionCanvasStoryboardRow{
 			ID: shot.ShotKey, ShotNumber: shot.Order, DurationSeconds: float64(shot.DurationMS) / 1000,
 			PlotDescription: shot.ScriptText, Characters: []string{}, ShotSize: "", Emotion: "", LightingAndAtmosphere: "",
 			AudioEffects: "", Camera: "", Motion: "", TimeBeats: "",
 			ImageGenerationPrompt: shot.ImagePrompt, VideoMotionPrompt: shot.VideoPrompt, NegativePrompt: "",
-			ReferenceNodeIDs: []string{}, ImageNodeID: nodeByArtifact[image.ID], VideoNodeID: nodeByArtifact[video.ID], Status: "success",
+			ReferenceNodeIDs: shotReferenceNodeIDs, ImageNodeID: nodeByArtifact[image.ID], VideoNodeID: nodeByArtifact[video.ID], Status: "success",
 		})
 	}
 	scriptNode := productionCanvasNode{
@@ -152,15 +176,26 @@ func buildProductionCanvasPatch(
 			ComposerContent: plan.Script, Status: productionArtifactCanvasStatus(script.Status), WorkflowKind: "script", WorkflowTitle: plan.Title,
 			Storyboard: &productionCanvasStoryboard{
 				Rows: rows, VisibleColumns: []string{"shotNumber", "durationSeconds", "plotDescription", "dialogue", "imageGenerationPrompt", "videoMotionPrompt"},
-				ReferenceNodeIDs: []string{},
+				ReferenceNodeIDs: orderedReferenceNodeIDs(references, referenceNodeByKey),
 			},
 		},
 	}
 	nodes := []productionCanvasNode{scriptNode}
-	connections := make([]productionCanvasConnection, 0, len(shots)*2)
+	connections := make([]productionCanvasConnection, 0, len(references)+len(shots)*2)
+	for index, reference := range references {
+		artifact := artifactsByRole[productionArtifactRole(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage)]
+		referenceNode, err := productionReferenceCanvasNode(plan, reference, artifact, resources, 500, float64(index)*280)
+		if err != nil {
+			return CanvasMutationPatch{}, nil, err
+		}
+		nodes = append(nodes, referenceNode)
+		connections = append(connections, productionCanvasConnection{
+			ID: productionCanvasConnectionID(plan, scriptNode.ID, referenceNode.ID), FromNodeID: scriptNode.ID, ToNodeID: referenceNode.ID,
+		})
+	}
 	for _, shot := range shots {
-		imageArtifact := artifactsByRole[productionArtifactRole(shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
-		videoArtifact := artifactsByRole[productionArtifactRole(shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+		imageArtifact := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
+		videoArtifact := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
 		imageNode, err := productionMediaCanvasNode(plan, shot, imageArtifact, resources, 1000, float64(shot.Order-1)*300)
 		if err != nil {
 			return CanvasMutationPatch{}, nil, err
@@ -178,6 +213,12 @@ func buildProductionCanvasPatch(
 				ID: productionCanvasConnectionID(plan, imageNode.ID, videoNode.ID), FromNodeID: imageNode.ID, ToNodeID: videoNode.ID,
 			},
 		)
+		for _, referenceKey := range shot.ReferenceKeys {
+			connections = append(connections, productionCanvasConnection{
+				ID:         productionCanvasConnectionID(plan, referenceNodeByKey[referenceKey], imageNode.ID),
+				FromNodeID: referenceNodeByKey[referenceKey], ToNodeID: imageNode.ID,
+			})
+		}
 	}
 	patch := CanvasMutationPatch{UpsertNodes: make([]json.RawMessage, 0, len(nodes)), UpsertConnections: make([]json.RawMessage, 0, len(connections))}
 	for _, node := range nodes {
@@ -195,6 +236,44 @@ func buildProductionCanvasPatch(
 		patch.UpsertConnections = append(patch.UpsertConnections, encoded)
 	}
 	return patch, bindings, nil
+}
+
+func orderedReferenceNodeIDs(references []agentruntime.ReferenceAssetDraft, nodeByKey map[string]string) []string {
+	result := make([]string, 0, len(references))
+	for _, reference := range references {
+		result = append(result, nodeByKey[reference.ReferenceKey])
+	}
+	return result
+}
+
+func productionReferenceCanvasNode(
+	plan model.AgentProductionPlanVersion,
+	reference agentruntime.ReferenceAssetDraft,
+	artifact model.AgentProductionArtifact,
+	resources map[string]model.Resource,
+	x float64,
+	y float64,
+) (productionCanvasNode, error) {
+	metadata := productionCanvasNodeMetadata{
+		Prompt: reference.ImagePrompt, ComposerContent: reference.ImagePrompt, Status: productionArtifactCanvasStatus(artifact.Status),
+		GenerationMode: "image", WorkflowKind: "reference", WorkflowTitle: reference.Title,
+		TaskID: artifact.TaskID, TaskStatus: string(artifact.Status), TaskProgress: productionArtifactProgress(artifact.Status),
+		TaskStage: productionArtifactStage(artifact.Status), ErrorDetails: artifact.LastErrorCode,
+	}
+	if artifact.ResourceID != "" {
+		resource, exists := resources[artifact.ResourceID]
+		if exists && resource.Status == model.ResourceStatusReady && resource.Kind == "image" {
+			metadata.Content = "/api/resources/" + resource.ID + "/file"
+			metadata.StorageKey = "resource:" + resource.ID
+			metadata.MimeType = resource.MimeType
+		} else if artifact.Status == model.AgentProductionArtifactSucceeded || artifact.Status == model.AgentProductionArtifactCommitted {
+			return productionCanvasNode{}, errors.New("successful production reference resource is not ready")
+		}
+	}
+	return productionCanvasNode{
+		ID: productionCanvasNodeID(plan, artifact), Type: "image", Title: reference.Title,
+		Position: agentCanvasPosition{X: x, Y: y}, Width: 340, Height: 240, Metadata: metadata,
+	}, nil
 }
 
 func productionMediaCanvasNode(plan model.AgentProductionPlanVersion, shot agentruntime.ShotPlanDraft, artifact model.AgentProductionArtifact, resources map[string]model.Resource, x float64, y float64) (productionCanvasNode, error) {
@@ -228,8 +307,8 @@ func productionMediaCanvasNode(plan model.AgentProductionPlanVersion, shot agent
 	}, nil
 }
 
-func productionArtifactRole(shotKey string, kind model.AgentProductionArtifactKind) string {
-	return string(kind) + ":" + strings.TrimSpace(shotKey)
+func productionArtifactRole(referenceKey string, shotKey string, kind model.AgentProductionArtifactKind) string {
+	return string(kind) + ":" + strings.TrimSpace(referenceKey) + ":" + strings.TrimSpace(shotKey)
 }
 
 func productionCanvasNodeID(plan model.AgentProductionPlanVersion, artifact model.AgentProductionArtifact) string {

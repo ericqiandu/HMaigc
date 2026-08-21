@@ -101,7 +101,7 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if err := validateProductionRenderCapabilities(request, *artifact, callable); err != nil {
 		return nil, err
 	}
-	quoteRequest, err := productionRenderQuoteRequest(request, *artifact)
+	quoteRequest, err := productionRenderQuoteRequest(scope.CanvasID, request, *artifact)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func productionRenderCallableModel(models []agentRuntimeCallableModelFact, selec
 	capability := "image"
 	if kind == model.AgentProductionArtifactVideoClip {
 		capability = "video"
-	} else if kind != model.AgentProductionArtifactStoryboardImage {
+	} else if kind != model.AgentProductionArtifactStoryboardImage && kind != model.AgentProductionArtifactReferenceImage {
 		return agentRuntimeCallableModelFact{}, newAgentProductionRenderInputError("production_render_invalid", "artifact kind is unsupported")
 	}
 	for _, item := range models {
@@ -187,7 +187,7 @@ func validateProductionRenderCapabilities(request agentProductionRenderRequest, 
 		return false
 	}
 	switch artifact.Kind {
-	case model.AgentProductionArtifactStoryboardImage:
+	case model.AgentProductionArtifactReferenceImage, model.AgentProductionArtifactStoryboardImage:
 		if request.ImageConfig == nil || callable.Capability != "image" {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "image capability is unavailable")
 		}
@@ -257,12 +257,12 @@ func decodeAgentProductionRenderRequest(raw json.RawMessage) (agentProductionRen
 	return request, nil
 }
 
-func productionRenderQuoteRequest(request agentProductionRenderRequest, artifact model.AgentProductionArtifact) (TaskBillingQuoteRequest, error) {
+func productionRenderQuoteRequest(canvasID string, request agentProductionRenderRequest, artifact model.AgentProductionArtifact) (TaskBillingQuoteRequest, error) {
 	taskType := "canvas_image"
 	mode := "image"
 	config := TaskBillingQuoteConfig{ChannelID: request.GenerationModel.ChannelID, Model: request.GenerationModel.Model}
 	switch artifact.Kind {
-	case model.AgentProductionArtifactStoryboardImage:
+	case model.AgentProductionArtifactReferenceImage, model.AgentProductionArtifactStoryboardImage:
 		if request.ImageConfig == nil || request.VideoConfig != nil {
 			return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "storyboard config is invalid")
 		}
@@ -280,7 +280,7 @@ func productionRenderQuoteRequest(request agentProductionRenderRequest, artifact
 		return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "artifact kind is unsupported")
 	}
 	return TaskBillingQuoteRequest{
-		Type: taskType, Operation: "production_render", BatchCount: 1,
+		ProjectID: canvasID, Type: taskType, Operation: "production_render", BatchCount: 1,
 		Input: TaskBillingQuoteInput{Mode: mode, Config: config},
 	}, nil
 }

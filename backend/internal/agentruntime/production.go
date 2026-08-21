@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-const maxProductionPlanShots = 64
+const (
+	maxProductionPlanShots      = 64
+	maxProductionPlanReferences = 16
+)
 
 type ImageRenderConfig struct {
 	Size                  string `json:"size"`
@@ -47,20 +50,31 @@ type ProductionRenderArguments struct {
 }
 
 type ProductionPlanDraft struct {
-	Title            string          `json:"title"`
-	TargetDurationMS int             `json:"targetDurationMs"`
-	Script           string          `json:"script"`
-	Shots            []ShotPlanDraft `json:"shots"`
+	Title            string                `json:"title"`
+	TargetDurationMS int                   `json:"targetDurationMs"`
+	Script           string                `json:"script"`
+	References       []ReferenceAssetDraft `json:"references,omitempty"`
+	Shots            []ShotPlanDraft       `json:"shots"`
+}
+
+// ReferenceAssetDraft describes a non-timeline visual anchor. It is rendered
+// before dependent storyboard images and never contributes to film duration.
+type ReferenceAssetDraft struct {
+	ReferenceKey string `json:"referenceKey"`
+	Role         string `json:"role"`
+	Title        string `json:"title"`
+	ImagePrompt  string `json:"imagePrompt"`
 }
 
 type ShotPlanDraft struct {
-	ShotKey      string   `json:"shotKey"`
-	Order        int      `json:"order"`
-	DurationMS   int      `json:"durationMs"`
-	ScriptText   string   `json:"scriptText"`
-	ImagePrompt  string   `json:"imagePrompt"`
-	VideoPrompt  string   `json:"videoPrompt"`
-	Dependencies []string `json:"dependencies"`
+	ShotKey       string   `json:"shotKey"`
+	Order         int      `json:"order"`
+	DurationMS    int      `json:"durationMs"`
+	ScriptText    string   `json:"scriptText"`
+	ImagePrompt   string   `json:"imagePrompt"`
+	VideoPrompt   string   `json:"videoPrompt"`
+	ReferenceKeys []string `json:"referenceKeys,omitempty"`
+	Dependencies  []string `json:"dependencies"`
 }
 
 func (draft ProductionPlanDraft) Validate() error {
@@ -75,6 +89,25 @@ func (draft ProductionPlanDraft) Validate() error {
 	}
 	if len(draft.Shots) == 0 || len(draft.Shots) > maxProductionPlanShots {
 		return errors.New("production plan shot count is invalid")
+	}
+	if len(draft.References) > maxProductionPlanReferences {
+		return errors.New("production plan reference count is invalid")
+	}
+	referenceKeys := make(map[string]struct{}, len(draft.References))
+	for index, reference := range draft.References {
+		referenceKey := strings.TrimSpace(reference.ReferenceKey)
+		if referenceKey == "" || len(referenceKey) > 120 {
+			return fmt.Errorf("production plan reference %d key is invalid", index+1)
+		}
+		if _, exists := referenceKeys[referenceKey]; exists {
+			return fmt.Errorf("production plan reference key %s is duplicated", referenceKey)
+		}
+		if strings.TrimSpace(reference.Role) == "" || len(strings.TrimSpace(reference.Role)) > 80 ||
+			strings.TrimSpace(reference.Title) == "" || len(strings.TrimSpace(reference.Title)) > 240 ||
+			strings.TrimSpace(reference.ImagePrompt) == "" {
+			return fmt.Errorf("production plan reference %s content is incomplete", referenceKey)
+		}
+		referenceKeys[referenceKey] = struct{}{}
 	}
 
 	shotKeys := make(map[string]struct{}, len(draft.Shots))
@@ -98,6 +131,17 @@ func (draft ProductionPlanDraft) Validate() error {
 		}
 		if strings.TrimSpace(shot.ScriptText) == "" || strings.TrimSpace(shot.ImagePrompt) == "" || strings.TrimSpace(shot.VideoPrompt) == "" {
 			return fmt.Errorf("production plan shot %s content is incomplete", shotKey)
+		}
+		seenReferences := make(map[string]struct{}, len(shot.ReferenceKeys))
+		for _, referenceKey := range shot.ReferenceKeys {
+			referenceKey = strings.TrimSpace(referenceKey)
+			if _, exists := referenceKeys[referenceKey]; !exists {
+				return fmt.Errorf("production plan shot %s reference %s is missing", shotKey, referenceKey)
+			}
+			if _, exists := seenReferences[referenceKey]; exists {
+				return fmt.Errorf("production plan shot %s reference %s is duplicated", shotKey, referenceKey)
+			}
+			seenReferences[referenceKey] = struct{}{}
 		}
 		totalDurationMS += shot.DurationMS
 	}

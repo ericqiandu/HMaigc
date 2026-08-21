@@ -26,13 +26,14 @@ type agentRuntimeCallableModelFact struct {
 }
 
 type agentRuntimeProductionPlanFact struct {
-	PlanKey          string                          `json:"planKey"`
-	PlanVersion      int                             `json:"planVersion"`
-	Title            string                          `json:"title"`
-	TargetDurationMS int                             `json:"targetDurationMs"`
-	Script           string                          `json:"script"`
-	Shots            []agentruntime.ShotPlanDraft    `json:"shots"`
-	Artifacts        []agentProductionArtifactResult `json:"artifacts"`
+	PlanKey          string                             `json:"planKey"`
+	PlanVersion      int                                `json:"planVersion"`
+	Title            string                             `json:"title"`
+	TargetDurationMS int                                `json:"targetDurationMs"`
+	Script           string                             `json:"script"`
+	References       []agentruntime.ReferenceAssetDraft `json:"references"`
+	Shots            []agentruntime.ShotPlanDraft       `json:"shots"`
+	Artifacts        []agentProductionArtifactResult    `json:"artifacts"`
 }
 
 func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState) (string, error) {
@@ -60,18 +61,22 @@ func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*age
 	if err != nil || record == nil {
 		return nil, err
 	}
+	var references []agentruntime.ReferenceAssetDraft
+	if err := json.Unmarshal([]byte(record.Plan.ReferencesJSON), &references); err != nil {
+		return nil, errors.New("active agent production plan references are invalid")
+	}
 	var shots []agentruntime.ShotPlanDraft
 	if err := json.Unmarshal([]byte(record.Plan.ShotsJSON), &shots); err != nil {
 		return nil, errors.New("active agent production plan shots are invalid")
 	}
 	fact := &agentRuntimeProductionPlanFact{
 		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, Title: record.Plan.Title,
-		TargetDurationMS: record.Plan.TargetDurationMS, Script: record.Plan.Script, Shots: shots,
+		TargetDurationMS: record.Plan.TargetDurationMS, Script: record.Plan.Script, References: references, Shots: shots,
 		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)),
 	}
 	for _, artifact := range record.Artifacts {
 		fact.Artifacts = append(fact.Artifacts, agentProductionArtifactResult{
-			ArtifactID: artifact.ID, Kind: artifact.Kind, ShotKey: artifact.ShotKey, Status: artifact.Status,
+			ArtifactID: artifact.ID, Kind: artifact.Kind, ReferenceKey: artifact.ReferenceKey, ShotKey: artifact.ShotKey, Status: artifact.Status,
 		})
 	}
 	return fact, nil

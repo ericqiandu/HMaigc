@@ -55,8 +55,8 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 		createSQL: `CREATE UNIQUE INDEX idx_agent_production_plan_versions_scope_key_version ON agent_production_plan_versions(tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version)`,
 	},
 	{
-		name: "idx_agent_production_artifacts_version_shot_kind", table: "agent_production_artifacts", columns: "plan_version_id,shot_key,kind", unique: true,
-		createSQL: `CREATE UNIQUE INDEX idx_agent_production_artifacts_version_shot_kind ON agent_production_artifacts(plan_version_id, shot_key, kind)`,
+		name: "idx_agent_production_artifacts_version_reference_shot_kind", table: "agent_production_artifacts", columns: "plan_version_id,reference_key,shot_key,kind", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_production_artifacts_version_reference_shot_kind ON agent_production_artifacts(plan_version_id, reference_key, shot_key, kind)`,
 	},
 	{
 		name: "idx_agent_production_artifacts_task", table: "agent_production_artifacts", columns: "task_id", predicate: "task_id <> ''", unique: true,
@@ -75,6 +75,7 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 var legacyAgentProductionIndexes = []string{
 	"idx_agent_production_plan_versions_key_version",
 	"idx_agent_production_artifacts_plan_shot_kind",
+	"idx_agent_production_artifacts_version_shot_kind",
 }
 
 // EnsureAgentRuntimeIntegritySchema creates only missing indexes after proving existing definitions and rows are safe.
@@ -115,8 +116,8 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 
 const (
 	retiredAgentToolSchemaFailureCode            = "tool_schema_retired"
-	legacyAgentToolSchemaVersion                 = 1
-	agentRuntimeMigrationTargetToolSchemaVersion = 2
+	legacyAgentToolSchemaVersion                 = 2
+	agentRuntimeMigrationTargetToolSchemaVersion = 3
 	legacyAgentModelTaskType                     = "agent_runtime_model"
 	legacyAgentModelTaskOperationPrefix          = "agent_model:"
 	legacyAgentModelBillingScene                 = "agent_runtime_model"
@@ -467,7 +468,7 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		{"agent_checkpoints", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent checkpoint"},
 		{"agent_tool_calls", "run_id AS first_value, tool_call_id AS second_value, CAST(action_version AS TEXT) AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, tool_call_id, action_version", "agent tool action"},
 		{"agent_production_plan_versions", "tenant_kind AS first_value, tenant_id AS second_value, domain_project_id AS third_value, canvas_id AS fourth_value, plan_key AS fifth_value, CAST(version AS TEXT) AS sixth_value, COUNT(*) AS count", "", "tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version", "agent production plan version"},
-		{"agent_production_artifacts", "plan_version_id AS first_value, shot_key AS second_value, kind AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "plan_version_id, shot_key, kind", "agent production artifact"},
+		{"agent_production_artifacts", "plan_version_id AS first_value, reference_key AS second_value, shot_key AS third_value, kind AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "plan_version_id, reference_key, shot_key, kind", "agent production artifact"},
 		{"agent_production_artifacts", "task_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "task_id <> ''", "task_id", "agent production task"},
 		{"agent_production_artifacts", "billing_order_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "billing_order_id <> ''", "billing_order_id", "agent production billing order"},
 		{"agent_production_artifacts", "resource_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "resource_id <> ''", "resource_id", "agent production resource"},

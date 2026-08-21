@@ -61,6 +61,7 @@ func Models() []any {
 		&model.UserWatermarkPreferenceEvent{},
 		&model.UserDailyActivity{},
 		&model.SystemSetting{},
+		&model.DataMigration{},
 		&model.UserOSSSetting{},
 		&model.UserDailyUploadUsage{},
 		&model.Skill{},

@@ -48,15 +48,17 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			!strings.Contains(body.Messages[0].Content, `"planKey":"","baseVersion":0`) ||
 			!strings.Contains(body.Messages[0].Content, `"targetDurationMs":10000`) ||
 			!strings.Contains(body.Messages[0].Content, `"shotKey":"shot-1"`) ||
+			!strings.Contains(body.Messages[0].Content, `"referenceKey":"hero"`) ||
+			!strings.Contains(body.Messages[0].Content, `"referenceKeys":["hero"]`) ||
 			!strings.Contains(body.Messages[0].Content, `"imagePrompt":"..."`) ||
 			!strings.Contains(body.Messages[0].Content, `"videoPrompt":"..."`) ||
-			!strings.Contains(body.Messages[0].Content, "所有镜头 durationMs 之和必须等于 targetDurationMs") ||
+			!strings.Contains(body.Messages[0].Content, "所有正式镜头 durationMs 必须大于 0 且总和等于 targetDurationMs") ||
 			!strings.Contains(body.Messages[0].Content, "禁止添加未声明字段") ||
 			!strings.Contains(body.Messages[0].Content, "fact 为 final_message 或 canvas_revision 时必须省略 artifact") ||
 			!strings.Contains(body.Messages[0].Content, `{"fact":"artifact","artifact":"image"}`) ||
 			!strings.Contains(body.Messages[0].Content, "production.render") ||
-			!strings.Contains(body.Messages[0].Content, `"artifactId":"<storyboard_image artifactId>"`) ||
-			!strings.Contains(body.Messages[0].Content, `"imageConfig":{"size":"16:9","count":1}`) ||
+			!strings.Contains(body.Messages[0].Content, `"artifactId":"<reference_image 或 storyboard_image artifactId>"`) ||
+			!strings.Contains(body.Messages[0].Content, `"imageConfig":{"size":"9:16","count":1}`) ||
 			strings.Contains(body.Messages[0].Content, `"quality":"high"`) ||
 			!strings.Contains(body.Messages[0].Content, "qualities 为空时必须省略 quality") ||
 			!strings.Contains(body.Messages[0].Content, "参数值必须来自所选 callableModels 的 providerCapabilities") ||
@@ -385,6 +387,160 @@ func TestStartAgentRuntimeCreatesTokenBilledFrozenModelTask(t *testing.T) {
 	}
 }
 
+func TestStartPersonalAgentRuntimeBillsPersonalAccountWhenUserAlsoHasTeamMembership(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	createAgentRuntimeTeamMembership(t, db, "runtime-team", 0)
+
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "personal-agent-with-team-membership",
+		UserMessage: "读取个人画布并告诉我下一步", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	started, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatalf("StartAgentRuntime() error = %v, want personal credit account", err)
+	}
+	if started.ModelTask == nil {
+		t.Fatalf("StartAgentRuntime() state = %#v, want personal billed model task", started.State)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.TeamID != "" {
+		t.Fatalf("personal Agent billing order TeamID = %q, want personal account", order.TeamID)
+	}
+}
+
+func TestStartPersonalAgentRuntimeDoesNotUseUnlimitedTeamEntitlement(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	createAgentRuntimeTeamMembership(t, db, "runtime-team", 1_000_000_000)
+	teamPlan, err := json.Marshal(model.MembershipPlan{
+		ID: "runtime-team-plan", Name: "Runtime Team", Tier: "pro", Audience: model.MembershipAudienceTeam,
+		ImageConcurrency: 99, VideoConcurrency: 99, UnlimitedTaskQueue: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.MembershipSubscription{}).
+		Where("id = ?", "runtime-team-subscription").
+		Update("plan_snapshot_json", string(teamPlan)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for index := 0; index < 6; index++ {
+		suffix := strconv.Itoa(index)
+		scope := agentRuntimeServiceScope()
+		scope.RunID = "personal-entitlement-run-" + suffix
+		scope.ThreadID = "personal-entitlement-thread-" + suffix
+		_, startErr := svc.StartAgentRuntime(StartAgentRuntimeInput{
+			Scope: scope, ClientRequestID: "personal-entitlement-request-" + suffix,
+			UserMessage: "检查个人账户并发范围", MaxSteps: 4,
+			Configuration: guidedAgentRuntimeConfigurationInput(),
+		})
+		if index < 5 && startErr != nil {
+			t.Fatalf("personal Agent task %d error = %v", index+1, startErr)
+		}
+		if index == 5 && (startErr == nil || !strings.Contains(startErr.Error(), "并发额度")) {
+			t.Fatalf("sixth personal Agent task error = %v, want personal concurrency rejection", startErr)
+		}
+	}
+}
+
+func TestStartPersonalAgentRuntimeIgnoresActiveTasksBilledToTeam(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	createAgentRuntimeTeamMembership(t, db, "runtime-team", 1_000_000_000)
+	for index := 0; index < 5; index++ {
+		suffix := strconv.Itoa(index)
+		orderID := "team-active-order-" + suffix
+		if err := db.Create(&model.BillingOrder{
+			ID: orderID, UserID: "runtime-user", TeamID: "runtime-team", TaskID: "team-active-task-" + suffix,
+			IdempotencyKey: "team-active-idempotency-" + suffix,
+			Status:         model.BillingStatusReserved, BillingMode: "fixed_request", AmountMicrocredits: 100,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&model.Task{
+			ID: "team-active-task-" + suffix, UserID: "runtime-user", ProjectID: "runtime-team-canvas",
+			Type: agentRuntimeModelTaskType, Capability: taskCapabilityOther, Status: model.TaskStatusQueued,
+			BillingOrderID: orderID,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "personal-ignores-team-active-tasks",
+		UserMessage: "检查个人账户任务范围", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatalf("StartAgentRuntime() error = %v, want team tasks excluded from personal concurrency", err)
+	}
+	if started.ModelTask == nil {
+		t.Fatal("personal Agent model task was not created")
+	}
+}
+
+func TestStartAgentRuntimeRejectsReplayedBillingOrderFromDifferentAccount(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "agent-replay-billing-account-mismatch",
+		UserMessage: "检查当前画布", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	started, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).
+		Where("id = ?", started.ModelTask.BillingOrderID).
+		Update("team_id", "different-team").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "billing facts conflict") {
+		t.Fatalf("replayed Agent billing mismatch error = %v", err)
+	}
+}
+
+func TestStartTeamAgentRuntimeBillsExactTeamAccount(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	createAgentRuntimeTeamMembership(t, db, "runtime-team", 1_000_000_000)
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").Updates(map[string]interface{}{
+		"team_id": "runtime-team", "default_team_access": model.CanvasAccessManager,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	scope := agentRuntimeServiceScope()
+	scope.TenantKind = agentruntime.TenantTeam
+	scope.TenantID = "runtime-team"
+
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "team-agent-exact-billing-scope",
+		UserMessage: "读取团队画布并告诉我下一步", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.ModelTask == nil {
+		t.Fatalf("StartAgentRuntime() state = %#v, want team billed model task", started.State)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.TeamID != "runtime-team" {
+		t.Fatalf("team Agent billing order TeamID = %q, want runtime-team", order.TeamID)
+	}
+}
+
 func TestAgentRuntimeTokenBillingSettlesFromProviderUsageAndBill(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
@@ -651,6 +807,43 @@ func agentRuntimeServiceScope() agentruntime.Scope {
 
 func guidedAgentRuntimeConfigurationInput() AgentRuntimeConfigurationInput {
 	return AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionGuided}
+}
+
+func createAgentRuntimeTeamMembership(t *testing.T, db *gorm.DB, teamID string, availableMicrocredits int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	endsAt := now.Add(24 * time.Hour)
+	planSnapshot, err := json.Marshal(model.MembershipPlan{
+		ID: teamID + "-plan", Name: "Runtime Team", Tier: "pro", Audience: model.MembershipAudienceTeam,
+		ImageConcurrency: 4, VideoConcurrency: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Team{
+		ID: teamID, OwnerUserID: "runtime-user", Name: "Runtime Team", Status: model.TeamStatusActive,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.TeamMember{
+		ID: teamID + "-member", TeamID: teamID, UserID: "runtime-user",
+		Role: model.TeamMemberRoleOwner, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.MembershipSubscription{
+		ID: teamID + "-subscription", TeamID: teamID, PlanID: teamID + "-plan",
+		Status: model.MembershipSubscriptionActive, Seats: 2, PlanSnapshotJSON: string(planSnapshot),
+		StartsAt: now.Add(-time.Hour), EndsAt: &endsAt, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.TeamCreditAccount{
+		TeamID: teamID, AvailableMicrocredits: availableMicrocredits, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func agentRuntimeTestSkillChecksum(instructions string) string {

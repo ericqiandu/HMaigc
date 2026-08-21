@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const agentRuntimeSkillChecksumMigrationBatchSize = 100
+const agentRuntimeSkillChecksumMigrationID = "20260821-agent-runtime-skill-checksums-v1"
 
 type agentRuntimeJSONFact struct {
 	ID      string `gorm:"column:id"`
@@ -21,10 +26,48 @@ type agentRuntimeJSONFact struct {
 // checkpoints and event facts retain their frozen instructions and gain the checksum now
 // required by the single current runtime contract; no legacy execution branch remains.
 func migrateAgentRuntimeSkillChecksums(db *gorm.DB) error {
-	if err := migrateAgentRuntimeSkillChecksumsInTable(db, "agent_checkpoints", "state_json"); err != nil {
-		return err
-	}
-	return migrateAgentRuntimeSkillChecksumsInTable(db, "agent_run_events", "payload_json")
+	return db.Transaction(func(tx *gorm.DB) error {
+		var completed []model.DataMigration
+		result := tx.Where("id = ? AND completed_at IS NOT NULL", agentRuntimeSkillChecksumMigrationID).Limit(1).Find(&completed)
+		if result.Error != nil {
+			return fmt.Errorf("读取 Agent Runtime Skill 迁移状态失败: %w", result.Error)
+		}
+		if len(completed) == 1 {
+			return nil
+		}
+
+		now := time.Now()
+		pending := model.DataMigration{ID: agentRuntimeSkillChecksumMigrationID, CreatedAt: now, UpdatedAt: now}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&pending).Error; err != nil {
+			return fmt.Errorf("创建 Agent Runtime Skill 迁移状态失败: %w", err)
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&pending, "id = ?", agentRuntimeSkillChecksumMigrationID).Error; err != nil {
+			return fmt.Errorf("锁定 Agent Runtime Skill 迁移状态失败: %w", err)
+		}
+		if pending.CompletedAt != nil {
+			return nil
+		}
+		if err := migrateAgentRuntimeSkillChecksumsInTable(tx, "agent_checkpoints", "state_json"); err != nil {
+			return err
+		}
+		if err := migrateAgentRuntimeSkillChecksumsInTable(tx, "agent_run_events", "payload_json"); err != nil {
+			return err
+		}
+		completedAt := time.Now()
+		updated := tx.Model(&model.DataMigration{}).
+			Where("id = ? AND completed_at IS NULL", agentRuntimeSkillChecksumMigrationID).
+			Updates(struct {
+				CompletedAt *time.Time
+				UpdatedAt   time.Time
+			}{CompletedAt: &completedAt, UpdatedAt: completedAt})
+		if updated.Error != nil {
+			return fmt.Errorf("完成 Agent Runtime Skill 迁移状态失败: %w", updated.Error)
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("Agent Runtime Skill 迁移完成状态发生并发冲突")
+		}
+		return nil
+	})
 }
 
 func migrateAgentRuntimeSkillChecksumsInTable(db *gorm.DB, table string, column string) error {

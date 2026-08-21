@@ -49,6 +49,7 @@ type AgentProductionArtifactKind string
 
 const (
 	AgentProductionArtifactScript          AgentProductionArtifactKind = "script"
+	AgentProductionArtifactReferenceImage  AgentProductionArtifactKind = "reference_image"
 	AgentProductionArtifactStoryboardImage AgentProductionArtifactKind = "storyboard_image"
 	AgentProductionArtifactVideoClip       AgentProductionArtifactKind = "video_clip"
 )
@@ -92,6 +93,7 @@ type AgentProductionPlanVersion struct {
 	Title                string                    `json:"title" gorm:"size:240;not null"`
 	TargetDurationMS     int                       `json:"targetDurationMs" gorm:"not null"`
 	Script               string                    `json:"script" gorm:"type:text;not null"`
+	ReferencesJSON       string                    `json:"-" gorm:"type:text;not null;default:'[]'"`
 	ShotsJSON            string                    `json:"-" gorm:"type:text;not null"`
 	ExpectedDeliveryJSON string                    `json:"-" gorm:"type:text;not null"`
 	CreatedAt            time.Time                 `json:"createdAt"`
@@ -105,6 +107,7 @@ type AgentProductionArtifact struct {
 	PlanKey        string                        `json:"planKey" gorm:"size:120;not null"`
 	PlanVersionID  string                        `json:"planVersionId" gorm:"size:80;not null"`
 	PlanVersion    int                           `json:"planVersion" gorm:"not null"`
+	ReferenceKey   string                        `json:"referenceKey,omitempty" gorm:"size:120;not null;default:''"`
 	ShotKey        string                        `json:"shotKey" gorm:"size:120;not null;default:''"`
 	Kind           AgentProductionArtifactKind   `json:"kind" gorm:"size:32;not null"`
 	Status         AgentProductionArtifactStatus `json:"status" gorm:"size:32;not null"`

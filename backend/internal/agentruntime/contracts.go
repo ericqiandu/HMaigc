@@ -42,7 +42,7 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
-	CurrentToolSchemaVersion = 2
+	CurrentToolSchemaVersion = 3
 
 	RunQueued          RunStatus = "queued"
 	RunRunning         RunStatus = "running"

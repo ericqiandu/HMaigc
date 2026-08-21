@@ -60,7 +60,7 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 		t.Fatal(err)
 	}
 	quote, err := primary.QuoteTaskBilling(scope.ActorUserID, TaskBillingQuoteRequest{
-		Type: "canvas_image", Operation: "production_render", BatchCount: 1,
+		ProjectID: scope.CanvasID, Type: "canvas_image", Operation: "production_render", BatchCount: 1,
 		Input: TaskBillingQuoteInput{Mode: "image", Config: TaskBillingQuoteConfig{
 			ChannelID: "postgres-image-channel", Model: "kz_gpt_image2", Size: "1:1", Quality: "medium",
 		}},

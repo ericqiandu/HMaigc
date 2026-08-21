@@ -380,6 +380,38 @@ func twoShotProductionPlanDraft(script string) agentruntime.ProductionPlanDraft 
 	}
 }
 
+func TestAppendAgentProductionPlanCreatesDurableReferenceArtifacts(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	draft := twoShotProductionPlanDraft("带角色参考的广告")
+	draft.References = []agentruntime.ReferenceAssetDraft{{
+		ReferenceKey: "hero", Role: "character", Title: "主角", ImagePrompt: "主角角色参考图",
+	}}
+	draft.Shots[0].ReferenceKeys = []string{"hero"}
+	draft.Shots[1].ReferenceKeys = []string{"hero"}
+
+	record, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "reference-plan", BaseVersion: 0, Draft: draft, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Plan.ReferencesJSON == "" {
+		t.Fatal("reference plan facts were not persisted")
+	}
+	var referenceArtifact model.AgentProductionArtifact
+	for _, artifact := range record.Artifacts {
+		if artifact.Kind == model.AgentProductionArtifactReferenceImage {
+			referenceArtifact = artifact
+			break
+		}
+	}
+	if referenceArtifact.ID == "" || referenceArtifact.ReferenceKey != "hero" || referenceArtifact.ShotKey != "" || referenceArtifact.Status != model.AgentProductionArtifactPlanned {
+		t.Fatalf("reference artifact = %#v", referenceArtifact)
+	}
+}
+
 func assertProductionArtifactShape(t *testing.T, artifacts []model.AgentProductionArtifact) {
 	t.Helper()
 	want := map[string]bool{

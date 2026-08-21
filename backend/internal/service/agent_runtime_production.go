@@ -42,10 +42,11 @@ type agentProductionPlanResult struct {
 }
 
 type agentProductionArtifactResult struct {
-	ArtifactID string                              `json:"artifactId"`
-	Kind       model.AgentProductionArtifactKind   `json:"kind"`
-	ShotKey    string                              `json:"shotKey"`
-	Status     model.AgentProductionArtifactStatus `json:"status"`
+	ArtifactID   string                              `json:"artifactId"`
+	Kind         model.AgentProductionArtifactKind   `json:"kind"`
+	ReferenceKey string                              `json:"referenceKey,omitempty"`
+	ShotKey      string                              `json:"shotKey"`
+	Status       model.AgentProductionArtifactStatus `json:"status"`
 }
 
 func executeAgentSkillLoad(configuration agentruntime.RunConfiguration, raw json.RawMessage) ([]byte, error) {
@@ -92,10 +93,11 @@ func (s *Service) executeAgentProductionPlan(scope agentruntime.Scope, raw json.
 	}
 	for _, artifact := range record.Artifacts {
 		result.Artifacts = append(result.Artifacts, agentProductionArtifactResult{
-			ArtifactID: artifact.ID,
-			Kind:       artifact.Kind,
-			ShotKey:    artifact.ShotKey,
-			Status:     artifact.Status,
+			ArtifactID:   artifact.ID,
+			Kind:         artifact.Kind,
+			ReferenceKey: artifact.ReferenceKey,
+			ShotKey:      artifact.ShotKey,
+			Status:       artifact.Status,
 		})
 	}
 	return json.Marshal(result)

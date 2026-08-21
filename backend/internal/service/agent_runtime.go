@@ -423,7 +423,11 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err != nil {
 		return nil, err
 	}
-	activePolicy, capability, err := s.membershipActiveTaskPolicy(scope.ActorUserID, agentRuntimeModelTaskType, policy)
+	billingScope, err := billingAccountScopeFromAgent(scope)
+	if err != nil {
+		return nil, err
+	}
+	activePolicy, capability, err := s.membershipActiveTaskPolicy(scope.ActorUserID, billingScope, agentRuntimeModelTaskType, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -438,9 +442,9 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	}
 	var order *model.BillingOrder
 	if tokenBilled {
-		order, err = s.newTokenBillingOrder(scope.ActorUserID, item.ChannelID, item.ModelKey, "agent_runtime_model", agentRuntimeBillingKey(scope.RunID, state.StepNumber), tokenReservation)
+		order, err = s.newTokenBillingOrder(scope.ActorUserID, billingScope, item.ChannelID, item.ModelKey, "agent_runtime_model", agentRuntimeBillingKey(scope.RunID, state.StepNumber), tokenReservation)
 	} else {
-		order, err = s.newBillingOrder(scope.ActorUserID, task.ID, agentRuntimeBillingKey(scope.RunID, state.StepNumber), item.ChannelID, item.ModelKey, "text", "agent_runtime_model", BillingUsage{Quantity: 1})
+		order, err = s.newBillingOrder(scope.ActorUserID, billingScope, task.ID, agentRuntimeBillingKey(scope.RunID, state.StepNumber), item.ChannelID, item.ModelKey, "text", "agent_runtime_model", BillingUsage{Quantity: 1})
 	}
 	if err != nil {
 		return nil, err
@@ -486,7 +490,12 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 	if order.BillingMode == "token_usage" {
 		expectedBillingKey = "proxy-token:" + expectedBillingKey
 	}
+	expectedBillingScope, err := billingAccountScopeFromAgent(scope)
+	if err != nil {
+		return nil, err
+	}
 	if order.UserID != run.ActorUserID || order.TaskID != task.ID || order.IdempotencyKey != expectedBillingKey ||
+		strings.TrimSpace(order.TeamID) != expectedBillingScope.TeamID ||
 		order.ChannelModelID != run.ModelRecordID || order.Model != run.ModelKey || order.Capability != "text" ||
 		order.Scene != "agent_runtime_model" || order.Quantity != 1 || order.AmountMicrocredits <= 0 {
 		return nil, errors.New("agent runtime billing facts conflict")
@@ -556,9 +565,9 @@ expectedDelivery 的 completionCriteria 只允许三种精确结构：{"fact":"f
 首次决策必须根据用户目标声明 expectedDelivery；Runtime 会立即冻结该合同。之后每个工具调用与 final 都必须逐字段复用同一 expectedDelivery，禁止在工具失败、审批拒绝或证据不足后把资产/画布交付降级成文字回答。
 每次新的工具调用必须使用从未出现过的 toolCallId；包括重试同一个工具时也必须生成新的 toolCallId，禁止复用历史 toolCallId + actionVersion。
 显式选择的 Skill 只会先提供目录、名称、描述与版本；必须通过 skill.load 的 {"dir":"已选目录"} 加载冻结说明后才能 final。
-production.plan 用于持久化版本化剧本与镜头计划，不触发媒体扣费。新建计划时 arguments 精确结构是 {"planKey":"","baseVersion":0,"draft":{"title":"...","targetDurationMs":10000,"script":"...","shots":[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"...","imagePrompt":"...","videoPrompt":"...","dependencies":[]}]}}；禁止添加未声明字段。所有镜头 durationMs 之和必须等于 targetDurationMs，order 必须从 1 连续递增，dependencies 只能引用更早的 shotKey。更新计划时必须复用已返回的 planKey，并把 baseVersion 设为当前 planVersion，同时仍传完整 draft。
-production.plan 成功结果会返回 planKey、planVersion 与 artifacts；每个 artifact 都包含 artifactId、kind、shotKey、status。后续必须按 kind 选择对应 artifactId；计划内容未变化时禁止重复新建 production.plan。
+production.plan 用于持久化版本化剧本、非时间线参考资产与镜头计划，不触发媒体扣费。新建计划时 arguments 精确结构是 {"planKey":"","baseVersion":0,"draft":{"title":"...","targetDurationMs":10000,"script":"...","references":[{"referenceKey":"hero","role":"character","title":"主角参考","imagePrompt":"..."}],"shots":[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"...","imagePrompt":"...","videoPrompt":"...","referenceKeys":["hero"],"dependencies":[]}]}}；没有参考资产时 references 和 referenceKeys 可省略。禁止添加未声明字段。referenceKey 必须唯一；referenceKeys 只能引用已声明参考资产。参考资产不占时间线时长，禁止伪装为 0 秒镜头。所有正式镜头 durationMs 必须大于 0 且总和等于 targetDurationMs，order 必须从 1 连续递增，dependencies 只能引用更早的 shotKey。更新计划时必须复用已返回的 planKey，并把 baseVersion 设为当前 planVersion，同时仍传完整 draft。
+production.plan 成功结果会返回 planKey、planVersion 与 artifacts；参考图 artifact 包含 artifactId、kind=reference_image、referenceKey、status，正式镜头 artifact 包含 artifactId、kind、shotKey、status。后续必须按 kind 选择对应 artifactId；计划内容未变化时禁止重复新建 production.plan。
 运行事实中的 productionPlan 是当前 run 的活动计划与 Artifact Ledger 快照；它存在时必须复用其中的 planKey、planVersion、shots 和 artifactId/status 从失败处继续，除非确实要修改剧本或镜头内容，否则禁止再调用 production.plan。
-production.render 每次只生成一个计划 Artifact。分镜图 arguments 精确结构是 {"planKey":"...","planVersion":1,"artifactId":"<storyboard_image artifactId>","generationModel":{"channelId":"...","model":"..."},"imageConfig":{"size":"16:9","count":1}}；视频 arguments 精确结构是 {"planKey":"...","planVersion":1,"artifactId":"<video_clip artifactId>","generationModel":{"channelId":"...","model":"..."},"videoConfig":{"durationSeconds":10,"quality":"720p","generateAudio":true}}。generationModel 与全部参数值必须来自所选 callableModels 的 providerCapabilities：图片 size 只能使用 ratios，count 只能使用 outputCounts；qualities 为空时必须省略 quality，非空时 quality 只能取其中之一；视频 quality 只能使用 resolutions，时长必须落在 durationMin 到 durationMax，generateAudio=true 仅可用于 supportsGeneratedAudio=true。imageConfig 与 videoConfig 必须二选一。需要生成付费媒体时必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval；禁止用 final 消息代替扣费确认。
+production.render 每次只生成一个计划 Artifact。参考图和分镜图都使用 {"planKey":"...","planVersion":1,"artifactId":"<reference_image 或 storyboard_image artifactId>","generationModel":{"channelId":"...","model":"..."},"imageConfig":{"size":"9:16","count":1}}；必须先生成镜头 referenceKeys 指向的全部参考图，Runtime 才允许生成该分镜图，并会把这些真实 Resource 作为图片模型输入。视频 arguments 精确结构是 {"planKey":"...","planVersion":1,"artifactId":"<video_clip artifactId>","generationModel":{"channelId":"...","model":"..."},"videoConfig":{"durationSeconds":10,"quality":"720p","generateAudio":true}}。generationModel 与全部参数值必须来自所选 callableModels 的 providerCapabilities：图片 size 只能使用 ratios，count 只能使用 outputCounts；qualities 为空时必须省略 quality，非空时 quality 只能取其中之一；视频 quality 只能使用 resolutions，时长必须落在 durationMin 到 durationMax，generateAudio=true 仅可用于 supportsGeneratedAudio=true。imageConfig 与 videoConfig 必须二选一。需要生成付费媒体时必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval；禁止用 final 消息代替扣费确认。
 canvas.commit 只接受版本化计划的确定性投影；arguments 结构是 {"planKey":"...","planVersion":1,"baseRevision":0,"artifactIds":["..."]}，artifactIds 必须完整覆盖该计划，画布版本冲突必须重新读取真实事实后发起新的工具调用。
 只有真实事实足以满足交付时才能 final；需要画布或生成事实时必须先调用工具。`

@@ -20,8 +20,9 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 	now := time.Now().UTC()
 	plan := model.AgentProductionPlanVersion{
 		ID: "plan-version-1", PlanKey: "orange-ad", Version: 1, Title: "10秒橙子广告", TargetDurationMS: 10_000,
-		Script:    "鲜橙唤醒清晨。",
-		ShotsJSON: `[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
+		Script:         "鲜橙唤醒清晨。",
+		ReferencesJSON: `[]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
 	}
 	artifacts := []model.AgentProductionArtifact{
 		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
@@ -75,6 +76,50 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 	}
 	if nodes[0].ID != productionCanvasNodeID(plan, artifacts[0]) || nodes[1].ID != productionCanvasNodeID(plan, artifacts[1]) || nodes[2].ID != productionCanvasNodeID(plan, artifacts[2]) {
 		t.Fatalf("production node identities = %s, %s, %s", nodes[0].ID, nodes[1].ID, nodes[2].ID)
+	}
+}
+
+func TestProductionCanvasCommitProjectsReferenceNodesAndBindings(t *testing.T) {
+	now := time.Now().UTC()
+	plan := model.AgentProductionPlanVersion{
+		ID: "plan-version-reference", PlanKey: "watch-film", Version: 1, Title: "雨夜怀表", TargetDurationMS: 6_000,
+		Script:         "顾棠在雨夜钟表店为怀表上弦。",
+		ReferencesJSON: `[{"referenceKey":"character-gu-tang","role":"character","title":"顾棠角色定妆","imagePrompt":"黑色齐下巴短发，右侧银色发夹，深青色风衣"}]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":6000,"scriptText":"顾棠拿起怀表","imagePrompt":"雨夜钟表店中景","videoPrompt":"缓慢推进","referenceKeys":["character-gu-tang"],"dependencies":[]}]`,
+	}
+	artifacts := []model.AgentProductionArtifact{
+		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
+		{ID: "artifact-reference", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ReferenceKey: "character-gu-tang", Kind: model.AgentProductionArtifactReferenceImage, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-reference"},
+		{ID: "artifact-image", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactStoryboardImage, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-image"},
+		{ID: "artifact-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-video"},
+	}
+	resources := map[string]model.Resource{
+		"resource-reference": {ID: "resource-reference", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", ObjectKey: "production/character.png", CreatedAt: now, UpdatedAt: now},
+		"resource-image":     {ID: "resource-image", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", ObjectKey: "production/shot-1.png", CreatedAt: now, UpdatedAt: now},
+		"resource-video":     {ID: "resource-video", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", ObjectKey: "production/shot-1.mp4", DurationMs: 6_000, CreatedAt: now, UpdatedAt: now},
+	}
+
+	patch, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch.UpsertNodes) != 4 || len(patch.UpsertConnections) != 4 || len(bindings) != 4 {
+		t.Fatalf("reference projection counts: nodes=%d connections=%d bindings=%d", len(patch.UpsertNodes), len(patch.UpsertConnections), len(bindings))
+	}
+	var scriptNode, referenceNode productionCanvasNode
+	if err := json.Unmarshal(patch.UpsertNodes[0], &scriptNode); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(patch.UpsertNodes[1], &referenceNode); err != nil {
+		t.Fatal(err)
+	}
+	if referenceNode.Type != "image" || referenceNode.Metadata.WorkflowKind != "reference" || referenceNode.Metadata.Content != "/api/resources/resource-reference/file" {
+		t.Fatalf("reference node = %#v", referenceNode)
+	}
+	if scriptNode.Metadata.Storyboard == nil || len(scriptNode.Metadata.Storyboard.ReferenceNodeIDs) != 1 ||
+		len(scriptNode.Metadata.Storyboard.Rows) != 1 || len(scriptNode.Metadata.Storyboard.Rows[0].ReferenceNodeIDs) != 1 ||
+		scriptNode.Metadata.Storyboard.ReferenceNodeIDs[0] != referenceNode.ID || scriptNode.Metadata.Storyboard.Rows[0].ReferenceNodeIDs[0] != referenceNode.ID {
+		t.Fatalf("storyboard reference bindings = %#v", scriptNode.Metadata.Storyboard)
 	}
 }
 

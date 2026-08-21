@@ -35,7 +35,7 @@ func (s *Service) productionArtifactForRender(scope agentruntime.Scope, argument
 		if artifact.Attempt < arguments.Attempt || artifact.Attempt > arguments.Attempt+1 {
 			return nil, repository.ErrAgentProductionArtifactConflict
 		}
-		if artifact.Kind != model.AgentProductionArtifactStoryboardImage && artifact.Kind != model.AgentProductionArtifactVideoClip {
+		if artifact.Kind != model.AgentProductionArtifactReferenceImage && artifact.Kind != model.AgentProductionArtifactStoryboardImage && artifact.Kind != model.AgentProductionArtifactVideoClip {
 			return nil, errAgentRuntimeProductionRenderInput
 		}
 		return artifact, nil
@@ -102,6 +102,18 @@ func (s *Service) ensureProductionArtifactTask(
 }
 
 func productionArtifactPrompt(plan model.AgentProductionPlanVersion, artifact model.AgentProductionArtifact) (string, error) {
+	if artifact.Kind == model.AgentProductionArtifactReferenceImage {
+		var references []agentruntime.ReferenceAssetDraft
+		if err := json.Unmarshal([]byte(plan.ReferencesJSON), &references); err != nil {
+			return "", err
+		}
+		for _, reference := range references {
+			if reference.ReferenceKey == artifact.ReferenceKey {
+				return strings.TrimSpace(reference.ImagePrompt), nil
+			}
+		}
+		return "", errors.New("production reference artifact is missing")
+	}
 	var shots []agentruntime.ShotPlanDraft
 	if err := json.Unmarshal([]byte(plan.ShotsJSON), &shots); err != nil {
 		return "", err
@@ -126,7 +138,7 @@ func (s *Service) productionRenderTaskInput(
 ) (canvasGenerationInput, string, error) {
 	config := providerConfig{ChannelID: arguments.GenerationModel.ChannelID, Model: arguments.GenerationModel.Model}
 	input := canvasGenerationInput{Prompt: prompt, Config: config}
-	if artifact.Kind == model.AgentProductionArtifactStoryboardImage {
+	if artifact.Kind == model.AgentProductionArtifactReferenceImage || artifact.Kind == model.AgentProductionArtifactStoryboardImage {
 		if arguments.ImageConfig == nil {
 			return canvasGenerationInput{}, "", errAgentRuntimeProductionRenderInput
 		}
@@ -135,6 +147,13 @@ func (s *Service) productionRenderTaskInput(
 		input.Config.Quality = arguments.ImageConfig.Quality
 		input.Config.Count = strconv.Itoa(arguments.ImageConfig.Count)
 		input.Config.TransparentBackground = strconv.FormatBool(arguments.ImageConfig.TransparentBackground)
+		if artifact.Kind == model.AgentProductionArtifactStoryboardImage {
+			references, err := s.productionShotReferenceResources(scope, arguments, artifact)
+			if err != nil {
+				return canvasGenerationInput{}, "", err
+			}
+			input.ReferenceImages = references
+		}
 		return input, "canvas_image", nil
 	}
 	if arguments.VideoConfig == nil {
@@ -153,6 +172,60 @@ func (s *Service) productionRenderTaskInput(
 		StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType,
 	}}
 	return input, "canvas_video", nil
+}
+
+func (s *Service) productionShotReferenceResources(
+	scope agentruntime.Scope,
+	arguments agentruntime.ProductionRenderArguments,
+	storyboardArtifact model.AgentProductionArtifact,
+) ([]providerMedia, error) {
+	plan, err := s.repo.AgentProductionPlanVersionForScope(scope, arguments.PlanKey, arguments.PlanVersion)
+	if err != nil {
+		return nil, err
+	}
+	var shots []agentruntime.ShotPlanDraft
+	if err := json.Unmarshal([]byte(plan.ShotsJSON), &shots); err != nil {
+		return nil, err
+	}
+	var referenceKeys []string
+	for _, shot := range shots {
+		if shot.ShotKey == storyboardArtifact.ShotKey {
+			referenceKeys = shot.ReferenceKeys
+			break
+		}
+	}
+	if len(referenceKeys) == 0 {
+		return nil, nil
+	}
+	artifacts, err := s.repo.AgentProductionArtifactsForVersion(scope, arguments.PlanKey, arguments.PlanVersion)
+	if err != nil {
+		return nil, err
+	}
+	referenceArtifacts := make(map[string]model.AgentProductionArtifact, len(referenceKeys))
+	for _, artifact := range artifacts {
+		if artifact.Kind == model.AgentProductionArtifactReferenceImage {
+			referenceArtifacts[artifact.ReferenceKey] = artifact
+		}
+	}
+	media := make([]providerMedia, 0, len(referenceKeys))
+	for _, referenceKey := range referenceKeys {
+		artifact, exists := referenceArtifacts[referenceKey]
+		if !exists || (artifact.Status != model.AgentProductionArtifactSucceeded && artifact.Status != model.AgentProductionArtifactCommitted) || artifact.ResourceID == "" {
+			return nil, errProductionPrerequisiteAssetMissing
+		}
+		resource, err := s.productionResourceForScope(scope, artifact.ResourceID)
+		if err != nil {
+			return nil, err
+		}
+		if resource.Status != model.ResourceStatusReady || resource.Kind != "image" {
+			return nil, errProductionPrerequisiteAssetMissing
+		}
+		media = append(media, providerMedia{
+			ID: resource.ID, Name: referenceKey, Type: "image", URL: "/api/resources/" + resource.ID + "/file",
+			StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType,
+		})
+	}
+	return media, nil
 }
 
 func (s *Service) productionStoryboardResource(scope agentruntime.Scope, arguments agentruntime.ProductionRenderArguments, videoArtifact model.AgentProductionArtifact) (*model.Resource, error) {
@@ -272,7 +345,7 @@ func (s *Service) reconcileSucceededProductionArtifacts(scope agentruntime.Scope
 		return err
 	}
 	for _, current := range record.Artifacts {
-		if current.Kind != model.AgentProductionArtifactStoryboardImage && current.Kind != model.AgentProductionArtifactVideoClip {
+		if current.Kind != model.AgentProductionArtifactReferenceImage && current.Kind != model.AgentProductionArtifactStoryboardImage && current.Kind != model.AgentProductionArtifactVideoClip {
 			continue
 		}
 		artifact := current
