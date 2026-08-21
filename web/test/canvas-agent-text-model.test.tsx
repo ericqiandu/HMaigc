@@ -1,18 +1,11 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { resolveAgentDefaultRequestConfig } from "../src/components/canvas/canvas-agent-default-model";
+import { CanvasAgentModelMenu } from "../src/components/canvas/canvas-agent-model-menu";
+import { CanvasAgentSelectionSummary } from "../src/components/canvas/canvas-agent-selection-summary";
 import { defaultConfig, encodeChannelModel, type AiConfig, type ModelChannel } from "../src/stores/use-config-store";
-
-let CanvasAgentModelMenu: (typeof import("../src/components/canvas/canvas-agent-model-menu"))["CanvasAgentModelMenu"];
-let CanvasAgentSelectionSummary: (typeof import("../src/components/canvas/canvas-agent-selection-summary"))["CanvasAgentSelectionSummary"];
-let resolveAgentDefaultRequestConfig: (typeof import("../src/components/canvas/canvas-agent-default-model"))["resolveAgentDefaultRequestConfig"];
-
-beforeAll(async () => {
-    ({ CanvasAgentModelMenu } = await import("../src/components/canvas/canvas-agent-model-menu"));
-    ({ CanvasAgentSelectionSummary } = await import("../src/components/canvas/canvas-agent-selection-summary"));
-    ({ resolveAgentDefaultRequestConfig } = await import("../src/components/canvas/canvas-agent-default-model"));
-});
 
 const textChannel: ModelChannel = {
     id: "kuaizi-chat-gpt",

@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Select } from "antd";
 
-import { staticAssetURL } from "@/lib/static-assets";
 import { cn } from "@/lib/utils";
-import { ModelBrandIcon } from "@/components/model-brand-icon";
+import { isMemberModel, MemberDiamond, ModelIcon, modelCatalogEntry } from "@/components/model-picker-presentation";
+import { CanvasMediaModelPicker } from "@/components/canvas/canvas-media-model-picker";
 import { formatModelEstimatedDuration } from "@/lib/model-estimated-duration";
 import { catalogModelsByCapability, isModelAccessible, modelDisplayName, modelOptionName, resolveModelChannel, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
@@ -17,7 +17,7 @@ type ModelPickerProps = {
     placeholder?: string;
     onMissingConfig?: () => void;
     showSelectedEstimate?: boolean;
-    presentation?: "default" | "canvasImage" | "canvasAudio";
+    presentation?: "default" | "canvasMedia";
 };
 
 export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig, showSelectedEstimate = true, presentation = "default" }: ModelPickerProps) {
@@ -38,7 +38,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         return ungroupedModels.length ? [...channelGroups, { key: "ungrouped", label: "其他模型", scope: "未指定渠道", models: ungroupedModels }] : channelGroups;
     }, [config, options]);
     const current = value || "";
-    const canvasMediaPresentation = presentation === "canvasImage" || presentation === "canvasAudio";
+    const canvasMediaPresentation = presentation === "canvasMedia";
     const selectOptions = useMemo(
         () =>
             canvasMediaPresentation
@@ -62,6 +62,12 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         window.addEventListener("model-picker-open", closeOtherPicker);
         return () => window.removeEventListener("model-picker-open", closeOtherPicker);
     }, [pickerId]);
+
+    if (canvasMediaPresentation && (capability === "image" || capability === "video" || capability === "audio")) {
+        return (
+            <CanvasMediaModelPicker capability={capability} className={className} config={config} current={current} open={open} pickerId={pickerId} placeholder={placeholder} onChange={onChange} onMissingConfig={onMissingConfig} onOpenChange={setOpen} />
+        );
+    }
 
     return (
         <div className={cn("model-picker-root", fullWidth ? "w-full min-w-0" : "w-fit max-w-full", className)} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
@@ -87,12 +93,12 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                         .includes(input.toLocaleLowerCase())
                 }
                 notFoundContent={<span className="canvas-model-picker-empty block px-2 py-3 text-center text-xs text-foreground/48">{emptyModelLabel(config, capability)}</span>}
-                popupMatchSelectWidth={presentation === "canvasImage" ? 370 : presentation === "canvasAudio" ? 360 : capability === "image" || capability === "video" ? 320 : 280}
-                placement={canvasMediaPresentation ? "topLeft" : "bottomLeft"}
+                popupMatchSelectWidth={capability === "image" || capability === "video" || capability === "audio" ? 320 : 280}
+                placement="bottomLeft"
                 className={cn("canvas-composer-model-picker", fullWidth ? "w-full" : "min-w-36 max-w-full")}
                 classNames={{
                     popup: {
-                        root: cn("canvas-model-picker-popup", presentation === "canvasImage" && "canvas-image-model-picker-popup", presentation === "canvasAudio" && "canvas-audio-model-picker-popup"),
+                        root: "canvas-model-picker-popup",
                     },
                 }}
                 onOpenChange={(nextOpen) => {
@@ -129,13 +135,11 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
 
 function ModelLabel({ config, model, presentation, selected }: { config: AiConfig; model: string; presentation: ModelPickerProps["presentation"]; selected: boolean }) {
     const [hovered, setHovered] = useState(false);
-    const canvasImage = presentation === "canvasImage";
-    const canvasAudio = presentation === "canvasAudio";
-    const canvasMedia = canvasImage || canvasAudio;
+    const canvasMedia = presentation === "canvasMedia";
     const presentationConfig = modelCatalogEntry(config, model);
     const marketingCopy = canvasMedia ? presentationConfig?.marketingCopy?.trim() : "";
-    const modelMeta = marketingCopy || (canvasAudio ? "未配置模型说明" : "");
-    const showMarketingCopy = Boolean(modelMeta && (canvasAudio || selected || hovered));
+    const modelMeta = marketingCopy;
+    const showMarketingCopy = Boolean(modelMeta && (selected || hovered));
     return (
         <span
             className={cn("canvas-model-picker-option flex min-w-0 items-center", canvasMedia ? "gap-2.5" : "gap-1.5 py-0", selected && "canvas-model-picker-option--selected")}
@@ -165,7 +169,7 @@ function ModelLabel({ config, model, presentation, selected }: { config: AiConfi
 function ModelEstimatedDuration({ seconds, compact = false, presentation = "default" }: { seconds: number | undefined; compact?: boolean; presentation?: ModelPickerProps["presentation"] }) {
     const label = formatModelEstimatedDuration(seconds);
     if (!label) return null;
-    const canvasMedia = presentation === "canvasImage" || presentation === "canvasAudio";
+    const canvasMedia = presentation === "canvasMedia";
     return (
         <span
             className={cn(
@@ -179,24 +183,4 @@ function ModelEstimatedDuration({ seconds, compact = false, presentation = "defa
     );
 }
 
-export function ModelIcon({ model, config }: { model: string; config?: AiConfig }) {
-    const brandKey = config ? (modelCatalogEntry(config, model)?.brandKey ?? "generic") : "generic";
-    return <ModelBrandIcon brandKey={brandKey} className="canvas-model-picker-icon size-3.5 opacity-90" />;
-}
-
-function modelCatalogEntry(config: AiConfig, model: string) {
-    const channel = resolveModelChannel(config, model);
-    return channel.modelCosts?.find((item) => item.model === modelOptionName(model));
-}
-
-function isMemberModel(config: AiConfig, model: string) {
-    return modelCatalogEntry(config, model)?.accessPolicy === "member";
-}
-
-function MemberDiamond() {
-    return (
-        <span className="canvas-model-picker-member-diamond inline-flex size-4 shrink-0 items-center justify-center" role="img" aria-label="会员专属模型" title="会员专属模型">
-            <img className="canvas-model-picker-member-diamond-image size-3.5 object-contain" src={staticAssetURL("/icons/member-diamond.svg")} alt="" aria-hidden="true" />
-        </span>
-    );
-}
+export { ModelIcon } from "@/components/model-picker-presentation";

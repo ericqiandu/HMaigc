@@ -8,7 +8,6 @@ import type { CanvasNodeMetadata } from "@/types/canvas";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
 import { CanvasSubmitButton } from "./canvas-submit-button";
-import "./canvas-audio-model-picker.css";
 import "./canvas-media-composer.css";
 
 type CanvasAudioComposerControlsProps = {
@@ -27,15 +26,14 @@ export function CanvasAudioComposerControls({ config, credits, promptLength, isR
         <div className="canvas-audio-composer-controls canvas-media-controls-row">
             <div className="canvas-audio-composer-primary-controls">
                 <ModelPicker
-                    className="canvas-image-model-picker canvas-audio-model-picker canvas-media-model-picker canvas-media-model-picker-slot"
-                    fullWidth
+                    className="canvas-media-model-picker canvas-media-model-picker-slot"
                     config={config}
                     value={config.model}
                     onChange={(model) => onConfigChange({ model })}
                     capability="audio"
                     onMissingConfig={handleMissingSystemModel}
                     showSelectedEstimate={false}
-                    presentation="canvasAudio"
+                    presentation="canvasMedia"
                 />
                 <span className="canvas-image-toolbar-divider canvas-audio-control-divider" aria-hidden="true" />
                 <CanvasAudioVoicePicker className="canvas-media-control" config={config} value={config.audioVoice} onChange={(audioVoice) => onConfigChange({ audioVoice })} />
