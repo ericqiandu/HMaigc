@@ -405,6 +405,7 @@ type BillingUsage struct {
 	Quantity                  int64
 	Resolution                string
 	InputVariant              string
+	InputImageCount           int64
 	SuperResolutionEnabled    bool
 	SuperResolutionResolution string
 	SuperResolutionVersion    string
@@ -537,6 +538,17 @@ func (s *Service) newBillingOrder(userID string, billingScope billingAccountScop
 	if err != nil {
 		return nil, err
 	}
+	usageAdjustment, err := s.mediaInputUsagePricingSnapshot(item, usage.InputImageCount, multiplierBPS)
+	if err != nil {
+		return nil, err
+	}
+	if usageAdjustment != nil {
+		const maxInt64 = int64(^uint64(0) >> 1)
+		if amount > maxInt64-usageAdjustment.UserAmountMicrocredits {
+			return nil, errors.New("计费金额超出允许范围")
+		}
+		amount += usageAdjustment.UserAmountMicrocredits
+	}
 	enhancementRuleID := ""
 	enhancementUnitPrice := int64(0)
 	enhancementAmount := int64(0)
@@ -569,7 +581,7 @@ func (s *Service) newBillingOrder(userID string, billingScope billingAccountScop
 		}
 		enhancementSnapshot = string(encoded)
 	}
-	return &model.BillingOrder{
+	order := &model.BillingOrder{
 		ID: newID(), UserID: userID, TeamID: billingScope.TeamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
@@ -579,7 +591,18 @@ func (s *Service) newBillingOrder(userID string, billingScope billingAccountScop
 		EnhancementAmountMicrocredits: enhancementAmount, EnhancementSupplierCostMinMicros: enhancementSupplierMin,
 		EnhancementSupplierCostMaxMicros: enhancementSupplierMax, EnhancementPricingSnapshotJSON: enhancementSnapshot,
 		Status: model.BillingStatusReserved,
-	}, nil
+	}
+	if usageAdjustment != nil {
+		order.UsageAdjustmentMetric = usageAdjustment.Metric
+		order.UsageAdjustmentActualQuantity = usageAdjustment.ActualQuantity
+		order.UsageAdjustmentIncludedQuantity = usageAdjustment.IncludedQuantity
+		order.UsageAdjustmentBillableQuantity = usageAdjustment.BillableQuantity
+		order.UsageAdjustmentSupplierUnitMicros = usageAdjustment.SupplierUnitMicros
+		order.UsageAdjustmentUserUnitMicrocredits = usageAdjustment.UserUnitMicrocredits
+		order.UsageAdjustmentSupplierAmountMicros = usageAdjustment.SupplierAmountMicros
+		order.UsageAdjustmentUserAmountMicrocredits = usageAdjustment.UserAmountMicrocredits
+	}
+	return order, nil
 }
 
 func (s *Service) requireAccessibleChannelModel(userID string, channelID string, modelKey string) (*model.ChannelModel, error) {
@@ -612,6 +635,9 @@ func billingUsage(capability string, modelKey string, config map[string]any, inp
 	if capability == "image" {
 		usage.Quantity = positiveInteger(config["count"])
 		usage.Resolution = imagePricingResolutionFromConfig(config)
+		if len(input) > 0 {
+			usage.InputImageCount = mediaInputCollectionLength(input[0]["referenceImages"])
+		}
 		return usage
 	}
 	if capability == "video" {
@@ -629,6 +655,17 @@ func billingUsage(capability string, modelKey string, config map[string]any, inp
 		}
 	}
 	return usage
+}
+
+func mediaInputCollectionLength(value any) int64 {
+	switch items := value.(type) {
+	case []any:
+		return int64(len(items))
+	case []providerMedia:
+		return int64(len(items))
+	default:
+		return 0
+	}
 }
 
 func imagePricingResolutionFromConfig(config map[string]any) string {

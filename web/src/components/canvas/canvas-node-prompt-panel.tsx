@@ -88,7 +88,11 @@ export function CanvasNodePromptPanel({
     const quoteConfig = useMemo(() => (isImageMode && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, isImageMode]);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
     const quoteReferenceVideoCount = isVideoMode && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? activeVideoReferenceCount : 0;
-    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, quoteReferenceVideoCount);
+    const quoteReferenceImageCount = mentionReferences.filter((item) => item.active && item.kind === "image").length;
+    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, {
+        referenceImageCount: quoteReferenceImageCount,
+        referenceVideoCount: quoteReferenceVideoCount,
+    });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoReferenceCounts = useMemo(
         () => ({
@@ -285,12 +289,7 @@ export function CanvasNodePromptPanel({
                 <span className="min-w-0 truncate px-2 text-[11px] leading-4" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
-                <CanvasSubmitButton
-                    state={isRunning ? "stop" : "ready"}
-                    disabled={isSubmitDisabled}
-                    onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                    ariaLabel={isRunning ? "停止生成" : "生成"}
-                />
+                <CanvasSubmitButton state={isRunning ? "stop" : "ready"} disabled={isSubmitDisabled} onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())} ariaLabel={isRunning ? "停止生成" : "生成"} />
             </div>
         ) : (
             <div className={`canvas-media-controls-row flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
@@ -347,12 +346,7 @@ export function CanvasNodePromptPanel({
                     <span className={isImageMode ? "canvas-image-generation-cost canvas-media-meta ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost canvas-media-meta ml-auto inline-flex" : "inline-flex"}>
                         <GenerationCreditQuoteBadge state={quoteState} color={theme.node.muted} />
                     </span>
-                    <CanvasSubmitButton
-                        state={isRunning ? "stop" : "ready"}
-                        disabled={isSubmitDisabled}
-                        onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                        ariaLabel={isRunning ? "停止生成" : "生成"}
-                    />
+                    <CanvasSubmitButton state={isRunning ? "stop" : "ready"} disabled={isSubmitDisabled} onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())} ariaLabel={isRunning ? "停止生成" : "生成"} />
                 </div>
             </div>
         );

@@ -3,14 +3,16 @@ import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
-import { buildGenerationConfig, isGenerationCanceled, supportsVideoReferenceAudio } from "@/lib/canvas/canvas-project-generation";
+import { formatCredits } from "@/constant/credits";
+import { buildTaskBillingQuoteRequest, taskBillingQuoteMatches, type ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
+import { backendProviderConfig, buildGenerationConfig, getGenerationCount, isGenerationCanceled, supportsVideoReferenceAudio } from "@/lib/canvas/canvas-project-generation";
 import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
 import { generationFailureMetadata } from "@/lib/generation-error";
-import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
+import { normalizeImageConfigForModel } from "@/lib/image-model-capabilities";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import type { PlatformSkill } from "@/services/api/skills";
-import type { GenerationTask } from "@/services/api/task-center";
+import { requestTaskBillingQuote, type GenerationTask } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -61,7 +63,7 @@ export function useCanvasGenerationExecutor({
     finishGenerationRequest,
     bindGenerationTask,
 }: UseCanvasGenerationExecutorOptions) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
 
@@ -143,6 +145,56 @@ export function useCanvasGenerationExecutor({
             const expandedPrompt = expandSkillMentions(rawGenerationContext.prompt, activatedSkills);
             const effectivePrompt = expandedPrompt.trim();
             const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
+            let confirmedQuote = options?.expectedQuote;
+            if (mode === "image") {
+                try {
+                    generationConfig = normalizeImageConfigForModel(generationConfig);
+                    const exactQuote = await requestTaskBillingQuote(
+                        buildTaskBillingQuoteRequest({
+                            projectId,
+                            mode: "image",
+                            operation: "image",
+                            batchCount: getGenerationCount(generationConfig.count),
+                            usage: { referenceImageCount: generationContext.referenceImages.length, referenceVideoCount: 0 },
+                            config: backendProviderConfig(generationConfig),
+                        }),
+                        controller.signal,
+                    );
+                    if (!taskBillingQuoteMatches(confirmedQuote, exactQuote)) {
+                        const accepted = await new Promise<boolean>((resolve) =>
+                            modal.confirm({
+                                title: "参考素材已解析，请确认最终报价",
+                                content: `实际使用 ${generationContext.referenceImages.length} 张参考图，预计消耗 ${formatCredits(exactQuote.amountMicrocredits)} 积分。`,
+                                okText: "确认生成",
+                                cancelText: "取消",
+                                centered: true,
+                                onOk: () => resolve(true),
+                                onCancel: () => resolve(false),
+                            }),
+                        );
+                        if (!accepted) {
+                            if (isPreparingEmptyImage)
+                                setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined } } : node)));
+                            finishGenerationRequest(nodeId, controller);
+                            return;
+                        }
+                    }
+                    confirmedQuote = exactQuote;
+                } catch (error) {
+                    if (controller.signal.aborted) {
+                        finishGenerationRequest(nodeId, controller);
+                        return;
+                    }
+                    const errorDetails = error instanceof Error ? `获取最终生成报价失败：${error.message}` : "获取最终生成报价失败";
+                    if (isPreparingEmptyImage)
+                        setNodes((current) =>
+                            current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined, errorDetails } } : node)),
+                        );
+                    finishGenerationRequest(nodeId, controller);
+                    message.error(errorDetails);
+                    return;
+                }
+            }
             if (mode === "audio" && generationContext.characterReferences.length) {
                 if (generationContext.characterReferences.length !== 1) {
                     finishGenerationRequest(nodeId, controller);
@@ -187,7 +239,7 @@ export function useCanvasGenerationExecutor({
                 generationConfig,
                 generationContext,
                 controller,
-                expectedQuote: options?.expectedQuote,
+                expectedQuote: confirmedQuote,
                 editingTextNode,
                 setNodes,
                 setConnections,
@@ -243,6 +295,7 @@ export function useCanvasGenerationExecutor({
             finishGenerationRequest,
             isAiConfigReady,
             message,
+            modal,
             nodesRef,
             connectionsRef,
             projectId,

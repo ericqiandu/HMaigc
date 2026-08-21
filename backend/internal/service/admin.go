@@ -170,6 +170,8 @@ type PublicProviderCapabilities struct {
 type PublicChannelModelPriceTier struct {
 	Resolution            string `json:"resolution"`
 	InputVariant          string `json:"inputVariant"`
+	UsageMetric           string `json:"usageMetric"`
+	IncludedQuantity      int64  `json:"includedQuantity"`
 	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
 }
 
@@ -748,7 +750,13 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		if item.Enabled && (admin && item.PriceConfigured || pricingReady) {
 			tiers := make([]PublicChannelModelPriceTier, 0, len(item.PriceTiers))
 			for _, tier := range item.PriceTiers {
-				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, InputVariant: tier.InputVariant, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
+				tiers = append(tiers, PublicChannelModelPriceTier{
+					Resolution:            tier.Resolution,
+					InputVariant:          tier.InputVariant,
+					UsageMetric:           tier.UsageMetric,
+					IncludedQuantity:      tier.IncludedQuantity,
+					UnitPriceMicrocredits: tier.UnitPriceMicrocredits,
+				})
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
 				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
@@ -809,6 +817,9 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 	for _, tier := range item.PriceTiers {
 		if tier.UnitPriceMicrocredits <= 0 {
 			return false
+		}
+		if strings.TrimSpace(tier.UsageMetric) != "" {
+			continue
 		}
 		variant := strings.ToLower(strings.TrimSpace(tier.InputVariant))
 		if variant == "" {

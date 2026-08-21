@@ -7,12 +7,19 @@ type BuildTaskBillingQuoteRequestInput = {
     mode: "image" | "video";
     operation: string;
     batchCount: number;
-    referenceVideoCount: number;
+    usage: {
+        referenceImageCount: number;
+        referenceVideoCount: number;
+    };
     config: QuoteConfigSource;
 };
 
 export type TaskBillingQuoteLoader = (request: TaskBillingQuoteRequest, signal?: AbortSignal) => Promise<TaskBillingQuote>;
 export type ConfirmedTaskBillingQuote = Pick<TaskBillingQuote, "priceVersion" | "quoteFingerprint">;
+
+export function taskBillingQuoteMatches(left: ConfirmedTaskBillingQuote | undefined, right: ConfirmedTaskBillingQuote): boolean {
+    return Boolean(left && left.priceVersion === right.priceVersion && left.quoteFingerprint === right.quoteFingerprint);
+}
 
 export class TaskPriceChangedError extends Error {
     readonly currentQuote: TaskBillingQuote;
@@ -24,7 +31,7 @@ export class TaskPriceChangedError extends Error {
     }
 }
 
-export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount, referenceVideoCount, config }: BuildTaskBillingQuoteRequestInput): TaskBillingQuoteRequest {
+export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount, usage, config }: BuildTaskBillingQuoteRequestInput): TaskBillingQuoteRequest {
     const fps = finiteNumber(config.videoSuperResolutionFps);
     return {
         projectId: requiredString(projectId, "画布"),
@@ -33,7 +40,8 @@ export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batch
         batchCount,
         input: {
             mode,
-            referenceVideoCount,
+            referenceImageCount: nonNegativeInteger(usage.referenceImageCount, "参考图片数量"),
+            referenceVideoCount: nonNegativeInteger(usage.referenceVideoCount, "参考视频数量"),
             config: {
                 channelId: requiredString(config.channelId, "渠道"),
                 model: requiredString(config.model, "模型"),
@@ -79,6 +87,8 @@ export function taskPriceChangedQuoteFromEnvelope(value: unknown): TaskBillingQu
     ) {
         return null;
     }
+    const usageAdjustment = parseUsageAdjustment(quote.usageAdjustment);
+    if (quote.usageAdjustment !== undefined && usageAdjustment === null) return null;
     return {
         amountMicrocredits: quote.amountMicrocredits,
         perTaskAmountMicrocredits: quote.perTaskAmountMicrocredits,
@@ -89,6 +99,7 @@ export function taskPriceChangedQuoteFromEnvelope(value: unknown): TaskBillingQu
         pricingInputVariant: quote.pricingInputVariant,
         quantity: quote.quantity,
         enhancementAmountMicrocredits: quote.enhancementAmountMicrocredits,
+        ...(usageAdjustment ? { usageAdjustment } : {}),
         quoteFingerprint: quote.quoteFingerprint,
     };
 }
@@ -98,15 +109,35 @@ function quoteRequestFromTaskInput(input: CreateTaskInput): TaskBillingQuoteRequ
     if (mode !== "image" && mode !== "video") return null;
     const config = input.input?.config;
     if (!isRecord(config)) throw new Error("生成任务缺少可报价的模型配置");
-    const references = mode === "video" ? input.input?.referenceVideos : undefined;
+    const referenceImages = input.input?.referenceImages;
+    const referenceVideos = input.input?.referenceVideos;
     return buildTaskBillingQuoteRequest({
         projectId: requiredString(input.projectId, "画布"),
         mode,
         operation: input.operation?.trim() || mode,
         batchCount: 1,
-        referenceVideoCount: Array.isArray(references) ? references.length : 0,
+        usage: {
+            referenceImageCount: Array.isArray(referenceImages) ? referenceImages.length : 0,
+            referenceVideoCount: Array.isArray(referenceVideos) ? referenceVideos.length : 0,
+        },
         config,
     });
+}
+
+function parseUsageAdjustment(value: unknown): TaskBillingQuote["usageAdjustment"] | null {
+    if (value === undefined) return undefined;
+    if (!isRecord(value) || value.metric !== "input_image") return null;
+    const numericKeys = ["actualQuantity", "includedQuantity", "billableQuantity", "unitPriceMicrocredits", "perTaskAmountMicrocredits", "amountMicrocredits"] as const;
+    if (numericKeys.some((key) => typeof value[key] !== "number" || !Number.isSafeInteger(value[key]) || value[key] < 0)) return null;
+    return {
+        metric: "input_image",
+        actualQuantity: value.actualQuantity as number,
+        includedQuantity: value.includedQuantity as number,
+        billableQuantity: value.billableQuantity as number,
+        unitPriceMicrocredits: value.unitPriceMicrocredits as number,
+        perTaskAmountMicrocredits: value.perTaskAmountMicrocredits as number,
+        amountMicrocredits: value.amountMicrocredits as number,
+    };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,4 +157,10 @@ function optionalString(value: unknown): string {
 function finiteNumber(value: unknown): number {
     const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : 0;
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function nonNegativeInteger(value: unknown, label: string): number {
+    const parsed = typeof value === "number" ? value : Number.NaN;
+    if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${label}无效`);
+    return parsed;
 }

@@ -70,9 +70,12 @@ export function useCanvasStoryboard({
                 const referenceVideoCount = connectionsRef.current.filter((connection) => connection.toNodeId === node.id)
                     .map((connection) => nodesRef.current.find((candidate) => candidate.id === connection.fromNodeId))
                     .filter((candidate) => candidate?.type === CanvasNodeType.Video && Boolean(candidate.metadata?.content)).length;
+                const referenceImageCount = connectionsRef.current.filter((connection) => connection.toNodeId === node.id)
+                    .map((connection) => nodesRef.current.find((candidate) => candidate.id === connection.fromNodeId))
+                    .filter((candidate) => candidate?.type === CanvasNodeType.Image && Boolean(candidate.metadata?.content)).length;
                 return {
                     targetId: node.id,
-                    request: buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount: 1, referenceVideoCount, config: backendProviderConfig(config) }),
+                    request: buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount: 1, usage: { referenceImageCount, referenceVideoCount }, config: backendProviderConfig(config) }),
                 };
             }), requestTaskBillingQuote);
             const modelNames = [...new Set(currentTargets.map((node) => {

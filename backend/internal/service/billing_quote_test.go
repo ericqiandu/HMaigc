@@ -24,6 +24,8 @@ func newBillingQuoteTestService(t *testing.T, models ...model.ChannelModel) (*Se
 		&model.ModelChannel{},
 		&model.ChannelModel{},
 		&model.ChannelModelPriceTier{},
+		&model.ModelPricing{},
+		&model.ModelPricingTier{},
 		&model.SuperResolutionPricingRule{},
 		&model.SystemSetting{},
 		&model.MembershipPlan{},
@@ -40,6 +42,82 @@ func newBillingQuoteTestService(t *testing.T, models ...model.ChannelModel) (*Se
 		}
 	}
 	return &Service{repo: repository.New(db)}, db
+}
+
+func TestQuoteTaskBillingAddsInputImageUsageAdjustment(t *testing.T) {
+	item := model.ChannelModel{
+		ID: "seedream-pro", ChannelID: "channel", ModelKey: "seedream-5-0-pro", Capability: "image",
+		AccessPolicy: model.ModelAccessAuthenticated, BillingMode: "fixed_request", PriceStrategy: "flat",
+		UnitPriceMicrocredits: 120_000, PriceConfigured: true, Enabled: true, PriceVersion: 4,
+		PriceTiers: []model.ChannelModelPriceTier{{
+			ID: "user-input-overage", UsageMetric: inputImageUsageMetric, IncludedQuantity: 1, UnitPriceMicrocredits: 4_000,
+		}},
+	}
+	svc, db := newBillingQuoteTestService(t, item)
+	pricing := model.ModelPricing{
+		ID: "supplier-price", ChannelID: item.ChannelID, Model: item.ModelKey, Capability: item.Capability,
+		Currency: "CNY", PerRequestMicros: 600_000,
+		Tiers: []model.ModelPricingTier{{
+			ID: "supplier-input-overage", Specification: "INPUT_IMAGE", UsageMetric: inputImageUsageMetric,
+			IncludedQuantity: 1, SupplierCostMicros: 20_000,
+		}},
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
+	}
+	request := TaskBillingQuoteRequest{
+		Type: "canvas_image", Operation: "generate", BatchCount: 2,
+		Input: TaskBillingQuoteInput{Mode: "image", ReferenceImageCount: 3, Config: TaskBillingQuoteConfig{
+			ChannelID: item.ChannelID, Model: item.ModelKey,
+		}},
+	}
+
+	quote, err := svc.QuoteTaskBilling("user", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.PerTaskAmountMicrocredits != 128_000 || quote.AmountMicrocredits != 256_000 {
+		t.Fatalf("quote = %#v", quote)
+	}
+	if quote.UsageAdjustment == nil {
+		t.Fatal("quote usage adjustment is nil")
+	}
+	if quote.UsageAdjustment.ActualQuantity != 3 || quote.UsageAdjustment.IncludedQuantity != 1 ||
+		quote.UsageAdjustment.BillableQuantity != 2 || quote.UsageAdjustment.UnitPriceMicrocredits != 4_000 ||
+		quote.UsageAdjustment.PerTaskAmountMicrocredits != 8_000 || quote.UsageAdjustment.AmountMicrocredits != 16_000 {
+		t.Fatalf("usage adjustment = %#v", quote.UsageAdjustment)
+	}
+
+	oneReference := request
+	oneReference.Input.ReferenceImageCount = 1
+	oneReferenceQuote, err := svc.QuoteTaskBilling("user", oneReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oneReferenceQuote.PerTaskAmountMicrocredits != 120_000 || oneReferenceQuote.UsageAdjustment == nil || oneReferenceQuote.UsageAdjustment.BillableQuantity != 0 {
+		t.Fatalf("one-reference quote = %#v", oneReferenceQuote)
+	}
+	if quote.QuoteFingerprint == oneReferenceQuote.QuoteFingerprint {
+		t.Fatal("changing reference-image count preserved the quote fingerprint")
+	}
+}
+
+func TestQuoteTaskBillingRejectsNegativeReferenceImageCount(t *testing.T) {
+	item := model.ChannelModel{
+		ID: "image", ChannelID: "channel", ModelKey: "image", Capability: "image",
+		AccessPolicy: model.ModelAccessAuthenticated, BillingMode: "fixed_request", PriceStrategy: "flat",
+		UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
+	}
+	svc, _ := newBillingQuoteTestService(t, item)
+	_, err := svc.QuoteTaskBilling("user", TaskBillingQuoteRequest{
+		Type: "canvas_image", BatchCount: 1,
+		Input: TaskBillingQuoteInput{Mode: "image", ReferenceImageCount: -1, Config: TaskBillingQuoteConfig{
+			ChannelID: item.ChannelID, Model: item.ModelKey,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "参考图片数量") {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestQuoteTaskBillingPricesFixedVideoBatchWithoutWalletWrites(t *testing.T) {

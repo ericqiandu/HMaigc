@@ -380,6 +380,57 @@ func TestTaskBillingOrderDoesNotApplySeedanceReferenceTierToOtherVideoModels(t *
 	}
 }
 
+func TestTaskBillingOrderDerivesInputImageUsageFromActualReferences(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.ModelPricing{}, &model.ModelPricingTier{},
+		&model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	item := model.ChannelModel{
+		ID: "image", ChannelID: "channel", ModelKey: "image", Capability: "image",
+		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100_000,
+		PriceConfigured: true, Enabled: true,
+		PriceTiers: []model.ChannelModelPriceTier{{
+			ID: "user-input-overage", UsageMetric: inputImageUsageMetric, IncludedQuantity: 1, UnitPriceMicrocredits: 5_000,
+		}},
+	}
+	pricing := model.ModelPricing{
+		ID: "supplier", ChannelID: item.ChannelID, Model: item.ModelKey, Capability: item.Capability, Currency: "CNY",
+		Tiers: []model.ModelPricingTier{{
+			ID: "supplier-input-overage", Specification: "INPUT_IMAGE", UsageMetric: inputImageUsageMetric,
+			IncludedQuantity: 1, SupplierCostMicros: 20_000,
+		}},
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	order, err := svc.taskBillingOrder("user", &model.Task{ID: "task", Type: "canvas_image"}, map[string]any{
+		"mode":   "image",
+		"config": map[string]any{"channelId": item.ChannelID, "model": item.ModelKey, "count": "1"},
+		"referenceImages": []any{
+			map[string]any{"storageKey": "resource:one"},
+			map[string]any{"storageKey": "resource:two"},
+			map[string]any{"storageKey": "resource:three"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.UsageAdjustmentActualQuantity != 3 || order.UsageAdjustmentBillableQuantity != 2 ||
+		order.UsageAdjustmentUserAmountMicrocredits != 10_000 || order.AmountMicrocredits != 110_000 {
+		t.Fatalf("order = %#v", order)
+	}
+}
+
 func TestValidateSystemProviderInputRejectsCustomCredentials(t *testing.T) {
 	input, err := normalizeTaskInput(map[string]any{
 		"config": providerConfig{BaseURL: "https://example.com", APIKey: "private-key", Model: "text-model"},
