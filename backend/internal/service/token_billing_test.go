@@ -408,6 +408,47 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 	}
 }
 
+func TestKuaiziAgentProxyRecoversUnscheduledChatCompletionBill(t *testing.T) {
+	var queriedTaskID string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			TaskID string `json:"task_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		queriedTaskID = payload.TaskID
+		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"provider-recovered-order","amount":6,"status":"succeeded","task_id":"kz-recovered-task","task_status":"succeeded","task_duration":1,"total_tokens":42,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+	}))
+	defer server.Close()
+	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
+	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-recovered-key")
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "recover-unscheduled-chat", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).
+		Where("id = ?", order.ID).
+		Select("Status", "ProviderRequestID", "NextReconcileAt").
+		Updates(model.BillingOrder{Status: model.BillingStatusUncertain, ProviderRequestID: "chatcmpl-kz-recovered-task", NextReconcileAt: nil}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now().Add(time.Second), 10); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if queriedTaskID != "kz-recovered-task" || stored.Status != model.BillingStatusSettled || stored.ProviderRequestID != "kz-recovered-task" {
+		t.Fatalf("queried task = %q, order = %#v", queriedTaskID, stored)
+	}
+}
+
 func TestKuaiziMediaBillWithFrozenRuntimeSettlesFromSupplierFact(t *testing.T) {
 	var billingCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

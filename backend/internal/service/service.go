@@ -420,11 +420,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if taskType == "" {
 		taskType = "video_image_to_video"
 	}
-	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, taskType, policy)
-	if err != nil {
-		return nil, err
-	}
-	task := model.Task{ID: identity.TaskID, UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Capability: capability, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	task := model.Task{ID: identity.TaskID, UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
@@ -432,6 +428,11 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if err != nil {
 		return nil, err
 	}
+	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, taskType, policy)
+	if err != nil {
+		return nil, err
+	}
+	task.Capability = capability
 	if identity.BillingIdempotencyKey != "" {
 		billingOrder.IdempotencyKey = identity.BillingIdempotencyKey
 	}
@@ -592,7 +593,11 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 			return nil, err
 		}
-		activeTaskPolicy, capability, policyErr := s.membershipActiveTaskPolicy(userID, task.Type, policy)
+		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
+		if orderErr != nil {
+			return nil, orderErr
+		}
+		activeTaskPolicy, capability, policyErr := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: order.TeamID}, task.Type, policy)
 		if policyErr != nil {
 			return nil, policyErr
 		}
@@ -641,7 +646,7 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, task.Type, policy)
+	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, task.Type, policy)
 	if err != nil {
 		return nil, err
 	}

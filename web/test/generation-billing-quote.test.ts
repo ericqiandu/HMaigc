@@ -31,7 +31,8 @@ const currentQuote: TaskBillingQuote = {
 
 describe("generation billing quote contract", () => {
     test("builds an exact video request without a frontend price formula", () => {
-        expect(buildTaskBillingQuoteRequest({ mode: "video", operation: "extend", batchCount: 4, referenceVideoCount: 2, config: providerConfig })).toEqual({
+        expect(buildTaskBillingQuoteRequest({ projectId: "canvas-project", mode: "video", operation: "extend", batchCount: 4, referenceVideoCount: 2, config: providerConfig })).toEqual({
+            projectId: "canvas-project",
             type: "canvas_video",
             operation: "extend",
             batchCount: 4,
@@ -76,7 +77,7 @@ describe("generation billing quote contract", () => {
     });
 
     test("submits the displayed confirmation without a duplicate preflight quote", async () => {
-        const input: CreateTaskInput = { type: "canvas_image", operation: "image", prompt: "prompt", input: { mode: "image", config: providerConfig } };
+        const input: CreateTaskInput = { projectId: "project", type: "canvas_image", operation: "image", prompt: "prompt", input: { mode: "image", config: providerConfig } };
         let quoteCalls = 0;
 
         const submission = await prepareGenerationTaskSubmission(input, { ...currentQuote, priceVersion: 6, quoteFingerprint: "quote-v6" }, async () => {

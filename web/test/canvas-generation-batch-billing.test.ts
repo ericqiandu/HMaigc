@@ -4,6 +4,7 @@ import { currentGenerationTargets, quoteGenerationBatch } from "../src/lib/billi
 import type { TaskBillingQuote, TaskBillingQuoteRequest } from "../src/services/api/task-center";
 
 const imageRequest: TaskBillingQuoteRequest = {
+    projectId: "canvas-project",
     type: "canvas_image",
     operation: "image",
     batchCount: 1,

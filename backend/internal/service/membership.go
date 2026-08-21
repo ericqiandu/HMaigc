@@ -179,6 +179,43 @@ func (s *Service) MembershipEntitlement(user *model.User) (*MembershipEntitlemen
 	return nil, errors.New("缺少启用的 Origin 基础套餐，无法确定并发权益")
 }
 
+func (s *Service) membershipEntitlementForBillingAccount(userID string, billingScope billingAccountScope) (*MembershipEntitlement, error) {
+	now := time.Now()
+	if err := s.reconcileMembershipLifecycle(now); err != nil {
+		return nil, err
+	}
+	subscriptions, err := s.repo.ActiveMembershipSubscriptionsForBillingAccount(userID, billingScope.TeamID, now)
+	if err != nil {
+		return nil, err
+	}
+	var selected *MembershipEntitlement
+	for _, subscription := range subscriptions {
+		candidate, entitlementErr := membershipEntitlementFromSubscription(subscription)
+		if entitlementErr != nil {
+			return nil, entitlementErr
+		}
+		if selected == nil || candidate.ImageConcurrency+candidate.VideoConcurrency > selected.ImageConcurrency+selected.VideoConcurrency {
+			selected = candidate
+		}
+	}
+	if selected != nil {
+		return selected, nil
+	}
+	if billingScope.TeamID != "" {
+		return nil, &AuthError{Status: http.StatusPaymentRequired, Message: "当前团队没有有效会员，无法创建生成任务"}
+	}
+	plans, err := s.repo.MembershipPlans(true)
+	if err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		if plan.Code == "origin-free" {
+			return entitlementFromPlan(plan, false, "", nil), nil
+		}
+	}
+	return nil, errors.New("缺少启用的 Origin 基础套餐，无法确定个人并发权益")
+}
+
 // HasActiveMembership 只认数据库中的有效个人订阅或有效团队席位；Origin 基础权益不属于付费会员。
 func (s *Service) HasActiveMembership(userID string) (bool, error) {
 	userID = strings.TrimSpace(userID)
@@ -217,27 +254,6 @@ func membershipEntitlementFromSubscription(subscription model.MembershipSubscrip
 		return nil, fmt.Errorf("有效订阅 %s 的套餐快照充值折扣无效", subscription.ID)
 	}
 	return entitlementFromPlan(snapshot, true, subscription.TeamID, subscription.EndsAt), nil
-}
-
-func (s *Service) billingTeamID(userID string, now time.Time) (string, error) {
-	subscriptions, err := s.repo.ActiveMembershipSubscriptions(userID, now)
-	if err != nil {
-		return "", err
-	}
-	var selected *MembershipEntitlement
-	for _, subscription := range subscriptions {
-		candidate, parseErr := membershipEntitlementFromSubscription(subscription)
-		if parseErr != nil {
-			return "", parseErr
-		}
-		if selected == nil || candidate.ImageConcurrency+candidate.VideoConcurrency > selected.ImageConcurrency+selected.VideoConcurrency {
-			selected = candidate
-		}
-	}
-	if selected == nil {
-		return "", nil
-	}
-	return selected.TeamID, nil
 }
 
 func entitlementFromPlan(plan model.MembershipPlan, isActiveMember bool, teamID string, expiresAt *time.Time) *MembershipEntitlement {

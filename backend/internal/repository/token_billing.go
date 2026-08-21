@@ -107,7 +107,7 @@ func (r *Repository) ClaimKuaiziBillingReconciliations(owner string, now time.Ti
 	}
 	claimed := make([]model.BillingOrder, 0, limit)
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		query := tx.Where("status = ? AND provider_request_id <> '' AND provider_endpoint_version_id <> '' AND provider_credential_version_id <> '' AND next_reconcile_at IS NOT NULL AND next_reconcile_at <= ? AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?) AND EXISTS (SELECT 1 FROM provider_endpoint_versions AS endpoints JOIN provider_accounts AS accounts ON accounts.id = endpoints.provider_account_id WHERE endpoints.id = billing_orders.provider_endpoint_version_id AND accounts.provider_kind = ?)", model.BillingStatusUncertain, now, now, "kuaizi").
+		query := tx.Where("status = ? AND provider_request_id <> '' AND provider_endpoint_version_id <> '' AND provider_credential_version_id <> '' AND COALESCE(provider_billing_status, '') <> ? AND ((next_reconcile_at IS NOT NULL AND next_reconcile_at <= ?) OR (next_reconcile_at IS NULL AND COALESCE(provider_billing_order_id, '') = '' AND COALESCE(provider_billing_status, '') = '')) AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?) AND EXISTS (SELECT 1 FROM provider_endpoint_versions AS endpoints JOIN provider_accounts AS accounts ON accounts.id = endpoints.provider_account_id WHERE endpoints.id = billing_orders.provider_endpoint_version_id AND accounts.provider_kind = ?)", model.BillingStatusUncertain, "requires_review", now, now, "kuaizi").
 			Order("next_reconcile_at asc, created_at asc").Limit(limit)
 		if tx.Dialector.Name() == "postgres" {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
@@ -121,7 +121,7 @@ func (r *Repository) ClaimKuaiziBillingReconciliations(owner string, now time.Ti
 			candidate := &candidates[index]
 			token := newRepositoryID()
 			result := tx.Model(&model.BillingOrder{}).
-				Where("id = ? AND status = ? AND next_reconcile_at <= ? AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?)", candidate.ID, model.BillingStatusUncertain, now, now).
+				Where("id = ? AND status = ? AND COALESCE(provider_billing_status, '') <> ? AND ((next_reconcile_at IS NOT NULL AND next_reconcile_at <= ?) OR (next_reconcile_at IS NULL AND COALESCE(provider_billing_order_id, '') = '' AND COALESCE(provider_billing_status, '') = '')) AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?)", candidate.ID, model.BillingStatusUncertain, "requires_review", now, now).
 				Updates(map[string]any{
 					"reconcile_lease_owner": owner, "reconcile_lease_token": token, "reconcile_lease_expires_at": &leaseExpiresAt,
 					"reconcile_attempts": gorm.Expr("reconcile_attempts + 1"), "updated_at": now,

@@ -19,6 +19,7 @@ type CreateProjectRequest struct {
 	SourceType    string `json:"sourceType"`
 	Description   string `json:"description"`
 	StylePresetID string `json:"stylePresetId"`
+	TeamID        string `json:"teamId"`
 }
 
 type UpdateProjectRequest struct {
@@ -164,6 +165,12 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 	if name == "" {
 		return model.Project{}, BadAuthRequest("项目名称不能为空")
 	}
+	teamID := strings.TrimSpace(req.TeamID)
+	if teamID != "" {
+		if _, err := s.requireTeamProjectManager(userID, teamID); err != nil {
+			return model.Project{}, err
+		}
+	}
 	projectType := strings.TrimSpace(req.Type)
 	if projectType == "" {
 		projectType = "short-drama"
@@ -177,7 +184,7 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 		sourceType = "blank"
 	}
 	now := time.Now()
-	project := model.Project{ID: newID(), UserID: userID, Name: name, Type: projectType, AspectRatio: aspectRatio, SourceType: sourceType, Description: strings.TrimSpace(req.Description), StylePresetID: strings.TrimSpace(req.StylePresetID), Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	project := model.Project{ID: newID(), UserID: userID, TeamID: teamID, Name: name, Type: projectType, AspectRatio: aspectRatio, SourceType: sourceType, Description: strings.TrimSpace(req.Description), StylePresetID: strings.TrimSpace(req.StylePresetID), Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.repo.CreateProject(&project); err != nil {
 		return model.Project{}, err
 	}
@@ -504,7 +511,7 @@ func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID strin
 	project, err := s.repo.ProjectEditableForUser(userID, id, time.Now())
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
+			return BadAuthRequest("画布尚未同步云端，完成同步后才能创建生成任务")
 		}
 		return err
 	}

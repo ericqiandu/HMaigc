@@ -1173,6 +1173,7 @@ function InfiniteCanvasPage() {
                 />
             ) : (
                 <CanvasNodePromptPanel
+                    projectId={projectId}
                     node={panelNode}
                     isRunning={runningNodeId === panelNode.id}
                     availableReferences={canvasResourceReferences}
@@ -1269,6 +1270,7 @@ function InfiniteCanvasPage() {
             }
             return (
                 <CanvasConfigNodePanel
+                    projectId={projectId}
                     node={contentNode}
                     isRunning={runningNodeId === contentNode.id}
                     inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}

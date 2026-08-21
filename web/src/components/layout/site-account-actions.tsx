@@ -1,31 +1,45 @@
-import { Popover, Switch } from "antd";
-import { ChevronDown, Coins, LogOut, Settings2, ShieldCheck, Stamp, UserPlus, UserRound, Zap } from "lucide-react";
-import { useEffect, useState, type JSX, type ReactNode } from "react";
+import { Popover } from "antd";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, Coins, LogOut, Moon, Settings, ShieldCheck, Stamp, Sun, UserPlus, UserRound, UsersRound, Zap } from "lucide-react";
+import { lazy, Suspense, useEffect, useState, type JSX, type ReactNode } from "react";
 import { Link } from "react-router";
 
-import { AIWatermarkSettingsModal } from "@/components/account/ai-watermark-settings-modal";
 import { openReferralCenter, ReferralRewardCenter } from "@/components/account/referral-reward-center";
 import { useConfirmLogout } from "@/components/auth/use-confirm-logout";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { useMembershipAction } from "@/hooks/use-membership-action";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
-import type { MembershipAction } from "@/lib/membership-action";
+import { getTeamWorkspace, type TeamWorkspace } from "@/services/api/teams";
+import type { WorkspaceScope } from "@/lib/workspace-scope";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 import "./site-account-actions.css";
 
+const AIWatermarkSettingsModal = lazy(() => import("@/components/account/ai-watermark-settings-modal").then((module) => ({ default: module.AIWatermarkSettingsModal })));
+const SiteAccountTeamSwitcher = lazy(() => import("@/components/layout/site-account-team-switcher").then((module) => ({ default: module.SiteAccountTeamSwitcher })));
+
 export function SiteAccountActions(): JSX.Element {
     const confirmLogout = useConfirmLogout();
     const hydrated = useUserStore((state) => state.hydrated);
     const user = useUserStore((state) => state.user);
+    const workspaceScope = useUserStore((state) => state.workspaceScope);
+    const selectWorkspaceScope = useUserStore((state) => state.selectWorkspaceScope);
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const [menuOpen, setMenuOpen] = useState(false);
     const [watermarkOpen, setWatermarkOpen] = useState(false);
-    const { availableMicrocredits } = useWalletBalance(user?.id, Boolean(user));
+    const teamWorkspaceQuery = useQuery({
+        queryKey: ["team-workspace", user?.id],
+        queryFn: getTeamWorkspace,
+        enabled: Boolean(user) && (menuOpen || workspaceScope.kind === "team"),
+        staleTime: 30_000,
+    });
+    const { availableMicrocredits } = useWalletBalance(user?.id, Boolean(user) && workspaceScope.kind === "personal");
     const membershipAction = useMembershipAction(user?.id);
-    const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
+    const activeTeam = workspaceScope.kind === "team" ? teamWorkspaceQuery.data?.teams.find((summary) => summary.team.id === workspaceScope.teamId) : undefined;
+    const activeMicrocredits = workspaceScope.kind === "team" ? activeTeam?.availableMicrocredits ?? null : availableMicrocredits;
+    const balance = activeMicrocredits === null ? "--" : (activeMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 
     const handleInvite = () => {
         setMenuOpen(false);
@@ -51,10 +65,14 @@ export function SiteAccountActions(): JSX.Element {
     return (
         <div className="site-account-actions flex items-center gap-2">
             <ReferralRewardCenter />
-            <AIWatermarkSettingsModal open={watermarkOpen} onClose={() => setWatermarkOpen(false)} />
+            {watermarkOpen ? (
+                <Suspense fallback={null}>
+                    <AIWatermarkSettingsModal open onClose={() => setWatermarkOpen(false)} />
+                </Suspense>
+            ) : null}
             <SystemAnnouncementCenter userId={user.id} className="site-account-notifications grid shrink-0 place-items-center rounded-full transition-colors" staticMotion />
             <div className="site-account-pill flex items-center rounded-full px-1.5 backdrop-blur-xl">
-                <Link to="/wallet" className="site-account-balance flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium tabular-nums transition-opacity hover:opacity-70" title={`${balance} 积分`}>
+                <Link to={workspaceScope.kind === "team" ? `/teams?teamId=${encodeURIComponent(workspaceScope.teamId)}` : "/wallet"} className="site-account-balance flex h-full items-center gap-1.5 px-2.5 text-[13px] font-medium tabular-nums transition-opacity hover:opacity-70" title={`${workspaceScope.kind === "team" ? activeTeam?.team.name || "团队" : "个人"}可用积分：${balance}`}>
                     <Zap className="site-account-balance-icon size-4" aria-hidden />
                     <span className="site-account-balance-value">{balance}</span>
                 </Link>
@@ -71,8 +89,12 @@ export function SiteAccountActions(): JSX.Element {
                     content={
                         <AccountMenu
                             user={user}
-                            balance={balance}
-                            membershipAction={membershipAction}
+                            workspaceScope={workspaceScope}
+                            teamWorkspace={teamWorkspaceQuery.data}
+                            teamWorkspaceStatus={teamWorkspaceQuery.isError ? "error" : teamWorkspaceQuery.isLoading || teamWorkspaceQuery.isFetching ? "loading" : teamWorkspaceQuery.data ? "ready" : "idle"}
+                            teamWorkspaceError={teamWorkspaceQuery.error instanceof Error ? teamWorkspaceQuery.error.message : "读取团队列表失败"}
+                            reloadTeamWorkspace={() => void teamWorkspaceQuery.refetch()}
+                            selectWorkspaceScope={selectWorkspaceScope}
                             theme={theme}
                             setTheme={setTheme}
                             close={() => setMenuOpen(false)}
@@ -100,8 +122,12 @@ export function SiteAccountActions(): JSX.Element {
 
 function AccountMenu({
     user,
-    balance,
-    membershipAction,
+    workspaceScope,
+    teamWorkspace,
+    teamWorkspaceStatus,
+    teamWorkspaceError,
+    reloadTeamWorkspace,
+    selectWorkspaceScope,
     theme,
     setTheme,
     close,
@@ -110,8 +136,12 @@ function AccountMenu({
     logout: logOut,
 }: {
     user: LocalUser;
-    balance: string;
-    membershipAction: MembershipAction;
+    workspaceScope: WorkspaceScope;
+    teamWorkspace?: TeamWorkspace;
+    teamWorkspaceStatus: "idle" | "loading" | "ready" | "error";
+    teamWorkspaceError: string;
+    reloadTeamWorkspace: () => void;
+    selectWorkspaceScope: (scope: WorkspaceScope) => void;
     theme: "light" | "dark";
     setTheme: (theme: "light" | "dark") => void;
     close: () => void;
@@ -121,7 +151,7 @@ function AccountMenu({
 }) {
     return (
         <div className="site-account-menu">
-            <div className="site-account-summary flex items-center gap-3 px-1 pb-3">
+            <div className="site-account-summary flex items-center">
                 <SiteUserAvatar user={user} className="size-9" />
                 <div className="site-account-summary-copy min-w-0 flex-1">
                     <div className="site-account-display-name truncate">{user.displayName || user.username}</div>
@@ -129,22 +159,58 @@ function AccountMenu({
                         ID:{user.publicId}
                     </div>
                 </div>
+                <Suspense
+                    fallback={
+                        <span className="site-account-switch-team-loading" role="status">
+                            正在读取团队…
+                        </span>
+                    }
+                >
+                    <SiteAccountTeamSwitcher
+                        user={user}
+                        scope={workspaceScope}
+                        workspace={teamWorkspace}
+                        status={teamWorkspaceStatus}
+                        error={teamWorkspaceError}
+                        reload={reloadTeamWorkspace}
+                        selectScope={selectWorkspaceScope}
+                        closeAccountMenu={close}
+                    />
+                </Suspense>
             </div>
-            <div className="site-account-balance-row mb-2 flex items-center justify-between px-3 py-2.5">
-                <span className="site-account-balance-label">可用创作积分</span>
-                <span className="site-account-balance-number tabular-nums">{balance}</span>
-            </div>
+            <div className="site-account-divider" aria-hidden="true" />
             <nav className="site-account-menu-nav py-1" aria-label="账户菜单">
-                <AccountMenuLink to="/wallet" icon={<Coins className="site-account-menu-icon" />} label="积分中心" onNavigate={close} />
-                <AccountMenuLink to="/membership" icon={<MembershipIcon className="site-account-menu-icon size-4" />} label={membershipAction.label} onNavigate={close} />
+                <AccountMenuLink className="site-account-menu-link--mobile-wallet" to="/wallet" icon={<Coins className="site-account-menu-icon" />} label="积分中心" onNavigate={close} />
+                <AccountMenuLink to="/settings" icon={<Settings className="site-account-menu-icon" />} label="账户设置" onNavigate={close} />
+                <AccountMenuLink to="/teams" icon={<UsersRound className="site-account-menu-icon" />} label="团队管理" onNavigate={close} />
                 <AccountMenuButton icon={<UserPlus className="site-account-menu-icon" />} label="邀请好友" onClick={invite} />
-                <AccountMenuLink to="/settings" icon={<Settings2 className="site-account-menu-icon" />} label="账户设置" onNavigate={close} />
                 <AccountMenuButton icon={<Stamp className="site-account-menu-icon" />} label="AI 水印设置" onClick={openWatermark} />
                 {user.role === "admin" ? <AccountMenuLink to="/admin" icon={<ShieldCheck className="site-account-menu-icon" />} label="管理后台" onNavigate={close} /> : null}
             </nav>
             <div className="site-account-theme flex items-center px-2">
                 <span className="site-account-theme-label flex-1">深色模式</span>
-                <Switch className="site-account-theme-switch" size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
+                <div className="site-account-theme-options" role="group" aria-label="界面主题">
+                    <button
+                        type="button"
+                        className={`site-account-theme-option ${theme === "light" ? "site-account-theme-option--active" : ""}`.trim()}
+                        onClick={() => setTheme("light")}
+                        aria-label="浅色模式"
+                        aria-pressed={theme === "light"}
+                        title="浅色模式"
+                    >
+                        <Sun className="site-account-theme-option-icon" aria-hidden />
+                    </button>
+                    <button
+                        type="button"
+                        className={`site-account-theme-option ${theme === "dark" ? "site-account-theme-option--active" : ""}`.trim()}
+                        onClick={() => setTheme("dark")}
+                        aria-label="深色模式"
+                        aria-pressed={theme === "dark"}
+                        title="深色模式"
+                    >
+                        <Moon className="site-account-theme-option-icon" aria-hidden />
+                    </button>
+                </div>
             </div>
             <button type="button" className="site-account-logout flex w-full items-center gap-2 px-2 transition-colors" onClick={logOut}>
                 <LogOut className="site-account-logout-icon" aria-hidden />
@@ -154,9 +220,9 @@ function AccountMenu({
     );
 }
 
-function AccountMenuLink({ to, icon, label, onNavigate }: { to: string; icon: ReactNode; label: string; onNavigate: () => void }) {
+function AccountMenuLink({ to, icon, label, onNavigate, className = "" }: { to: string; icon: ReactNode; label: string; onNavigate: () => void; className?: string }) {
     return (
-        <Link to={to} onClick={onNavigate} className="site-account-menu-link flex items-center gap-2.5 px-2 transition-colors">
+        <Link to={to} onClick={onNavigate} className={`site-account-menu-link flex items-center gap-2.5 px-2 transition-colors ${className}`.trim()}>
             {icon}
             <span className="site-account-menu-label flex-1">{label}</span>
         </Link>

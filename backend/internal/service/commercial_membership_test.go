@@ -289,13 +289,16 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 	_, owner, _ := createCommercialTestUsers(t, db)
 	runtimePolicy := defaultRuntimePolicy()
 	runtimePolicy.Task.ActiveTaskLimit = 2
-	imagePolicy, capability, err := svc.membershipActiveTaskPolicy(owner.ID, "canvas_image", runtimePolicy)
+	imagePolicy, capability, err := svc.membershipActiveTaskPolicy(owner.ID, personalBillingAccountScope(), "canvas_image", runtimePolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if capability != taskCapabilityImage || imagePolicy.CapabilityLimit != 4 || imagePolicy.TotalLimit != 8 {
 		t.Fatalf("unexpected origin image policy: %#v capability=%s", imagePolicy, capability)
 	}
+	// 此测试直接写入无计费订单的仓储级任务，只验证账户中立的并发计数；
+	// 生产生成链路始终通过 BillingOrder 冻结并按账户范围计数。
+	imagePolicy.BillingTeamID = nil
 	for index := 0; index < imagePolicy.CapabilityLimit; index++ {
 		task := &model.Task{
 			ID: "image-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_image",
@@ -309,10 +312,11 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 	if err := svc.repo.CreateTaskWithActiveLimit(excess, imagePolicy, model.WatermarkCapabilityNotApplicable); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		t.Fatalf("excess image task error = %v, want ErrCapabilityTaskLimit", err)
 	}
-	otherPolicy, _, err := svc.membershipActiveTaskPolicy(owner.ID, "canvas_text", runtimePolicy)
+	otherPolicy, _, err := svc.membershipActiveTaskPolicy(owner.ID, personalBillingAccountScope(), "canvas_text", runtimePolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
+	otherPolicy.BillingTeamID = nil
 	for index := 0; index < runtimePolicy.Task.ActiveTaskLimit; index++ {
 		task := &model.Task{
 			ID: "other-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_text",
@@ -326,7 +330,7 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 	if err := svc.repo.CreateTaskWithActiveLimit(excessOther, otherPolicy, model.WatermarkCapabilityNotApplicable); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		t.Fatalf("excess other task error = %v, want ErrCapabilityTaskLimit", err)
 	}
-	if _, _, err := svc.membershipActiveTaskPolicy(owner.ID, "unknown-task", runtimePolicy); err == nil {
+	if _, _, err := svc.membershipActiveTaskPolicy(owner.ID, personalBillingAccountScope(), "unknown-task", runtimePolicy); err == nil {
 		t.Fatal("unknown task type unexpectedly received a fallback concurrency policy")
 	}
 }

@@ -190,6 +190,50 @@ func TestClaimKuaiziBillingReconciliationsLeasesDueOrders(t *testing.T) {
 	}
 }
 
+func TestClaimKuaiziBillingReconciliationsRecoversUnscheduledOrdersButSkipsManualReview(t *testing.T) {
+	repo, db := openTokenBillingRepository(t)
+	now := time.Now().UTC()
+	if err := db.Create(&model.ProviderAccount{ID: "recover-account", ProviderKind: "kuaizi", Name: "Kuaizi", Enabled: true, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ProviderEndpointVersion{ID: "recover-endpoint", ProviderAccountID: "recover-account", BaseURL: "https://example.com", Status: "active", Version: 1, CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	orders := []model.BillingOrder{
+		{
+			ID: "recover-unscheduled", UserID: "recover-user", IdempotencyKey: "recover-unscheduled", BillingMode: "token_usage",
+			Status: model.BillingStatusUncertain, AmountMicrocredits: 30_000_000, ReservedAmountMicrocredits: 30_000_000,
+			ProviderRequestID: "chatcmpl-kz-task", ProviderEndpointVersionID: "recover-endpoint", ProviderCredentialVersionID: "recover-key",
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "recover-manual-review", UserID: "recover-user", IdempotencyKey: "recover-manual-review", BillingMode: "token_usage",
+			Status: model.BillingStatusUncertain, AmountMicrocredits: 30_000_000, ReservedAmountMicrocredits: 30_000_000,
+			ProviderRequestID: "chatcmpl-review-task", ProviderBillingStatus: "requires_review",
+			ProviderEndpointVersionID: "recover-endpoint", ProviderCredentialVersionID: "recover-key",
+			CreatedAt: now.Add(time.Second), UpdatedAt: now,
+		},
+		{
+			ID: "recover-observed-overage", UserID: "recover-user", IdempotencyKey: "recover-observed-overage", BillingMode: "token_usage",
+			Status: model.BillingStatusUncertain, AmountMicrocredits: 30_000_000, ReservedAmountMicrocredits: 30_000_000,
+			ProviderRequestID: "chatcmpl-overage-task", ProviderBillingOrderID: "provider-overage-order", ProviderBillingStatus: "succeeded",
+			ProviderEndpointVersionID: "recover-endpoint", ProviderCredentialVersionID: "recover-key",
+			CreatedAt: now.Add(2 * time.Second), UpdatedAt: now,
+		},
+	}
+	if err := db.Create(&orders).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := repo.ClaimKuaiziBillingReconciliations("recover-worker", now.Add(2*time.Second), time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != "recover-unscheduled" {
+		t.Fatalf("claimed orders = %#v", claimed)
+	}
+}
+
 func TestConcurrentTokenReservationsCannotOverdrawAccount(t *testing.T) {
 	repo, db := openTokenBillingRepository(t)
 	now := time.Now().UTC()

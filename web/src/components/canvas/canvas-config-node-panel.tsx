@@ -21,6 +21,7 @@ import { GenerationCreditQuoteBadge } from "./generation-credit-quote-badge";
 import { CanvasSubmitButton } from "./canvas-submit-button";
 
 type CanvasConfigNodePanelProps = {
+    projectId: string;
     node: CanvasNodeData;
     isRunning: boolean;
     inputSummary: { textCount: number; imageCount: number; videoCount: number; audioCount: number };
@@ -43,7 +44,7 @@ const videoOperationOptions: Array<{ label: string; value: CanvasVideoEditOperat
     { label: "版本对比", value: "compare_versions" },
 ];
 
-export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigChange, onGenerate, onStop, onComposerToggle, workspaceMode = "professional" }: CanvasConfigNodePanelProps) {
+export function CanvasConfigNodePanel({ projectId, node, isRunning, inputSummary, onConfigChange, onGenerate, onStop, onComposerToggle, workspaceMode = "professional" }: CanvasConfigNodePanelProps) {
     const globalConfig = useEffectiveConfig();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = node.metadata?.generationMode || "image";
@@ -55,7 +56,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const quoteConfig = useMemo(() => (mode === "image" && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, mode]);
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
     const quoteReferenceVideoCount = mode === "video" && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? inputSummary.videoCount : 0;
-    const quoteState = useCanvasTaskBillingQuote(quoteConfig, mode, mode === "video" ? node.metadata?.videoEditOperation || defaultVideoOperation(inputSummary) : mode, count, quoteReferenceVideoCount);
+    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, mode === "video" ? node.metadata?.videoEditOperation || defaultVideoOperation(inputSummary) : mode, count, quoteReferenceVideoCount);
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());

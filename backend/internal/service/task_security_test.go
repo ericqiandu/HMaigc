@@ -297,7 +297,7 @@ func TestNewBillingOrderAddsSuperResolutionPriceAndFreezesSnapshot(t *testing.T)
 	}
 	svc := &Service{repo: repository.New(db)}
 
-	order, err := svc.newBillingOrder("user-1", "task-1", "request-1", "channel-1", "video-model", "video", "canvas_video", BillingUsage{
+	order, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "task-1", "request-1", "channel-1", "video-model", "video", "canvas_video", BillingUsage{
 		Quantity: 6, Resolution: "720P", SuperResolutionEnabled: true,
 		SuperResolutionResolution: "4K", SuperResolutionVersion: "professional", SuperResolutionFPS: 60,
 	})

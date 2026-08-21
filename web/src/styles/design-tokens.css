@@ -88,6 +88,23 @@
     --overlay-light: rgb(0 0 0 / 12%);
     --overlay-default: rgb(0 0 0 / 28%);
     --overlay-heavy: rgb(0 0 0 / 48%);
+    --floating-surface: rgb(255 255 255 / 88%);
+    --floating-surface-border: rgb(15 23 42 / 10%);
+    --floating-surface-shadow: 0 4px 20px rgb(0 0 0 / 10%);
+    --account-popover-surface: #ffffff;
+
+    /* Creator workspace surfaces. Keep these scoped through workspace-ui.css. */
+    --creator-workspace-page: #f5f7fb;
+    --creator-workspace-surface: #ffffff;
+    --creator-workspace-surface-subtle: #eef2f7;
+    --creator-workspace-surface-hover: rgb(15 23 42 / 5%);
+    --creator-workspace-control: rgb(15 23 42 / 4%);
+    --creator-workspace-control-hover: rgb(15 23 42 / 7%);
+    --creator-workspace-border: rgb(15 23 42 / 10%);
+    --creator-workspace-border-hover: rgb(15 23 42 / 18%);
+    --creator-workspace-text: rgb(15 23 42 / 96%);
+    --creator-workspace-text-secondary: rgb(15 23 42 / 68%);
+    --creator-workspace-text-tertiary: rgb(15 23 42 / 46%);
 }
 
 .dark {
@@ -116,4 +133,20 @@
     --overlay-light: rgb(0 0 0 / 25%);
     --overlay-default: rgb(0 0 0 / 45%);
     --overlay-heavy: rgb(0 0 0 / 65%);
+    --floating-surface: rgb(38 38 38 / 80%);
+    --floating-surface-border: rgb(255 255 255 / 10%);
+    --floating-surface-shadow: 0 4px 20px rgb(0 0 0 / 10%);
+    --account-popover-surface: #262626;
+
+    --creator-workspace-page: #0a0a0a;
+    --creator-workspace-surface: #171717;
+    --creator-workspace-surface-subtle: #121212;
+    --creator-workspace-surface-hover: #1f1f1f;
+    --creator-workspace-control: rgb(255 255 255 / 5%);
+    --creator-workspace-control-hover: rgb(255 255 255 / 8%);
+    --creator-workspace-border: rgb(255 255 255 / 10%);
+    --creator-workspace-border-hover: rgb(255 255 255 / 20%);
+    --creator-workspace-text: #fafafa;
+    --creator-workspace-text-secondary: #a1a1aa;
+    --creator-workspace-text-tertiary: #737373;
 }

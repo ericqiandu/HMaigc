@@ -5,15 +5,17 @@ import { Link } from "react-router";
 import { projectSummaryCompletion, projectSummaryStage } from "@/lib/project-workbench";
 import type { ProjectSummary } from "@/services/api/projects";
 
-export function ProjectGallery({ rows, onCreate }: { rows: ProjectSummary[]; onCreate: () => void }) {
+export function ProjectGallery({ rows, onCreate }: { rows: ProjectSummary[]; onCreate?: () => void }) {
     return (
         <section className="projects-gallery" aria-label="项目列表">
-            <button type="button" className="projects-gallery-create-card" onClick={onCreate}>
-                <span className="projects-gallery-create-content">
-                    <Plus className="projects-gallery-create-icon" aria-hidden="true" />
-                    <span className="projects-gallery-create-label">新建项目</span>
-                </span>
-            </button>
+            {onCreate ? (
+                <button type="button" className="projects-gallery-create-card" onClick={onCreate}>
+                    <span className="projects-gallery-create-content">
+                        <Plus className="projects-gallery-create-icon" aria-hidden="true" />
+                        <span className="projects-gallery-create-label">新建项目</span>
+                    </span>
+                </button>
+            ) : null}
             {rows.map((row) => (
                 <ProjectCard key={row.project.id} row={row} />
             ))}

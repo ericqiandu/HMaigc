@@ -46,25 +46,32 @@ func (s *Service) AssignProjectTeam(user *model.User, projectID string, req Assi
 	}
 	teamID := strings.TrimSpace(req.TeamID)
 	if teamID != "" {
-		team, member, accessErr := s.teamAccess(user.ID, teamID)
-		if accessErr != nil {
+		if _, accessErr := s.requireTeamProjectManager(user.ID, teamID); accessErr != nil {
 			return nil, accessErr
-		}
-		if member.Role != model.TeamMemberRoleOwner && member.Role != model.TeamMemberRoleAdmin {
-			return nil, Forbidden("只有团队所有者或管理员可以接收团队项目")
-		}
-		entitlement, entitlementErr := s.teamEntitlement(user.ID, team.ID)
-		if entitlementErr != nil {
-			return nil, entitlementErr
-		}
-		if !entitlement.ProjectPermissionsEnabled {
-			return nil, Forbidden("当前团队套餐未开通项目权限管理")
 		}
 	}
 	if err := s.repo.AssignProjectTeam(project.ID, user.ID, teamID, time.Now()); err != nil {
 		return nil, err
 	}
 	return s.repo.ProjectReadableForUser(user.ID, project.ID)
+}
+
+func (s *Service) requireTeamProjectManager(userID string, teamID string) (*model.Team, error) {
+	team, member, err := s.teamAccess(userID, strings.TrimSpace(teamID))
+	if err != nil {
+		return nil, err
+	}
+	if member.Role != model.TeamMemberRoleOwner && member.Role != model.TeamMemberRoleAdmin {
+		return nil, Forbidden("只有团队所有者或管理员可以管理团队项目")
+	}
+	entitlement, err := s.teamEntitlement(userID, team.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !entitlement.ProjectPermissionsEnabled {
+		return nil, Forbidden("当前团队套餐未开通项目权限管理")
+	}
+	return team, nil
 }
 
 func (s *Service) ProjectAccessOverview(user *model.User, projectID string) (*ProjectAccessOverview, error) {

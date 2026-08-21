@@ -318,6 +318,9 @@ type ActiveTaskPolicy struct {
 	Capability      string
 	CapabilityLimit int
 	Unlimited       bool
+	// BillingTeamID freezes the exact paying account for account-scoped limits.
+	// nil is reserved for explicitly account-neutral internal tasks.
+	BillingTeamID *string
 }
 
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy, watermark model.WatermarkCapability) error {
@@ -494,16 +497,23 @@ func enforceActiveTaskLimit(tx *gorm.DB, userID string, policy ActiveTaskPolicy)
 	if policy.Unlimited {
 		return nil
 	}
+	activeTasks := tx.Model(&model.Task{}).
+		Where("tasks.user_id = ? AND tasks.status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
+	if policy.BillingTeamID != nil {
+		activeTasks = activeTasks.
+			Joins("JOIN billing_orders AS active_task_orders ON active_task_orders.id = tasks.billing_order_id AND active_task_orders.user_id = tasks.user_id").
+			Where("active_task_orders.team_id = ?", strings.TrimSpace(*policy.BillingTeamID))
+	}
 	var count int64
-	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {
+	if err := activeTasks.Count(&count).Error; err != nil {
 		return err
 	}
 	if count >= int64(policy.TotalLimit) {
 		return ErrActiveTaskLimit
 	}
 	var capabilityCount int64
-	if err := tx.Model(&model.Task{}).
-		Where("user_id = ? AND capability = ? AND status IN ?", userID, policy.Capability, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+	if err := activeTasks.
+		Where("tasks.capability = ?", policy.Capability).
 		Count(&capabilityCount).Error; err != nil {
 		return err
 	}

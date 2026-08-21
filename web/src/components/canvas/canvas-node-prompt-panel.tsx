@@ -32,6 +32,7 @@ import { GenerationCreditQuoteBadge } from "./generation-credit-quote-badge";
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
 type CanvasNodePromptPanelProps = {
+    projectId: string;
     node: CanvasNodeData;
     isRunning: boolean;
     onPromptChange: (nodeId: string, prompt: string) => void;
@@ -48,6 +49,7 @@ type CanvasNodePromptPanelProps = {
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 export function CanvasNodePromptPanel({
+    projectId,
     node,
     isRunning,
     onPromptChange,
@@ -86,7 +88,7 @@ export function CanvasNodePromptPanel({
     const quoteConfig = useMemo(() => (isImageMode && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, isImageMode]);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
     const quoteReferenceVideoCount = isVideoMode && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? activeVideoReferenceCount : 0;
-    const quoteState = useCanvasTaskBillingQuote(quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, quoteReferenceVideoCount);
+    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, quoteReferenceVideoCount);
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoReferenceCounts = useMemo(
         () => ({

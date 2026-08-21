@@ -44,7 +44,7 @@ func newModelAccessTestService(t *testing.T) (*Service, *gorm.DB) {
 func TestMemberModelRejectsUserWithoutActiveSubscription(t *testing.T) {
 	svc, _ := newModelAccessTestService(t)
 
-	_, err := svc.newBillingOrder("user-1", "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
+	_, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
 
 	if err == nil || !strings.Contains(err.Error(), "仅限有效会员") {
 		t.Fatalf("newBillingOrder() error = %v, want membership rejection", err)
@@ -67,7 +67,7 @@ func TestMemberModelAllowsActivePersonalSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	order, err := svc.newBillingOrder("user-1", "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
+	order, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
 
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestMemberModelAllowsActiveTeamSeat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.newBillingOrder("user-1", "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1}); err != nil {
+	if _, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1}); err != nil {
 		t.Fatal(err)
 	}
 }

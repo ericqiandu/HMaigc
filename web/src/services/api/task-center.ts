@@ -142,6 +142,7 @@ export type TaskBillingQuoteConfig = {
 };
 
 export type TaskBillingQuoteRequest = {
+    projectId: string;
     type: "canvas_image" | "canvas_video";
     operation: string;
     batchCount: number;
