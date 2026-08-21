@@ -39,11 +39,15 @@ export function CanvasCollaborationModal({
     const [loading, setLoading] = useState(false);
     const [submittingKey, setSubmittingKey] = useState("");
 
-    const applyState = useCallback((next: CanvasCollaborationState) => {
+    const applyLocalState = useCallback((next: CanvasCollaborationState) => {
         setState(next);
         setDefaultAccess(next.project.defaultTeamAccess === "viewer" ? "viewer" : "editor");
+    }, []);
+
+    const applyState = useCallback((next: CanvasCollaborationState) => {
+        applyLocalState(next);
         onStateChange(next);
-    }, [onStateChange]);
+    }, [applyLocalState, onStateChange]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -52,7 +56,7 @@ export function CanvasCollaborationModal({
                 getCanvasCollaboration(projectId),
                 getTeamWorkspace(),
             ]);
-            applyState(collaboration);
+            applyLocalState(collaboration);
             const manageableTeams = workspace.teams.filter((item) =>
                 (item.currentRole === "owner" || item.currentRole === "admin") &&
                 Boolean(item.subscription),
@@ -64,7 +68,7 @@ export function CanvasCollaborationModal({
         } finally {
             setLoading(false);
         }
-    }, [applyState, message, projectId]);
+    }, [applyLocalState, message, projectId]);
 
     useEffect(() => {
         if (open) void load();
