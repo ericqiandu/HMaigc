@@ -3,7 +3,22 @@ import { BadgeCheck, ChevronRight, RefreshCw, Sparkles } from "lucide-react";
 import { Link } from "react-router";
 
 import { useSiteSettings } from "@/components/site/site-settings-provider";
+import skill1 from "@/pages/home/updream/assets/skill-1.png";
+import skill2 from "@/pages/home/updream/assets/skill-2.png";
+import skill3 from "@/pages/home/updream/assets/skill-3.png";
+import skill4 from "@/pages/home/updream/assets/skill-4.png";
+import skill5 from "@/pages/home/updream/assets/skill-5.png";
+import skill6 from "@/pages/home/updream/assets/skill-6.png";
 import { listSkillsCatalog, skillImageUrl, type PlatformSkill } from "@/services/api/skills";
+
+const HOME_SKILL_COVERS: Readonly<Record<string, string>> = {
+    "screenplay-writer": skill1,
+    "short-drama-director": skill2,
+    "story-development": skill3,
+    "storyboard-continuity-director": skill4,
+    "commercial-film-director": skill5,
+    "suspense-visual-director": skill6,
+};
 
 const CARD_GRADIENTS = [
     "linear-gradient(115deg, #3447c8 0%, #6675e0 55%, #8994eb 100%)",
@@ -13,7 +28,7 @@ const CARD_GRADIENTS = [
 ] as const;
 
 function FirstPartySkillCard({ skill, siteName, index }: { skill: PlatformSkill; siteName: string; index: number }) {
-    const coverURL = skillImageUrl(skill.cover_url);
+    const coverURL = HOME_SKILL_COVERS[skill.dir] ?? skillImageUrl(skill.cover_url);
     return (
         <Link to="/skills" className="updream-skill-link block">
             <article

@@ -27,4 +27,24 @@ describe("first-party skill library contract", () => {
         expect(card).toContain("<SkillIcon icon={skill.icon}");
         expect(`${page}\n${card}`).not.toContain('{skill.icon || "skill"}');
     });
+
+    test("the homepage restores the six curated skill covers from the previous release", () => {
+        const homepageSkills = readFileSync(resolve(workspaceRoot, "src/pages/home/updream/updream-skills-section.tsx"), "utf8");
+
+        for (let index = 1; index <= 6; index += 1) {
+            expect(homepageSkills).toContain(`assets/skill-${index}.png`);
+        }
+        for (const [dir, cover] of [
+            ["screenplay-writer", "skill1"],
+            ["short-drama-director", "skill2"],
+            ["story-development", "skill3"],
+            ["storyboard-continuity-director", "skill4"],
+            ["commercial-film-director", "skill5"],
+            ["suspense-visual-director", "skill6"],
+        ]) {
+            expect(homepageSkills).toContain(`\"${dir}\": ${cover}`);
+        }
+        expect(homepageSkills).toContain("HOME_SKILL_COVERS[skill.dir]");
+        expect(homepageSkills).not.toContain("HOME_SKILL_COVERS[index % HOME_SKILL_COVERS.length]");
+    });
 });
