@@ -64,7 +64,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                 image: encodePendingModel(runtime.pendingConfiguration.generationModels.image),
                 video: encodePendingModel(runtime.pendingConfiguration.generationModels.video),
             });
-            setSelectedSkills(runtime.pendingConfiguration.skillDirs.map((dir) => ({ dir, name: dir, description: "", detailText: "" })));
+            setSelectedSkills(runtime.pendingConfiguration.skillDirs.map((dir) => ({ dir, name: dir, description: "" })));
             setDraft((current) => ({
                 ...current,
                 attachments: runtime.pendingConfiguration?.attachments.map((attachment) => ({ id: attachment.resourceId, resourceId: attachment.resourceId, name: attachment.name, url: resourceFileUrl(attachment.resourceId) })) || [],
@@ -79,7 +79,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
         if (!agentLaunchRequest || !runtime.restored || launchAttemptRef.current === agentLaunchRequest.id) return;
         launchAttemptRef.current = agentLaunchRequest.id;
         const launchModels = { ...agentLaunchRequest.generationModels };
-        const launchSkills = agentLaunchRequest.skillDirs.map((dir) => ({ dir, name: dir, description: "", detailText: "" }));
+        const launchSkills = agentLaunchRequest.skillDirs.map((dir) => ({ dir, name: dir, description: "" }));
         const launchAttachments = agentLaunchRequest.attachments.map((attachment) => ({ id: attachment.resourceId, resourceId: attachment.resourceId, name: attachment.name, url: resourceFileUrl(attachment.resourceId) }));
         setDraft({ prompt: agentLaunchRequest.prompt, generationModels: launchModels, skillSelections: launchSkills, attachments: launchAttachments, executionMode: agentLaunchRequest.executionMode });
         void (async () => {
@@ -229,9 +229,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                     ) : (
                         <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />
                     )}
-                    {!historyOpen && runtime.view?.state.clarificationHistory.length ? (
-                        <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} />
-                    ) : null}
+                    {!historyOpen && runtime.view?.state.clarificationHistory.length ? <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} /> : null}
                     {!historyOpen && runtime.view?.state.status === "waiting_input" ? <AgentClarificationStatus /> : null}
                     {(runtime.error && runtime.view?.state.status !== "waiting_input") || configurationError ? (
                         <div className="canvas-agent-runtime-error" role="alert">

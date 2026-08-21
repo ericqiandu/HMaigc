@@ -57,7 +57,7 @@ test("生成模式菜单使用紧凑且符合真实审批边界的说明", async
     expect(modeMenu.textContent).toContain("手动模式");
     expect(modeMenu.textContent).toContain("每次生成前询问");
     expect(modeMenu.textContent).toContain("自动模式");
-    expect(modeMenu.textContent).toContain("可逆操作自动执行，付费前确认");
+    expect(modeMenu.textContent).toContain("推理按 Token 计费，媒体生成前确认");
     expect(modeMenu.textContent).not.toContain("完全自动生成");
     const modeButtons = modeMenu.querySelectorAll<HTMLButtonElement>("button");
     expect(modeButtons).toHaveLength(2);
