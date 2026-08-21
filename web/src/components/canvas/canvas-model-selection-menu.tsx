@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { Check, Plus } from "lucide-react";
 
-import { ModelIcon, modelCatalogEntry } from "@/components/model-picker-presentation";
+import { isMemberModel, MemberDiamond, ModelIcon, modelCatalogEntry } from "@/components/model-picker-presentation";
+import { formatModelEstimatedDuration } from "@/lib/model-estimated-duration";
 import { cn } from "@/lib/utils";
 import { catalogModelsByCapability, isModelAccessible, modelDisplayName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import "./canvas-model-selection-menu.css";
@@ -69,13 +69,16 @@ export function CanvasModelSelectionMenu({ config, value, capabilities = DEFAULT
                                 <span className="canvas-model-selection-copy">
                                     <span className="canvas-model-selection-name-line">
                                         <span className="canvas-model-selection-name">{modelDisplayName(config, model)}</span>
+                                        {isMemberModel(config, model) ? <MemberDiamond /> : null}
                                         {presentation.promotionBadge ? <span className="canvas-model-selection-badge">{presentation.promotionBadge}</span> : null}
                                     </span>
                                     {presentation.marketingCopy ? <span className="canvas-model-selection-description">{presentation.marketingCopy}</span> : null}
                                 </span>
-                                <span className="canvas-model-selection-action" aria-hidden="true">
-                                    {selected ? <Check className="canvas-model-selection-action-icon" /> : <Plus className="canvas-model-selection-action-icon" />}
-                                </span>
+                                {presentation.estimatedDuration ? (
+                                    <span className="canvas-model-selection-duration" title={`预计生成耗时约 ${presentation.estimatedDuration}`}>
+                                        {presentation.estimatedDuration}
+                                    </span>
+                                ) : null}
                             </button>
                         );
                     })
@@ -98,6 +101,7 @@ function modelCapabilityLabel(capability: CanvasModelSelectionCapability) {
 function modelPresentation(config: AiConfig, model: string) {
     const entry = modelCatalogEntry(config, model);
     return {
+        estimatedDuration: formatModelEstimatedDuration(entry?.estimatedDurationSeconds),
         marketingCopy: entry?.marketingCopy?.trim() || "",
         promotionBadge: entry?.promotionBadge?.trim() || "",
     };
