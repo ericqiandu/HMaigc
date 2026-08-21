@@ -70,6 +70,7 @@ export type ProviderModelCapabilities = {
     upstreamMode: string;
     capability: string;
     resolutions: string[];
+    resolutionPixels: Record<string, number>;
     inputVariants: Array<"standard" | "reference_video">;
     ratios: string[];
     qualities: string[];

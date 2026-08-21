@@ -461,8 +461,18 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Adapters) != 4 || len(view.Adapters[0].Models) != 4 {
+	if len(view.Adapters) != 5 {
 		t.Fatalf("adapters = %#v", view.Adapters)
+	}
+	var seedanceAdapter *ProviderAdapterDescriptor
+	for index := range view.Adapters {
+		if view.Adapters[index].Family == "seedance" {
+			seedanceAdapter = &view.Adapters[index]
+			break
+		}
+	}
+	if seedanceAdapter == nil || len(seedanceAdapter.Models) != 4 {
+		t.Fatalf("seedance adapter = %#v", seedanceAdapter)
 	}
 	var models []model.ChannelModel
 	if err := db.Where("channel_id = ?", channel.ID).Order("model_key").Find(&models).Error; err != nil {
@@ -487,7 +497,7 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 			t.Fatalf("unpriced model published as available = %#v", item)
 		}
 	}
-	for _, spec := range view.Adapters[0].Models {
+	for _, spec := range seedanceAdapter.Models {
 		if !spec.Published || spec.ChannelModelID == "" {
 			t.Fatalf("publication facts missing = %#v", spec)
 		}

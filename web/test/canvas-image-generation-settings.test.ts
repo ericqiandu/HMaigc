@@ -55,6 +55,7 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
     upstreamMode: "kz_gpt_image2",
     capability: "image",
     resolutions: ["1K", "2K", "4K"],
+    resolutionPixels: {},
     qualities: ["low", "medium", "high"],
     outputCounts: [1],
     inputVariants: [],
@@ -75,6 +76,17 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
 };
 
 describe("图片模型能力驱动参数", () => {
+
+    test("Seedream 按后台发布的像素预算派生 2K 与 3K 尺寸", () => {
+        const resolutionPixels = { "2K": 4_194_304, "3K": 9_437_184 };
+        expect(buildImageDimensions("1:1", "2K", resolutionPixels)).toBe("2048x2048");
+        expect(buildImageDimensions("16:9", "3K", resolutionPixels)).toBe("4096x2304");
+    });
+
+    test("没有像素预算时保持 GPT Image 2 的长边尺寸契约", () => {
+        expect(buildImageDimensions("16:9", "2K", {})).toBe("2048x1152");
+    });
+
     test("全部声明比例和清晰度都满足上游像素边界", () => {
         for (const ratio of ratios) {
             for (const resolution of ["1K", "2K", "4K"] as const) {

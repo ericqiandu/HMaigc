@@ -18,12 +18,12 @@ export function CanvasImageGenerationSettings({ config, theme, showCount, onConf
     }
     const quality = capabilities.qualities.includes(config.quality) ? config.quality : capabilities.qualities[0] || "";
     const ratio = imageCanvasAspectLabel(config.size, capabilities.ratios);
-    const resolution = imageCanvasResolutionLabel(config.size, capabilities.resolutions);
+    const resolution = imageCanvasResolutionLabel(config.size, capabilities.resolutions, capabilities.resolutionPixels);
     const parsedCount = Math.max(1, Math.floor(Number(config.count) || 1));
     const count = capabilities.outputCounts.includes(parsedCount) ? parsedCount : capabilities.outputCounts[0] || 1;
 
     const updateDimensions = (nextRatio: string, nextResolution: string) => {
-        onConfigChange("size", imageSizeValue(nextRatio, nextResolution));
+        onConfigChange("size", imageSizeValue(nextRatio, nextResolution, capabilities.resolutionPixels));
     };
 
     return (

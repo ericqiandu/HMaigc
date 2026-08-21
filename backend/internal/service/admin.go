@@ -146,6 +146,7 @@ type PublicProviderCapabilities struct {
 	UpstreamMode              string                    `json:"upstreamMode"`
 	Capability                string                    `json:"capability"`
 	Resolutions               []string                  `json:"resolutions"`
+	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
 	InputVariants             []string                  `json:"inputVariants"`
 	Ratios                    []string                  `json:"ratios"`
 	Qualities                 []string                  `json:"qualities"`
@@ -841,7 +842,8 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 		ModelKey: capabilities.ModelKey, DisplayName: capabilities.DisplayName,
 		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
 		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, Ratios: append([]string{}, capabilities.Ratios...),
-		Qualities: append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
+		ResolutionPixels: cloneStringInt64Map(capabilities.ResolutionPixels),
+		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
 		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
@@ -865,7 +867,8 @@ func publicAPIMartImageCapabilities(modelKey string) *PublicProviderCapabilities
 	return &PublicProviderCapabilities{
 		ModelKey: modelKey, DisplayName: profile.label, UpstreamMode: modelKey, Capability: "image",
 		Resolutions: append([]string{}, profile.resolutions...), InputVariants: []string{},
-		Ratios: apimartPublishedAspectRatios(profile), Qualities: qualities, OutputCounts: []int{1},
+		ResolutionPixels: map[string]int64{},
+		Ratios:           apimartPublishedAspectRatios(profile), Qualities: qualities, OutputCounts: []int{1},
 		WatermarkCapability: model.WatermarkCapabilityUnsupported,
 		MaxImages:           profile.maxReferenceImages,
 		Tools:               []string{},

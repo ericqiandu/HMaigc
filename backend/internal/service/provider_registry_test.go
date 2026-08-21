@@ -32,8 +32,8 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	descriptors := registry.Descriptors()
-	if len(descriptors) != 4 {
-		t.Fatalf("descriptor count = %d, want 4", len(descriptors))
+	if len(descriptors) != 5 {
+		t.Fatalf("descriptor count = %d, want 5", len(descriptors))
 	}
 	seedance, ok := registry.Descriptor("kuaizi", "seedance")
 	if !ok {
@@ -123,6 +123,41 @@ func TestProviderRegistryPublishesGPTImage2ParameterCapabilities(t *testing.T) {
 	}
 	if len(model.OutputCounts) != 1 || model.OutputCounts[0] != 1 {
 		t.Fatalf("GPT Image 2 output counts = %#v", model.OutputCounts)
+	}
+}
+
+func TestProviderRegistryPublishesSeedreamImageCapabilities(t *testing.T) {
+	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, ok := registry.Descriptor("kuaizi", "seedream")
+	if !ok || len(descriptor.Models) != 2 {
+		t.Fatalf("kuaizi/seedream descriptor = %#v, exists=%v", descriptor, ok)
+	}
+	tests := []struct {
+		index     int
+		modelKey  string
+		display   string
+		maxImages int
+	}{
+		{index: 0, modelKey: "seedream5.0lite", display: "Seedream 5.0 Lite", maxImages: 14},
+		{index: 1, modelKey: "seedream5.0pro", display: "Seedream 5.0 Pro", maxImages: 10},
+	}
+	for _, test := range tests {
+		model := descriptor.Models[test.index]
+		if model.ModelKey != test.modelKey || model.DisplayName != test.display || model.UpstreamMode != test.modelKey || model.Capability != "image" {
+			t.Fatalf("Seedream identity = %#v", model)
+		}
+		if model.WatermarkCapability != modelpkg.WatermarkCapabilityControlled || model.MaxImages != test.maxImages {
+			t.Fatalf("Seedream limits = %#v", model)
+		}
+		if strings.Join(model.Resolutions, ",") != "2K,3K" || len(model.Ratios) != 9 || len(model.OutputCounts) != 1 || model.OutputCounts[0] != 1 {
+			t.Fatalf("Seedream output capabilities = %#v", model)
+		}
+		if model.ResolutionPixels["2K"] != 4_194_304 || model.ResolutionPixels["3K"] != 9_437_184 {
+			t.Fatalf("Seedream resolution pixel budgets = %#v", model.ResolutionPixels)
+		}
 	}
 }
 

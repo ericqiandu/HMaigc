@@ -20,6 +20,7 @@ type ProviderModelSpec struct {
 	UpstreamMode            string                    `json:"upstreamMode"`
 	Capability              string                    `json:"capability"`
 	Resolutions             []string                  `json:"resolutions"`
+	ResolutionPixels        map[string]int64          `json:"resolutionPixels"`
 	Ratios                  []string                  `json:"ratios"`
 	Qualities               []string                  `json:"qualities"`
 	OutputCounts            []int                     `json:"outputCounts"`
@@ -127,10 +128,19 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 	for index, model := range source.Models {
 		result.Models[index] = model
 		result.Models[index].Resolutions = append([]string{}, model.Resolutions...)
+		result.Models[index].ResolutionPixels = cloneStringInt64Map(model.ResolutionPixels)
 		result.Models[index].Ratios = append([]string{}, model.Ratios...)
 		result.Models[index].Qualities = append([]string{}, model.Qualities...)
 		result.Models[index].OutputCounts = append([]int{}, model.OutputCounts...)
 		result.Models[index].Tools = append([]string{}, model.Tools...)
+	}
+	return result
+}
+
+func cloneStringInt64Map(source map[string]int64) map[string]int64 {
+	result := make(map[string]int64, len(source))
+	for key, value := range source {
+		result[key] = value
 	}
 	return result
 }
@@ -161,6 +171,14 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 		},
 		{
 			ProviderKind: "kuaizi",
+			Family:       "seedream",
+			Models: []ProviderModelSpec{
+				seedreamProviderModel("seedream5.0lite", "Seedream 5.0 Lite", "支持文生图与最多 14 张参考图的图像编辑", 14),
+				seedreamProviderModel("seedream5.0pro", "Seedream 5.0 Pro", "高质量文生图与最多 10 张参考图的精准编辑", 10),
+			},
+		},
+		{
+			ProviderKind: "kuaizi",
 			Family:       "gpt",
 			Models: []ProviderModelSpec{{
 				ModelKey: "gpt-5.5", DisplayName: "GPT 5.5", MarketingCopy: "支持图片理解与 Agent 工具调用",
@@ -181,6 +199,19 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 				},
 			},
 		},
+	}
+}
+
+func seedreamProviderModel(modelKey string, displayName string, marketingCopy string, maxImages int) ProviderModelSpec {
+	return ProviderModelSpec{
+		ModelKey: modelKey, DisplayName: displayName, MarketingCopy: marketingCopy,
+		UpstreamMode: modelKey, Capability: "image",
+		Resolutions:         []string{"2K", "3K"},
+		ResolutionPixels:    map[string]int64{"2K": 4_194_304, "3K": 9_437_184},
+		Ratios:              []string{"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "9:21"},
+		OutputCounts:        []int{1},
+		WatermarkCapability: model.WatermarkCapabilityControlled,
+		MaxImages:           maxImages,
 	}
 }
 
