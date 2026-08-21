@@ -30,6 +30,7 @@ import (
 
 const providerResourceURLTTL = 4 * time.Hour
 const directResourceURLTTL = 5 * time.Minute
+const playbackResourceURLTTL = 4 * time.Hour
 
 var errInvalidGeneratedDataURL = errors.New("生成内容 data URL 无效")
 
@@ -58,8 +59,17 @@ func (s *Service) Resource(userID string, id string) (*model.Resource, error) {
 	return resource, err
 }
 
-// DirectResourceURL 先校验资源归属，再为私有 OSS 对象签发短时下载地址；本地资源继续由应用流式读取。
+// DirectResourceURL 为用户主动复制 OSS 地址签发短时链接，不承担长时间媒体播放。
 func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
+	return s.signedResourceURL(userID, id, directResourceURLTTL)
+}
+
+// PlaybackResourceURL 为已鉴权媒体播放签发会话级链接，避免长时间编辑后续播 Range 请求因五分钟签名过期。
+func (s *Service) PlaybackResourceURL(userID string, id string) (string, error) {
+	return s.signedResourceURL(userID, id, playbackResourceURLTTL)
+}
+
+func (s *Service) signedResourceURL(userID string, id string, ttl time.Duration) (string, error) {
 	resource, err := s.repo.ResourceForUser(userID, id)
 	if err != nil {
 		return "", err
@@ -77,7 +87,7 @@ func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
 	setting.Provider = firstNonEmpty(resource.Provider, setting.Provider)
 	setting.Endpoint = firstNonEmpty(resource.Endpoint, setting.Endpoint)
 	setting.Bucket = firstNonEmpty(resource.Bucket, setting.Bucket)
-	return signedOSSObjectURL(setting, resource.ObjectKey, time.Now().Add(directResourceURLTTL))
+	return signedOSSObjectURL(setting, resource.ObjectKey, time.Now().Add(ttl))
 }
 
 func (s *Service) UploadResource(userID string, header *multipart.FileHeader, kind string, width int, height int) (*model.Resource, error) {
