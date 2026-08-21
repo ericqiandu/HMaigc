@@ -72,7 +72,7 @@ export function useCanvasStoryboard({
                     .filter((candidate) => candidate?.type === CanvasNodeType.Video && Boolean(candidate.metadata?.content)).length;
                 return {
                     targetId: node.id,
-                    request: buildTaskBillingQuoteRequest({ mode, operation, batchCount: 1, referenceVideoCount, config: backendProviderConfig(config) }),
+                    request: buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount: 1, referenceVideoCount, config: backendProviderConfig(config) }),
                 };
             }), requestTaskBillingQuote);
             const modelNames = [...new Set(currentTargets.map((node) => {

@@ -158,11 +158,14 @@ export function useCanvasProjectLifecycle({
         };
     }, [projectId, projectLoaded, updateProject, viewport, viewportRef]);
 
-    useEffect(() => () => {
-        if (!projectLoaded) return;
-        if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        updateProject(projectId, { viewport: viewportRef.current });
-    }, [projectId, projectLoaded, updateProject, viewportRef]);
+    useEffect(
+        () => () => {
+            if (!projectLoaded) return;
+            if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
+            updateProject(projectId, { viewport: viewportRef.current });
+        },
+        [projectId, projectLoaded, updateProject, viewportRef],
+    );
 
     const createAndOpenProject = useCallback(() => {
         void createCanvasProjectWithRemoteSync(`自由画布 ${useCanvasStore.getState().projects.length + 1}`).then(({ id, syncError }) => {
@@ -182,9 +185,12 @@ export function useCanvasProjectLifecycle({
         });
     }, [cleanupAssetImages, message, navigate, projectId]);
 
-    const renameCurrentProject = useCallback((title: string) => {
-        renameProject(projectId, title);
-    }, [projectId, renameProject]);
+    const renameCurrentProject = useCallback(
+        (title: string) => {
+            renameProject(projectId, title);
+        },
+        [projectId, renameProject],
+    );
 
     const saveCanvasProject = useCallback(async () => {
         try {
