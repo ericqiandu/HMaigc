@@ -263,6 +263,9 @@ func openProviderAccountHandlerFixture(t *testing.T) *providerAccountHandlerFixt
 	if err := db.Create(&[]model.User{admin, user}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsureUserPublicIdentitySchema(db); err != nil {
+		t.Fatal(err)
+	}
 	adminCookie := createProviderHandlerSession(t, db, admin.ID, "handler-admin-session", "handler-admin-token", now)
 	userCookie := createProviderHandlerSession(t, db, user.ID, "handler-user-session", "handler-user-token", now)
 
