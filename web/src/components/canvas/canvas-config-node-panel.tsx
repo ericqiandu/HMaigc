@@ -167,7 +167,7 @@ export function CanvasConfigNodePanel({ projectId, node, isRunning, inputSummary
                         onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : mode === "image" ? imageModelMetadataPatch(config, model) : { model })}
                         capability={mode}
                         onMissingConfig={handleMissingSystemModel}
-                        fullWidth
+                        presentation={mode === "image" || mode === "video" || mode === "audio" ? "canvasMedia" : "default"}
                     />
                     {mode === "video" && videoModelPublished ? (
                         <CanvasVideoSettingsPopover

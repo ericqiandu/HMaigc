@@ -1,0 +1,264 @@
+.canvas-model-selection-popover :where(.ant-popover-container, .ant-popover-inner) {
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--canvas-overlay-border);
+    border-radius: var(--canvas-overlay-radius);
+    background: var(--canvas-overlay-elevated);
+    box-shadow: var(--canvas-overlay-shadow);
+    backdrop-filter: saturate(150%) blur(18px);
+    -webkit-backdrop-filter: saturate(150%) blur(18px);
+}
+
+.canvas-model-selection-popover :where(.ant-popover-content, .ant-popover-inner-content) {
+    color: var(--foreground);
+}
+
+.canvas-model-selection-menu {
+    box-sizing: border-box;
+    width: min(370px, calc(100vw - 24px));
+    height: 384px;
+    overflow: hidden;
+    padding: 14px 16px 12px;
+    color: var(--foreground);
+    font-family: var(--font-family-sans);
+    font-size: 13px;
+}
+
+.canvas-model-selection-header {
+    display: flex;
+    min-height: 30px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.canvas-model-selection-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 20px;
+}
+
+.canvas-model-selection-segments {
+    display: grid;
+    height: 36px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 12px;
+    padding: 2px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+
+.canvas-model-selection-segment {
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: color-mix(in srgb, var(--foreground) 52%, transparent);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.canvas-model-selection-segment:hover,
+.canvas-model-selection-segment:focus-visible {
+    color: var(--foreground);
+}
+
+.canvas-model-selection-segment:focus-visible,
+.canvas-model-selection-row:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--tc-color-accent-blue, #60a5fa) 72%, transparent);
+    outline-offset: -2px;
+}
+
+.canvas-model-selection-segment--active {
+    background: color-mix(in srgb, var(--foreground) 18%, transparent);
+    color: var(--foreground);
+}
+
+.canvas-model-selection-section-label {
+    padding: 10px 0 6px;
+    color: color-mix(in srgb, var(--foreground) 46%, transparent);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+}
+
+.canvas-model-selection-list {
+    height: 260px;
+    overflow-y: auto;
+}
+
+.canvas-model-selection-row {
+    display: flex;
+    width: 100%;
+    min-height: 58px;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.canvas-model-selection-row:hover,
+.canvas-model-selection-row--selected {
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.canvas-model-selection-icon {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+
+.canvas-model-selection-icon .canvas-model-picker-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.canvas-model-selection-copy {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+}
+
+.canvas-model-selection-name-line {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.canvas-model-selection-name {
+    overflow: hidden;
+    color: color-mix(in srgb, var(--foreground) 94%, transparent);
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-model-selection-description {
+    overflow: hidden;
+    color: color-mix(in srgb, var(--foreground) 46%, transparent);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-model-selection-badge {
+    max-width: 72px;
+    overflow: hidden;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #ffbf3f;
+    color: #493000;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-model-selection-action {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--foreground) 62%, transparent);
+}
+
+.canvas-model-selection-row--selected .canvas-model-selection-action {
+    border-color: color-mix(in srgb, var(--tc-color-accent-blue, #60a5fa) 40%, transparent);
+    color: var(--tc-color-accent-blue, #60a5fa);
+}
+
+.canvas-model-selection-row--disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.canvas-model-selection-row--disabled:hover {
+    background: transparent;
+}
+
+.canvas-model-selection-action-icon {
+    width: 12px;
+    height: 12px;
+}
+
+.canvas-model-selection-empty {
+    display: flex;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
+    color: color-mix(in srgb, var(--foreground) 46%, transparent);
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+}
+
+.model-picker-root--content {
+    display: flex;
+    width: fit-content;
+    max-width: 100%;
+    flex: 0 1 auto;
+}
+
+.canvas-model-selection-trigger {
+    display: inline-flex;
+    width: fit-content;
+    max-width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 32px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.canvas-model-selection-trigger .canvas-model-picker-label,
+.canvas-model-selection-trigger .canvas-model-picker-label-copy {
+    flex: 0 1 auto;
+}
+
+.canvas-model-selection-trigger:hover {
+    background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.canvas-model-selection-trigger:focus-visible {
+    outline: 2px solid #0071e3;
+    outline-offset: 1px;
+}
+
+.canvas-model-selection-trigger-chevron {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    color: color-mix(in srgb, var(--foreground) 42%, transparent);
+}

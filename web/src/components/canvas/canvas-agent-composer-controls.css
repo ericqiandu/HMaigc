@@ -70,12 +70,6 @@
     font-size: 13px;
 }
 
-.canvas-agent-model-menu {
-    width: min(370px, calc(100vw - 24px));
-    height: 384px;
-    padding: 14px 16px 12px;
-}
-
 .canvas-agent-skill-menu {
     width: min(450px, calc(100vw - 24px));
     height: 400px;
@@ -87,7 +81,6 @@
     padding: 6px;
 }
 
-.canvas-agent-picker-header,
 .canvas-agent-skill-header {
     display: flex;
     min-height: 30px;
@@ -103,34 +96,6 @@
     line-height: 20px;
 }
 
-.canvas-agent-picker-segments {
-    display: grid;
-    height: 36px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-top: 12px;
-    padding: 2px;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--foreground) 9%, transparent);
-}
-
-.canvas-agent-picker-segment {
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: color-mix(in srgb, var(--foreground) 52%, transparent);
-    font: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-.canvas-agent-picker-segment:hover,
-.canvas-agent-picker-segment:focus-visible {
-    color: var(--foreground);
-}
-
-.canvas-agent-picker-segment:focus-visible,
-.canvas-agent-model-row:focus-visible,
 .canvas-agent-skill-row:focus-visible,
 .canvas-agent-mode-row:focus-visible,
 .canvas-agent-skill-tab:focus-visible,
@@ -139,25 +104,6 @@
     outline-offset: -2px;
 }
 
-.canvas-agent-picker-segment--active {
-    background: color-mix(in srgb, var(--foreground) 18%, transparent);
-    color: var(--foreground);
-}
-
-.canvas-agent-picker-section-label {
-    padding: 10px 0 6px;
-    color: color-mix(in srgb, var(--foreground) 46%, transparent);
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 16px;
-}
-
-.canvas-agent-model-list {
-    height: 260px;
-    overflow-y: auto;
-}
-
-.canvas-agent-model-row,
 .canvas-agent-skill-row,
 .canvas-agent-mode-row {
     width: 100%;
@@ -169,17 +115,6 @@
     cursor: pointer;
 }
 
-.canvas-agent-model-row {
-    display: flex;
-    min-height: 58px;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 8px;
-    border-radius: 6px;
-}
-
-.canvas-agent-model-row:hover,
-.canvas-agent-model-row--selected,
 .canvas-agent-skill-row:hover,
 .canvas-agent-skill-row--selected,
 .canvas-agent-mode-row:hover,
@@ -187,7 +122,6 @@
     background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
 
-.canvas-agent-model-icon,
 .canvas-agent-skill-icon {
     display: grid;
     width: 36px;
@@ -198,12 +132,6 @@
     background: color-mix(in srgb, var(--foreground) 9%, transparent);
 }
 
-.canvas-agent-model-icon .canvas-model-picker-icon {
-    width: 18px;
-    height: 18px;
-}
-
-.canvas-agent-model-copy,
 .canvas-agent-skill-copy,
 .canvas-agent-mode-copy {
     display: flex;
@@ -212,7 +140,6 @@
     flex-direction: column;
 }
 
-.canvas-agent-model-name-line,
 .canvas-agent-skill-name-line {
     display: flex;
     min-width: 0;
@@ -220,7 +147,6 @@
     gap: 6px;
 }
 
-.canvas-agent-model-name,
 .canvas-agent-skill-name {
     overflow: hidden;
     color: color-mix(in srgb, var(--foreground) 94%, transparent);
@@ -231,7 +157,6 @@
     white-space: nowrap;
 }
 
-.canvas-agent-model-description,
 .canvas-agent-skill-description {
     overflow: hidden;
     color: color-mix(in srgb, var(--foreground) 46%, transparent);
@@ -240,41 +165,6 @@
     line-height: 16px;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.canvas-agent-model-badge {
-    max-width: 72px;
-    overflow: hidden;
-    padding: 2px 6px;
-    border-radius: 999px;
-    background: #ffbf3f;
-    color: #493000;
-    font-size: 9px;
-    font-weight: 700;
-    line-height: 14px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.canvas-agent-model-action {
-    display: grid;
-    width: 22px;
-    height: 22px;
-    flex: 0 0 auto;
-    place-items: center;
-    border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
-    border-radius: 999px;
-    color: color-mix(in srgb, var(--foreground) 62%, transparent);
-}
-
-.canvas-agent-model-row--selected .canvas-agent-model-action {
-    border-color: color-mix(in srgb, var(--tc-color-accent-blue, #60a5fa) 40%, transparent);
-    color: var(--tc-color-accent-blue, #60a5fa);
-}
-
-.canvas-agent-model-action-icon {
-    width: 12px;
-    height: 12px;
 }
 
 .canvas-agent-picker-empty,

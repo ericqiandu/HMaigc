@@ -296,15 +296,15 @@ export function CanvasNodePromptPanel({
             <div className={`canvas-media-controls-row flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
                 <div className={isImageMode || isVideoMode ? "canvas-media-model-picker-slot" : `${expanded ? "max-w-[320px]" : "max-w-[174px]"} min-w-[88px] flex-1`}>
                     <ModelPicker
-                        className={`!h-8 !w-full !min-w-0 ${isImageMode || isVideoMode ? "canvas-image-model-picker canvas-media-model-picker" : ""}`}
-                        fullWidth
+                        className={`!h-8 !min-w-0 ${isImageMode || isVideoMode ? "canvas-media-model-picker" : "!w-full"}`}
+                        fullWidth={!isImageMode && !isVideoMode}
                         config={config}
                         value={config.model}
                         onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelMetadataPatch(config, model, resolveVideoGenerationMode(node.metadata)) : mode === "image" ? imageModelMetadataPatch(config, model) : { model })}
                         capability={mode}
                         onMissingConfig={handleMissingSystemModel}
                         showSelectedEstimate={false}
-                        presentation={isImageMode || isVideoMode ? "canvasImage" : "default"}
+                        presentation={isImageMode || isVideoMode ? "canvasMedia" : "default"}
                     />
                 </div>
                 {isImageMode || isVideoMode ? <span className={isVideoMode ? "canvas-video-toolbar-divider" : "canvas-image-toolbar-divider"} aria-hidden="true" /> : null}
