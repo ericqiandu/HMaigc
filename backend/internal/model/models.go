@@ -335,7 +335,7 @@ type ChannelModelPriceTier struct {
 	ID                             string    `json:"id" gorm:"primaryKey;size:36"`
 	ChannelModelID                 string    `json:"channelModelId" gorm:"size:36;index"`
 	Resolution                     string    `json:"resolution" gorm:"size:16;index"`
-	InputVariant                   string    `json:"inputVariant" gorm:"not null;default:standard;size:40;index"`
+	InputVariant                   string    `json:"inputVariant" gorm:"not null;default:'';size:40;index"`
 	UsageMetric                    string    `json:"usageMetric" gorm:"not null;default:'';size:32;index"`
 	IncludedQuantity               int64     `json:"includedQuantity"`
 	UnitPriceMicrocredits          int64     `json:"unitPriceMicrocredits"`

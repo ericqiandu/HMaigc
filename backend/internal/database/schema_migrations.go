@@ -48,7 +48,7 @@ func MigrateBaseSchema(db *gorm.DB) error {
 			return fmt.Errorf("设置平台事实字段默认值 %s.%s: %w", field.table, field.column, err)
 		}
 	}
-	if err := db.Exec(`ALTER TABLE "channel_model_price_tiers" ALTER COLUMN "input_variant" SET DEFAULT 'standard'`).Error; err != nil {
+	if err := db.Exec(`ALTER TABLE "channel_model_price_tiers" ALTER COLUMN "input_variant" SET DEFAULT ''`).Error; err != nil {
 		return fmt.Errorf("设置价格规格默认值: %w", err)
 	}
 	return nil

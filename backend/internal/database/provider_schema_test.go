@@ -36,7 +36,7 @@ func TestProviderAccountSchemaCreatesExactIntegrityIndexes(t *testing.T) {
 		"idx_provider_endpoint_active":           `CREATE UNIQUE INDEX idx_provider_endpoint_active ON provider_endpoint_versions(provider_account_id) WHERE status = 'active'`,
 		"idx_provider_credential_account_family": `CREATE UNIQUE INDEX idx_provider_credential_account_family ON provider_credentials(provider_account_id, family)`,
 		"idx_provider_credential_version_active": `CREATE UNIQUE INDEX idx_provider_credential_version_active ON provider_credential_versions(provider_credential_id) WHERE status = 'active'`,
-		"idx_channel_model_resolution_variant":   `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant)`,
+		"idx_channel_model_resolution_variant":   `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant, usage_metric)`,
 	}
 	for name, expected := range want {
 		var actual string

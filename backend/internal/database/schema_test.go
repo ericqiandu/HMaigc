@@ -496,6 +496,75 @@ func TestChannelModelVariantMigrationBackfillsLegacyTierAndHardCutsUniqueKey(t *
 	}
 }
 
+func TestChannelModelUsageTierMigrationCanonicalizesVariantAndIdentity(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE channel_model_price_tiers (
+		id text PRIMARY KEY,
+		channel_model_id text NOT NULL,
+		resolution text NOT NULL DEFAULT '',
+		input_variant text NOT NULL DEFAULT 'standard',
+		usage_metric text NOT NULL DEFAULT '',
+		included_quantity integer NOT NULL DEFAULT 0,
+		unit_price_microcredits integer NOT NULL DEFAULT 0,
+		supplier_reference_cost_min_micros integer NOT NULL DEFAULT 0,
+		supplier_reference_cost_max_micros integer NOT NULL DEFAULT 0,
+		supplier_reference_currency text NOT NULL DEFAULT '',
+		price_version integer NOT NULL DEFAULT 0,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO channel_model_price_tiers (
+		id, channel_model_id, input_variant, usage_metric, included_quantity,
+		unit_price_microcredits, price_version, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"usage-input-image", "model", "standard", "input_image", 1, 4_000, 2, now, now,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("migrate usage pricing identity: %v", err)
+	}
+
+	var stored model.ChannelModelPriceTier
+	if err := db.First(&stored, "id = ?", "usage-input-image").Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.InputVariant != "" || stored.UsageMetric != "input_image" {
+		t.Fatalf("usage tier identity = variant %q metric %q, want empty variant and input_image", stored.InputVariant, stored.UsageMetric)
+	}
+
+	var definition string
+	if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", "idx_channel_model_resolution_variant").Scan(&definition).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantIndex := `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant, usage_metric)`
+	if compactSchemaSQL(definition) != compactSchemaSQL(wantIndex) {
+		t.Fatalf("usage tier index = %q, want %q", definition, wantIndex)
+	}
+
+	secondMetric := model.ChannelModelPriceTier{
+		ID: "usage-output-image", ChannelModelID: "model", UsageMetric: "output_image",
+		IncludedQuantity: 1, UnitPriceMicrocredits: 5_000, PriceVersion: 2,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&secondMetric).Error; err != nil {
+		t.Fatalf("create second usage metric: %v", err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("repeat usage pricing migration: %v", err)
+	}
+}
+
 func TestLegacyChannelModelResolutionIndexAcceptsSQLiteQuotedEquivalent(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

@@ -45,16 +45,42 @@ func prepareLegacyProviderSchema(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if !exists {
+	if exists {
+		if !exact {
+			return fmt.Errorf("旧价格规格索引 %s 定义错误，拒绝修改现有索引: %s", legacyIndex, definition)
+		}
+		if err := db.Exec("DROP INDEX " + legacyIndex).Error; err != nil {
+			return err
+		}
+	}
+
+	const variantIndex = "idx_channel_model_resolution_variant"
+	exists, exact, definition, err = legacyChannelModelVariantIndex(db, variantIndex)
+	if err != nil || !exists {
+		return err
+	}
+	if exact {
+		return db.Exec("DROP INDEX " + variantIndex).Error
+	}
+	_, current, _, currentErr := channelModelPriceTierIndexMatches(db, variantIndex, "channel_model_id,resolution,input_variant,usage_metric")
+	if currentErr != nil {
+		return currentErr
+	}
+	if current {
 		return nil
 	}
-	if !exact {
-		return fmt.Errorf("旧价格规格索引 %s 定义错误，拒绝修改现有索引: %s", legacyIndex, definition)
-	}
-	return db.Exec("DROP INDEX " + legacyIndex).Error
+	return fmt.Errorf("旧价格规格索引 %s 定义错误，拒绝修改现有索引: %s", variantIndex, definition)
+}
+
+func legacyChannelModelVariantIndex(db *gorm.DB, name string) (bool, bool, string, error) {
+	return channelModelPriceTierIndexMatches(db, name, "channel_model_id,resolution,input_variant")
 }
 
 func legacyChannelModelResolutionIndex(db *gorm.DB, name string) (bool, bool, string, error) {
+	return channelModelPriceTierIndexMatches(db, name, "channel_model_id,resolution")
+}
+
+func channelModelPriceTierIndexMatches(db *gorm.DB, name string, expectedColumns string) (bool, bool, string, error) {
 	if db.Dialector.Name() == "postgres" {
 		type facts struct {
 			Unique    bool   `gorm:"column:is_unique"`
@@ -80,7 +106,7 @@ func legacyChannelModelResolutionIndex(db *gorm.DB, name string) (bool, bool, st
 			return result.RowsAffected > 0, false, "", result.Error
 		}
 		definition := fmt.Sprintf("unique=%t table=%s columns=%s predicate=%s", actual.Unique, actual.TableName, actual.Columns, actual.Predicate)
-		return true, actual.Unique && actual.TableName == "channel_model_price_tiers" && actual.Columns == "channel_model_id,resolution" && strings.TrimSpace(actual.Predicate) == "", definition, nil
+		return true, actual.Unique && actual.TableName == "channel_model_price_tiers" && actual.Columns == expectedColumns && strings.TrimSpace(actual.Predicate) == "", definition, nil
 	}
 	var definition string
 	row := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Row()
@@ -104,7 +130,7 @@ func legacyChannelModelResolutionIndex(db *gorm.DB, name string) (bool, bool, st
 		names = append(names, column.Name)
 	}
 	normalized := strings.ToLower(strings.TrimSpace(definition))
-	exact := owner == "channel_model_price_tiers" && strings.Join(names, ",") == "channel_model_id,resolution" && strings.Contains(normalized, "create unique index") && !strings.Contains(normalized, " where ")
+	exact := owner == "channel_model_price_tiers" && strings.Join(names, ",") == expectedColumns && strings.Contains(normalized, "create unique index") && !strings.Contains(normalized, " where ")
 	return true, exact, definition, nil
 }
 
@@ -122,7 +148,10 @@ func backfillProviderDefaults(db *gorm.DB) error {
 		}
 	}
 	if db.Migrator().HasTable("channel_model_price_tiers") && db.Migrator().HasColumn("channel_model_price_tiers", "input_variant") {
-		if err := db.Exec("UPDATE channel_model_price_tiers SET input_variant = 'standard' WHERE input_variant IS NULL OR TRIM(input_variant) = ''").Error; err != nil {
+		if err := db.Exec("UPDATE channel_model_price_tiers SET input_variant = '' WHERE TRIM(usage_metric) <> '' AND input_variant <> ''").Error; err != nil {
+			return fmt.Errorf("回填用量价格输入规格: %w", err)
+		}
+		if err := db.Exec("UPDATE channel_model_price_tiers SET input_variant = 'standard' WHERE TRIM(usage_metric) = '' AND (input_variant IS NULL OR TRIM(input_variant) = '')").Error; err != nil {
 			return fmt.Errorf("回填价格输入规格: %w", err)
 		}
 	}
@@ -151,8 +180,8 @@ var providerIntegrityIndexes = []providerIntegrityIndex{
 		createSQL: `CREATE UNIQUE INDEX idx_provider_credential_version_active ON provider_credential_versions(provider_credential_id) WHERE status = 'active'`,
 	},
 	{
-		name: "idx_channel_model_resolution_variant", table: "channel_model_price_tiers", columns: "channel_model_id,resolution,input_variant",
-		createSQL: `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant)`,
+		name: "idx_channel_model_resolution_variant", table: "channel_model_price_tiers", columns: "channel_model_id,resolution,input_variant,usage_metric",
+		createSQL: `CREATE UNIQUE INDEX idx_channel_model_resolution_variant ON channel_model_price_tiers(channel_model_id, resolution, input_variant, usage_metric)`,
 	},
 }
 
@@ -256,7 +285,7 @@ func rejectProviderIntegrityConflicts(db *gorm.DB) error {
 		{&model.ProviderEndpointVersion{}, "provider_account_id AS first_value, '' AS second_value, COUNT(*) AS count", "status = 'active'", "provider_account_id", "账号活动 endpoint"},
 		{&model.ProviderCredential{}, "provider_account_id AS first_value, family AS second_value, COUNT(*) AS count", "", "provider_account_id, family", "账号凭据系列"},
 		{&model.ProviderCredentialVersion{}, "provider_credential_id AS first_value, '' AS second_value, COUNT(*) AS count", "status = 'active'", "provider_credential_id", "活动凭据版本"},
-		{&model.ChannelModelPriceTier{}, "channel_model_id AS first_value, resolution || ':' || input_variant AS second_value, COUNT(*) AS count", "", "channel_model_id, resolution, input_variant", "模型价格规格"},
+		{&model.ChannelModelPriceTier{}, "channel_model_id AS first_value, resolution || ':' || input_variant || ':' || usage_metric AS second_value, COUNT(*) AS count", "", "channel_model_id, resolution, input_variant, usage_metric", "模型价格规格"},
 	}
 	for _, check := range checks {
 		var conflict duplicate
