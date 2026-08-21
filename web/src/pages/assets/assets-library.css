@@ -8,12 +8,11 @@
     display: inline-flex;
     max-width: 100%;
     align-items: center;
-    gap: 3px;
+    gap: 8px;
     overflow-x: auto;
-    padding: 3px;
-    border: 1px solid var(--workspace-ui-divider);
-    border-radius: 8px;
-    background: var(--workspace-ui-surface-subtle);
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 .workspace-ui-scope.assets-workspace-page .assets-scope-tab {
@@ -24,8 +23,8 @@
     align-items: center;
     justify-content: center;
     gap: 7px;
-    border: 0;
-    border-radius: 5px;
+    border: 1px solid var(--workspace-ui-control-border);
+    border-radius: var(--workspace-ui-radius-pill);
     background: transparent;
     color: var(--workspace-ui-text-secondary);
     font-size: 13px;
@@ -38,11 +37,13 @@
 
 .workspace-ui-scope.assets-workspace-page .assets-scope-tab:hover {
     background: var(--workspace-ui-control);
+    border-color: var(--workspace-ui-control-border-hover);
     color: var(--workspace-ui-text);
 }
 
 .workspace-ui-scope.assets-workspace-page .assets-scope-tab[aria-current="page"] {
     background: var(--workspace-ui-control-hover);
+    border-color: var(--workspace-ui-control-border-hover);
     color: var(--workspace-ui-text);
     font-weight: 600;
 }
@@ -163,6 +164,34 @@
 
 .workspace-ui-scope.assets-workspace-page .assets-library-toolbar-actions {
     flex: 0 0 auto;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar .ant-input-affix-wrapper,
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar .ant-select-single .ant-select-selector {
+    min-height: var(--workspace-ui-control-height);
+    border-color: var(--workspace-ui-control-border) !important;
+    border-radius: var(--workspace-ui-radius-pill) !important;
+    background: var(--workspace-ui-control) !important;
+    box-shadow: none !important;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar .ant-input-affix-wrapper:hover,
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar .ant-select-single:hover .ant-select-selector {
+    border-color: var(--workspace-ui-control-border-hover) !important;
+    background: var(--workspace-ui-control-hover) !important;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar .ant-btn {
+    min-height: var(--workspace-ui-control-height);
+    border-color: var(--workspace-ui-control-border-hover) !important;
+    border-radius: var(--workspace-ui-radius-pill) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.workspace-ui-scope.assets-workspace-page .assets-library-toolbar .ant-btn:hover {
+    border-color: var(--workspace-ui-control-border-hover) !important;
+    background: var(--workspace-ui-control-hover) !important;
 }
 
 .workspace-ui-scope.assets-workspace-page .assets-library-search {

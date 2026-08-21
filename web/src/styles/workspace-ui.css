@@ -22,6 +22,7 @@
     --workspace-ui-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     --workspace-ui-radius-control: var(--radius-xs);
     --workspace-ui-radius-surface: var(--radius-sm);
+    --workspace-ui-radius-pill: var(--radius-full);
     --workspace-ui-shadow-soft: var(--shadow-md);
     --workspace-ui-shadow-overlay: var(--shadow-xl);
     --workspace-ui-motion-fast: var(--duration-fast);
@@ -43,6 +44,22 @@
     font-size: 14px;
     line-height: 1.43;
     letter-spacing: -0.014em;
+}
+
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) {
+    --workspace-ui-page: var(--creator-workspace-page);
+    --workspace-ui-surface: var(--creator-workspace-surface);
+    --workspace-ui-surface-subtle: var(--creator-workspace-surface-subtle);
+    --workspace-ui-surface-hover: var(--creator-workspace-surface-hover);
+    --workspace-ui-text: var(--creator-workspace-text);
+    --workspace-ui-text-secondary: var(--creator-workspace-text-secondary);
+    --workspace-ui-text-tertiary: var(--creator-workspace-text-tertiary);
+    --workspace-ui-divider: var(--creator-workspace-border);
+    --workspace-ui-control: var(--creator-workspace-control);
+    --workspace-ui-control-border: var(--creator-workspace-border);
+    --workspace-ui-control-border-hover: var(--creator-workspace-border-hover);
+    --workspace-ui-control-hover: var(--creator-workspace-control-hover);
+    --workspace-ui-radius-surface: var(--radius-md);
 }
 
 :where(.workspace-ui-scope, .settings-workspace-page, .admin-workspace) :where(button, input, textarea, select) {
