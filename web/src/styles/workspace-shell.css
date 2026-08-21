@@ -4,9 +4,10 @@
     --workspace-ui-control-height: 36px;
 }
 
-.workspace-ui-scope .workspace-page-frame {
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) .workspace-page-frame {
     max-width: var(--workspace-ui-frame-max);
     margin-inline: auto;
+    padding-top: 90px;
 }
 
 .workspace-ui-scope.workspace-page--collection .workspace-collection-grid {
@@ -131,6 +132,30 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
     background: var(--workspace-ui-control-hover) !important;
 }
 
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) .workspace-list-toolbar .ant-segmented {
+    padding: 0;
+    border-radius: var(--workspace-ui-radius-pill);
+    background: transparent;
+}
+
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) .workspace-list-toolbar .ant-segmented-item {
+    border: 1px solid var(--workspace-ui-control-border);
+    border-radius: var(--workspace-ui-radius-pill);
+    color: var(--workspace-ui-text-secondary);
+}
+
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) .workspace-list-toolbar .ant-segmented-item + .ant-segmented-item {
+    margin-left: var(--workspace-ui-space-2);
+}
+
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) .workspace-list-toolbar .ant-segmented-item:hover,
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) .workspace-list-toolbar .ant-segmented-item-selected {
+    border-color: var(--workspace-ui-control-border-hover);
+    background: var(--workspace-ui-control-hover);
+    box-shadow: none;
+    color: var(--workspace-ui-text);
+}
+
 :where(.workspace-ui-scope, .settings-workspace-page) .workspace-list-toolbar :where(.ant-input-affix-wrapper-focused, .ant-select-focused .ant-select-selector) {
     border-color: var(--workspace-ui-accent) !important;
     background: var(--workspace-ui-control) !important;
@@ -160,6 +185,11 @@ body:has(.app-product-floating-account) :where(.workspace-ui-scope, .settings-wo
     border-radius: var(--workspace-ui-radius-surface);
     background: var(--workspace-ui-surface);
     box-shadow: none;
+}
+
+.workspace-ui-scope:is(.projects-workspace, .skills-workspace-page, .tasks-workspace-page, .assets-workspace-page) :where(.app-table-surface, .app-collection-card, .canvas-library-new-button) {
+    border-color: var(--workspace-ui-divider);
+    border-radius: var(--workspace-ui-radius-surface);
 }
 
 :where(.workspace-ui-scope, .settings-workspace-page) .app-pagination-bar {

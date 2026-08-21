@@ -9,6 +9,7 @@
         "check:bundle": "node ./scripts/check-bundle-budget.mjs",
         "verify:membership-checkout-browser": "node ./scripts/verify-membership-checkout-browser.mjs",
         "lighthouse": "node ./scripts/run-lighthouse-gate.mjs",
+        "benchmark:canvas": "node ./scripts/run-canvas-performance-benchmark.mjs",
         "test": "bun test",
         "start": "vite preview --host 0.0.0.0 --port 3000",
         "format": "prettier --write .",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -23,13 +24,48 @@ type TokenPricingSnapshot struct {
 	MaxOutputTokens        int64 `json:"maxOutputTokens"`
 }
 
-const kuaiziBillingFenMicrocredits int64 = 1_000_000
+const (
+	kuaiziBillingFenMicrocredits    int64 = 1_000_000
+	tokenBillingProtocolMarginBytes int64 = 256
+)
 
 type TokenUsageFact struct {
 	InputTokens  int64
 	CachedTokens int64
 	OutputTokens int64
 	Available    bool
+}
+
+// PrepareTokenBilledChatRequest freezes the commercial output ceiling in the
+// exact request body and returns a conservative UTF-8 byte upper bound for
+// input-token reservation.
+func PrepareTokenBilledChatRequest(body []byte, maxOutputTokens int64) ([]byte, int64, error) {
+	if maxOutputTokens <= 0 || len(body) == 0 || !utf8.Valid(body) {
+		return nil, 0, errors.New("Token 计费请求不符合 Chat Completions 契约")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+		return nil, 0, errors.New("Token 计费请求 JSON 无效")
+	}
+	limit, err := json.Marshal(maxOutputTokens)
+	if err != nil {
+		return nil, 0, err
+	}
+	payload["max_tokens"] = limit
+	if streamRaw, exists := payload["stream"]; exists {
+		var stream bool
+		if err := json.Unmarshal(streamRaw, &stream); err != nil {
+			return nil, 0, errors.New("Token 计费请求 stream 字段无效")
+		}
+		if stream {
+			payload["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		}
+	}
+	prepared, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	return prepared, int64(len(prepared)) + tokenBillingProtocolMarginBytes, nil
 }
 
 func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, error) {
@@ -78,6 +114,7 @@ func tokenChargeMicrocredits(pricing TokenPricingSnapshot, usage TokenUsageFact,
 }
 
 type TokenBillingReservation struct {
+	TaskID               string
 	EstimatedInputTokens int64
 	MaxOutputTokens      int64
 	Pricing              TokenPricingSnapshot
@@ -102,10 +139,45 @@ func (s *Service) ProxyTokenBillingConfig(userID string, channelID string, model
 }
 
 func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
+	order, err := s.newTokenBillingOrder(userID, personalBillingAccountScope(), channelID, modelKey, scene, idempotencyKey, reservation)
+	if err != nil {
+		return nil, err
+	}
+	existing, lookupErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
+	if lookupErr == nil {
+		if !sameTokenBillingReservation(existing, order) {
+			return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
+		}
+		return existing, nil
+	}
+	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		return nil, lookupErr
+	}
+	if err := s.repo.ReserveBillingOrder(order); err != nil {
+		existing, existingErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
+		if existingErr == nil {
+			if !sameTokenBillingReservation(existing, order) {
+				return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
+			}
+			return existing, nil
+		}
+		if errors.Is(err, repository.ErrInsufficientCredits) {
+			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
+		}
+		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
+			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
+		}
+		return nil, err
+	}
+	return order, nil
+}
+
+func (s *Service) newTokenBillingOrder(userID string, billingScope billingAccountScope, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)
 	modelKey = strings.TrimSpace(modelKey)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	reservation.TaskID = strings.TrimSpace(reservation.TaskID)
 	reservation.EndpointVersionID = strings.TrimSpace(reservation.EndpointVersionID)
 	reservation.CredentialVersionID = strings.TrimSpace(reservation.CredentialVersionID)
 	if userID == "" || channelID == "" || modelKey == "" || idempotencyKey == "" || reservation.EstimatedInputTokens <= 0 || reservation.MaxOutputTokens <= 0 || reservation.EndpointVersionID == "" || reservation.CredentialVersionID == "" {
@@ -148,13 +220,9 @@ func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, mode
 	if err != nil {
 		return nil, err
 	}
-	teamID, err := s.billingTeamID(userID, time.Now())
-	if err != nil {
-		return nil, err
-	}
 	now := time.Now()
 	order := &model.BillingOrder{
-		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: "proxy-token:" + idempotencyKey,
+		ID: newID(), UserID: userID, TeamID: billingScope.TeamID, IdempotencyKey: "proxy-token:" + idempotencyKey, TaskID: reservation.TaskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: "text", Scene: truncateRunes(firstNonEmpty(strings.TrimSpace(scene), "agent"), 80),
 		BillingMode: "token_usage", PriceVersion: item.PriceVersion, MultiplierBasisPoints: multiplierBPS, Quantity: 1,
 		AmountMicrocredits: amount, ReservedAmountMicrocredits: amount, TokenPricingSnapshotJSON: string(pricingJSON),
@@ -162,38 +230,12 @@ func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, mode
 		ProviderEndpointVersionID: reservation.EndpointVersionID, ProviderCredentialVersionID: reservation.CredentialVersionID,
 		Status: model.BillingStatusReserved, CreatedAt: now, UpdatedAt: now,
 	}
-	existing, lookupErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
-	if lookupErr == nil {
-		if !sameTokenBillingReservation(existing, order) {
-			return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
-		}
-		return existing, nil
-	}
-	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-		return nil, lookupErr
-	}
-	if err := s.repo.ReserveBillingOrder(order); err != nil {
-		existing, existingErr := s.repo.BillingOrderByUserIdempotency(order.UserID, order.IdempotencyKey)
-		if existingErr == nil {
-			if !sameTokenBillingReservation(existing, order) {
-				return nil, BadAuthRequest("Idempotency-Key 已用于不同的 Token 计费请求")
-			}
-			return existing, nil
-		}
-		if errors.Is(err, repository.ErrInsufficientCredits) {
-			return nil, BadAuthRequest(creditInsufficientMessage(order.TeamID))
-		}
-		if errors.Is(err, repository.ErrTeamMemberCreditLimit) {
-			return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
-		}
-		return nil, err
-	}
 	return order, nil
 }
 
 func sameTokenBillingReservation(existing *model.BillingOrder, requested *model.BillingOrder) bool {
 	return existing != nil && requested != nil &&
-		existing.BillingMode == "token_usage" && existing.UserID == requested.UserID && existing.IdempotencyKey == requested.IdempotencyKey &&
+		existing.BillingMode == "token_usage" && existing.UserID == requested.UserID && existing.TeamID == requested.TeamID && existing.IdempotencyKey == requested.IdempotencyKey && existing.TaskID == requested.TaskID &&
 		existing.ChannelID == requested.ChannelID && existing.ChannelModelID == requested.ChannelModelID && existing.Model == requested.Model &&
 		existing.Scene == requested.Scene && existing.PriceVersion == requested.PriceVersion && existing.MultiplierBasisPoints == requested.MultiplierBasisPoints &&
 		existing.ReservedAmountMicrocredits == requested.ReservedAmountMicrocredits && existing.TokenPricingSnapshotJSON == requested.TokenPricingSnapshotJSON &&
@@ -222,9 +264,29 @@ func (s *Service) ReconcileTokenBillingNow(ctx context.Context, orderID string, 
 	return s.reconcileTokenBillingOrder(ctx, order, false)
 }
 
+func (s *Service) settleCompletedTaskBilling(ctx context.Context, orderID string) error {
+	if strings.TrimSpace(orderID) == "" {
+		return nil
+	}
+	order, err := s.repo.BillingOrder(orderID)
+	if err != nil {
+		return err
+	}
+	if order.BillingMode != "token_usage" {
+		return s.SettleBilling(order.ID, order.ProviderRequestID)
+	}
+	if strings.TrimSpace(order.ProviderRequestID) == "" {
+		return errors.New("Token 账单缺少可核对的上游任务 ID")
+	}
+	return s.reconcileTokenBillingOrder(ctx, order, false)
+}
+
 func (s *Service) ScheduleTokenBillingReconciliation(orderID string, providerTaskID string, reason string, usage TokenUsageFact) error {
 	providerTaskID, err := tokenBillingTaskID(providerTaskID)
 	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdateBillingProviderRequestID(strings.TrimSpace(orderID), providerTaskID); err != nil {
 		return err
 	}
 	usageStatus, storedUsage := normalizeTokenUsageFact(usage)
@@ -243,23 +305,30 @@ func tokenBillingTaskID(chatCompletionID string) (string, error) {
 	return strings.TrimPrefix(chatCompletionID, prefix), nil
 }
 
-func (s *Service) RunTokenBillingReconciliationBatch(ctx context.Context, now time.Time, limit int) error {
-	orders, err := s.repo.ClaimTokenBillingReconciliations(s.workerID, now, time.Minute, limit)
+func (s *Service) RunKuaiziBillingReconciliationBatch(ctx context.Context, now time.Time, limit int) error {
+	orders, err := s.repo.ClaimKuaiziBillingReconciliations(s.workerID, now, time.Minute, limit)
 	if err != nil {
 		return err
 	}
 	for index := range orders {
-		if err := s.reconcileTokenBillingOrder(ctx, &orders[index], true); err != nil {
-			return err
+		order := &orders[index]
+		var reconcileErr error
+		if order.BillingMode == "token_usage" {
+			reconcileErr = s.reconcileTokenBillingOrder(ctx, order, true)
+		} else {
+			reconcileErr = s.reconcileKuaiziMediaBillingOrder(ctx, order)
+		}
+		if reconcileErr != nil {
+			return reconcileErr
 		}
 	}
 	return nil
 }
 
-func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.BillingOrder, claimed bool) error {
+func (s *Service) reconcileKuaiziMediaBillingOrder(ctx context.Context, order *model.BillingOrder) error {
 	runtime, err := s.resolveFrozenKuaiziBillingRuntime(order)
 	if err != nil {
-		return s.deferTokenBillingReconciliation(order, claimed, "frozen_runtime_unavailable")
+		return s.deferKuaiziBillingReconciliation(order, "frozen_runtime_unavailable")
 	}
 	client := NewKuaiziClient(KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), 20*time.Second))
 	fact, err := client.BillingByTaskID(ctx, runtime.BaseURL, runtime.APIKey, order.ProviderRequestID)
@@ -269,17 +338,83 @@ func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.B
 		if errors.As(err, &billingError) {
 			code = billingError.Code
 		}
+		return s.deferKuaiziBillingReconciliation(order, code)
+	}
+	if providerBillingOrderIDConflict(order, fact) {
+		return s.repo.RequireKuaiziBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, "provider_billing_order_changed")
+	}
+	if err := s.repo.RecordProviderBillingObservation(order.ID, fact.OrderID, fact.Amount, fact.Status, fact.TaskStatus, fact.TotalTokens); err != nil {
+		return err
+	}
+	if reason := providerBillingStatusContradiction(fact); reason != "" {
+		return s.repo.RequireKuaiziBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
+	}
+	switch fact.Status {
+	case "pending":
+		return s.deferKuaiziBillingReconciliation(order, "billing_pending")
+	case "failed":
+		if fact.Amount != 0 {
+			return s.repo.RequireKuaiziBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, "failed_bill_has_amount")
+		}
+		return s.repo.RefundBillingOrder(order.ID, "上游账单明确失败且未扣费")
+	case "succeeded":
+		return s.repo.SettleBillingOrder(order.ID, order.ProviderRequestID)
+	default:
+		return s.deferKuaiziBillingReconciliation(order, "billing_status_invalid")
+	}
+}
+
+func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.BillingOrder, claimed bool) error {
+	runtime, err := s.resolveFrozenKuaiziBillingRuntime(order)
+	if err != nil {
+		return s.deferTokenBillingReconciliation(order, claimed, "frozen_runtime_unavailable")
+	}
+	providerTaskID, err := storedTokenBillingTaskID(order.ProviderRequestID)
+	if err != nil {
+		return s.deferTokenBillingReconciliation(order, claimed, "provider_task_id_invalid")
+	}
+	if providerTaskID != order.ProviderRequestID {
+		if err := s.repo.UpdateBillingProviderRequestID(order.ID, providerTaskID); err != nil {
+			return err
+		}
+		order.ProviderRequestID = providerTaskID
+	}
+	if strings.TrimSpace(order.TokenUsageStatus) == "" {
+		usageStatus, usage := normalizeTokenUsageFact(TokenUsageFact{
+			InputTokens: order.InputTokens, CachedTokens: order.CachedTokens, OutputTokens: order.OutputTokens,
+		})
+		if err := s.repo.RecordTokenBillingUsage(order.ID, repository.TokenUsageFact{
+			InputTokens: usage.InputTokens, CachedTokens: usage.CachedTokens, OutputTokens: usage.OutputTokens,
+		}, usageStatus); err != nil {
+			return err
+		}
+		order.InputTokens, order.CachedTokens, order.OutputTokens, order.TokenUsageStatus = usage.InputTokens, usage.CachedTokens, usage.OutputTokens, usageStatus
+	}
+	client := NewKuaiziClient(KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), 20*time.Second))
+	fact, err := client.BillingByTaskID(ctx, runtime.BaseURL, runtime.APIKey, providerTaskID)
+	if err != nil {
+		var billingError *KuaiziBillingError
+		code := "billing_lookup_failed"
+		if errors.As(err, &billingError) {
+			code = billingError.Code
+		}
 		return s.deferTokenBillingReconciliation(order, claimed, code)
 	}
-	if err := s.repo.RecordTokenBillingObservation(order.ID, fact.OrderID, fact.Amount, fact.Status, fact.TaskStatus, fact.TotalTokens); err != nil {
+	if providerBillingOrderIDConflict(order, fact) {
+		return s.deferOrReviewTokenBilling(order, claimed, "provider_billing_order_changed")
+	}
+	if err := s.repo.RecordProviderBillingObservation(order.ID, fact.OrderID, fact.Amount, fact.Status, fact.TaskStatus, fact.TotalTokens); err != nil {
 		return err
+	}
+	if reason := providerBillingStatusContradiction(fact); reason != "" {
+		return s.deferOrReviewTokenBilling(order, claimed, reason)
 	}
 	switch fact.Status {
 	case "pending":
 		return s.deferTokenBillingReconciliation(order, claimed, "billing_pending")
 	case "failed":
 		if fact.Amount != 0 {
-			return s.deferTokenBillingReconciliation(order, claimed, "failed_bill_has_amount")
+			return s.deferOrReviewTokenBilling(order, claimed, "failed_bill_has_amount")
 		}
 		return s.repo.RefundTokenBilling(order.ID, fact.OrderID, fact.Amount, fact.TaskStatus, fact.TotalTokens, "上游账单明确失败且未扣费")
 	case "succeeded":
@@ -297,6 +432,42 @@ func (s *Service) reconcileTokenBillingOrder(ctx context.Context, order *model.B
 	default:
 		return s.deferTokenBillingReconciliation(order, claimed, "billing_status_invalid")
 	}
+}
+
+func storedTokenBillingTaskID(providerRequestID string) (string, error) {
+	providerRequestID = strings.TrimSpace(providerRequestID)
+	if strings.HasPrefix(providerRequestID, "chatcmpl-") {
+		return tokenBillingTaskID(providerRequestID)
+	}
+	if providerRequestID == "" {
+		return "", errors.New("Token 账单任务 ID 契约无效")
+	}
+	return providerRequestID, nil
+}
+
+func providerBillingOrderIDConflict(order *model.BillingOrder, fact KuaiziBillingFact) bool {
+	return strings.TrimSpace(order.ProviderBillingOrderID) != "" && strings.TrimSpace(order.ProviderBillingOrderID) != strings.TrimSpace(fact.OrderID)
+}
+
+func providerBillingStatusContradiction(fact KuaiziBillingFact) string {
+	switch fact.Status {
+	case "succeeded":
+		if fact.TaskStatus != "succeeded" {
+			return "succeeded_bill_task_status_conflict"
+		}
+	case "failed":
+		if fact.TaskStatus != "failed" {
+			return "failed_bill_task_status_conflict"
+		}
+	}
+	return ""
+}
+
+func (s *Service) deferOrReviewTokenBilling(order *model.BillingOrder, claimed bool, reason string) error {
+	if claimed {
+		return s.repo.RequireKuaiziBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
+	}
+	return s.deferTokenBillingReconciliation(order, false, reason)
 }
 
 func tokenBillingReconciliationWarning(order *model.BillingOrder, providerAmountSubunits int64) string {
@@ -334,13 +505,21 @@ func normalizeTokenUsageFact(usage TokenUsageFact) (string, TokenUsageFact) {
 
 func (s *Service) deferTokenBillingReconciliation(order *model.BillingOrder, claimed bool, reason string) error {
 	if claimed && order.ReconcileAttempts >= 8 {
-		return s.repo.RequireTokenBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
+		return s.repo.RequireKuaiziBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
 	}
 	next := time.Now().Add(tokenBillingReconcileDelay(order.ReconcileAttempts))
 	if claimed {
-		return s.repo.RescheduleTokenBillingReconciliation(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason, next)
+		return s.repo.RescheduleKuaiziBillingReconciliation(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason, next)
 	}
 	return s.repo.MarkTokenBillingForReconciliation(order.ID, order.ProviderRequestID, reason, next)
+}
+
+func (s *Service) deferKuaiziBillingReconciliation(order *model.BillingOrder, reason string) error {
+	if order.ReconcileAttempts >= 8 {
+		return s.repo.RequireKuaiziBillingReview(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason)
+	}
+	next := time.Now().Add(tokenBillingReconcileDelay(order.ReconcileAttempts))
+	return s.repo.RescheduleKuaiziBillingReconciliation(order.ID, order.ReconcileLeaseOwner, order.ReconcileLeaseToken, reason, next)
 }
 
 func tokenBillingReconcileDelay(attempt int) time.Duration {

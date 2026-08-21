@@ -1,6 +1,6 @@
 import { Check, Clapperboard, Download, FileText, Frame, Image as ImageIcon, MoreHorizontal, Music2, Pencil, Settings2, Sparkles, Trash2, Video, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Dropdown, Input } from "antd";
+import { Dropdown, Input, type MenuProps } from "antd";
 
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
@@ -29,6 +29,13 @@ export function CanvasProjectCard({ project, projectName, variant = "library", s
         renameProject(project.id, editingTitle);
         stopEditing();
     };
+    const menuItems: MenuProps["items"] = [
+        { key: "export", icon: <Download className="size-3.5" />, label: "导出画布", onClick: () => void exportCanvasProjects([project], project.title || "HMaigc画布") },
+        { key: "rename", icon: <Pencil className="size-3.5" />, label: "重命名", onClick: () => startEditing(project.id, project.title) },
+    ];
+    if (project.canManage !== false) {
+        menuItems.push({ type: "divider" }, { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除", onClick: () => setDeleteIds([project.id]) });
+    }
 
     const compact = variant === "recent";
     return (
@@ -71,16 +78,11 @@ export function CanvasProjectCard({ project, projectName, variant = "library", s
                         </div>
                     ) : (
                         <Dropdown
-                            overlayClassName="canvas-overlay-dropdown"
+                            classNames={{ root: "canvas-overlay-dropdown" }}
                             trigger={["click"]}
                             menu={{
                                 onClick: ({ domEvent }) => domEvent.stopPropagation(),
-                                items: [
-                                    { key: "export", icon: <Download className="size-3.5" />, label: "导出画布", onClick: () => void exportCanvasProjects([project], project.title || "HMaigc画布") },
-                                    { key: "rename", icon: <Pencil className="size-3.5" />, label: "重命名", onClick: () => startEditing(project.id, project.title) },
-                                    { type: "divider" },
-                                    { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除", onClick: () => setDeleteIds([project.id]) },
-                                ],
+                                items: menuItems,
                             }}
                         >
                             <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md text-foreground/42 opacity-100 transition hover:bg-foreground/[.06] hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 dark:hover:bg-white/10" onClick={(event) => event.stopPropagation()} aria-label={`${project.title} 画布操作`} title="画布操作"><MoreHorizontal className="size-4" /></button>

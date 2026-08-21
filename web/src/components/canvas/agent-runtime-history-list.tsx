@@ -1,6 +1,7 @@
 import { Button } from "antd";
 
-import type { AgentRunStatus, AgentThreadHistoryItem } from "@/services/api/agent-runtime";
+import type { AgentThreadHistoryItem } from "@/services/api/agent-runtime";
+import { agentRuntimeStatusLabel } from "./use-agent-runtime";
 
 type AgentRuntimeHistoryListProps = {
     items: AgentThreadHistoryItem[];
@@ -43,7 +44,7 @@ export function AgentRuntimeHistoryList({ items, selectedThreadId, loading, erro
                         <button key={item.thread.id} className="canvas-agent-runtime-history-item" type="button" aria-current={selectedThreadId === item.thread.id ? "true" : undefined} onClick={() => onSelect(item)}>
                             <span className="canvas-agent-runtime-history-item-main">
                                 <span className="canvas-agent-runtime-history-item-title">{title}</span>
-                                <span className="canvas-agent-runtime-history-item-status">{item.latestRun ? runStatusLabel(item.latestRun.state.status) : "尚未运行"}</span>
+                                <span className="canvas-agent-runtime-history-item-status">{item.latestRun ? agentRuntimeStatusLabel(item.latestRun.state.status) : "尚未运行"}</span>
                             </span>
                             <time className="canvas-agent-runtime-history-item-time" dateTime={item.activityAt}>
                                 {activityFormatter.format(new Date(item.activityAt))}
@@ -54,18 +55,4 @@ export function AgentRuntimeHistoryList({ items, selectedThreadId, loading, erro
             </div>
         </div>
     );
-}
-
-function runStatusLabel(status: AgentRunStatus) {
-    return (
-        {
-            queued: "已排队",
-            running: "正在执行",
-            waiting_approval: "等待确认",
-            waiting_tool: "正在调用工具",
-            succeeded: "已完成",
-            failed: "已失败",
-            cancelled: "已取消",
-        } satisfies Record<AgentRunStatus, string>
-    )[status];
 }

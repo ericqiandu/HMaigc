@@ -1,14 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, CheckCircle2, ChevronDown, CircleAlert, History, PanelRightClose, Plus, Send, ShieldCheck, XCircle } from "lucide-react";
-import { Button, Tooltip } from "antd";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type PointerEventHandler, type SetStateAction } from "react";
+import { Bot, CheckCircle2, ChevronDown, CircleAlert, History, PanelRightClose, Plus, ShieldCheck, XCircle } from "lucide-react";
+import { App, Button, Tooltip } from "antd";
 import { motion } from "motion/react";
+import { nanoid } from "nanoid";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeState } from "@/services/api/agent-runtime";
+import { CANVAS_AGENT_DOCK_MAX_WIDTH, CANVAS_AGENT_DOCK_MIN_WIDTH } from "@/lib/canvas/canvas-agent-dock";
+import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection } from "@/lib/canvas/canvas-agent-draft";
+import { uploadImage } from "@/services/image-storage";
+import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState } from "@/services/api/agent-runtime";
+import { decodeChannelModel, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { CanvasAgentLaunchRequest } from "@/types/canvas";
+import type { CanvasAgentGenerationModels, CanvasAgentLaunchRequest, CanvasAgentSkillSelection } from "@/types/canvas";
+import { AgentChatComposer } from "./canvas-agent-chat-ui";
+import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
+import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
-import { useAgentRuntime } from "./use-agent-runtime";
+import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
+import { agentRuntimeStatusLabel, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 240;
@@ -18,185 +28,328 @@ type CanvasAssistantPanelProps = {
     canvasRevision: number;
     selectedNodeIds: Set<string>;
     closing: boolean;
+    width: number;
+    onResizeStart: PointerEventHandler<HTMLDivElement>;
+    onResizeKeyDown: KeyboardEventHandler<HTMLDivElement>;
     onCollapse: () => void;
     agentLaunchRequest?: CanvasAgentLaunchRequest;
     onAgentLaunchHandled?: (launchRequestId: string) => void;
+    onBeforeRun?: () => Promise<void>;
+    onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     runtimeClient?: AgentRuntimeClient;
     runtimeStorage?: AgentRuntimeHandleStorage;
 };
 
-export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeIds, closing, onCollapse, agentLaunchRequest, onAgentLaunchHandled, runtimeClient, runtimeStorage }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeIds, closing, width, onResizeStart, onResizeKeyDown, onCollapse, agentLaunchRequest, onAgentLaunchHandled, onBeforeRun, onRuntimeEvent, runtimeClient, runtimeStorage }: CanvasAssistantPanelProps) {
+    const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const [prompt, setPrompt] = useState("");
+    const effectiveConfig = useEffectiveConfig();
+    const [draft, setDraft] = useState(createEmptyCanvasAgentDraft);
+    const [configurationError, setConfigurationError] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
+    const [clarificationHistoryOpen, setClarificationHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
-    const runtime = useAgentRuntime({ canvasId: projectId, canvasRevision, selectedNodeIds, client: runtimeClient, storage: runtimeStorage });
+    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage, onRuntimeEvent });
     const active = Boolean(runtime.view && !runtime.terminal);
+    const { prompt, generationModels: agentModels, skillSelections: selectedSkills, executionMode } = draft;
+    const setPrompt = useCallback((value: SetStateAction<string>) => setDraft((current) => ({ ...current, prompt: typeof value === "function" ? value(current.prompt) : value })), []);
+    const setAgentModels = useCallback((generationModels: CanvasAgentGenerationModels) => setDraft((current) => ({ ...current, generationModels })), []);
+    const setSelectedSkills = useCallback((skillSelections: CanvasAgentSkillSelection[]) => setDraft((current) => ({ ...current, skillSelections })), []);
 
     useEffect(() => {
         if (!runtime.pendingUserMessage) return;
         setPrompt((current) => current || runtime.pendingUserMessage);
-    }, [runtime.pendingUserMessage]);
+        if (runtime.pendingConfiguration) {
+            setAgentModels({
+                image: encodePendingModel(runtime.pendingConfiguration.generationModels.image),
+                video: encodePendingModel(runtime.pendingConfiguration.generationModels.video),
+            });
+            setSelectedSkills(runtime.pendingConfiguration.skillDirs.map((dir) => ({ dir, name: dir, description: "" })));
+            setDraft((current) => ({
+                ...current,
+                attachments: runtime.pendingConfiguration?.attachments.map((attachment) => ({ id: attachment.resourceId, resourceId: attachment.resourceId, name: attachment.name, url: resourceFileUrl(attachment.resourceId) })) || [],
+                executionMode: runtime.pendingConfiguration?.executionMode || current.executionMode,
+            }));
+        }
+    }, [runtime.pendingConfiguration, runtime.pendingUserMessage]);
 
     useEffect(() => setHistoryOpen(false), [projectId]);
 
     useEffect(() => {
         if (!agentLaunchRequest || !runtime.restored || launchAttemptRef.current === agentLaunchRequest.id) return;
         launchAttemptRef.current = agentLaunchRequest.id;
-        setPrompt(agentLaunchRequest.prompt);
-        void runtime.submit(agentLaunchRequest.prompt).then((submitted) => {
-            if (!submitted) return;
-            setPrompt("");
-            onAgentLaunchHandled?.(agentLaunchRequest.id);
-        });
-    }, [agentLaunchRequest, onAgentLaunchHandled, runtime.restored, runtime.submit]);
+        const launchModels = { ...agentLaunchRequest.generationModels };
+        const launchSkills = agentLaunchRequest.skillDirs.map((dir) => ({ dir, name: dir, description: "" }));
+        const launchAttachments = agentLaunchRequest.attachments.map((attachment) => ({ id: attachment.resourceId, resourceId: attachment.resourceId, name: attachment.name, url: resourceFileUrl(attachment.resourceId) }));
+        setDraft({ prompt: agentLaunchRequest.prompt, generationModels: launchModels, skillSelections: launchSkills, attachments: launchAttachments, executionMode: agentLaunchRequest.executionMode });
+        void (async () => {
+            try {
+                await onBeforeRun?.();
+                const submitted = await runtime.submit(agentLaunchRequest.prompt, buildStartConfiguration(launchModels, launchSkills, launchAttachments, agentLaunchRequest.executionMode));
+                if (!submitted) return;
+                setDraft((current) => ({ ...current, prompt: "", attachments: [] }));
+                onAgentLaunchHandled?.(agentLaunchRequest.id);
+            } catch (cause) {
+                launchAttemptRef.current = "";
+                setConfigurationError(cause instanceof Error ? cause.message : "当前画布同步失败，Agent 未启动");
+            }
+        })();
+    }, [agentLaunchRequest, onAgentLaunchHandled, onBeforeRun, runtime.restored, runtime.submit]);
 
     const submit = async () => {
-        if (!(await runtime.submit(prompt))) return;
+        let configuration: AgentRuntimeStartConfiguration;
+        try {
+            configuration = buildStartConfiguration(agentModels, selectedSkills, draft.attachments, executionMode);
+            setConfigurationError("");
+        } catch (cause) {
+            setConfigurationError(cause instanceof Error ? cause.message : "Agent 运行配置无效");
+            return;
+        }
+        try {
+            await onBeforeRun?.();
+        } catch (cause) {
+            setConfigurationError(cause instanceof Error ? cause.message : "当前画布同步失败，Agent 未启动");
+            return;
+        }
+        if (!(await runtime.submit(prompt, configuration))) return;
         if (agentLaunchRequest?.prompt === prompt) onAgentLaunchHandled?.(agentLaunchRequest.id);
-        setPrompt("");
+        setDraft((current) => ({ ...current, prompt: "", attachments: [] }));
+    };
+
+    const addAttachments = async (files: FileList | File[] | null) => {
+        const images = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        if (!images.length) return;
+        const remaining = 4 - draft.attachments.length;
+        if (remaining <= 0) {
+            message.warning("一次最多添加 4 张参考图片");
+            return;
+        }
+        try {
+            const uploaded = await Promise.all(
+                images.slice(0, remaining).map(async (file) => {
+                    const result = await uploadImage(file);
+                    const resourceId = resourceIdFromStorageKey(result.storageKey);
+                    if (!resourceId) throw new Error(`参考图片“${file.name}”尚未保存到账号资源，请检查存储配置后重试`);
+                    return { id: nanoid(), resourceId, name: file.name, url: result.url || resourceFileUrl(resourceId) };
+                }),
+            );
+            setDraft((current) => ({ ...current, attachments: [...current.attachments, ...uploaded] }));
+            if (images.length > remaining) message.warning("一次最多添加 4 张参考图片");
+        } catch (cause) {
+            message.error(cause instanceof Error ? cause.message : "参考图片上传失败");
+        }
     };
 
     return (
-        <motion.aside
-            className="canvas-agent-runtime-panel"
-            initial={{ x: 28, opacity: 0 }}
-            animate={{ x: closing ? 28 : 0, opacity: closing ? 0 : 1 }}
+        <motion.div
+            className="canvas-agent-runtime-layout flex shrink-0"
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: closing ? 0 : width, opacity: closing ? 0 : 1 }}
             transition={{ duration: CANVAS_AGENT_PANEL_MOTION_MS / 1000, ease: [0.2, 0.8, 0.2, 1] }}
-            style={{ background: theme.toolbar.panel, color: theme.node.text, borderColor: theme.node.stroke }}
-            aria-label="画布 Agent"
+            style={{ overflow: "clip", pointerEvents: closing ? "none" : undefined, position: "relative" }}
         >
-            <header className="canvas-agent-runtime-header">
-                <div className="canvas-agent-runtime-heading">
-                    <span className="canvas-agent-runtime-avatar" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
-                        <Bot className="canvas-agent-runtime-avatar-icon" />
-                    </span>
-                    <div className="canvas-agent-runtime-title-copy">
-                        <strong className="canvas-agent-runtime-title">Agent</strong>
-                        <span className="canvas-agent-runtime-subtitle" style={{ color: theme.node.muted }}>
-                            单一运行内核 · {runtime.threadId ? "对话已建立" : "等待任务"}
-                        </span>
+            <div
+                className="canvas-agent-resize-handle"
+                role="separator"
+                aria-label="调整 Agent 面板宽度"
+                aria-orientation="vertical"
+                aria-valuemin={CANVAS_AGENT_DOCK_MIN_WIDTH}
+                aria-valuemax={CANVAS_AGENT_DOCK_MAX_WIDTH}
+                aria-valuenow={width}
+                tabIndex={0}
+                onPointerDown={onResizeStart}
+                onKeyDown={onResizeKeyDown}
+            />
+            <motion.aside
+                className="canvas-agent-shell relative flex min-w-0 flex-1 flex-col overflow-hidden border"
+                initial={{ x: 48 }}
+                animate={{ x: closing ? 28 : 0 }}
+                transition={{ duration: CANVAS_AGENT_PANEL_MOTION_MS / 1000, ease: [0.2, 0.8, 0.2, 1] }}
+                style={{ background: theme.node.panel, color: theme.node.text, borderColor: theme.node.stroke, boxShadow: `0 24px 72px ${theme.spatial.shadow}` }}
+                aria-label="画布 Agent"
+            >
+                <header className="canvas-agent-runtime-header canvas-agent-header">
+                    <strong className="canvas-agent-header-title">Agent 画布助手</strong>
+                    <div className="canvas-agent-runtime-header-actions">
+                        <Tooltip title="历史对话">
+                            <Button
+                                className="canvas-agent-runtime-icon-button"
+                                type="text"
+                                icon={<History className="canvas-agent-runtime-button-icon" />}
+                                disabled={!runtime.restored || runtime.busy}
+                                onClick={() => setHistoryOpen((open) => !open)}
+                                aria-label="历史对话"
+                                aria-pressed={historyOpen}
+                            />
+                        </Tooltip>
+                        <Tooltip title={active ? "当前任务完成后才能新建对话" : "新建对话"}>
+                            <Button
+                                className="canvas-agent-runtime-icon-button"
+                                type="text"
+                                icon={<Plus className="canvas-agent-runtime-button-icon" />}
+                                disabled={active || runtime.busy}
+                                onClick={() => {
+                                    setHistoryOpen(false);
+                                    void runtime.newThread();
+                                }}
+                                aria-label="新建 Agent 对话"
+                            />
+                        </Tooltip>
+                        <Tooltip title="收起">
+                            <Button className="canvas-agent-runtime-icon-button" type="text" icon={<PanelRightClose className="canvas-agent-runtime-button-icon" />} onClick={onCollapse} aria-label="收起 Agent" />
+                        </Tooltip>
                     </div>
+                </header>
+
+                <div className="canvas-agent-context" style={{ color: theme.node.muted }}>
+                    <strong className="canvas-agent-runtime-context-label" style={{ color: theme.node.text }}>
+                        将读取
+                    </strong>
+                    <span className="canvas-agent-runtime-context-copy">
+                        当前画布 v{canvasRevision} · 已选 {selectedNodeIds.size} 个节点
+                    </span>
+                    <span className="canvas-agent-runtime-context-state">{runtime.threadId ? "对话已建立" : "等待任务"}</span>
                 </div>
-                <div className="canvas-agent-runtime-header-actions">
-                    <Tooltip title="历史对话">
-                        <Button
-                            className="canvas-agent-runtime-icon-button"
-                            type="text"
-                            icon={<History className="canvas-agent-runtime-button-icon" />}
-                            disabled={!runtime.restored || runtime.busy}
-                            onClick={() => setHistoryOpen((open) => !open)}
-                            aria-label="历史对话"
-                            aria-pressed={historyOpen}
-                        />
-                    </Tooltip>
-                    <Tooltip title={active ? "当前任务完成后才能新建对话" : "新建对话"}>
-                        <Button
-                            className="canvas-agent-runtime-icon-button"
-                            type="text"
-                            icon={<Plus className="canvas-agent-runtime-button-icon" />}
-                            disabled={active || runtime.busy}
-                            onClick={() => {
+
+                <section className="canvas-agent-runtime-content canvas-agent-chat-list thin-scrollbar min-h-0 flex-1">
+                    {historyOpen ? (
+                        <AgentRuntimeHistoryList
+                            items={runtime.threads}
+                            selectedThreadId={runtime.selectedThreadId}
+                            loading={runtime.historyLoading}
+                            error={runtime.historyError}
+                            onSelect={(item) => {
+                                runtime.selectThread(item);
                                 setHistoryOpen(false);
-                                void runtime.newThread();
                             }}
-                            aria-label="新建 Agent 对话"
+                            onRetry={() => void runtime.reloadThreads()}
                         />
-                    </Tooltip>
-                    <Tooltip title="收起">
-                        <Button className="canvas-agent-runtime-icon-button" type="text" icon={<PanelRightClose className="canvas-agent-runtime-button-icon" />} onClick={onCollapse} aria-label="收起 Agent" />
-                    </Tooltip>
-                </div>
-            </header>
-
-            <section className="canvas-agent-runtime-content thin-scrollbar">
-                {historyOpen ? (
-                    <AgentRuntimeHistoryList
-                        items={runtime.threads}
-                        selectedThreadId={runtime.selectedThreadId}
-                        loading={runtime.historyLoading}
-                        error={runtime.historyError}
-                        onSelect={(item) => {
-                            runtime.selectThread(item);
-                            setHistoryOpen(false);
-                        }}
-                        onRetry={() => void runtime.reloadThreads()}
-                    />
-                ) : !runtime.view ? (
-                    <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} />
-                ) : (
-                    <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />
-                )}
-                {runtime.error ? (
-                    <div className="canvas-agent-runtime-error" role="alert">
-                        <CircleAlert className="canvas-agent-runtime-error-icon" />
-                        <div className="canvas-agent-runtime-error-content">
-                            <span className="canvas-agent-runtime-error-copy">{runtime.error}</span>
-                            {runtime.canRetrySelection ? (
-                                <Button className="canvas-agent-runtime-error-retry" size="small" onClick={runtime.retrySelection}>
-                                    重试选区提交
-                                </Button>
-                            ) : null}
+                    ) : !runtime.view ? (
+                        <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} onSuggestion={setPrompt} />
+                    ) : (
+                        <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />
+                    )}
+                    {!historyOpen && runtime.view?.state.clarificationHistory.length ? <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} /> : null}
+                    {!historyOpen && runtime.view?.state.status === "waiting_input" ? <AgentClarificationStatus /> : null}
+                    {(runtime.error && runtime.view?.state.status !== "waiting_input") || configurationError ? (
+                        <div className="canvas-agent-runtime-error" role="alert">
+                            <CircleAlert className="canvas-agent-runtime-error-icon" />
+                            <div className="canvas-agent-runtime-error-content">
+                                <span className="canvas-agent-runtime-error-copy">{configurationError || runtime.error}</span>
+                            </div>
                         </div>
-                    </div>
-                ) : null}
-                {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall ? (
-                    <AgentApprovalCard state={runtime.view.state} busy={runtime.busy} muted={theme.node.muted} onDecision={(decision) => void runtime.decideApproval(decision)} />
-                ) : null}
-            </section>
+                    ) : null}
+                    {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall ? (
+                        <AgentApprovalCard state={runtime.view.state} busy={runtime.busy} muted={theme.node.muted} onDecision={(decision) => void runtime.decideApproval(decision)} />
+                    ) : null}
+                </section>
 
-            <footer className="canvas-agent-runtime-composer" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
-                <div className="canvas-agent-runtime-selection" style={{ color: theme.node.muted }}>
-                    当前画布 v{canvasRevision} · 已选 {selectedNodeIds.size} 个节点
+                <div className="canvas-agent-runtime-interaction">
+                    {!historyOpen && runtime.view?.state.status === "waiting_input" && runtime.view.state.pendingClarification ? (
+                        <AgentClarificationPanel pending={runtime.view.state.pendingClarification} history={[]} busy={runtime.busy} error={runtime.error} onRespond={runtime.submitClarificationResponse} />
+                    ) : null}
                 </div>
-                <textarea
-                    className="canvas-agent-runtime-textarea thin-scrollbar"
-                    value={prompt}
-                    disabled={!runtime.restored || active || runtime.busy}
-                    onChange={(event) => setPrompt(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey) return;
-                        event.preventDefault();
-                        void submit();
+
+                <AgentChatComposer
+                    prompt={prompt}
+                    attachments={draft.attachments}
+                    sending={runtime.busy}
+                    disabled={!runtime.restored || active}
+                    placeholder={active ? "当前任务运行中" : "描述你想让 Agent 如何操作画布"}
+                    theme={theme}
+                    onPromptChange={setPrompt}
+                    onSubmit={submit}
+                    onAddFiles={addAttachments}
+                    onRemoveAttachment={(id) => setDraft((current) => ({ ...current, attachments: current.attachments.filter((attachment) => attachment.id !== id) }))}
+                    onDeleteBackwardAtStart={() => {
+                        const next = removeLastCanvasAgentDraftSelection(draft);
+                        if (!next) return false;
+                        setDraft(next);
+                        return true;
                     }}
-                    placeholder={active ? "当前任务运行中" : "告诉 Agent 你要完成什么"}
-                    style={{ color: theme.node.text }}
-                    rows={3}
+                    submitReady={Boolean(prompt.trim())}
+                    selectionSummary={<CanvasAgentSelectionSummary config={effectiveConfig} models={agentModels} selectedSkills={selectedSkills} disabled={active || runtime.busy} onModelsChange={setAgentModels} onSkillsChange={setSelectedSkills} />}
+                    left={
+                        <CanvasAgentComposerControls
+                            config={effectiveConfig}
+                            disabled={!runtime.restored || active || runtime.busy}
+                            models={agentModels}
+                            selectedSkills={selectedSkills}
+                            executionMode={executionMode}
+                            onModelsChange={setAgentModels}
+                            onSkillsChange={setSelectedSkills}
+                            onExecutionModeChange={(mode) => setDraft((current) => ({ ...current, executionMode: mode }))}
+                        />
+                    }
                 />
-                <div className="canvas-agent-runtime-composer-footer">
-                    <span className="canvas-agent-runtime-composer-hint" style={{ color: theme.node.muted }}>
-                        Enter 发送 · Shift + Enter 换行
-                    </span>
-                    <Button
-                        className="canvas-agent-runtime-submit"
-                        type="primary"
-                        icon={<Send className="canvas-agent-runtime-submit-icon" />}
-                        disabled={!prompt.trim() || !runtime.restored || active || runtime.busy}
-                        loading={runtime.busy}
-                        onClick={() => void submit()}
-                    >
-                        发送
-                    </Button>
-                </div>
-            </footer>
-        </motion.aside>
+            </motion.aside>
+        </motion.div>
     );
 }
 
-function AgentEmptyState({ restored, muted }: { restored: boolean; muted: string }) {
+function emptyStartConfiguration(): AgentRuntimeStartConfiguration {
+    return { generationModels: {}, skillDirs: [], attachments: [], executionMode: "guided" };
+}
+
+function buildStartConfiguration(
+    models: CanvasAgentGenerationModels,
+    skills: CanvasAgentSkillSelection[],
+    attachments: Array<{ resourceId?: string; name: string }>,
+    executionMode: AgentRuntimeStartConfiguration["executionMode"],
+): AgentRuntimeStartConfiguration {
+    const configuration = emptyStartConfiguration();
+    if (models.image) configuration.generationModels.image = requiredModelSelection(models.image, "图片模型");
+    if (models.video) configuration.generationModels.video = requiredModelSelection(models.video, "视频模型");
+    configuration.skillDirs = skills
+        .map((skill) => skill.dir.trim())
+        .filter(Boolean)
+        .sort();
+    configuration.attachments = attachments.map((attachment) => {
+        const resourceId = attachment.resourceId?.trim();
+        if (!resourceId) throw new Error(`参考图片“${attachment.name}”缺少账号资源事实`);
+        return { resourceId, name: attachment.name.trim() || "参考图片" };
+    });
+    configuration.executionMode = executionMode;
+    return configuration;
+}
+
+function requiredModelSelection(value: string, label: string) {
+    const selected = decodeChannelModel(value);
+    if (!selected?.channelId.trim() || !selected.model.trim()) throw new Error(`${label}配置无效，请重新选择`);
+    return selected;
+}
+
+function encodePendingModel(selection: { channelId: string; model: string } | undefined) {
+    return selection ? `${selection.channelId}::${selection.model}` : "";
+}
+
+function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean; muted: string; onSuggestion: (suggestion: string) => void }) {
+    const suggestions = ["搭建短剧工作流", "整理当前画布", "生成镜头分镜", "检查节点连线"];
     return (
         <div className="canvas-agent-runtime-empty">
-            <Bot className="canvas-agent-runtime-empty-icon" />
-            <strong className="canvas-agent-runtime-empty-title">{restored ? "从目标开始" : "正在恢复运行事实"}</strong>
-            <p className="canvas-agent-runtime-empty-description" style={{ color: muted }}>
-                {restored ? "Agent 会读取真实画布、按需调用工具，并在交付验收通过后结束。" : "正在读取本画布最后一次可恢复运行。"}
-            </p>
+            <span className="canvas-agent-runtime-empty-avatar">
+                <Bot className="canvas-agent-runtime-empty-icon" />
+            </span>
+            <strong className="canvas-agent-runtime-empty-title">{restored ? "Agent" : "正在恢复运行事实"}</strong>
+            {restored ? (
+                <div className="canvas-agent-runtime-suggestions">
+                    {suggestions.map((suggestion) => (
+                        <button key={suggestion} type="button" className="canvas-agent-runtime-suggestion" onClick={() => onSuggestion(suggestion)}>
+                            {suggestion}
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <p className="canvas-agent-runtime-empty-description" style={{ color: muted }}>
+                    正在读取本画布最后一次可恢复运行。
+                </p>
+            )}
         </div>
     );
 }
 
 function AgentRunContent({ state, events, connection, muted }: { state: AgentRuntimeState; events: AgentRuntimeEvent[]; connection: string; muted: string }) {
-    const status = runtimeStatus(state.status);
+    const status = agentRuntimeStatusLabel(state.status);
     const lastEvents = useMemo(() => events.slice(-8), [events]);
     return (
         <div className="canvas-agent-runtime-run">
@@ -301,15 +454,16 @@ function ToolResult({ state, muted }: { state: AgentRuntimeState; muted: string 
 function isTerminal(status: AgentRuntimeState["status"]) {
     return status === "succeeded" || status === "failed" || status === "cancelled";
 }
-function runtimeStatus(status: AgentRuntimeState["status"]) {
-    return ({ queued: "已排队", running: "正在执行", waiting_approval: "等待确认", waiting_tool: "正在调用工具", succeeded: "已完成", failed: "已失败", cancelled: "已取消" } satisfies Record<AgentRuntimeState["status"], string>)[status];
-}
 function eventLabel(kind: AgentRuntimeEvent["kind"]) {
     return (
         {
             "run.created": "运行已创建",
             "run.status_changed": "运行状态更新",
             "model.delta": "模型输出已持久化",
+            "model.rejected": "模型决策正在自修",
+            "clarification.requested": "Agent 发起询问",
+            "clarification.answer_saved": "回答已保存",
+            "clarification.responded": "询问已完成",
             "tool.call": "工具调用已冻结",
             "approval.required": "需要用户确认",
             "approval.decided": "审批已记录",

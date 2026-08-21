@@ -22,7 +22,7 @@ import {
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage, emotionGenerationSize } from "@/lib/canvas/canvas-emotion";
 import { captureVideoLastFrame } from "@/lib/canvas/canvas-video-frame";
-import { mergeVideos, type MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
+import type { MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
 import { VIDEO_COMPOSITION_NODE_SIZE } from "@/lib/canvas/canvas-video-composition";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedVideo } from "@/services/api/video";
@@ -227,6 +227,7 @@ export function useCanvasMediaTools({
             setNodes(nextNodes);
         }
         try {
+            const { mergeVideos } = await import("@/lib/canvas/canvas-video-merge");
             const blob = await mergeVideos(videos.map((node, index) => ({
                 id: node.id,
                 url: node.metadata?.content,
@@ -458,7 +459,7 @@ export function useCanvasMediaTools({
             const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt: payload.prompt, config: generationConfig, referenceImages: [editReference, characterReference], mask: { id: `${node.id}-emotion-mask`, name: "emotion-mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "emotion", emotion: emotionEdit }, onTaskCreated: (task) => bindGenerationTask(childId, task) });
             const image = result.images?.[0];
             if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-            const composited = await compositeEmotionImage(node.metadata.content, image.dataUrl, payload.editRegion, payload.faceBox);
+            const composited = await compositeEmotionImage(payload.fullSourceDataUrl, image.dataUrl, payload.editRegion, payload.faceBox);
             const uploaded = await uploadImage(composited);
             const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
             setNodes((current) => current.map((item) => item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt: payload.prompt, ...generationMetadata, emotionEdit } } : item));

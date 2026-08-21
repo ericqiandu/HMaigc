@@ -146,6 +146,16 @@ describe("图片模型能力驱动参数", () => {
         expect(normalized).toMatchObject({ size: "16:9", quality: "", count: "1", transparentBackground: "false" });
     });
 
+    test("APIMart 分辨率模型只冻结真实尺寸，不携带画质代理参数", () => {
+        const normalized = normalizeImageConfigForModel(
+            imageConfig(
+                { ...gptImage2Capabilities, qualities: [] },
+                { size: buildImageDimensions("16:9", "4K"), quality: "low" },
+            ),
+        );
+        expect(normalized).toMatchObject({ size: "3840x2160", quality: "" });
+    });
+
     test("后台未发布图片能力时显式失败，不回退到硬编码参数", () => {
         expect(() => resolveImageModelCapabilities({ ...defaultConfig, model: "images::unknown", channels: [] })).toThrow("缺少后台发布的图片能力契约");
     });

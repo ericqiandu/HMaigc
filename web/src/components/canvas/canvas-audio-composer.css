@@ -40,8 +40,7 @@
 
 .canvas-audio-text-tool:focus-visible,
 .canvas-audio-voice-trigger:focus-visible,
-.canvas-audio-settings-trigger:focus-visible,
-.canvas-audio-submit-button:focus-visible {
+.canvas-audio-settings-trigger:focus-visible {
     outline: 2px solid #0071e3;
     outline-offset: 2px;
 }
@@ -335,30 +334,6 @@
     padding-inline: 0;
 }
 
-.canvas-audio-submit-button.ant-btn {
-    display: inline-flex !important;
-    width: 32px !important;
-    min-width: 32px !important;
-    height: 32px !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 0 !important;
-    border: 0 !important;
-    border-radius: 8px !important;
-    background: var(--workspace-accent) !important;
-    color: #ffffff !important;
-    box-shadow: none !important;
-}
-
-.canvas-audio-submit-button.ant-btn:not(:disabled):hover {
-    filter: brightness(1.08);
-}
-
-.canvas-audio-submit-button.ant-btn:disabled {
-    background: color-mix(in srgb, var(--foreground) 8%, transparent) !important;
-    color: color-mix(in srgb, var(--foreground) 32%, transparent) !important;
-}
-
 .canvas-audio-settings-popover {
     border-color: color-mix(in srgb, var(--foreground) 13%, transparent) !important;
     border-radius: 12px !important;
@@ -612,7 +587,6 @@
     .canvas-audio-text-tool,
     .canvas-audio-voice-trigger,
     .canvas-audio-settings-trigger,
-    .canvas-audio-submit-button,
     .canvas-audio-insert-option,
     .canvas-audio-vocal-option {
         transition: none !important;

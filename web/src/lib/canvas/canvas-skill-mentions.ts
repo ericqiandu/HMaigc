@@ -1,9 +1,9 @@
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import type { UpdreamSkill } from "@/services/api/skills";
+import type { PlatformSkill } from "@/services/api/skills";
 
 const SKILL_REF_PATTERN = /@\[skill:([^\]]+)\]/g;
 
-export function buildSkillMentionReferences(skills: UpdreamSkill[]): CanvasResourceReference[] {
+export function buildSkillMentionReferences(skills: PlatformSkill[]): CanvasResourceReference[] {
     return skills
         .filter((skill) => skill.activated ?? true)
         .map((skill) => ({
@@ -18,7 +18,7 @@ export function buildSkillMentionReferences(skills: UpdreamSkill[]): CanvasResou
         }));
 }
 
-export function expandSkillMentions(prompt: string, skills: UpdreamSkill[]) {
+export function expandSkillMentions(prompt: string, skills: PlatformSkill[]) {
     if (!prompt.trim()) return prompt;
     const activeSkills = skills.filter((skill) => skill.activated ?? true);
     if (!activeSkills.length) return prompt;
@@ -39,18 +39,11 @@ export function expandSkillMentions(prompt: string, skills: UpdreamSkill[]) {
     return next;
 }
 
-export function renderSkillPrompt(skill: Pick<UpdreamSkill, "name" | "description" | "detail_text">) {
-    return [
-        `【技能：${skill.name}】`,
-        skill.description ? `用途：${skill.description}` : "",
-        skill.detail_text ? `技能详情：\n${skill.detail_text}` : "",
-        "请严格执行该技能，只输出结果，不要输出解释性套话。",
-    ]
-        .filter(Boolean)
-        .join("\n\n");
+export function renderSkillPrompt(skill: Pick<PlatformSkill, "name" | "description" | "detail_text">) {
+    return [`【技能：${skill.name}】`, skill.description ? `用途：${skill.description}` : "", skill.detail_text ? `技能详情：\n${skill.detail_text}` : "", "请严格执行该技能，只输出结果，不要输出解释性套话。"].filter(Boolean).join("\n\n");
 }
 
-function replaceNaturalSkillMention(value: string, skill: UpdreamSkill) {
+function replaceNaturalSkillMention(value: string, skill: PlatformSkill) {
     const token = `@${skill.name}`;
     let result = "";
     let index = 0;

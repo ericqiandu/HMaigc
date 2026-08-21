@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Clock3, Coins, ListTodo, LoaderCircle } from "l
 import { useEffect, useState } from "react";
 
 import { formatCredits } from "@/constant/credits";
+import { useSharedSecondNow } from "@/hooks/use-shared-second-clock";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { formatTaskKind, statusLabel } from "@/lib/generation-task-display";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -12,15 +13,9 @@ import { useThemeStore } from "@/stores/use-theme-store";
 export function CanvasActiveTaskPanel({ tasks }: { tasks: GenerationTask[] }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const reducedMotion = useReducedMotion();
-    const [now, setNow] = useState(() => Date.now());
+    const now = useSharedSecondNow(tasks.length > 0);
     const [open, setOpen] = useState(true);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
-
-    useEffect(() => {
-        if (!tasks.length) return;
-        const timer = window.setInterval(() => setNow(Date.now()), 1_000);
-        return () => window.clearInterval(timer);
-    }, [tasks.length]);
 
     useEffect(() => {
         if (expandedTaskId && !tasks.some((task) => task.id === expandedTaskId)) setExpandedTaskId(null);
@@ -62,7 +57,9 @@ export function CanvasActiveTaskPanel({ tasks }: { tasks: GenerationTask[] }) {
                                 </span>
                                 <span className="min-w-0">
                                     <span className="block text-sm font-semibold leading-5">生成任务</span>
-                                    <span className="block truncate text-[11px]" style={{ color: theme.node.muted }}>当前画布 · {tasks.length} 个进行中</span>
+                                    <span className="block truncate text-[11px]" style={{ color: theme.node.muted }}>
+                                        当前画布 · {tasks.length} 个进行中
+                                    </span>
                                 </span>
                             </span>
                             <span className="flex shrink-0 items-center gap-2" style={{ color: theme.accent.primary }}>
@@ -89,7 +86,7 @@ export function CanvasActiveTaskPanel({ tasks }: { tasks: GenerationTask[] }) {
                                             now={now}
                                             theme={theme}
                                             expanded={expandedTaskId === task.id}
-                                            onToggle={() => setExpandedTaskId((current) => current === task.id ? null : task.id)}
+                                            onToggle={() => setExpandedTaskId((current) => (current === task.id ? null : task.id))}
                                             reducedMotion={Boolean(reducedMotion)}
                                         />
                                     ))}
@@ -113,12 +110,7 @@ function ActiveTaskCard({ task, now, theme, expanded, onToggle, reducedMotion }:
     const transition = reducedMotion ? { duration: 0 } : aceternityMotion.spring.panel;
 
     return (
-        <motion.article
-            layout
-            layoutId={`canvas-active-task-${task.id}`}
-            className="overflow-hidden rounded-xl border"
-            style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}
-        >
+        <motion.article layout layoutId={`canvas-active-task-${task.id}`} className="overflow-hidden rounded-xl border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
             <button type="button" className="block w-full p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]" onClick={onToggle} aria-expanded={expanded}>
                 <div className="flex min-w-0 items-start gap-2">
                     <motion.span layout="position" className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `${statusTone}18`, color: statusTone }}>
@@ -126,10 +118,16 @@ function ActiveTaskCard({ task, now, theme, expanded, onToggle, reducedMotion }:
                     </motion.span>
                     <span className="min-w-0 flex-1">
                         <span className="flex items-center justify-between gap-2">
-                            <span className="truncate text-xs font-semibold" title={formatTaskKind(task)}>{formatTaskKind(task)}</span>
-                            <span className="shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium" style={{ borderColor: `${statusTone}44`, color: statusTone }}>{statusLabel[task.status]}</span>
+                            <span className="truncate text-xs font-semibold" title={formatTaskKind(task)}>
+                                {formatTaskKind(task)}
+                            </span>
+                            <span className="shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium" style={{ borderColor: `${statusTone}44`, color: statusTone }}>
+                                {statusLabel[task.status]}
+                            </span>
                         </span>
-                        <span className="mt-1 block truncate text-[11px]" style={{ color: theme.node.muted }} title={task.stage || statusLabel[task.status]}>{task.stage || statusLabel[task.status]}</span>
+                        <span className="mt-1 block truncate text-[11px]" style={{ color: theme.node.muted }} title={task.stage || statusLabel[task.status]}>
+                            {task.stage || statusLabel[task.status]}
+                        </span>
                     </span>
                     {expanded ? <ChevronUp className="mt-0.5 size-3.5 shrink-0" style={{ color: theme.node.muted }} /> : <ChevronDown className="mt-0.5 size-3.5 shrink-0" style={{ color: theme.node.muted }} />}
                 </div>
@@ -139,8 +137,14 @@ function ActiveTaskCard({ task, now, theme, expanded, onToggle, reducedMotion }:
                 </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]" style={{ color: theme.node.muted }}>
-                    <span className="inline-flex min-w-0 items-center gap-1 truncate" title={durationLabel}><Clock3 className="size-3 shrink-0" />{durationLabel}</span>
-                    <span className="inline-flex min-w-0 items-center justify-end gap-1 truncate" title={billingLabel}><Coins className="size-3 shrink-0" />{billingLabel}</span>
+                    <span className="inline-flex min-w-0 items-center gap-1 truncate" title={durationLabel}>
+                        <Clock3 className="size-3 shrink-0" />
+                        {durationLabel}
+                    </span>
+                    <span className="inline-flex min-w-0 items-center justify-end gap-1 truncate" title={billingLabel}>
+                        <Coins className="size-3 shrink-0" />
+                        {billingLabel}
+                    </span>
                 </div>
             </button>
 
@@ -156,7 +160,9 @@ function ActiveTaskCard({ task, now, theme, expanded, onToggle, reducedMotion }:
                     >
                         <div className="flex items-center justify-between gap-2">
                             <span>当前阶段</span>
-                            <span className="max-w-[200px] truncate text-right" style={{ color: theme.node.text }}>{task.stage || statusLabel[task.status]}</span>
+                            <span className="max-w-[200px] truncate text-right" style={{ color: theme.node.text }}>
+                                {task.stage || statusLabel[task.status]}
+                            </span>
                         </div>
                     </motion.div>
                 ) : null}

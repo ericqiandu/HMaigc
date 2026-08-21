@@ -1,19 +1,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 
-import { agentRuntimeClient, agentRuntimeHandleStorage, type AgentRuntimeClient, type AgentRuntimeEvent, type AgentRuntimeHandle, type AgentRuntimeHandleStorage, type AgentRuntimeView, type AgentThreadHistoryItem } from "@/services/api/agent-runtime";
+import {
+    agentRuntimeClient,
+    agentRuntimeHandleStorage,
+    AgentRuntimeRequestError,
+    type AgentClarificationAnswerInput,
+    type AgentRuntimeClient,
+    type AgentRuntimeEvent,
+    type AgentRuntimeHandle,
+    type AgentRuntimeHandleStorage,
+    type AgentRuntimeStartConfiguration,
+    type AgentRuntimeView,
+    type AgentThreadHistoryItem,
+} from "@/services/api/agent-runtime";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 
-type UseAgentRuntimeInput = {
-    canvasId: string;
-    canvasRevision: number;
-    selectedNodeIds: Set<string>;
-    client?: AgentRuntimeClient;
-    storage?: AgentRuntimeHandleStorage;
+const statusLabels: Record<AgentRuntimeView["state"]["status"], string> = {
+    queued: "准备中",
+    running: "思考中",
+    waiting_input: "询问中",
+    waiting_approval: "等待确认",
+    waiting_tool: "执行中",
+    succeeded: "已完成",
+    failed: "已失败",
+    cancelled: "已取消",
 };
 
-export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, client = agentRuntimeClient, storage = agentRuntimeHandleStorage }: UseAgentRuntimeInput) {
+export function agentRuntimeStatusLabel(status: AgentRuntimeView["state"]["status"]) {
+    return statusLabels[status];
+}
+
+type UseAgentRuntimeInput = {
+    canvasId: string;
+    client?: AgentRuntimeClient;
+    storage?: AgentRuntimeHandleStorage;
+    onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
+};
+
+export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeEvent }: UseAgentRuntimeInput) {
     const [threadId, setThreadId] = useState("");
     const [view, setView] = useState<AgentRuntimeView | null>(null);
     const [events, setEvents] = useState<AgentRuntimeEvent[]>([]);
@@ -22,24 +48,19 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
     const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "reconnecting">("idle");
     const [restored, setRestored] = useState(false);
     const [pendingUserMessage, setPendingUserMessage] = useState("");
-    const [selectionRetry, setSelectionRetry] = useState(0);
+    const [pendingConfiguration, setPendingConfiguration] = useState<AgentRuntimeStartConfiguration | null>(null);
     const [threads, setThreads] = useState<AgentThreadHistoryItem[]>([]);
     const [historyLoading, setHistoryLoading] = useState(true);
     const [historyError, setHistoryError] = useState("");
     const cursorRef = useRef(0);
     const threadIdRef = useRef("");
     const pendingRunRef = useRef<AgentRuntimeHandle["pendingRun"]>(undefined);
-    const submittedSelectionRef = useRef(new Set<string>());
-    const selectedNodeIdsRef = useRef(selectedNodeIds);
-    const canvasRevisionRef = useRef(canvasRevision);
     const historyRequestRef = useRef(0);
+    const onRuntimeEventRef = useRef(onRuntimeEvent);
 
     useEffect(() => {
-        selectedNodeIdsRef.current = selectedNodeIds;
-    }, [selectedNodeIds]);
-    useEffect(() => {
-        canvasRevisionRef.current = canvasRevision;
-    }, [canvasRevision]);
+        onRuntimeEventRef.current = onRuntimeEvent;
+    }, [onRuntimeEvent]);
 
     const persist = useCallback(
         async (nextView: AgentRuntimeView | null, nextThreadId = threadIdRef.current) => {
@@ -67,13 +88,13 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             threadIdRef.current = item.thread.id;
             pendingRunRef.current = undefined;
             cursorRef.current = item.latestRun && !terminalStatuses.has(item.latestRun.state.status) ? item.latestRun.run.lastEventSequence : 0;
-            submittedSelectionRef.current.clear();
             setThreadId(item.thread.id);
             setView(item.latestRun);
             setEvents([]);
             setError("");
             setConnection("idle");
             setPendingUserMessage("");
+            setPendingConfiguration(null);
             void persist(item.latestRun, item.thread.id).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
         },
         [persist],
@@ -99,13 +120,13 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         threadIdRef.current = "";
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
-        submittedSelectionRef.current.clear();
         setThreadId("");
         setView(null);
         setEvents([]);
         setError("");
         setConnection("idle");
         setPendingUserMessage("");
+        setPendingConfiguration(null);
         setRestored(false);
         setThreads([]);
         setHistoryLoading(true);
@@ -126,10 +147,12 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                     cursorRef.current = handle.lastSequence;
                     setThreadId(handle.threadId);
                     setPendingUserMessage(handle.pendingRun.userMessage);
+                    setPendingConfiguration(handle.pendingRun.configuration);
                     const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: 8 });
                     if (cancelled || historyRequestRef.current !== historyRequestID) return;
                     pendingRunRef.current = undefined;
                     setPendingUserMessage("");
+                    setPendingConfiguration(null);
                     adoptView(resumed);
                     return;
                 }
@@ -180,6 +203,7 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                 if (event.sequence <= cursorRef.current) return;
                 cursorRef.current = event.sequence;
                 setEvents((current) => [...current, event].slice(-30));
+                onRuntimeEventRef.current?.(event);
                 setView((current) => {
                     if (!current || current.run.id !== runId) return current;
                     const next = { ...current, run: { ...current.run, status: event.payload.status, lastEventSequence: event.sequence, stateVersion: event.payload.stateVersion, stepNumber: event.payload.stepNumber }, state: event.payload };
@@ -190,33 +214,8 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         });
     }, [client, persist, restored, runId, terminal]);
 
-    const pendingSelection = view?.state.status === "waiting_tool" && view.state.pendingToolCall?.toolName === "canvas.read_selection" ? view.state.pendingToolCall : null;
-    useEffect(() => {
-        if (!pendingSelection || !view) return;
-        const identity = `${view.run.id}:${pendingSelection.toolCallId}:${pendingSelection.actionVersion}`;
-        if (submittedSelectionRef.current.has(identity)) return;
-        submittedSelectionRef.current.add(identity);
-        setBusy(true);
-        void client
-            .submitSelection(view.run.id, {
-                toolCallId: pendingSelection.toolCallId,
-                actionVersion: pendingSelection.actionVersion,
-                selection: { revision: canvasRevisionRef.current, nodeIds: [...selectedNodeIdsRef.current].sort() },
-            })
-            .then(adoptView)
-            .catch((cause: unknown) => setError(errorMessage(cause, "选区事实提交失败")))
-            .finally(() => setBusy(false));
-    }, [adoptView, client, pendingSelection, selectionRetry, view]);
-
-    const retrySelection = useCallback(() => {
-        if (!pendingSelection || !view) return;
-        submittedSelectionRef.current.delete(`${view.run.id}:${pendingSelection.toolCallId}:${pendingSelection.actionVersion}`);
-        setError("");
-        setSelectionRetry((value) => value + 1);
-    }, [pendingSelection, view]);
-
     const submit = useCallback(
-        async (userMessage: string) => {
+        async (userMessage: string, configuration: AgentRuntimeStartConfiguration) => {
             const message = userMessage.trim();
             if (!message || busy || (view && !terminalStatuses.has(view.state.status))) return false;
             setBusy(true);
@@ -233,14 +232,18 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
                     await persist(null, thread.id);
                 }
                 const pending = pendingRunRef.current;
-                if (pending && pending.userMessage !== message) throw new Error("上次 Agent 启动结果尚未确认，请保留原指令重试");
-                const request = pending || { clientRequestId: nanoid(), userMessage: message };
+                if (pending && (pending.userMessage !== message || !sameStartConfiguration(pending.configuration, configuration))) {
+                    throw new Error("上次 Agent 启动结果尚未确认，请保留原指令、模型与 Skills 重试");
+                }
+                const request = pending || { clientRequestId: nanoid(), userMessage: message, configuration };
                 pendingRunRef.current = request;
                 setPendingUserMessage(request.userMessage);
+                setPendingConfiguration(request.configuration);
                 await persist(null, activeThreadId);
                 const started = await client.startRun(activeThreadId, { ...request, maxSteps: 8 });
                 pendingRunRef.current = undefined;
                 setPendingUserMessage("");
+                setPendingConfiguration(null);
                 adoptView(started);
                 void reloadThreads();
                 return true;
@@ -271,18 +274,54 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
         [adoptView, busy, client, view],
     );
 
+    const submitClarificationResponse = useCallback(
+        async (input: { requestId: string; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => {
+            const pending = view?.state.status === "waiting_input" ? view.state.pendingClarification : undefined;
+            if (!view || !pending) throw new Error("当前 Agent 运行未处于询问状态");
+            if (pending.request.requestId !== input.requestId) throw new Error("当前问题身份已更新，请核对后重试");
+            if (busy) return false;
+            setBusy(true);
+            setError("");
+            try {
+                const next = await client.submitClarificationResponse(view.run.id, pending.request.requestId, {
+                    expectedStateVersion: view.state.stateVersion,
+                    questionId: input.questionId,
+                    answer: input.answer,
+                    complete: input.complete,
+                });
+                adoptView(next);
+                return true;
+            } catch (cause) {
+                if (cause instanceof AgentRuntimeRequestError && cause.status === 409) {
+                    try {
+                        adoptView(await client.getRun(view.run.id));
+                        setError("问题已在其他页面更新，请核对后重试");
+                    } catch (refreshCause) {
+                        setError(errorMessage(refreshCause, "追问状态刷新失败，请重新打开当前会话"));
+                    }
+                    return false;
+                }
+                setError(errorMessage(cause, "追问回答提交失败"));
+                return false;
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, busy, client, view],
+    );
+
     const newThread = useCallback(async () => {
         if (view && !terminalStatuses.has(view.state.status)) return;
         await storage.clear(canvasId);
         threadIdRef.current = "";
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
-        submittedSelectionRef.current.clear();
         setThreadId("");
         setView(null);
         setEvents([]);
         setError("");
         setPendingUserMessage("");
+        setPendingConfiguration(null);
     }, [canvasId, storage, view]);
 
     return useMemo(
@@ -300,18 +339,52 @@ export function useAgentRuntime({ canvasId, canvasRevision, selectedNodeIds, cli
             restored,
             terminal,
             pendingUserMessage,
-            canRetrySelection: Boolean(pendingSelection && error),
+            pendingConfiguration,
             submit,
+            submitClarificationResponse,
             decideApproval,
-            retrySelection,
             newThread,
             selectThread,
             reloadThreads,
         }),
-        [busy, connection, decideApproval, error, events, historyError, historyLoading, newThread, pendingSelection, pendingUserMessage, reloadThreads, restored, retrySelection, selectThread, submit, terminal, threadId, threads, view],
+        [
+            busy,
+            connection,
+            decideApproval,
+            error,
+            events,
+            historyError,
+            historyLoading,
+            newThread,
+            pendingConfiguration,
+            pendingUserMessage,
+            reloadThreads,
+            restored,
+            selectThread,
+            submit,
+            submitClarificationResponse,
+            terminal,
+            threadId,
+            threads,
+            view,
+        ],
     );
 }
 
 function errorMessage(cause: unknown, fallback: string) {
     return cause instanceof Error && cause.message.trim() ? cause.message : fallback;
+}
+
+function sameStartConfiguration(left: AgentRuntimeStartConfiguration, right: AgentRuntimeStartConfiguration) {
+    return (
+        left.generationModels.image?.channelId === right.generationModels.image?.channelId &&
+        left.generationModels.image?.model === right.generationModels.image?.model &&
+        left.generationModels.video?.channelId === right.generationModels.video?.channelId &&
+        left.generationModels.video?.model === right.generationModels.video?.model &&
+        left.skillDirs.length === right.skillDirs.length &&
+        left.skillDirs.every((dir, index) => dir === right.skillDirs[index]) &&
+        left.executionMode === right.executionMode &&
+        left.attachments.length === right.attachments.length &&
+        left.attachments.every((attachment, index) => attachment.resourceId === right.attachments[index]?.resourceId && attachment.name === right.attachments[index]?.name)
+    );
 }

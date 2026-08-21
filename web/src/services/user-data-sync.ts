@@ -1,38 +1,46 @@
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl } from "@/services/image-storage";
-import { deleteRemoteAsset, deleteRemoteCanvasProject, getRemoteAsset, getRemoteCanvasProject, listRemoteAssets, listRemoteCanvasProjects, upsertRemoteAsset, upsertRemoteCanvasProject, type RemoteUserDataSummary } from "@/services/api/user-data";
+import { createRemoteCanvasProject, deleteRemoteAsset, deleteRemoteCanvasProject, getRemoteAsset, getRemoteCanvasProject, listRemoteAssets, listRemoteCanvasProjects, upsertRemoteAsset, type RemoteUserDataSummary } from "@/services/api/user-data";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { nanoid } from "nanoid";
 import { canvasAgentProjectTitle, createCanvasAgentLaunchRequest } from "@/lib/canvas/canvas-agent-launch";
+import type { CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
 import { getNodeSpec } from "@/constant/canvas";
+import { createCanvasProjectDeletionService, type CanvasProjectDeletionResult } from "@/services/canvas-project-deletion";
 import type { UploadedImage } from "@/services/image-storage";
 import type { CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
+import { remoteCanvasCreationRequired } from "@/lib/canvas/canvas-persistence-policy";
 
 let activeRemoteUserId = "";
+let remoteSessionRevision = 0;
 let applyingRemoteState = false;
 let syncTimer: number | null = null;
-let syncPromise: Promise<void> | null = null;
-let syncQueued = false;
+let syncOperation: RemoteWriteOperation | null = null;
 let subscriptionsInstalled = false;
 let remoteAssetVersions = new Map<string, string>();
 let remoteProjectVersions = new Map<string, string>();
-let remoteTeamProjectIds = new Set<string>();
 
 const LOCAL_STORAGE_KEY_PATTERN = /^(image|video|audio|file|video-reference|audio-reference):/;
+
+type RemoteSession = Readonly<{ revision: number; userId: string }>;
+type RemoteWriteOperation = { session: RemoteSession; promise: Promise<void>; queued: boolean };
 
 export async function syncRemoteUserData(userId?: string | null) {
     activeRemoteUserId = userId || "";
     if (!activeRemoteUserId) return;
+    const session = { revision: ++remoteSessionRevision, userId: activeRemoteUserId };
     applyingRemoteState = true;
     try {
+        await resumePendingCanvasProjectDeletions();
+        if (!ownsRemoteSession(session)) return;
         const [remoteCanvas, remoteAssets] = await Promise.all([listRemoteCanvasProjects(), listRemoteAssets()]);
+        if (!ownsRemoteSession(session)) return;
         remoteProjectVersions = versionMap(remoteCanvas.projects);
-        remoteTeamProjectIds = new Set(remoteCanvas.projects.filter((project) => Boolean(project.teamId)).map((project) => project.id));
         remoteAssetVersions = versionMap(remoteAssets.assets);
         const localProjects = useCanvasStore.getState().projects;
         const localAssets = useAssetStore.getState().assets;
@@ -40,13 +48,16 @@ export async function syncRemoteUserData(userId?: string | null) {
             fetchNewerRemoteItems(localProjects, remoteCanvas.projects, async (id) => (await getRemoteCanvasProject(id)).project),
             fetchNewerRemoteItems(localAssets, remoteAssets.assets, async (id) => (await getRemoteAsset(id)).asset),
         ]);
+        if (!ownsRemoteSession(session)) return;
         const mergedProjects = mergeById(localProjects, changedProjects);
         const mergedAssets = mergeById(localAssets, await hydrateAssets(changedAssets));
+        if (!ownsRemoteSession(session)) return;
         useCanvasStore.getState().replaceProjects(mergedProjects);
         useAssetStore.getState().replaceAssets(mergedAssets);
     } finally {
-        applyingRemoteState = false;
+        if (ownsRemoteSession(session)) applyingRemoteState = false;
     }
+    if (!ownsRemoteSession(session)) return;
     // 首次登录可能带有尚未创建到云端的本地画布；先完成一次 upsert，避免详情页保存/分享先于项目创建。
     try {
         await saveRemoteUserDataNow();
@@ -68,20 +79,29 @@ export function installRemoteUserDataAutoSync() {
 }
 
 export function resetRemoteUserDataSync() {
+    remoteSessionRevision += 1;
     activeRemoteUserId = "";
+    applyingRemoteState = false;
     remoteAssetVersions.clear();
     remoteProjectVersions.clear();
-    remoteTeamProjectIds.clear();
     if (syncTimer) {
         window.clearTimeout(syncTimer);
         syncTimer = null;
     }
 }
 
+function currentRemoteSession(): RemoteSession | null {
+    return activeRemoteUserId ? { revision: remoteSessionRevision, userId: activeRemoteUserId } : null;
+}
+
+function ownsRemoteSession(session: RemoteSession) {
+    return session.revision === remoteSessionRevision && session.userId === activeRemoteUserId;
+}
+
 export function scheduleRemoteUserDataSync() {
     if (!activeRemoteUserId || applyingRemoteState) return;
-    if (syncPromise) {
-        syncQueued = true;
+    if (syncOperation && ownsRemoteSession(syncOperation.session)) {
+        syncOperation.queued = true;
         return;
     }
     if (syncTimer) window.clearTimeout(syncTimer);
@@ -103,15 +123,15 @@ export async function createCanvasProjectWithRemoteSync(title: string, projectId
     }
 }
 
-export async function createAgentCanvasProjectWithRemoteSync(input: { prompt: string; referenceImages: Array<UploadedImage & { name: string }> }) {
+export async function createAgentCanvasProjectWithRemoteSync(input: { draft: CanvasAgentDraft; referenceImages: Array<UploadedImage & { name: string }> }) {
     const now = new Date().toISOString();
     const store = useCanvasStore.getState();
-    const id = store.createProject(canvasAgentProjectTitle(input.prompt));
+    const id = store.createProject(canvasAgentProjectTitle(input.draft.prompt));
     const referenceNodes = createAgentReferenceNodes(input.referenceImages);
     store.updateProject(id, {
         nodes: referenceNodes,
         pendingAgentLaunch: createCanvasAgentLaunchRequest({
-            prompt: input.prompt,
+            draft: input.draft,
             id: nanoid(),
             createdAt: now,
         }),
@@ -157,62 +177,140 @@ export async function deleteAssetWithRemoteSync(id: string) {
     useAssetStore.getState().removeAsset(id);
 }
 
+const deleteCanvasProjects = createCanvasProjectDeletionService({
+    resolveTarget: (id) => {
+        const store = useCanvasStore.getState();
+        const project = store.projects.find((item) => item.id === id);
+        const pendingDeletion = store.pendingDeletionIds.includes(id);
+        if (!project && !pendingDeletion) return null;
+        return {
+            id,
+            requiresRemoteDelete: pendingDeletion || Boolean(activeRemoteUserId || remoteProjectVersions.has(id) || project?.ownerUserId || project?.teamId),
+            canManage: pendingDeletion || project?.canManage !== false,
+        };
+    },
+    hasRemoteSession: () => Boolean(activeRemoteUserId),
+    isRemoteDeleteStaged: (id) => useCanvasStore.getState().pendingDeletionIds.includes(id),
+    stageRemoteDelete: async (ids) => {
+        const previousPendingDeletionIds = useCanvasStore.getState().pendingDeletionIds;
+        useCanvasStore.getState().stageProjectDeletions(ids);
+        try {
+            await flushCanvasStorePersistence();
+        } catch (error) {
+            useCanvasStore.setState({ pendingDeletionIds: previousPendingDeletionIds });
+            throw error;
+        }
+    },
+    cancelRemoteDelete: async (ids) => {
+        const previousPendingDeletionIds = useCanvasStore.getState().pendingDeletionIds;
+        useCanvasStore.getState().cancelProjectDeletions(ids);
+        try {
+            await flushCanvasStorePersistence();
+        } catch (error) {
+            useCanvasStore.setState({ pendingDeletionIds: previousPendingDeletionIds });
+            throw error;
+        }
+    },
+    waitForRemoteWrites: async () => {
+        const activeSync = syncOperation;
+        if (activeSync && ownsRemoteSession(activeSync.session)) await activeSync.promise;
+    },
+    deleteRemote: async (id) => {
+        await deleteRemoteCanvasProject(id);
+    },
+    deleteLocal: async (ids) => {
+        const previousProjects = useCanvasStore.getState().projects;
+        const previousPendingDeletionIds = useCanvasStore.getState().pendingDeletionIds;
+        for (const id of ids) remoteProjectVersions.delete(id);
+        useCanvasStore.getState().finishProjectDeletions(ids);
+        try {
+            await flushCanvasStorePersistence();
+        } catch (error) {
+            useCanvasStore.setState({ projects: previousProjects, pendingDeletionIds: previousPendingDeletionIds });
+            throw error;
+        }
+    },
+});
+
+export function deleteCanvasProjectsWithRemoteSync(ids: string[]): Promise<CanvasProjectDeletionResult> {
+    return deleteCanvasProjects(ids);
+}
+
+async function resumePendingCanvasProjectDeletions() {
+    const pendingDeletionIds = [...useCanvasStore.getState().pendingDeletionIds];
+    if (pendingDeletionIds.length === 0) return;
+    const result = await deleteCanvasProjects(pendingDeletionIds);
+    if (result.failures.length > 0) {
+        console.warn("未完成的画布删除请求恢复失败", { failures: result.failures });
+    }
+}
+
 export async function saveRemoteUserDataNow() {
-    if (!activeRemoteUserId) return;
-    if (syncPromise) {
-        syncQueued = true;
-        return syncPromise;
+    const session = currentRemoteSession();
+    if (!session) return;
+    if (syncOperation && ownsRemoteSession(syncOperation.session)) {
+        syncOperation.queued = true;
+        return syncOperation.promise;
     }
-    syncPromise = drainRemoteUserDataChanges();
+    const operation: RemoteWriteOperation = { session, promise: Promise.resolve(), queued: false };
+    operation.promise = drainRemoteUserDataChanges(operation);
+    syncOperation = operation;
     try {
-        await syncPromise;
+        await operation.promise;
     } finally {
-        syncPromise = null;
+        if (syncOperation === operation) syncOperation = null;
     }
 }
 
-async function drainRemoteUserDataChanges() {
+async function drainRemoteUserDataChanges(operation: RemoteWriteOperation) {
     do {
-        syncQueued = false;
-        await saveRemoteUserDataBatch();
-    } while (syncQueued);
+        operation.queued = false;
+        await saveRemoteUserDataBatch(operation.session);
+    } while (operation.queued && ownsRemoteSession(operation.session));
 }
 
-async function saveRemoteUserDataBatch() {
+async function saveRemoteUserDataBatch(session: RemoteSession) {
+    if (!ownsRemoteSession(session)) return;
     try {
-        const currentProjects = useCanvasStore.getState().projects;
+        const canvasState = useCanvasStore.getState();
+        const currentProjects = canvasState.projects;
         const currentAssets = useAssetStore.getState().assets;
-        const dirtyProjects = currentProjects.filter((item) => !item.teamId && remoteProjectVersions.get(item.id) !== item.updatedAt);
-        const dirtyAssets = currentAssets.filter((item) => remoteAssetVersions.get(item.id) !== item.updatedAt);
-        const deletedProjectIds = missingIds(remoteProjectVersions, currentProjects).filter((id) => !remoteTeamProjectIds.has(id));
+        const pendingDeletionIds = new Set(canvasState.pendingDeletionIds);
+        const dirtyProjects = currentProjects.filter((item) =>
+            !pendingDeletionIds.has(item.id) && remoteCanvasCreationRequired(remoteProjectVersions, item.id),
+        );
+        const dirtyAssets = currentAssets.filter((item) => remoteAssetWriteRequired(remoteAssetVersions.get(item.id), item.updatedAt));
         const deletedAssetIds = missingIds(remoteAssetVersions, currentAssets);
-        if (!dirtyProjects.length && !dirtyAssets.length && !deletedProjectIds.length && !deletedAssetIds.length) return;
+        if (!dirtyProjects.length && !dirtyAssets.length && !deletedAssetIds.length) return;
         const uploaded = new Map<string, string>();
         const projects = await prepareRemoteCanvasProjects(dirtyProjects, uploaded);
         const assets = await prepareRemoteAssets(dirtyAssets, uploaded);
+        if (!ownsRemoteSession(session)) return;
         applyingRemoteState = true;
         if (projects.length) useCanvasStore.getState().replaceProjects(replaceById(currentProjects, projects));
         if (assets.length) useAssetStore.getState().replaceAssets(replaceById(currentAssets, assets));
         applyingRemoteState = false;
         // SQLite 和接口频控都要求写入保持有界；逐项提交还能准确记录已完成版本。
         for (const project of projects) {
-            await upsertRemoteCanvasProject(project);
+            if (!ownsRemoteSession(session)) return;
+            await createRemoteCanvasProject(project);
+            if (!ownsRemoteSession(session)) return;
             remoteProjectVersions.set(project.id, project.updatedAt);
         }
         for (const asset of assets) {
+            if (!ownsRemoteSession(session)) return;
             await upsertRemoteAsset(asset);
+            if (!ownsRemoteSession(session)) return;
             remoteAssetVersions.set(asset.id, asset.updatedAt);
         }
-        for (const id of deletedProjectIds) {
-            await deleteRemoteCanvasProject(id);
-            remoteProjectVersions.delete(id);
-        }
         for (const id of deletedAssetIds) {
+            if (!ownsRemoteSession(session)) return;
             await deleteRemoteAsset(id);
+            if (!ownsRemoteSession(session)) return;
             remoteAssetVersions.delete(id);
         }
     } finally {
-        applyingRemoteState = false;
+        if (ownsRemoteSession(session)) applyingRemoteState = false;
     }
 }
 
@@ -357,6 +455,14 @@ function replaceById<T extends { id: string }>(current: T[], changed: T[]) {
 function timeValue(value?: string) {
     const time = value ? Date.parse(value) : 0;
     return Number.isFinite(time) ? time : 0;
+}
+
+function remoteAssetWriteRequired(remoteVersion: string | undefined, localVersion: string) {
+    if (!remoteVersion) return true;
+    const remoteTime = Date.parse(remoteVersion);
+    const localTime = Date.parse(localVersion);
+    if (!Number.isFinite(remoteTime) || !Number.isFinite(localTime)) return true;
+    return remoteTime !== localTime;
 }
 
 function isLocalStorageKey(value: string) {

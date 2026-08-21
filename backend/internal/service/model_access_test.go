@@ -44,7 +44,7 @@ func newModelAccessTestService(t *testing.T) (*Service, *gorm.DB) {
 func TestMemberModelRejectsUserWithoutActiveSubscription(t *testing.T) {
 	svc, _ := newModelAccessTestService(t)
 
-	_, err := svc.newBillingOrder("user-1", "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
+	_, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
 
 	if err == nil || !strings.Contains(err.Error(), "仅限有效会员") {
 		t.Fatalf("newBillingOrder() error = %v, want membership rejection", err)
@@ -67,7 +67,7 @@ func TestMemberModelAllowsActivePersonalSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	order, err := svc.newBillingOrder("user-1", "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
+	order, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1})
 
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestMemberModelAllowsActiveTeamSeat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.newBillingOrder("user-1", "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1}); err != nil {
+	if _, err := svc.newBillingOrder("user-1", personalBillingAccountScope(), "", "request-1", "channel-1", "member-image", "image", "canvas_image", BillingUsage{Quantity: 1}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -189,6 +189,39 @@ func TestPublicChannelPublishesImageParameterCapabilities(t *testing.T) {
 	}
 	if strings.Join(capabilities.Qualities, ",") != "low,medium,high" || len(capabilities.OutputCounts) != 1 || capabilities.OutputCounts[0] != 1 {
 		t.Fatalf("image quality/count capabilities = %#v", capabilities)
+	}
+}
+
+func TestPublicChannelPublishesAPIMartImageParameterCapabilities(t *testing.T) {
+	channel := model.ModelChannel{
+		ID: "channel-apimart-image", Scope: model.ChannelScopeSystem, Enabled: true,
+		InterfaceType: model.ChannelInterfaceAPIMartImage,
+	}
+	item := model.ChannelModel{
+		ID: "apimart-gpt-image-2", ChannelID: channel.ID, ModelKey: "gpt-image-2", DisplayName: "GPT Image 2",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", BillingMode: "fixed_request",
+		PriceStrategy: "flat", UnitPriceMicrocredits: 1_000_000, PriceConfigured: true, Enabled: true,
+	}
+
+	catalog := publicChannel(channel, false, []model.ChannelModel{item}, false)
+	if len(catalog.ModelCosts) != 1 || catalog.ModelCosts[0].ProviderCapabilities == nil {
+		t.Fatalf("APIMart image provider capabilities missing: %#v", catalog.ModelCosts)
+	}
+	capabilities := catalog.ModelCosts[0].ProviderCapabilities
+	if capabilities.ModelKey != "gpt-image-2" || capabilities.UpstreamMode != "gpt-image-2" || capabilities.Capability != "image" {
+		t.Fatalf("APIMart image identity capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.Resolutions, ",") != "1K,2K,4K" || len(capabilities.Qualities) != 0 {
+		t.Fatalf("APIMart image output capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.Ratios, ",") != "1:1,3:2,2:3,4:3,3:4,5:4,4:5,16:9,9:16,2:1,1:2,21:9,9:21" {
+		t.Fatalf("APIMart image ratios = %#v", capabilities.Ratios)
+	}
+	if len(capabilities.OutputCounts) != 1 || capabilities.OutputCounts[0] != 1 || capabilities.MaxImages != 16 {
+		t.Fatalf("APIMart image count/reference capabilities = %#v", capabilities)
+	}
+	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityUnsupported || capabilities.WatermarkCapability != model.WatermarkCapabilityUnsupported {
+		t.Fatalf("APIMart image watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
 	}
 }
 

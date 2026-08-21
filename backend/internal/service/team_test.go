@@ -25,6 +25,10 @@ func createTeamTestUser(t *testing.T, db *gorm.DB, id string, email string) *mod
 	return user
 }
 
+func teamCreateRequest(name string) CreateTeamRequest {
+	return CreateTeamRequest{Name: name, IdempotencyKey: "test-create-team-" + newID()}
+}
+
 func activateTeamTestSubscription(t *testing.T, db *gorm.DB, team *model.Team, owner *model.User, seats int) {
 	t.Helper()
 	plan := &model.MembershipPlan{
@@ -53,11 +57,136 @@ func activateTeamTestSubscription(t *testing.T, db *gorm.DB, team *model.Team, o
 	}
 }
 
+func TestTeamCollectionsSerializeAsArraysWhenEmpty(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "team-empty-owner", "team-empty-owner@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("空集合团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace, err := svc.TeamWorkspace(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceJSON, err := json.Marshal(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workspacePayload struct {
+		Teams               []json.RawMessage `json:"teams"`
+		IncomingInvitations []json.RawMessage `json:"incomingInvitations"`
+	}
+	if err := json.Unmarshal(workspaceJSON, &workspacePayload); err != nil {
+		t.Fatal(err)
+	}
+	if workspacePayload.Teams == nil || workspacePayload.IncomingInvitations == nil {
+		t.Fatalf("workspace collections must be arrays: %s", workspaceJSON)
+	}
+
+	detail, err := svc.TeamDetail(owner, team.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detailJSON, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detailPayload struct {
+		Members     []json.RawMessage `json:"members"`
+		Invitations []json.RawMessage `json:"invitations"`
+		AuditEvents []json.RawMessage `json:"auditEvents"`
+	}
+	if err := json.Unmarshal(detailJSON, &detailPayload); err != nil {
+		t.Fatal(err)
+	}
+	if detailPayload.Members == nil || detailPayload.Invitations == nil || detailPayload.AuditEvents == nil {
+		t.Fatalf("detail collections must be arrays: %s", detailJSON)
+	}
+}
+
+func TestTeamCapabilitiesAreExplicitForOwnerAdminAndMember(t *testing.T) {
+	owner := BuildTeamCapabilities(model.TeamMemberRoleOwner, true, true)
+	if !owner.CanRenameTeam || !owner.CanManageSubscription || !owner.CanInviteMembers || !owner.CanManageMemberRoles || !owner.CanManageMemberCreditLimits || !owner.CanRemoveMembers || owner.CanLeaveTeam || !owner.CanManageProjects || !owner.CanUploadSharedAssets || !owner.CanViewAudit {
+		t.Fatalf("owner capabilities = %#v", owner)
+	}
+	if len(owner.InviteRoles) != 2 || owner.InviteRoles[0] != model.TeamMemberRoleAdmin || owner.InviteRoles[1] != model.TeamMemberRoleMember {
+		t.Fatalf("owner invite roles = %#v", owner.InviteRoles)
+	}
+
+	admin := BuildTeamCapabilities(model.TeamMemberRoleAdmin, true, true)
+	if admin.CanRenameTeam || admin.CanManageSubscription || !admin.CanInviteMembers || admin.CanManageMemberRoles || admin.CanManageMemberCreditLimits || !admin.CanRemoveMembers || !admin.CanLeaveTeam || !admin.CanManageProjects || !admin.CanUploadSharedAssets || !admin.CanViewAudit {
+		t.Fatalf("admin capabilities = %#v", admin)
+	}
+	if len(admin.InviteRoles) != 1 || admin.InviteRoles[0] != model.TeamMemberRoleMember {
+		t.Fatalf("admin invite roles = %#v", admin.InviteRoles)
+	}
+
+	member := BuildTeamCapabilities(model.TeamMemberRoleMember, true, true)
+	if member.CanRenameTeam || member.CanManageSubscription || member.CanInviteMembers || member.CanManageMemberRoles || member.CanManageMemberCreditLimits || member.CanRemoveMembers || !member.CanLeaveTeam || member.CanManageProjects || member.CanUploadSharedAssets || member.CanViewAudit {
+		t.Fatalf("member capabilities = %#v", member)
+	}
+	if member.InviteRoles == nil || len(member.InviteRoles) != 0 {
+		t.Fatalf("member invite roles = %#v", member.InviteRoles)
+	}
+
+	withoutEntitlements := BuildTeamCapabilities(model.TeamMemberRoleOwner, false, false)
+	if withoutEntitlements.CanManageProjects || withoutEntitlements.CanUploadSharedAssets {
+		t.Fatalf("disabled entitlement capabilities = %#v", withoutEntitlements)
+	}
+	if !canRemoveTeamMember(model.TeamMemberRoleOwner, model.TeamMemberRoleAdmin) || !canRemoveTeamMember(model.TeamMemberRoleAdmin, model.TeamMemberRoleMember) || canRemoveTeamMember(model.TeamMemberRoleAdmin, model.TeamMemberRoleAdmin) || canRemoveTeamMember(model.TeamMemberRoleMember, model.TeamMemberRoleMember) {
+		t.Fatal("member-level removal capability matrix is incorrect")
+	}
+}
+
+func TestTeamCreationIdempotencyReturnsSameFactAndRejectsChangedRequest(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "team-idempotent-owner", "team-idempotent-owner@example.com")
+
+	first, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "幂等团队", IdempotencyKey: "create-team-request-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "幂等团队", IdempotencyKey: "create-team-request-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != first.ID {
+		t.Fatalf("replayed team id = %q, want %q", replayed.ID, first.ID)
+	}
+
+	_, err = svc.CreateTeam(owner, CreateTeamRequest{Name: "不同团队", IdempotencyKey: "create-team-request-1"})
+	requireAuthStatus(t, err, http.StatusConflict)
+
+	var teamCount, ownerCount, auditCount int64
+	if err := db.Model(&model.Team{}).Where("owner_user_id = ?", owner.ID).Count(&teamCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.TeamMember{}).Where("team_id = ? AND role = ?", first.ID, model.TeamMemberRoleOwner).Count(&ownerCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.TeamAuditEvent{}).Where("team_id = ? AND action = ?", first.ID, "team.created").Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if teamCount != 1 || ownerCount != 1 || auditCount != 1 {
+		t.Fatalf("facts team=%d owner=%d audit=%d", teamCount, ownerCount, auditCount)
+	}
+}
+
+func TestTeamCreationRequiresAVisibleASCIIIdempotencyKey(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "team-idempotency-validation-owner", "team-idempotency-validation@example.com")
+	for _, key := range []string{"", "  ", strings.Repeat("a", 129), "包含中文"} {
+		_, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "无效幂等键", IdempotencyKey: key})
+		requireAuthStatus(t, err, http.StatusBadRequest)
+	}
+}
+
 func TestTeamCreationIsAtomicAndAudited(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "team-owner-a", "owner-a@example.com")
 
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "  弘梦制作组  "})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("  弘梦制作组  "))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +214,7 @@ func TestTeamInvitationRequiresSubscriptionAndReservesSeat(t *testing.T) {
 	owner := createTeamTestUser(t, db, "team-owner-b", "owner-b@example.com")
 	first := createTeamTestUser(t, db, "team-member-b1", "member-b1@example.com")
 	second := createTeamTestUser(t, db, "team-member-b2", "member-b2@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "席位团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("席位团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +257,7 @@ func TestTeamInvitationAcceptanceChecksEmailAndCannotRepeat(t *testing.T) {
 	owner := createTeamTestUser(t, db, "team-owner-c", "owner-c@example.com")
 	invitee := createTeamTestUser(t, db, "team-member-c", "member-c@example.com")
 	other := createTeamTestUser(t, db, "team-other-c", "other-c@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "邀请团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("邀请团队"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,12 +309,136 @@ func TestTeamInvitationAcceptanceChecksEmailAndCannotRepeat(t *testing.T) {
 	}
 }
 
+func TestPendingInvitationRequiresExplicitRegeneration(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "team-owner-regenerate", "owner-regenerate@example.com")
+	invitee := createTeamTestUser(t, db, "team-member-regenerate", "member-regenerate@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("邀请轮换团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateTeamTestSubscription(t, db, team, owner, 3)
+	request := CreateTeamInvitationRequest{Email: invitee.Email, Role: model.TeamMemberRoleMember}
+	first, err := svc.CreateTeamInvitation(owner, team.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateTeamInvitation(owner, team.ID, request); err == nil {
+		t.Fatal("duplicate pending invitation unexpectedly rotated its token")
+	} else {
+		requireAuthStatus(t, err, http.StatusConflict)
+	}
+	rotated, err := svc.RegenerateTeamInvitation(owner, team.ID, first.Invitation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Invitation.ID != first.Invitation.ID || rotated.AcceptToken == first.AcceptToken {
+		t.Fatalf("rotated invitation = %#v", rotated)
+	}
+	_, err = svc.AcceptTeamInvitationByToken(invitee, AcceptTeamInvitationRequest{Token: first.AcceptToken})
+	requireAuthStatus(t, err, http.StatusNotFound)
+	if _, err := svc.AcceptTeamInvitationByToken(invitee, AcceptTeamInvitationRequest{Token: rotated.AcceptToken}); err != nil {
+		t.Fatal(err)
+	}
+	var invitationCount int64
+	if err := db.Model(&model.TeamInvitation{}).Where("team_id = ?", team.ID).Count(&invitationCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if invitationCount != 1 {
+		t.Fatalf("invitation count = %d, want 1", invitationCount)
+	}
+}
+
+func TestTerminalInvitationCanBeCreatedAgainWithoutOverwritingHistory(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "team-owner-reinvite", "owner-reinvite@example.com")
+	invitee := createTeamTestUser(t, db, "team-member-reinvite", "member-reinvite@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("重新邀请团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateTeamTestSubscription(t, db, team, owner, 3)
+	request := CreateTeamInvitationRequest{Email: invitee.Email, Role: model.TeamMemberRoleMember}
+	first, err := svc.CreateTeamInvitation(owner, team.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RevokeTeamInvitation(owner, team.ID, first.Invitation.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.CreateTeamInvitation(owner, team.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Invitation.ID == first.Invitation.ID {
+		t.Fatal("terminal invitation history was overwritten")
+	}
+	if err := db.Model(&model.TeamInvitation{}).Where("id = ?", second.Invitation.ID).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	third, err := svc.CreateTeamInvitation(owner, team.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Invitation.ID == second.Invitation.ID {
+		t.Fatal("expired invitation history was overwritten")
+	}
+	var invitationCount int64
+	if err := db.Model(&model.TeamInvitation{}).Where("team_id = ? AND email = ?", team.ID, invitee.Email).Count(&invitationCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if invitationCount != 3 {
+		t.Fatalf("invitation count = %d, want 3", invitationCount)
+	}
+	var expired model.TeamInvitation
+	if err := db.First(&expired, "id = ?", second.Invitation.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if expired.Status != model.TeamInvitationStatusExpired {
+		t.Fatalf("expired invitation status = %q", expired.Status)
+	}
+}
+
+func TestTeamMemberPolicyRejectsStaleVersion(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	owner := createTeamTestUser(t, db, "team-owner-version", "owner-version@example.com")
+	memberUser := createTeamTestUser(t, db, "team-member-version", "member-version@example.com")
+	team, err := svc.CreateTeam(owner, teamCreateRequest("成员并发团队"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateTeamTestSubscription(t, db, team, owner, 3)
+	invitation, err := svc.CreateTeamInvitation(owner, team.ID, CreateTeamInvitationRequest{Email: memberUser.Email, Role: model.TeamMemberRoleMember})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := svc.AcceptTeamInvitationByToken(memberUser, AcceptTeamInvitationRequest{Token: invitation.AcceptToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleVersion := member.UpdatedAt
+	winnerLimit := int64(2_000_000)
+	if err := svc.UpdateTeamMember(owner, team.ID, member.ID, UpdateTeamMemberRequest{Role: model.TeamMemberRoleAdmin, MonthlyCreditLimitMicrocredits: &winnerLimit, ExpectedUpdatedAt: staleVersion}); err != nil {
+		t.Fatal(err)
+	}
+	loserLimit := int64(3_000_000)
+	err = svc.UpdateTeamMember(owner, team.ID, member.ID, UpdateTeamMemberRequest{Role: model.TeamMemberRoleMember, MonthlyCreditLimitMicrocredits: &loserLimit, ExpectedUpdatedAt: staleVersion})
+	requireAuthStatus(t, err, http.StatusConflict)
+	stored, err := svc.repo.TeamMemberByID(team.ID, member.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Role != model.TeamMemberRoleAdmin || stored.MonthlyCreditLimitMicrocredits != winnerLimit {
+		t.Fatalf("winner fact was overwritten: %#v", stored)
+	}
+}
+
 func TestTeamRolePermissionsAndOwnerInvariants(t *testing.T) {
 	svc, db := newMembershipTestService(t)
 	owner := createTeamTestUser(t, db, "team-owner-d", "owner-d@example.com")
 	admin := createTeamTestUser(t, db, "team-admin-d", "admin-d@example.com")
 	member := createTeamTestUser(t, db, "team-member-d", "member-d@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "权限团队"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("权限团队"))
 	if err != nil {
 		t.Fatal(err)
 	}

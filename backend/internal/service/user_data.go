@@ -215,7 +215,7 @@ func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, 
 	return canvasProjectResponse(project, access)
 }
 
-func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
+func (s *Service) CreateUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
 	project, err := canvasProjectFromJSON(userID, raw)
 	if err != nil {
 		return UserDataSummary{}, err
@@ -234,27 +234,22 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 		if existing.UserID != userID {
 			return UserDataSummary{}, &AuthError{Status: 404, Message: "画布不存在"}
 		}
-		if existing.TeamID != "" {
-			return UserDataSummary{}, &AuthError{Status: 409, Message: "团队画布必须通过多人协作通道保存"}
-		}
-	}
-	existingBytes := int64(0)
-	if existing != nil {
-		existingBytes = int64(len([]byte(existing.PayloadJSON)))
+		return UserDataSummary{}, &AuthError{Status: 409, Message: "画布已存在，内容必须通过版本化变更通道保存"}
 	}
 	usage, err := s.repo.UserStorageUsage(userID)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
-	if err := validateStructuredStorageQuotaWithPolicy(usage, "canvas", errors.Is(existingErr, gorm.ErrRecordNotFound), int64(len(raw))-existingBytes, policy.Resource); err != nil {
+	if err := validateStructuredStorageQuotaWithPolicy(usage, "canvas", true, int64(len(raw)), policy.Resource); err != nil {
 		return UserDataSummary{}, err
 	}
-	if err := s.repo.UpsertCanvasProject(&project); err != nil {
+	if err := s.repo.CreateCanvasProject(&project); err != nil {
+		if errors.Is(err, repository.ErrCanvasProjectConflict) {
+			return UserDataSummary{}, &AuthError{Status: 409, Message: "画布已存在，内容必须通过版本化变更通道保存"}
+		}
 		return UserDataSummary{}, err
 	}
-	if existingErr != nil || existing.PayloadJSON != project.PayloadJSON || existing.Title != project.Title {
-		s.recordActivity(userID, "canvas", 1)
-	}
+	s.recordActivity(userID, "canvas", 1)
 	return UserDataSummary{
 		ID: project.ID, Title: project.Title, Revision: project.Revision,
 		AccessLevel: model.CanvasAccessManager, CanEdit: true, CanManage: true,
@@ -263,15 +258,12 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	project, access, err := s.canvasAccess(userID, id)
+	_, access, err := s.canvasAccess(userID, id)
 	if err != nil {
 		return err
 	}
 	if !access.CanManage {
 		return Forbidden("当前用户不能删除该画布")
-	}
-	if err := s.repo.DeleteCanvasShare(project.UserID, id); err != nil {
-		return err
 	}
 	return s.repo.DeleteCanvasProjectWithCollaboration(id)
 }

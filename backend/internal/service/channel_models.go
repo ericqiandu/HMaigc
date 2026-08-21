@@ -83,7 +83,7 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]Adm
 	for index := range items {
 		result[index] = AdminChannelModelView{
 			ChannelModel:         items[index],
-			ProviderCapabilities: publicProviderModelCapabilities(items[index].ModelKey),
+			ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, items[index].ModelKey),
 			WatermarkCapability:  publicWatermarkCapability(*channel, items[index]),
 		}
 	}

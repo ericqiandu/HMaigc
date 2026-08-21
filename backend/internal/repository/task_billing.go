@@ -39,22 +39,33 @@ func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action Faile
 			if order.TaskID != "" && order.TaskID != task.ID {
 				return ErrBillingStateConflict
 			}
-			if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning {
-				return ErrBillingStateConflict
-			}
 			if action == FailedTaskBillingRefund {
+				if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning {
+					return ErrBillingStateConflict
+				}
 				if err := refundBillingOrderTx(tx, &order, errorText); err != nil {
 					return err
 				}
 			} else if action == FailedTaskBillingUncertain {
-				updated := tx.Model(&model.BillingOrder{}).
-					Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
-					Updates(map[string]any{"status": model.BillingStatusUncertain, "error": errorText, "updated_at": time.Now()})
-				if updated.Error != nil {
-					return updated.Error
-				}
-				if updated.RowsAffected != 1 {
-					return ErrBillingStateConflict
+				if order.Status != model.BillingStatusUncertain {
+					now := time.Now()
+					updated := tx.Model(&model.BillingOrder{}).
+						Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
+						Updates(uncertainBillingUpdates(order, errorText, now))
+					if updated.Error != nil {
+						return updated.Error
+					}
+					if updated.RowsAffected != 1 {
+						return ErrBillingStateConflict
+					}
+				} else {
+					updates := uncertainBillingUpdates(order, order.Error, time.Now())
+					if strings.TrimSpace(order.Error) == "" {
+						updates["error"] = errorText
+					}
+					if err := tx.Model(&model.BillingOrder{}).Where("id = ? AND status = ?", order.ID, model.BillingStatusUncertain).Updates(updates).Error; err != nil {
+						return err
+					}
 				}
 			} else {
 				return fmt.Errorf("unsupported failed task billing action: %s", action)
@@ -76,4 +87,14 @@ func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action Faile
 		}
 		return nil
 	})
+}
+
+func uncertainBillingUpdates(order model.BillingOrder, errorText string, now time.Time) map[string]any {
+	updates := map[string]any{
+		"status": model.BillingStatusUncertain, "error": errorText, "updated_at": now,
+	}
+	if order.BillingMode != "token_usage" && strings.TrimSpace(order.ProviderRequestID) != "" && strings.TrimSpace(order.ProviderEndpointVersionID) != "" && strings.TrimSpace(order.ProviderCredentialVersionID) != "" {
+		updates["next_reconcile_at"] = now.Add(5 * time.Second)
+	}
+	return updates
 }

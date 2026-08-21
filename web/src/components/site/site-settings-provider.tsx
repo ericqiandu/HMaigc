@@ -6,6 +6,7 @@ import { getPublicSiteSettings, publicSiteSettingsQueryKey, type SiteSettings } 
 
 const bootstrapSiteSettings: SiteSettings = {
     siteName: "HMaigc",
+    homeHeroSlogan: "让算力更有想象力！",
     logoUrl: "",
     footerCopyright: "",
     icpRegistrationNumber: "",

@@ -1,26 +1,52 @@
 # 后端数据库
 
+## 用户公开数字 ID
+
+`users.id` 继续使用内部 UUID，作为权限、租户、账本、团队和资产关系的唯一主键；前端不得截断、散列或替换该主键。`user_public_identities` 为每个用户保存唯一的数据库自增 `number`，认证响应将其转换为 `9,999 + number` 的稳定短数字 `publicId`，从 `10000` 开始单调递增；`99999` 之后自然进入 `100000`，不设置五位容量上限。该 ID 只用于账户卡、客服检索与用户间识别，号码不得回收、重排或使用内部 UUID 兜底。
+
+新用户在注册事务内同时创建数字 ID 映射；任一写入失败时，用户、推荐关系、积分账户和验证码消费全部回滚。服务升级会按 `users.created_at + users.id` 的稳定顺序为历史用户补齐映射，重复迁移或多实例并发启动只接受 `user_id` 唯一事实，不得重新编号。认证链路若找不到映射必须显式失败，禁止临时使用 UUID、哈希值或默认数字掩盖迁移缺口。
+
 ## Agent Runtime 作用域与恢复事实
 
-单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改与真实生成任务协调；前端入口和事件流仍未开放。五张表职责如下：
+单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改、真实生成任务协调与版本化影视生产计划。七张核心表职责如下：
 
 - `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
-- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态和最后事件序号；`thread_id + client_request_id` 唯一；
+- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态、最后事件序号及冻结的 runtime/policy/tool schema 版本；`thread_id + client_request_id` 唯一；
 - `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
 - `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
 - `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。
+- `agent_production_plan_versions` 以 `tenant_kind + tenant_id + domain_project_id + canvas_id + plan_key + version` 唯一追加不可变的生产计划版本，并绑定来源 run、基础版本、剧本和总时长；相同业务键可在不同租户和画布独立存在，同一 Scope 的同一基础版本只允许一个事实胜出；
+- `agent_production_artifacts` 以 `plan_version_id + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
 
 Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
 
 服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。
 
-Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。首次初始化会同时冻结用户原始请求、步数预算、默认模型记录、模型 Key 与工具 schema 版本，并原子创建首个事件和 checkpoint；不同事实复用同一 run 必须冲突。恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。
+Runtime 每次推进以 `run.step_number` 作为数据库 CAS 代次；run 快照、连续事件序号和 checkpoint 必须在同一事务提交。首次初始化会同时冻结用户原始请求、步数预算、默认模型记录、模型 Key、runtime 版本、policy 版本与工具 schema 版本，并原子创建首个事件和 checkpoint；不同事实复用同一 run 必须冲突。历史投影必须保留三类版本事实，恢复时 checkpoint 的 state version、step、max steps 与 run 状态必须逐项一致，否则显式失败。
 
-工具状态转换使用独立 `state_version`，不会伪增模型 `step_number`。`canvas.read_state` 与 `canvas.read_selection` 每次执行都重新校验完整 Scope、当前权限和 revision；`canvas.apply_ops` 在批准后先持久化 `tool.started` 与 `started_at`，再以 `runId + toolCallId + actionVersion` 派生唯一 `clientMutationId`，复用 `CanvasChange` 的 revision CAS 与幂等事务。个人画布所有者和团队有效 editor/manager 走同一增量 mutation 协议；画布已提交但 Runtime 结果事务中断时，重试只读取同一 CanvasChange 并补齐工具结果，不重复增加 revision。revision 冲突和参数错误作为结构化工具失败回灌主 Agent，权限撤销或基础设施错误保持显式失败，不伪装成成功。
+已选 Skill 的完整说明不常驻首轮 prompt。`skill.load` 只能读取当前 run 已冻结的精确目录与版本，成功结果把目录写入 checkpoint 的有序 `loadedSkillDirs`；最终交付若仍有选定 Skill 未加载，Runtime 以可修复事实回灌同一执行链。`production.plan` 只追加不可变计划版本和 Artifact Ledger：`references_json` 保存非时间线角色、服装、道具、场景参考，`shots_json` 保存正式镜头及其 `referenceKeys`；脚本 Artifact 立即完成，参考图、逐镜分镜图与视频保持 planned。参考图以 `reference_key` 标识，正式镜头以 `shot_key` 标识，唯一约束为 `plan_version_id + reference_key + shot_key + kind`。
 
-`generation.submit` 在完整 Scope 和 L2 审批后复用现有 `CreateTask` 商业入口，并以 `runId + toolCallId + actionVersion` 派生稳定 Task 与 Billing 幂等身份；重复协调、进程中断和 PostgreSQL 并发重放只允许形成一个 Task、一个 BillingOrder 和一次积分预留。`generation.wait` 只读取当前用户、当前画布、当前 run operation 的同一任务；queued/running 保持等待，失败和取消显式回灌，只有 succeeded 且结果中存在真实媒体 URL 才写入交付证据。Runtime 最终验收从已持久化的成功工具结果构造 canvas revision 与资产事实，不能用模型文本代替真实交付。
+工具状态转换使用独立 `state_version`，不会伪增模型 `step_number`。模型只能选择 `skill.load`、`production.plan`、`production.render`、`canvas.commit` 四个高层工具；旧画布读写与生成提交/等待工具已从 schema、执行器和生产源码硬切删除。v3 数据库启动迁移对旧工具 schema 仅允许一种自动处理：工具 schema 明确为 v2、状态仍为 `queued`、没有 ToolCall，并且 run、唯一 `run.created` 事件与 v2 初始 checkpoint 完全一致的任务，会通过版本化迁移转换为 `failed`。不存在模型 Task/Billing 时视为尚未进入商业边界；存在时必须精确匹配该 run 的唯一模型 Task 与 BillingOrder，并且只接受 `Task succeeded + Billing settled` 或 `Task failed/cancelled + Billing refunded` 两种完整终态。活动、账单不确定或彼此冲突的商业事实会阻止迁移且保持原状。run 更新、`run.failed` 事件与终态 checkpoint 在同一数据库事务提交，原 `tool_schema_version`、v2 状态形状及既有商业事实保持不变，失败码为 `tool_schema_retired`，重复迁移不增加第二组事实。批次内任一任务事实无效时整批回滚。`running`、`waiting_approval`、`waiting_tool`、未初始化 schema、含工具事实、已推进的排队任务或未来 schema 的任务不允许自动终结；结构完整的剩余不兼容任务会汇总报告，事实损坏任务则精确报告 run 与损坏原因，避免升级覆盖计费、供应商调用、审批和资产所有权。真实 PostgreSQL 发布门禁必须包含带终态 Task/Billing 的 v2 初始排队任务升级回归。终态历史 run 则继续保留用于审计。`canvas.commit` 只从同 Scope 的活动计划、完整 Artifact Ledger 与已就绪 Resource 构造确定性画布投影，再以 `runId + toolCallId + actionVersion` 派生唯一 `clientMutationId`，复用 `CanvasChange` 的 revision CAS 与幂等事务。个人画布所有者和团队有效 editor/manager 走同一协议；参考节点及镜头绑定会一并写入确定性投影。画布已提交但 Artifact 回填中断时，重试只读取同一 CanvasChange 并补齐绑定，不重复增加 revision。
 
-每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version，worker 才能在请求边界解密 Key。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；Task 失败或决策非法会显式终结 run，repairable 结果只创建唯一下一步任务，工具决策停在 `waiting_tool`。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
+`production.render` 在完整 Scope 和 L2 审批后复用正式 Task 商业入口，并以 run、计划版本、Artifact、attempt 派生稳定 Task 与 Billing 幂等身份。参考图使用图片能力独立生成；分镜图创建任务前必须逐项解析镜头 `referenceKeys`，确认参考 Artifact 已 succeeded/committed、Resource 为 ready image，再把这些受鉴权资源组成多图输入。任一参考缺失都会返回 `production_prerequisite_missing` 且不创建下游商业事实；视频继续严格依赖同镜分镜 Resource。审批前能力校验和报价只读取冻结目录，只有真实 Resource 与 Artifact Ledger 事实才进入交付证据。
+
+run 只由一个事件驱动协调器推进：创建 run、模型任务终结、审批决定、媒体任务终结都会唤醒同一入口；一次唤醒最多执行固定数量的状态转换，遇到未完成任务、付费审批或终态即停止。后台不再高频盲扫所有 run，只以分钟级游标查询超过恢复阈值的活动记录，并通过跨实例协调锁补偿进程中断；恢复仍消费同一 checkpoint、ToolCall、Task 和 Billing 幂等事实，不创建平行运行路径。
+
+每个模型决策步骤以 `run_id + step_number` 生成确定性 Task ID 和 Billing idempotency key，复用既有 `Task + BillingOrder + CreditLedger + ProviderTaskFact + Worker lease` 商业链路。只有具备版本化筷子账号凭据的文本模型可作为当前运行模型；任务创建时冻结 endpoint 与 credential version。`token_usage` 模型在同一创建事务内冻结 Token 价格、输入上界和商业最大输出量，worker 先提交不可重复发送边界，再把相同最大输出量写入真实请求，响应事实持久化后才核对筷子账单。Task 成功后 Runtime 只读取已持久化的严格 JSON 决策并做通用交付验收；决策结构非法时保存受控的 `model_decision_invalid` 反馈并在同一有界 run 内创建下一模型步骤修正，达到步骤上限才终结，禁止文本提取、默认决策或模型降级。上游请求失败仍显式终结 run；所有已成功发出的 Token 请求继续按原账单核对，禁止误退款或重复调用。模型网关禁止直接发起供应商 HTTP，也禁止以普通请求绕过积分、审计、并发或模型冻结事实。
+
+## 平台第一方技能目录与不可变版本
+
+`skills` 是 HMaigc 自有技能目录的可变展示头，保存稳定目录标识、名称、说明、图标、封面、分类、公开范围、发布状态、当前版本以及来源授权事实。公开目录只读取 `published + public` 且已经绑定已发布时间的版本，不请求或缓存外部社区接口。
+
+`skill_versions` 以 `skill_id + version` 唯一追加技能执行正文，保存 SHA-256 校验值、变更说明、发布人和发布时间。相同版本发布后正文与校验值不可原地修改；内置 `SKILL.md` 随应用版本发布，启动迁移若发现数据库中的同版本事实与代码不一致会整笔回滚并显式拒绝启动。新正文必须使用新版本号，避免历史 Agent run 的语义被后台更新改写。
+
+升级迁移会在同一数据库事务内为历史 Agent checkpoint 与 event 中已冻结的 Skill 指令补齐 SHA-256。`data_migrations` 以版本 ID 记录一次性历史数据规范化的完成时间；只有事实更新与完成记录在同一事务提交后，后续启动才允许跳过该版本，失败会整笔回滚并在下次启动重新执行。已有非空校验值若与正文冲突会阻断迁移，禁止继续运行受污染事实；迁移成功后只保留当前严格读取路径。
+
+`user_skill_states` 只保存账号对稳定技能目录的激活与收藏状态。写入使用 `user_id + skill_dir` 唯一冲突更新，激活和收藏分别更新自己的字段，避免并发或顺序操作覆盖另一项状态。已保存状态若指向已删除、退役或未发布技能，读取会显式失败并要求管理员处理，不会静默跳过或回退外部目录。
+
+Agent run 创建时服务端只接受技能目录标识，并从第一方数据库重新解析当前已发布版本，将目录、名称、说明、完整指令、版本号和校验值冻结到 run configuration。Runtime 会重新计算完整指令的 SHA-256 并与版本校验值逐字节核对，格式正确但指向其他正文的校验值同样会拒绝运行。恢复与 `skill.load` 只消费冻结事实，技能目录后续发布新版本不会改变已有 run 的执行含义。
+
+公开目录的页码、每页数量、搜索文本与分类数量均有明确上限；越界请求返回参数错误，不截断、不回退到其他页，避免匿名查询造成偏移溢出或无界数据库工作量。
 
 ## 历史资源 OSS 迁移
 
@@ -133,13 +159,13 @@ Agent 文本模型使用同一张 `billing_orders` 的 `token_usage` 模式，�
 
 团队能力由成员关系、订阅快照、团队积分、共享资产、项目权限和开票状态共同组成：
 
-- `teams` 保存团队所有者、名称与启停状态；
-- `team_members` 保存成员角色、有效状态和成员月度积分额度，`owner` 角色不可转移、降级或移除；
-- `team_invitations` 保存邀请邮箱、角色、有效期和凭证哈希。原始邀请凭证只在创建成功时返回一次，数据库不保存明文；
-- `team_audit_events` 追加记录创建团队、重命名、邀请、接受、撤销、角色与积分额度调整、成员移除和主动退出等写操作；
+- `teams` 保存团队所有者、名称、启停状态、创建幂等键与请求摘要；同一用户重复提交同一创建请求只返回唯一完整团队事实，请求摘要冲突会显式失败；
+- `team_members` 保存成员角色、有效状态、成员月度积分额度和并发更新版本，`owner` 角色不可转移、降级或移除；角色与额度修改使用版本比较交换，避免并发覆盖；
+- `team_invitations` 保存邀请邮箱、角色、有效期和凭证哈希。同一团队与邮箱最多存在一条 pending 邀请；原始邀请凭证只在创建或管理员明确重新生成成功时返回一次，数据库不保存明文；查询、创建、撤销与重新生成都会先在团队锁内将过期邀请持久化为 expired；
+- `team_audit_events` 追加记录创建团队、重命名、邀请、接受、撤销、角色与积分额度调整、成员移除、主动退出、共享资产上传成功或失败，以及项目权限覆盖等写操作；
 - `team_credit_accounts` 是团队可用积分和预留积分的唯一余额真源；
 - `team_credit_ledger_entries` 追加记录团队套餐到账、任务预留、结算消费和退款，并以 `actor_user_id` 归因到实际调用成员；
-- `resources.team_id` 将共享文件归属到团队空间，读取必须经过有效团队成员校验；
+- `resources.team_id` 将共享文件归属到团队空间，读取必须经过有效团队成员校验；上传开始前先分配稳定资源 ID，成功和失败事实都与对应审计在同一事务持久化；
 - `projects.team_id` 表示团队项目归属，`project_collaborators` 保存项目级 `viewer`、`editor`、`manager` 权限覆盖；
 - `invoice_requests` 保存会员订单的开票申请、处理结果、发票号码和 HTTPS 文件地址，同一会员订单只能申请一次。
 
@@ -169,6 +195,6 @@ AI 水印规则不写入 `system_settings.site`。`policy_publication_heads` 为
 
 “无限任务”只取消套餐层面的排队数量拒绝，不取消全局 Worker 与渠道安全并发限制。团队存储额度由套餐字节字段配置，不在前端写死；上传会同时校验单文件、用户日上传和团队总存储额度。
 
-团队角色默认映射为项目权限：所有者、管理员为 `manager`，普通成员为 `editor`；项目覆盖可降为 `viewer`。团队项目写入要求有效团队订阅，读取保留给有效成员以保证订阅到期后的数据可访问。项目移出团队或删除时会事务性清理项目权限覆盖，避免旧团队权限泄漏到新归属。
+团队角色默认映射为项目权限：所有者、管理员为 `manager`，普通成员为 `editor`；项目覆盖可降为 `viewer`。团队项目创建者不会绕过团队角色与订阅状态取得额外管理权限。团队项目写入要求有效团队订阅，读取保留给有效成员以保证订阅到期后的数据可访问。项目权限覆盖变更与审计同事务提交；项目移出团队或删除时会事务性清理项目权限覆盖，避免旧团队权限泄漏到新归属。
 
 `invoice_requests` 只表示可审计的开票业务状态，不伪造税务结果。标记 `issued` 时必须由后台填写真实发票号码和 HTTPS 文件地址；重复处理使用条件更新拒绝。真实电子发票仍需由税务系统或后续接入的开票服务商生成。

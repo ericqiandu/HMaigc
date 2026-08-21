@@ -1,14 +1,8 @@
 package handler
 
 import (
-	"context"
 	"errors"
-	"io"
-	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
-	"time"
 
 	"infinite-canvas/backend/internal/service"
 
@@ -16,28 +10,27 @@ import (
 )
 
 func RegisterSkillRoutes(r *gin.RouterGroup, svc *service.Service) {
-	r.GET("/skills/image", proxySkillImage)
 	r.GET("/skills/capabilities", func(c *gin.Context) {
-		if _, err := currentUser(c, svc); err != nil {
-			failService(c, err)
-			return
-		}
 		ok(c, gin.H{"capabilities": svc.SkillIntegrationCapabilities()})
 	})
-	r.GET("/skills/community", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
+	r.GET("/skills/catalog", func(c *gin.Context) {
+		userID, err := optionalSkillCatalogUserID(c, svc)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-		pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "12"))
-		result, err := svc.CommunitySkills(c.Request.Context(), user.ID, service.CommunitySkillsRequest{
-			Page:       page,
-			PageSize:   pageSize,
-			Sort:       c.DefaultQuery("sort", "hot"),
-			Search:     c.Query("search"),
-			Categories: c.QueryArray("categories"),
+		page, err := parsePositiveSkillQuery(c.DefaultQuery("page", "1"), "页码", service.SkillCatalogMaximumPage)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		pageSize, err := parsePositiveSkillQuery(c.DefaultQuery("page_size", "12"), "每页数量", 60)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.SkillsCatalog(c.Request.Context(), userID, service.SkillListRequest{
+			Page: page, PageSize: pageSize, Search: c.Query("search"), Categories: c.QueryArray("categories"),
 		})
 		if err != nil {
 			failService(c, err)
@@ -71,13 +64,13 @@ func RegisterSkillRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"skills": skills})
 	})
-	r.GET("/skills/community/:dir", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
+	r.GET("/skills/catalog/:dir", func(c *gin.Context) {
+		userID, err := optionalSkillCatalogUserID(c, svc)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		skill, err := svc.CommunitySkillDetail(c.Request.Context(), user.ID, c.Param("dir"))
+		skill, err := svc.SkillDetail(c.Request.Context(), userID, c.Param("dir"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -138,65 +131,26 @@ func RegisterSkillRoutes(r *gin.RouterGroup, svc *service.Service) {
 	})
 }
 
-func proxySkillImage(c *gin.Context) {
-	rawURL := strings.TrimSpace(c.Query("url"))
-	target, err := url.Parse(rawURL)
-	if err != nil || !allowedSkillImageURL(target) {
-		fail(c, http.StatusBadRequest, errInvalidSkillImageURL())
-		return
+func optionalSkillCatalogUserID(c *gin.Context, svc *service.Service) (string, error) {
+	cookie := sessionCookie(c)
+	if cookie == "" {
+		return "", nil
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	user, err := svc.CurrentUser(cookie)
 	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-	req.Header.Set("Referer", "https://www.updream.cn/")
-	req.Header.Set("User-Agent", "Mozilla/5.0 InfiniteCanvas/skills-image-proxy")
-	client := service.OutboundHTTPClient(15 * time.Second)
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || !allowedSkillImageURL(req.URL) {
-			return errInvalidSkillImageURL()
+		var authError *service.AuthError
+		if errors.As(err, &authError) && authError.Status == 401 {
+			return "", nil
 		}
-		return nil
+		return "", err
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		fail(c, http.StatusBadGateway, err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fail(c, http.StatusBadGateway, errSkillImageUpstream(resp.StatusCode))
-		return
-	}
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	c.Header("Cache-Control", "public, max-age=604800")
-	if etag := resp.Header.Get("ETag"); etag != "" {
-		c.Header("ETag", etag)
-	}
-	c.Status(http.StatusOK)
-	c.Header("Content-Type", contentType)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	return user.ID, nil
 }
 
-func allowedSkillImageURL(target *url.URL) bool {
-	if target == nil || (target.Scheme != "https" && target.Scheme != "http") {
-		return false
+func parsePositiveSkillQuery(raw string, label string, maximum int) (int, error) {
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 || (maximum > 0 && value > maximum) {
+		return 0, service.BadAuthRequest(label + "无效")
 	}
-	host := strings.ToLower(target.Hostname())
-	return host == "updream.cn" || strings.HasSuffix(host, ".updream.cn") || host == "hdslb.com" || strings.HasSuffix(host, ".hdslb.com")
-}
-
-func errInvalidSkillImageURL() error {
-	return errors.New("不支持的技能图片地址")
-}
-
-func errSkillImageUpstream(status int) error {
-	return errors.New("技能图片读取失败: " + strconv.Itoa(status))
+	return value, nil
 }

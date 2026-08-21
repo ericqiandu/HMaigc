@@ -23,6 +23,8 @@ import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-s
 import { removeRetiredCanvasNodes } from "@/lib/canvas/canvas-retired-content-migration";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
+import { canvasUsesRevisionedMutations } from "@/lib/canvas/canvas-persistence-policy";
+import { requireCanvasCollaborationRevision, requireEditableCanvasCollaboration } from "@/lib/canvas/canvas-collaboration-preflight";
 
 export type CanvasCollaborationConnectionStatus = "personal" | "connecting" | "online" | "reconnecting" | "readonly" | "error";
 
@@ -67,7 +69,7 @@ export function useCanvasCollaboration({
 }: UseCanvasCollaborationOptions) {
     const { message } = App.useApp();
     const updateProject = useCanvasStore((state) => state.updateProject);
-    const enabled = Boolean(projectLoaded && project?.teamId);
+    const enabled = canvasUsesRevisionedMutations(projectLoaded, project?.id);
     const [access, setAccess] = useState<CanvasAccess | null>(null);
     const [status, setStatus] = useState<CanvasCollaborationConnectionStatus>(enabled ? "connecting" : "personal");
     const [presenceByConnection, setPresenceByConnection] = useState<Record<string, CanvasPresence>>({});
@@ -370,9 +372,28 @@ export function useCanvasCollaboration({
         return state;
     }, [projectId, updateProject]);
 
+    const refreshRemoteState = useCallback(async (expectedRevision?: number) => {
+        const loadedState = await getCanvasCollaboration(projectId);
+        const state = expectedRevision === undefined ? loadedState : requireCanvasCollaborationRevision(loadedState, expectedRevision);
+        if ((state.project.revision || 0) < revisionRef.current) return;
+        applySnapshot(state);
+    }, [applySnapshot, projectId]);
+
+    const adoptAuthoritativeBaseline = useCallback((state: CanvasCollaborationState) => {
+        baseDocumentRef.current = collaborationDocumentFromProject(state.project);
+        revisionRef.current = state.project.revision || 0;
+        inFlightRef.current = null;
+        accessRef.current = state.access;
+        setAccess(state.access);
+        setManagementState(state);
+        setStatus(state.access.canEdit ? "online" : "readonly");
+        updateProject(projectId, collaborationMetadata(state));
+    }, [projectId, updateProject]);
+
     const flushPendingChanges = useCallback(async () => {
         if (!enabled) return;
-        if (!access?.canEdit) throw new Error("当前用户没有画布编辑权限");
+        const loadedState = await requireEditableCanvasCollaboration(accessRef.current, Boolean(baseDocumentRef.current), () => getCanvasCollaboration(projectId));
+        if (loadedState) adoptAuthoritativeBaseline(loadedState);
         if (mutationTimerRef.current) {
             window.clearTimeout(mutationTimerRef.current);
             mutationTimerRef.current = null;
@@ -380,19 +401,19 @@ export function useCanvasCollaboration({
         sendPendingMutation();
         const startedAt = performance.now();
         while (performance.now() - startedAt < 10_000) {
-            if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-                throw new Error("实时协作连接不可用，无法确认画布已保存");
-            }
             const base = baseDocumentRef.current;
             const current = currentDocumentRef.current;
             if (base && current && !inFlightRef.current && isEmptyCanvasMutationPatch(diffCanvasCollaborationDocument(base, current))) {
                 return;
             }
+            if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+                throw new Error("实时协作连接不可用，无法确认画布已保存");
+            }
             await new Promise<void>((resolve) => window.setTimeout(resolve, 25));
             sendPendingMutation();
         }
         throw new Error("等待团队画布保存超时，请确认协作连接后重试");
-    }, [access?.canEdit, enabled, sendPendingMutation]);
+    }, [adoptAuthoritativeBaseline, enabled, projectId, sendPendingMutation]);
 
     return {
         access,
@@ -400,6 +421,7 @@ export function useCanvasCollaboration({
         managementState,
         presence: Object.values(presenceByConnection).filter((item) => item.connectionId !== connectionIDRef.current),
         refreshManagementState,
+        refreshRemoteState,
         status,
         updateCursor,
     };

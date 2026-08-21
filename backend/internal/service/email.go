@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"mime"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -147,6 +146,10 @@ func (s *Service) SendRegistrationEmailCode(rawEmail string) error {
 	if !setting.Enabled {
 		return Forbidden("平台尚未启用注册邮件，请联系管理员")
 	}
+	_, siteSetting, err := s.readSiteSetting()
+	if err != nil {
+		return fmt.Errorf("读取邮件品牌配置失败：%w", err)
+	}
 	s.emailCodeMu.Lock()
 	defer s.emailCodeMu.Unlock()
 	if latest, err := s.repo.LatestEmailVerificationCode(email, registrationEmailPurpose); err == nil && time.Since(latest.CreatedAt) < time.Minute {
@@ -167,7 +170,12 @@ func (s *Service) SendRegistrationEmailCode(rawEmail string) error {
 	if err := s.repo.Create(&record); err != nil {
 		return err
 	}
-	if err := sendSMTPMail(setting, email, "HMaigc 注册验证码", registrationEmailBody(code)); err != nil {
+	content := buildRegistrationEmailContent(code, registrationCodeTTL, registrationEmailBranding{
+		SiteName:  siteSetting.SiteName,
+		Slogan:    siteSetting.HomeHeroSlogan,
+		Copyright: siteSetting.FooterCopyright,
+	})
+	if err := sendSMTPMail(setting, email, siteSetting.SiteName+" 邮箱验证码", content); err != nil {
 		_ = s.repo.DeleteEmailVerificationCode(record.ID)
 		return fmt.Errorf("发送注册邮件失败：%w", err)
 	}
@@ -285,12 +293,16 @@ func publicEmailSetting(setting *model.SystemSetting, value emailSettingValue) *
 	return result
 }
 
-func sendSMTPMail(setting emailSettingValue, recipient string, subject string, body string) error {
+func sendSMTPMail(setting emailSettingValue, recipient string, subject string, content registrationEmailContent) error {
+	from := mail.Address{Name: setting.FromName, Address: setting.FromEmail}
+	message, err := buildSMTPMessage(from, recipient, subject, content)
+	if err != nil {
+		return err
+	}
 	address := net.JoinHostPort(setting.Host, strconv.Itoa(setting.Port))
 	tlsConfig := &tls.Config{ServerName: setting.Host, MinVersion: tls.VersionTLS12}
 	dialer := &net.Dialer{Timeout: 12 * time.Second}
 	var client *smtp.Client
-	var err error
 	if setting.Encryption == "tls" {
 		connection, dialErr := tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
 		if dialErr != nil {
@@ -326,9 +338,7 @@ func sendSMTPMail(setting emailSettingValue, recipient string, subject string, b
 	if err != nil {
 		return err
 	}
-	from := mail.Address{Name: setting.FromName, Address: setting.FromEmail}
-	message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s", from.String(), recipient, mime.QEncoding.Encode("UTF-8", subject), body)
-	if _, err := wc.Write([]byte(message)); err != nil {
+	if _, err := wc.Write(message); err != nil {
 		_ = wc.Close()
 		return err
 	}
@@ -345,8 +355,4 @@ func randomNumericCode(length int) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%0*d", length, value.Int64()), nil
-}
-
-func registrationEmailBody(code string) string {
-	return "你正在注册 HMaigc。\n\n验证码：" + code + "\n\n验证码 10 分钟内有效。若非本人操作，请忽略本邮件。"
 }

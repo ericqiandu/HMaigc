@@ -248,27 +248,38 @@ func requestKuaiziGPTImage2JSON(ctx context.Context, config providerConfig, path
 	if err := json.Unmarshal(responseBody, &response); err != nil {
 		return errors.New("GPT Image 2 上游响应格式无效")
 	}
-	if path == kuaiziGPTImage2CreatePath {
-		businessCode := int(firstInt64(response, "code"))
-		if _, hasBusinessCode := response["code"]; hasBusinessCode && businessCode != http.StatusOK {
-			if businessCode < 100 || businessCode > 599 {
-				businessCode = http.StatusInternalServerError
-			}
-			return kuaiziCompatibleHTTPError{statusCode: businessCode}
-		}
-		responseData, ok := response["data"].(map[string]interface{})
-		if !ok {
+	responseData, err := kuaiziGPTImage2ResponseData(response)
+	if err != nil {
+		return err
+	}
+	if responseData == nil {
+		if path == kuaiziGPTImage2CreatePath {
 			return errors.New("GPT Image 2 创建响应缺少 data 对象")
 		}
-		*target = responseData
-		return nil
-	}
-	responseData, ok := response["data"].(map[string]interface{})
-	if !ok {
 		return errors.New("GPT Image 2 状态响应缺少 data 对象")
 	}
 	*target = responseData
 	return nil
+}
+
+func kuaiziGPTImage2ResponseData(response map[string]interface{}) (map[string]interface{}, error) {
+	rawCode, exists := response["code"]
+	if !exists {
+		return nil, errors.New("GPT Image 2 上游响应缺少业务码")
+	}
+	code, ok := rawCode.(float64)
+	if !ok {
+		return nil, errors.New("GPT Image 2 上游响应业务码格式无效")
+	}
+	if code != 0 {
+		statusCode := int(code)
+		if code != float64(statusCode) || statusCode < 100 || statusCode > 599 {
+			statusCode = http.StatusInternalServerError
+		}
+		return nil, kuaiziCompatibleHTTPError{statusCode: statusCode}
+	}
+	responseData, _ := response["data"].(map[string]interface{})
+	return responseData, nil
 }
 
 func validateKuaiziGPTImage2ResultURL(value string, input canvasGenerationInput) error {

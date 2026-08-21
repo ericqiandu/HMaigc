@@ -1,21 +1,26 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
 
 type StartScopedAgentRunInput struct {
+	Context         context.Context
 	ClientRequestID string
 	UserMessage     string
 	MaxSteps        int
+	Configuration   AgentRuntimeConfigurationInput
 }
 
 type AgentRuntimeView struct {
@@ -28,6 +33,17 @@ type AgentRuntimeEventView struct {
 	Kind      agentruntime.EventKind `json:"kind"`
 	Payload   json.RawMessage        `json:"payload"`
 	CreatedAt time.Time              `json:"createdAt"`
+}
+
+type AgentClarificationError struct {
+	Status             int    `json:"-"`
+	ErrorCode          string `json:"errorCode"`
+	Message            string `json:"-"`
+	LatestStateVersion int    `json:"latestStateVersion,omitempty"`
+}
+
+func (err *AgentClarificationError) Error() string {
+	return err.Message
 }
 
 func (s *Service) CreateAgentThread(actor *model.User, canvasID string) (*model.AgentThread, error) {
@@ -58,7 +74,8 @@ func (s *Service) StartScopedAgentRun(actor *model.User, threadID string, input 
 		return nil, err
 	}
 	progress, err := s.StartAgentRuntime(StartAgentRuntimeInput{
-		Scope: scope, ClientRequestID: input.ClientRequestID, UserMessage: input.UserMessage, MaxSteps: input.MaxSteps,
+		Context: input.Context, Scope: scope, ClientRequestID: input.ClientRequestID,
+		UserMessage: input.UserMessage, MaxSteps: input.MaxSteps, Configuration: input.Configuration,
 	})
 	if err != nil {
 		return nil, err
@@ -131,16 +148,89 @@ func (s *Service) SubmitScopedAgentApproval(actor *model.User, runID string, inp
 	return agentRuntimeView(progress), nil
 }
 
-func (s *Service) SubmitScopedAgentToolResult(actor *model.User, runID string, input CoordinateAgentToolInput) (*AgentRuntimeView, error) {
+func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runID string, requestID string, submission agentruntime.ClarificationResponseSubmission) (*AgentRuntimeView, error) {
 	scope, err := s.scopeForAgentRun(actor, runID)
 	if err != nil {
 		return nil, err
 	}
-	progress, err := s.CoordinatePendingAgentTool(scope, input)
+	submission.RequestID = strings.TrimSpace(requestID)
+	progress, err := s.SubmitAgentClarificationResponse(scope, submission)
 	if err != nil {
 		return nil, err
 	}
 	return agentRuntimeView(progress), nil
+}
+
+func (s *Service) SubmitAgentClarificationResponse(scope agentruntime.Scope, submission agentruntime.ClarificationResponseSubmission) (*AgentRuntimeProgress, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if !scope.CanMutateCanvas() {
+		return nil, Forbidden("当前用户没有提交 Agent 追问回答的画布权限")
+	}
+	current, err := s.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		return nil, err
+	}
+	transition, replayed, err := agentruntime.ApplyClarificationResponse(current, submission)
+	if err != nil {
+		return nil, mapAgentClarificationError(err, current.StateVersion)
+	}
+	if replayed {
+		return s.agentRuntimeProgressForCurrentState(scope, current)
+	}
+	if err := s.repo.CommitAgentRuntimeTransition(scope, current, transition, time.Now().UTC()); err != nil {
+		if !errors.Is(err, repository.ErrAgentRuntimeStepConflict) {
+			return nil, err
+		}
+		latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		_, replayed, replayErr := agentruntime.ApplyClarificationResponse(latest, submission)
+		if replayErr != nil {
+			return nil, mapAgentClarificationError(replayErr, latest.StateVersion)
+		}
+		if !replayed {
+			return nil, clarificationConflict(latest.StateVersion)
+		}
+		return s.agentRuntimeProgressForCurrentState(scope, latest)
+	}
+	if submission.Complete {
+		return s.advanceAgentRun(scope, agentWakeClarificationAnswered)
+	}
+	return s.agentRuntimeProgressForCurrentState(scope, transition.State)
+}
+
+func mapAgentClarificationError(err error, latestStateVersion int) error {
+	switch {
+	case errors.Is(err, agentruntime.ErrClarificationAnswerInvalid), errors.Is(err, agentruntime.ErrClarificationIncomplete):
+		return &AgentClarificationError{
+			Status: http.StatusBadRequest, ErrorCode: "agent_clarification_invalid",
+			Message: "Agent 追问回答格式无效", LatestStateVersion: latestStateVersion,
+		}
+	case errors.Is(err, agentruntime.ErrClarificationIdentityReused):
+		return &AgentClarificationError{
+			Status: http.StatusConflict, ErrorCode: "agent_clarification_identity_reused",
+			Message: "Agent 追问身份已完成且回答事实冲突", LatestStateVersion: latestStateVersion,
+		}
+	case errors.Is(err, agentruntime.ErrClarificationNotPending):
+		return &AgentClarificationError{
+			Status: http.StatusConflict, ErrorCode: "agent_clarification_not_pending",
+			Message: "Agent 当前没有等待该追问回答", LatestStateVersion: latestStateVersion,
+		}
+	case errors.Is(err, agentruntime.ErrClarificationVersionConflict), errors.Is(err, agentruntime.ErrClarificationConflict):
+		return clarificationConflict(latestStateVersion)
+	default:
+		return err
+	}
+}
+
+func clarificationConflict(latestStateVersion int) *AgentClarificationError {
+	return &AgentClarificationError{
+		Status: http.StatusConflict, ErrorCode: "agent_clarification_conflict",
+		Message: "Agent 追问状态已经变化，请按最新状态重试", LatestStateVersion: latestStateVersion,
+	}
 }
 
 func (s *Service) agentThreadForActor(actorUserID string, threadID string) (*model.AgentThread, error) {

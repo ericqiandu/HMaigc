@@ -38,6 +38,11 @@ func TestMembershipStorefrontReturnsBackendManagedPresentationAndPlans(t *testin
 			t.Fatalf("default storefront FAQ must not promise an unsupported credit reset: %q", faq.Answer)
 		}
 	}
+	for _, feature := range storefront.Presentation.ExclusiveFeatures {
+		if strings.Contains(feature, "全景") {
+			t.Fatalf("default storefront must not advertise an unavailable panorama capability: %q", feature)
+		}
+	}
 }
 
 func TestUpdateMembershipStorefrontPersistsConfigurationAndAuditAtomically(t *testing.T) {

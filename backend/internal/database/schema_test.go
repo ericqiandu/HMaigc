@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 func TestModelsRegistersAgentRuntimeFacts(t *testing.T) {
 	registered := map[string]bool{}
 	for _, value := range Models() {
+		registered[reflect.TypeOf(value).String()] = true
 		switch value.(type) {
 		case *model.AgentThread:
 			registered["thread"] = true
@@ -31,6 +33,14 @@ func TestModelsRegistersAgentRuntimeFacts(t *testing.T) {
 	for _, name := range []string{"thread", "run", "event", "checkpoint", "tool_call"} {
 		if !registered[name] {
 			t.Fatalf("agent runtime model %s is not registered", name)
+		}
+	}
+	for _, modelName := range []string{
+		"*model.AgentProductionPlanVersion",
+		"*model.AgentProductionArtifact",
+	} {
+		if !registered[modelName] {
+			t.Fatalf("agent runtime model %s is not registered", modelName)
 		}
 	}
 }

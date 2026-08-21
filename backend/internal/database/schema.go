@@ -10,6 +10,7 @@ import (
 func Models() []any {
 	return []any{
 		&model.User{},
+		&model.UserPublicIdentity{},
 		&model.AuthSession{},
 		&model.UserIdentity{},
 		&model.OAuthState{},
@@ -60,8 +61,11 @@ func Models() []any {
 		&model.UserWatermarkPreferenceEvent{},
 		&model.UserDailyActivity{},
 		&model.SystemSetting{},
+		&model.DataMigration{},
 		&model.UserOSSSetting{},
 		&model.UserDailyUploadUsage{},
+		&model.Skill{},
+		&model.SkillVersion{},
 		&model.UserSkillState{},
 		&model.Resource{},
 		&model.StorageMigrationJob{},
@@ -88,6 +92,8 @@ func Models() []any {
 		&model.CanvasChange{},
 		&model.AgentThread{},
 		&model.AgentRun{},
+		&model.AgentProductionPlanVersion{},
+		&model.AgentProductionArtifact{},
 		&model.AgentRunEvent{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},
@@ -114,6 +120,15 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := MigrateBaseSchema(tx); err != nil {
+			return err
+		}
+		if err := EnsureUserPublicIdentitySchema(tx); err != nil {
+			return err
+		}
+		if err := migrateAgentRuntimeSkillChecksums(tx); err != nil {
+			return err
+		}
+		if err := seedFirstPartySkills(tx); err != nil {
 			return err
 		}
 		if err := backfillProviderDefaults(tx); err != nil {
@@ -176,6 +191,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := EnsurePaymentIntegritySchema(tx); err != nil {
+			return err
+		}
+		if err := EnsureTeamIntegritySchema(tx); err != nil {
 			return err
 		}
 		if err := EnsureProviderIntegritySchema(tx); err != nil {

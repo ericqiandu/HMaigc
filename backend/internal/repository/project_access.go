@@ -65,7 +65,7 @@ func (r *Repository) projectForEffectiveRole(userID string, projectID string, no
 		   AND (subscriptions.ends_at IS NULL OR subscriptions.ends_at > ?)
 		 WHERE projects.id = ?
 		   AND (
-		     projects.user_id = ?
+		     (projects.team_id = '' AND projects.user_id = ?)
 		     OR (
 		       projects.team_id <> ''
 		       AND members.id IS NOT NULL
@@ -134,9 +134,23 @@ func (r *Repository) ProjectCollaboratorRecords(projectID string) ([]ProjectColl
 	return records, err
 }
 
-func (r *Repository) SaveProjectCollaborator(collaborator *model.ProjectCollaborator) error {
-	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "project_id"}, {Name: "user_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"role", "updated_at"}),
-	}).Create(collaborator).Error
+func (r *Repository) SaveProjectCollaboratorWithAudit(collaborator *model.ProjectCollaborator, audit *model.TeamAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"role", "updated_at"}),
+		}).Create(collaborator).Error; err != nil {
+			return err
+		}
+		return tx.Create(audit).Error
+	})
+}
+
+func (r *Repository) DeleteProjectCollaboratorWithAudit(projectID string, userID string, audit *model.TeamAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("project_id = ? AND user_id = ?", projectID, userID).Delete(&model.ProjectCollaborator{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(audit).Error
+	})
 }

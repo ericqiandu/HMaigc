@@ -7,27 +7,31 @@ import { createAgentCanvasProjectWithRemoteSync } from "@/services/user-data-syn
 import { useThemeStore } from "@/stores/use-theme-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { uploadImage } from "@/services/image-storage";
-import { AgentChatComposer, type CanvasAgentChatAttachment } from "@/components/canvas/canvas-agent-chat-ui";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { AgentChatComposer } from "@/components/canvas/canvas-agent-chat-ui";
+import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-composer-controls";
+import { CanvasAgentSelectionSummary } from "@/components/canvas/canvas-agent-selection-summary";
+import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection, type CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
+import { useEffectiveConfig } from "@/stores/use-config-store";
+import { useSiteSettings } from "@/components/site/site-settings-provider";
 
 const MAX_REFERENCE_IMAGES = 4;
-
-type HomeReferenceAttachment = CanvasAgentChatAttachment & {
-    file: File;
-};
 
 const PLACEHOLDERS = ['试试说"在画布上为我创建…"，生成不阻塞，随时开启下一轮对话', "描述你想创作的内容，AI 帮你生成分镜", "进入项目后，按 @ 可引用资产库素材"] as const;
 
 export function UpdreamHero() {
     const { message } = App.useApp();
+    const { settings } = useSiteSettings();
     const navigate = useNavigate();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const [value, setValue] = useState("");
-    const [referenceAttachments, setReferenceAttachments] = useState<HomeReferenceAttachment[]>([]);
+    const effectiveConfig = useEffectiveConfig();
+    const [draft, setDraft] = useState<CanvasAgentDraft>(createEmptyCanvasAgentDraft);
     const [submitting, setSubmitting] = useState(false);
     const [placeholderIndex, setPlaceholderIndex] = useState(0);
     const [placeholderVisible, setPlaceholderVisible] = useState(true);
     const transitionTimeoutRef = useRef<number | null>(null);
-    const referenceAttachmentsRef = useRef<HomeReferenceAttachment[]>([]);
+    const attachmentsRef = useRef(draft.attachments);
+    const attachmentFilesRef = useRef(new Map<string, File>());
 
     useEffect(() => {
         const timer = window.setInterval(() => {
@@ -45,12 +49,12 @@ export function UpdreamHero() {
     }, []);
 
     useEffect(() => {
-        referenceAttachmentsRef.current = referenceAttachments;
-    }, [referenceAttachments]);
+        attachmentsRef.current = draft.attachments;
+    }, [draft.attachments]);
 
     useEffect(
         () => () => {
-            referenceAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.url));
+            attachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.url));
         },
         [],
     );
@@ -58,45 +62,50 @@ export function UpdreamHero() {
     const addReferenceImages = (files: FileList | File[] | null) => {
         const images = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
         if (!images.length) return;
-        const remaining = MAX_REFERENCE_IMAGES - referenceAttachments.length;
+        const remaining = MAX_REFERENCE_IMAGES - draft.attachments.length;
         if (remaining <= 0) {
             message.warning(`最多添加 ${MAX_REFERENCE_IMAGES} 张参考图片`);
             return;
         }
         const accepted = images.slice(0, remaining);
         if (accepted.length < images.length) message.warning(`最多添加 ${MAX_REFERENCE_IMAGES} 张参考图片`);
-        setReferenceAttachments((current) => [
-            ...current,
-            ...accepted.map((file) => ({
-                id: nanoid(),
-                name: file.name,
-                url: URL.createObjectURL(file),
-                file,
-            })),
-        ]);
+        const attachments = accepted.map((file) => {
+            const id = nanoid();
+            attachmentFilesRef.current.set(id, file);
+            return { id, name: file.name, url: URL.createObjectURL(file) };
+        });
+        setDraft((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }));
     };
 
     const removeReferenceImage = (id: string) => {
-        setReferenceAttachments((current) => {
-            const removed = current.find((attachment) => attachment.id === id);
+        setDraft((current) => {
+            const removed = current.attachments.find((attachment) => attachment.id === id);
             if (removed) URL.revokeObjectURL(removed.url);
-            return current.filter((attachment) => attachment.id !== id);
+            attachmentFilesRef.current.delete(id);
+            return { ...current, attachments: current.attachments.filter((attachment) => attachment.id !== id) };
         });
     };
 
     const startCreating = async () => {
-        const prompt = value.trim();
+        const prompt = draft.prompt.trim();
         if (!prompt || submitting) return;
         setSubmitting(true);
         try {
             const referenceImages = await Promise.all(
-                referenceAttachments.map(async (attachment) => ({
-                    ...(await uploadImage(attachment.file)),
-                    name: attachment.name,
-                })),
+                draft.attachments.map(async (attachment) => {
+                    const file = attachmentFilesRef.current.get(attachment.id);
+                    if (!file) throw new Error(`参考图片“${attachment.name}”的本地文件已失效，请重新添加`);
+                    return { ...(await uploadImage(file)), name: attachment.name };
+                }),
             );
+            const persistedAttachments = referenceImages.map((image, index) => {
+                const resourceId = resourceIdFromStorageKey(image.storageKey);
+                if (!resourceId) throw new Error(`参考图片“${image.name}”尚未保存到账号资源，请检查存储配置后重试`);
+                const source = draft.attachments[index];
+                return { id: source.id, name: image.name, url: image.url, resourceId };
+            });
             const { id, syncError } = await createAgentCanvasProjectWithRemoteSync({
-                prompt,
+                draft: { ...draft, prompt, attachments: persistedAttachments },
                 referenceImages,
             });
             if (syncError) {
@@ -112,21 +121,50 @@ export function UpdreamHero() {
 
     return (
         <section className="updream-hero flex flex-col items-center px-4">
-            <h1 className="updream-hero-title bg-clip-text text-center text-transparent">灵感从这里开始！</h1>
+            <h1 className="updream-hero-title bg-clip-text text-center text-transparent">{settings.homeHeroSlogan}</h1>
 
             <div className="updream-home-agent-composer w-full max-w-[700px]">
                 <AgentChatComposer
-                    prompt={value}
-                    attachments={referenceAttachments}
+                    prompt={draft.prompt}
+                    attachments={draft.attachments}
                     disabled={submitting}
                     sending={submitting}
-                    submitReady={Boolean(value.trim())}
+                    submitReady={Boolean(draft.prompt.trim())}
                     placeholder={placeholderVisible ? PLACEHOLDERS[placeholderIndex] : ""}
                     theme={theme}
-                    onPromptChange={setValue}
+                    onPromptChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
                     onSubmit={() => void startCreating()}
                     onAddFiles={addReferenceImages}
                     onRemoveAttachment={removeReferenceImage}
+                    onDeleteBackwardAtStart={() => {
+                        const next = removeLastCanvasAgentDraftSelection(draft);
+                        if (!next) return false;
+                        setDraft(next);
+                        return true;
+                    }}
+                    selectionSummary={
+                        <CanvasAgentSelectionSummary
+                            config={effectiveConfig}
+                            models={draft.generationModels}
+                            selectedSkills={draft.skillSelections}
+                            disabled={submitting}
+                            onModelsChange={(generationModels) => setDraft((current) => ({ ...current, generationModels }))}
+                            onSkillsChange={(skillSelections) => setDraft((current) => ({ ...current, skillSelections }))}
+                        />
+                    }
+                    left={
+                        <CanvasAgentComposerControls
+                            config={effectiveConfig}
+                            disabled={submitting}
+                            models={draft.generationModels}
+                            selectedSkills={draft.skillSelections}
+                            executionMode={draft.executionMode}
+                            placement="bottom"
+                            onModelsChange={(generationModels) => setDraft((current) => ({ ...current, generationModels }))}
+                            onSkillsChange={(skillSelections) => setDraft((current) => ({ ...current, skillSelections }))}
+                            onExecutionModeChange={(executionMode) => setDraft((current) => ({ ...current, executionMode }))}
+                        />
+                    }
                 />
             </div>
         </section>

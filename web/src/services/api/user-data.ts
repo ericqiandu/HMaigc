@@ -21,13 +21,25 @@ export type RemoteUserDataSummary = {
     updatedAt: string;
 };
 
+export class UserDataRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "UserDataRequestError";
+    }
+}
+
 async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>) {
     try {
         const response = await promise;
         if (response.data.code !== 0) throw new Error(response.data.msg || "请求失败");
         return response.data.data;
     } catch (error) {
-        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) throw new Error(error.response?.data?.msg || error.message || "请求失败");
+        if (axios.isAxiosError<BackendEnvelope<unknown>>(error)) {
+            throw new UserDataRequestError(error.response?.data?.msg || error.message || "请求失败", error.response?.status);
+        }
         throw error;
     }
 }
@@ -56,7 +68,7 @@ export function getRemoteCanvasProject(id: string) {
     return request<{ project: CanvasProject }>(api.get(`/canvas-projects/${encodeURIComponent(id)}`));
 }
 
-export function upsertRemoteCanvasProject(project: CanvasProject) {
+export function createRemoteCanvasProject(project: CanvasProject) {
     return request<{ project: RemoteUserDataSummary }>(api.put(`/canvas-projects/${encodeURIComponent(project.id)}`, { project }));
 }
 

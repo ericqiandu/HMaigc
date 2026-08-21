@@ -26,18 +26,9 @@ const workerGlobal = self as typeof self & {
 };
 
 // MediaPipe 会在模块 Worker 中从 importScripts 失败分支转向 self.import。
-// 这里显式标记为运行时 URL，避免 Vite 将 public loader 当作源码模块转换。
+// loader 是同源 public 资源，直接导入可遵守 script-src 'self'，也避免 blob: 模块被 CSP 拒绝。
 workerGlobal.importScripts = () => { throw new TypeError("module worker uses dynamic import"); };
-workerGlobal.import = async (url: string) => {
-    const response = await fetch(url.replace(/\?import(?:&.*)?$/, ""));
-    if (!response.ok) throw new Error(`MediaPipe loader 加载失败：${response.status}`);
-    const blobUrl = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
-    try {
-        return await import(/* @vite-ignore */ blobUrl);
-    } finally {
-        URL.revokeObjectURL(blobUrl);
-    }
-};
+workerGlobal.import = (url: string) => import(/* @vite-ignore */ url);
 
 function getDetector() {
     if (!detectorPromise) {

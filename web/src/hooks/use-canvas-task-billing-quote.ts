@@ -5,13 +5,13 @@ import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import { buildTaskBillingQuoteRequest } from "@/lib/billing/task-billing-quote";
 import { resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
-export function useCanvasTaskBillingQuote(config: AiConfig, mode: "image" | "video" | "text" | "audio", operation: string, batchCount: number, referenceVideoCount: number) {
+export function useCanvasTaskBillingQuote(projectId: string, config: AiConfig, mode: "image" | "video" | "text" | "audio", operation: string, batchCount: number, referenceVideoCount: number) {
     const request = useMemo(() => {
         if (mode !== "image" && mode !== "video") return null;
         const channel = resolveModelChannel(config, config.model);
         if (channel.scope !== "system" || channel.enabled === false) return null;
         const providerConfig = systemProviderTaskConfig(resolveModelRequestConfig(config, config.model));
-        return buildTaskBillingQuoteRequest({ mode, operation, batchCount, referenceVideoCount, config: providerConfig });
+        return buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount, referenceVideoCount, config: providerConfig });
     }, [
         batchCount,
         config.channels,
@@ -26,6 +26,7 @@ export function useCanvasTaskBillingQuote(config: AiConfig, mode: "image" | "vid
         config.vquality,
         mode,
         operation,
+        projectId,
         referenceVideoCount,
     ]);
 

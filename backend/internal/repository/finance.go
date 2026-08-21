@@ -318,6 +318,9 @@ type ActiveTaskPolicy struct {
 	Capability      string
 	CapabilityLimit int
 	Unlimited       bool
+	// BillingTeamID freezes the exact paying account for account-scoped limits.
+	// nil is reserved for explicitly account-neutral internal tasks.
+	BillingTeamID *string
 }
 
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, policy ActiveTaskPolicy, watermark model.WatermarkCapability) error {
@@ -327,6 +330,12 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		}
 		if err := freezeProviderTaskRuntimeTx(tx, task, order.ChannelModelID); err != nil {
 			return err
+		}
+		order.ProviderEndpointVersionID = task.ProviderEndpointVersionID
+		order.ProviderCredentialVersionID = task.ProviderCredentialVersionID
+		if order.BillingMode == "token_usage" &&
+			(order.TaskID != task.ID || order.ProviderEndpointVersionID != task.ProviderEndpointVersionID || order.ProviderCredentialVersionID != task.ProviderCredentialVersionID) {
+			return errors.New("token billing runtime does not match frozen task runtime")
 		}
 		if err := freezeTaskWatermarkTx(tx, task, watermark); err != nil {
 			return err
@@ -393,7 +402,18 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 		if err := enforceActiveTaskLimit(tx, userID, policy); err != nil {
 			return err
 		}
+		if err := tx.Where("id = ? AND user_id = ? AND status IN ?", taskID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}).First(&task).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTaskNotRetryable
+			}
+			return err
+		}
 		if order != nil {
+			if err := freezeProviderTaskRuntimeTx(tx, &task, order.ChannelModelID); err != nil {
+				return err
+			}
+			order.ProviderEndpointVersionID = task.ProviderEndpointVersionID
+			order.ProviderCredentialVersionID = task.ProviderCredentialVersionID
 			if err := reserveBillingOrder(tx, order); err != nil {
 				return err
 			}
@@ -412,6 +432,9 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 		}
 		if order != nil {
 			updates["billing_order_id"] = order.ID
+			updates["provider_account_id"] = task.ProviderAccountID
+			updates["provider_endpoint_version_id"] = task.ProviderEndpointVersionID
+			updates["provider_credential_version_id"] = task.ProviderCredentialVersionID
 		}
 		updated := tx.Model(&model.Task{}).
 			Where("id = ? AND user_id = ? AND status IN ?", taskID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}).
@@ -474,16 +497,23 @@ func enforceActiveTaskLimit(tx *gorm.DB, userID string, policy ActiveTaskPolicy)
 	if policy.Unlimited {
 		return nil
 	}
+	activeTasks := tx.Model(&model.Task{}).
+		Where("tasks.user_id = ? AND tasks.status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
+	if policy.BillingTeamID != nil {
+		activeTasks = activeTasks.
+			Joins("JOIN billing_orders AS active_task_orders ON active_task_orders.id = tasks.billing_order_id AND active_task_orders.user_id = tasks.user_id").
+			Where("active_task_orders.team_id = ?", strings.TrimSpace(*policy.BillingTeamID))
+	}
 	var count int64
-	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {
+	if err := activeTasks.Count(&count).Error; err != nil {
 		return err
 	}
 	if count >= int64(policy.TotalLimit) {
 		return ErrActiveTaskLimit
 	}
 	var capabilityCount int64
-	if err := tx.Model(&model.Task{}).
-		Where("user_id = ? AND capability = ? AND status IN ?", userID, policy.Capability, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+	if err := activeTasks.
+		Where("tasks.capability = ?", policy.Capability).
 		Count(&capabilityCount).Error; err != nil {
 		return err
 	}
@@ -709,9 +739,33 @@ func (r *Repository) MarkBillingRunning(id string) error {
 }
 
 func (r *Repository) MarkBillingUncertain(id string, errorText string) error {
-	return r.db.Model(&model.BillingOrder{}).
-		Where("id = ? AND status IN ?", id, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
-		Updates(map[string]any{"status": model.BillingStatusUncertain, "error": errorText, "updated_at": time.Now()}).Error
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrBillingStateConflict
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var order model.BillingOrder
+		query := tx.Where("id = ?", id)
+		if r.Dialect() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := query.First(&order).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusUncertain {
+			return ErrBillingStateConflict
+		}
+		result := tx.Model(&model.BillingOrder{}).
+			Where("id = ? AND status IN ?", id, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).
+			Updates(uncertainBillingUpdates(order, errorText, time.Now()))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrBillingStateConflict
+		}
+		return nil
+	})
 }
 
 func (r *Repository) SettleBillingOrder(id string, providerRequestID string) error {
@@ -741,7 +795,10 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 				return err
 			}
 			now := time.Now()
-			orderUpdates := map[string]any{"status": model.BillingStatusSettled, "settled_at": &now, "updated_at": now}
+			orderUpdates := map[string]any{
+				"status": model.BillingStatusSettled, "settled_at": &now, "next_reconcile_at": nil,
+				"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": now,
+			}
 			if providerRequestID != "" {
 				orderUpdates["provider_request_id"] = providerRequestID
 			}
@@ -773,7 +830,10 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 			return err
 		}
 		now := time.Now()
-		orderUpdates := map[string]any{"status": model.BillingStatusSettled, "settled_at": &now, "updated_at": now}
+		orderUpdates := map[string]any{
+			"status": model.BillingStatusSettled, "settled_at": &now, "next_reconcile_at": nil,
+			"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": now,
+		}
 		if providerRequestID != "" {
 			orderUpdates["provider_request_id"] = providerRequestID
 		}
@@ -832,7 +892,10 @@ func refundBillingOrderTx(tx *gorm.DB, order *model.BillingOrder, errorText stri
 			return err
 		}
 		now := time.Now()
-		if err := tx.Model(order).Updates(map[string]any{"status": model.BillingStatusRefunded, "error": errorText, "refunded_at": &now, "updated_at": now}).Error; err != nil {
+		if err := tx.Model(order).Updates(map[string]any{
+			"status": model.BillingStatusRefunded, "error": errorText, "refunded_at": &now, "next_reconcile_at": nil,
+			"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": now,
+		}).Error; err != nil {
 			return err
 		}
 		return tx.Create(&model.TeamCreditLedgerEntry{
@@ -862,7 +925,10 @@ func refundBillingOrderTx(tx *gorm.DB, order *model.BillingOrder, errorText stri
 		return err
 	}
 	now := time.Now()
-	if err := tx.Model(order).Updates(map[string]any{"status": model.BillingStatusRefunded, "error": errorText, "refunded_at": &now, "updated_at": now}).Error; err != nil {
+	if err := tx.Model(order).Updates(map[string]any{
+		"status": model.BillingStatusRefunded, "error": errorText, "refunded_at": &now, "next_reconcile_at": nil,
+		"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": now,
+	}).Error; err != nil {
 		return err
 	}
 	return tx.Create(&model.CreditLedgerEntry{

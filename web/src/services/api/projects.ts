@@ -204,7 +204,7 @@ export function getProject(id: string) {
     return request<ProjectDetail>(api.get(`/projects/${encodeURIComponent(id)}`));
 }
 
-export function createProject(input: { name: string; type: string; aspectRatio: string; sourceType: string; description?: string; stylePresetId?: string }) {
+export function createProject(input: { name: string; type: string; aspectRatio: string; sourceType: string; description?: string; stylePresetId?: string; teamId?: string }) {
     return request<{ project: Project }>(api.post("/projects", input));
 }
 
@@ -226,6 +226,10 @@ export function getProjectPermissions(projectId: string) {
 
 export function updateProjectPermission(projectId: string, userId: string, role: ProjectAccessRole) {
     return request<{ updated: boolean }>(api.put(`/projects/${encodeURIComponent(projectId)}/permissions/${encodeURIComponent(userId)}`, { role }));
+}
+
+export function clearProjectCollaborator(projectId: string, userId: string) {
+    return request<{ deleted: boolean }>(api.delete(`/projects/${encodeURIComponent(projectId)}/permissions/${encodeURIComponent(userId)}`));
 }
 
 export function createProjectUnit(projectId: string, input: { kind: string; title: string; sourceText?: string; position?: number }) {

@@ -89,6 +89,8 @@ export type CanvasGenerationBatchItem = {
     retryCount: number;
     errorDetails?: string;
     costUncertain?: boolean;
+    quotePriceVersion?: number;
+    quoteFingerprint?: string;
 };
 
 export type CanvasGenerationBatch = {
@@ -166,6 +168,8 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     assetId?: string;
+    teamResourceId?: string;
+    teamResourceTeamId?: string;
     assetTags?: string[];
     assetCategory?: "character" | "environment" | "wardrobe" | "prop" | "weapon" | "style" | "other";
     workflowKind?: CanvasWorkflowKind;
@@ -326,13 +330,16 @@ export type CanvasAgentSkillSelection = {
     dir: string;
     name: string;
     description: string;
-    detailText: string;
 };
 
 export type CanvasAgentLaunchRequest = {
     id: string;
     source: "home";
     prompt: string;
+    attachments: Array<{ resourceId: string; name: string }>;
+    generationModels: CanvasAgentGenerationModels;
+    skillDirs: string[];
+    executionMode: CanvasAgentExecutionMode;
     createdAt: string;
 };
 

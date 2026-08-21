@@ -54,6 +54,46 @@ func MigrateBaseSchema(db *gorm.DB) error {
 	return nil
 }
 
+// EnsureUserPublicIdentitySchema creates and backfills the UUID-to-short-number mapping.
+// Existing users are assigned deterministically by creation time; conflict handling
+// makes concurrent startup and repeated migrations safe without rewriting an ID.
+func EnsureUserPublicIdentitySchema(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.AutoMigrate(&model.UserPublicIdentity{}); err != nil {
+			return fmt.Errorf("创建用户公开数字 ID 表: %w", err)
+		}
+		type userRow struct {
+			ID string
+		}
+		var users []userRow
+		if err := tx.Model(&model.User{}).
+			Select("id").
+			Where("NOT EXISTS (?)", tx.Model(&model.UserPublicIdentity{}).
+				Select("1").
+				Where("user_public_identities.user_id = users.id"),
+			).
+			Order("created_at asc, id asc").
+			Find(&users).Error; err != nil {
+			return fmt.Errorf("查询缺少公开数字 ID 的用户: %w", err)
+		}
+		if len(users) == 0 {
+			return nil
+		}
+		identities := make([]model.UserPublicIdentity, 0, len(users))
+		now := time.Now()
+		for _, user := range users {
+			identities = append(identities, model.UserPublicIdentity{UserID: user.ID, CreatedAt: now})
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}},
+			DoNothing: true,
+		}).CreateInBatches(&identities, 500).Error; err != nil {
+			return fmt.Errorf("补齐用户公开数字 ID: %w", err)
+		}
+		return nil
+	})
+}
+
 // prepareLegacyPaymentNulls 是运行时旧库的数据准备阶段，不属于跨库复制前的基础结构创建。
 func prepareLegacyPaymentNulls(db *gorm.DB) error {
 	for _, field := range paymentRequiredStringFields {
@@ -191,6 +231,114 @@ func paymentPredicateMatches(expected string, actual string) bool {
 	default:
 		return false
 	}
+}
+
+const teamCreationIndexSQL = `CREATE UNIQUE INDEX idx_team_owner_creation ON teams(owner_user_id, creation_idempotency_key) WHERE creation_idempotency_key <> ''`
+const teamInvitationIndexSQL = `CREATE UNIQUE INDEX idx_team_pending_invitation_email ON team_invitations(team_id, lower(email)) WHERE status = 'pending'`
+
+// EnsureTeamIntegritySchema verifies the exact team creation idempotency fence before trusting it.
+func EnsureTeamIntegritySchema(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		exists, err := verifyTeamCreationIndex(tx)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if err := tx.Exec(teamCreationIndexSQL).Error; err != nil {
+				return fmt.Errorf("创建团队完整性索引 idx_team_owner_creation 失败: %w", err)
+			}
+		}
+		// 旧索引会永久阻止终态邀请重新创建；新索引只约束待处理邀请。
+		if err := tx.Exec(`DROP INDEX IF EXISTS idx_team_invitation_email`).Error; err != nil {
+			return fmt.Errorf("移除旧团队邀请唯一索引失败: %w", err)
+		}
+		invitationExists, err := verifyTeamInvitationIndex(tx)
+		if err != nil {
+			return err
+		}
+		if !invitationExists {
+			if err := tx.Exec(teamInvitationIndexSQL).Error; err != nil {
+				return fmt.Errorf("创建团队邀请完整性索引 idx_team_pending_invitation_email 失败: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func verifyTeamInvitationIndex(db *gorm.DB) (bool, error) {
+	if db.Dialector.Name() == "postgres" {
+		var definition string
+		result := db.Raw(`SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, "idx_team_pending_invitation_email").Scan(&definition)
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return false, nil
+		}
+		canonical := canonicalPaymentPredicate(definition)
+		if !strings.Contains(canonical, "createuniqueindexidx_team_pending_invitation_email") || !strings.Contains(canonical, "team_invitations") || !strings.Contains(canonical, "team_id") || !strings.Contains(canonical, "loweremail") || !strings.Contains(canonical, "wherestatus='pending'") {
+			return true, fmt.Errorf("团队邀请完整性索引 idx_team_pending_invitation_email 定义错误: %s", definition)
+		}
+		return true, nil
+	}
+	var definition string
+	row := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", "idx_team_pending_invitation_email").Row()
+	if err := row.Scan(&definition); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if compactSchemaSQL(definition) != compactSchemaSQL(teamInvitationIndexSQL) {
+		return true, fmt.Errorf("团队邀请完整性索引 idx_team_pending_invitation_email 定义错误，拒绝信任现有索引: %s", definition)
+	}
+	return true, nil
+}
+
+func verifyTeamCreationIndex(db *gorm.DB) (bool, error) {
+	if db.Dialector.Name() == "postgres" {
+		type indexFacts struct {
+			Unique    bool   `gorm:"column:is_unique"`
+			TableName string `gorm:"column:table_name"`
+			Columns   string `gorm:"column:columns"`
+			Predicate string `gorm:"column:predicate"`
+		}
+		var facts indexFacts
+		result := db.Raw(`
+			SELECT indexes.indisunique AS is_unique,
+			       tables.relname AS table_name,
+			       string_agg(attributes.attname, ',' ORDER BY keys.ordinality) AS columns,
+			       pg_get_expr(indexes.indpred, indexes.indrelid) AS predicate
+			FROM pg_class index_names
+			JOIN pg_namespace namespaces ON namespaces.oid = index_names.relnamespace
+			JOIN pg_index indexes ON indexes.indexrelid = index_names.oid
+			JOIN pg_class tables ON tables.oid = indexes.indrelid
+			JOIN LATERAL unnest(indexes.indkey) WITH ORDINALITY AS keys(attnum, ordinality) ON keys.attnum > 0
+			JOIN pg_attribute attributes ON attributes.attrelid = tables.oid AND attributes.attnum = keys.attnum
+			WHERE namespaces.nspname = current_schema() AND index_names.relname = ?
+			GROUP BY indexes.indisunique, tables.relname, indexes.indpred, indexes.indrelid`, "idx_team_owner_creation").Scan(&facts)
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return false, nil
+		}
+		predicate := canonicalPaymentPredicate(facts.Predicate)
+		if !facts.Unique || facts.TableName != "teams" || facts.Columns != "owner_user_id,creation_idempotency_key" || predicate != "creation_idempotency_key<>''" {
+			return true, fmt.Errorf("团队完整性索引 idx_team_owner_creation 定义错误，实际 table=%s columns=%s predicate=%s", facts.TableName, facts.Columns, facts.Predicate)
+		}
+		return true, nil
+	}
+	var definition string
+	row := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", "idx_team_owner_creation").Row()
+	if err := row.Scan(&definition); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if compactSchemaSQL(definition) != compactSchemaSQL(teamCreationIndexSQL) {
+		return true, fmt.Errorf("团队完整性索引 idx_team_owner_creation 定义错误，拒绝信任现有索引: %s", definition)
+	}
+	return true, nil
 }
 
 func canonicalPaymentPredicate(value string) string {

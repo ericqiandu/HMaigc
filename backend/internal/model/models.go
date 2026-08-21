@@ -182,6 +182,20 @@ type User struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
+const UserPublicIDBase uint64 = 9_999
+
+// UserPublicIdentity maps the internal UUID to a stable, human-facing numeric ID.
+// Number is database-assigned so concurrent registrations cannot collide.
+type UserPublicIdentity struct {
+	Number    uint64    `json:"-" gorm:"primaryKey;autoIncrement"`
+	UserID    string    `json:"userId" gorm:"not null;size:36;uniqueIndex"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (identity UserPublicIdentity) PublicID() uint64 {
+	return UserPublicIDBase + identity.Number
+}
+
 type AuthSession struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string    `json:"userId" gorm:"index;size:36"`
@@ -564,6 +578,16 @@ type SystemSetting struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// DataMigration records completion of one-way historical data normalization.
+// A record is trusted only after CompletedAt is committed in the same transaction
+// as the migrated facts.
+type DataMigration struct {
+	ID          string     `json:"id" gorm:"primaryKey;size:160"`
+	CompletedAt *time.Time `json:"completedAt"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
 type UserOSSSetting struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string    `json:"userId" gorm:"index;size:36;index:idx_user_oss_settings_user_created,priority:1"`
@@ -590,6 +614,47 @@ type UserSkillState struct {
 	Liked     bool      `json:"liked" gorm:"index"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type SkillStatus string
+
+const (
+	SkillStatusDraft     SkillStatus = "draft"
+	SkillStatusPublished SkillStatus = "published"
+	SkillStatusRetired   SkillStatus = "retired"
+)
+
+// Skill 是平台自有技能目录；执行内容固定引用不可变的 SkillVersion。
+type Skill struct {
+	ID               string      `json:"id" gorm:"primaryKey;size:80"`
+	Dir              string      `json:"dir" gorm:"size:120;uniqueIndex"`
+	Name             string      `json:"name" gorm:"size:160"`
+	Description      string      `json:"description" gorm:"size:500"`
+	Icon             string      `json:"icon" gorm:"size:80"`
+	CoverURL         string      `json:"coverUrl" gorm:"size:1000"`
+	CategoriesJSON   string      `json:"-" gorm:"type:text"`
+	Visibility       string      `json:"visibility" gorm:"size:24;index"`
+	Status           SkillStatus `json:"status" gorm:"size:24;index"`
+	CurrentVersionID string      `json:"currentVersionId" gorm:"size:120;index"`
+	SourceKind       string      `json:"sourceKind" gorm:"size:32"`
+	SourceURL        string      `json:"sourceUrl" gorm:"size:1000"`
+	SourceRevision   string      `json:"sourceRevision" gorm:"size:160"`
+	SourceLicense    string      `json:"sourceLicense" gorm:"size:80"`
+	CreatedAt        time.Time   `json:"createdAt"`
+	UpdatedAt        time.Time   `json:"updatedAt"`
+}
+
+// SkillVersion 只允许新增；已发布版本的指令与校验值不得原地修改。
+type SkillVersion struct {
+	ID           string     `json:"id" gorm:"primaryKey;size:120"`
+	SkillID      string     `json:"skillId" gorm:"size:80;index;uniqueIndex:idx_skill_version_number,priority:1"`
+	Version      int        `json:"version" gorm:"uniqueIndex:idx_skill_version_number,priority:2"`
+	Instructions string     `json:"instructions" gorm:"type:text"`
+	Checksum     string     `json:"checksum" gorm:"size:64"`
+	Changelog    string     `json:"changelog" gorm:"size:500"`
+	CreatedBy    string     `json:"createdBy" gorm:"size:80"`
+	PublishedAt  *time.Time `json:"publishedAt" gorm:"index"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 type Resource struct {

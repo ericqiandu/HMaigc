@@ -40,7 +40,7 @@ type SystemProxyRuntime struct {
 
 func (s *Service) resolveFrozenKuaiziBillingRuntime(order *model.BillingOrder) (SystemProxyRuntime, error) {
 	if order == nil || strings.TrimSpace(order.ProviderEndpointVersionID) == "" || strings.TrimSpace(order.ProviderCredentialVersionID) == "" {
-		return SystemProxyRuntime{}, errors.New("Token 账单缺少冻结的供应商版本")
+		return SystemProxyRuntime{}, errors.New("筷子账单缺少冻结的供应商版本")
 	}
 	account, err := s.repo.ProviderAccountByKind(kuaiziProviderKind)
 	if err != nil {

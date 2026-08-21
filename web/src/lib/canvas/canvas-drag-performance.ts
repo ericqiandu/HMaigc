@@ -31,18 +31,25 @@ export function findFrameDropTargetFromContext(context: FrameDropContext | null,
     );
 }
 
-export function applyCanvasLiveNodeDrag(surface: HTMLElement | null, offset: Position) {
-    if (!surface) return;
-    surface.dataset.canvasNodeDragging = "true";
-    surface.style.setProperty("--canvas-live-drag-x", `${offset.x}px`);
-    surface.style.setProperty("--canvas-live-drag-y", `${offset.y}px`);
+export function resolveCanvasLiveNodeDragTargets(surface: HTMLElement | null, draggedNodeIds: ReadonlySet<string>) {
+    if (!surface || draggedNodeIds.size === 0) return [];
+    return Array.from(surface.querySelectorAll<HTMLElement>("[data-node-id]")).filter((element) => draggedNodeIds.has(element.dataset.nodeId || ""));
 }
 
-export function clearCanvasLiveNodeDrag(surface: HTMLElement | null) {
-    if (!surface) return;
-    delete surface.dataset.canvasNodeDragging;
-    surface.style.removeProperty("--canvas-live-drag-x");
-    surface.style.removeProperty("--canvas-live-drag-y");
+export function applyCanvasLiveNodeDrag(targets: readonly HTMLElement[], offset: Position) {
+    for (const target of targets) {
+        target.dataset.canvasNodeDragging = "true";
+        target.style.setProperty("--canvas-live-drag-x", `${offset.x}px`);
+        target.style.setProperty("--canvas-live-drag-y", `${offset.y}px`);
+    }
+}
+
+export function clearCanvasLiveNodeDrag(targets: readonly HTMLElement[]) {
+    for (const target of targets) {
+        delete target.dataset.canvasNodeDragging;
+        target.style.removeProperty("--canvas-live-drag-x");
+        target.style.removeProperty("--canvas-live-drag-y");
+    }
 }
 
 export function shouldSyncCanvasDragPreview(now: number, lastSync: number) {

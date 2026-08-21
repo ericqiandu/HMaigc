@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -32,12 +31,12 @@ func taskConcurrencyCapability(taskType string) (string, error) {
 	}
 }
 
-func (s *Service) membershipActiveTaskPolicy(userID string, taskType string, runtimePolicy RuntimePolicySetting) (repository.ActiveTaskPolicy, string, error) {
+func (s *Service) membershipActiveTaskPolicy(userID string, billingScope billingAccountScope, taskType string, runtimePolicy RuntimePolicySetting) (repository.ActiveTaskPolicy, string, error) {
 	capability, err := taskConcurrencyCapability(taskType)
 	if err != nil {
 		return repository.ActiveTaskPolicy{}, "", err
 	}
-	entitlement, err := s.MembershipEntitlement(&model.User{ID: userID})
+	entitlement, err := s.membershipEntitlementForBillingAccount(userID, billingScope)
 	if err != nil {
 		return repository.ActiveTaskPolicy{}, "", err
 	}
@@ -52,11 +51,13 @@ func (s *Service) membershipActiveTaskPolicy(userID string, taskType string, run
 		return repository.ActiveTaskPolicy{}, "", BadAuthRequest("当前会员套餐未配置有效的任务并发额度")
 	}
 	totalLimit := entitlement.ImageConcurrency + entitlement.VideoConcurrency + runtimePolicy.Task.ActiveTaskLimit
+	billingTeamID := billingScope.TeamID
 	return repository.ActiveTaskPolicy{
 		TotalLimit:      totalLimit,
 		Capability:      capability,
 		CapabilityLimit: capabilityLimit,
 		Unlimited:       entitlement.UnlimitedTaskQueue,
+		BillingTeamID:   &billingTeamID,
 	}, capability, nil
 }
 

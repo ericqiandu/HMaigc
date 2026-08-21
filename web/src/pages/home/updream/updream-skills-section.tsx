@@ -1,4 +1,5 @@
-import { BadgeCheck, ChevronRight, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { BadgeCheck, ChevronRight, RefreshCw, Sparkles } from "lucide-react";
 import { Link } from "react-router";
 
 import { useSiteSettings } from "@/components/site/site-settings-provider";
@@ -8,101 +9,55 @@ import skill3 from "@/pages/home/updream/assets/skill-3.png";
 import skill4 from "@/pages/home/updream/assets/skill-4.png";
 import skill5 from "@/pages/home/updream/assets/skill-5.png";
 import skill6 from "@/pages/home/updream/assets/skill-6.png";
+import { listSkillsCatalog, skillImageUrl, type PlatformSkill } from "@/services/api/skills";
 
-interface Skill {
-    title: string;
-    author: string;
-    description: string;
-    uses: string;
-    thumbnail: string;
-    gradient: string;
-}
+const HOME_SKILL_COVERS: Readonly<Record<string, string>> = {
+    "screenplay-writer": skill1,
+    "short-drama-director": skill2,
+    "story-development": skill3,
+    "storyboard-continuity-director": skill4,
+    "commercial-film-director": skill5,
+    "suspense-visual-director": skill6,
+};
 
-const SKILLS: readonly Skill[] = [
-    {
-        title: "剧本策划助手",
-        author: "官方",
-        description: "对剧本、故事梗概、角色设定或原始想法做诊断、策划、结构优化、大纲扩写和正文改写。",
-        uses: "3.4 k",
-        thumbnail: skill1,
-        gradient: "linear-gradient(115deg, #b2309e 0%, #d671c2 55%, #efa9dc 100%)",
-    },
-    {
-        title: "剧本转视频提示词",
-        author: "官方",
-        description: "将完整剧本的文本一键转换为严格时间码视频提示词。",
-        uses: "1.3 k",
-        thumbnail: skill2,
-        gradient: "linear-gradient(115deg, #2e8bdd 0%, #6aa9e8 55%, #9fc6ef 100%)",
-    },
-    {
-        title: "剧本直出美术资产",
-        author: "官方",
-        description: "将剧本、小说或故事文本拆解为资产清单、分场美术演变表（Markdown 表格）和固定美学提示词。",
-        uses: "662",
-        thumbnail: skill3,
-        gradient: "linear-gradient(115deg, #ec872f 0%, #f3a964 55%, #f7ca9e 100%)",
-    },
-    {
-        title: "分镜光影设计",
-        author: "官方",
-        description: "为分镜图、分镜视频、分镜脚本、剧本或故事梗概建立统一光影逻辑。",
-        uses: "263",
-        thumbnail: skill4,
-        gradient: "linear-gradient(115deg, #8ab2f9 0%, #acc0fb 55%, #cdbcf7 100%)",
-    },
-    {
-        title: "人物多视角生成",
-        author: "官方",
-        description: "为人物角色规划特殊视角、环视机位、视角迁移 prompt，并在需要时生成一致性视角图。",
-        uses: "2.3 k",
-        thumbnail: skill5,
-        gradient: "linear-gradient(115deg, #f27ba0 0%, #f69cba 55%, #f9c2d3 100%)",
-    },
-    {
-        title: "外部模型直连器",
-        author: "杨浦吴彦祖",
-        description: "由平台管理员统一接入并维护图片、视频与文本模型，用户无需管理 API 密钥，可直接在创作流程中使用已启用的系统模型。",
-        uses: "249",
-        thumbnail: skill6,
-        gradient: "linear-gradient(115deg, #63b3e8 0%, #8ac5ee 55%, #a9d6f2 100%)",
-    },
+const CARD_GRADIENTS = [
+    "linear-gradient(115deg, #3447c8 0%, #6675e0 55%, #8994eb 100%)",
+    "linear-gradient(115deg, #16697a 0%, #2a8998 55%, #63aeba 100%)",
+    "linear-gradient(115deg, #70409b 0%, #9365b8 55%, #b28dca 100%)",
+    "linear-gradient(115deg, #9b542f 0%, #ba7650 55%, #d29a77 100%)",
 ] as const;
 
-function UpdreamSkillCard({ skill, siteName }: { skill: Skill; siteName: string }) {
+function FirstPartySkillCard({ skill, siteName, index }: { skill: PlatformSkill; siteName: string; index: number }) {
+    const coverURL = HOME_SKILL_COVERS[skill.dir] ?? skillImageUrl(skill.cover_url);
     return (
         <Link to="/skills" className="updream-skill-link block">
             <article
-                className="updream-skill-card relative h-[176px] cursor-pointer rounded-[18px] p-5 pr-[152px] transition-transform duration-300 hover:-translate-y-1"
-                style={{ background: skill.gradient }}
+                className="updream-skill-card relative h-[176px] cursor-pointer overflow-hidden rounded-[18px] p-5 pr-[152px] transition-transform duration-300 hover:-translate-y-1"
+                style={{ background: CARD_GRADIENTS[index % CARD_GRADIENTS.length] }}
             >
                 <div className="updream-skill-heading flex items-center gap-2.5">
                     <span className="updream-skill-mark flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-white/30 bg-white/20 text-white backdrop-blur-sm">
-                        <Zap className="updream-skill-mark-icon size-4 fill-current" />
+                        <Sparkles className="updream-skill-mark-icon size-4" />
                     </span>
                     <div className="updream-skill-meta min-w-0">
-                        <h3 className="updream-skill-title truncate text-[15px] font-semibold leading-5 text-white">
-                            {skill.title}
-                        </h3>
+                        <h3 className="updream-skill-title truncate text-[15px] font-semibold leading-5 text-white">{skill.name}</h3>
                         <p className="updream-skill-author mt-0.5 flex items-center gap-1 text-[11px] text-white/75">
                             <BadgeCheck className="updream-skill-verified size-3" />
-                            {skill.author === "官方" ? `${siteName} 官方` : skill.author}
+                            {siteName} 官方
                         </p>
                     </div>
                 </div>
-                <p className="updream-skill-description mt-3 line-clamp-2 text-[12px] leading-[1.6] text-white/85">
-                    {skill.description}
+                <p className="updream-skill-description mt-3 line-clamp-2 text-[12px] leading-[1.6] text-white/85">{skill.description}</p>
+                <p className="updream-skill-version absolute bottom-4 left-5 text-[11px] text-white/75">
+                    V{skill.version} · {skill.source_kind === "original" ? "平台原创" : "授权改编"}
                 </p>
-                <p className="updream-skill-uses absolute bottom-4 left-5 flex items-center gap-1.5 text-[11px] text-white/75">
-                    使用次数
-                    <Zap className="updream-skill-uses-icon size-[11px] fill-current" />
-                    {skill.uses}
-                </p>
-                <img
-                    src={skill.thumbnail}
-                    alt={skill.title}
-                    className="updream-skill-thumbnail absolute right-5 top-5 h-[160px] w-[128px] rounded-xl object-cover shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
-                />
+                {coverURL ? (
+                    <img src={coverURL} alt="" loading="lazy" className="updream-skill-thumbnail absolute right-5 top-5 h-[136px] w-[108px] rounded-xl object-cover shadow-[0_8px_24px_rgba(0,0,0,0.35)]" />
+                ) : (
+                    <span className="updream-skill-fallback absolute right-5 top-5 flex h-[136px] w-[108px] items-center justify-center rounded-xl bg-white/12 text-white/80 shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur-sm" aria-hidden="true">
+                        <Sparkles className="updream-skill-fallback-icon size-9" />
+                    </span>
+                )}
             </article>
         </Link>
     );
@@ -110,21 +65,56 @@ function UpdreamSkillCard({ skill, siteName }: { skill: Skill; siteName: string 
 
 export function UpdreamSkillsSection() {
     const { settings } = useSiteSettings();
+    const [skills, setSkills] = useState<PlatformSkill[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+    const [reloadKey, setReloadKey] = useState(0);
+
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        setError("");
+        listSkillsCatalog({ page: 1, page_size: 6 })
+            .then((catalog) => {
+                if (!cancelled) setSkills(catalog.skills);
+            })
+            .catch((reason: unknown) => {
+                if (!cancelled) setError(reason instanceof Error ? reason.message : "技能目录加载失败");
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [reloadKey]);
 
     return (
         <section className="updream-skills mx-auto w-full max-w-[1408px] px-4 pb-24 sm:px-8">
             <div className="updream-skills-heading mb-5 flex items-center justify-between">
-                <h2 className="updream-skills-title text-[20px] font-semibold text-white">官方精选技能</h2>
+                <h2 className="updream-skills-title text-[20px] font-semibold text-white">官方导演技能</h2>
                 <Link to="/skills" className="updream-skills-all flex items-center gap-0.5 text-[13px] text-white/45 transition-colors hover:text-white/80">
                     查看全部
                     <ChevronRight className="updream-skills-all-icon size-3.5" />
                 </Link>
             </div>
-            <div className="updream-skills-grid grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
-                {SKILLS.map((skill) => (
-                    <UpdreamSkillCard key={skill.title} skill={skill} siteName={settings.siteName} />
-                ))}
-            </div>
+            {loading ? <p className="updream-skills-loading py-8 text-sm text-white/55">正在加载平台技能…</p> : null}
+            {!loading && error ? (
+                <div className="updream-skills-error flex items-center gap-3 py-8 text-sm text-white/65" role="alert">
+                    <span className="updream-skills-error-text">{error}</span>
+                    <button type="button" className="updream-skills-retry inline-flex items-center gap-1 text-white hover:text-white/75" onClick={() => setReloadKey((value) => value + 1)}>
+                        <RefreshCw className="updream-skills-retry-icon size-3.5" />
+                        重试
+                    </button>
+                </div>
+            ) : null}
+            {!loading && !error ? (
+                <div className="updream-skills-grid grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
+                    {skills.map((skill, index) => (
+                        <FirstPartySkillCard key={skill.dir} skill={skill} siteName={settings.siteName} index={index} />
+                    ))}
+                </div>
+            ) : null}
         </section>
     );
 }

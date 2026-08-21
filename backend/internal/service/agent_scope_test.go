@@ -47,7 +47,7 @@ func TestAuthorizeAgentScopeUsesTeamAccessAndSubscriptionFacts(t *testing.T) {
 	owner := createTeamTestUser(t, db, "agent-team-owner", "agent-team-owner@example.com")
 	member := createTeamTestUser(t, db, "agent-team-member", "agent-team-member@example.com")
 	outsider := createTeamTestUser(t, db, "agent-team-outsider", "agent-team-outsider@example.com")
-	team, err := svc.CreateTeam(owner, CreateTeamRequest{Name: "Agent Team"})
+	team, err := svc.CreateTeam(owner, teamCreateRequest("Agent Team"))
 	if err != nil {
 		t.Fatal(err)
 	}

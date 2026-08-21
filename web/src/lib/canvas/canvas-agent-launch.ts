@@ -1,16 +1,29 @@
 import type { AgentSessionDetail } from "@/services/api/task-center";
+import type { CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
 import type { CanvasAgentLaunchRequest, CanvasAssistantSession } from "@/types/canvas";
 
 const PROJECT_TITLE_LIMIT = 24;
 
-export function createCanvasAgentLaunchRequest(input: { prompt: string; id: string; createdAt: string }): CanvasAgentLaunchRequest {
-    const { prompt, id, createdAt } = input;
-    const normalizedPrompt = prompt.trim();
+export function createCanvasAgentLaunchRequest(input: { draft: CanvasAgentDraft; id: string; createdAt: string }): CanvasAgentLaunchRequest {
+    const { draft, id, createdAt } = input;
+    const normalizedPrompt = draft.prompt.trim();
     if (!normalizedPrompt) throw new Error("创作描述不能为空");
+    if (draft.attachments.length > 4) throw new Error("一次最多添加 4 张参考图片");
+    const attachments = draft.attachments.map((attachment) => {
+        const resourceId = attachment.resourceId?.trim();
+        if (!resourceId) throw new Error("参考图片尚未保存到账号资源");
+        return { resourceId, name: attachment.name.trim() || "参考图片" };
+    });
+    const skillDirs = [...new Set(draft.skillSelections.map((skill) => skill.dir.trim()).filter(Boolean))].sort();
+    if (skillDirs.length > 8) throw new Error("一次最多选择 8 个 Skills");
     return {
         id,
         source: "home",
         prompt: normalizedPrompt,
+        attachments,
+        generationModels: { ...draft.generationModels },
+        skillDirs,
+        executionMode: draft.executionMode,
         createdAt,
     };
 }

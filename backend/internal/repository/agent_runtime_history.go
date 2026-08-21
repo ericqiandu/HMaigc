@@ -39,6 +39,8 @@ type agentThreadHistoryRow struct {
 	RunModelRecordID      *string                   `gorm:"column:run_model_record_id"`
 	RunModelKey           *string                   `gorm:"column:run_model_key"`
 	RunToolSchemaVersion  *int                      `gorm:"column:run_tool_schema_version"`
+	RunRuntimeVersion     *int                      `gorm:"column:run_runtime_version"`
+	RunPolicyVersion      *int                      `gorm:"column:run_policy_version"`
 	RunCreatedAt          *time.Time                `gorm:"column:run_created_at"`
 	RunUpdatedAt          *time.Time                `gorm:"column:run_updated_at"`
 	RunCompletedAt        *time.Time                `gorm:"column:run_completed_at"`
@@ -89,6 +91,8 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 		       ranked_runs.model_record_id AS run_model_record_id,
 		       ranked_runs.model_key AS run_model_key,
 		       ranked_runs.tool_schema_version AS run_tool_schema_version,
+		       ranked_runs.runtime_version AS run_runtime_version,
+		       ranked_runs.policy_version AS run_policy_version,
 		       ranked_runs.created_at AS run_created_at,
 		       ranked_runs.updated_at AS run_updated_at,
 		       ranked_runs.completed_at AS run_completed_at,
@@ -134,7 +138,8 @@ func agentThreadHistoryRecord(row agentThreadHistoryRow) (AgentThreadHistoryReco
 	}
 	if row.RunThreadID == nil || row.RunActorUserID == nil || row.RunClientRequestID == nil || row.RunStatus == nil ||
 		row.RunLastEventSequence == nil || row.RunStateVersion == nil || row.RunStepNumber == nil || row.RunMaxSteps == nil ||
-		row.RunModelRecordID == nil || row.RunModelKey == nil || row.RunToolSchemaVersion == nil || row.RunCreatedAt == nil ||
+		row.RunModelRecordID == nil || row.RunModelKey == nil || row.RunToolSchemaVersion == nil ||
+		row.RunRuntimeVersion == nil || row.RunPolicyVersion == nil || row.RunCreatedAt == nil ||
 		row.RunUpdatedAt == nil || row.LatestStateJSON == nil {
 		return AgentThreadHistoryRecord{}, errors.New("agent thread history facts are incomplete")
 	}
@@ -144,7 +149,8 @@ func agentThreadHistoryRecord(row agentThreadHistoryRow) (AgentThreadHistoryReco
 		LastEventSequence: *row.RunLastEventSequence, StateVersion: *row.RunStateVersion,
 		StepNumber: *row.RunStepNumber, MaxSteps: *row.RunMaxSteps,
 		ModelRecordID: *row.RunModelRecordID, ModelKey: *row.RunModelKey,
-		ToolSchemaVersion: *row.RunToolSchemaVersion, CreatedAt: *row.RunCreatedAt,
+		ToolSchemaVersion: *row.RunToolSchemaVersion, RuntimeVersion: *row.RunRuntimeVersion,
+		PolicyVersion: *row.RunPolicyVersion, CreatedAt: *row.RunCreatedAt,
 		UpdatedAt: *row.RunUpdatedAt, CompletedAt: row.RunCompletedAt,
 	}
 	record.StateJSON = *row.LatestStateJSON

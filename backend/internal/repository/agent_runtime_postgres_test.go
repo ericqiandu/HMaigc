@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -17,6 +19,105 @@ import (
 	postgresdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	const stateJSON = `{"stateVersion":1,"stepNumber":0,"maxSteps":6,"status":"queued","userMessage":"生成短剧样片"}`
+	run := model.AgentRun{
+		ID: "postgres-legacy-queued-run", ThreadID: "postgres-legacy-thread", ActorUserID: "postgres-legacy-user",
+		ClientRequestID: "postgres-legacy-request", Status: agentruntime.RunQueued, LastEventSequence: 1,
+		StateVersion: 1, MaxSteps: 6, ModelRecordID: "postgres-legacy-model-record",
+		ModelKey: "postgres-legacy-model", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
+		RuntimeVersion: 1, PolicyVersion: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRunEvent{
+		ID: "postgres-legacy-event-1", RunID: run.ID, Sequence: 1,
+		Kind: agentruntime.EventRunCreated, PayloadJSON: stateJSON, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentCheckpoint{
+		ID: "postgres-legacy-checkpoint-1", RunID: run.ID, Sequence: 1,
+		StateVersion: 1, StateJSON: stateJSON, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	legacyTask := model.Task{
+		ID: legacyAgentRuntimeModelTaskID(run.ID, 0), UserID: run.ActorUserID, ProjectID: "postgres-legacy-canvas",
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusSucceeded, Operation: "agent_model:" + run.ID,
+		Provider: "system", Model: run.ModelKey, BillingOrderID: "postgres-legacy-model-order",
+		CreatedAt: now, UpdatedAt: now, CompletedAt: &now,
+	}
+	legacyOrder := model.BillingOrder{
+		ID: legacyTask.BillingOrderID, UserID: run.ActorUserID, TaskID: legacyTask.ID,
+		IdempotencyKey: "agent-runtime:" + run.ID + ":0", Scene: "agent_runtime_model",
+		ChannelModelID: run.ModelRecordID, Model: run.ModelKey, Capability: "text",
+		Quantity: 1, Status: model.BillingStatusSettled, AmountMicrocredits: 1,
+		CreatedAt: now, UpdatedAt: now, SettledAt: &now,
+	}
+	if err := db.Create(&legacyTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&legacyOrder).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("PostgreSQL hard cutover failed: %v", err)
+	}
+	var stored model.AgentRun
+	if err := db.First(&stored, "id = ?", run.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != agentruntime.RunFailed || stored.StateVersion != 2 || stored.LastEventSequence != 2 || stored.CompletedAt == nil {
+		t.Fatalf("PostgreSQL retired run = %#v", stored)
+	}
+	var event model.AgentRunEvent
+	if err := db.First(&event, "run_id = ? AND sequence = ?", run.ID, 2).Error; err != nil {
+		t.Fatal(err)
+	}
+	var terminal struct {
+		StateVersion int                    `json:"stateVersion"`
+		Status       agentruntime.RunStatus `json:"status"`
+		FailureCode  string                 `json:"failureCode"`
+	}
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &terminal); err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != agentruntime.EventRunFailed || terminal.FailureCode != "tool_schema_retired" {
+		t.Fatalf("PostgreSQL retirement event=%#v state=%#v", event, terminal)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.First(&checkpoint, "run_id = ? AND sequence = ?", run.ID, 2).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.StateVersion != terminal.StateVersion || checkpoint.StateJSON != event.PayloadJSON {
+		t.Fatalf("PostgreSQL terminal facts disagree: checkpoint=%#v event=%#v", checkpoint, event)
+	}
+	var storedTask model.Task
+	if err := db.First(&storedTask, "id = ?", legacyTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", legacyOrder.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != legacyTask.Status || storedOrder.Status != legacyOrder.Status || storedOrder.AmountMicrocredits != legacyOrder.AmountMicrocredits {
+		t.Fatalf("PostgreSQL migration changed commercial facts: task=%#v order=%#v", storedTask, storedOrder)
+	}
+}
+
+func legacyAgentRuntimeModelTaskID(runID string, step int) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("agent-runtime-model\x00%s\x00%d", runID, step)))
+	return fmt.Sprintf("agt_%x", digest[:16])
+}
 
 func TestPostgresAgentRuntimeIntegrityAndScopeIsolation(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
@@ -310,7 +411,8 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "读取当前画布", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -320,8 +422,8 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasReadState,
-			ActionVersion: 1, Arguments: []byte(`{}`),
+			ToolCallID: "call-read-state", ToolName: agentruntime.ToolProductionPlan,
+			ActionVersion: 1, Arguments: []byte(`{"planKey":"plan-pg"}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 		},
 	}})
 	if err != nil {
@@ -390,7 +492,8 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, firstRepo, scope)
 	if _, err := firstRepo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, UserMessage: "修改当前画布", Now: time.Now().UTC(),
+		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -401,8 +504,9 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
-			Arguments: []byte(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"node-pg"}]}}`),
+			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+			Arguments:        []byte(`{"planKey":"plan-pg","planVersion":1,"baseRevision":7,"artifactIds":["artifact-pg"]}`),
+			ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})
 	if err != nil {
@@ -411,22 +515,13 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	if err := firstRepo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
-		ToolCallID: "call-pg-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
+	started, err := agentruntime.BeginToolExecution(requested.State, agentruntime.ToolExecution{
 		ToolCallID: "call-pg-apply", ActionVersion: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := firstRepo.CommitAgentRuntimeTransition(scope, approved.State, started, time.Now().UTC()); err != nil {
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, started, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -502,7 +597,8 @@ func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, New(db), scope)
 	input := InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "agent-model-record", ModelKey: "gpt-5.5",
-		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取画布并给出下一步", Now: time.Now().UTC(),
+		MaxSteps: 6, ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取画布并给出下一步",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}
 	start := make(chan struct{})
 	results := make(chan *InitializedAgentRun, 2)
@@ -546,6 +642,73 @@ func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	input.ModelKey = "different-model"
 	if _, err := New(secondDB).InitializeAgentRun(input); !errors.Is(err, ErrAgentRuntimeInitializationConflict) {
 		t.Fatalf("PostgreSQL conflicting replay = %v", err)
+	}
+}
+
+func TestPostgresAgentProductionPlanVersionCASAcrossConnections(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := openSecondAgentPostgresConnection(t, db)
+	firstRepo, secondRepo := New(db), New(secondDB)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, firstRepo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := firstRepo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "postgres-production-plan", BaseVersion: 0,
+		Draft: twoShotProductionPlanDraft("基础版本"), Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wait sync.WaitGroup
+	for index, candidate := range []*Repository{firstRepo, secondRepo} {
+		index, candidate := index, candidate
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := candidate.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+				Scope: scope, RunID: scope.RunID, PlanKey: "postgres-production-plan", BaseVersion: 1,
+				Draft: twoShotProductionPlanDraft(fmt.Sprintf("并发版本 %d", index+1)), Now: now.Add(time.Second),
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+
+	succeeded, conflicted := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrAgentProductionPlanVersionConflict):
+			conflicted++
+		default:
+			t.Fatalf("PostgreSQL production plan append error = %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("PostgreSQL production plan CAS: succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
+	var plans int64
+	var artifacts int64
+	if err := db.Model(&model.AgentProductionPlanVersion{}).Where("plan_key = ?", "postgres-production-plan").Count(&plans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_key = ?", "postgres-production-plan").Count(&artifacts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if plans != 2 || artifacts != 10 {
+		t.Fatalf("PostgreSQL production plan facts: plans=%d artifacts=%d", plans, artifacts)
 	}
 }
 

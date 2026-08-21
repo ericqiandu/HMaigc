@@ -60,6 +60,195 @@
     color: var(--credit-accent);
 }
 
+.site-account-popover {
+    --component-floating-shadow: var(--floating-surface-shadow);
+
+    color: var(--text-primary);
+    font-family: var(--font-family-sans);
+}
+
+.site-account-popover.ant-popover > .ant-popover-container {
+    width: 340px;
+    max-height: calc(100vh - 96px);
+    padding: var(--space-3);
+    overflow-x: hidden;
+    overflow-y: auto;
+    border: 1px solid var(--floating-surface-border) !important;
+    border-radius: var(--radius-md) !important;
+    background: var(--account-popover-surface) !important;
+    color: var(--text-primary);
+    box-shadow: var(--floating-surface-shadow) !important;
+}
+
+.site-account-popover .ant-popover-content {
+    padding: 0;
+    color: inherit;
+    font-family: inherit;
+}
+
+.site-account-popover .ant-popover-arrow::before {
+    background: var(--account-popover-surface) !important;
+}
+
+.site-account-menu {
+    display: flex;
+    width: 316px;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: 0;
+    color: var(--text-primary);
+    font-family: var(--font-family-sans);
+    font-size: var(--text-sm);
+    line-height: 22px;
+    font-synthesis: none;
+}
+
+.site-account-summary {
+    height: 64px;
+    gap: 10px;
+    padding: var(--space-2);
+}
+
+.site-account-divider {
+    width: 100%;
+    height: 1px;
+    flex: none;
+    background: var(--floating-surface-border);
+}
+
+.site-account-display-name {
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    line-height: 20px;
+    font-weight: var(--font-semibold);
+    letter-spacing: -0.224px;
+}
+
+.site-account-username {
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    line-height: 17px;
+    font-weight: var(--font-regular);
+    letter-spacing: -0.12px;
+}
+
+.site-account-switch-team {
+    display: flex;
+    width: 80px;
+    height: 28px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-full);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.site-account-switch-team:hover {
+    background: var(--border-default);
+}
+
+.site-account-switch-team-icon {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    color: var(--text-tertiary);
+    stroke-width: 2;
+}
+
+.site-account-menu-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: 0;
+}
+
+.site-account-menu-link,
+.site-account-theme,
+.site-account-logout {
+    height: 44px;
+    min-height: 44px;
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+    font-size: var(--text-sm);
+    line-height: 22px;
+    font-weight: var(--font-regular);
+    letter-spacing: -0.224px;
+}
+
+.site-account-menu-link,
+.site-account-logout {
+    border-radius: var(--radius-xs);
+}
+
+.site-account-menu-link,
+.site-account-theme {
+    color: var(--text-secondary);
+}
+
+.site-account-menu-link--mobile-wallet {
+    display: none;
+}
+
+.site-account-theme {
+    justify-content: space-between;
+    padding: var(--space-2);
+}
+
+.site-account-theme-options {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+.site-account-theme-option {
+    display: grid;
+    width: 36px;
+    height: 24px;
+    place-items: center;
+    border-radius: var(--radius-full);
+    color: var(--text-tertiary);
+}
+
+.site-account-theme-option:hover,
+.site-account-theme-option--active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.site-account-theme-option-icon {
+    width: 16px;
+    height: 16px;
+    stroke-width: 1.75;
+}
+
+.site-account-menu-label,
+.site-account-theme-label,
+.site-account-logout-label {
+    font: inherit;
+    letter-spacing: inherit;
+    white-space: nowrap;
+}
+
+.site-account-menu-link:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.site-account-menu-icon,
+.site-account-logout-icon {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    color: var(--text-tertiary);
+    stroke-width: 1.7;
+}
+
 .site-account-upgrade:focus-visible,
 .site-account-auth:focus-visible,
 .site-account-notifications:focus-visible,
@@ -68,19 +257,178 @@
 .site-account-trigger:focus-visible,
 .referral-reward-trigger:focus-visible,
 .site-account-menu-link:focus-visible,
-.site-account-theme-switch:focus-visible,
+.site-account-switch-team:focus-visible,
+.site-account-theme-option:focus-visible,
+.site-account-team-option:focus-visible,
+.site-account-team-retry:focus-visible,
 .site-account-logout:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
 }
 
 .site-account-logout {
-    color: var(--status-danger);
+    color: var(--text-secondary);
 }
 
 .site-account-logout:hover {
-    background: color-mix(in srgb, var(--status-danger) 8%, transparent);
-    color: var(--status-danger);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.site-account-team-popover {
+    --component-floating-shadow: var(--floating-surface-shadow);
+
+    color: var(--text-primary);
+    font-family: var(--font-family-sans);
+}
+
+.site-account-team-popover.ant-popover > .ant-popover-container {
+    width: 236px;
+    max-height: calc(100vh - 96px);
+    padding: var(--space-2);
+    overflow: hidden auto;
+    border: 1px solid var(--floating-surface-border) !important;
+    border-radius: var(--radius-md) !important;
+    background: var(--account-popover-surface) !important;
+    color: var(--text-primary);
+    box-shadow: var(--floating-surface-shadow) !important;
+}
+
+.site-account-team-popover .ant-popover-content {
+    padding: 0;
+    color: inherit;
+    font-family: inherit;
+}
+
+.site-account-team-popover .ant-popover-arrow::before {
+    background: var(--account-popover-surface) !important;
+}
+
+.site-account-team-panel {
+    display: flex;
+    width: 218px;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--text-primary);
+    font-family: var(--font-family-sans);
+}
+
+.site-account-team-section-label {
+    padding: var(--space-2) var(--space-2) var(--space-1);
+    color: var(--text-tertiary);
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: var(--font-medium);
+}
+
+.site-account-team-section-label--teams {
+    margin-top: var(--space-1);
+}
+
+.site-account-team-option {
+    display: flex;
+    width: 100%;
+    min-height: 36px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border-radius: var(--radius-xs);
+    color: var(--text-secondary);
+    text-align: left;
+}
+
+.site-account-team-option:hover,
+.site-account-team-option--active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.site-account-team-option-avatar {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex: none;
+    place-items: center;
+    border-radius: var(--radius-full);
+    background: var(--bg-hover);
+    color: var(--brand-primary);
+}
+
+.site-account-team-option-avatar--personal {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+.site-account-team-option-avatar-icon,
+.site-account-team-option-check {
+    width: 13px;
+    height: 13px;
+    stroke-width: 2;
+}
+
+.site-account-team-option-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    font-size: var(--text-sm);
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.site-account-team-option-check {
+    flex: none;
+    color: var(--brand-primary);
+}
+
+.site-account-team-list {
+    display: flex;
+    max-height: 240px;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+}
+
+.site-account-team-state {
+    display: flex;
+    min-height: 52px;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-2);
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    line-height: 18px;
+    text-align: center;
+}
+
+.site-account-team-state--error {
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.site-account-team-retry {
+    display: flex;
+    height: 28px;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-full);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+.site-account-team-retry:hover {
+    color: var(--text-primary);
+}
+
+.site-account-team-retry-icon {
+    width: 12px;
+    height: 12px;
+}
+
+.site-account-team-retry-label {
+    font-size: var(--text-xs);
+    line-height: 16px;
 }
 
 @media (max-width: 639px) {
@@ -93,6 +441,12 @@
     .site-account-pill,
     .referral-reward-trigger {
         min-width: 44px;
+        min-height: 44px;
+    }
+
+    .site-account-menu-link,
+    .site-account-theme,
+    .site-account-logout {
         min-height: 44px;
     }
 }
@@ -115,5 +469,21 @@
 
     .site-account-upgrade-label {
         display: none;
+    }
+
+    .site-account-popover.ant-popover > .ant-popover-container {
+        width: min(340px, calc(100vw - 24px));
+    }
+
+    .site-account-team-popover.ant-popover > .ant-popover-container {
+        width: min(236px, calc(100vw - 24px));
+    }
+
+    .site-account-menu {
+        width: 100%;
+    }
+
+    .site-account-menu-link--mobile-wallet {
+        display: flex;
     }
 }

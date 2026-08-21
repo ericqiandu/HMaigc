@@ -26,29 +26,30 @@ import (
 )
 
 type Service struct {
-	repo                 *repository.Repository
-	dataDir              string
-	cancelMu             sync.Mutex
-	registrationMu       sync.Mutex
-	emailCodeMu          sync.Mutex
-	redeemBatchMu        sync.Mutex
-	storageMu            sync.Mutex
-	storageMigrationMu   sync.Mutex
-	storageMigrationOnce sync.Once
-	sessionCreateMu      sync.Mutex
-	characterTaskMu      sync.Mutex
-	agentDriveMu         sync.Mutex
-	agentDriveCursor     string
-	siteSettingMu        sync.Mutex
-	voicePreviewGroup    singleflight.Group
-	activeCancels        map[string]context.CancelFunc
-	pendingStorage       map[string]int64
-	pendingTeamStorage   map[string]int64
-	coordinator          *runtimeCoordinator
-	runtimeErr           error
-	workerID             string
-	operationsClient     opsprotocol.Client
-	mediaDurationProbe   mediaDurationProbe
+	repo                      *repository.Repository
+	dataDir                   string
+	cancelMu                  sync.Mutex
+	registrationMu            sync.Mutex
+	emailCodeMu               sync.Mutex
+	redeemBatchMu             sync.Mutex
+	storageMu                 sync.Mutex
+	storageMigrationMu        sync.Mutex
+	storageMigrationOnce      sync.Once
+	sessionCreateMu           sync.Mutex
+	characterTaskMu           sync.Mutex
+	agentRecoveryMu           sync.Mutex
+	agentRecoveryCursor       string
+	siteSettingMu             sync.Mutex
+	voicePreviewGroup         singleflight.Group
+	activeCancels             map[string]context.CancelFunc
+	pendingStorage            map[string]int64
+	pendingTeamStorage        map[string]int64
+	coordinator               *runtimeCoordinator
+	runtimeErr                error
+	workerID                  string
+	operationsClient          opsprotocol.Client
+	mediaDurationProbe        mediaDurationProbe
+	agentRuntimeSkillResolver func(context.Context, string, string) (*Skill, error)
 }
 
 const taskWorkerConcurrency = 3
@@ -84,6 +85,7 @@ type taskCreationIdentity struct {
 	TaskID                 string
 	BillingIdempotencyKey  string
 	UseCurrentBillingQuote bool
+	TypedInputJSON         json.RawMessage
 }
 
 type SessionDetail struct {
@@ -192,16 +194,12 @@ func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
 
 func (s *Service) StartWorker() {
 	go func() {
-		drive := func() {
-			if err := s.DriveAgentRuns(100); err != nil {
-				log.Printf("agent runtime drive failed: %v", err)
-			}
-		}
-		drive()
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			drive()
+			if err := s.RecoverStaleAgentRuns(time.Now().UTC(), 100); err != nil {
+				log.Printf("agent runtime stale recovery failed: %v", err)
+			}
 		}
 	}()
 	go func() {
@@ -241,7 +239,9 @@ func (s *Service) StartWorker() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			_ = s.RunTokenBillingReconciliationBatch(context.Background(), time.Now(), 20)
+			if err := s.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now(), 20); err != nil {
+				log.Printf("event=kuaizi_billing_reconciliation_batch_failed error=%q", err.Error())
+			}
 			<-ticker.C
 		}
 	}()
@@ -382,6 +382,14 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if prompt == "" {
 		return nil, errors.New("prompt is required")
 	}
+	if len(identity.TypedInputJSON) > 0 {
+		if req.Input != nil || !json.Valid(identity.TypedInputJSON) {
+			return nil, errors.New("typed task input facts are invalid")
+		}
+		if err := json.Unmarshal(identity.TypedInputJSON, &req.Input); err != nil {
+			return nil, errors.New("typed task input facts are invalid")
+		}
+	}
 	normalizedInput, err := normalizeTaskInput(req.Input)
 	if err != nil {
 		return nil, err
@@ -412,11 +420,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if taskType == "" {
 		taskType = "video_image_to_video"
 	}
-	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, taskType, policy)
-	if err != nil {
-		return nil, err
-	}
-	task := model.Task{ID: identity.TaskID, UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Capability: capability, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	task := model.Task{ID: identity.TaskID, UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
@@ -424,6 +428,11 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if err != nil {
 		return nil, err
 	}
+	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, taskType, policy)
+	if err != nil {
+		return nil, err
+	}
+	task.Capability = capability
 	if identity.BillingIdempotencyKey != "" {
 		billingOrder.IdempotencyKey = identity.BillingIdempotencyKey
 	}
@@ -584,7 +593,11 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 			return nil, err
 		}
-		activeTaskPolicy, capability, policyErr := s.membershipActiveTaskPolicy(userID, task.Type, policy)
+		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
+		if orderErr != nil {
+			return nil, orderErr
+		}
+		activeTaskPolicy, capability, policyErr := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: order.TeamID}, task.Type, policy)
 		if policyErr != nil {
 			return nil, policyErr
 		}
@@ -633,7 +646,7 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, task.Type, policy)
+	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, task.Type, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -982,18 +995,17 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	runID := ""
 	if task.Type == agentRuntimeModelTaskType {
 		runID, _ = agentRuntimeModelRunID(task.Operation)
-	} else if generationRunID, generationTask := agentGenerationRunID(task.Operation); generationTask {
-		runID = generationRunID
+	} else if productionRunID, productionTask := agentProductionRenderRunID(task.Operation); productionTask {
+		runID = productionRunID
 	}
 	if runID != "" {
 		defer func() {
 			reference := repository.ActiveAgentRunReference{RunID: runID, ActorUserID: task.UserID}
-			var err error
+			wakeup := agentWakeGenerationTaskFinished
 			if task.Type == agentRuntimeModelTaskType {
-				err = s.resumeAgentRunReference(reference)
-			} else {
-				err = s.driveAgentRunReference(reference)
+				wakeup = agentWakeModelTaskFinished
 			}
+			err := s.advanceAgentRunReference(reference, wakeup)
 			if err != nil {
 				_ = s.log(task.UserID, task.ID, "error", "Agent 运行恢复失败", taskFailureMessage(err))
 			}
@@ -1028,6 +1040,14 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	defer s.unregisterActiveTask(task.ID)
 
 	reconcilingCancellation := task.Status == model.TaskStatusCancelled
+	tokenBilledTask := false
+	if strings.TrimSpace(task.BillingOrderID) != "" {
+		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
+		if orderErr != nil {
+			return orderErr
+		}
+		tokenBilledTask = order.BillingMode == "token_usage"
+	}
 	if !reconcilingCancellation {
 		task.Stage = "调用生成模型"
 		task.Progress = 35
@@ -1043,15 +1063,27 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			}
 		}
 		if !billingAlreadyUncertain {
-			if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
+			var billingStartErr error
+			if tokenBilledTask {
+				billingStartErr = s.BeginTokenBillingRequest(task.BillingOrderID)
+			} else {
+				billingStartErr = s.MarkBillingRunning(task.BillingOrderID)
+			}
+			if billingStartErr != nil {
 				task.Status = model.TaskStatusFailed
 				task.Stage = "计费准备失败"
-				task.Error = taskFailureMessage(err)
+				task.Error = taskFailureMessage(billingStartErr)
 				task.CompletedAt = ptr(time.Now())
-				if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingRefund, "计费准备失败，上游请求未发出"); finalizeErr != nil {
-					return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+				action := repository.FailedTaskBillingRefund
+				reason := "计费准备失败，上游请求未发出"
+				if tokenBilledTask {
+					action = repository.FailedTaskBillingUncertain
+					reason = "Token 请求发送边界冲突，禁止重复调用上游"
 				}
-				return err
+				if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, action, reason); finalizeErr != nil {
+					return errors.Join(billingStartErr, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+				}
+				return billingStartErr
 			}
 		}
 	}
@@ -1160,7 +1192,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			_ = s.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
 		}
 	}
-	if err := s.SettleBilling(task.BillingOrderID, ""); err != nil {
+	if err := s.settleCompletedTaskBilling(ctx, task.BillingOrderID); err != nil {
 		_ = s.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
 		_ = s.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
 	}
@@ -1213,11 +1245,18 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 		return s.processStoryboardRowsTask(ctx, task)
 	}
 	if task.Type == agentRuntimeModelTaskType {
-		text, err := s.processAgentRuntimeModelText(ctx, task)
+		result, err := s.processAgentRuntimeModelText(ctx, task)
 		if err != nil {
 			return nil, nil, err
 		}
-		return map[string]interface{}{"mode": "text", "text": text}, nil, nil
+		output := map[string]interface{}{"mode": result.Mode}
+		if result.Text != "" {
+			output["text"] = result.Text
+		}
+		if result.DecisionFeedback != nil {
+			output["decisionFeedback"] = result.DecisionFeedback
+		}
+		return output, nil, nil
 	}
 	if task.Type == "agent_storyboard" {
 		return s.processAgentStoryboardTask(ctx, task)

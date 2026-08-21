@@ -10,31 +10,43 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - `docker-compose.production.yml`：使用 PostgreSQL 和 Redis 的生产环境。
 
 仓库只保留上述两条运行路径，不再维护旧镜像部署、重复 Compose 或上游一键安装脚本。
-画布助手已硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent、Codex 插件连接或浏览器内模型循环。服务端负责冻结模型、决策循环、五类工具协调、通用交付验收和可恢复检查点；Web 只提交用户目标与真实选区事实、展示持久化事件并处理审批。
+画布助手已硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent、Codex 插件连接或浏览器内模型循环。服务端负责冻结模型、决策循环、高层工具协调、通用交付验收和可恢复检查点；Web 只提交用户目标与真实选区事实、展示持久化事件并处理审批。
 
 ### 首页到 Agent 的创作链路
 
-- 首页创作框先创建真实画布项目，把提示词和参考图片节点写入项目内的 `pendingAgentLaunch`；提示词不进入 URL，首页不再预选模型、Skill 或本地执行模式。
+- 首页创作框先上传参考图片并创建真实画布项目，把提示词、账号级资源 ID、系统动态模型选择、平台第一方公开 Skill 目录与显式执行模式写入项目内的 `pendingAgentLaunch`；提示词和临时 Blob URL 均不进入 URL 或持久事实。
 - 打开新画布后，Agent 面板用该请求创建或复用服务端 thread，并以持久化 `clientRequestId` 启动 run；只有取得运行事实后才消费启动请求。启动响应丢失时刷新或重试仍复用同一请求 ID，不重复创建运行。
-- 模型选择、Skill 选择、工具规划与交付判断全部由服务端 Runtime 完成。需要副作用确认时，前端展示已冻结的 `toolCallId + actionVersion + arguments`，用户批准后由后端按权限、revision CAS、计费和幂等事实执行。
-- 选区读取是唯一需要浏览器回传的当前画布事实；前端提交真实 revision 与节点 ID。图片、视频和音频生成结果只以服务端 Task、BillingOrder、Resource 和交付验收事实为准。
+- Agent 推理模型、工具规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，允许用户从系统动态目录显式指定本次运行的图片/视频模型、公开 Skills、参考图片与执行模式；Web 只提交 `channelId + model`、Skill 目录标识、账号级 `resourceId + name` 和模式枚举。服务端重新校验模型可调用且已定价、读取 Skill 详情、核对资源归属与可用状态，并将模型、Skill 指令、资源 MIME/尺寸及执行模式冻结进 run checkpoint。每个 run 的步骤预算由服务端固定为 24，浏览器提交的步数不参与运行事实。自动模式可连续完成无费用的规划和画布提交，但每一个 `production.render` 付费 Artifact 都必须展示冻结报价并由用户确认后才创建 Task、BillingOrder 和积分预留。
+- 模型只可调用 `skill.load`、`production.plan`、`production.render`、`canvas.commit` 四个高层工具；角色、服装、道具、场景参考图和正式分镜/视频结果只以服务端 Task、BillingOrder、Resource、Artifact Ledger 和交付验收事实为准。
 
 ### 单一 Agent Runtime
 
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。
-- 工具调用按 `runId + toolCallId + actionVersion` 冻结并幂等登记。`canvas.read_state`、`canvas.read_selection` 已由服务端协调；选择事实必须匹配当前画布 revision 和真实节点。
-- `canvas.apply_ops` 使用画布 revision CAS 与稳定 `clientMutationId` 幂等提交；`generation.submit` 在服务端按同一计价内核取得当前单任务报价并携带版本与指纹，随后复用正式 Task、BillingOrder、积分预留和冻结供应商版本，禁止绕过媒体报价校验；`generation.wait` 只接受同一运行创建的任务与真实终态资产。后台 worker 会定期核对持久化等待事实，进程中断后不依赖浏览器重复提交生成任务。
-- 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；每个模型步骤冻结该目录快照，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。
-- 正式传输入口为 `GET /api/agent/threads?canvasId=...&limit=...`、`POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、审批和工具结果提交。历史查询只投影当前用户、当前租户与当前画布最近 20 个 Thread 及各自最新 Run/checkpoint；SSE 仅发送已持久化事件。Web 对历史与本地恢复句柄分别报告错误，按最后确认的 sequence 续接，未知状态、未知事件、Run/checkpoint 冲突或非法 DTO 均显式失败。
+- Runtime 只有一个事件驱动协调入口：run 创建、模型任务终结、审批决定和媒体任务终结都会以持久化事实唤醒同一协调器；协调器在有界转换次数内继续免费工具或创建唯一下一模型任务。worker 不再每 5 秒扫描并盲推全部运行，只按分钟检查超过恢复阈值且仍未终结的 run，并使用跨实例互斥与游标恢复进程中断后的事件。
+- 信息确实不足时，模型可返回严格的 `clarification_request`，由 Runtime 在同一 Run 冻结交付合同和 1–3 个结构化问题，并切换到不占用 worker 的 `waiting_input`。问题类型只允许单选、多选和自由文本；逐题保存只写 checkpoint/event，不消耗模型 Token，也不创建工具、媒体任务、账单或积分冻结。最终提交使用 `stateVersion` CAS 将 pending 问答原子追加到不可变 history，产生 `clarification.responded` 后只唤醒一次同一协调器；下一模型步骤读取原始结构化问答继续执行，不创建第二条 Run。完全相同重放不增加事件或任务，并发提交只有一个事务可推进。
+- 追问内容由 Agent 基于本轮真实事实自主决定，本地仅校验问题/选项/答案的类型、数量、身份、长度和权限，不做关键词路由、默认答案或语义改写。`requestId` 复用、回答冲突、过期版本、非法问题身份与非等待态提交都会返回稳定错误码及最新状态版本；用户显式忽略的问题以 `skipped=true` 保留，禁止补写推测答案。
+- 首个模型决策必须声明结构化 `expectedDelivery`，Runtime 将其冻结为整条 run 的不可变交付合同；`final_message` 与 `canvas_revision` 条件不得携带 Artifact 字段，只有 `artifact` 条件必须声明具体资产类型。后续每个工具调用和最终答复必须逐字段保持一致。工具失败、审批拒绝或证据不足不能把图片、视频或画布交付降级成文字回答，合同漂移会作为显式修复事实回灌同一条有界执行链。
+- 工具调用按 `runId + toolCallId + actionVersion` 冻结并幂等登记。`production.plan` 的严格 DTO 同时保存非时间线 `references`（角色、服装、道具、场景）和正式镜头 `shotKey/order/durationMs/scriptText/imagePrompt/videoPrompt/referenceKeys/dependencies`。参考图不占时间线，不能伪装为 0 秒镜头；重复/缺失参考、非连续顺序、未来依赖或正式镜头总时长不匹配都会显式失败。计划成功后创建不可变版本和 Artifact Ledger：参考图以 `referenceKey` 标识，分镜与视频以 `shotKey` 标识。`production.render` 先逐项审批并生成参考图；分镜只有在绑定参考 Resource 全部就绪后才创建任务，并把真实参考图作为模型输入；视频继续以同镜分镜 Resource 为首帧。能力、报价、Task、BillingOrder、积分预留、远程结果物化和恢复都沿现有单一路径持久化，不依赖浏览器重复提交。
+- `canvas.commit` 从计划、Artifact 和就绪 Resource 构造稳定节点/连线 ID 的确定性投影，使用画布 revision CAS 与稳定 `clientMutationId` 只提交一次。每轮模型事实都包含服务端权威 `canvasRevision`；画布已变更时显式返回 `canvas_revision_conflict + currentRevision`，投影或参数不完整时返回可审计的结构化 `reason`，供同一有界执行链按真实事实纠正，禁止猜测版本或重复盲试。画布提交成功后以 Artifact 状态/attempt CAS 回填 `canvasNodeId`，成功媒体 Artifact 同步进入 `committed`，进程在提交与回填之间中断时可安全重放。交付验收会从最后一次成功提交的完整计划恢复剧本、参考图、分镜和视频证据，续跑只生成剩余资产时也不会遗失前序交付事实或重复提交画布。
+- 个人与团队画布统一使用同一条 WebSocket revision/CAS 增量变更通道；浏览器加载后必须先同步服务端权威快照，再提交本地差异。`PUT /api/canvas-projects/:id` 只负责首次创建远程画布，已存在项目一律拒绝整页覆盖，防止浏览器旧快照覆盖 Agent、协作者或其他设备刚提交的节点。
+- Web 在启动 Agent run 前先将当前画布未提交变更收敛到权威 revision；首次权限预检只建立远程基线与权限事实，不覆盖 WebSocket 建连前的本地编辑。SSE 只在收到成功的 `canvas.commit` `tool.result` 时读取 `committedRevision`，再通过已鉴权的协作查询获取画布事实；查询 revision 低于已确认提交或低于当前本地基线时显式失败或忽略过期响应，禁止旧快照回退已展示的 Agent 交付。
+- 每个新工具动作必须使用未出现过的 `toolCallId + actionVersion`；模型误复用历史身份时，Runtime 记录显式 `tool_identity_reused` 修复事实并继续同一执行链，不会再次写入冲突记录。同一工具以语义相同的 JSON 参数连续返回相同错误码与相同结构化失败证据时，首次错误允许 Agent 根据事实修正，第二次直接以该错误终结 run；错误原因已经变化时继续留给 Agent 修正，禁止误判为死循环。最后一个模型步骤不得再开启新工具调用；历史运行若已进入该状态，拒绝或完成工具后会保存结果并以 `step_budget_exhausted` 明确终结。图片生成公共契约要求规范字符串字段 `size/count` 并强制匹配本次运行冻结的图片模型；`quality` 仅在动态 `providerCapabilities.qualities` 发布非空候选时才允许从候选中填写，候选为空则必须省略，禁止默认画质、`ratio/resolution` 或其他未知字段绕开正式任务契约。
+- 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；用户显式选择图片或视频模型时，本次 run 的对应能力目录只保留该模型，未选择的能力仍使用完整可调用目录。模型作出工具决策后，渲染准备严格使用该模型步骤 prompt 中冻结的可调用目录，不会在审批前重新读取已漂移的在线目录。Skill 目录由 HMaigc 自有数据库和随版本发布的 `SKILL.md` 建立，不再依赖外部社区网络接口；目录列表只返回元数据，完整指令只在查看详情或服务端冻结 run 时读取。每个已发布版本以目录、版本号和 SHA-256 校验值形成不可变事实，启动时发现同版本正文漂移会显式拒绝发布；升级迁移会从历史 checkpoint 与 event 已冻结的指令一次性计算并写入校验值，迁移后仍由同一严格契约读取，不保留旧分支。模型和 Skill 配置随 run checkpoint 冻结，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。已选 Skill 的完整执行说明必须先通过 `skill.load` 按冻结版本按需加载，未加载时模型只看到目录元数据；Runtime 会冻结已加载目录并在最终答复前拒绝遗漏选定 Skill 的交付。存在活动生产计划时，每轮同时注入当前 Agent thread 在同一租户、项目与画布作用域内最新的活动 `productionPlan` 与完整 Artifact Ledger，因此后续 run 能继续上一 run 的计划和已付费资产；不同 thread 之间严格隔离。工具准备或执行失败都会先持久化失败的 ToolCall/ToolResult，再把结构化原因回灌同一执行链；不能因 `LastToolResult` 覆盖而遗失计划事实或重复规划。
+- 每次 run 同时冻结 `runtimeVersion`、`policyVersion` 与工具 schema 版本。工具 schema v3 保留四个高层工具，但把参考资产提升为正式计划与 Artifact Ledger 契约；v2 中尚未执行且检查点、模型 Task/Billing 事实完整的排队 run 可按既有事务退役为 `tool_schema_retired`。已经运行、等待输入/审批/工具、商业事实不一致、含工具事实或来自未来版本的非终态 run 不自动接管并会阻止启动；终态历史 run 继续保留审计证据。
+- Agent 模型调用统一声明 Chat Completions 的 `response_format=json_object`，使 DeepSeek 与 GPT 共用同一结构化决策契约；模型仍必须通过 Runtime 的严格单 JSON 校验。决策结构无效时，Runtime 记录受控的 `model_decision_invalid` 事实并在同一有界 run 内回灌下一模型步骤自修，绝不提取文本、伪造默认决策或切换模型；达到步骤上限仍显式失败。
+- 参考图片只接受当前账号已就绪的图片 Resource；服务端冻结资源 ID、显示名称、MIME 与尺寸，拒绝浏览器 Blob URL、跨账号资源和失效资源。执行模式是必填运行事实，幂等重放若更换模型、Skill、附件或模式会显式冲突，禁止静默采用新配置。
+- 正式传输入口为 `GET /api/agent/threads?canvasId=...&limit=...`、`POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、`POST /api/agent/runs/:runId/clarifications/:requestId/responses` 和付费工具审批。回答接口严格接收 `expectedStateVersion/questionId/answer/complete`，未知字段与尾随 JSON 直接拒绝。全部工具结果均由服务端执行器写入，浏览器不再提交选区或工具结果事实。历史查询只投影当前用户、当前租户与当前画布最近 20 个 Thread 及各自最新 Run/checkpoint；SSE 仅发送已持久化事件。Web 对历史与本地恢复句柄分别报告错误，按最后确认的 sequence 续接，未知状态、未知事件、Run/checkpoint 冲突或非法 DTO 均显式失败。
 - 服务端历史是会话发现与跨设备恢复的权威来源；浏览器 `localForage` 只保存当前 Thread、活动 Run、事件游标或尚未确认的 `clientRequestId`，用于快速恢复和启动幂等，不构成会话事实。没有本地句柄时采用服务端最近活动会话；选择旧会话只切换观察和恢复目标，不取消服务端仍在运行的 Run。
 - 浏览器不再调用 Agent 模型、不拼 system prompt、不维护 tool loop，也不再创建固定影视 Session。旧会话事实仅保留在历史项目数据中用于审计，不进入新运行链。
 
 ### Agent 模型计费链路
 
 - 网站 Agent 的每次模型请求分别创建计费订单；工具调用本身不计费，图片、视频等媒体生成继续使用各自独立订单。
-- 托管的筷子 DeepSeek 模型使用 `token_usage`：请求发出前按后台发布的输入/缓存命中/输出单价和最大输出 Token 原子预留积分，并冻结当时的服务地址版本和凭据版本；首版倍率固定为 1.0。
+- Agent 模型任务创建前若确认账号余额不足或团队月额度耗尽，运行会以 `insufficient_credits` 或 `team_credit_limit_reached` 明确终结，不创建下一任务或账单，也不会由后台驱动器无限重试；并发与暂时性额度错误仍保持原有显式错误语义。
+- 托管的筷子 DeepSeek 模型使用 `token_usage`：系统代理和服务端 Agent Runtime 共用同一预留/结算内核；请求发出前按后台发布的输入/缓存命中/输出单价和最大输出 Token 原子预留积分，并把同一最大输出值写入真实请求，同时冻结当时的服务地址版本和凭据版本；首版倍率固定为 1.0。
 - 流式请求会强制开启 `stream_options.include_usage`，响应 usage 会先持久化；缺失或无效 usage 分别标记为 `missing` / `invalid`，但资金结算仍以筷子账单的订单号、任务状态、总 Token 和实扣金额为准。账单 pending 时只异步核对，不重复调用模型。
+- 筷子图片、视频与 Token 任务共用同一条账单核对 worker。新建付费任务会把供应商服务地址版本和凭据版本同时冻结到任务与账单；已取得上游任务号但本地结果不明确时，worker 只查询对应筷子账单：上游确认成功则结算本地冻结报价，明确失败且未扣费则退款，pending、矛盾或无法取得可复现运行时的账单继续保留人工核对，禁止猜测扣费结果。
 - Chat Completion 响应 ID 按筷子契约从 `chatcmpl-<task_id>` 提取唯一内部任务 ID，写入计费订单后再通过任务账单接口取得真实扣费金额。成功账单原子消费实际积分并释放差额；待生成、缺失、重复或不可判定账单进入有租约、有限次数的后台核对，绝不重复发送模型请求。
 - 上游账单事实不足时不会回退到固定 1 分或估算终值。超过预留、达到核对上限或凭据事实损坏都会保留冻结积分并进入显式人工核对。
 

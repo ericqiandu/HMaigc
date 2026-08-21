@@ -13,6 +13,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrAgentRuntimeStepConflict = errors.New("agent runtime step conflict")
@@ -24,7 +25,10 @@ type InitializeAgentRunInput struct {
 	ModelKey          string
 	MaxSteps          int
 	ToolSchemaVersion int
+	RuntimeVersion    int
+	PolicyVersion     int
 	UserMessage       string
+	Configuration     agentruntime.RunConfiguration
 	Now               time.Time
 }
 
@@ -38,6 +42,8 @@ type agentRunInitializationUpdates struct {
 	ModelRecordID     string    `gorm:"column:model_record_id"`
 	ModelKey          string    `gorm:"column:model_key"`
 	ToolSchemaVersion int       `gorm:"column:tool_schema_version"`
+	RuntimeVersion    int       `gorm:"column:runtime_version"`
+	PolicyVersion     int       `gorm:"column:policy_version"`
 	LastEventSequence int64     `gorm:"column:last_event_sequence"`
 	StateVersion      int       `gorm:"column:state_version"`
 	UpdatedAt         time.Time `gorm:"column:updated_at"`
@@ -51,12 +57,16 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 		return nil, err
 	}
 	if input.ModelRecordID == "" || len(input.ModelRecordID) > 80 || input.ModelKey == "" || len(input.ModelKey) > 120 ||
-		input.MaxSteps < 1 || input.MaxSteps > 24 || input.ToolSchemaVersion < 1 || input.UserMessage == "" || len(input.UserMessage) > 64*1024 || input.Now.IsZero() {
+		input.MaxSteps < 1 || input.MaxSteps > 24 || input.ToolSchemaVersion < 1 || input.RuntimeVersion < 1 || input.PolicyVersion < 1 || input.UserMessage == "" || len(input.UserMessage) > 64*1024 || input.Now.IsZero() {
 		return nil, errors.New("agent runtime initialization boundary is invalid")
+	}
+	if err := agentruntime.ValidateRunConfiguration(input.Configuration); err != nil {
+		return nil, err
 	}
 	state := agentruntime.RuntimeState{
 		StateVersion: 1, StepNumber: 0, MaxSteps: input.MaxSteps,
-		Status: agentruntime.RunQueued, UserMessage: input.UserMessage,
+		Status: agentruntime.RunQueued, UserMessage: input.UserMessage, Configuration: input.Configuration,
+		ClarificationHistory: []agentruntime.CompletedClarification{},
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
@@ -71,6 +81,7 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 			Where(`id = ? AND thread_id = ? AND actor_user_id = ? AND status = ? AND step_number = 0
 				AND state_version = 0
 				AND max_steps = 0 AND model_record_id = '' AND model_key = '' AND tool_schema_version = 0
+				AND runtime_version = 0 AND policy_version = 0
 				AND last_event_sequence = 0 AND EXISTS (
 					SELECT 1 FROM agent_threads WHERE agent_threads.id = agent_runs.thread_id
 					AND tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
@@ -79,7 +90,8 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 				input.Scope.TenantKind, input.Scope.TenantID, input.Scope.ActorUserID, input.Scope.DomainProjectID, input.Scope.CanvasID).
 			Updates(agentRunInitializationUpdates{
 				MaxSteps: input.MaxSteps, ModelRecordID: input.ModelRecordID, ModelKey: input.ModelKey,
-				ToolSchemaVersion: input.ToolSchemaVersion, LastEventSequence: 1, UpdatedAt: input.Now,
+				ToolSchemaVersion: input.ToolSchemaVersion, RuntimeVersion: input.RuntimeVersion, PolicyVersion: input.PolicyVersion,
+				LastEventSequence: 1, UpdatedAt: input.Now,
 				StateVersion: 1,
 			})
 		if updated.Error != nil {
@@ -97,7 +109,7 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 			return err
 		}
 		if updated.RowsAffected == 0 {
-			if run.StateVersion != 1 || run.MaxSteps != input.MaxSteps || run.ModelRecordID != input.ModelRecordID || run.ModelKey != input.ModelKey || run.ToolSchemaVersion != input.ToolSchemaVersion || run.LastEventSequence != 1 {
+			if run.StateVersion != 1 || run.MaxSteps != input.MaxSteps || run.ModelRecordID != input.ModelRecordID || run.ModelKey != input.ModelKey || run.ToolSchemaVersion != input.ToolSchemaVersion || run.RuntimeVersion != input.RuntimeVersion || run.PolicyVersion != input.PolicyVersion || run.LastEventSequence != 1 {
 				return ErrAgentRuntimeInitializationConflict
 			}
 			var event model.AgentRunEvent
@@ -189,6 +201,9 @@ func (r *Repository) CommitAgentRuntimeTransition(scope agentruntime.Scope, prev
 			}
 			return ErrAgentRuntimeStepConflict
 		}
+		if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, now); err != nil {
+			return err
+		}
 		if err := persistAgentToolTransition(tx, scope, previous, state, now); err != nil {
 			return err
 		}
@@ -224,7 +239,37 @@ func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentrunt
 			return errors.New("agent runtime transition event kind is invalid")
 		}
 	}
+	if transition.RejectedToolCall != nil {
+		if previous.PendingToolCall != nil || state.PendingToolCall != nil || state.LastToolResult == nil ||
+			state.LastToolResult.ToolCallID != transition.RejectedToolCall.ToolCallID ||
+			state.LastToolResult.ActionVersion != transition.RejectedToolCall.ActionVersion || state.LastToolResult.Succeeded ||
+			!transition.RejectedToolCall.ToolName.Valid() {
+			return errors.New("agent rejected tool transition is invalid")
+		}
+	}
 	return nil
+}
+
+func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, now time.Time) error {
+	call := transition.RejectedToolCall
+	if call == nil {
+		return nil
+	}
+	policy, ok := agentruntime.ToolPolicyFor(call.ToolName)
+	if !ok || transition.State.LastToolResult == nil {
+		return errors.New("agent rejected tool policy is unavailable")
+	}
+	approvalRequired := agentruntime.ApprovalRequiredFor(policy, previous.Configuration.ExecutionMode)
+	record := model.AgentToolCall{
+		ID:    agentFactID("tool", scope.RunID, call.ToolCallID, strconv.Itoa(call.ActionVersion)),
+		RunID: scope.RunID, ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		ToolName: string(call.ToolName), Status: agentruntime.ToolCallFailed,
+		RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: approvalRequired,
+		IdempotencyKey: scope.RunID + ":" + call.ToolCallID + ":" + strconv.Itoa(call.ActionVersion),
+		InputJSON:      string(call.Arguments), OutputJSON: string(transition.State.LastToolResult.Output),
+		ErrorCode: transition.State.LastToolResult.ErrorCode, CreatedAt: now, UpdatedAt: now,
+	}
+	return db.Create(&record).Error
 }
 
 func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState, now time.Time) error {
@@ -234,19 +279,26 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 		if !ok {
 			return errors.New("agent tool policy is unavailable")
 		}
+		approvalRequired := agentruntime.ApprovalRequiredFor(policy, next.Configuration.ExecutionMode)
 		status := agentruntime.ToolCallPending
-		if policy.ApprovalRequired {
+		if approvalRequired {
 			status = agentruntime.ToolCallWaitingApproval
 		}
 		call := model.AgentToolCall{
 			ID:    agentFactID("tool", runID, next.PendingToolCall.ToolCallID, strconv.Itoa(next.PendingToolCall.ActionVersion)),
 			RunID: runID, ToolCallID: next.PendingToolCall.ToolCallID, ActionVersion: next.PendingToolCall.ActionVersion,
 			ToolName: string(next.PendingToolCall.ToolName), Status: status,
-			RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: policy.ApprovalRequired,
+			RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: approvalRequired,
 			IdempotencyKey: runID + ":" + next.PendingToolCall.ToolCallID + ":" + strconv.Itoa(next.PendingToolCall.ActionVersion),
 			InputJSON:      string(next.PendingToolCall.Arguments), OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
-		return db.Create(&call).Error
+		if err := db.Create(&call).Error; err != nil {
+			return err
+		}
+		if next.PendingToolCall.ToolName == agentruntime.ToolProductionRender {
+			return persistProductionRenderAwaitingApproval(db, scope, next.PendingToolCall.Arguments, now)
+		}
+		return nil
 	}
 	if previous.Status == agentruntime.RunWaitingApproval && next.Status == agentruntime.RunWaitingTool &&
 		previous.PendingToolCall != nil && next.PendingToolCall != nil &&
@@ -309,6 +361,113 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 	}
 	if result.RowsAffected != 1 {
 		return ErrAgentRuntimeStepConflict
+	}
+	if previous.Status == agentruntime.RunWaitingApproval && previous.PendingToolCall.ToolName == agentruntime.ToolProductionRender && !next.LastToolResult.Succeeded {
+		return persistProductionRenderApprovalFailure(db, scope, previous.PendingToolCall.Arguments, next.LastToolResult.ErrorCode, now)
+	}
+	return nil
+}
+
+func persistProductionRenderAwaitingApproval(db *gorm.DB, scope agentruntime.Scope, raw json.RawMessage, now time.Time) error {
+	var arguments agentruntime.ProductionRenderArguments
+	if err := json.Unmarshal(raw, &arguments); err != nil {
+		return errors.New("frozen production render arguments are invalid")
+	}
+	if strings.TrimSpace(arguments.PlanKey) == "" || arguments.PlanVersion < 1 || strings.TrimSpace(arguments.ArtifactID) == "" || arguments.Attempt < 0 ||
+		strings.TrimSpace(arguments.GenerationModel.ChannelID) == "" || strings.TrimSpace(arguments.GenerationModel.Model) == "" ||
+		(arguments.ImageConfig == nil) == (arguments.VideoConfig == nil) || arguments.AmountMicrocredits <= 0 || arguments.PerTaskAmountMicrocredits <= 0 ||
+		arguments.PriceVersion < 0 || arguments.Quantity <= 0 || strings.TrimSpace(arguments.BillingMode) == "" || strings.TrimSpace(arguments.QuoteFingerprint) == "" {
+		return errors.New("frozen production render arguments are incomplete")
+	}
+	var current model.AgentProductionArtifact
+	query := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(`id = ? AND plan_key = ? AND plan_version = ? AND attempt = ? AND status IN (?, ?)
+			AND EXISTS (
+				SELECT 1 FROM agent_production_plan_versions
+				 WHERE agent_production_plan_versions.id = agent_production_artifacts.plan_version_id
+				   AND tenant_kind = ? AND tenant_id = ? AND domain_project_id = ? AND canvas_id = ?
+				   AND status = ?
+			)`,
+			arguments.ArtifactID, arguments.PlanKey, arguments.PlanVersion, arguments.Attempt,
+			model.AgentProductionArtifactPlanned, model.AgentProductionArtifactFailed,
+			scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID, model.AgentProductionPlanActive).
+		Take(&current)
+	if query.Error != nil {
+		if errors.Is(query.Error, gorm.ErrRecordNotFound) {
+			return ErrAgentProductionArtifactConflict
+		}
+		return query.Error
+	}
+
+	base := db.Model(&model.AgentProductionArtifact{}).
+		Where("id = ? AND status = ? AND attempt = ?", current.ID, current.Status, current.Attempt)
+	if current.Status == model.AgentProductionArtifactFailed && (current.TaskID != "" || current.BillingOrderID != "" || current.ResourceID != "") {
+		if current.TaskID == "" || current.BillingOrderID == "" || current.ResourceID != "" {
+			return ErrAgentProductionArtifactConflict
+		}
+		base = base.Where(`EXISTS (
+				SELECT 1 FROM tasks
+				 WHERE tasks.id = agent_production_artifacts.task_id
+				   AND tasks.user_id = ? AND tasks.billing_order_id = agent_production_artifacts.billing_order_id
+				   AND tasks.status IN (?, ?)
+			) AND EXISTS (
+				SELECT 1 FROM billing_orders
+				 WHERE billing_orders.id = agent_production_artifacts.billing_order_id
+				   AND billing_orders.user_id = ? AND billing_orders.task_id = agent_production_artifacts.task_id
+				   AND billing_orders.status = ?
+			)`,
+			scope.ActorUserID, model.TaskStatusFailed, model.TaskStatusCancelled,
+			scope.ActorUserID, model.BillingStatusRefunded)
+	}
+	result := base.Select("status", "task_id", "billing_order_id", "resource_id", "last_error_code", "updated_at").
+		Updates(productionRenderApprovalUpdate{
+			Status: model.AgentProductionArtifactAwaitingApproval, TaskID: "", BillingOrderID: "", ResourceID: "", LastErrorCode: "", UpdatedAt: now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrAgentProductionArtifactConflict
+	}
+	return nil
+}
+
+type productionRenderApprovalUpdate struct {
+	Status         model.AgentProductionArtifactStatus `gorm:"column:status"`
+	TaskID         string                              `gorm:"column:task_id"`
+	BillingOrderID string                              `gorm:"column:billing_order_id"`
+	ResourceID     string                              `gorm:"column:resource_id"`
+	LastErrorCode  string                              `gorm:"column:last_error_code"`
+	UpdatedAt      time.Time                           `gorm:"column:updated_at"`
+}
+
+func persistProductionRenderApprovalFailure(db *gorm.DB, scope agentruntime.Scope, raw json.RawMessage, failureCode string, now time.Time) error {
+	var arguments agentruntime.ProductionRenderArguments
+	if err := json.Unmarshal(raw, &arguments); err != nil {
+		return errors.New("frozen production render arguments are invalid")
+	}
+	failureCode = strings.TrimSpace(failureCode)
+	if strings.TrimSpace(arguments.ArtifactID) == "" || arguments.Attempt < 0 || failureCode == "" {
+		return errors.New("production render approval failure facts are incomplete")
+	}
+	result := db.Model(&model.AgentProductionArtifact{}).
+		Where(`id = ? AND plan_key = ? AND plan_version = ? AND attempt = ? AND status = ?
+			AND EXISTS (
+				SELECT 1 FROM agent_production_plan_versions
+				 WHERE agent_production_plan_versions.id = agent_production_artifacts.plan_version_id
+				   AND tenant_kind = ? AND tenant_id = ? AND domain_project_id = ? AND canvas_id = ?
+			)`,
+			arguments.ArtifactID, arguments.PlanKey, arguments.PlanVersion, arguments.Attempt, model.AgentProductionArtifactAwaitingApproval,
+			scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID).
+		Select("status", "last_error_code", "updated_at").
+		Updates(productionRenderApprovalUpdate{
+			Status: model.AgentProductionArtifactFailed, LastErrorCode: failureCode, UpdatedAt: now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrAgentProductionArtifactConflict
 	}
 	return nil
 }

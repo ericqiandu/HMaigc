@@ -1,14 +1,13 @@
-import { App, Button, Empty, Select, Spin, Tooltip } from "antd";
+import { Alert, App, Button, Empty, Select, Spin, Tooltip } from "antd";
 import { Check, FileArchive, FileAudio, FileImage, FileVideo, FolderKanban, Gauge, Library, ReceiptText, ShieldCheck, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { assignProjectTeam, getProjectPermissions, listProjects, type ProjectAccessOverview, type ProjectAccessRole, type ProjectSummary, updateProjectPermission } from "@/services/api/projects";
+import { assignProjectTeam, clearProjectCollaborator, getProjectPermissions, listProjects, type ProjectAccessOverview, type ProjectAccessRole, type ProjectSummary, updateProjectPermission } from "@/services/api/projects";
 import { listTeamResources, teamResourceFileURL, type TeamDetail, type TeamResource, uploadTeamResource } from "@/services/api/teams";
 import { useUserStore } from "@/stores/use-user-store";
 
 type TeamCommercialPanelProps = {
     detail: TeamDetail;
-    canManage: boolean;
     onTeamChanged: () => Promise<void>;
 };
 
@@ -18,41 +17,57 @@ const projectRoleOptions: Array<{ label: string; value: ProjectAccessRole }> = [
     { label: "项目管理", value: "manager" },
 ];
 
-export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCommercialPanelProps) {
+export function TeamCommercialPanel({ detail, onTeamChanged }: TeamCommercialPanelProps) {
     const { message } = App.useApp();
     const currentUserId = useUserStore((store) => store.user?.id || "");
     const fileInput = useRef<HTMLInputElement>(null);
+    const commercialRequestGeneration = useRef(0);
+    const permissionsRequestGeneration = useRef(0);
     const [resources, setResources] = useState<TeamResource[]>([]);
     const [projects, setProjects] = useState<ProjectSummary[]>([]);
+    const [loadedTeamId, setLoadedTeamId] = useState("");
     const [permissions, setPermissions] = useState<ProjectAccessOverview | null>(null);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState("");
     const [busyKey, setBusyKey] = useState("");
     const subscription = detail.summary.subscription;
+    const { capabilities } = detail.summary;
     const teamId = detail.summary.team.id;
 
     const loadCommercialData = useCallback(async () => {
+        const requestGeneration = commercialRequestGeneration.current + 1;
+        commercialRequestGeneration.current = requestGeneration;
         if (!subscription) {
             setResources([]);
             setProjects([]);
+            setLoadedTeamId("");
+            setLoadError("");
+            setLoading(false);
             return;
         }
         setLoading(true);
+        setLoadError("");
         try {
             const [resourceResult, projectResult] = await Promise.all([
                 subscription.sharedAssetsEnabled ? listTeamResources(teamId) : Promise.resolve({ resources: [] }),
                 subscription.projectPermissionsEnabled ? listProjects() : Promise.resolve({ projects: [] }),
             ]);
+            if (commercialRequestGeneration.current !== requestGeneration) return;
             setResources(resourceResult.resources);
             setProjects(projectResult.projects);
+            setLoadedTeamId(teamId);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "团队商业数据加载失败");
+            if (commercialRequestGeneration.current !== requestGeneration) return;
+            setLoadError(error instanceof Error ? error.message : "团队商业数据加载失败");
         } finally {
-            setLoading(false);
+            if (commercialRequestGeneration.current === requestGeneration) setLoading(false);
         }
-    }, [message, subscription, teamId]);
+    }, [subscription, teamId]);
 
     useEffect(() => {
+        permissionsRequestGeneration.current += 1;
         setPermissions(null);
+        setLoadedTeamId("");
         void loadCommercialData();
     }, [loadCommercialData]);
 
@@ -100,13 +115,16 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
     };
 
     const openPermissions = async (projectId: string) => {
+        const requestGeneration = permissionsRequestGeneration.current + 1;
+        permissionsRequestGeneration.current = requestGeneration;
         setBusyKey(`permissions:${projectId}`);
         try {
-            setPermissions(await getProjectPermissions(projectId));
+            const result = await getProjectPermissions(projectId);
+            if (permissionsRequestGeneration.current === requestGeneration) setPermissions(result);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "项目权限加载失败");
+            if (permissionsRequestGeneration.current === requestGeneration) message.error(error instanceof Error ? error.message : "项目权限加载失败");
         } finally {
-            setBusyKey("");
+            if (permissionsRequestGeneration.current === requestGeneration) setBusyKey("");
         }
     };
 
@@ -119,6 +137,20 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
             message.success("项目权限已更新");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "项目权限更新失败");
+        } finally {
+            setBusyKey("");
+        }
+    };
+
+    const clearPermission = async (userId: string) => {
+        if (!permissions) return;
+        setBusyKey(`permission-clear:${permissions.projectId}:${userId}`);
+        try {
+            await clearProjectCollaborator(permissions.projectId, userId);
+            setPermissions(await getProjectPermissions(permissions.projectId));
+            message.success("已恢复继承团队角色权限");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "恢复继承权限失败");
         } finally {
             setBusyKey("");
         }
@@ -170,8 +202,23 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
                 <UsageMetric icon={<Library className="team-commercial-usage-icon size-4" />} label="共享资产存储" value={`${formatBytes(detail.summary.storageUsedBytes)} / ${formatBytes(subscription.teamStorageBytes)}`} />
             </div>
 
+            {loadError ? (
+                <Alert
+                    className="team-commercial-load-error mt-5"
+                    type="error"
+                    showIcon
+                    message="团队商业数据加载失败"
+                    description={loadError}
+                    action={
+                        <Button className="team-commercial-load-retry" size="small" onClick={() => void loadCommercialData()}>
+                            重新加载
+                        </Button>
+                    }
+                />
+            ) : null}
+
             <Spin className="team-commercial-loading" spinning={loading}>
-                {subscription.sharedAssetsEnabled ? (
+                {loadedTeamId === teamId && subscription.sharedAssetsEnabled ? (
                     <section className="team-assets-section border-b border-border/55 py-6">
                         <div className="team-commercial-section-heading flex items-center justify-between gap-3">
                             <div className="team-commercial-section-copy">
@@ -188,9 +235,11 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
                                         if (file) void uploadFile(file);
                                     }}
                                 />
-                                <Button className="team-assets-upload-button" icon={<Upload className="team-assets-upload-icon size-4" />} loading={busyKey === "asset-upload"} onClick={() => fileInput.current?.click()}>
-                                    上传资产
-                                </Button>
+                                {capabilities.canUploadSharedAssets ? (
+                                    <Button className="team-assets-upload-button" icon={<Upload className="team-assets-upload-icon size-4" />} loading={busyKey === "asset-upload"} onClick={() => fileInput.current?.click()}>
+                                        上传资产
+                                    </Button>
+                                ) : null}
                             </div>
                         </div>
                         {resources.length ? (
@@ -219,14 +268,14 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
                     </section>
                 ) : null}
 
-                {subscription.projectPermissionsEnabled ? (
+                {loadedTeamId === teamId && subscription.projectPermissionsEnabled ? (
                     <section className="team-projects-section py-6">
                         <div className="team-commercial-section-heading flex flex-wrap items-end justify-between gap-3">
                             <div className="team-commercial-section-copy">
                                 <h4 className="team-commercial-section-title text-sm font-medium">团队项目与权限</h4>
                                 <p className="team-commercial-section-description mt-1 text-xs text-foreground/42">团队角色提供默认权限，项目级配置可做明确覆盖。</p>
                             </div>
-                            {canManage && assignableProjects.length ? (
+                            {capabilities.canManageProjects && assignableProjects.length ? (
                                 <Select
                                     className="team-project-assign-select min-w-48"
                                     placeholder="添加个人项目到团队"
@@ -248,7 +297,7 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
                                                 {item.canvasCount} 个画布 · {item.assetCount} 项资产
                                             </div>
                                         </div>
-                                        {canManage ? (
+                                        {capabilities.canManageProjects ? (
                                             <div className="team-project-actions flex items-center gap-1">
                                                 <Button className="team-project-permissions-button" type="text" size="small" loading={busyKey === `permissions:${item.project.id}`} onClick={() => void openPermissions(item.project.id)}>
                                                     权限
@@ -291,6 +340,18 @@ export function TeamCommercialPanel({ detail, canManage, onTeamChanged }: TeamCo
                                                 disabled={busyKey !== ""}
                                                 onChange={(role: ProjectAccessRole) => void changePermission(member.userId, role)}
                                             />
+                                            {member.explicit ? (
+                                                <Button
+                                                    className="team-project-permission-clear"
+                                                    type="text"
+                                                    size="small"
+                                                    loading={busyKey === `permission-clear:${permissions.projectId}:${member.userId}`}
+                                                    disabled={busyKey !== ""}
+                                                    onClick={() => void clearPermission(member.userId)}
+                                                >
+                                                    恢复继承
+                                                </Button>
+                                            ) : null}
                                         </div>
                                     ))}
                                 </div>

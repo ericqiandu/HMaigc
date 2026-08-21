@@ -354,6 +354,10 @@ func (s *Service) AdminDisableRedeemCode(actor *model.User, batchID string, code
 }
 
 func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[string]any) (*model.BillingOrder, error) {
+	billingScope, err := s.billingAccountScopeForTask(userID, task.ProjectID)
+	if err != nil {
+		return nil, err
+	}
 	config, _ := input["config"].(map[string]any)
 	if config == nil {
 		return nil, BadAuthRequest("当前功能必须使用后台配置的系统模型")
@@ -394,7 +398,7 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 		return nil, BadAuthRequest("任务能力类型无效，无法计费")
 	}
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
-	return s.newBillingOrder(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingUsage(capability, modelKey, config, input))
+	return s.newBillingOrder(userID, billingScope, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingUsage(capability, modelKey, config, input))
 }
 
 type BillingUsage struct {
@@ -411,7 +415,7 @@ func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey 
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
 	}
-	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), usage)
+	order, err := s.newBillingOrder(userID, personalBillingAccountScope(), "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), usage)
 	if err != nil {
 		return nil, err
 	}
@@ -427,11 +431,7 @@ func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey 
 	return order, nil
 }
 
-func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, usage BillingUsage) (*model.BillingOrder, error) {
-	teamID, err := s.billingTeamID(userID, time.Now())
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) newBillingOrder(userID string, billingScope billingAccountScope, taskID string, idempotencyKey string, channelID string, modelKey string, capability string, scene string, usage BillingUsage) (*model.BillingOrder, error) {
 	item, err := s.requireAccessibleChannelModel(userID, channelID, modelKey)
 	if err != nil {
 		return nil, err
@@ -570,7 +570,7 @@ func (s *Service) newBillingOrder(userID string, taskID string, idempotencyKey s
 		enhancementSnapshot = string(encoded)
 	}
 	return &model.BillingOrder{
-		ID: newID(), UserID: userID, TeamID: teamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
+		ID: newID(), UserID: userID, TeamID: billingScope.TeamID, IdempotencyKey: idempotencyKey, TaskID: taskID,
 		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: item.BillingMode, PriceVersion: item.PriceVersion,
 		PriceTierID: priceTierID, PricingResolution: pricingResolution, PricingInputVariant: usage.InputVariant,

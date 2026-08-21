@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -45,25 +46,32 @@ func (s *Service) AssignProjectTeam(user *model.User, projectID string, req Assi
 	}
 	teamID := strings.TrimSpace(req.TeamID)
 	if teamID != "" {
-		team, member, accessErr := s.teamAccess(user.ID, teamID)
-		if accessErr != nil {
+		if _, accessErr := s.requireTeamProjectManager(user.ID, teamID); accessErr != nil {
 			return nil, accessErr
-		}
-		if member.Role != model.TeamMemberRoleOwner && member.Role != model.TeamMemberRoleAdmin {
-			return nil, Forbidden("只有团队所有者或管理员可以接收团队项目")
-		}
-		entitlement, entitlementErr := s.teamEntitlement(user.ID, team.ID)
-		if entitlementErr != nil {
-			return nil, entitlementErr
-		}
-		if !entitlement.ProjectPermissionsEnabled {
-			return nil, Forbidden("当前团队套餐未开通项目权限管理")
 		}
 	}
 	if err := s.repo.AssignProjectTeam(project.ID, user.ID, teamID, time.Now()); err != nil {
 		return nil, err
 	}
 	return s.repo.ProjectReadableForUser(user.ID, project.ID)
+}
+
+func (s *Service) requireTeamProjectManager(userID string, teamID string) (*model.Team, error) {
+	team, member, err := s.teamAccess(userID, strings.TrimSpace(teamID))
+	if err != nil {
+		return nil, err
+	}
+	if member.Role != model.TeamMemberRoleOwner && member.Role != model.TeamMemberRoleAdmin {
+		return nil, Forbidden("只有团队所有者或管理员可以管理团队项目")
+	}
+	entitlement, err := s.teamEntitlement(userID, team.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !entitlement.ProjectPermissionsEnabled {
+		return nil, Forbidden("当前团队套餐未开通项目权限管理")
+	}
+	return team, nil
 }
 
 func (s *Service) ProjectAccessOverview(user *model.User, projectID string) (*ProjectAccessOverview, error) {
@@ -123,10 +131,45 @@ func (s *Service) UpdateProjectCollaborator(user *model.User, projectID string, 
 		return Forbidden("团队所有者必须保留项目管理权限")
 	}
 	now := time.Now()
-	return s.repo.SaveProjectCollaborator(&model.ProjectCollaborator{
+	metadata, err := json.Marshal(struct {
+		ProjectID string                  `json:"projectId"`
+		Role      model.ProjectAccessRole `json:"role"`
+	}{ProjectID: project.ID, Role: req.Role})
+	if err != nil {
+		return err
+	}
+	audit := newTeamAuditEvent(project.TeamID, user.ID, "project.collaborator_updated", string(metadata), now)
+	audit.TargetUserID = target.UserID
+	return s.repo.SaveProjectCollaboratorWithAudit(&model.ProjectCollaborator{
 		ID: newID(), ProjectID: project.ID, UserID: target.UserID, Role: req.Role,
 		CreatedAt: now, UpdatedAt: now,
-	})
+	}, audit)
+}
+
+func (s *Service) ClearProjectCollaborator(user *model.User, projectID string, targetUserID string) error {
+	project, err := s.repo.ProjectManageableForUser(user.ID, strings.TrimSpace(projectID), time.Now())
+	if err != nil {
+		return err
+	}
+	if project.TeamID == "" {
+		return BadAuthRequest("个人项目不支持团队成员权限")
+	}
+	target, err := s.repo.TeamMemberForUser(project.TeamID, strings.TrimSpace(targetUserID))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &AuthError{Status: http.StatusNotFound, Message: "目标用户不是当前团队成员"}
+	}
+	if err != nil {
+		return err
+	}
+	metadata, err := json.Marshal(struct {
+		ProjectID string `json:"projectId"`
+	}{ProjectID: project.ID})
+	if err != nil {
+		return err
+	}
+	audit := newTeamAuditEvent(project.TeamID, user.ID, "project.collaborator_inherited", string(metadata), time.Now())
+	audit.TargetUserID = target.UserID
+	return s.repo.DeleteProjectCollaboratorWithAudit(project.ID, target.UserID, audit)
 }
 
 func defaultProjectRole(role model.TeamMemberRole) model.ProjectAccessRole {

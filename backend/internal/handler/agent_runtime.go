@@ -26,6 +26,15 @@ type startAgentRunRequest struct {
 	ClientRequestID string `json:"clientRequestId"`
 	UserMessage     string `json:"userMessage"`
 	MaxSteps        int    `json:"maxSteps"`
+	Configuration   struct {
+		GenerationModels agentruntime.GenerationModelSelections `json:"generationModels"`
+		SkillDirs        []string                               `json:"skillDirs"`
+		Attachments      []struct {
+			ResourceID string `json:"resourceId"`
+			Name       string `json:"name"`
+		} `json:"attachments"`
+		ExecutionMode agentruntime.ExecutionMode `json:"executionMode"`
+	} `json:"configuration"`
 }
 
 type submitAgentApprovalRequest struct {
@@ -34,14 +43,15 @@ type submitAgentApprovalRequest struct {
 	Decision      agentruntime.ToolApprovalDecision `json:"decision"`
 }
 
-type submitAgentToolResultRequest struct {
-	ToolCallID    string                             `json:"toolCallId"`
-	ActionVersion int                                `json:"actionVersion"`
-	Selection     *service.AgentCanvasSelectionFacts `json:"selection,omitempty"`
+type submitAgentClarificationResponseRequest struct {
+	ExpectedStateVersion int                                   `json:"expectedStateVersion"`
+	QuestionID           string                                `json:"questionId"`
+	Answer               agentruntime.ClarificationAnswerInput `json:"answer"`
+	Complete             bool                                  `json:"complete"`
 }
 
 type agentRuntimeRequest interface {
-	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentToolResultRequest
+	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentClarificationResponseRequest
 }
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
@@ -94,8 +104,19 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
+		attachments := make([]service.AgentRuntimeResourceInput, 0, len(request.Configuration.Attachments))
+		for _, attachment := range request.Configuration.Attachments {
+			attachments = append(attachments, service.AgentRuntimeResourceInput{ResourceID: attachment.ResourceID, Name: attachment.Name})
+		}
 		view, err := svc.StartScopedAgentRun(user, c.Param("threadId"), service.StartScopedAgentRunInput{
-			ClientRequestID: request.ClientRequestID, UserMessage: request.UserMessage, MaxSteps: request.MaxSteps,
+			Context: c.Request.Context(), ClientRequestID: request.ClientRequestID,
+			UserMessage: request.UserMessage, MaxSteps: request.MaxSteps,
+			Configuration: service.AgentRuntimeConfigurationInput{
+				GenerationModels: request.Configuration.GenerationModels,
+				SkillDirs:        request.Configuration.SkillDirs,
+				Attachments:      attachments,
+				ExecutionMode:    request.Configuration.ExecutionMode,
+			},
 		})
 		if err != nil {
 			failService(c, err)
@@ -137,26 +158,45 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
-	agent.POST("/runs/:runId/tool-results", func(c *gin.Context) {
+	agent.POST("/runs/:runId/clarifications/:requestId/responses", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		var request submitAgentToolResultRequest
+		var request submitAgentClarificationResponseRequest
 		if err := decodeStrictAgentRequest(c, &request); err != nil {
-			fail(c, http.StatusBadRequest, err)
+			failAgentClarification(c, &service.AgentClarificationError{
+				Status: http.StatusBadRequest, ErrorCode: "agent_clarification_invalid", Message: err.Error(),
+			})
 			return
 		}
-		view, err := svc.SubmitScopedAgentToolResult(user, c.Param("runId"), service.CoordinateAgentToolInput{
-			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Selection: request.Selection,
+		view, err := svc.SubmitScopedAgentClarificationResponse(user, c.Param("runId"), c.Param("requestId"), agentruntime.ClarificationResponseSubmission{
+			ExpectedStateVersion: request.ExpectedStateVersion, QuestionID: request.QuestionID,
+			Answer: request.Answer, Complete: request.Complete,
 		})
 		if err != nil {
+			if failAgentClarification(c, err) {
+				return
+			}
 			failService(c, err)
 			return
 		}
 		ok(c, view)
 	})
+}
+
+func failAgentClarification(c *gin.Context, err error) bool {
+	var clarificationErr *service.AgentClarificationError
+	if !errors.As(err, &clarificationErr) {
+		return false
+	}
+	data := gin.H{"errorCode": clarificationErr.ErrorCode}
+	if clarificationErr.LatestStateVersion > 0 {
+		data["latestStateVersion"] = clarificationErr.LatestStateVersion
+	}
+	c.JSON(clarificationErr.Status, gin.H{"code": clarificationErr.Status, "data": data, "msg": clarificationErr.Message})
+	return true
 }
 
 func strictAgentThreadHistoryLimit(raw string) (int, error) {

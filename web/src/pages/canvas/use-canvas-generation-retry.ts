@@ -27,7 +27,7 @@ import { selectVideoGenerationContext, shouldRestoreStoredVideoReferenceImages }
 import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/generation-error";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
-import type { UpdreamSkill } from "@/services/api/skills";
+import type { PlatformSkill } from "@/services/api/skills";
 import { retryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -36,7 +36,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 type UseCanvasGenerationRetryOptions = {
     projectId: string;
     domainProjectId?: string;
-    activatedSkills: UpdreamSkill[];
+    activatedSkills: PlatformSkill[];
     nodesRef: { current: CanvasNodeData[] };
     connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;

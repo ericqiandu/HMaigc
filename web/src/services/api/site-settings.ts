@@ -13,6 +13,7 @@ type BackendEnvelope<T> = {
 
 export type SiteSettings = {
     siteName: string;
+    homeHeroSlogan: string;
     logoUrl: string;
     footerCopyright: string;
     icpRegistrationNumber: string;
@@ -45,6 +46,7 @@ export type SiteSettings = {
 export type UpdateSiteSettingsInput = Pick<
     SiteSettings,
     | "siteName"
+    | "homeHeroSlogan"
     | "footerCopyright"
     | "icpRegistrationNumber"
     | "icpRegistrationUrl"

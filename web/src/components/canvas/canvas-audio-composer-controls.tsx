@@ -1,5 +1,4 @@
-import { ArrowUp, SlidersHorizontal, Square } from "lucide-react";
-import { Button } from "antd";
+import { SlidersHorizontal } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol } from "@/constant/credits";
@@ -8,6 +7,7 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasAudioVoicePicker } from "./canvas-audio-voice-picker";
+import { CanvasSubmitButton } from "./canvas-submit-button";
 import "./canvas-audio-model-picker.css";
 import "./canvas-media-composer.css";
 
@@ -51,9 +51,7 @@ export function CanvasAudioComposerControls({ config, credits, promptLength, isR
                         {credits.toLocaleString()}
                     </span>
                 ) : null}
-                <Button type="text" className="canvas-audio-submit-button canvas-media-control" danger={isRunning} disabled={submitDisabled} onClick={isRunning ? onStop : onSubmit} aria-label={isRunning ? "停止生成音频" : "生成音频"}>
-                    {isRunning ? <Square className="canvas-audio-submit-icon size-3 fill-current" /> : <ArrowUp className="canvas-audio-submit-icon size-4" />}
-                </Button>
+                <CanvasSubmitButton state={isRunning ? "stop" : "ready"} disabled={submitDisabled} onClick={isRunning ? onStop : onSubmit} ariaLabel={isRunning ? "停止生成音频" : "生成音频"} />
             </div>
         </div>
     );

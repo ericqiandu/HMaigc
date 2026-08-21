@@ -1,6 +1,7 @@
 .projects-workspace .workspace-page-frame {
     max-width: 1448px;
     margin-inline: auto;
+    padding-top: 90px;
 }
 
 .projects-workspace .app-page-header {
@@ -28,7 +29,7 @@
 .projects-workspace .page-header-title {
     color: var(--workspace-ui-text);
     font-family: var(--workspace-ui-font-display);
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 22px;
     letter-spacing: -0.02em;
@@ -49,14 +50,14 @@
     width: 218px;
     height: 36px;
     padding-inline: 13px;
-    border-color: transparent;
+    border-color: var(--workspace-ui-control-border);
     border-radius: 999px;
     background: var(--workspace-ui-control);
     box-shadow: none;
 }
 
 .projects-workspace .projects-workspace-search.ant-input-affix-wrapper:hover {
-    border-color: transparent;
+    border-color: var(--workspace-ui-control-border-hover);
     background: var(--workspace-ui-control-hover);
 }
 
@@ -78,7 +79,7 @@
 .projects-workspace .projects-workspace-header-button.ant-btn {
     height: 36px;
     padding-inline: 14px;
-    border-color: var(--workspace-ui-divider);
+    border-color: var(--workspace-ui-control-border-hover);
     border-radius: 999px;
     background: transparent;
     box-shadow: none;
@@ -88,13 +89,9 @@
 }
 
 .projects-workspace .projects-workspace-header-button.ant-btn:hover {
-    border-color: var(--workspace-ui-divider);
+    border-color: var(--workspace-ui-control-border-hover);
     background: var(--workspace-ui-control);
     color: var(--workspace-ui-text);
-}
-
-.projects-workspace .projects-workspace-create-button.ant-btn {
-    background: var(--workspace-ui-control);
 }
 
 .projects-workspace .projects-workspace-filter-button--active.ant-btn {
@@ -133,14 +130,14 @@
 
 .projects-gallery {
     display: grid;
-    grid-template-columns: repeat(auto-fill, 236px);
+    grid-template-columns: repeat(auto-fill, minmax(236px, 259px));
     gap: var(--workspace-ui-space-3);
     margin-top: 22px;
 }
 
 .projects-gallery-create-card,
 .projects-gallery-card {
-    width: 236px;
+    width: 100%;
     aspect-ratio: 1.25;
     min-width: 0;
     overflow: hidden;
@@ -410,7 +407,7 @@
     }
 
     .projects-gallery {
-        grid-template-columns: repeat(auto-fill, 236px);
+        grid-template-columns: repeat(auto-fill, minmax(236px, 259px));
     }
 }
 

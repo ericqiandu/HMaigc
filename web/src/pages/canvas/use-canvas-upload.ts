@@ -529,19 +529,30 @@ export function useCanvasUpload({
         if (payload.kind === "audio") {
             const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
             const id = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-            return { id, type: CanvasNodeType.Audio, title: payload.title, position: { x: center.x - spec.width / 2, y: center.y - spec.height / 2 }, width: spec.width, height: spec.height, metadata: { content: payload.url, storageKey: payload.storageKey, durationMs: payload.durationMs, bytes: payload.bytes, mimeType: payload.mimeType || "audio/mpeg", assetId: payload.assetId, status: NODE_STATUS_SUCCESS } } satisfies CanvasNodeData;
+            return { id, type: CanvasNodeType.Audio, title: payload.title, position: { x: center.x - spec.width / 2, y: center.y - spec.height / 2 }, width: spec.width, height: spec.height, metadata: { content: payload.url, storageKey: payload.storageKey, durationMs: payload.durationMs, bytes: payload.bytes, mimeType: payload.mimeType || "audio/mpeg", assetId: payload.assetId, teamResourceId: payload.teamResource?.resourceId, teamResourceTeamId: payload.teamResource?.teamId, status: NODE_STATUS_SUCCESS } } satisfies CanvasNodeData;
         }
         if (payload.kind === "video") {
             const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
             const size = fitNodeSize(payload.width || spec.width, payload.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
             const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-            return { id, type: CanvasNodeType.Video, title: payload.title, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height, durationMs: payload.durationMs, bytes: payload.bytes, mimeType: payload.mimeType || "video/mp4", assetId: payload.assetId } } satisfies CanvasNodeData;
+            return { id, type: CanvasNodeType.Video, title: payload.title, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height, durationMs: payload.durationMs, bytes: payload.bytes, mimeType: payload.mimeType || "video/mp4", assetId: payload.assetId, teamResourceId: payload.teamResource?.resourceId, teamResourceTeamId: payload.teamResource?.teamId } } satisfies CanvasNodeData;
         }
-        const storedImage = payload.storageKey ? { url: payload.dataUrl, storageKey: payload.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" } : await uploadImage(payload.dataUrl);
+        const storedImage = payload.teamResource
+            ? { url: payload.dataUrl, storageKey: undefined, width: payload.width || 1, height: payload.height || 1, bytes: payload.bytes || 0, mimeType: payload.mimeType || "image/png" }
+            : payload.storageKey
+              ? { url: payload.dataUrl, storageKey: payload.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" }
+              : await uploadImage(payload.dataUrl);
         const meta = storedImage.width === 1 && storedImage.height === 1 ? await readImageMeta(storedImage.url) : storedImage;
         const size = fitNodeSize(meta.width, meta.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        return { id, type: CanvasNodeType.Image, title: payload.title.slice(0, 32) || "Generated Image", position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: payload.title, assetId: payload.assetId } } satisfies CanvasNodeData;
+        let storedImageMetadata;
+        if (payload.teamResource) {
+            storedImageMetadata = { content: storedImage.url, status: NODE_STATUS_SUCCESS, naturalWidth: meta.width, naturalHeight: meta.height, bytes: storedImage.bytes, mimeType: storedImage.mimeType };
+        } else {
+            if (!storedImage.storageKey) throw new Error("图片素材缺少存储标识");
+            storedImageMetadata = imageMetadata({ ...storedImage, storageKey: storedImage.storageKey, width: meta.width, height: meta.height });
+        }
+        return { id, type: CanvasNodeType.Image, title: payload.title.slice(0, 32) || "Generated Image", position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: { ...storedImageMetadata, prompt: payload.title, assetId: payload.assetId, teamResourceId: payload.teamResource?.resourceId, teamResourceTeamId: payload.teamResource?.teamId } } satisfies CanvasNodeData;
     }, []);
 
     const handleAssetInsert = useCallback(async (payload: InsertAssetPayload) => {

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+const expectedDefaultHomeHeroSlogan = "让算力更有想象力！"
 
 func newSiteSettingTestService(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
@@ -41,7 +44,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.SiteName != "HMaigc" || defaults.FooterCopyright == "" || defaults.LogoURL != "" {
+	if defaults.SiteName != "HMaigc" || defaults.HomeHeroSlogan != expectedDefaultHomeHeroSlogan || defaults.FooterCopyright == "" || defaults.LogoURL != "" {
 		t.Fatalf("unexpected defaults: %#v", defaults)
 	}
 	if !defaults.HomeBannerEnabled || defaults.HomeBannerText == "" {
@@ -57,6 +60,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
 	updated, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{
 		SiteName:                         "弘梦 AIGC",
+		HomeHeroSlogan:                   "让创作更有想象力！",
 		FooterCopyright:                  "© 弘梦科技",
 		ICPRegistrationNumber:            "蜀ICP备2026000000号-1",
 		ICPRegistrationURL:               "https://beian.miit.gov.cn/",
@@ -73,7 +77,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.SiteName != "弘梦 AIGC" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" || updated.HomeBannerText != "商业合作伙伴招募计划" {
+	if updated.SiteName != "弘梦 AIGC" || updated.HomeHeroSlogan != "让创作更有想象力！" || updated.ICPRegistrationNumber == "" || updated.PublicSecurityRegistrationNumber == "" || updated.HomeBannerText != "商业合作伙伴招募计划" {
 		t.Fatalf("unexpected updated setting: %#v", updated)
 	}
 	updated, err = svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{
@@ -97,7 +101,7 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	legalAgreement := updated.UserAgreement
 	legalPrivacy := updated.PrivacyPolicy
 	legalMembership := updated.MembershipAgreement
-	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", FooterCopyright: "© 弘梦科技", HomeBannerEnabled: true, HomeBannerText: "新版运营公告", HomeBannerFrequency: "session", MarketingPopupFrequency: "once"})
+	updated, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦 AIGC 2", HomeHeroSlogan: "让创作更有想象力！", FooterCopyright: "© 弘梦科技", HomeBannerEnabled: true, HomeBannerText: "新版运营公告", HomeBannerFrequency: "session", MarketingPopupFrequency: "once"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,6 +141,96 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 			t.Fatalf("legal audit metadata %s missing %s", legalAudit.MetadataJSON, marker)
 		}
 	}
+}
+
+func TestSiteSettingHomeHeroSloganContract(t *testing.T) {
+	svc, _ := newSiteSettingTestService(t)
+	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
+
+	defaults, err := svc.PublicSiteSetting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultPayload := siteSettingPayload(t, defaults)
+	if got := defaultPayload.HomeHeroSlogan; got != expectedDefaultHomeHeroSlogan {
+		t.Fatalf("default homeHeroSlogan = %#v, want %q", got, expectedDefaultHomeHeroSlogan)
+	}
+
+	request := siteSettingRequestFromPayload(t, map[string]string{
+		"siteName":                "HMaigc",
+		"homeHeroSlogan":          "  创意从每一次生成开始  ",
+		"homeBannerFrequency":     "always",
+		"marketingPopupFrequency": "once",
+	})
+	updated, err := svc.UpdateSiteSetting(admin, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedPayload := siteSettingPayload(t, updated)
+	if got := updatedPayload.HomeHeroSlogan; got != "创意从每一次生成开始" {
+		t.Fatalf("saved homeHeroSlogan = %#v, want trimmed value", got)
+	}
+	maximumSlogan := strings.Repeat("算", 40)
+	maximumRequest := siteSettingRequestFromPayload(t, map[string]string{
+		"siteName":                "HMaigc",
+		"homeHeroSlogan":          maximumSlogan,
+		"homeBannerFrequency":     "always",
+		"marketingPopupFrequency": "once",
+	})
+	maximumUpdated, err := svc.UpdateSiteSetting(admin, maximumRequest)
+	if err != nil {
+		t.Fatalf("40-character homeHeroSlogan should be accepted: %v", err)
+	}
+	if got := siteSettingPayload(t, maximumUpdated).HomeHeroSlogan; got != maximumSlogan {
+		t.Fatalf("maximum homeHeroSlogan = %q, want %q", got, maximumSlogan)
+	}
+
+	for name, slogan := range map[string]string{
+		"empty":    "   ",
+		"too_long": strings.Repeat("算", 41),
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := siteSettingRequestFromPayload(t, map[string]string{
+				"siteName":                "HMaigc",
+				"homeHeroSlogan":          slogan,
+				"homeBannerFrequency":     "always",
+				"marketingPopupFrequency": "once",
+			})
+			if _, err := svc.UpdateSiteSetting(admin, invalid); err == nil {
+				t.Fatalf("homeHeroSlogan %q should be rejected", slogan)
+			}
+		})
+	}
+}
+
+func siteSettingRequestFromPayload(t *testing.T, payload map[string]string) SiteSettingRequest {
+	t.Helper()
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request SiteSettingRequest
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
+
+func siteSettingPayload(t *testing.T, value *PublicSiteSetting) struct {
+	HomeHeroSlogan string `json:"homeHeroSlogan"`
+} {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		HomeHeroSlogan string `json:"homeHeroSlogan"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func TestSiteSettingMembershipAgreementValidationIsAtomicAndDoesNotGateRegistration(t *testing.T) {
@@ -207,6 +301,14 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: legalRichContent}); err != nil {
 		t.Fatalf("safe legal links, alignment and images should be accepted: %v", err)
 	}
+	browserSerializedAlignment := `<h2 style="text-align: center;">协议标题</h2>`
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: browserSerializedAlignment}); err != nil {
+		t.Fatalf("browser-serialized text alignment should be accepted: %v", err)
+	}
+	unsupportedLegalStyle := `<h2 style="text-align: center; color: red">协议标题</h2>`
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: unsupportedLegalStyle}); err == nil {
+		t.Fatal("additional legal text styles should be rejected")
+	}
 	unsafeLegalContent := `<p><a href="javascript:alert(1)">危险链接</a></p>`
 	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: unsafeLegalContent}); err == nil {
 		t.Fatal("unsafe legal link should be rejected")
@@ -215,31 +317,31 @@ func TestSiteSettingRejectsUnauthorizedAndInvalidUpdates(t *testing.T) {
 	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{UserAgreement: unsafeLegalImage}); err == nil {
 		t.Fatal("inline legal image should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "javascript:alert(1)", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, ICPRegistrationURL: "javascript:alert(1)", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("unsafe registration URL should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", PublicSecurityRegistrationURL: "https://user@example.com/path", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, PublicSecurityRegistrationURL: "https://user@example.com/path", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("registration URL with credentials should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", ICPRegistrationURL: "https://beian.miit.gov.cn/", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, ICPRegistrationURL: "https://beian.miit.gov.cn/", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("registration URL without registration number should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerEnabled: true, HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerEnabled: true, HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("enabled home banner without text should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("home banner action label without URL should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看", HomeBannerPrimaryActionURL: "javascript:alert(1)", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerText: "公告", HomeBannerPrimaryActionLabel: "查看", HomeBannerPrimaryActionURL: "javascript:alert(1)", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("unsafe home banner action URL should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerFrequency: "always", MarketingPopupEnabled: true, MarketingPopupTitle: "新品上线", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerFrequency: "always", MarketingPopupEnabled: true, MarketingPopupTitle: "新品上线", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("enabled marketing popup without image should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerFrequency: "always", MarketingPopupFrequency: "always"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerFrequency: "always", MarketingPopupFrequency: "always"}); err == nil {
 		t.Fatal("invalid marketing popup frequency should be rejected")
 	}
-	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeBannerFrequency: "hourly", MarketingPopupFrequency: "once"}); err == nil {
+	if _, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "弘梦", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerFrequency: "hourly", MarketingPopupFrequency: "once"}); err == nil {
 		t.Fatal("invalid home banner frequency should be rejected")
 	}
 }
@@ -294,6 +396,7 @@ func TestMarketingPopupImageAndConfiguration(t *testing.T) {
 	}
 	configured, err := svc.UpdateSiteSetting(admin, SiteSettingRequest{
 		SiteName:                  "HMaigc",
+		HomeHeroSlogan:            expectedDefaultHomeHeroSlogan,
 		MarketingPopupEnabled:     true,
 		MarketingPopupTitle:       "Seedance 2.5 预售上线",
 		MarketingPopupDescription: "预售加赠生成次数",
@@ -311,7 +414,7 @@ func TestMarketingPopupImageAndConfiguration(t *testing.T) {
 	if _, err := svc.RemoveMarketingPopupImage(admin); err == nil {
 		t.Fatal("enabled marketing popup image removal should be rejected")
 	}
-	configured, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "HMaigc", HomeBannerFrequency: "always", MarketingPopupFrequency: "once"})
+	configured, err = svc.UpdateSiteSetting(admin, SiteSettingRequest{SiteName: "HMaigc", HomeHeroSlogan: expectedDefaultHomeHeroSlogan, HomeBannerFrequency: "always", MarketingPopupFrequency: "once"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +450,7 @@ func TestSiteSettingAppliesNewFieldDefaultsToStoredConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setting.SiteName != "弘梦" || !setting.HomeBannerEnabled || setting.HomeBannerText == "" || setting.HomeBannerFrequency != "always" || setting.MarketingPopupFrequency != "once" {
+	if setting.SiteName != "弘梦" || setting.HomeHeroSlogan != expectedDefaultHomeHeroSlogan || !setting.HomeBannerEnabled || setting.HomeBannerText == "" || setting.HomeBannerFrequency != "always" || setting.MarketingPopupFrequency != "once" {
 		t.Fatalf("stored setting did not receive current schema defaults: %#v", setting)
 	}
 	if setting.MembershipAgreement != "" {

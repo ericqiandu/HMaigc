@@ -2,7 +2,8 @@ package service
 
 import (
 	"context"
-	"io"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 	"infinite-canvas/backend/internal/testsupport"
 )
 
-func TestPostgresKuaiziTokenReconciliationUsesFrozenCredential(t *testing.T) {
+func TestPostgresKuaiziReconciliationUsesFrozenCredentialForTokenAndMedia(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	var oldCalls int
@@ -24,7 +25,17 @@ func TestPostgresKuaiziTokenReconciliationUsesFrozenCredential(t *testing.T) {
 		if request.Header.Get("ApiKey") != "old-frozen-key" {
 			t.Fatalf("old ApiKey = %q", request.Header.Get("ApiKey"))
 		}
-		_, _ = io.WriteString(writer, `{"code":0,"data":{"items":[{"order_id":"pg-provider-order","amount":6,"status":"succeeded","task_id":"pg-provider-task","task_status":"succeeded","task_duration":1,"total_tokens":10,"created_at":"2026-08-15T10:00:00Z"}]}}`)
+		var payload struct {
+			TaskID string `json:"task_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		amount := 6
+		if payload.TaskID == "pg-media-task" {
+			amount = 2
+		}
+		_, _ = fmt.Fprintf(writer, `{"code":0,"data":{"items":[{"order_id":"pg-provider-order-%s","amount":%d,"status":"succeeded","task_id":"%s","task_status":"succeeded","task_duration":1,"total_tokens":10,"created_at":"2026-08-15T10:00:00Z"}]}}`, payload.TaskID, amount, payload.TaskID)
 	}))
 	defer oldServer.Close()
 	newServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -83,10 +94,24 @@ func TestPostgresKuaiziTokenReconciliationUsesFrozenCredential(t *testing.T) {
 	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("next_reconcile_at", now.Add(-time.Second)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RunTokenBillingReconciliationBatch(context.Background(), now, 10); err != nil {
+	mediaOrder := &model.BillingOrder{
+		ID: "pg-media-reconcile-order", UserID: "pg-agent-user", IdempotencyKey: "pg-media-reconcile-order",
+		Model: "doubao-seedance-2-0-260128", Capability: "video", Scene: "image_to_video", BillingMode: "per_second",
+		Status: model.BillingStatusReserved, AmountMicrocredits: 10_000_000, ProviderRequestID: "pg-media-task",
+		ProviderEndpointVersionID: "pg-endpoint-v1", ProviderCredentialVersionID: "pg-key-v1", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := svc.repo.ReserveBillingOrder(mediaOrder); err != nil {
 		t.Fatal(err)
 	}
-	if oldCalls != 1 {
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", mediaOrder.ID).Updates(map[string]any{
+		"status": model.BillingStatusUncertain, "next_reconcile_at": now.Add(-time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), now, 10); err != nil {
+		t.Fatal(err)
+	}
+	if oldCalls != 2 {
 		t.Fatalf("old endpoint calls = %d", oldCalls)
 	}
 	var stored model.BillingOrder
@@ -95,5 +120,12 @@ func TestPostgresKuaiziTokenReconciliationUsesFrozenCredential(t *testing.T) {
 	}
 	if stored.Status != model.BillingStatusSettled || stored.ProviderBillingAmount != 6 {
 		t.Fatalf("reconciled order = %#v", stored)
+	}
+	var storedMedia model.BillingOrder
+	if err := db.First(&storedMedia, "id = ?", mediaOrder.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedMedia.Status != model.BillingStatusSettled || storedMedia.ProviderBillingAmount != 2 {
+		t.Fatalf("reconciled media order = %#v", storedMedia)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -29,7 +30,9 @@ type apimartImageModelProfile struct {
 	allowedAspectRatios   map[string]bool
 	defaultAspectRatio    string
 	maxReferenceImages    int
-	resolutionByQuality   map[string]string
+	resolutions           []string
+	defaultResolution     string
+	resolutionValueByName map[string]string
 	supportsQuality       bool
 	supportsTransparency  bool
 	supportsReferenceData bool
@@ -107,7 +110,10 @@ func runAPIMartImageTask(ctx context.Context, input canvasGenerationInput) (map[
 		}
 		switch strings.ToLower(strings.TrimSpace(task.Data.Status)) {
 		case "completed":
-			images := apimartCompletedImages(task)
+			images, materializeErr := apimartCompletedImages(ctx, task)
+			if materializeErr != nil {
+				return nil, materializeErr
+			}
 			if len(images) == 0 {
 				return nil, errors.New("APIMart 图片任务已完成但未返回可用图片")
 			}
@@ -178,6 +184,7 @@ func normalizeAPIMartImageOutput(
 	profile apimartImageModelProfile,
 ) (string, string, string, error) {
 	normalizedSize := strings.TrimSpace(size)
+	resolution := ""
 	if normalizedSize == "" {
 		normalizedSize = profile.defaultAspectRatio
 	} else if strings.Contains(strings.ToLower(normalizedSize), "x") {
@@ -190,8 +197,17 @@ func normalizeAPIMartImageOutput(
 		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
 			return "", "", "", fmt.Errorf("APIMart 图片尺寸无效：%s", size)
 		}
-		divisor := greatestCommonDivisor(width, height)
-		normalizedSize = fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+		if len(profile.resolutions) > 0 {
+			matchedRatio, matchedResolution, ok := matchAPIMartPublishedDimensions(width, height, profile)
+			if !ok {
+				return "", "", "", fmt.Errorf("%s 图片尺寸 %s 不属于后台发布的分辨率契约", profile.label, size)
+			}
+			normalizedSize = matchedRatio
+			resolution = profile.resolutionValueByName[matchedResolution]
+		} else {
+			divisor := greatestCommonDivisor(width, height)
+			normalizedSize = fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+		}
 	}
 	if !profile.allowedAspectRatios[normalizedSize] {
 		return "", "", "", fmt.Errorf("%s 不支持图片比例 %s", profile.label, normalizedSize)
@@ -207,15 +223,90 @@ func normalizeAPIMartImageOutput(
 		}
 		return normalizedSize, "", normalizedQuality, nil
 	}
-	resolution := ""
 	if normalizedQuality != "" && normalizedQuality != "auto" {
-		mapped, ok := profile.resolutionByQuality[normalizedQuality]
-		if !ok {
-			return "", "", "", fmt.Errorf("%s 不支持图片质量 %s", profile.label, quality)
+		return "", "", "", fmt.Errorf("%s 不支持图片质量 %s", profile.label, quality)
+	}
+	if len(profile.resolutions) > 0 && resolution == "" {
+		resolution = profile.resolutionValueByName[profile.defaultResolution]
+		if resolution == "" {
+			return "", "", "", fmt.Errorf("%s 缺少默认分辨率契约", profile.label)
 		}
-		resolution = mapped
 	}
 	return normalizedSize, resolution, "", nil
+}
+
+var apimartImageAspectRatioOrder = []string{
+	"1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16",
+	"2:1", "1:2", "21:9", "9:21", "1:4", "4:1", "1:8", "8:1",
+}
+
+func apimartPublishedAspectRatios(profile apimartImageModelProfile) []string {
+	ratios := make([]string, 0, len(profile.allowedAspectRatios))
+	for _, ratio := range apimartImageAspectRatioOrder {
+		if profile.allowedAspectRatios[ratio] {
+			ratios = append(ratios, ratio)
+		}
+	}
+	return ratios
+}
+
+func matchAPIMartPublishedDimensions(width int, height int, profile apimartImageModelProfile) (string, string, bool) {
+	for _, ratio := range apimartPublishedAspectRatios(profile) {
+		for _, resolution := range profile.resolutions {
+			expectedWidth, expectedHeight, err := apimartPublishedDimensions(ratio, resolution)
+			if err == nil && width == expectedWidth && height == expectedHeight {
+				return ratio, resolution, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func apimartPublishedDimensions(ratio string, resolution string) (int, int, error) {
+	parts := strings.Split(ratio, ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("图片比例无效：%s", ratio)
+	}
+	ratioWidth, widthErr := strconv.Atoi(parts[0])
+	ratioHeight, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil || ratioWidth <= 0 || ratioHeight <= 0 {
+		return 0, 0, fmt.Errorf("图片比例无效：%s", ratio)
+	}
+	longestEdgeByResolution := map[string]int{"1K": 1824, "2K": 2048, "4K": 3840}
+	longestEdge, ok := longestEdgeByResolution[resolution]
+	if !ok {
+		return 0, 0, fmt.Errorf("图片分辨率无效：%s", resolution)
+	}
+	square := ratioWidth == ratioHeight
+	landscape := ratioWidth > ratioHeight
+	if resolution == "1K" && square {
+		longestEdge = 1024
+	}
+	shortestEdge := alignAPIMartDimension(float64(longestEdge) * float64(min(ratioWidth, ratioHeight)) / float64(max(ratioWidth, ratioHeight)))
+	width := shortestEdge
+	height := longestEdge
+	if square {
+		width = longestEdge
+		height = longestEdge
+	} else if landscape {
+		width = longestEdge
+		height = shortestEdge
+	}
+	const maxPixels = 8_294_400
+	if width*height > maxPixels {
+		scale := math.Sqrt(float64(maxPixels) / float64(width*height))
+		width = floorAPIMartDimension(float64(width) * scale)
+		height = floorAPIMartDimension(float64(height) * scale)
+	}
+	return width, height, nil
+}
+
+func alignAPIMartDimension(value float64) int {
+	return max(64, int(math.Round(value/16))*16)
+}
+
+func floorAPIMartDimension(value float64) int {
+	return max(64, int(math.Floor(value/16))*16)
 }
 
 var apimartGeminiAspectRatios = map[string]bool{
@@ -234,14 +325,12 @@ var apimartGPTImageTwoAspectRatios = map[string]bool{
 	"21:9": true, "9:21": true,
 }
 
-var apimartGeminiResolutionByQuality = map[string]string{
-	"low": "1K", "medium": "2K", "high": "4K",
-	"0.5k": "0.5K", "1k": "1K", "2k": "2K", "4k": "4K",
+var apimartGeminiResolutionValueByName = map[string]string{
+	"1K": "1K", "2K": "2K", "4K": "4K",
 }
 
-var apimartGPTImageTwoResolutionByQuality = map[string]string{
-	"low": "1k", "medium": "2k", "high": "4k",
-	"1k": "1k", "2k": "2k", "4k": "4k",
+var apimartGPTImageTwoResolutionValueByName = map[string]string{
+	"1K": "1k", "2K": "2k", "4K": "4k",
 }
 
 func apimartImageProfile(model string) (apimartImageModelProfile, error) {
@@ -253,7 +342,9 @@ func apimartImageProfile(model string) (apimartImageModelProfile, error) {
 			allowedAspectRatios:   apimartGeminiAspectRatios,
 			defaultAspectRatio:    "auto",
 			maxReferenceImages:    14,
-			resolutionByQuality:   apimartGeminiResolutionByQuality,
+			resolutions:           []string{"1K", "2K", "4K"},
+			defaultResolution:     "1K",
+			resolutionValueByName: apimartGeminiResolutionValueByName,
 			supportsReferenceData: true,
 		}, nil
 	case "gpt-image-1-official", "gpt-image-1.5-official":
@@ -280,7 +371,9 @@ func apimartImageProfile(model string) (apimartImageModelProfile, error) {
 			allowedAspectRatios:   apimartGPTImageTwoAspectRatios,
 			defaultAspectRatio:    "auto",
 			maxReferenceImages:    16,
-			resolutionByQuality:   apimartGPTImageTwoResolutionByQuality,
+			resolutions:           []string{"1K", "2K", "4K"},
+			defaultResolution:     "1K",
+			resolutionValueByName: apimartGPTImageTwoResolutionValueByName,
 			supportsReferenceData: true,
 		}, nil
 	default:
@@ -298,16 +391,25 @@ func greatestCommonDivisor(left int, right int) int {
 	return left
 }
 
-func apimartCompletedImages(task apimartImageTaskResponse) []map[string]string {
+func apimartCompletedImages(ctx context.Context, task apimartImageTaskResponse) ([]map[string]string, error) {
 	images := make([]map[string]string, 0)
 	for _, item := range task.Data.Result.Images {
 		for _, imageURL := range item.URL {
-			if strings.TrimSpace(imageURL) != "" {
-				images = append(images, map[string]string{"dataUrl": strings.TrimSpace(imageURL)})
+			imageURL = strings.TrimSpace(imageURL)
+			if imageURL == "" {
+				continue
 			}
+			data, mimeType, err := getExternalBinary(withProviderRequestKind(ctx, "download"), imageURL)
+			if err != nil {
+				return nil, fmt.Errorf("APIMart 图片任务已完成但结果下载失败：%w", err)
+			}
+			if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+				return nil, fmt.Errorf("APIMart 图片任务返回非图片结果：%s", mimeType)
+			}
+			images = append(images, map[string]string{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType})
 		}
 	}
-	return images
+	return images, nil
 }
 
 func apimartResponseMessage(message string, msg string) string {

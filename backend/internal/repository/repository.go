@@ -13,6 +13,7 @@ import (
 )
 
 var ErrDailyUploadLimitExceeded = errors.New("daily upload limit exceeded")
+var ErrCanvasProjectConflict = errors.New("canvas project conflict")
 
 type Repository struct {
 	db *gorm.DB
@@ -255,6 +256,40 @@ func (r *Repository) TaskForUser(userID string, id string) (*model.Task, error) 
 	return &task, nil
 }
 
+func (r *Repository) AttachSucceededTaskResource(userID string, taskID string, expectedResultJSON string, nextResultJSON string) (*model.Task, error) {
+	var task model.Task
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ? AND user_id = ?", taskID, userID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.TaskStatusSucceeded {
+			return ErrTaskCompletionStateConflict
+		}
+		if task.ResultJSON == nextResultJSON {
+			return nil
+		}
+		if task.ResultJSON != expectedResultJSON {
+			return ErrTaskCompletionStateConflict
+		}
+		result := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ? AND result_json = ?", task.ID, task.UserID, model.TaskStatusSucceeded, expectedResultJSON).
+			Select("result_json", "updated_at").
+			Updates(model.Task{ResultJSON: nextResultJSON, UpdatedAt: time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrTaskCompletionStateConflict
+		}
+		task.ResultJSON = nextResultJSON
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 func (r *Repository) ActiveTaskCountForUser(userID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error
@@ -425,20 +460,24 @@ func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Resu
 		if task.BillingOrderID == "" {
 			return nil
 		}
+		var order model.BillingOrder
+		orderQuery := tx.Where("id = ?", task.BillingOrderID)
+		if r.Dialect() == "postgres" {
+			orderQuery = orderQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := orderQuery.First(&order).Error; err != nil {
+			return err
+		}
+		if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusUncertain {
+			return ErrBillingStateConflict
+		}
 		billingUpdate := tx.Model(&model.BillingOrder{}).
-			Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
-			Updates(map[string]any{"status": model.BillingStatusUncertain, "error": billingError, "updated_at": time.Now()})
+			Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).
+			Updates(uncertainBillingUpdates(order, billingError, time.Now()))
 		if billingUpdate.Error != nil {
 			return billingUpdate.Error
 		}
-		if billingUpdate.RowsAffected == 1 {
-			return nil
-		}
-		var order model.BillingOrder
-		if err := tx.Select("status").First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
-			return err
-		}
-		if order.Status != model.BillingStatusUncertain {
+		if billingUpdate.RowsAffected != 1 {
 			return ErrBillingStateConflict
 		}
 		return nil
@@ -713,6 +752,39 @@ func (r *Repository) SaveResource(resource *model.Resource) error {
 	return r.db.Save(resource).Error
 }
 
+func (r *Repository) SaveTeamResourceWithAudit(resource *model.Resource, audit *model.TeamAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(resource).Error; err != nil {
+			return err
+		}
+		return tx.Create(audit).Error
+	})
+}
+
+func (r *Repository) SaveTeamResourceFailureWithAudit(resource *model.Resource, audit *model.TeamAuditEvent) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var existing model.Resource
+		err := tx.First(&existing, "id = ?", resource.ID).Error
+		switch {
+		case err == nil:
+			if existing.UserID != resource.UserID || existing.TeamID != resource.TeamID {
+				return errors.New("team resource failure fact scope conflict")
+			}
+			resource.CreatedAt = existing.CreatedAt
+			if err := tx.Save(resource).Error; err != nil {
+				return err
+			}
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			if err := tx.Create(resource).Error; err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+		return tx.Create(audit).Error
+	})
+}
+
 func (r *Repository) ResourceForUser(userID string, id string) (*model.Resource, error) {
 	var resource model.Resource
 	if err := r.db.First(&resource, "id = ? AND user_id = ?", id, userID).Error; err != nil {
@@ -752,7 +824,7 @@ func (r *Repository) TeamResources(teamID string, limit int) ([]model.Resource, 
 		limit = 200
 	}
 	var resources []model.Resource
-	err := r.db.Where("team_id = ? AND status <> ?", teamID, model.ResourceStatusDeleted).
+	err := r.db.Where("team_id = ? AND status = ?", teamID, model.ResourceStatusReady).
 		Order("created_at desc").Limit(limit).Find(&resources).Error
 	return resources, err
 }
@@ -835,14 +907,12 @@ func (r *Repository) CanvasProjectForUser(userID string, id string) (*model.Canv
 	return &project, nil
 }
 
-func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
-	result := r.db.Model(&model.CanvasProject{}).
-		Where("id = ? AND user_id = ?", project.ID, project.UserID).
-		Updates(map[string]any{"project_id": project.ProjectID, "title": project.Title, "payload_json": project.PayloadJSON, "updated_at": project.UpdatedAt})
-	if result.Error != nil || result.RowsAffected > 0 {
-		return result.Error
+func (r *Repository) CreateCanvasProject(project *model.CanvasProject) error {
+	err := r.db.Create(project).Error
+	if err != nil && isUniqueConstraintError(err) {
+		return ErrCanvasProjectConflict
 	}
-	return r.db.Create(project).Error
+	return err
 }
 
 func (r *Repository) DeleteCanvasProject(userID string, id string) error {

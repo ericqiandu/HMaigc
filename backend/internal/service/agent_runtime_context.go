@@ -11,7 +11,7 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-const agentRuntimeModelPromptPrefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
+const agentRuntimeModelPromptPrefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付、发起结构化追问或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
 
 type agentRuntimeCallableModelFact struct {
 	ChannelID             string                        `json:"channelId"`
@@ -25,12 +25,61 @@ type agentRuntimeCallableModelFact struct {
 	ProviderCapabilities  *PublicProviderCapabilities   `json:"providerCapabilities,omitempty"`
 }
 
+type agentRuntimeProductionPlanFact struct {
+	PlanKey          string                             `json:"planKey"`
+	PlanVersion      int                                `json:"planVersion"`
+	Title            string                             `json:"title"`
+	TargetDurationMS int                                `json:"targetDurationMs"`
+	Script           string                             `json:"script"`
+	References       []agentruntime.ReferenceAssetDraft `json:"references"`
+	Shots            []agentruntime.ShotPlanDraft       `json:"shots"`
+	Artifacts        []agentProductionArtifactResult    `json:"artifacts"`
+}
+
 func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState) (string, error) {
+	canvas, _, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
+	if err != nil {
+		return "", err
+	}
 	models, err := s.agentRuntimeCallableModels(scope.ActorUserID)
 	if err != nil {
 		return "", err
 	}
-	return encodeAgentRuntimeModelPrompt(scope, state, models)
+	models, err = filterAgentRuntimeCallableModels(models, state.Configuration.GenerationModels)
+	if err != nil {
+		return "", err
+	}
+	productionPlan, err := s.agentRuntimeProductionPlanFact(scope)
+	if err != nil {
+		return "", err
+	}
+	return encodeAgentRuntimeModelPrompt(scope, state, canvas.Revision, models, productionPlan)
+}
+
+func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*agentRuntimeProductionPlanFact, error) {
+	record, err := s.repo.ActiveAgentProductionPlanForThread(scope)
+	if err != nil || record == nil {
+		return nil, err
+	}
+	var references []agentruntime.ReferenceAssetDraft
+	if err := json.Unmarshal([]byte(record.Plan.ReferencesJSON), &references); err != nil {
+		return nil, errors.New("active agent production plan references are invalid")
+	}
+	var shots []agentruntime.ShotPlanDraft
+	if err := json.Unmarshal([]byte(record.Plan.ShotsJSON), &shots); err != nil {
+		return nil, errors.New("active agent production plan shots are invalid")
+	}
+	fact := &agentRuntimeProductionPlanFact{
+		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, Title: record.Plan.Title,
+		TargetDurationMS: record.Plan.TargetDurationMS, Script: record.Plan.Script, References: references, Shots: shots,
+		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)),
+	}
+	for _, artifact := range record.Artifacts {
+		fact.Artifacts = append(fact.Artifacts, agentProductionArtifactResult{
+			ArtifactID: artifact.ID, Kind: artifact.Kind, ReferenceKey: artifact.ReferenceKey, ShotKey: artifact.ShotKey, Status: artifact.Status,
+		})
+	}
+	return fact, nil
 }
 
 func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntimeCallableModelFact, error) {
@@ -81,12 +130,13 @@ func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntime
 	return result, nil
 }
 
-func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState, models []agentRuntimeCallableModelFact) (string, error) {
+func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState, canvasRevision int64, models []agentRuntimeCallableModelFact, productionPlan *agentRuntimeProductionPlanFact) (string, error) {
 	context := agentRuntimeModelContext{
-		RunID: scope.RunID, CanvasID: scope.CanvasID, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
+		RunID: scope.RunID, CanvasID: scope.CanvasID, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
-		Verification: state.Verification, LastToolResult: state.LastToolResult, PreviousMessage: state.FinalMessage,
-		CallableModels: models,
+		Verification: state.Verification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
+		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableModels: models,
+		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), ProductionPlan: productionPlan,
 	}
 	encoded, err := json.Marshal(context)
 	if err != nil {
@@ -95,31 +145,55 @@ func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.
 	return agentRuntimeModelPromptPrefix + string(encoded), nil
 }
 
+func promptAgentRuntimeConfiguration(state agentruntime.RuntimeState) agentruntime.RunConfiguration {
+	configuration := state.Configuration
+	configuration.Skills = append([]agentruntime.SkillSelection(nil), state.Configuration.Skills...)
+	configuration.Attachments = append([]agentruntime.ResourceAttachment(nil), state.Configuration.Attachments...)
+	loaded := make(map[string]struct{}, len(state.LoadedSkillDirs))
+	for _, dir := range state.LoadedSkillDirs {
+		loaded[dir] = struct{}{}
+	}
+	for index := range configuration.Skills {
+		if _, ok := loaded[configuration.Skills[index].Dir]; !ok {
+			configuration.Skills[index].Instructions = ""
+		}
+	}
+	return configuration
+}
+
 func validateFrozenAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState, prompt string) error {
+	_, err := frozenAgentRuntimeModelContext(scope, state, prompt)
+	return err
+}
+
+// frozenAgentRuntimeModelContext returns the exact facts shown to the model for
+// this step. Render preparation must validate against this snapshot instead of
+// re-reading a catalog that may have changed after the model made its choice.
+func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime.RuntimeState, prompt string) (agentRuntimeModelContext, error) {
 	if !strings.HasPrefix(prompt, agentRuntimeModelPromptPrefix) {
-		return errors.New("agent runtime model prompt facts conflict")
+		return agentRuntimeModelContext{}, errors.New("agent runtime model prompt facts conflict")
 	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix))))
 	decoder.DisallowUnknownFields()
 	var frozen agentRuntimeModelContext
 	if err := decoder.Decode(&frozen); err != nil {
-		return errors.New("agent runtime model prompt facts conflict")
+		return agentRuntimeModelContext{}, errors.New("agent runtime model prompt facts conflict")
 	}
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("agent runtime model prompt facts conflict")
+		return agentRuntimeModelContext{}, errors.New("agent runtime model prompt facts conflict")
 	}
 	if err := validateAgentRuntimeCallableModels(frozen.CallableModels); err != nil {
-		return err
+		return agentRuntimeModelContext{}, err
 	}
-	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CallableModels)
+	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CanvasRevision, frozen.CallableModels, frozen.ProductionPlan)
 	if err != nil {
-		return err
+		return agentRuntimeModelContext{}, err
 	}
 	if prompt != expected {
-		return errors.New("agent runtime model prompt facts conflict")
+		return agentRuntimeModelContext{}, errors.New("agent runtime model prompt facts conflict")
 	}
-	return nil
+	return frozen, nil
 }
 
 func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) error {

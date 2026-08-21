@@ -81,11 +81,11 @@ func (r *Repository) RecordTokenBillingUsage(id string, usage TokenUsageFact, st
 	return nil
 }
 
-func (r *Repository) RecordTokenBillingObservation(id, providerOrderID string, amount int64, billingStatus, taskStatus string, totalTokens int64) error {
+func (r *Repository) RecordProviderBillingObservation(id, providerOrderID string, amount int64, billingStatus, taskStatus string, totalTokens int64) error {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(providerOrderID) == "" || amount < 0 || totalTokens < 0 || strings.TrimSpace(billingStatus) == "" || strings.TrimSpace(taskStatus) == "" {
-		return errors.New("token billing observation facts are invalid")
+		return errors.New("provider billing observation facts are invalid")
 	}
-	result := r.db.Model(&model.BillingOrder{}).Where("id = ? AND billing_mode = ? AND status IN ?", id, "token_usage", []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).Updates(map[string]any{
+	result := r.db.Model(&model.BillingOrder{}).Where("id = ? AND status IN ?", id, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).Updates(map[string]any{
 		"provider_billing_order_id": providerOrderID, "provider_billing_amount": amount, "provider_billing_status": billingStatus, "provider_billing_unit": "fen", "provider_billing_total_tokens": totalTokens, "provider_task_status": taskStatus, "updated_at": time.Now(),
 	})
 	if result.Error != nil {
@@ -97,17 +97,17 @@ func (r *Repository) RecordTokenBillingObservation(id, providerOrderID string, a
 	return nil
 }
 
-func (r *Repository) ClaimTokenBillingReconciliations(owner string, now time.Time, lease time.Duration, limit int) ([]model.BillingOrder, error) {
+func (r *Repository) ClaimKuaiziBillingReconciliations(owner string, now time.Time, lease time.Duration, limit int) ([]model.BillingOrder, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || now.IsZero() || lease <= 0 || limit <= 0 {
-		return nil, errors.New("token billing reconciliation claim is invalid")
+		return nil, errors.New("kuaizi billing reconciliation claim is invalid")
 	}
 	if limit > 100 {
 		limit = 100
 	}
 	claimed := make([]model.BillingOrder, 0, limit)
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		query := tx.Where("billing_mode = ? AND status = ? AND provider_request_id <> '' AND next_reconcile_at IS NOT NULL AND next_reconcile_at <= ? AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?)", "token_usage", model.BillingStatusUncertain, now, now).
+		query := tx.Where("status = ? AND provider_request_id <> '' AND provider_endpoint_version_id <> '' AND provider_credential_version_id <> '' AND COALESCE(provider_billing_status, '') <> ? AND ((next_reconcile_at IS NOT NULL AND next_reconcile_at <= ?) OR (next_reconcile_at IS NULL AND COALESCE(provider_billing_order_id, '') = '' AND COALESCE(provider_billing_status, '') = '')) AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?) AND EXISTS (SELECT 1 FROM provider_endpoint_versions AS endpoints JOIN provider_accounts AS accounts ON accounts.id = endpoints.provider_account_id WHERE endpoints.id = billing_orders.provider_endpoint_version_id AND accounts.provider_kind = ?)", model.BillingStatusUncertain, "requires_review", now, now, "kuaizi").
 			Order("next_reconcile_at asc, created_at asc").Limit(limit)
 		if tx.Dialector.Name() == "postgres" {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
@@ -121,7 +121,7 @@ func (r *Repository) ClaimTokenBillingReconciliations(owner string, now time.Tim
 			candidate := &candidates[index]
 			token := newRepositoryID()
 			result := tx.Model(&model.BillingOrder{}).
-				Where("id = ? AND billing_mode = ? AND status = ? AND next_reconcile_at <= ? AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?)", candidate.ID, "token_usage", model.BillingStatusUncertain, now, now).
+				Where("id = ? AND status = ? AND COALESCE(provider_billing_status, '') <> ? AND ((next_reconcile_at IS NOT NULL AND next_reconcile_at <= ?) OR (next_reconcile_at IS NULL AND COALESCE(provider_billing_order_id, '') = '' AND COALESCE(provider_billing_status, '') = '')) AND (reconcile_lease_expires_at IS NULL OR reconcile_lease_expires_at <= ?)", candidate.ID, model.BillingStatusUncertain, "requires_review", now, now).
 				Updates(map[string]any{
 					"reconcile_lease_owner": owner, "reconcile_lease_token": token, "reconcile_lease_expires_at": &leaseExpiresAt,
 					"reconcile_attempts": gorm.Expr("reconcile_attempts + 1"), "updated_at": now,
@@ -143,12 +143,12 @@ func (r *Repository) ClaimTokenBillingReconciliations(owner string, now time.Tim
 	return claimed, err
 }
 
-func (r *Repository) RescheduleTokenBillingReconciliation(id string, owner string, leaseToken string, reason string, next time.Time) error {
+func (r *Repository) RescheduleKuaiziBillingReconciliation(id string, owner string, leaseToken string, reason string, next time.Time) error {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(owner) == "" || strings.TrimSpace(leaseToken) == "" || next.IsZero() {
-		return errors.New("token billing reconciliation reschedule is invalid")
+		return errors.New("kuaizi billing reconciliation reschedule is invalid")
 	}
 	result := r.db.Model(&model.BillingOrder{}).
-		Where("id = ? AND billing_mode = ? AND status = ? AND reconcile_lease_owner = ? AND reconcile_lease_token = ?", id, "token_usage", model.BillingStatusUncertain, owner, leaseToken).
+		Where("id = ? AND status = ? AND reconcile_lease_owner = ? AND reconcile_lease_token = ?", id, model.BillingStatusUncertain, owner, leaseToken).
 		Updates(map[string]any{
 			"error": truncateRepositoryText(reason, 1000), "next_reconcile_at": next,
 			"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": time.Now(),
@@ -162,9 +162,9 @@ func (r *Repository) RescheduleTokenBillingReconciliation(id string, owner strin
 	return nil
 }
 
-func (r *Repository) RequireTokenBillingReview(id string, owner string, leaseToken string, reason string) error {
+func (r *Repository) RequireKuaiziBillingReview(id string, owner string, leaseToken string, reason string) error {
 	result := r.db.Model(&model.BillingOrder{}).
-		Where("id = ? AND billing_mode = ? AND status = ? AND reconcile_lease_owner = ? AND reconcile_lease_token = ?", strings.TrimSpace(id), "token_usage", model.BillingStatusUncertain, strings.TrimSpace(owner), strings.TrimSpace(leaseToken)).
+		Where("id = ? AND status = ? AND reconcile_lease_owner = ? AND reconcile_lease_token = ?", strings.TrimSpace(id), model.BillingStatusUncertain, strings.TrimSpace(owner), strings.TrimSpace(leaseToken)).
 		Updates(map[string]any{
 			"provider_billing_status": "requires_review", "error": truncateRepositoryText(reason, 1000), "next_reconcile_at": nil,
 			"reconcile_lease_owner": "", "reconcile_lease_token": "", "reconcile_lease_expires_at": nil, "updated_at": time.Now(),

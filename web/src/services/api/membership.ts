@@ -99,7 +99,7 @@ export type MembershipOrderRequestIdentity = {
 };
 
 type MembershipOrderSubmissionDependencies = {
-    createTeam: (name: string) => Promise<Team>;
+    createTeam: (name: string, idempotencyKey: string) => Promise<Team>;
     createOrder: (input: MembershipOrderRequestInput, idempotencyKey: string) => Promise<MembershipOrder>;
     persistResolvedTeamID: (teamID: string) => void;
     persistIdentity: (identity: MembershipOrderRequestIdentity) => void;
@@ -136,7 +136,7 @@ export async function submitMembershipOrderRequest(
     if (requiresTeam && !resolvedInput.teamId) {
         const normalizedTeamName = teamName.trim();
         if (!normalizedTeamName) throw new Error("请输入团队名称");
-        const team = await dependencies.createTeam(normalizedTeamName);
+        const team = await dependencies.createTeam(normalizedTeamName, `team-create:${nextKey}`);
         const resolvedTeamID = team.id.trim();
         if (!resolvedTeamID) throw new Error("新团队创建成功但返回的团队 ID 为空");
         dependencies.persistResolvedTeamID(resolvedTeamID);
@@ -241,8 +241,8 @@ export function cancelMembershipOrder(id: string) {
     return request<MembershipOrder>(api.post(`/membership/orders/${encodeURIComponent(id)}/cancel`, {}));
 }
 
-export function createTeam(name: string) {
-    return request<Team>(api.post("/teams", { name }));
+export function createTeam(name: string, idempotencyKey: string) {
+    return request<Team>(api.post("/teams", { name }, { headers: { "Idempotency-Key": idempotencyKey } }));
 }
 
 export function listAdminMembershipPlans() {

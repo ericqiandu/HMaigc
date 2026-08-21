@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -311,6 +312,32 @@ func (r *Repository) ActiveMembershipSubscriptions(userID string, now time.Time)
 		  AND (subscriptions.user_id = ? OR members.id IS NOT NULL)
 		ORDER BY subscriptions.created_at DESC
 	`, userID, model.TeamMemberStatusActive, model.MembershipSubscriptionActive, now, now, userID).Scan(&subscriptions).Error
+	return subscriptions, err
+}
+
+// ActiveMembershipSubscriptionsForBillingAccount only returns subscriptions owned by the
+// exact account that will pay for a task. A membership in another team must not grant
+// concurrency to the user's personal account or to a different team.
+func (r *Repository) ActiveMembershipSubscriptionsForBillingAccount(userID string, teamID string, now time.Time) ([]model.MembershipSubscription, error) {
+	var subscriptions []model.MembershipSubscription
+	teamID = strings.TrimSpace(teamID)
+	query := r.db.Model(&model.MembershipSubscription{}).
+		Where("membership_subscriptions.status = ?", model.MembershipSubscriptionActive).
+		Where("membership_subscriptions.starts_at <= ?", now).
+		Where("membership_subscriptions.ends_at IS NULL OR membership_subscriptions.ends_at > ?", now)
+	if teamID == "" {
+		query = query.
+			Where("membership_subscriptions.user_id = ?", userID).
+			Where("membership_subscriptions.team_id = '' OR membership_subscriptions.team_id IS NULL")
+	} else {
+		query = query.
+			Joins(`JOIN team_members account_membership
+				ON account_membership.team_id = membership_subscriptions.team_id
+				AND account_membership.user_id = ?
+				AND account_membership.status = ?`, userID, model.TeamMemberStatusActive).
+			Where("membership_subscriptions.team_id = ?", teamID)
+	}
+	err := query.Order("membership_subscriptions.created_at DESC").Find(&subscriptions).Error
 	return subscriptions, err
 }
 

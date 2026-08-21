@@ -30,6 +30,7 @@ import (
 
 const providerResourceURLTTL = 4 * time.Hour
 const directResourceURLTTL = 5 * time.Minute
+const playbackResourceURLTTL = 4 * time.Hour
 
 var errInvalidGeneratedDataURL = errors.New("生成内容 data URL 无效")
 
@@ -58,8 +59,17 @@ func (s *Service) Resource(userID string, id string) (*model.Resource, error) {
 	return resource, err
 }
 
-// DirectResourceURL 先校验资源归属，再为私有 OSS 对象签发短时下载地址；本地资源继续由应用流式读取。
+// DirectResourceURL 为用户主动复制 OSS 地址签发短时链接，不承担长时间媒体播放。
 func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
+	return s.signedResourceURL(userID, id, directResourceURLTTL)
+}
+
+// PlaybackResourceURL 为已鉴权媒体播放签发会话级链接，避免长时间编辑后续播 Range 请求因五分钟签名过期。
+func (s *Service) PlaybackResourceURL(userID string, id string) (string, error) {
+	return s.signedResourceURL(userID, id, playbackResourceURLTTL)
+}
+
+func (s *Service) signedResourceURL(userID string, id string, ttl time.Duration) (string, error) {
 	resource, err := s.repo.ResourceForUser(userID, id)
 	if err != nil {
 		return "", err
@@ -77,7 +87,7 @@ func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
 	setting.Provider = firstNonEmpty(resource.Provider, setting.Provider)
 	setting.Endpoint = firstNonEmpty(resource.Endpoint, setting.Endpoint)
 	setting.Bucket = firstNonEmpty(resource.Bucket, setting.Bucket)
-	return signedOSSObjectURL(setting, resource.ObjectKey, time.Now().Add(directResourceURLTTL))
+	return signedOSSObjectURL(setting, resource.ObjectKey, time.Now().Add(ttl))
 }
 
 func (s *Service) UploadResource(userID string, header *multipart.FileHeader, kind string, width int, height int) (*model.Resource, error) {
@@ -200,6 +210,14 @@ func (s *Service) storeResource(userID string, kind string, fileName string, mim
 }
 
 func (s *Service) storeScopedResource(userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker) (*model.Resource, error) {
+	return s.storeScopedResourceWithIdentity("", userID, teamID, kind, fileName, mimeType, size, width, height, body)
+}
+
+func (s *Service) storeScopedResourceWithIdentity(resourceID string, userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker) (*model.Resource, error) {
+	return s.storeScopedResourceWithIdentityAndAudit(resourceID, userID, teamID, kind, fileName, mimeType, size, width, height, body, nil)
+}
+
+func (s *Service) storeScopedResourceWithIdentityAndAudit(resourceID string, userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker, successAudit *model.TeamAuditEvent) (*model.Resource, error) {
 	now := time.Now()
 	kind = normalizeResourceKind(kind, mimeType)
 	durationMs, err := s.authoritativeMediaDuration(kind, body)
@@ -216,7 +234,11 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 		scopeKey = "team-" + teamID
 	}
 	objectKey := localObjectKey(scopeKey, kind, fileName, now)
-	resource := model.Resource{ID: newID(), UserID: userID, TeamID: teamID, Kind: kind, Status: model.ResourceStatusPending, Provider: provider, ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, CreatedAt: now, UpdatedAt: now}
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		resourceID = newID()
+	}
+	resource := model.Resource{ID: resourceID, UserID: userID, TeamID: teamID, Kind: kind, Status: model.ResourceStatusPending, Provider: provider, ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, CreatedAt: now, UpdatedAt: now}
 	if useOSS {
 		provider = setting.Provider
 		objectKey = ossObjectKey(setting, scopeKey, kind, fileName, now)
@@ -226,8 +248,39 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 		resource.StorageSettingID = storageSettingID
 		resource.ObjectKey = objectKey
 	}
-	if err := s.repo.CreateResource(&resource); err != nil {
-		return nil, err
+	if createErr := s.repo.CreateResource(&resource); createErr != nil {
+		existing, loadErr := s.repo.Resource(resource.ID)
+		if loadErr != nil {
+			return nil, createErr
+		}
+		if existing.UserID != userID || existing.TeamID != teamID || existing.Kind != kind || existing.MimeType != mimeType ||
+			existing.Size != size || existing.Width != width || existing.Height != height || existing.DurationMs != durationMs {
+			return nil, errors.New("确定性生成资源事实冲突")
+		}
+		if existing.Status == model.ResourceStatusReady {
+			return existing, nil
+		}
+		if existing.Status != model.ResourceStatusPending && existing.Status != model.ResourceStatusFailed {
+			return nil, errors.New("确定性生成资源状态不可恢复")
+		}
+		resource = *existing
+		provider = resource.Provider
+		objectKey = resource.ObjectKey
+		if provider != "local" {
+			setting, err = s.ossSettingForResource(userID, &resource)
+			if err != nil {
+				return nil, err
+			}
+			if setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
+				return nil, errors.New("OSS 访问密钥不可用")
+			}
+		}
+		resource.Status = model.ResourceStatusPending
+		resource.Error = ""
+		resource.UpdatedAt = now
+		if err := s.repo.SaveResource(&resource); err != nil {
+			return nil, err
+		}
 	}
 	var etag string
 	if provider == "local" {
@@ -255,7 +308,12 @@ func (s *Service) storeScopedResource(userID string, teamID string, kind string,
 	}
 	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
-	if err := s.repo.SaveResource(&resource); err != nil {
+	if successAudit != nil {
+		err = s.repo.SaveTeamResourceWithAudit(&resource, successAudit)
+	} else {
+		err = s.repo.SaveResource(&resource)
+	}
+	if err != nil {
 		return nil, err
 	}
 	s.recordActivity(userID, "resource", 1)

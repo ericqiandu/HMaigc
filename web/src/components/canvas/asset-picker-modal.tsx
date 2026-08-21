@@ -8,12 +8,28 @@ import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 type InsertableAsset = Extract<Asset, { kind: "text" | "image" | "video" | "audio" }>;
 
+export type TeamResourceIdentity = { teamId: string; resourceId: string };
+
 export type InsertAssetPayload =
     | { kind: "text"; content: string; title: string; assetId?: string }
-    | { kind: "image"; dataUrl: string; title: string; storageKey?: string; assetId?: string }
-    | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string; assetId?: string }
-    | { kind: "audio"; url: string; title: string; storageKey?: string; durationMs?: number; bytes?: number; mimeType?: string; assetId?: string }
-    | { kind: "character"; title: string; assetId: string; versionId: string; prompt: string; aliases: string[]; definition: Record<string, unknown>; coverUrl?: string; visualStatus: string; voiceStatus: string; voiceName?: string; voiceProfile?: { name: string; provider: string; language: string; timbre: string }; voiceInstructions?: string };
+    | { kind: "image"; dataUrl: string; title: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string; assetId?: string; teamResource?: TeamResourceIdentity }
+    | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string; assetId?: string; teamResource?: TeamResourceIdentity }
+    | { kind: "audio"; url: string; title: string; storageKey?: string; durationMs?: number; bytes?: number; mimeType?: string; assetId?: string; teamResource?: TeamResourceIdentity }
+    | {
+          kind: "character";
+          title: string;
+          assetId: string;
+          versionId: string;
+          prompt: string;
+          aliases: string[];
+          definition: Record<string, unknown>;
+          coverUrl?: string;
+          visualStatus: string;
+          voiceStatus: string;
+          voiceName?: string;
+          voiceProfile?: { name: string; provider: string; language: string; timbre: string };
+          voiceInstructions?: string;
+      };
 
 type Props = {
     open: boolean;
@@ -90,7 +106,18 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
         } else if (asset.kind === "audio") {
             onInsert({ kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, durationMs: asset.data.durationMs, bytes: asset.data.bytes, mimeType: asset.data.mimeType, assetId: asset.id });
         } else if (asset.kind === "video") {
-            onInsert({ kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height, durationMs: asset.data.durationMs, bytes: asset.data.bytes, mimeType: asset.data.mimeType, assetId: asset.id });
+            onInsert({
+                kind: "video",
+                url: asset.data.url,
+                storageKey: asset.data.storageKey,
+                title: asset.title,
+                width: asset.data.width,
+                height: asset.data.height,
+                durationMs: asset.data.durationMs,
+                bytes: asset.data.bytes,
+                mimeType: asset.data.mimeType,
+                assetId: asset.id,
+            });
         } else if (asset.kind === "image") {
             onInsert({ kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id });
         }

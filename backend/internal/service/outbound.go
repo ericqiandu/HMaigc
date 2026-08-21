@@ -142,13 +142,79 @@ func validateKuaiziBaseURLWithResolver(ctx context.Context, rawURL string, envir
 }
 
 func KuaiziHTTPClient(environment string, timeout time.Duration) *http.Client {
+	transport, err := newKuaiziHTTPTransport(environment, defaultOutboundHostResolver, os.Getenv("CANVAS_KUAIZI_PROXY_URL"))
+	if err != nil {
+		transport = rejectingRoundTripper{err: err}
+	}
 	return &http.Client{
-		Transport: newKuaiziTransport(environment, defaultOutboundHostResolver),
+		Transport: transport,
 		Timeout:   timeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("筷子服务请求不允许重定向")
 		},
 	}
+}
+
+type rejectingRoundTripper struct {
+	err error
+}
+
+func (transport rejectingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, transport.err
+}
+
+type validatingKuaiziProxyTransport struct {
+	transport   *http.Transport
+	environment string
+	resolver    outboundHostResolver
+}
+
+func (transport *validatingKuaiziProxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil || request.URL == nil {
+		return nil, BadAuthRequest("筷子服务请求地址无效")
+	}
+	origin := &url.URL{Scheme: request.URL.Scheme, Host: request.URL.Host, User: request.URL.User}
+	if _, err := validateKuaiziBaseURLWithResolver(request.Context(), origin.String(), transport.environment, transport.resolver); err != nil {
+		return nil, err
+	}
+	return transport.transport.RoundTrip(request)
+}
+
+func (transport *validatingKuaiziProxyTransport) CloseIdleConnections() {
+	transport.transport.CloseIdleConnections()
+}
+
+func newKuaiziHTTPTransport(environment string, resolver outboundHostResolver, rawProxyURL string) (http.RoundTripper, error) {
+	if strings.TrimSpace(rawProxyURL) == "" {
+		return newKuaiziTransport(environment, resolver), nil
+	}
+	proxyURL, err := validateKuaiziProxyURL(rawProxyURL, environment)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	base := newBaseHTTPTransport(dialer.DialContext)
+	base.Proxy = http.ProxyURL(proxyURL)
+	return &validatingKuaiziProxyTransport{transport: base, environment: environment, resolver: resolver}, nil
+}
+
+func validateKuaiziProxyURL(rawProxyURL string, environment string) (*url.URL, error) {
+	if strings.TrimSpace(environment) != "development" {
+		return nil, BadAuthRequest("筷子出站代理仅允许开发环境使用")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawProxyURL))
+	if err != nil || !parsed.IsAbs() || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.Port() == "" {
+		return nil, BadAuthRequest("筷子出站代理地址无效")
+	}
+	if parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return nil, BadAuthRequest("筷子出站代理必须是不含凭据、路径、查询或片段的 HTTP origin")
+	}
+	host := normalizeOutboundHost(parsed.Hostname())
+	address := net.ParseIP(host)
+	if host != "host.docker.internal" && host != "localhost" && (address == nil || !address.IsLoopback()) {
+		return nil, BadAuthRequest("筷子出站代理必须指向本机开发代理")
+	}
+	return parsed, nil
 }
 
 func defaultOutboundHostResolver(ctx context.Context, host string) ([]net.IP, error) {
@@ -161,25 +227,33 @@ func newKuaiziTransport(environment string, resolver outboundHostResolver) *http
 }
 
 func newKuaiziTransportWithDialer(environment string, resolver outboundHostResolver, dial outboundDialContext) *http.Transport {
+	transport := newBaseHTTPTransport(dial)
+	transport.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		addresses, err := resolveKuaiziHost(ctx, host, resolver)
+		if err != nil {
+			return nil, err
+		}
+		if environment == "development" && allLoopbackIPs(addresses) {
+			return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+		}
+		for _, candidate := range addresses {
+			if blockedSpecialUseIP(candidate) {
+				return nil, BadAuthRequest("筷子服务连接不允许解析到本机、内网或特殊用途地址")
+			}
+		}
+		return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+	}
+	return transport
+}
+
+func newBaseHTTPTransport(dial outboundDialContext) *http.Transport {
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			addresses, err := resolveKuaiziHost(ctx, host, resolver)
-			if err != nil {
-				return nil, err
-			}
-			if environment == "development" && allLoopbackIPs(addresses) {
-				return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
-			}
-			for _, candidate := range addresses {
-				if blockedSpecialUseIP(candidate) {
-					return nil, BadAuthRequest("筷子服务连接不允许解析到本机、内网或特殊用途地址")
-				}
-			}
-			return dial(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+			return dial(ctx, network, address)
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          20,

@@ -30,6 +30,13 @@ func TestFreezeProviderTaskRuntimeUsesActiveVersions(t *testing.T) {
 	if stored.ProviderAccountID != "account" || stored.ProviderEndpointVersionID != "endpoint-v1" || stored.ProviderCredentialVersionID != "key-v1" {
 		t.Fatalf("frozen runtime = %#v", stored)
 	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.ProviderEndpointVersionID != "endpoint-v1" || storedOrder.ProviderCredentialVersionID != "key-v1" {
+		t.Fatalf("billing runtime = %#v", storedOrder)
+	}
 
 	if err := db.Model(&model.ProviderEndpointVersion{}).Where("id = ?", "endpoint-v1").Update("status", "retired").Error; err != nil {
 		t.Fatal(err)
@@ -42,6 +49,12 @@ func TestFreezeProviderTaskRuntimeUsesActiveVersions(t *testing.T) {
 	}
 	if stored.ProviderEndpointVersionID != "endpoint-v1" || stored.ProviderCredentialVersionID != "key-v1" {
 		t.Fatalf("frozen runtime changed after rotation: %#v", stored)
+	}
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.ProviderEndpointVersionID != "endpoint-v1" || storedOrder.ProviderCredentialVersionID != "key-v1" {
+		t.Fatalf("billing runtime changed after rotation: %#v", storedOrder)
 	}
 }
 
@@ -81,6 +94,60 @@ func TestResumeTaskWithUncertainBillingPreservesExistingProviderRequest(t *testi
 	}
 }
 
+func TestFailedKuaiziMediaTaskSchedulesFrozenBillingReconciliation(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "failed-media", UserID: "user", Status: model.TaskStatusRunning, Stage: "生成失败", Error: "upstream failed",
+		BillingOrderID: "failed-media-order", ProviderRequestID: "provider-media-task", LeaseOwner: "worker", CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID, IdempotencyKey: task.BillingOrderID,
+		BillingMode: "fixed_request", Status: model.BillingStatusRunning, ProviderRequestID: task.ProviderRequestID,
+		ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", AmountMicrocredits: 1_000_000,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := New(db).FinalizeFailedTaskAndBilling(&task, FailedTaskBillingUncertain, "上游结果待核对"); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusUncertain || stored.NextReconcileAt == nil || !stored.NextReconcileAt.After(now) {
+		t.Fatalf("scheduled billing = %#v", stored)
+	}
+}
+
+func TestMarkBillingUncertainSchedulesFrozenProviderFact(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	now := time.Now().UTC()
+	order := model.BillingOrder{
+		ID: "uncertain-media-order", UserID: "user", IdempotencyKey: "uncertain-media-order", BillingMode: "fixed_request",
+		Status: model.BillingStatusRunning, ProviderRequestID: "provider-media-task", ProviderEndpointVersionID: "endpoint-v1",
+		ProviderCredentialVersionID: "key-v1", AmountMicrocredits: 1_000_000, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := New(db).MarkBillingUncertain(order.ID, "结果待核对"); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.BillingStatusUncertain || stored.NextReconcileAt == nil || !stored.NextReconcileAt.After(now) {
+		t.Fatalf("scheduled billing = %#v", stored)
+	}
+}
+
 func TestFreezeProviderTaskRuntimeRejectsUnhealthyCredential(t *testing.T) {
 	db := openProviderRepositorySQLite(t)
 	seedProviderRuntime(t, db, time.Now().UTC(), "unavailable")
@@ -109,6 +176,37 @@ func TestFreezeProviderTaskRuntimeRejectsUnhealthyCredential(t *testing.T) {
 	}
 	if taskCount != 0 || orderCount != 0 || account.AvailableMicrocredits != 100 || account.ReservedMicrocredits != 0 {
 		t.Fatalf("failed freeze left persistent facts: tasks=%d orders=%d account=%#v", taskCount, orderCount, account)
+	}
+}
+
+func TestRetryTaskFreezesCurrentProviderRuntimeIntoTaskAndNewBilling(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	now := time.Now().UTC()
+	seedProviderRuntime(t, db, now, "healthy")
+	if err := db.Create(&model.CreditAccount{UserID: "retry-user", AvailableMicrocredits: 100, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "retry-task", UserID: "retry-user", Capability: "video", Status: model.TaskStatusFailed, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := &model.BillingOrder{
+		ID: "retry-order", UserID: task.UserID, TaskID: task.ID, IdempotencyKey: "retry-order", ChannelModelID: "channel-model",
+		BillingMode: "per_second", AmountMicrocredits: 10, Status: model.BillingStatusReserved, CreatedAt: now, UpdatedAt: now,
+	}
+	retried, err := New(db).RetryTaskWithBilling(task.UserID, task.ID, order, ActiveTaskPolicy{Unlimited: true}, model.WatermarkCapabilityControlled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ProviderAccountID != "account" || retried.ProviderEndpointVersionID != "endpoint-v1" || retried.ProviderCredentialVersionID != "key-v1" {
+		t.Fatalf("retried runtime = %#v", retried)
+	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.ProviderEndpointVersionID != "endpoint-v1" || storedOrder.ProviderCredentialVersionID != "key-v1" {
+		t.Fatalf("retry billing runtime = %#v", storedOrder)
 	}
 }
 

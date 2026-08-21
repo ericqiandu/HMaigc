@@ -64,6 +64,7 @@ type AuthSessionResult struct {
 
 type AuthUser struct {
 	model.User
+	PublicID         uint64 `json:"publicId"`
 	AvatarURL        string `json:"avatarUrl,omitempty"`
 	IdentityProvider string `json:"identityProvider,omitempty"`
 	IdentityID       string `json:"identityId,omitempty"`
@@ -277,7 +278,11 @@ func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
 
 // 认证响应只补充当前用户自己的第三方公开身份，不把身份表或密钥字段暴露给其他列表接口。
 func (s *Service) PublicAuthUser(user *model.User) (AuthUser, error) {
-	result := AuthUser{User: *user}
+	publicIdentity, err := s.repo.UserPublicIdentityForUser(user.ID)
+	if err != nil {
+		return AuthUser{}, err
+	}
+	result := AuthUser{User: *user, PublicID: publicIdentity.PublicID()}
 	identity, err := s.repo.UserIdentityForUser(user.ID, "linuxdo")
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return result, nil

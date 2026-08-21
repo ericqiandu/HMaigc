@@ -35,6 +35,43 @@ func TestDevelopmentConfigAllowsBothLocalBrowserOrigins(t *testing.T) {
 	}
 }
 
+func TestLocalBackendBuildCanUseExplicitPackageMirrors(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	expectedConfiguration := map[string][]string{
+		"backend/Dockerfile": {
+			"ARG APK_REPOSITORY=https://dl-cdn.alpinelinux.org/alpine",
+			"sed -i \"s#https://dl-cdn.alpinelinux.org/alpine#${APK_REPOSITORY}#g\" /etc/apk/repositories",
+		},
+		"docker-compose.yml": {
+			"APK_REPOSITORY: ${APK_REPOSITORY:-https://mirrors.tuna.tsinghua.edu.cn/alpine}",
+			"GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}",
+		},
+	}
+	for relativePath, expectedValues := range expectedConfiguration {
+		contents, err := os.ReadFile(filepath.Join(repositoryRoot, relativePath))
+		if err != nil {
+			t.Fatalf("read %s: %v", relativePath, err)
+		}
+		for _, expected := range expectedValues {
+			if !strings.Contains(string(contents), expected) {
+				t.Errorf("%s local build config does not contain %q", relativePath, expected)
+			}
+		}
+	}
+}
+
+func TestLocalBackendUsesExplicitDevelopmentOnlyKuaiziProxy(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	contents, err := os.ReadFile(filepath.Join(repositoryRoot, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("read docker-compose.yml: %v", err)
+	}
+	expected := "CANVAS_KUAIZI_PROXY_URL: ${CANVAS_KUAIZI_PROXY_URL:-http://host.docker.internal:7897}"
+	if !strings.Contains(string(contents), expected) {
+		t.Fatalf("local backend config does not contain %q", expected)
+	}
+}
+
 func TestAllowedOriginRejectsWildcard(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_CORS_ORIGINS", "*")
@@ -45,6 +82,15 @@ func TestAllowedOriginRejectsWildcard(t *testing.T) {
 	}
 	if allowedOrigin(context, "ftp://example.com") {
 		t.Fatal("non-HTTP origin was allowed")
+	}
+}
+
+func TestWebSocketOriginPatternsReuseValidatedCORSOrigins(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_CORS_ORIGINS", "http://localhost:3000, http://127.0.0.1:3000,*,https://example.com/path")
+	patterns := websocketOriginPatterns()
+	if len(patterns) != 2 || patterns[0] != "http://localhost:3000" || patterns[1] != "http://127.0.0.1:3000" {
+		t.Fatalf("websocket origin patterns = %#v", patterns)
 	}
 }
 

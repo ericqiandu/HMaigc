@@ -151,7 +151,7 @@ func initializeAndServe(sqlDB *sql.DB, svc *service.Service) error {
 	handler.RegisterUserDataRoutes(api, svc)
 	handler.RegisterProjectRoutes(api, svc)
 	handler.RegisterCanvasShareRoutes(api, svc)
-	if err := handler.RegisterCanvasCollaborationRoutes(api, svc); err != nil {
+	if err := handler.RegisterCanvasCollaborationRoutes(api, svc, websocketOriginPatterns()); err != nil {
 		return err
 	}
 
@@ -372,6 +372,19 @@ func allowedOrigin(_ *gin.Context, origin string) bool {
 		}
 	}
 	return false
+}
+
+func websocketOriginPatterns() []string {
+	origins := strings.Split(os.Getenv("CANVAS_CORS_ORIGINS"), ",")
+	patterns := make([]string, 0, len(origins))
+	for _, configured := range origins {
+		origin := strings.TrimSpace(configured)
+		if !allowedOrigin(nil, origin) {
+			continue
+		}
+		patterns = append(patterns, origin)
+	}
+	return patterns
 }
 
 func isLoopbackCORSHost(host string) bool {

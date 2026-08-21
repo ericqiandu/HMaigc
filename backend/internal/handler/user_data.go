@@ -129,12 +129,12 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		if c.Query("direct") == "1" && resource.Provider != "local" {
-			directURL, err := svc.DirectResourceURL(user.ID, resource.ID)
+			directURL, err := svc.PlaybackResourceURL(user.ID, resource.ID)
 			if err != nil {
 				failService(c, err)
 				return
 			}
-			// 签名 URL 不进入应用、代理或浏览器缓存，也不作为后续请求的 Referer 泄露。
+			// 会话级签名只由当前已鉴权请求签发，不进入缓存，也不作为后续请求的 Referer 泄露。
 			c.Header("Cache-Control", "private, no-store")
 			c.Header("Referrer-Policy", "no-referrer")
 			c.Header("X-Content-Type-Options", "nosniff")
@@ -304,7 +304,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, service.BadAuthRequest("画布 ID 与请求路径不一致"))
 			return
 		}
-		project, err := svc.UpsertUserCanvasProject(user.ID, req.Project)
+		project, err := svc.CreateUserCanvasProject(user.ID, req.Project)
 		if err != nil {
 			failService(c, err)
 			return

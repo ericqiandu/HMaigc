@@ -17,6 +17,9 @@ var (
 	ErrTeamMemberNotActive         = errors.New("team member is not active")
 	ErrTeamOwnerImmutable          = errors.New("team owner is immutable")
 	ErrTeamSubscriptionRequired    = errors.New("active team subscription is required")
+	ErrTeamCreationConflict        = errors.New("team creation idempotency conflict")
+	ErrTeamInvitationAlreadyExists = errors.New("team invitation already exists")
+	ErrTeamMemberVersionConflict   = errors.New("team member version conflict")
 )
 
 type TeamMemberRecord struct {
@@ -196,12 +199,20 @@ func activeTeamSubscription(db *gorm.DB, teamID string, now time.Time) (*model.M
 
 func (r *Repository) PendingTeamInvitations(teamID string, now time.Time) ([]model.TeamInvitation, error) {
 	var invitations []model.TeamInvitation
-	err := r.db.Where(
-		"team_id = ? AND status = ? AND expires_at > ?",
-		teamID,
-		model.TeamInvitationStatusPending,
-		now,
-	).Order("created_at DESC").Find(&invitations).Error
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockTeam(tx, teamID); err != nil {
+			return err
+		}
+		if err := expireTeamInvitations(tx, teamID, now); err != nil {
+			return err
+		}
+		return tx.Where(
+			"team_id = ? AND status = ? AND expires_at > ?",
+			teamID,
+			model.TeamInvitationStatusPending,
+			now,
+		).Order("created_at DESC").Find(&invitations).Error
+	})
 	return invitations, err
 }
 
@@ -237,16 +248,49 @@ func (r *Repository) TeamAuditRecords(teamID string, limit int) ([]TeamAuditReco
 	return records, err
 }
 
-func (r *Repository) CreateTeamWithAudit(team *model.Team, owner *model.TeamMember, audit *model.TeamAuditEvent) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(team).Error; err != nil {
+func (r *Repository) CreateTeamIdempotent(team *model.Team, owner *model.TeamMember, audit *model.TeamAuditEvent) (*model.Team, error) {
+	var resolved model.Team
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var existing model.Team
+		err := tx.First(&existing, "owner_user_id = ? AND creation_idempotency_key = ?", team.OwnerUserID, team.CreationIdempotencyKey).Error
+		if err == nil {
+			if existing.CreationRequestHash != team.CreationRequestHash {
+				return ErrTeamCreationConflict
+			}
+			resolved = existing
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(team)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			if err := tx.First(&existing, "owner_user_id = ? AND creation_idempotency_key = ?", team.OwnerUserID, team.CreationIdempotencyKey).Error; err != nil {
+				return err
+			}
+			if existing.CreationRequestHash != team.CreationRequestHash {
+				return ErrTeamCreationConflict
+			}
+			resolved = existing
+			return nil
 		}
 		if err := tx.Create(owner).Error; err != nil {
 			return err
 		}
-		return tx.Create(audit).Error
+		if err := tx.Create(audit).Error; err != nil {
+			return err
+		}
+		resolved = *team
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &resolved, nil
 }
 
 func (r *Repository) RenameTeam(teamID string, name string, audit *model.TeamAuditEvent, now time.Time) error {
@@ -264,16 +308,23 @@ func (r *Repository) RenameTeam(teamID string, name string, audit *model.TeamAud
 	})
 }
 
-func (r *Repository) UpdateTeamMemberPolicy(teamID string, memberID string, role model.TeamMemberRole, monthlyLimit int64, audit *model.TeamAuditEvent, now time.Time) error {
+func (r *Repository) UpdateTeamMemberPolicy(teamID string, memberID string, role model.TeamMemberRole, monthlyLimit int64, expectedUpdatedAt time.Time, audit *model.TeamAuditEvent, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.TeamMember{}).
-			Where("id = ? AND team_id = ? AND status = ? AND role <> ?", memberID, teamID, model.TeamMemberStatusActive, model.TeamMemberRoleOwner).
+			Where("id = ? AND team_id = ? AND status = ? AND role <> ? AND updated_at = ?", memberID, teamID, model.TeamMemberStatusActive, model.TeamMemberRoleOwner, expectedUpdatedAt).
 			Updates(map[string]interface{}{"role": role, "monthly_credit_limit_microcredits": monthlyLimit, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
+			var current model.TeamMember
+			if err := tx.First(&current, "id = ? AND team_id = ? AND status = ?", memberID, teamID, model.TeamMemberStatusActive).Error; err != nil {
+				return err
+			}
+			if current.Role == model.TeamMemberRoleOwner {
+				return ErrTeamOwnerImmutable
+			}
+			return ErrTeamMemberVersionConflict
 		}
 		return tx.Create(audit).Error
 	})
@@ -305,13 +356,22 @@ func (r *Repository) CreateTeamInvitation(invitation *model.TeamInvitation, targ
 				return ErrTeamMemberAlreadyActive
 			}
 		}
+		if err := tx.Model(&model.TeamInvitation{}).
+			Where("team_id = ? AND status = ? AND expires_at <= ?", invitation.TeamID, model.TeamInvitationStatusPending, now).
+			Updates(map[string]interface{}{"status": model.TeamInvitationStatusExpired, "updated_at": now}).Error; err != nil {
+			return err
+		}
 
 		var existing model.TeamInvitation
 		existingErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("team_id = ? AND lower(email) = lower(?)", invitation.TeamID, invitation.Email).
+			Where("team_id = ? AND lower(email) = lower(?) AND status = ?", invitation.TeamID, invitation.Email, model.TeamInvitationStatusPending).
 			First(&existing).Error
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
+		}
+
+		if existingErr == nil {
+			return ErrTeamInvitationAlreadyExists
 		}
 
 		var activeMembers int64
@@ -323,9 +383,6 @@ func (r *Repository) CreateTeamInvitation(invitation *model.TeamInvitation, targ
 		var reservedInvitations int64
 		query := tx.Model(&model.TeamInvitation{}).
 			Where("team_id = ? AND status = ? AND expires_at > ?", invitation.TeamID, model.TeamInvitationStatusPending, now)
-		if existingErr == nil && existing.Status == model.TeamInvitationStatusPending && existing.ExpiresAt.After(now) {
-			query = query.Where("id <> ?", existing.ID)
-		}
 		if err := query.Count(&reservedInvitations).Error; err != nil {
 			return err
 		}
@@ -333,28 +390,49 @@ func (r *Repository) CreateTeamInvitation(invitation *model.TeamInvitation, targ
 			return ErrTeamSeatLimitReached
 		}
 
-		if existingErr == nil {
-			invitation.ID = existing.ID
-			invitation.CreatedAt = existing.CreatedAt
-			if err := tx.Model(&model.TeamInvitation{}).Where("id = ?", existing.ID).Updates(map[string]interface{}{
-				"inviter_user_id":     invitation.InviterUserID,
-				"role":                invitation.Role,
-				"status":              model.TeamInvitationStatusPending,
-				"token_hash":          invitation.TokenHash,
-				"expires_at":          invitation.ExpiresAt,
-				"accepted_by_user_id": "",
-				"accepted_at":         nil,
-				"revoked_at":          nil,
-				"updated_at":          invitation.UpdatedAt,
-			}).Error; err != nil {
-				return err
-			}
-		} else if err := tx.Create(invitation).Error; err != nil {
+		if err := tx.Create(invitation).Error; err != nil {
 			return err
 		}
 		audit.TargetInvitationID = invitation.ID
 		return tx.Create(audit).Error
 	})
+}
+
+func (r *Repository) RegenerateTeamInvitation(teamID string, invitationID string, inviterUserID string, tokenHash string, expiresAt time.Time, audit *model.TeamAuditEvent, now time.Time) (*model.TeamInvitation, error) {
+	var regenerated model.TeamInvitation
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockTeam(tx, teamID); err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&regenerated, "id = ? AND team_id = ?", invitationID, teamID).Error; err != nil {
+			return err
+		}
+		if regenerated.Status != model.TeamInvitationStatusPending || !regenerated.ExpiresAt.After(now) {
+			return ErrTeamInvitationNotPending
+		}
+		result := tx.Model(&model.TeamInvitation{}).Where("id = ? AND status = ?", regenerated.ID, model.TeamInvitationStatusPending).Updates(map[string]interface{}{
+			"inviter_user_id": inviterUserID,
+			"token_hash":      tokenHash,
+			"expires_at":      expiresAt,
+			"updated_at":      now,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrTeamInvitationNotPending
+		}
+		regenerated.InviterUserID = inviterUserID
+		regenerated.TokenHash = tokenHash
+		regenerated.ExpiresAt = expiresAt
+		regenerated.UpdatedAt = now
+		audit.TargetInvitationID = regenerated.ID
+		return tx.Create(audit).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &regenerated, nil
 }
 
 func (r *Repository) AcceptTeamInvitation(invitationID string, tokenHash string, memberID string, userID string, email string, audit *model.TeamAuditEvent, now time.Time) (*model.TeamMember, error) {
@@ -497,6 +575,12 @@ func (r *Repository) RemoveTeamMember(teamID string, memberID string, audit *mod
 
 func (r *Repository) RevokeTeamInvitation(teamID string, invitationID string, audit *model.TeamAuditEvent, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockTeam(tx, teamID); err != nil {
+			return err
+		}
+		if err := expireTeamInvitations(tx, teamID, now); err != nil {
+			return err
+		}
 		var invitation model.TeamInvitation
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&invitation, "id = ? AND team_id = ?", invitationID, teamID).Error; err != nil {
 			return err

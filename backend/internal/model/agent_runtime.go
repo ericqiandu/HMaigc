@@ -31,9 +31,94 @@ type AgentRun struct {
 	ModelRecordID     string                 `json:"modelRecordId" gorm:"size:80;not null;default:''"`
 	ModelKey          string                 `json:"modelKey" gorm:"size:120;not null;default:''"`
 	ToolSchemaVersion int                    `json:"toolSchemaVersion" gorm:"not null;default:0"`
+	RuntimeVersion    int                    `json:"runtimeVersion" gorm:"not null;default:0"`
+	PolicyVersion     int                    `json:"policyVersion" gorm:"not null;default:0"`
 	CreatedAt         time.Time              `json:"createdAt"`
 	UpdatedAt         time.Time              `json:"updatedAt"`
 	CompletedAt       *time.Time             `json:"completedAt,omitempty"`
+}
+
+type AgentProductionPlanStatus string
+
+const (
+	AgentProductionPlanActive     AgentProductionPlanStatus = "active"
+	AgentProductionPlanSuperseded AgentProductionPlanStatus = "superseded"
+)
+
+type AgentProductionArtifactKind string
+
+const (
+	AgentProductionArtifactScript          AgentProductionArtifactKind = "script"
+	AgentProductionArtifactReferenceImage  AgentProductionArtifactKind = "reference_image"
+	AgentProductionArtifactStoryboardImage AgentProductionArtifactKind = "storyboard_image"
+	AgentProductionArtifactVideoClip       AgentProductionArtifactKind = "video_clip"
+)
+
+type AgentProductionArtifactStatus string
+
+const (
+	AgentProductionArtifactPlanned          AgentProductionArtifactStatus = "planned"
+	AgentProductionArtifactAwaitingApproval AgentProductionArtifactStatus = "awaiting_approval"
+	AgentProductionArtifactQueued           AgentProductionArtifactStatus = "queued"
+	AgentProductionArtifactRunning          AgentProductionArtifactStatus = "running"
+	AgentProductionArtifactSucceeded        AgentProductionArtifactStatus = "succeeded"
+	AgentProductionArtifactFailed           AgentProductionArtifactStatus = "failed"
+	AgentProductionArtifactCommitted        AgentProductionArtifactStatus = "committed"
+)
+
+func (status AgentProductionArtifactStatus) Valid() bool {
+	switch status {
+	case AgentProductionArtifactPlanned, AgentProductionArtifactAwaitingApproval,
+		AgentProductionArtifactQueued, AgentProductionArtifactRunning,
+		AgentProductionArtifactSucceeded, AgentProductionArtifactFailed,
+		AgentProductionArtifactCommitted:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentProductionPlanVersion is an immutable production plan snapshot. Only Status
+// changes when a newer version supersedes it; the plan content is append-only.
+type AgentProductionPlanVersion struct {
+	ID                   string                    `json:"id" gorm:"primaryKey;size:80"`
+	PlanKey              string                    `json:"planKey" gorm:"size:120;not null"`
+	TenantKind           agentruntime.TenantKind   `json:"tenantKind" gorm:"size:16;not null"`
+	TenantID             string                    `json:"tenantId" gorm:"size:80;not null"`
+	DomainProjectID      string                    `json:"domainProjectId,omitempty" gorm:"size:80;not null;default:''"`
+	CanvasID             string                    `json:"canvasId" gorm:"size:80;not null"`
+	CreatedByRunID       string                    `json:"createdByRunId" gorm:"size:80;not null"`
+	Version              int                       `json:"version" gorm:"not null"`
+	Status               AgentProductionPlanStatus `json:"status" gorm:"size:24;not null"`
+	Title                string                    `json:"title" gorm:"size:240;not null"`
+	TargetDurationMS     int                       `json:"targetDurationMs" gorm:"not null"`
+	Script               string                    `json:"script" gorm:"type:text;not null"`
+	ReferencesJSON       string                    `json:"-" gorm:"type:text;not null;default:'[]'"`
+	ShotsJSON            string                    `json:"-" gorm:"type:text;not null"`
+	ExpectedDeliveryJSON string                    `json:"-" gorm:"type:text;not null"`
+	CreatedAt            time.Time                 `json:"createdAt"`
+	UpdatedAt            time.Time                 `json:"updatedAt"`
+}
+
+// AgentProductionArtifact is the durable ledger entry for one plan-level or
+// shot-level deliverable. Empty ShotKey denotes the single plan-level script.
+type AgentProductionArtifact struct {
+	ID             string                        `json:"id" gorm:"primaryKey;size:80"`
+	PlanKey        string                        `json:"planKey" gorm:"size:120;not null"`
+	PlanVersionID  string                        `json:"planVersionId" gorm:"size:80;not null"`
+	PlanVersion    int                           `json:"planVersion" gorm:"not null"`
+	ReferenceKey   string                        `json:"referenceKey,omitempty" gorm:"size:120;not null;default:''"`
+	ShotKey        string                        `json:"shotKey" gorm:"size:120;not null;default:''"`
+	Kind           AgentProductionArtifactKind   `json:"kind" gorm:"size:32;not null"`
+	Status         AgentProductionArtifactStatus `json:"status" gorm:"size:32;not null"`
+	Attempt        int                           `json:"attempt" gorm:"not null;default:0"`
+	CanvasNodeID   string                        `json:"canvasNodeId" gorm:"size:120;not null;default:''"`
+	TaskID         string                        `json:"taskId" gorm:"size:80;not null;default:''"`
+	BillingOrderID string                        `json:"billingOrderId" gorm:"size:80;not null;default:''"`
+	ResourceID     string                        `json:"resourceId" gorm:"size:80;not null;default:''"`
+	LastErrorCode  string                        `json:"lastErrorCode" gorm:"size:80;not null;default:''"`
+	CreatedAt      time.Time                     `json:"createdAt"`
+	UpdatedAt      time.Time                     `json:"updatedAt"`
 }
 
 type AgentRunEvent struct {

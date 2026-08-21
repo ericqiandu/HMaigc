@@ -58,6 +58,12 @@ func (r *Repository) CreateUserRegistration(input UserRegistration) error {
 		if err := tx.Create(input.User).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&model.UserPublicIdentity{
+			UserID:    input.User.ID,
+			CreatedAt: input.User.CreatedAt,
+		}).Error; err != nil {
+			return err
+		}
 		if input.Identity != nil {
 			if err := tx.Create(input.Identity).Error; err != nil {
 				return err
@@ -79,6 +85,11 @@ func (r *Repository) CreateUserRegistration(input UserRegistration) error {
 		}
 		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.CreditAccount{UserID: input.User.ID}).Error
 	})
+}
+
+func (r *Repository) UserPublicIdentityForUser(userID string) (*model.UserPublicIdentity, error) {
+	var identity model.UserPublicIdentity
+	return &identity, r.db.First(&identity, "user_id = ?", userID).Error
 }
 
 func (r *Repository) ReferralProfileByCode(code string) (*model.ReferralProfile, error) {

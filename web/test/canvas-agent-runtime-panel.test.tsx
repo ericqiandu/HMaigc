@@ -5,7 +5,8 @@ import { afterEach, beforeAll, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
-import type { AgentRuntimeClient, AgentRuntimeHandle, AgentRuntimeHandleStorage, AgentRuntimeView, AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
+import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandle, AgentRuntimeHandleStorage, AgentRuntimeView, AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
+import { defaultConfig, encodeChannelModel, useConfigStore, type ModelChannel } from "../src/stores/use-config-store";
 
 let Panel: typeof import("../src/components/canvas/canvas-assistant-panel").CanvasAssistantPanel;
 let createRoot: (container: Element | DocumentFragment) => Root;
@@ -21,16 +22,151 @@ afterEach(async () => {
     root = null;
     document.body.replaceChildren();
     window.localStorage.clear();
+    useConfigStore.setState({ config: defaultConfig, agentDefaultModel: "" });
 });
 
-test("单一运行链回传真实选区、等待审批并展示验收后的最终消息", async () => {
+test("单一运行内核保留原有紧凑 Agent 对话框视觉外壳", async () => {
+    await mount(runtimeClient());
+
+    const panel = document.querySelector(".canvas-agent-shell");
+    const composer = document.querySelector(".canvas-agent-composer");
+    const textarea = document.querySelector<HTMLTextAreaElement>("textarea");
+
+    expect(panel?.classList.contains("canvas-agent-shell")).toBe(true);
+    expect(document.body.textContent).toContain("Agent 画布助手");
+    expect(document.body.textContent).toContain("搭建短剧工作流");
+    expect(document.body.textContent).not.toContain("从目标开始");
+    expect(composer).not.toBeNull();
+    expect(textarea?.placeholder).toBe("描述你想让 Agent 如何操作画布");
+    expect(document.querySelector(".canvas-agent-runtime-subtitle")).toBeNull();
+    expect(button("选择模型")).not.toBeNull();
+    expect(button("Skills")).not.toBeNull();
+    expect(button("生成模式")).not.toBeNull();
+    expect(button("添加图片")).not.toBeNull();
+    expect(button("发送").classList.contains("canvas-submit-button")).toBe(true);
+});
+
+test("生成模式菜单使用紧凑且符合真实审批边界的说明", async () => {
+    await mount(runtimeClient());
+
+    await act(async () => button("生成模式").click());
+    await settle();
+
+    const modeMenu = document.querySelector<HTMLElement>('section[aria-label="生成模式"]');
+    if (!modeMenu) throw new Error("未找到生成模式菜单");
+    expect(modeMenu.textContent).toContain("手动模式");
+    expect(modeMenu.textContent).toContain("每次生成前询问");
+    expect(modeMenu.textContent).toContain("自动模式");
+    expect(modeMenu.textContent).toContain("推理按 Token 计费，媒体生成前确认");
+    expect(modeMenu.textContent).not.toContain("完全自动生成");
+    const modeButtons = modeMenu.querySelectorAll<HTMLButtonElement>("button");
+    expect(modeButtons).toHaveLength(2);
+    expect(modeButtons[0]?.querySelector(".lucide-hand")).not.toBeNull();
+    expect(modeButtons[1]?.querySelector(".lucide-cpu")).not.toBeNull();
+    expect(modeButtons[1]?.querySelector(".lucide-refresh-cw")).toBeNull();
+});
+
+test("启动运行前先等待当前画布提交完成", async () => {
     const calls: string[] = [];
-    const selectionView = runtimeView("waiting_tool", {
-        pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {} },
+    const client = runtimeClient({
+        startRun: async () => {
+            calls.push("start-run");
+            return runtimeView("running");
+        },
     });
+    await mount(client, undefined, {
+        onBeforeRun: async () => {
+            calls.push("flush-canvas");
+        },
+    });
+    await setPrompt("整理当前画布");
+    await act(async () => button("发送").click());
+    await settle();
+    expect(calls).toEqual(["flush-canvas", "start-run"]);
+});
+
+test("运行事件逐条交给当前画布刷新链路", async () => {
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    const received: AgentRuntimeEvent[] = [];
+    const running = runtimeView("running", { stateVersion: 3, stepNumber: 2 });
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 2 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        getRun: async () => running,
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+    await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
+    const event: AgentRuntimeEvent = {
+        sequence: 3,
+        kind: "tool.result",
+        payload: {
+            ...running.state,
+            stateVersion: 4,
+            lastToolResult: {
+                toolCallId: "canvas-commit-1",
+                actionVersion: 1,
+                succeeded: true,
+                output: { canvasId: "canvas-1", committedRevision: 8 },
+            },
+        },
+        createdAt: "2026-08-19T00:00:00Z",
+    };
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+    await act(async () => handlers?.onEvent(event));
+    await settle();
+    expect(received).toEqual([event]);
+});
+
+test("Agent 工作区提供受控宽度的语义分隔条", async () => {
+    await mount(runtimeClient(), undefined, { width: 432, onResizeStart: () => undefined });
+
+    const separator = document.querySelector<HTMLElement>('[role="separator"][aria-orientation="vertical"]');
+    expect(separator).not.toBeNull();
+    expect(separator?.getAttribute("aria-valuemin")).toBe("320");
+    expect(separator?.getAttribute("aria-valuemax")).toBe("560");
+    expect(separator?.getAttribute("aria-valuenow")).toBe("432");
+    expect(separator?.getAttribute("aria-label")).toBe("调整 Agent 面板宽度");
+    expect(separator?.tabIndex).toBe(0);
+});
+
+test("输入框选择的动态生成模型随本次 Agent 运行提交", async () => {
+    const imageModel = encodeChannelModel("channel-image", "gpt-image-2");
+    useConfigStore.setState({
+        config: { ...defaultConfig, channels: [imageChannel()], models: [imageModel], imageModels: [imageModel], imageModel },
+    });
+    let submittedConfiguration: Parameters<AgentRuntimeClient["startRun"]>[1]["configuration"] | null = null;
+    const client = runtimeClient({
+        startRun: async (_threadId, input) => {
+            submittedConfiguration = input.configuration;
+            return runtimeView("running", { userMessage: input.userMessage, configuration: { generationModels: input.configuration.generationModels, skills: [], attachments: [], executionMode: input.configuration.executionMode } });
+        },
+    });
+    await mount(client);
+    await act(async () => button("选择模型").click());
+    await settle();
+    await act(async () => button("GPT Image 2").click());
+    await setPrompt("生成一张分镜图");
+    await act(async () => button("发送").click());
+    await settle();
+    expect(submittedConfiguration).toEqual({
+        generationModels: { image: { channelId: "channel-image", model: "gpt-image-2" } },
+        skillDirs: [],
+        attachments: [],
+        executionMode: "guided",
+    });
+});
+
+test("单一运行链等待付费审批并展示验收后的最终消息", async () => {
+    const calls: string[] = [];
     const approvalView = runtimeView("waiting_approval", {
         stateVersion: 3,
-        pendingToolCall: { toolCallId: "apply-1", toolName: "canvas.apply_ops", actionVersion: 2, arguments: { baseRevision: 7, patch: { upsertNodes: [] } } },
+        pendingToolCall: { toolCallId: "render-1", toolName: "production.render", actionVersion: 2, arguments: { planKey: "plan-1", planVersion: 1, artifactId: "artifact-1" }, expectedDelivery: answerDelivery() },
     });
     const completedView = runtimeView("succeeded", {
         stateVersion: 4,
@@ -47,17 +183,14 @@ test("单一运行链回传真实选区、等待审批并展示验收后的最�
         },
         startRun: async (_threadId, input) => {
             calls.push(`start:${input.userMessage}`);
-            return selectionView;
-        },
-        getRun: async () => selectionView,
-        submitSelection: async (_runId, input) => {
-            calls.push(`selection:${input.selection.revision}:${input.selection.nodeIds.join(",")}`);
             return approvalView;
         },
+        getRun: async () => approvalView,
         submitApproval: async (_runId, input) => {
             calls.push(`approval:${input.decision}:${input.toolCallId}:${input.actionVersion}`);
             return completedView;
         },
+        submitClarificationResponse: async () => completedView,
         subscribe: () => () => undefined,
     };
     await mount(client);
@@ -68,16 +201,18 @@ test("单一运行链回传真实选区、等待审批并展示验收后的最�
     await act(async () => {
         valueSetter.call(textarea, "整理当前画布");
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        textarea.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    expect(textarea.value).toBe("整理当前画布");
+    expect(button("选择模型").disabled).toBe(false);
+    expect(button("发送").disabled).toBe(false);
     await act(async () => button("发送").click());
     await settle();
-    expect(calls).toEqual(["create-thread", "start:整理当前画布", "selection:7:node-a,node-b"]);
+    expect(calls).toEqual(["create-thread", "start:整理当前画布"]);
     expect(document.body.textContent).toContain("等待确认");
-    expect(document.body.textContent).toContain("canvas.apply_ops");
+    expect(document.body.textContent).toContain("production.render");
     await act(async () => button("批准执行").click());
     await settle();
-    expect(calls.at(-1)).toBe("approval:approved:apply-1:2");
+    expect(calls.at(-1)).toBe("approval:approved:render-1:2");
     expect(document.body.textContent).toContain("画布整理已经完成。");
     expect(document.body.textContent).toContain("交付已验收");
 });
@@ -98,8 +233,8 @@ test("刷新时从持久句柄恢复运行并从已确认游标续接事件", as
             calls.push(`resume:${runId}`);
             return runningView;
         },
-        submitSelection: async () => runningView,
         submitApproval: async () => runningView,
+        submitClarificationResponse: async () => runningView,
         subscribe: (_runId, afterSequence) => {
             calls.push(`subscribe:${afterSequence}`);
             return () => undefined;
@@ -114,7 +249,7 @@ test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () 
     const calls: string[] = [];
     const runningView = runtimeView("running", { stateVersion: 2, stepNumber: 1, userMessage: "生成三镜头短片" });
     const storage: AgentRuntimeHandleStorage = {
-        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片" } }),
+        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片", configuration: emptyConfiguration() } }),
         save: async () => undefined,
         clear: async () => undefined,
     };
@@ -126,8 +261,8 @@ test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () 
             return runningView;
         },
         getRun: async () => runningView,
-        submitSelection: async () => runningView,
         submitApproval: async () => runningView,
+        submitClarificationResponse: async () => runningView,
         subscribe: () => () => undefined,
     };
     await mount(client, storage);
@@ -143,7 +278,7 @@ test("启动恢复再次失败时还原原指令并允许复用同一请求身�
         verification: { status: "satisfied", rationale: "ok" },
     });
     const storage: AgentRuntimeHandleStorage = {
-        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片" } }),
+        load: async () => ({ threadId: "thread-1", lastSequence: 0, pendingRun: { clientRequestId: "request-stable", userMessage: "生成三镜头短片", configuration: emptyConfiguration() } }),
         save: async () => undefined,
         clear: async () => undefined,
     };
@@ -156,8 +291,8 @@ test("启动恢复再次失败时还原原指令并允许复用同一请求身�
             return completedView;
         },
         getRun: async () => completedView,
-        submitSelection: async () => completedView,
         submitApproval: async () => completedView,
+        submitClarificationResponse: async () => completedView,
         subscribe: () => () => undefined,
     };
     await mount(client, storage);
@@ -183,8 +318,8 @@ test("切换画布时先清空上一画布的运行事实", async () => {
         createThread: async (canvasId) => ({ id: `thread-${canvasId}`, canvasId, status: "active" }),
         startRun: async () => oldView,
         getRun: async () => oldView,
-        submitSelection: async () => oldView,
         submitApproval: async () => oldView,
+        submitClarificationResponse: async () => oldView,
         subscribe: () => () => undefined,
     };
     const host = document.createElement("div");
@@ -199,6 +334,8 @@ test("切换画布时先清空上一画布的运行事实", async () => {
                 canvasRevision: 7,
                 selectedNodeIds: new Set<string>(),
                 closing: false,
+                width: 400,
+                onResizeStart: () => undefined,
                 onCollapse: () => undefined,
                 runtimeClient: client,
                 runtimeStorage: storage,
@@ -224,46 +361,24 @@ test("首页已确认的创作请求只提交一次并在成功后消费", async
             return completedView;
         },
         getRun: async () => completedView,
-        submitSelection: async () => completedView,
         submitApproval: async () => completedView,
+        submitClarificationResponse: async () => completedView,
         subscribe: () => () => undefined,
     };
     await mount(client, undefined, {
-        agentLaunchRequest: { id: "launch-1", source: "home", prompt: "生成东方幻想短片", createdAt: "2026-08-15T00:00:00Z" },
+        agentLaunchRequest: {
+            id: "launch-1",
+            source: "home",
+            prompt: "生成东方幻想短片",
+            attachments: [],
+            generationModels: { image: "", video: "" },
+            skillDirs: [],
+            executionMode: "guided",
+            createdAt: "2026-08-15T00:00:00Z",
+        },
         onAgentLaunchHandled: (id: string) => calls.push(`handled:${id}`),
     });
     expect(calls).toEqual(["start:生成东方幻想短片", "handled:launch-1"]);
-});
-
-test("选区事实提交失败后提供显式重试而不是伪装继续", async () => {
-    let attempts = 0;
-    const selectionView = runtimeView("waiting_tool", { pendingToolCall: { toolCallId: "selection-1", toolName: "canvas.read_selection", actionVersion: 1, arguments: {} } });
-    const runningView = runtimeView("running", { stateVersion: 3, stepNumber: 2, pendingToolCall: undefined });
-    const storage: AgentRuntimeHandleStorage = {
-        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 1 }),
-        save: async () => undefined,
-        clear: async () => undefined,
-    };
-    const client: AgentRuntimeClient = {
-        listThreads: async () => ({ items: [] }),
-        createThread: async () => ({ id: "thread-1", canvasId: "canvas-1", status: "active" }),
-        startRun: async () => selectionView,
-        getRun: async () => selectionView,
-        submitSelection: async () => {
-            attempts += 1;
-            if (attempts === 1) throw new Error("选区版本冲突");
-            return runningView;
-        },
-        submitApproval: async () => runningView,
-        subscribe: () => () => undefined,
-    };
-    await mount(client, storage);
-    expect(document.body.textContent).toContain("选区版本冲突");
-    expect(attempts).toBe(1);
-    await act(async () => button("重试选区提交").click());
-    await settle();
-    expect(attempts).toBe(2);
-    expect(document.body.textContent).not.toContain("选区版本冲突");
 });
 
 test("没有本地句柄时采用服务端最近运行并保存恢复身份", async () => {
@@ -362,6 +477,36 @@ test("新运行启动后刷新历史且刷新失败不污染运行状态", async
     expect(document.body.textContent).toContain("历史刷新失败");
 });
 
+test("询问状态在输入框上方显示结构化卡片并保留运行配置入口", async () => {
+    const waiting = runtimeView("waiting_input", {
+        stateVersion: 4,
+        expectedDelivery: answerDelivery(),
+        pendingClarification: {
+            request: {
+                requestId: "clarification-1",
+                expectedDelivery: answerDelivery(),
+                questions: [{ id: "question-1", prompt: "广告时长大概多长？", type: "single_choice", options: [{ id: "15s", label: "15 秒" }, { id: "30s", label: "30 秒" }], allowCustomAnswer: false }],
+            },
+            answers: [],
+        },
+    });
+    const client = runtimeClient({ listThreads: async () => ({ items: [historyItem("thread-1", waiting, "2026-08-15T04:00:00Z")] }) });
+    await mount(client);
+
+    expect(document.body.textContent).toContain("询问中");
+    expect(document.body.textContent).not.toContain("正在执行");
+    expect(document.body.textContent).toContain("广告时长大概多长？");
+    expect(document.querySelector(".agent-clarification-section")).not.toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-interaction > .agent-clarification-section")).not.toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-content .agent-clarification-section")).toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-content > .agent-clarification-live")).not.toBeNull();
+    expect(document.querySelector(".canvas-agent-runtime-interaction .agent-clarification-live")).toBeNull();
+    expect(button("选择模型")).not.toBeNull();
+    expect(button("Skills")).not.toBeNull();
+    expect(button("生成模式")).not.toBeNull();
+    expect(document.querySelector<HTMLTextAreaElement>(".canvas-agent-composer-textarea")?.disabled).toBe(true);
+});
+
 async function mount(client: AgentRuntimeClient, storage?: AgentRuntimeHandleStorage, extra: Record<string, unknown> = {}) {
     const host = document.createElement("div");
     document.body.append(host);
@@ -376,6 +521,9 @@ async function mount(client: AgentRuntimeClient, storage?: AgentRuntimeHandleSto
                     canvasRevision: 7,
                     selectedNodeIds: new Set(["node-a", "node-b"]),
                     closing: false,
+                    width: 400,
+                    onResizeStart: () => undefined,
+                    onResizeKeyDown: () => undefined,
                     onCollapse: () => undefined,
                     runtimeClient: client,
                     runtimeStorage: storage,
@@ -393,7 +541,9 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], patch: Partial
         stepNumber: 1,
         maxSteps: 8,
         status,
+        clarificationHistory: [],
         userMessage: "整理当前画布",
+        configuration: { generationModels: {}, skills: [], attachments: [], executionMode: "guided" },
         ...(status === "succeeded"
             ? {
                   expectedDelivery: { kind: "answer" as const, completionCriteria: [{ fact: "final_message" }] },
@@ -423,6 +573,47 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], patch: Partial
     };
 }
 
+function answerDelivery(): NonNullable<AgentRuntimeView["state"]["expectedDelivery"]> {
+    return { kind: "answer", completionCriteria: [{ fact: "final_message" }] };
+}
+
+function emptyConfiguration() {
+    return { generationModels: {}, skillDirs: [], attachments: [], executionMode: "guided" as const };
+}
+
+function imageChannel(): ModelChannel {
+    return {
+        id: "channel-image",
+        name: "图片模型渠道",
+        baseUrl: "/api/ai/system/channel-image",
+        apiKey: "system",
+        apiFormat: "openai",
+        interfaceType: "openai-image",
+        models: ["gpt-image-2"],
+        scope: "system",
+        enabled: true,
+        hasApiKey: true,
+        modelCosts: [
+            {
+                model: "gpt-image-2",
+                displayName: "GPT Image 2",
+                marketingCopy: "分镜图生成",
+                promotionBadge: "",
+                estimatedDurationSeconds: 20,
+                brandKey: "openai",
+                accessPolicy: "authenticated",
+                accessible: true,
+                capability: "image",
+                watermarkCapability: "not_applicable",
+                billingMode: "fixed_request",
+                priceStrategy: "flat",
+                unitPriceMicrocredits: 1,
+                priceTiers: [],
+            },
+        ],
+    };
+}
+
 function runtimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntimeClient {
     const running = runtimeView("running");
     return {
@@ -430,8 +621,8 @@ function runtimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntimeCli
         createThread: async (canvasId) => ({ id: "thread-1", canvasId, status: "active" }),
         startRun: async () => running,
         getRun: async () => running,
-        submitSelection: async () => running,
         submitApproval: async () => running,
+        submitClarificationResponse: async () => running,
         subscribe: () => () => undefined,
         ...patch,
     };
@@ -453,7 +644,6 @@ async function setPrompt(value: string) {
     await act(async () => {
         valueSetter.call(textarea, value);
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        textarea.dispatchEvent(new Event("change", { bubbles: true }));
     });
 }
 

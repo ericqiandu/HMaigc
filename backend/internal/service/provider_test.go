@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -211,6 +212,53 @@ func TestRunAIOpenPlatformVolcengineVideoTaskRejectsUnknownStatus(t *testing.T) 
 	})
 	if err == nil || !strings.Contains(err.Error(), "未知状态") {
 		t.Fatalf("runAIOpenPlatformVolcengineVideoTask() error = %v", err)
+	}
+}
+
+func TestAIOpenPlatformVolcengineHTTPFailurePreservesSanitizedProviderFact(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	const apiKey = "provider-secret-key"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = response.Write([]byte(`{"code":"InvalidParameter.provider-secret-key","message":"duration is invalid for provider-secret-key","type":"BadRequest"}`))
+	}))
+	defer server.Close()
+
+	service, repo := openProviderSecretSQLite(t, t.TempDir())
+	ctx := context.WithValue(context.Background(), providerAnalyticsKey{}, providerAnalyticsContext{
+		Service: service, UserID: "user", Capability: "video", Operation: "video_generate",
+		Model: "doubao-seedance-2-0-260128", RequestKind: "poll",
+	})
+	var response map[string]interface{}
+	err := requestAIOpenPlatformVolcengineJSON(ctx, providerConfig{BaseURL: server.URL, APIKey: apiKey}, http.MethodGet, "/poll", nil, &response)
+	if err == nil {
+		t.Fatal("requestAIOpenPlatformVolcengineJSON() error = nil")
+	}
+	var httpFailure kuaiziCompatibleHTTPError
+	if !errors.As(err, &httpFailure) || httpFailure.statusCode != http.StatusBadRequest {
+		t.Fatalf("error = %T %v, want typed HTTP 400", err, err)
+	}
+	for _, want := range []string{"HTTP 400", "InvalidParameter.[REDACTED]", "duration is invalid"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+	if strings.Contains(err.Error(), apiKey) {
+		t.Fatalf("error leaked API key: %q", err.Error())
+	}
+
+	logs, logErr := repo.ApiCallLogs("user", false, 10)
+	if logErr != nil {
+		t.Fatal(logErr)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("API call logs = %d, want 1", len(logs))
+	}
+	if logs[0].ErrorCode != "InvalidParameter.[REDACTED]" ||
+		!strings.Contains(logs[0].Error, "duration is invalid") ||
+		strings.Contains(logs[0].Error, apiKey) {
+		t.Fatalf("API call failure fact = %#v", logs[0])
 	}
 }
 

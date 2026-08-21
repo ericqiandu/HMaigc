@@ -80,12 +80,14 @@ type MembershipPlan struct {
 }
 
 type Team struct {
-	ID          string     `json:"id" gorm:"primaryKey;size:36"`
-	OwnerUserID string     `json:"ownerUserId" gorm:"index;size:36"`
-	Name        string     `json:"name" gorm:"size:120"`
-	Status      TeamStatus `json:"status" gorm:"index;size:24"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	ID                     string     `json:"id" gorm:"primaryKey;size:36"`
+	OwnerUserID            string     `json:"ownerUserId" gorm:"index;size:36"`
+	CreationIdempotencyKey string     `json:"-" gorm:"size:128;not null;default:''"`
+	CreationRequestHash    string     `json:"-" gorm:"size:64;not null;default:''"`
+	Name                   string     `json:"name" gorm:"size:120"`
+	Status                 TeamStatus `json:"status" gorm:"index;size:24"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
 }
 
 type TeamMember struct {
@@ -102,9 +104,9 @@ type TeamMember struct {
 // TeamInvitation 只持久化邀请凭证哈希，原始凭证仅在创建成功时返回一次。
 type TeamInvitation struct {
 	ID               string               `json:"id" gorm:"primaryKey;size:36"`
-	TeamID           string               `json:"teamId" gorm:"uniqueIndex:idx_team_invitation_email,priority:1;index;size:36"`
+	TeamID           string               `json:"teamId" gorm:"index:idx_team_invitation_email_lookup,priority:1;index;size:36"`
 	InviterUserID    string               `json:"inviterUserId" gorm:"index;size:36"`
-	Email            string               `json:"email" gorm:"uniqueIndex:idx_team_invitation_email,priority:2;size:160"`
+	Email            string               `json:"email" gorm:"index:idx_team_invitation_email_lookup,priority:2;size:160"`
 	Role             TeamMemberRole       `json:"role" gorm:"size:24"`
 	Status           TeamInvitationStatus `json:"status" gorm:"index;size:24"`
 	TokenHash        string               `json:"-" gorm:"uniqueIndex;size:64"`

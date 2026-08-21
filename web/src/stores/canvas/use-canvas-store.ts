@@ -36,18 +36,21 @@ export type CanvasProject = {
 type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
+    pendingDeletionIds: string[];
     createProject: (title?: string, projectId?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
-    deleteProjects: (ids: string[]) => void;
+    stageProjectDeletions: (ids: string[]) => void;
+    cancelProjectDeletions: (ids: string[]) => void;
+    finishProjectDeletions: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "ownerUserId" | "teamId" | "projectId" | "title" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "pendingAgentLaunch" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "revision" | "defaultTeamAccess" | "accessLevel" | "canEdit" | "canManage" | "teamSubscriptionActive">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 export const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
-type PersistedCanvasState = Pick<CanvasStore, "projects">;
+type PersistedCanvasState = Pick<CanvasStore, "projects" | "pendingDeletionIds">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 let queuedPersistName = CANVAS_STORE_KEY;
@@ -63,7 +66,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
     },
     setItem: (name, value) => {
         const nextState = value.state as PersistedCanvasState;
-        if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
+        if (queuedPersistState && queuedPersistState.projects === nextState.projects && queuedPersistState.pendingDeletionIds === nextState.pendingDeletionIds) return;
         queuedPersistState = nextState;
         queuedPersistName = name;
         queuedPersistValue = JSON.stringify(value);
@@ -93,6 +96,7 @@ export const useCanvasStore = create<CanvasStore>()(
         (set, get) => ({
             hydrated: false,
             projects: [],
+            pendingDeletionIds: [],
             createProject: (title = "未命名画布", projectId) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
@@ -151,11 +155,18 @@ export const useCanvasStore = create<CanvasStore>()(
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)),
                 })),
-            deleteProjects: (ids) =>
-                set((state) => {
-                    const projects = state.projects.filter((project) => !ids.includes(project.id));
-                    return { projects };
-                }),
+            stageProjectDeletions: (ids) => set((state) => ({ pendingDeletionIds: [...new Set([...state.pendingDeletionIds, ...ids])] })),
+            cancelProjectDeletions: (ids) => {
+                const cancelledIds = new Set(ids);
+                set((state) => ({ pendingDeletionIds: state.pendingDeletionIds.filter((id) => !cancelledIds.has(id)) }));
+            },
+            finishProjectDeletions: (ids) => {
+                const finishedIds = new Set(ids);
+                set((state) => ({
+                    projects: state.projects.filter((project) => !finishedIds.has(project.id)),
+                    pendingDeletionIds: state.pendingDeletionIds.filter((id) => !finishedIds.has(id)),
+                }));
+            },
             replaceProjects: (projects) => set({ projects: projects.map((project) => removeRetiredCanvasProjectContent(project)) }),
             updateProject: (id, patch) =>
                 set((state) => ({
@@ -168,10 +179,12 @@ export const useCanvasStore = create<CanvasStore>()(
             partialize: (state) =>
                 ({
                     projects: state.projects,
+                    pendingDeletionIds: state.pendingDeletionIds,
                 }) as StorageValue<CanvasStore>["state"],
             onRehydrateStorage: () => () => {
                 const projects = useCanvasStore.getState().projects.map((project) => removeRetiredCanvasProjectContent(project));
-                useCanvasStore.setState({ projects, hydrated: true });
+                const pendingDeletionIds = useCanvasStore.getState().pendingDeletionIds || [];
+                useCanvasStore.setState({ projects, pendingDeletionIds, hydrated: true });
             },
         },
     ),

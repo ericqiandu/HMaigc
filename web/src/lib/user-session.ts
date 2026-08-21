@@ -6,42 +6,50 @@ import { ASSET_STORE_KEY, useAssetStore } from "@/stores/use-asset-store";
 import { CONFIG_STORE_KEY, defaultConfig, normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { installRemoteUserDataAutoSync, resetRemoteUserDataSync, syncRemoteUserData } from "@/services/user-data-sync";
+import { startUserSession } from "@/lib/user-session-startup";
 
 export async function applyUserSession(payload: AuthSessionPayload) {
-    useUserStore.getState().setHydrated(false);
-    try {
-        resetRemoteUserDataSync();
-        await flushCanvasStorePersistence();
-        setActiveUserScope(payload.user?.id);
-        const [persistedCanvas, persistedAssets] = await Promise.all([localForageStorage.getItem(CANVAS_STORE_KEY), localForageStorage.getItem(ASSET_STORE_KEY)]);
-        const persistedConfig = scopedLocalStorage.getItem(CONFIG_STORE_KEY);
-        useUserStore.getState().setUser(payload.user);
-        useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
-        await Promise.all([useCanvasStore.persist.rehydrate(), useAssetStore.persist.rehydrate(), useConfigStore.persist.rehydrate()]);
-        // Zustand 在目标 scope 没有快照时会保留旧内存，必须显式恢复该 scope 的空状态。
-        if (!persistedCanvas) useCanvasStore.setState({ projects: [] });
-        if (!persistedAssets) useAssetStore.setState({ assets: [] });
-        if (!persistedConfig) {
-            // 只有首次配置缺失时才生成能力推荐；已有配置中的空数组代表用户明确清空。
-            const initialSystemConfig = {
-                ...defaultConfig,
-                channels: payload.systemChannels || [],
-                imageModels: undefined,
-                videoModels: undefined,
-                textModels: undefined,
-                audioModels: undefined,
-            };
-            useConfigStore.getState().replaceConfig(normalizeConfigSnapshot({ config: initialSystemConfig }).config);
-            useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
-        } else {
-            useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
-        }
-        installRemoteUserDataAutoSync();
-        if (payload.user?.id) await syncRemoteUserData(payload.user.id);
-        else resetRemoteUserDataSync();
-    } finally {
-        useUserStore.getState().setHydrated(true);
-    }
+    const remoteUserId = payload.user?.id || "";
+    await startUserSession({
+        restoreLocalSession: async () => {
+            useUserStore.getState().setHydrated(false);
+            try {
+                resetRemoteUserDataSync();
+                await flushCanvasStorePersistence();
+                setActiveUserScope(payload.user?.id);
+                const [persistedCanvas, persistedAssets] = await Promise.all([localForageStorage.getItem(CANVAS_STORE_KEY), localForageStorage.getItem(ASSET_STORE_KEY)]);
+                const persistedConfig = scopedLocalStorage.getItem(CONFIG_STORE_KEY);
+                useUserStore.getState().setUser(payload.user);
+                useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
+                await Promise.all([useCanvasStore.persist.rehydrate(), useAssetStore.persist.rehydrate(), useConfigStore.persist.rehydrate()]);
+                // Zustand 在目标 scope 没有快照时会保留旧内存，必须显式恢复该 scope 的空状态。
+                if (!persistedCanvas) useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+                if (!persistedAssets) useAssetStore.setState({ assets: [] });
+                if (!persistedConfig) {
+                    // 只有首次配置缺失时才生成能力推荐；已有配置中的空数组代表用户明确清空。
+                    const initialSystemConfig = {
+                        ...defaultConfig,
+                        channels: payload.systemChannels || [],
+                        imageModels: undefined,
+                        videoModels: undefined,
+                        textModels: undefined,
+                        audioModels: undefined,
+                    };
+                    useConfigStore.getState().replaceConfig(normalizeConfigSnapshot({ config: initialSystemConfig }).config);
+                    useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
+                } else {
+                    useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
+                }
+                installRemoteUserDataAutoSync();
+            } finally {
+                useUserStore.getState().setHydrated(true);
+            }
+        },
+        startRemoteSync: remoteUserId ? () => syncRemoteUserData(remoteUserId) : undefined,
+        onRemoteSyncError: (error) => {
+            console.error("云端用户数据同步失败", { userId: remoteUserId, error });
+        },
+    });
 }
 
 export async function refreshSystemChannels() {

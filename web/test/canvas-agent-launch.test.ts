@@ -8,24 +8,41 @@ import { previewCanvasAgentOps } from "../src/lib/canvas/canvas-agent-ops";
 describe("canvas agent launch", () => {
     test("normalizes the prompt and creates a privacy-safe persisted launch request", () => {
         const request = createCanvasAgentLaunchRequest({
-            prompt: "  月下少女走进发光竹林  ",
             id: "launch-1",
             createdAt: "2026-07-29T00:00:00.000Z",
+            draft: {
+                prompt: "  月下少女走进发光竹林  ",
+                attachments: [{ id: "attachment-1", name: "竹林.png", url: "/api/resources/resource-1/file", resourceId: "resource-1" }],
+                generationModels: { image: "channel-image::gpt-image-2", video: "" },
+                skillSelections: [{ dir: "skills/storyboard", name: "分镜", description: "" }],
+                executionMode: "automatic",
+            },
         });
 
         expect(request).toEqual({
             id: "launch-1",
             source: "home",
             prompt: "月下少女走进发光竹林",
+            attachments: [{ resourceId: "resource-1", name: "竹林.png" }],
+            generationModels: { image: "channel-image::gpt-image-2", video: "" },
+            skillDirs: ["skills/storyboard"],
+            executionMode: "automatic",
             createdAt: "2026-07-29T00:00:00.000Z",
         });
         expect(() =>
             createCanvasAgentLaunchRequest({
-                prompt: "   ",
                 id: "launch-2",
                 createdAt: request.createdAt,
+                draft: { ...requestToDraft(request), prompt: "   " },
             }),
         ).toThrow("创作描述不能为空");
+        expect(() =>
+            createCanvasAgentLaunchRequest({
+                id: "launch-3",
+                createdAt: request.createdAt,
+                draft: { ...requestToDraft(request), attachments: [{ id: "local", name: "本地.png", url: "blob:local" }] },
+            }),
+        ).toThrow("参考图片尚未保存到账号资源");
     });
 
     test("derives a compact project title without putting the prompt in the URL", () => {
@@ -167,3 +184,13 @@ describe("canvas agent launch", () => {
         expect(impact.items.join(" ")).not.toContain("agent-internal");
     });
 });
+
+function requestToDraft(request: ReturnType<typeof createCanvasAgentLaunchRequest>) {
+    return {
+        prompt: request.prompt,
+        attachments: request.attachments.map((attachment) => ({ id: attachment.resourceId, name: attachment.name, url: `/api/resources/${attachment.resourceId}/file`, resourceId: attachment.resourceId })),
+        generationModels: request.generationModels,
+        skillSelections: request.skillDirs.map((dir) => ({ dir, name: dir, description: "" })),
+        executionMode: request.executionMode,
+    };
+}

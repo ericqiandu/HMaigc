@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { AudioLines } from "lucide-react";
 import { Modal } from "antd";
 
 import { loadCanvasAudioVoiceCatalog } from "@/components/canvas/canvas-audio-voice-catalog-data";
 import { CanvasAudioVoiceCatalog } from "@/components/canvas/canvas-audio-voice-catalog";
-import { CanvasAudioVoiceCloneDialog } from "@/components/canvas/canvas-audio-voice-clone-dialog";
 import { useChannelVoicePreview } from "@/components/canvas/use-channel-voice-preview";
 import { normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -14,6 +13,8 @@ import { modelOptionName, resolveModelChannel, type AiConfig, type ChannelVoice 
 import { useThemeStore } from "@/stores/use-theme-store";
 
 import "./canvas-audio-voice-picker.css";
+
+const CanvasAudioVoiceCloneDialog = lazy(() => import("@/components/canvas/canvas-audio-voice-clone-dialog").then((module) => ({ default: module.CanvasAudioVoiceCloneDialog })));
 
 type CanvasAudioVoicePickerProps = {
     config: AiConfig;
@@ -161,7 +162,11 @@ export function CanvasAudioVoicePicker({ config, value, onChange, className = ""
                     />
                 </div>
             </Modal>
-            <CanvasAudioVoiceCloneDialog open={cloneOpen} channelId={channel.id} onCancel={() => setCloneOpen(false)} onCreated={handleVoiceCreated} />
+            {cloneOpen ? (
+                <Suspense fallback={null}>
+                    <CanvasAudioVoiceCloneDialog open channelId={channel.id} onCancel={() => setCloneOpen(false)} onCreated={handleVoiceCreated} />
+                </Suspense>
+            ) : null}
         </>
     );
 }

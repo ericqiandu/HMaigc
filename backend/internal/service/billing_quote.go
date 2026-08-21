@@ -14,6 +14,7 @@ import (
 const maxBillingQuoteBatchCount int64 = 15
 
 type TaskBillingQuoteRequest struct {
+	ProjectID  string                `json:"projectId"`
 	Type       string                `json:"type"`
 	Operation  string                `json:"operation"`
 	BatchCount int64                 `json:"batchCount"`
@@ -93,12 +94,17 @@ func (s *Service) QuoteTaskBilling(userID string, request TaskBillingQuoteReques
 	if channelID == "" || modelKey == "" {
 		return nil, BadAuthRequest("当前功能必须使用后台配置的系统模型")
 	}
+	billingScope, err := s.billingAccountScopeForTask(userID, request.ProjectID)
+	if err != nil {
+		return nil, err
+	}
 	usage, err := billingUsageFromQuoteInput(capability, modelKey, request.Input)
 	if err != nil {
 		return nil, err
 	}
 	order, err := s.newBillingOrder(
 		userID,
+		billingScope,
 		"",
 		"quote:"+newID(),
 		channelID,

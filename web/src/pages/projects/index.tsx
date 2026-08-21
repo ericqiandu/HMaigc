@@ -6,7 +6,10 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
+import { projectBelongsToWorkspace } from "@/lib/workspace-scope";
 import { createProject, listProjects } from "@/services/api/projects";
+import { getTeamWorkspace } from "@/services/api/teams";
+import { useUserStore } from "@/stores/use-user-store";
 
 import { ProjectGallery } from "./project-gallery";
 import "./projects-workspace.css";
@@ -24,6 +27,8 @@ export default function ProjectsPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { message } = App.useApp();
+    const user = useUserStore((state) => state.user);
+    const workspaceScope = useUserStore((state) => state.workspaceScope);
     const [searchParams, setSearchParams] = useSearchParams();
     const [keyword, setKeyword] = useState("");
     const [status, setStatus] = useState<ProjectStatusFilter>("all");
@@ -41,9 +46,22 @@ export default function ProjectsPage() {
         queryKey: ["projects"],
         queryFn: listProjects,
     });
+    const teamWorkspaceQuery = useQuery({
+        queryKey: ["team-workspace", user?.id],
+        queryFn: getTeamWorkspace,
+        enabled: Boolean(user) && workspaceScope.kind === "team",
+        staleTime: 30_000,
+    });
+    const activeTeam = workspaceScope.kind === "team" ? teamWorkspaceQuery.data?.teams.find((summary) => summary.team.id === workspaceScope.teamId) : undefined;
+    const canCreateProject = workspaceScope.kind === "personal" || activeTeam?.capabilities.canManageProjects === true;
 
     const mutation = useMutation({
-        mutationFn: createProject,
+        mutationFn: (input: ProjectForm) =>
+            createProject({
+                ...input,
+                type: "short-drama",
+                teamId: workspaceScope.kind === "team" ? workspaceScope.teamId : undefined,
+            }),
         onSuccess: ({ project }) => {
             setCreateOpen(false);
             void queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -57,6 +75,7 @@ export default function ProjectsPage() {
     const rows = useMemo(() => {
         const normalizedKeyword = keyword.trim().toLowerCase();
         return [...(query.data?.projects || [])]
+            .filter(({ project }) => Boolean(user) && projectBelongsToWorkspace(project, user?.id || "", workspaceScope))
             .filter(({ project }) => status === "all" || project.status === status)
             .filter(({ project }) => !normalizedKeyword || `${project.name} ${project.description} ${project.stylePresetId}`.toLowerCase().includes(normalizedKeyword))
             .sort((left, right) => {
@@ -70,10 +89,14 @@ export default function ProjectsPage() {
                 }
                 return right.project.updatedAt.localeCompare(left.project.updatedAt);
             });
-    }, [keyword, query.data, sort, status]);
+    }, [keyword, query.data, sort, status, user, workspaceScope]);
 
     const filtersActive = status !== "all" || sort !== "updated";
-    const showGallery = !query.isLoading && !query.isError && (rows.length > 0 || (!keyword && status === "all"));
+    const teamWorkspaceBlocked = workspaceScope.kind === "team" && (teamWorkspaceQuery.isLoading || teamWorkspaceQuery.isError || !activeTeam);
+    const showGallery = !query.isLoading && !query.isError && !teamWorkspaceBlocked && (rows.length > 0 || (!keyword && status === "all"));
+    const openCreateProject = () => {
+        if (canCreateProject) setCreateOpen(true);
+    };
 
     const resetFilters = () => {
         setStatus("all");
@@ -119,9 +142,8 @@ export default function ProjectsPage() {
     return (
         <WorkspacePage className="projects-workspace" layout="collection">
             <PageHeader
-                title="我的项目"
-                description="继续最近的短剧项目，或创建新的制作空间。"
-                meta={<span className="projects-page-count">{rows.length}</span>}
+                title={workspaceScope.kind === "team" ? activeTeam?.team.name || "团队项目" : "我的项目"}
+                description={workspaceScope.kind === "team" ? "浏览团队共享项目，并按团队权限创建制作空间。" : "继续最近的短剧项目，或创建新的制作空间。"}
                 actions={
                     <>
                         <Popover content={filterContent} placement="bottomRight" trigger="click">
@@ -135,7 +157,7 @@ export default function ProjectsPage() {
                         <Button className="projects-workspace-header-button projects-page-canvas-button" icon={<LayoutGrid className="projects-workspace-header-icon size-3.5" />} onClick={() => navigate("/canvas")}>
                             画布
                         </Button>
-                        <Button className="projects-workspace-header-button projects-workspace-create-button projects-page-create-button" icon={<Plus className="projects-workspace-header-icon size-3.5" />} onClick={() => setCreateOpen(true)}>
+                        <Button className="projects-workspace-header-button projects-workspace-create-button projects-page-create-button" icon={<Plus className="projects-workspace-header-icon size-3.5" />} onClick={openCreateProject} disabled={!canCreateProject} title={!canCreateProject && workspaceScope.kind === "team" ? "当前团队角色没有创建项目权限" : undefined}>
                             新建项目
                         </Button>
                         <Input
@@ -163,7 +185,25 @@ export default function ProjectsPage() {
                 </div>
             ) : null}
 
-            {showGallery ? <ProjectGallery rows={rows} onCreate={() => setCreateOpen(true)} /> : null}
+            {workspaceScope.kind === "team" && teamWorkspaceQuery.isError ? (
+                <div className="projects-workspace-state">
+                    <WorkspaceErrorState description={teamWorkspaceQuery.error instanceof Error ? teamWorkspaceQuery.error.message : "团队工作区加载失败"} onRetry={() => void teamWorkspaceQuery.refetch()} />
+                </div>
+            ) : null}
+
+            {workspaceScope.kind === "team" && teamWorkspaceQuery.isLoading ? (
+                <div className="projects-workspace-state">
+                    <WorkspaceLoadingState label="正在读取团队工作区" detail="核对团队权限与项目范围" />
+                </div>
+            ) : null}
+
+            {workspaceScope.kind === "team" && teamWorkspaceQuery.isSuccess && !activeTeam ? (
+                <div className="projects-workspace-state">
+                    <WorkspaceErrorState description="当前团队已不可访问，请从右上角账户菜单切换工作区。" onRetry={() => void teamWorkspaceQuery.refetch()} />
+                </div>
+            ) : null}
+
+            {showGallery ? <ProjectGallery rows={rows} onCreate={canCreateProject ? openCreateProject : undefined} /> : null}
 
             {!query.isLoading && !query.isError && !rows.length && (Boolean(keyword) || status !== "all") ? (
                 <div className="projects-workspace-state">
@@ -186,8 +226,8 @@ export default function ProjectsPage() {
                 </div>
             ) : null}
 
-            <Modal title="创建短剧项目" open={createOpen} footer={null} destroyOnHidden onCancel={() => setCreateOpen(false)} width={500} className="projects-workspace-create-modal" styles={{ body: { paddingTop: 12 } }}>
-                <Form<ProjectForm> className="projects-workspace-create-form" layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank" }} onFinish={(values) => mutation.mutate({ ...values, type: "short-drama" })}>
+            <Modal title={workspaceScope.kind === "team" ? "创建团队短剧项目" : "创建短剧项目"} open={createOpen && canCreateProject} footer={null} destroyOnHidden onCancel={() => setCreateOpen(false)} width={500} className="projects-workspace-create-modal" styles={{ body: { paddingTop: 12 } }}>
+                <Form<ProjectForm> className="projects-workspace-create-form" layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank" }} onFinish={(values) => mutation.mutate(values)}>
                     <Form.Item className="projects-workspace-create-form-item" name="name" label="项目名称" rules={[{ required: true, whitespace: true, message: "请输入项目名称" }]}>
                         <Input autoFocus className="projects-workspace-create-name" placeholder="例如：长安夜行" />
                     </Form.Item>

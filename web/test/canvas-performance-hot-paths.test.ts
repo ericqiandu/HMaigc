@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyCanvasLiveNodeDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, shouldSyncCanvasDragPreview } from "../src/lib/canvas/canvas-drag-performance";
+import { applyCanvasLiveNodeDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveNodeDragTargets, shouldSyncCanvasDragPreview } from "../src/lib/canvas/canvas-drag-performance";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "../src/lib/canvas/canvas-resource-references";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
@@ -59,16 +59,27 @@ describe("canvas performance hot paths", () => {
             },
         } as HTMLElement;
 
-        applyCanvasLiveNodeDrag(surface, { x: 18.5, y: -7 });
+        applyCanvasLiveNodeDrag([surface], { x: 18.5, y: -7 });
         expect(surface.style.getPropertyValue("--canvas-live-drag-x")).toBe("18.5px");
         expect(surface.style.getPropertyValue("--canvas-live-drag-y")).toBe("-7px");
         expect(surface.dataset.canvasNodeDragging).toBe("true");
         expect(shouldSyncCanvasDragPreview(120, 100)).toBeFalse();
         expect(shouldSyncCanvasDragPreview(150, 100)).toBeTrue();
 
-        clearCanvasLiveNodeDrag(surface);
+        clearCanvasLiveNodeDrag([surface]);
         expect(surface.style.getPropertyValue("--canvas-live-drag-x")).toBe("");
         expect(surface.dataset.canvasNodeDragging).toBeUndefined();
+    });
+
+    test("resolves drag variables to selected nodes instead of invalidating the canvas ancestry", () => {
+        const selected = { dataset: { nodeId: "selected" } } as unknown as HTMLElement;
+        const untouched = { dataset: { nodeId: "untouched" } } as unknown as HTMLElement;
+        const world = {
+            querySelectorAll: () => [selected, untouched],
+        } as unknown as HTMLElement;
+
+        expect(resolveCanvasLiveNodeDragTargets(world, new Set(["selected"]))).toEqual([selected]);
+        expect(resolveCanvasLiveNodeDragTargets(null, new Set(["selected"]))).toEqual([]);
     });
 
     test("keeps the drag offset prop stable while CSS variables carry frame-by-frame movement", async () => {

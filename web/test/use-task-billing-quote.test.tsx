@@ -24,6 +24,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 const imageQuoteRequest = (model: string): TaskBillingQuoteRequest => ({
+    projectId: "canvas-project",
     type: "canvas_image",
     operation: "generate",
     batchCount: 1,

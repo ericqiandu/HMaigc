@@ -21,13 +21,17 @@ export type LocalUser = {
     updatedAt: string;
 };
 
+export type AuthUser = LocalUser & {
+    publicId: number;
+};
+
 export type AdminUser = LocalUser & {
     availableMicrocredits: number;
     reservedMicrocredits: number;
 };
 
 export type AuthSessionPayload = {
-    user: LocalUser | null;
+    user: AuthUser | null;
     systemChannels?: ModelChannel[];
     agentDefaultModel?: AgentDefaultModelReference | null;
     runtimeLimits?: RuntimeLimits;
@@ -403,7 +407,7 @@ export function getSystemChannels() {
 }
 
 export function login(input: { username: string; password: string }) {
-    return request<{ user: LocalUser }>(api.post("/auth/login", input));
+    return request<{ user: AuthUser }>(api.post("/auth/login", input));
 }
 
 export function sendRegistrationEmailCode(email: string) {
@@ -411,7 +415,7 @@ export function sendRegistrationEmailCode(email: string) {
 }
 
 export function register(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; inviteCode?: string }) {
-    return request<{ user: LocalUser }>(api.post("/auth/register", input));
+    return request<{ user: AuthUser }>(api.post("/auth/register", input));
 }
 
 export function logout() {

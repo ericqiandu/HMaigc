@@ -6,7 +6,7 @@ import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
-import type { UpdreamSkill } from "@/services/api/skills";
+import type { PlatformSkill } from "@/services/api/skills";
 import type { Asset, ImageAsset } from "@/stores/use-asset-store";
 import type { DirectorScene } from "@/types/director";
 import { CanvasNodeType, type CanvasConnection, type CanvasMediaPerformanceMode, type CanvasNodeData, type ContextMenuState, type ViewportTransform } from "@/types/canvas";
@@ -24,7 +24,7 @@ type UseCanvasRenderModelOptions = {
     hoveredNodeId: string | null;
     dragPreview: DragPreview;
     collapsingBatchIds: Set<string>;
-    activatedSkills: UpdreamSkill[];
+    activatedSkills: PlatformSkill[];
     directorScenes?: DirectorScene[];
     toolbarNodeId: string | null;
     infoNodeId: string | null;
@@ -127,7 +127,10 @@ export function useCanvasRenderModel({
     }, [nodes, reduceMediaEffects, renderHiddenNodeIds, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
 
     const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image"), [assets]);
-    const canvasImageNodes = useMemo(() => nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content) && !collapsedBatchChildIds.has(node.id) && !(node.parentId && nodeById.get(node.parentId)?.metadata?.frame?.collapsed)), [collapsedBatchChildIds, nodeById, nodes]);
+    const canvasImageNodes = useMemo(
+        () => nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content) && !collapsedBatchChildIds.has(node.id) && !(node.parentId && nodeById.get(node.parentId)?.metadata?.frame?.collapsed)),
+        [collapsedBatchChildIds, nodeById, nodes],
+    );
     const semanticNodesRef = useRef(nodes);
     const semanticNodes = useMemo(() => {
         const previous = semanticNodesRef.current;
@@ -165,13 +168,17 @@ export function useCanvasRenderModel({
         const bottom = Math.max(...selectedNodes.map((node) => node.position.y + node.height));
         return { left, top, width: right - left, height: bottom - top, count: selectedNodes.length };
     }, [nodes, renderHiddenNodeIds, selectedNodeIds]);
-    const selectedVideoNodes = useMemo(() => nodes
-        .filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content) && !renderHiddenNodeIds.has(node.id))
-        .sort((a, b) => {
-            const shotA = a.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
-            const shotB = b.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
-            return shotA - shotB || a.position.y - b.position.y || a.position.x - b.position.x;
-        }), [nodes, renderHiddenNodeIds, selectedNodeIds]);
+    const selectedVideoNodes = useMemo(
+        () =>
+            nodes
+                .filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Video && Boolean(node.metadata?.content) && !renderHiddenNodeIds.has(node.id))
+                .sort((a, b) => {
+                    const shotA = a.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
+                    const shotB = b.metadata?.shotIndex ?? Number.MAX_SAFE_INTEGER;
+                    return shotA - shotB || a.position.y - b.position.y || a.position.x - b.position.x;
+                }),
+        [nodes, renderHiddenNodeIds, selectedNodeIds],
+    );
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
         nodes.forEach((node) => {
@@ -215,20 +222,24 @@ export function useCanvasRenderModel({
         });
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
-    const displayConnections = useMemo(() => connections.flatMap((connection) => {
-        if (collapsedBatchChildIds.has(connection.fromNodeId) || collapsedBatchChildIds.has(connection.toNodeId)) return [];
-        const fromNode = nodeById.get(connection.fromNodeId);
-        const toNode = nodeById.get(connection.toNodeId);
-        if (!fromNode || !toNode) return [];
-        const fromParent = fromNode.parentId ? nodeById.get(fromNode.parentId) : null;
-        const toParent = toNode.parentId ? nodeById.get(toNode.parentId) : null;
-        const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
-        const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
-        if (displayFrom.id === displayTo.id) return [];
-        const from = dragPreview?.nodeIds.has(displayFrom.id) ? { ...displayFrom, position: { x: displayFrom.position.x + dragPreview.x, y: displayFrom.position.y + dragPreview.y } } : displayFrom;
-        const to = dragPreview?.nodeIds.has(displayTo.id) ? { ...displayTo, position: { x: displayTo.position.x + dragPreview.x, y: displayTo.position.y + dragPreview.y } } : displayTo;
-        return [{ connection, from, to }];
-    }), [collapsedBatchChildIds, connections, dragPreview, nodeById]);
+    const displayConnections = useMemo(
+        () =>
+            connections.flatMap((connection) => {
+                if (collapsedBatchChildIds.has(connection.fromNodeId) || collapsedBatchChildIds.has(connection.toNodeId)) return [];
+                const fromNode = nodeById.get(connection.fromNodeId);
+                const toNode = nodeById.get(connection.toNodeId);
+                if (!fromNode || !toNode) return [];
+                const fromParent = fromNode.parentId ? nodeById.get(fromNode.parentId) : null;
+                const toParent = toNode.parentId ? nodeById.get(toNode.parentId) : null;
+                const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
+                const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
+                if (displayFrom.id === displayTo.id) return [];
+                const from = dragPreview?.nodeIds.has(displayFrom.id) ? { ...displayFrom, position: { x: displayFrom.position.x + dragPreview.x, y: displayFrom.position.y + dragPreview.y } } : displayFrom;
+                const to = dragPreview?.nodeIds.has(displayTo.id) ? { ...displayTo, position: { x: displayTo.position.x + dragPreview.x, y: displayTo.position.y + dragPreview.y } } : displayTo;
+                return [{ connection, from, to }];
+            }),
+        [collapsedBatchChildIds, connections, dragPreview, nodeById],
+    );
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();

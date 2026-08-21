@@ -3,6 +3,7 @@ import type { CreateTaskInput, TaskBillingQuote, TaskBillingQuoteRequest } from 
 type QuoteConfigSource = Record<string, unknown>;
 
 type BuildTaskBillingQuoteRequestInput = {
+    projectId: string;
     mode: "image" | "video";
     operation: string;
     batchCount: number;
@@ -11,6 +12,7 @@ type BuildTaskBillingQuoteRequestInput = {
 };
 
 export type TaskBillingQuoteLoader = (request: TaskBillingQuoteRequest, signal?: AbortSignal) => Promise<TaskBillingQuote>;
+export type ConfirmedTaskBillingQuote = Pick<TaskBillingQuote, "priceVersion" | "quoteFingerprint">;
 
 export class TaskPriceChangedError extends Error {
     readonly currentQuote: TaskBillingQuote;
@@ -22,9 +24,10 @@ export class TaskPriceChangedError extends Error {
     }
 }
 
-export function buildTaskBillingQuoteRequest({ mode, operation, batchCount, referenceVideoCount, config }: BuildTaskBillingQuoteRequestInput): TaskBillingQuoteRequest {
+export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount, referenceVideoCount, config }: BuildTaskBillingQuoteRequestInput): TaskBillingQuoteRequest {
     const fps = finiteNumber(config.videoSuperResolutionFps);
     return {
+        projectId: requiredString(projectId, "画布"),
         type: mode === "image" ? "canvas_image" : "canvas_video",
         operation,
         batchCount,
@@ -47,7 +50,7 @@ export function buildTaskBillingQuoteRequest({ mode, operation, batchCount, refe
     };
 }
 
-export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: TaskBillingQuote | undefined, loadQuote: TaskBillingQuoteLoader, signal?: AbortSignal): Promise<CreateTaskInput> {
+export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: ConfirmedTaskBillingQuote | undefined, loadQuote: TaskBillingQuoteLoader, signal?: AbortSignal): Promise<CreateTaskInput> {
     const quoteRequest = quoteRequestFromTaskInput(input);
     if (!quoteRequest) return input;
 
@@ -97,6 +100,7 @@ function quoteRequestFromTaskInput(input: CreateTaskInput): TaskBillingQuoteRequ
     if (!isRecord(config)) throw new Error("生成任务缺少可报价的模型配置");
     const references = mode === "video" ? input.input?.referenceVideos : undefined;
     return buildTaskBillingQuoteRequest({
+        projectId: requiredString(input.projectId, "画布"),
         mode,
         operation: input.operation?.trim() || mode,
         batchCount: 1,

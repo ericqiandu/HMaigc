@@ -26,6 +26,13 @@ const BUDGETS = {
     seo: 0.95,
 };
 
+const CATEGORY_BY_BUDGET = {
+    performance: "performance",
+    accessibility: "accessibility",
+    bestPractices: "best-practices",
+    seo: "seo",
+};
+
 const waitForServer = async () => {
     const deadline = Date.now() + 120_000;
     while (Date.now() < deadline) {
@@ -47,6 +54,34 @@ const median = (values) => {
 
 const readScore = (result, category) => result.categories[category]?.score ?? 0;
 const readMetric = (result, audit) => result.audits[audit]?.numericValue ?? Number.POSITIVE_INFINITY;
+
+const readAuditTargets = (audit) => {
+    const items = Array.isArray(audit.details?.items) ? audit.details.items : [];
+    const targets = items
+        .flatMap((item) => {
+            const selector = item.node?.selector;
+            if (typeof selector === "string" && selector.trim()) return [selector.trim()];
+            const path = item.node?.path;
+            return typeof path === "string" && path.trim() ? [path.trim()] : [];
+        })
+        .slice(0, 3);
+    return targets.length > 0 ? ` [${targets.join(" | ")}]` : "";
+};
+
+const describeCategoryFailures = (results, categoryId) => {
+    const failures = new Set();
+    for (const result of results) {
+        const auditRefs = result.categories[categoryId]?.auditRefs ?? [];
+        for (const auditRef of auditRefs) {
+            if (!(auditRef.weight > 0)) continue;
+            const audit = result.audits[auditRef.id];
+            if (!audit || audit.score === null || audit.score >= 1) continue;
+            if (["informative", "manual", "notApplicable"].includes(audit.scoreDisplayMode)) continue;
+            failures.add(`${audit.id}: ${audit.title}${readAuditTargets(audit)}`);
+        }
+    }
+    return [...failures].slice(0, 12);
+};
 
 const preview = EXTERNAL_BASE_URL
     ? undefined
@@ -95,7 +130,12 @@ try {
             const actual = summary[metric];
             const isTimingMetric = metric.endsWith("Paint") || metric.endsWith("Time");
             const passed = isTimingMetric || metric === "cumulativeLayoutShift" ? actual <= budget : actual >= budget;
-            if (!passed) failures.push(`${route.id} ${metric}: ${actual}（门槛 ${budget}）`);
+            if (!passed) {
+                const categoryId = CATEGORY_BY_BUDGET[metric];
+                const diagnostics = categoryId ? describeCategoryFailures(results, categoryId) : [];
+                const diagnosticText = diagnostics.length > 0 ? `\n  audit: ${diagnostics.join("\n  audit: ")}` : "";
+                failures.push(`${route.id} ${metric}: ${actual}（门槛 ${budget}）${diagnosticText}`);
+            }
         }
     }
 

@@ -7,9 +7,10 @@ import { buildGenerationConfig, isGenerationCanceled, supportsVideoReferenceAudi
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { expandSkillMentions } from "@/lib/canvas/canvas-skill-mentions";
 import { generationFailureMetadata } from "@/lib/generation-error";
+import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
-import type { UpdreamSkill } from "@/services/api/skills";
-import type { GenerationTask, TaskBillingQuote } from "@/services/api/task-center";
+import type { PlatformSkill } from "@/services/api/skills";
+import type { GenerationTask } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -20,7 +21,7 @@ import { executeTextGeneration } from "./canvas-text-generation-executor";
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
     domainProjectId?: string;
-    activatedSkills: UpdreamSkill[];
+    activatedSkills: PlatformSkill[];
     nodesRef: { current: CanvasNodeData[] };
     connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
@@ -41,7 +42,7 @@ const NODE_STATUS_ERROR = "error" as const;
 export type CanvasNodeGenerationOptions = {
     controller?: AbortController;
     waitForTaskCapacity?: boolean;
-    expectedQuote?: TaskBillingQuote;
+    expectedQuote?: ConfirmedTaskBillingQuote;
 };
 
 export function useCanvasGenerationExecutor({
@@ -116,7 +117,23 @@ export function useCanvasGenerationExecutor({
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成任务准备失败";
                 if (isPreparingEmptyImage) {
-                    setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: controller.signal.aborted ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined, errorDetails: controller.signal.aborted ? undefined : errorDetails } } : node)));
+                    setNodes((current) =>
+                        current.map((node) =>
+                            node.id === nodeId
+                                ? {
+                                      ...node,
+                                      metadata: {
+                                          ...node.metadata,
+                                          status: controller.signal.aborted ? NODE_STATUS_IDLE : NODE_STATUS_ERROR,
+                                          taskStage: undefined,
+                                          taskProgress: undefined,
+                                          taskCreatedAt: undefined,
+                                          errorDetails: controller.signal.aborted ? undefined : errorDetails,
+                                      },
+                                  }
+                                : node,
+                        ),
+                    );
                 }
                 finishGenerationRequest(nodeId, controller);
                 if (!controller.signal.aborted) message.error(errorDetails);
@@ -141,7 +158,8 @@ export function useCanvasGenerationExecutor({
                 generationConfig = { ...generationConfig, audioVoice: voice.voiceKey, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
             }
             if (controller.signal.aborted) {
-                if (isPreparingEmptyImage) setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined } } : node)));
+                if (isPreparingEmptyImage)
+                    setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined } } : node)));
                 finishGenerationRequest(nodeId, controller);
                 return;
             }
@@ -152,7 +170,12 @@ export function useCanvasGenerationExecutor({
                 finishGenerationRequest(nodeId, controller);
                 return;
             }
-            if (markSourceStatus) setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: statusPrompt, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } } : node)));
+            if (markSourceStatus)
+                setNodes((current) =>
+                    current.map((node) =>
+                        node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: statusPrompt, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } } : node,
+                    ),
+                );
 
             let pendingNodeIds: string[] = [];
             const execution = {
@@ -189,25 +212,47 @@ export function useCanvasGenerationExecutor({
                 if (isGenerationCanceled(error)) return;
                 const failure = generationFailureMetadata(error, prompt);
                 if (options?.waitForTaskCapacity && isGenerationTaskCapacityError(error)) {
-                    setNodes((current) => current.map((node) => {
-                        if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
-                        const metadata = { ...(node.metadata || {}), status: NODE_STATUS_IDLE, errorDetails: undefined };
-                        delete metadata.taskId;
-                        delete metadata.taskStatus;
-                        delete metadata.taskProgress;
-                        delete metadata.taskStage;
-                        delete metadata.taskCreatedAt;
-                        delete metadata.taskUpdatedAt;
-                        return { ...node, metadata };
-                    }));
+                    setNodes((current) =>
+                        current.map((node) => {
+                            if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
+                            const metadata = { ...(node.metadata || {}), status: NODE_STATUS_IDLE, errorDetails: undefined };
+                            delete metadata.taskId;
+                            delete metadata.taskStatus;
+                            delete metadata.taskProgress;
+                            delete metadata.taskStage;
+                            delete metadata.taskCreatedAt;
+                            delete metadata.taskUpdatedAt;
+                            return { ...node, metadata };
+                        }),
+                    );
                     return;
                 }
                 message.error(failure.errorDetails);
-                setNodes((current) => current.map((node) => (node.id === nodeId || pendingNodeIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } }) : node)));
+                setNodes((current) =>
+                    current.map((node) => (node.id === nodeId || pendingNodeIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } }) : node)),
+                );
             } finally {
                 finishGenerationRequest(nodeId, controller);
             }
         },
-        [activatedSkills, bindGenerationTask, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, connectionsRef, projectId, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, startGenerationRequest],
+        [
+            activatedSkills,
+            bindGenerationTask,
+            domainProjectId,
+            effectiveConfig,
+            finishGenerationRequest,
+            isAiConfigReady,
+            message,
+            nodesRef,
+            connectionsRef,
+            projectId,
+            setConnections,
+            setDialogNodeId,
+            setNodes,
+            setRunningNodeId,
+            setSelectedConnectionId,
+            setSelectedNodeIds,
+            startGenerationRequest,
+        ],
     );
 }

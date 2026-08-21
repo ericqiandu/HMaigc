@@ -52,7 +52,7 @@ func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testi
 		t.Fatalf("thread facts = %#v", envelope.Data)
 	}
 
-	failedRun := fixture.request(http.MethodPost, "/api/agent/threads/"+envelope.Data.ID+"/runs", `{"clientRequestId":"request-1","userMessage":"生成一张图片","maxSteps":6}`, fixture.userCookie, "")
+	failedRun := fixture.request(http.MethodPost, "/api/agent/threads/"+envelope.Data.ID+"/runs", `{"clientRequestId":"request-1","userMessage":"生成一张图片","maxSteps":6,"configuration":{"generationModels":{},"skillDirs":[],"attachments":[],"executionMode":"guided"}}`, fixture.userCookie, "")
 	if failedRun.Code != http.StatusServiceUnavailable || !strings.Contains(failedRun.Body.String(), "Agent 模型") {
 		t.Fatalf("missing model status = %d, body = %s", failedRun.Code, failedRun.Body.String())
 	}
@@ -84,7 +84,8 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "frozen-agent-model", ModelKey: "agent-model",
-		MaxSteps: 6, ToolSchemaVersion: 1, UserMessage: "读取事件", Now: time.Now().UTC(),
+		MaxSteps: 6, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取事件",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +242,106 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	}
 }
 
+func TestAgentRuntimeHTTPClarificationResponseIsScopedStrictAndIdempotent(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(fixture.db)
+	svc := service.New(repo, t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-clarification-canvas")
+	scope := createWaitingClarificationHandlerRun(t, svc, repo, fixture.userID)
+	path := "/api/agent/runs/" + scope.RunID + "/clarifications/clarify-handler/responses"
+	body := `{"expectedStateVersion":2,"questionId":"duration","answer":{"selectedOptionIds":["30s"],"customText":"","skipped":false},"complete":false}`
+
+	if response := fixture.request(http.MethodPost, path, body, "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, path, body, fixture.adminCookie, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("cross-user status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, path, strings.TrimSuffix(body, "}")+`,"extra":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_clarification_invalid"`) {
+		t.Fatalf("unknown-field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, strings.Replace(path, "clarify-handler", "wrong-request", 1), body, fixture.userCookie, ""); response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"errorCode":"agent_clarification_conflict"`) {
+		t.Fatalf("wrong-request status = %d, body = %s", response.Code, response.Body.String())
+	}
+	invalidQuestion := strings.Replace(body, `"questionId":"duration"`, `"questionId":"unknown"`, 1)
+	if response := fixture.request(http.MethodPost, path, invalidQuestion, fixture.userCookie, ""); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_clarification_invalid"`) {
+		t.Fatalf("invalid-question status = %d, body = %s", response.Code, response.Body.String())
+	}
+	stale := strings.Replace(body, `"expectedStateVersion":2`, `"expectedStateVersion":1`, 1)
+	if response := fixture.request(http.MethodPost, path, stale, fixture.userCookie, ""); response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"latestStateVersion":2`) {
+		t.Fatalf("stale status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	saved := fixture.request(http.MethodPost, path, body, fixture.userCookie, "")
+	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"stateVersion":3`) || !strings.Contains(saved.Body.String(), `"duration"`) {
+		t.Fatalf("saved status = %d, body = %s", saved.Code, saved.Body.String())
+	}
+	var eventCount int64
+	if err := fixture.db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	replayed := fixture.request(http.MethodPost, path, body, fixture.userCookie, "")
+	if replayed.Code != http.StatusOK || !strings.Contains(replayed.Body.String(), `"stateVersion":3`) {
+		t.Fatalf("replayed status = %d, body = %s", replayed.Code, replayed.Body.String())
+	}
+	var replayedEventCount int64
+	if err := fixture.db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&replayedEventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if replayedEventCount != eventCount {
+		t.Fatalf("idempotent replay changed events: before=%d after=%d", eventCount, replayedEventCount)
+	}
+}
+
+func createWaitingClarificationHandlerRun(t *testing.T, svc *service.Service, repo *repository.Repository, actorUserID string) agentruntime.Scope {
+	t.Helper()
+	scope, err := svc.AuthorizeAgentScope(actorUserID, "handler-agent-clarification-canvas", "handler-clarification-thread", "handler-clarification-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := repo.CreateAgentRun(repository.CreateAgentRunInput{Scope: scope, ClientRequestID: "handler-clarification-request", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
+		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "生成汽车广告剧本",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	transition, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionClarificationRequest,
+		Clarification: &agentruntime.ClarificationDecision{
+			RequestID: "clarify-handler",
+			Questions: []agentruntime.ClarificationQuestion{{
+				ID: "duration", Prompt: "广告时长是多少？", Type: agentruntime.ClarificationSingleChoice,
+				Options: []agentruntime.ClarificationOption{{ID: "15s", Label: "15 秒"}, {ID: "30s", Label: "30 秒"}},
+			}},
+			ExpectedDelivery: delivery,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, state, transition, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	return scope
+}
+
 func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repository.Repository, actorUserID, canvasID, threadID, runID, userMessage string, now time.Time) agentruntime.Scope {
 	t.Helper()
 	scope, err := svc.AuthorizeAgentScope(actorUserID, canvasID, threadID, runID)
@@ -252,7 +353,8 @@ func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repo
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "history-model-record", ModelKey: "history-model",
-		MaxSteps: 8, ToolSchemaVersion: 1, UserMessage: userMessage, Now: now,
+		MaxSteps: 8, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: userMessage,
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
 	}

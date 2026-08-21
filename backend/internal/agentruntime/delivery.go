@@ -53,6 +53,25 @@ type ExpectedDelivery struct {
 	CompletionCriteria []DeliveryCriterion `json:"completionCriteria"`
 }
 
+func (expected ExpectedDelivery) Equal(other ExpectedDelivery) bool {
+	if expected.Kind != other.Kind || expected.TargetCanvasID != other.TargetCanvasID ||
+		len(expected.RequiredArtifacts) != len(other.RequiredArtifacts) ||
+		len(expected.CompletionCriteria) != len(other.CompletionCriteria) {
+		return false
+	}
+	for index := range expected.RequiredArtifacts {
+		if expected.RequiredArtifacts[index] != other.RequiredArtifacts[index] {
+			return false
+		}
+	}
+	for index := range expected.CompletionCriteria {
+		if expected.CompletionCriteria[index] != other.CompletionCriteria[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func (expected ExpectedDelivery) Validate() error {
 	if expected.Kind != DeliveryAnswer && expected.Kind != DeliveryCanvasChange && expected.Kind != DeliveryGeneratedAsset && expected.Kind != DeliveryMixed {
 		return errors.New("expected delivery kind is invalid")

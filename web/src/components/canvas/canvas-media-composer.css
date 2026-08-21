@@ -151,7 +151,7 @@
 
 .canvas-media-model-picker .canvas-composer-model-picker.ant-select:hover .ant-select-content,
 .canvas-media-model-picker .canvas-composer-model-picker.ant-select-focused .ant-select-content,
-.canvas-media-control:not(.canvas-node-submit-button):not(.canvas-audio-submit-button):hover {
+.canvas-media-control:hover {
     background: color-mix(in srgb, var(--foreground) 6%, transparent) !important;
 }
 
@@ -172,8 +172,8 @@
     line-height: 16px !important;
 }
 
-.canvas-media-control:not(.canvas-node-submit-button):not(.canvas-audio-submit-button),
-.canvas-media-control.ant-btn:not(.canvas-node-submit-button):not(.canvas-audio-submit-button) {
+.canvas-media-control,
+.canvas-media-control.ant-btn {
     border: 0 !important;
     border-radius: var(--canvas-media-control-radius) !important;
     background: transparent !important;
@@ -209,16 +209,6 @@
     flex: 0 0 1px;
     margin-inline: 2px;
     background: color-mix(in srgb, var(--foreground) 12%, transparent);
-}
-
-.canvas-media-controls-row .canvas-node-submit-button,
-.canvas-media-controls-row .canvas-audio-submit-button {
-    width: 32px !important;
-    min-width: 32px !important;
-    height: var(--canvas-media-control-height) !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 0 !important;
 }
 
 .canvas-node-prompt-controls-row--video > div:last-child {

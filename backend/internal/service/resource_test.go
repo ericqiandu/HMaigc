@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,60 @@ func TestDirectResourceURLChecksOwnershipAndSignsOSSResource(t *testing.T) {
 	if _, err := svc.DirectResourceURL("other-user", resource.ID); err == nil {
 		t.Fatal("DirectResourceURL() allowed another user's resource")
 	}
+}
+
+func TestPlaybackResourceURLUsesSessionTTLWithoutExtendingCopyLink(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		AccessKeyID: "access-id", AccessKeySecret: "secret-value",
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-playback", UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady,
+		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		ObjectKey: "users/user-1/video/playback.mp4", MimeType: "video/mp4",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now()
+	copyURL, err := svc.DirectResourceURL("user-1", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbackURL, err := svc.PlaybackResourceURL("user-1", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	copyExpiry := signedURLExpiry(t, copyURL)
+	playbackExpiry := signedURLExpiry(t, playbackURL)
+	if lifetime := copyExpiry.Sub(startedAt); lifetime < 4*time.Minute || lifetime > 6*time.Minute {
+		t.Fatalf("copy URL lifetime = %s, want about 5m", lifetime)
+	}
+	if lifetime := playbackExpiry.Sub(startedAt); lifetime < 3*time.Hour+59*time.Minute || lifetime > 4*time.Hour+time.Minute {
+		t.Fatalf("playback URL lifetime = %s, want about 4h", lifetime)
+	}
+	if _, err := svc.PlaybackResourceURL("other-user", resource.ID); err == nil {
+		t.Fatal("PlaybackResourceURL() allowed another user's resource")
+	}
+}
+
+func signedURLExpiry(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires, err := strconv.ParseInt(parsed.Query().Get("Expires"), 10, 64)
+	if err != nil {
+		t.Fatalf("signed URL Expires = %q: %v", parsed.Query().Get("Expires"), err)
+	}
+	return time.Unix(expires, 0)
 }
 
 func TestNormalizeSingleByteRange(t *testing.T) {

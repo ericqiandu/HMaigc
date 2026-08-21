@@ -86,7 +86,7 @@ describe("site header unification", () => {
         if (!owner) throw new Error("shared membership SVG owner is missing");
         expect(owner.componentName).toBeDefined();
         const usages = findComponentClassTokens(sharedAccountSource, owner.componentName ?? "");
-        expect(usages).toHaveLength(3);
+        expect(usages).toHaveLength(2);
         for (const usage of usages) {
             expect(usage).toContain("size-4");
         }
@@ -98,8 +98,8 @@ describe("site header unification", () => {
         if (!owner) throw new Error("shared membership SVG owner is missing");
         expect(owner.componentName).toBeDefined();
         expect(inspectMembershipRoutes(sharedAccountSource, owner.componentName ?? "")).toEqual({
-            entryCount: 3,
-            entriesUsingSignatureOwner: 3,
+            entryCount: 2,
+            entriesUsingSignatureOwner: 2,
             gemUsages: 0,
         });
     });
@@ -227,10 +227,38 @@ describe("site header unification", () => {
         expect(styles).toContain("gap: var(--space-2)");
         expect(styles).toContain("padding-right: var(--space-3)");
         expect(styles).toContain("padding-left: var(--space-3)");
-        expect(styles).not.toMatch(/\b(?:6|13)px\b/);
-        expect(styles).not.toContain("box-shadow:");
+        expect(styles).not.toMatch(/\b6px\b/);
         expect(styles).not.toContain("#172033");
         expect(styles).not.toContain("#ffffff");
+    });
+
+    test("shared account popover owns one typography and interaction contract", async () => {
+        const source = await sharedAccount.text();
+        const styles = await sharedAccountStyles.text();
+
+        expect(source).toContain('rootClassName="site-account-popover"');
+        expect(source).not.toContain("text-sm font-semibold");
+        expect(source).not.toContain("text-[11px]");
+        expect(source).not.toContain("text-xs");
+        expect(source).not.toContain("h-9");
+        expect(source).not.toContain("h-10");
+
+        expect(styles).toMatch(/\.site-account-menu\s*\{[^}]*font-family:\s*var\(--font-family-sans\)/);
+        expect(styles).toMatch(/\.site-account-display-name\s*\{[^}]*font-size:\s*var\(--text-sm\)[^}]*line-height:\s*20px[^}]*font-weight:\s*var\(--font-semibold\)/);
+        expect(styles).toMatch(/\.site-account-username\s*\{[^}]*font-size:\s*var\(--text-xs\)[^}]*line-height:\s*17px[^}]*font-weight:\s*var\(--font-regular\)/);
+        expect(styles).toMatch(/\.site-account-menu-link,\s*\n\.site-account-theme,\s*\n\.site-account-logout\s*\{[^}]*min-height:\s*44px[^}]*font-size:\s*var\(--text-sm\)[^}]*line-height:\s*22px[^}]*font-weight:\s*var\(--font-regular\)/);
+        expect(styles).toMatch(/\.site-account-menu-icon,\s*\n\.site-account-logout-icon\s*\{[^}]*width:\s*20px[^}]*height:\s*20px/);
+    });
+
+    test("account and team popovers use an opaque dedicated surface", async () => {
+        const styles = await sharedAccountStyles.text();
+        const tokens = await designTokens.text();
+
+        expect(tokens).toContain("--account-popover-surface: #ffffff");
+        expect(tokens).toContain("--account-popover-surface: #262626");
+        expect(styles).toMatch(/\.site-account-popover\.ant-popover > \.ant-popover-container\s*\{[^}]*background:\s*var\(--account-popover-surface\)/);
+        expect(styles).toMatch(/\.site-account-team-popover\.ant-popover > \.ant-popover-container\s*\{[^}]*background:\s*var\(--account-popover-surface\)/);
+        expect(styles).not.toMatch(/\.site-account-popover\.ant-popover > \.ant-popover-container\s*\{[^}]*background:\s*var\(--floating-surface\)/);
     });
 
     test("shared header and account menu interactions use one semantic focus-visible ring", async () => {
@@ -246,7 +274,7 @@ describe("site header unification", () => {
             ".site-account-trigger",
             ".referral-reward-trigger",
             ".site-account-menu-link",
-            ".site-account-theme-switch",
+            ".site-account-theme-option",
             ".site-account-logout",
         ]) {
             expect(styles, `${selector} must expose an explicit focus-visible selector`).toContain(`${selector}:focus-visible`);
@@ -255,12 +283,12 @@ describe("site header unification", () => {
         expect(styles).toContain("outline-offset: 2px");
     });
 
-    test("shared logout uses semantic danger styling without private Tailwind colors", async () => {
+    test("shared logout follows the reference menu's neutral interaction styling", async () => {
         const source = await sharedAccount.text();
         const styles = await sharedAccountStyles.text();
         expect(source).not.toMatch(/(?:hover:)?(?:bg|text)-red-(?:500|600)/);
-        expect(styles).toMatch(/\.site-account-logout\s*\{[^}]*color:\s*var\(--status-danger\)/);
-        expect(styles).toMatch(/\.site-account-logout:hover\s*\{[^}]*color-mix\(in srgb, var\(--status-danger\)/);
+        expect(styles).toMatch(/\.site-account-logout\s*\{[^}]*color:\s*var\(--text-secondary\)/);
+        expect(styles).toMatch(/\.site-account-logout:hover\s*\{[^}]*background:\s*var\(--bg-hover\)[^}]*color:\s*var\(--text-primary\)/);
     });
 
     test("shared markup and homepage CSS no longer retain dead homepage owners", async () => {

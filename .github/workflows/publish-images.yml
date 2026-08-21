@@ -37,8 +37,10 @@ jobs:
       - name: Test payment integration runner contract
         run: bash scripts/tests/run-payment-integration.test.sh
 
-      - name: Test payments with PostgreSQL and Redis
-        run: bash scripts/tests/run-payment-integration.sh --all
+      - name: Test PostgreSQL and Redis integration
+        run: >-
+          bash scripts/tests/run-payment-integration.sh --all
+          --require TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

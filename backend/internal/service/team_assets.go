@@ -1,6 +1,8 @@
 package service
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -10,6 +12,8 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+
+	"gorm.io/gorm"
 )
 
 func (s *Service) TeamResources(userID string, teamID string, limit int) ([]model.Resource, error) {
@@ -27,6 +31,13 @@ func (s *Service) TeamResources(userID string, teamID string, limit int) ([]mode
 func (s *Service) UploadTeamResource(userID string, teamID string, header *multipart.FileHeader, kind string, width int, height int) (*model.Resource, error) {
 	if header == nil {
 		return nil, BadAuthRequest("请选择要上传的文件")
+	}
+	_, actor, err := s.teamAccess(userID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	if actor.Role != model.TeamMemberRoleOwner && actor.Role != model.TeamMemberRoleAdmin {
+		return nil, Forbidden("当前角色不能上传团队共享素材")
 	}
 	entitlement, err := s.teamEntitlement(userID, teamID)
 	if err != nil {
@@ -46,21 +57,73 @@ func (s *Service) UploadTeamResource(userID string, teamID string, header *multi
 	if err != nil {
 		return nil, err
 	}
+	resourceID := newID()
+	now := time.Now()
 	file, err := header.Open()
 	if err != nil {
 		s.releaseTeamResourceQuota(userID, teamID, day, header.Size)
+		kind = strings.TrimSpace(kind)
+		if kind == "" {
+			kind = "file"
+		}
+		mimeType := strings.TrimSpace(strings.Split(header.Header.Get("Content-Type"), ";")[0])
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		if factErr := s.recordTeamResourceUploadFailure(resourceID, userID, teamID, kind, mimeType, header.Size, width, height, now, err); factErr != nil {
+			return nil, fmt.Errorf("团队共享素材读取失败且保存失败事实异常: upload=%v fact=%w", err, factErr)
+		}
 		return nil, err
 	}
 	defer file.Close()
 	mimeType := detectUploadedMimeType(file, header.Filename, header.Header.Get("Content-Type"))
 	kind = normalizeResourceKind(kind, mimeType)
-	resource, err := s.storeScopedResource(userID, teamID, kind, header.Filename, mimeType, header.Size, width, height, file)
+	metadata, err := json.Marshal(struct {
+		ResourceID string `json:"resourceId"`
+		Kind       string `json:"kind"`
+		Size       int64  `json:"size"`
+	}{ResourceID: resourceID, Kind: kind, Size: header.Size})
 	if err != nil {
 		s.releaseTeamResourceQuota(userID, teamID, day, header.Size)
 		return nil, err
 	}
+	successAudit := newTeamAuditEvent(teamID, userID, "resource.uploaded", string(metadata), now)
+	resource, err := s.storeScopedResourceWithIdentityAndAudit(resourceID, userID, teamID, kind, header.Filename, mimeType, header.Size, width, height, file, successAudit)
+	if err != nil {
+		s.releaseTeamResourceQuota(userID, teamID, day, header.Size)
+		if factErr := s.recordTeamResourceUploadFailure(resourceID, userID, teamID, kind, mimeType, header.Size, width, height, now, err); factErr != nil {
+			return nil, fmt.Errorf("团队共享素材上传失败且保存失败事实异常: upload=%v fact=%w", err, factErr)
+		}
+		return nil, err
+	}
 	s.commitTeamResourceQuota(teamID, header.Size)
 	return resource, nil
+}
+
+func (s *Service) recordTeamResourceUploadFailure(resourceID string, userID string, teamID string, kind string, mimeType string, size int64, width int, height int, createdAt time.Time, uploadErr error) error {
+	metadata, err := json.Marshal(struct {
+		ResourceID string `json:"resourceId"`
+		Kind       string `json:"kind"`
+		Size       int64  `json:"size"`
+	}{ResourceID: resourceID, Kind: kind, Size: size})
+	if err != nil {
+		return err
+	}
+	failure := &model.Resource{
+		ID: resourceID, UserID: userID, TeamID: teamID, Kind: kind, Status: model.ResourceStatusFailed,
+		Provider: "unresolved", MimeType: mimeType, Size: size, Width: width, Height: height,
+		Error: uploadErr.Error(), CreatedAt: createdAt, UpdatedAt: time.Now(),
+	}
+	if existing, loadErr := s.repo.Resource(resourceID); loadErr == nil {
+		failure = existing
+		failure.Status = model.ResourceStatusFailed
+		failure.Error = uploadErr.Error()
+		failure.UpdatedAt = time.Now()
+	} else if !errors.Is(loadErr, gorm.ErrRecordNotFound) {
+		return loadErr
+	}
+	failureAudit := newTeamAuditEvent(teamID, userID, "resource.upload_failed", string(metadata), time.Now())
+	return s.repo.SaveTeamResourceFailureWithAudit(failure, failureAudit)
 }
 
 func (s *Service) TeamResource(userID string, teamID string, resourceID string) (*model.Resource, error) {
