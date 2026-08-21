@@ -32,8 +32,8 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	descriptors := registry.Descriptors()
-	if len(descriptors) != 5 {
-		t.Fatalf("descriptor count = %d, want 5", len(descriptors))
+	if len(descriptors) != 6 {
+		t.Fatalf("descriptor count = %d, want 6", len(descriptors))
 	}
 	seedance, ok := registry.Descriptor("kuaizi", "seedance")
 	if !ok {
@@ -69,6 +69,38 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	}
 	if got := deepseek.Models[1]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
 		t.Fatalf("DeepSeek Pro Agent model = %#v", got)
+	}
+	kling, ok := registry.Descriptor("kuaizi", "kling")
+	if !ok || len(kling.Models) != 1 {
+		t.Fatalf("kuaizi/kling descriptor = %#v, exists=%v", kling, ok)
+	}
+	if got := kling.Models[0]; got.ModelKey != "kling-v3-omni" || got.DisplayName != "Kling 3 Omni" || got.UpstreamMode != "kling-v3-omni" || got.Capability != "video" || got.DurationMin != 3 || got.DurationMax != 15 || !got.SupportsGeneratedAudio || got.MaxImages != 7 || got.MaxVideos != 1 || got.MaxAudios != 0 || strings.Join(got.Resolutions, ",") != "std,pro,4k" || strings.Join(got.ReferenceVideoResolutions, ",") != "std,pro" || strings.Join(got.Ratios, ",") != "16:9,9:16,1:1" {
+		t.Fatalf("Kling 3 Omni capabilities = %#v", got)
+	}
+	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel)
+	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" {
+		t.Fatalf("Kling public capabilities = %#v", public)
+	}
+}
+
+func TestKuaiziKlingPricingReadinessDoesNotRequireForbidden4KReferenceTier(t *testing.T) {
+	item := modelpkg.ChannelModel{
+		ModelKey:        kuaiziKlingModel,
+		PriceConfigured: true,
+		PriceTiers: []modelpkg.ChannelModelPriceTier{
+			{Resolution: "std", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "std", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
+			{Resolution: "pro", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "pro", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
+			{Resolution: "4k", InputVariant: "standard", UnitPriceMicrocredits: 1},
+		},
+	}
+	if !channelModelPricingReady(item) {
+		t.Fatal("Kling pricing with every supported mode/variant was rejected")
+	}
+	item.PriceTiers = item.PriceTiers[:4]
+	if channelModelPricingReady(item) {
+		t.Fatal("Kling pricing without the required 4k standard tier was accepted")
 	}
 }
 

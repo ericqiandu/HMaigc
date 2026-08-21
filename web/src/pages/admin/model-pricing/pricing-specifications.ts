@@ -48,7 +48,7 @@ export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "p
     const capabilities = model.providerCapabilities;
     if (model.priceStrategy === "video_resolution" && capabilities && capabilities.inputVariants.length > 0) {
         return capabilities.resolutions.flatMap((resolution) =>
-            capabilities.inputVariants.map((inputVariant) => ({
+            capabilities.inputVariants.filter((inputVariant) => inputVariant === "standard" || capabilities.referenceVideoResolutions.includes(resolution)).map((inputVariant) => ({
                 key: `${resolution}::${inputVariant}`,
                 label: `${resolution} · ${inputVariant === "reference_video" ? "参考视频" : "普通生成"}`,
                 group: "base" as const,

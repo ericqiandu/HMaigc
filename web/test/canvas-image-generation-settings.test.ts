@@ -50,6 +50,7 @@ function imageConfig(capabilities: ProviderModelCapabilities, overrides: Partial
 }
 
 const gptImage2Capabilities: ProviderModelCapabilities = {
+    providerFamily: "gpt-image2",
     modelKey: "kz_gpt_image2",
     displayName: "GPT Image 2",
     upstreamMode: "kz_gpt_image2",
@@ -59,6 +60,7 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
     qualities: ["low", "medium", "high"],
     outputCounts: [1],
     inputVariants: [],
+    referenceVideoResolutions: [],
     ratios: [...ratios],
     durationMin: 0,
     durationMax: 0,
@@ -68,6 +70,7 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
     supportsAudioOnly: false,
     requiresAdaptiveFrames: false,
     maxImages: 0,
+    maxImagesWithVideo: 0,
     maxVideos: 0,
     maxAudios: 0,
     maxVideoDurationSeconds: 0,

@@ -141,6 +141,7 @@ type PublicChannelModelPrice struct {
 }
 
 type PublicProviderCapabilities struct {
+	ProviderFamily            string                    `json:"providerFamily"`
 	ModelKey                  string                    `json:"modelKey"`
 	DisplayName               string                    `json:"displayName"`
 	UpstreamMode              string                    `json:"upstreamMode"`
@@ -148,6 +149,7 @@ type PublicProviderCapabilities struct {
 	Resolutions               []string                  `json:"resolutions"`
 	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
 	InputVariants             []string                  `json:"inputVariants"`
+	ReferenceVideoResolutions []string                  `json:"referenceVideoResolutions"`
 	Ratios                    []string                  `json:"ratios"`
 	Qualities                 []string                  `json:"qualities"`
 	OutputCounts              []int                     `json:"outputCounts"`
@@ -159,6 +161,7 @@ type PublicProviderCapabilities struct {
 	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
 	RequiresAdaptiveFrames    bool                      `json:"requiresAdaptiveFrames"`
 	MaxImages                 int                       `json:"maxImages"`
+	MaxImagesWithVideo        int                       `json:"maxImagesWithVideo"`
 	MaxVideos                 int                       `json:"maxVideos"`
 	MaxAudios                 int                       `json:"maxAudios"`
 	MaxVideoDurationSeconds   int                       `json:"maxVideoDurationSeconds"`
@@ -828,7 +831,11 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 		configured[channelModelPriceTierKey(tier.Resolution, variant)] = true
 	}
 	for _, resolution := range spec.Resolutions {
-		for _, variant := range []string{"standard", "reference_video"} {
+		variants := []string{"standard"}
+		if stringInSlice(resolution, spec.ReferenceVideoResolutions) {
+			variants = append(variants, "reference_video")
+		}
+		for _, variant := range variants {
 			if !configured[channelModelPriceTierKey(resolution, variant)] {
 				return false
 			}
@@ -841,25 +848,29 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 	if interfaceType == model.ChannelInterfaceAPIMartImage {
 		return publicAPIMartImageCapabilities(modelKey)
 	}
-	capabilities, ok := kuaiziProviderModelSpec(modelKey)
+	family, capabilities, ok := kuaiziProviderFamilyForModel(modelKey)
 	if !ok {
 		return nil
 	}
 	inputVariants := []string{}
 	if capabilities.Capability == "video" {
-		inputVariants = []string{"standard", "reference_video"}
+		inputVariants = []string{"standard"}
+		if len(capabilities.ReferenceVideoResolutions) > 0 {
+			inputVariants = append(inputVariants, "reference_video")
+		}
 	}
 	return &PublicProviderCapabilities{
-		ModelKey: capabilities.ModelKey, DisplayName: capabilities.DisplayName,
+		ProviderFamily: family,
+		ModelKey:       capabilities.ModelKey, DisplayName: capabilities.DisplayName,
 		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
-		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, Ratios: append([]string{}, capabilities.Ratios...),
+		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, ReferenceVideoResolutions: append([]string{}, capabilities.ReferenceVideoResolutions...), Ratios: append([]string{}, capabilities.Ratios...),
 		ResolutionPixels: cloneStringInt64Map(capabilities.ResolutionPixels),
 		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
 		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
 		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
-		MaxImages:              capabilities.MaxImages, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
+		MaxImages:              capabilities.MaxImages, MaxImagesWithVideo: capabilities.MaxImagesWithVideo, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
 		Tools:                     append([]string{}, capabilities.Tools...),
 		SupportsTokenUsageBilling: kuaiziModelSupportsTokenUsageBilling(modelKey),

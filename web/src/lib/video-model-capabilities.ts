@@ -8,7 +8,7 @@ import type { CanvasVideoGenerationMode } from "@/types/canvas";
 export type VideoParameterOption = Readonly<{ value: string; label: string }>;
 
 export type VideoModelCapabilities = Readonly<{
-    id: "kling" | "minimax-h3" | "seedance" | "standard";
+    id: "kling" | "kuaizi-kling" | "minimax-h3" | "seedance" | "standard";
     resolutions: readonly VideoParameterOption[];
     ratios: readonly VideoParameterOption[];
     durations: readonly number[];
@@ -18,7 +18,7 @@ export type VideoModelCapabilities = Readonly<{
     supportsGeneratedAudio: boolean;
     watermarkCapability: WatermarkCapability;
     supportsSuperResolution: boolean;
-    referenceLimits?: Readonly<{ images: number; videos: number; audios: number; totalVideoDurationSeconds: number; totalAudioDurationSeconds: number }>;
+    referenceLimits?: Readonly<{ images: number; imagesWithVideo: number; videos: number; audios: number; totalVideoDurationSeconds: number; totalAudioDurationSeconds: number }>;
     supportedTools: readonly string[];
     requiresAdaptiveFrameRatio?: boolean;
     unsupportedReasons: Readonly<Partial<Record<"generatedAudio" | "superResolution", string>>>;
@@ -83,21 +83,25 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
     if (isKlingVideoConfig(config)) return { ...klingCapabilities, watermarkCapability: selectedModelWatermarkCapability(config) };
     if (isMiniMaxH3VideoConfig(config)) return { ...miniMaxH3Capabilities, watermarkCapability: selectedModelWatermarkCapability(config) };
     const model = modelOptionName(config.model || config.videoModel);
-    if (isSeedanceVideoConfig(config)) {
-        const providerCapabilities = resolveSeedanceProviderCapabilities(config, model);
+    const publishedCapabilities = resolvePublishedVideoProviderCapabilities(config, model);
+    if (publishedCapabilities || isSeedanceVideoConfig(config)) {
+        const providerCapabilities = publishedCapabilities || resolveSeedanceProviderCapabilities(config, model);
+        assertCompletePublishedVideoCapabilities(providerCapabilities, model);
+        const kuaiziKling = providerCapabilities.providerFamily === "kling";
         return {
-            id: "seedance",
+            id: kuaiziKling ? "kuaizi-kling" : "seedance",
             resolutions: providerCapabilities.resolutions.map((value) => ({ value, label: value.toUpperCase() })),
             ratios: providerCapabilities.ratios.map((value) => ({ value, label: value === "adaptive" ? "Auto" : value })),
             durations: Array.from({ length: providerCapabilities.durationMax - providerCapabilities.durationMin + 1 }, (_, index) => providerCapabilities.durationMin + index),
             customDurationRange: { min: providerCapabilities.durationMin, max: providerCapabilities.durationMax },
-            outputCounts: [1, 2, 4],
+            outputCounts: providerCapabilities.outputCounts,
             supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
             supportsGeneratedAudio: providerCapabilities.supportsGeneratedAudio,
             watermarkCapability: providerCapabilities.watermarkCapability,
             supportsSuperResolution: false,
             referenceLimits: {
                 images: providerCapabilities.maxImages,
+                imagesWithVideo: providerCapabilities.maxImagesWithVideo || providerCapabilities.maxImages,
                 videos: providerCapabilities.maxVideos,
                 audios: providerCapabilities.maxAudios,
                 totalVideoDurationSeconds: providerCapabilities.maxVideoDurationSeconds,
@@ -105,7 +109,7 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
             },
             supportedTools: providerCapabilities.tools,
             requiresAdaptiveFrameRatio: providerCapabilities.requiresAdaptiveFrames,
-            unsupportedReasons: { superResolution: "筷子兼容接口不支持独立超分参数" },
+            unsupportedReasons: { generatedAudio: kuaiziKling ? "Kling 携带参考视频时不支持同步生成音频" : undefined, superResolution: "筷子兼容接口不支持独立超分参数" },
         };
     }
     return {
@@ -131,35 +135,49 @@ function selectedModelWatermarkCapability(config: AiConfig): WatermarkCapability
     return capability;
 }
 
-export function resolveSeedanceProviderCapabilities(config: AiConfig, model: string): ProviderModelCapabilities {
+function resolvePublishedVideoProviderCapabilities(config: AiConfig, model: string): ProviderModelCapabilities | undefined {
     const resolved = resolveModelRequestConfig(config, config.model || config.videoModel);
     const channel = config.channels.find((candidate) => candidate.id === resolved.channelId);
     const capabilities = channel?.modelCosts?.find((candidate) => candidate.model === model)?.providerCapabilities;
+    if (!capabilities) return undefined;
     if (!capabilities || capabilities.modelKey !== model || capabilities.capability !== "video") {
         throw new Error(`模型 ${model} 缺少后台发布的视频能力契约`);
     }
     return capabilities;
 }
 
+export function resolveSeedanceProviderCapabilities(config: AiConfig, model: string): ProviderModelCapabilities {
+    const capabilities = resolvePublishedVideoProviderCapabilities(config, model);
+    if (!capabilities) throw new Error(`模型 ${model} 缺少后台发布的视频能力契约`);
+    return capabilities;
+}
+
+function assertCompletePublishedVideoCapabilities(capabilities: ProviderModelCapabilities, model: string) {
+    if (!capabilities.providerFamily || !capabilities.resolutions.length || !capabilities.ratios.length || !capabilities.outputCounts.length || capabilities.durationMin <= 0 || capabilities.durationMax < capabilities.durationMin) {
+        throw new Error(`模型 ${model} 的后台视频能力契约不完整`);
+    }
+}
+
 export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: CanvasVideoGenerationMode): AiConfig {
     const capabilities = resolveVideoModelCapabilities(config);
+    const resolutionOptions = videoResolutionsForMode(capabilities, generationMode);
     const normalizedResolution =
         capabilities.id === "kling"
             ? normalizeKlingResolution(config.vquality)
             : capabilities.id === "minimax-h3"
               ? normalizeMiniMaxH3Resolution(config.vquality)
-              : capabilities.id === "seedance"
-                ? normalizeSeedanceCapabilityResolution(config.vquality, capabilities)
+              : capabilities.id === "seedance" || capabilities.id === "kuaizi-kling"
+                ? normalizePublishedCapabilityResolution(config.vquality, resolutionOptions)
                 : `${normalizeVideoResolution(config.vquality)}p`;
     const normalizedDuration =
         capabilities.id === "kling"
             ? normalizeKlingDuration(config.videoSeconds)
             : capabilities.id === "minimax-h3"
               ? normalizeMiniMaxH3Duration(config.videoSeconds)
-              : capabilities.id === "seedance"
-                ? normalizeSeedanceCapabilityDuration(config.videoSeconds, capabilities)
+              : capabilities.id === "seedance" || capabilities.id === "kuaizi-kling"
+                ? normalizePublishedCapabilityDuration(config.videoSeconds, capabilities, generationMode)
                 : Number(normalizeVideoDuration(config.videoSeconds));
-    const normalizedRatio = capabilities.id === "seedance" ? normalizeSeedanceCapabilityRatio(config.size, capabilities) : normalizeSeedanceRatio(config.size);
+    const normalizedRatio = capabilities.id === "seedance" || capabilities.id === "kuaizi-kling" ? normalizePublishedCapabilityRatio(config.size, capabilities) : normalizeSeedanceRatio(config.size);
     const ratioOptions = videoRatiosForMode(capabilities, generationMode);
     const supportedRatio = ratioOptions.some((option) => option.value === normalizedRatio) ? normalizedRatio : ratioOptions[0].value;
     const requestedCount = Math.max(1, Math.floor(Math.abs(Number(config.count)) || 1));
@@ -170,26 +188,29 @@ export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: 
         videoSeconds: String(normalizedDuration),
         size: supportedRatio,
         count: String(normalizedCount),
-        videoGenerateAudio: capabilities.supportsGeneratedAudio ? config.videoGenerateAudio : "false",
+        videoGenerateAudio: videoSupportsGeneratedAudio(capabilities, generationMode) ? config.videoGenerateAudio : "false",
         videoSuperResolutionEnabled: capabilities.supportsSuperResolution ? config.videoSuperResolutionEnabled : "false",
         videoSuperResolutionFps: capabilities.supportsSuperResolution ? config.videoSuperResolutionFps : "",
     };
 }
 
-function normalizeSeedanceCapabilityResolution(value: string, capabilities: VideoModelCapabilities) {
-    const normalized = normalizeResolutionToken(value);
-    if (capabilities.resolutions.some((option) => option.value === normalized)) return normalized;
-    return capabilities.resolutions.find((option) => option.value === "720p")?.value || capabilities.resolutions[0].value;
+function normalizePublishedCapabilityResolution(value: string, options: readonly VideoParameterOption[]) {
+    const requested = value.trim().toLowerCase();
+    if (options.some((option) => option.value === requested)) return requested;
+    const normalized = normalizeResolutionToken(requested);
+    if (options.some((option) => option.value === normalized)) return normalized;
+    return options.find((option) => option.value === "720p")?.value || options[0].value;
 }
 
-function normalizeSeedanceCapabilityDuration(value: string, capabilities: VideoModelCapabilities) {
+function normalizePublishedCapabilityDuration(value: string, capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
     const requested = Math.round(Number(value));
     const range = capabilities.customDurationRange;
-    if (!range) throw new Error("Seedance 模型缺少生成时长能力契约");
-    return Math.max(range.min, Math.min(range.max, Number.isFinite(requested) ? requested : range.min));
+    if (!range) throw new Error("当前模型缺少生成时长能力契约");
+    const max = capabilities.id === "kuaizi-kling" && mode === "omni_reference" ? Math.min(range.max, 10) : range.max;
+    return Math.max(range.min, Math.min(max, Number.isFinite(requested) ? requested : range.min));
 }
 
-function normalizeSeedanceCapabilityRatio(value: string, capabilities: VideoModelCapabilities) {
+function normalizePublishedCapabilityRatio(value: string, capabilities: VideoModelCapabilities) {
     const requested = value === "auto" ? "adaptive" : value;
     if (capabilities.ratios.some((option) => option.value === requested)) return requested;
     const dimensions = requested.match(/^(\d+)x(\d+)$/);
@@ -209,6 +230,15 @@ export function videoRatiosForMode(capabilities: VideoModelCapabilities, mode?: 
     if (capabilities.id !== "minimax-h3") return capabilities.ratios;
     if (!mode || mode === "text") return capabilities.ratios.filter((option) => option.value !== "adaptive");
     return capabilities.ratios.filter((option) => option.value === "adaptive");
+}
+
+export function videoResolutionsForMode(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
+    if (capabilities.id !== "kuaizi-kling" || mode !== "omni_reference") return capabilities.resolutions;
+    return capabilities.resolutions.filter((option) => option.value !== "4k");
+}
+
+export function videoSupportsGeneratedAudio(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
+    return capabilities.supportsGeneratedAudio && !(capabilities.id === "kuaizi-kling" && mode === "omni_reference");
 }
 
 export function videoModelMetadataPatch(config: AiConfig, model: string, generationMode?: CanvasVideoGenerationMode) {

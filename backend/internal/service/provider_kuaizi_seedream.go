@@ -87,7 +87,7 @@ func runKuaiziSeedreamTaskWithPollInterval(ctx context.Context, input canvasGene
 	for deadline := providerPollingDeadline(ctx); time.Now().Before(deadline); {
 		state, traceID, err := requestKuaiziSeedreamJSON(withProviderRequestKind(ctx, "poll"), input.Config, kuaiziSeedreamStatusPath, map[string]string{"task_id": taskID})
 		if err != nil {
-			if !retryableKuaiziSeedreamPollError(err) {
+			if !retryableKuaiziPollError(err) {
 				return nil, err
 			}
 			lastTransientPollError = err
@@ -143,7 +143,7 @@ func runKuaiziSeedreamTaskWithPollInterval(ctx context.Context, input canvasGene
 	return nil, fmt.Errorf("Seedream 生成超时（task_id=%s）", taskID)
 }
 
-func retryableKuaiziSeedreamPollError(err error) bool {
+func retryableKuaiziPollError(err error) bool {
 	var failure kuaiziCompatibleHTTPError
 	if !errors.As(err, &failure) {
 		return false

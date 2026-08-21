@@ -44,8 +44,15 @@ func (s *Service) processKuaiziCompatibleTask(ctx context.Context, task model.Ta
 	}
 	switch spec.Capability {
 	case "video":
-		input.Config.InterfaceType = "ai-open-platform-video-volcengine"
-		return runAIOpenPlatformVolcengineVideoTask(ctx, input)
+		switch family {
+		case "seedance":
+			input.Config.InterfaceType = "ai-open-platform-video-volcengine"
+			return runAIOpenPlatformVolcengineVideoTask(ctx, input)
+		case "kling":
+			return runKuaiziKlingTask(ctx, input)
+		default:
+			return nil, fmt.Errorf("筷子科技视频模型系列未实现：%s", family)
+		}
 	case "image":
 		input.Mode = "image"
 		switch family {

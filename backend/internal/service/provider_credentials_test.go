@@ -461,7 +461,7 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Adapters) != 5 {
+	if len(view.Adapters) != 6 {
 		t.Fatalf("adapters = %#v", view.Adapters)
 	}
 	var seedanceAdapter *ProviderAdapterDescriptor
@@ -501,6 +501,16 @@ func TestPublishKuaiziFamilyModelsBindsHealthyCredentialAndKeepsUnpricedModelsDi
 		if !spec.Published || spec.ChannelModelID == "" {
 			t.Fatalf("publication facts missing = %#v", spec)
 		}
+	}
+	if _, err := svc.PublishKuaiziFamilyModels(admin, "kling"); err != nil {
+		t.Fatal(err)
+	}
+	var kling model.ChannelModel
+	if err := db.First(&kling, "channel_id = ? AND model_key = ?", channel.ID, kuaiziKlingModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if kling.ProviderCredentialID != credential.ID || kling.Capability != "video" || kling.Enabled || kling.PriceConfigured {
+		t.Fatalf("Kling model publication = %#v", kling)
 	}
 }
 

@@ -66,6 +66,7 @@ export type ModelChannel = {
 };
 
 export type ProviderModelCapabilities = {
+    providerFamily: string;
     modelKey: string;
     displayName: string;
     upstreamMode: string;
@@ -73,6 +74,7 @@ export type ProviderModelCapabilities = {
     resolutions: string[];
     resolutionPixels: Record<string, number>;
     inputVariants: Array<"standard" | "reference_video">;
+    referenceVideoResolutions: string[];
     ratios: string[];
     qualities: string[];
     outputCounts: number[];
@@ -84,6 +86,7 @@ export type ProviderModelCapabilities = {
     supportsAudioOnly: boolean;
     requiresAdaptiveFrames: boolean;
     maxImages: number;
+    maxImagesWithVideo: number;
     maxVideos: number;
     maxAudios: number;
     maxVideoDurationSeconds: number;
