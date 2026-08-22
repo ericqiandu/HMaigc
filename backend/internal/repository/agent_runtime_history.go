@@ -1,50 +1,82 @@
 package repository
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
+
+	"gorm.io/gorm"
 )
 
 const maxAgentThreadHistoryLimit = 20
 
 type AgentThreadHistoryRecord struct {
 	Thread     model.AgentThread
-	Run        *model.AgentRun
-	StateJSON  string
+	Turns      []AgentThreadTurnRecord
 	ActivityAt time.Time
 }
 
+type AgentThreadTurnRecord struct {
+	Run       model.AgentRun
+	StateJSON string
+	Items     []model.AgentTimelineItem
+}
+
+type AgentTimelineEventRecord struct {
+	Event model.AgentRunEvent
+	Item  *model.AgentTimelineItem
+}
+
+func (r *Repository) AgentTimelineEventsAfter(scope agentruntime.Scope, afterSequence int64, limit int) ([]AgentTimelineEventRecord, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	events, err := r.AgentRunEventsAfter(scope, afterSequence, limit)
+	if err != nil || len(events) == 0 {
+		return nil, err
+	}
+	sequences := make([]int64, 0, len(events))
+	for _, event := range events {
+		if event.RunID != scope.RunID || event.Sequence <= afterSequence {
+			return nil, errors.New("agent timeline event facts are inconsistent")
+		}
+		sequences = append(sequences, event.Sequence)
+	}
+	var items []model.AgentTimelineItem
+	if err := r.db.Where("run_id = ? AND source_event_sequence IN ?", scope.RunID, sequences).
+		Order("source_event_sequence ASC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	itemsBySequence := make(map[int64]model.AgentTimelineItem, len(items))
+	for _, item := range items {
+		if item.TenantKind != scope.TenantKind || item.TenantID != scope.TenantID || item.ThreadID != scope.ThreadID ||
+			item.RunID != scope.RunID || item.SourceEventSequence <= afterSequence {
+			return nil, errors.New("agent timeline item facts are inconsistent")
+		}
+		if _, exists := itemsBySequence[item.SourceEventSequence]; exists {
+			return nil, errors.New("agent timeline event has multiple item projections")
+		}
+		itemsBySequence[item.SourceEventSequence] = item
+	}
+	records := make([]AgentTimelineEventRecord, 0, len(events))
+	for _, event := range events {
+		record := AgentTimelineEventRecord{Event: event}
+		if item, ok := itemsBySequence[event.Sequence]; ok {
+			copied := item
+			record.Item = &copied
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
 type agentThreadHistoryRow struct {
-	ThreadID              string                    `gorm:"column:thread_id"`
-	ThreadTenantKind      agentruntime.TenantKind   `gorm:"column:thread_tenant_kind"`
-	ThreadTenantID        string                    `gorm:"column:thread_tenant_id"`
-	ThreadCreatedByUserID string                    `gorm:"column:thread_created_by_user_id"`
-	ThreadDomainProjectID string                    `gorm:"column:thread_domain_project_id"`
-	ThreadCanvasID        string                    `gorm:"column:thread_canvas_id"`
-	ThreadStatus          agentruntime.ThreadStatus `gorm:"column:thread_status"`
-	ThreadCreatedAt       time.Time                 `gorm:"column:thread_created_at"`
-	ThreadUpdatedAt       time.Time                 `gorm:"column:thread_updated_at"`
-	RunID                 *string                   `gorm:"column:run_id"`
-	RunThreadID           *string                   `gorm:"column:run_thread_id"`
-	RunActorUserID        *string                   `gorm:"column:run_actor_user_id"`
-	RunClientRequestID    *string                   `gorm:"column:run_client_request_id"`
-	RunStatus             *string                   `gorm:"column:run_status"`
-	RunLastEventSequence  *int64                    `gorm:"column:run_last_event_sequence"`
-	RunStateVersion       *int                      `gorm:"column:run_state_version"`
-	RunStepNumber         *int                      `gorm:"column:run_step_number"`
-	RunMaxSteps           *int                      `gorm:"column:run_max_steps"`
-	RunModelRecordID      *string                   `gorm:"column:run_model_record_id"`
-	RunModelKey           *string                   `gorm:"column:run_model_key"`
-	RunToolSchemaVersion  *int                      `gorm:"column:run_tool_schema_version"`
-	RunRuntimeVersion     *int                      `gorm:"column:run_runtime_version"`
-	RunPolicyVersion      *int                      `gorm:"column:run_policy_version"`
-	RunCreatedAt          *time.Time                `gorm:"column:run_created_at"`
-	RunUpdatedAt          *time.Time                `gorm:"column:run_updated_at"`
-	RunCompletedAt        *time.Time                `gorm:"column:run_completed_at"`
-	LatestStateJSON       *string                   `gorm:"column:latest_state_json"`
+	model.AgentThread
+	ActivityAt time.Time `gorm:"column:activity_at"`
 }
 
 func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]AgentThreadHistoryRecord, error) {
@@ -54,106 +86,313 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 	if limit < 1 || limit > maxAgentThreadHistoryLimit {
 		return nil, errors.New("agent thread history limit is invalid")
 	}
-	var rows []agentThreadHistoryRow
-	err := r.db.Raw(`
-		WITH scoped_threads AS (
-			SELECT *
-			  FROM agent_threads
-			 WHERE tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
-			   AND domain_project_id = ? AND canvas_id = ? AND status = ?
-		), ranked_runs AS (
-			SELECT agent_runs.*,
-			       ROW_NUMBER() OVER (
-					PARTITION BY agent_runs.thread_id
-					ORDER BY agent_runs.updated_at DESC, agent_runs.created_at DESC, agent_runs.id DESC
-			       ) AS run_rank
-			  FROM agent_runs
-			  JOIN scoped_threads ON scoped_threads.id = agent_runs.thread_id
-		)
-		SELECT scoped_threads.id AS thread_id,
-		       scoped_threads.tenant_kind AS thread_tenant_kind,
-		       scoped_threads.tenant_id AS thread_tenant_id,
-		       scoped_threads.created_by_user_id AS thread_created_by_user_id,
-		       scoped_threads.domain_project_id AS thread_domain_project_id,
-		       scoped_threads.canvas_id AS thread_canvas_id,
-		       scoped_threads.status AS thread_status,
-		       scoped_threads.created_at AS thread_created_at,
-		       scoped_threads.updated_at AS thread_updated_at,
-		       ranked_runs.id AS run_id,
-		       ranked_runs.thread_id AS run_thread_id,
-		       ranked_runs.actor_user_id AS run_actor_user_id,
-		       ranked_runs.client_request_id AS run_client_request_id,
-		       ranked_runs.status AS run_status,
-		       ranked_runs.last_event_sequence AS run_last_event_sequence,
-		       ranked_runs.state_version AS run_state_version,
-		       ranked_runs.step_number AS run_step_number,
-		       ranked_runs.max_steps AS run_max_steps,
-		       ranked_runs.model_record_id AS run_model_record_id,
-		       ranked_runs.model_key AS run_model_key,
-		       ranked_runs.tool_schema_version AS run_tool_schema_version,
-		       ranked_runs.runtime_version AS run_runtime_version,
-		       ranked_runs.policy_version AS run_policy_version,
-		       ranked_runs.created_at AS run_created_at,
-		       ranked_runs.updated_at AS run_updated_at,
-		       ranked_runs.completed_at AS run_completed_at,
-		       agent_checkpoints.state_json AS latest_state_json
-		  FROM scoped_threads
-		  LEFT JOIN ranked_runs ON ranked_runs.thread_id = scoped_threads.id AND ranked_runs.run_rank = 1
-		  LEFT JOIN agent_checkpoints ON agent_checkpoints.run_id = ranked_runs.id
-		   AND agent_checkpoints.state_version = ranked_runs.state_version
-		   AND agent_checkpoints.sequence = (
-		       SELECT MAX(latest_checkpoint.sequence)
-		         FROM agent_checkpoints AS latest_checkpoint
-		        WHERE latest_checkpoint.run_id = ranked_runs.id
-		          AND latest_checkpoint.state_version = ranked_runs.state_version
-		   )
-		 ORDER BY COALESCE(ranked_runs.updated_at, scoped_threads.updated_at) DESC, scoped_threads.id DESC
-		 LIMIT ?`, scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID, agentruntime.ThreadActive, limit).Scan(&rows).Error
-	if err != nil {
-		return nil, err
-	}
+	var records []AgentThreadHistoryRecord
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var threads []model.AgentThread
+		if err := tx.Where(`tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
+			AND domain_project_id = ? AND canvas_id = ? AND status = ?`,
+			scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID,
+			scope.CanvasID, agentruntime.ThreadActive).
+			Order(`COALESCE((SELECT MAX(agent_runs.updated_at) FROM agent_runs
+				WHERE agent_runs.thread_id = agent_threads.id), agent_threads.updated_at) DESC, agent_threads.id DESC`).
+			Limit(limit).Find(&threads).Error; err != nil {
+			return err
+		}
+		if len(threads) == 0 {
+			records = []AgentThreadHistoryRecord{}
+			return nil
+		}
+		threadIDs := make([]string, 0, len(threads))
+		for _, thread := range threads {
+			threadIDs = append(threadIDs, thread.ID)
+		}
+		var runs []model.AgentRun
+		if err := tx.Where("thread_id IN ?", threadIDs).
+			Order("thread_id ASC, created_at ASC, id ASC").Find(&runs).Error; err != nil {
+			return err
+		}
+		runIDs := make([]string, 0, len(runs))
+		for _, run := range runs {
+			runIDs = append(runIDs, run.ID)
+		}
+		var checkpoints []model.AgentCheckpoint
+		var items []model.AgentTimelineItem
+		var events []model.AgentRunEvent
+		if len(runIDs) > 0 {
+			if err := tx.Where("run_id IN ?", runIDs).Order("run_id ASC, sequence ASC").Find(&checkpoints).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("run_id IN ?", runIDs).Order("run_id ASC, ordinal ASC").Find(&items).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("run_id IN ?", runIDs).Order("run_id ASC, sequence ASC").Find(&events).Error; err != nil {
+				return err
+			}
+		}
+		activityByThreadID := make(map[string]time.Time, len(threads))
+		for _, thread := range threads {
+			activityByThreadID[thread.ID] = thread.UpdatedAt
+		}
+		for _, run := range runs {
+			if run.UpdatedAt.After(activityByThreadID[run.ThreadID]) {
+				activityByThreadID[run.ThreadID] = run.UpdatedAt
+			}
+		}
+		rows := make([]agentThreadHistoryRow, 0, len(threads))
+		for _, thread := range threads {
+			rows = append(rows, agentThreadHistoryRow{AgentThread: thread, ActivityAt: activityByThreadID[thread.ID]})
+		}
+		var err error
+		records, err = agentThreadHistoryFacts(scope, rows, runs, checkpoints, items, events)
+		return err
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	return records, err
+}
+
+func agentThreadHistoryFacts(
+	scope agentruntime.Scope,
+	rows []agentThreadHistoryRow,
+	runs []model.AgentRun,
+	checkpoints []model.AgentCheckpoint,
+	items []model.AgentTimelineItem,
+	events []model.AgentRunEvent,
+) ([]AgentThreadHistoryRecord, error) {
+	threadByID := make(map[string]model.AgentThread, len(rows))
+	recordIndexByThreadID := make(map[string]int, len(rows))
 	records := make([]AgentThreadHistoryRecord, 0, len(rows))
 	for _, row := range rows {
-		record, err := agentThreadHistoryRecord(row)
-		if err != nil {
-			return nil, err
+		thread := row.AgentThread
+		if thread.TenantKind != scope.TenantKind || thread.TenantID != scope.TenantID ||
+			thread.CreatedByUserID != scope.ActorUserID || thread.DomainProjectID != scope.DomainProjectID ||
+			thread.CanvasID != scope.CanvasID || thread.Status != agentruntime.ThreadActive || row.ActivityAt.IsZero() {
+			return nil, errors.New("agent thread history scope facts are inconsistent")
 		}
-		records = append(records, record)
+		threadByID[thread.ID] = thread
+		recordIndexByThreadID[thread.ID] = len(records)
+		records = append(records, AgentThreadHistoryRecord{
+			Thread: thread, Turns: []AgentThreadTurnRecord{}, ActivityAt: row.ActivityAt,
+		})
+	}
+	runByID := make(map[string]model.AgentRun, len(runs))
+	for _, run := range runs {
+		thread, ok := threadByID[run.ThreadID]
+		if !ok || run.ActorUserID != scope.ActorUserID || run.UpdatedAt.Before(run.CreatedAt) ||
+			run.LastEventSequence < 0 || run.StateVersion < 0 || run.StepNumber < 0 || run.MaxSteps < 0 {
+			return nil, errors.New("agent thread history run facts are inconsistent")
+		}
+		if thread.ID != run.ThreadID {
+			return nil, errors.New("agent thread history run scope is inconsistent")
+		}
+		runByID[run.ID] = run
+	}
+	checkpointByRunID := make(map[string]model.AgentCheckpoint, len(runs))
+	for _, checkpoint := range checkpoints {
+		run, ok := runByID[checkpoint.RunID]
+		if !ok || checkpoint.Sequence < 1 || checkpoint.Sequence > run.LastEventSequence {
+			return nil, errors.New("agent thread history checkpoint facts are inconsistent")
+		}
+		if checkpoint.StateVersion != run.StateVersion {
+			continue
+		}
+		stored, exists := checkpointByRunID[checkpoint.RunID]
+		if !exists || checkpoint.Sequence > stored.Sequence {
+			checkpointByRunID[checkpoint.RunID] = checkpoint
+		}
+	}
+	itemsByRunID := make(map[string][]model.AgentTimelineItem, len(runs))
+	for _, item := range items {
+		run, ok := runByID[item.RunID]
+		if !ok || item.ThreadID != run.ThreadID || item.TenantKind != scope.TenantKind ||
+			item.TenantID != scope.TenantID || !item.Kind.Valid() || !item.Status.Valid() ||
+			item.SourceEventSequence < 1 || item.SourceEventSequence > run.LastEventSequence ||
+			!json.Valid([]byte(item.ContentJSON)) {
+			return nil, errors.New("agent thread history timeline facts are inconsistent")
+		}
+		itemsByRunID[item.RunID] = append(itemsByRunID[item.RunID], item)
+	}
+	eventsByRunID := make(map[string][]model.AgentRunEvent, len(runs))
+	for _, event := range events {
+		run, ok := runByID[event.RunID]
+		if !ok || event.Sequence < 1 || event.Sequence > run.LastEventSequence || !event.Kind.Valid() ||
+			!json.Valid([]byte(event.PayloadJSON)) {
+			return nil, errors.New("agent thread history event facts are inconsistent")
+		}
+		eventsByRunID[event.RunID] = append(eventsByRunID[event.RunID], event)
+	}
+	for _, run := range runs {
+		checkpoint, ok := checkpointByRunID[run.ID]
+		if !ok {
+			return nil, errors.New("agent thread history checkpoint is missing")
+		}
+		runItems := itemsByRunID[run.ID]
+		if len(runItems) == 0 && run.LastEventSequence > 0 {
+			if !agentHistoryRunTerminal(run.Status) {
+				return nil, errors.New("active agent run timeline projection is missing")
+			}
+			var rebuildErr error
+			runItems, rebuildErr = rebuildTerminalAgentTimeline(scope, run, eventsByRunID[run.ID])
+			if rebuildErr != nil {
+				return nil, rebuildErr
+			}
+		}
+		for index, item := range runItems {
+			if item.Ordinal != int64(index+1) {
+				return nil, errors.New("agent thread history timeline ordinal is not contiguous")
+			}
+		}
+		recordIndex := recordIndexByThreadID[run.ThreadID]
+		records[recordIndex].Turns = append(records[recordIndex].Turns, AgentThreadTurnRecord{
+			Run: run, StateJSON: checkpoint.StateJSON, Items: runItems,
+		})
 	}
 	return records, nil
 }
 
-func agentThreadHistoryRecord(row agentThreadHistoryRow) (AgentThreadHistoryRecord, error) {
-	record := AgentThreadHistoryRecord{
-		Thread: model.AgentThread{
-			ID: row.ThreadID, TenantKind: row.ThreadTenantKind, TenantID: row.ThreadTenantID,
-			CreatedByUserID: row.ThreadCreatedByUserID, DomainProjectID: row.ThreadDomainProjectID,
-			CanvasID: row.ThreadCanvasID, Status: row.ThreadStatus,
-			CreatedAt: row.ThreadCreatedAt, UpdatedAt: row.ThreadUpdatedAt,
-		},
-		ActivityAt: row.ThreadUpdatedAt,
+func agentHistoryRunTerminal(status agentruntime.RunStatus) bool {
+	return status == agentruntime.RunSucceeded || status == agentruntime.RunFailed || status == agentruntime.RunCancelled
+}
+
+type agentHistoryUserMessagePayload struct {
+	ClientRequestID string `json:"clientRequestId"`
+	Message         string `json:"message"`
+}
+
+type agentHistoryArtifactPayload struct {
+	ArtifactID     string                              `json:"artifactId"`
+	Kind           model.AgentProductionArtifactKind   `json:"kind"`
+	PlanKey        string                              `json:"planKey"`
+	PlanVersion    int                                 `json:"planVersion"`
+	ReferenceKey   string                              `json:"referenceKey,omitempty"`
+	ShotKey        string                              `json:"shotKey,omitempty"`
+	TaskID         string                              `json:"taskId,omitempty"`
+	BillingOrderID string                              `json:"billingOrderId,omitempty"`
+	ResourceID     string                              `json:"resourceId,omitempty"`
+	Status         model.AgentProductionArtifactStatus `json:"status"`
+}
+
+func rebuildTerminalAgentTimeline(scope agentruntime.Scope, run model.AgentRun, events []model.AgentRunEvent) ([]model.AgentTimelineItem, error) {
+	if !agentHistoryRunTerminal(run.Status) || int64(len(events)) != run.LastEventSequence {
+		return nil, errors.New("terminal agent run event history is incomplete")
 	}
-	if row.RunID == nil {
-		return record, nil
+	hasUserMessageEvent := false
+	for index, event := range events {
+		if event.Sequence != int64(index+1) {
+			return nil, errors.New("terminal agent run event sequence is not contiguous")
+		}
+		hasUserMessageEvent = hasUserMessageEvent || event.Kind == agentruntime.EventUserMessageAdded
 	}
-	if row.RunThreadID == nil || row.RunActorUserID == nil || row.RunClientRequestID == nil || row.RunStatus == nil ||
-		row.RunLastEventSequence == nil || row.RunStateVersion == nil || row.RunStepNumber == nil || row.RunMaxSteps == nil ||
-		row.RunModelRecordID == nil || row.RunModelKey == nil || row.RunToolSchemaVersion == nil ||
-		row.RunRuntimeVersion == nil || row.RunPolicyVersion == nil || row.RunCreatedAt == nil ||
-		row.RunUpdatedAt == nil || row.LatestStateJSON == nil {
-		return AgentThreadHistoryRecord{}, errors.New("agent thread history facts are incomplete")
+	items := make([]model.AgentTimelineItem, 0, len(events))
+	itemIndexByID := make(map[string]int, len(events))
+	var latestState agentruntime.RuntimeState
+	var transitionPrevious agentruntime.RuntimeState
+	transitionStateVersion := 0
+	for _, event := range events {
+		var mutation *TimelineMutation
+		switch event.Kind {
+		case agentruntime.EventUserMessageAdded:
+			var payload agentHistoryUserMessagePayload
+			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil || payload.ClientRequestID == "" || payload.Message == "" {
+				return nil, errors.New("terminal agent user message facts are invalid")
+			}
+			mutation = &TimelineMutation{
+				ItemID: agentFactID("timeline", run.ID, payload.ClientRequestID), Kind: model.AgentTimelineItemUserMessage,
+				ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
+				ContentJSON: json.RawMessage(event.PayloadJSON),
+			}
+		case agentruntime.EventArtifactAvailable:
+			var payload agentHistoryArtifactPayload
+			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil || payload.ArtifactID == "" ||
+				payload.PlanKey == "" || payload.PlanVersion < 1 || payload.ResourceID == "" || !payload.Status.Valid() {
+				return nil, errors.New("terminal agent artifact facts are invalid")
+			}
+			mutation = &TimelineMutation{
+				ItemID: agentFactID("timeline", run.ID, "artifact", payload.ArtifactID), Kind: model.AgentTimelineItemArtifact,
+				ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
+				ContentJSON: json.RawMessage(event.PayloadJSON),
+			}
+		case agentruntime.EventModelDelta:
+			continue
+		default:
+			var state agentruntime.RuntimeState
+			if err := json.Unmarshal([]byte(event.PayloadJSON), &state); err != nil || state.StateVersion < 1 || !state.Status.Valid() {
+				return nil, errors.New("terminal agent runtime event state is invalid")
+			}
+			if state.StateVersion != transitionStateVersion {
+				transitionPrevious = latestState
+				transitionStateVersion = state.StateVersion
+			}
+			if event.Kind == agentruntime.EventRunCreated && !hasUserMessageEvent {
+				content, err := json.Marshal(agentHistoryUserMessagePayload{ClientRequestID: run.ClientRequestID, Message: state.UserMessage})
+				if err != nil || run.ClientRequestID == "" || state.UserMessage == "" {
+					return nil, errors.New("terminal agent initial message facts are invalid")
+				}
+				mutation = &TimelineMutation{
+					ItemID: agentFactID("timeline", run.ID, run.ClientRequestID), Kind: model.AgentTimelineItemUserMessage,
+					ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence, ContentJSON: content,
+				}
+			} else {
+				var err error
+				mutation, err = agentTimelineMutationForEvent(run.ID, transitionPrevious, state, event.Kind, event.Sequence)
+				if err != nil {
+					return nil, err
+				}
+			}
+			latestState = state
+		}
+		if mutation == nil {
+			continue
+		}
+		if err := applyRebuiltAgentTimelineMutation(scope, run, event.CreatedAt, *mutation, &items, itemIndexByID); err != nil {
+			return nil, err
+		}
 	}
-	record.Run = &model.AgentRun{
-		ID: *row.RunID, ThreadID: *row.RunThreadID, ActorUserID: *row.RunActorUserID,
-		ClientRequestID: *row.RunClientRequestID, Status: agentruntime.RunStatus(*row.RunStatus),
-		LastEventSequence: *row.RunLastEventSequence, StateVersion: *row.RunStateVersion,
-		StepNumber: *row.RunStepNumber, MaxSteps: *row.RunMaxSteps,
-		ModelRecordID: *row.RunModelRecordID, ModelKey: *row.RunModelKey,
-		ToolSchemaVersion: *row.RunToolSchemaVersion, RuntimeVersion: *row.RunRuntimeVersion,
-		PolicyVersion: *row.RunPolicyVersion, CreatedAt: *row.RunCreatedAt,
-		UpdatedAt: *row.RunUpdatedAt, CompletedAt: row.RunCompletedAt,
+	if latestState.StateVersion != run.StateVersion || latestState.StepNumber != run.StepNumber ||
+		latestState.MaxSteps != run.MaxSteps || latestState.Status != run.Status {
+		return nil, errors.New("terminal agent run state does not match event history")
 	}
-	record.StateJSON = *row.LatestStateJSON
-	record.ActivityAt = *row.RunUpdatedAt
-	return record, nil
+	return items, nil
+}
+
+func applyRebuiltAgentTimelineMutation(
+	scope agentruntime.Scope,
+	run model.AgentRun,
+	now time.Time,
+	mutation TimelineMutation,
+	items *[]model.AgentTimelineItem,
+	itemIndexByID map[string]int,
+) error {
+	if mutation.ItemID == "" || !mutation.Kind.Valid() || !mutation.ToStatus.Valid() || mutation.SourceEventSequence < 1 ||
+		!json.Valid(mutation.ContentJSON) || now.IsZero() {
+		return errors.New("rebuilt agent timeline mutation is invalid")
+	}
+	index, exists := itemIndexByID[mutation.ItemID]
+	if !exists {
+		if mutation.FromStatus != nil {
+			return errors.New("rebuilt agent timeline update has no source item")
+		}
+		completedAt := agentTimelineCompletedAt(mutation.ToStatus, now)
+		item := model.AgentTimelineItem{
+			ID: mutation.ItemID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+			ThreadID: run.ThreadID, RunID: run.ID, Kind: mutation.Kind, Status: mutation.ToStatus,
+			Ordinal: int64(len(*items) + 1), SourceEventSequence: mutation.SourceEventSequence,
+			ContentJSON: string(mutation.ContentJSON), StartedAt: now, CompletedAt: completedAt,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		*items = append(*items, item)
+		itemIndexByID[mutation.ItemID] = len(*items) - 1
+		return nil
+	}
+	if mutation.FromStatus == nil {
+		return errors.New("rebuilt agent timeline item identity is duplicated")
+	}
+	item := &(*items)[index]
+	if item.Kind != mutation.Kind || item.Status != *mutation.FromStatus || agentTimelineStatusTerminal(item.Status) {
+		return errors.New("rebuilt agent timeline transition conflicts with prior facts")
+	}
+	item.Status = mutation.ToStatus
+	item.SourceEventSequence = mutation.SourceEventSequence
+	item.ContentJSON = string(mutation.ContentJSON)
+	item.CompletedAt = agentTimelineCompletedAt(mutation.ToStatus, now)
+	item.UpdatedAt = now
+	return nil
 }

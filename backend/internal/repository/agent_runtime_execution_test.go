@@ -110,7 +110,7 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 1 || history[0].Run == nil || history[0].Run.RuntimeVersion != input.RuntimeVersion || history[0].Run.PolicyVersion != input.PolicyVersion {
+	if len(history) != 1 || len(history[0].Turns) != 1 || history[0].Turns[0].Run.RuntimeVersion != input.RuntimeVersion || history[0].Turns[0].Run.PolicyVersion != input.PolicyVersion {
 		t.Fatalf("thread history did not preserve runtime policy versions: %#v", history)
 	}
 	replayed, err := repo.InitializeAgentRun(input)
@@ -626,7 +626,7 @@ func TestAppendAgentSteerPersistsDurableIdempotencyAndKeepsOriginalMessage(t *te
 	}
 	conflict := request
 	conflict.Message = "改成另外一套服装"
-	if _, _, err := repo.AppendAgentSteer(scope, conflict, now.Add(3*time.Second)); !errors.Is(err, ErrAgentTimelineConflict) {
+	if _, _, err := repo.AppendAgentSteer(scope, conflict, now.Add(3*time.Second)); !errors.Is(err, agentruntime.ErrSteerConflict) {
 		t.Fatalf("steer identity conflict = %v", err)
 	}
 	var eventCount, checkpointCount, timelineCount int64

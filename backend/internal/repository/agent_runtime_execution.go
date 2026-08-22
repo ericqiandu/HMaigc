@@ -306,7 +306,7 @@ func (r *Repository) AppendAgentSteer(
 				existing.Kind != model.AgentTimelineItemUserMessage || existing.Status != model.AgentTimelineItemCompleted ||
 				json.Unmarshal([]byte(existing.ContentJSON), &stored) != nil ||
 				stored.ClientRequestID != strings.TrimSpace(request.ClientRequestID) || stored.Message != strings.TrimSpace(request.Message) {
-				return ErrAgentTimelineConflict
+				return agentruntime.ErrSteerConflict
 			}
 			state = current
 			replayed = true
