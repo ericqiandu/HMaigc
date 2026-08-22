@@ -40,7 +40,7 @@ jobs:
       - name: Test PostgreSQL and Redis integration
         run: >-
           bash scripts/tests/run-payment-integration.sh --all
-          --require TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts
+          --require TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

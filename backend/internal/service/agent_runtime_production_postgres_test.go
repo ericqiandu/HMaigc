@@ -40,6 +40,11 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 		Access: agentruntime.AccessGrant{Level: agentruntime.AccessEditor},
 	}
 	now := time.Now().UTC()
+	if _, err := primary.repo.CreateAgentRun(repository.CreateAgentRunInput{
+		Scope: scope, ClientRequestID: "postgres-production-request", Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	plan := model.AgentProductionPlanVersion{
 		ID: "postgres-production-version", PlanKey: "postgres-render-plan",
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID,
