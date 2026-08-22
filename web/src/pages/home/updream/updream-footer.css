@@ -1,0 +1,53 @@
+.updream-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 64px;
+    padding: 0 16px 40px;
+    color: rgb(23 32 51 / 42%);
+    font-size: 12px;
+    line-height: 20px;
+    text-align: center;
+}
+
+.updream-footer-legal-links,
+.updream-footer-copyright,
+.updream-footer-registration {
+    margin: 0;
+}
+
+.updream-footer-divider,
+.updream-footer-registration-divider {
+    margin: 0 12px;
+    color: rgb(23 32 51 / 20%);
+}
+
+.updream-footer-link,
+.updream-footer-registration-link {
+    transition: color 180ms var(--ease-standard);
+}
+
+.updream-footer-link:hover,
+.updream-footer-registration-link:hover {
+    color: rgb(23 32 51 / 76%);
+}
+
+.dark .updream-footer {
+    color: rgb(255 255 255 / 35%);
+}
+
+.dark .updream-footer-divider,
+.dark .updream-footer-registration-divider {
+    color: rgb(255 255 255 / 20%);
+}
+
+.dark .updream-footer-link:hover,
+.dark .updream-footer-registration-link:hover {
+    color: rgb(255 255 255 / 70%);
+}
+
+@media (max-width: 640px) {
+    .updream-footer {
+        margin-top: 56px;
+    }
+}

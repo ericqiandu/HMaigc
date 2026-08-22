@@ -24,6 +24,12 @@
 }
 
 .updream-header {
+    display: flex;
+    width: 100%;
+    height: 80px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
     background: transparent;
     border-bottom: 1px solid transparent;
     transition:
@@ -72,5 +78,9 @@
 @media (max-width: 767px) {
     .updream-sticky-stack .updream-announcement {
         display: none;
+    }
+
+    .updream-header {
+        padding: 0 16px;
     }
 }

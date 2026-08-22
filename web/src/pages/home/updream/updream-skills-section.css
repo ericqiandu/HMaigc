@@ -1,0 +1,303 @@
+.updream-skills {
+    width: 100%;
+    max-width: 1448px;
+    margin: 0 auto;
+    padding: 0 104px;
+    color: #172033;
+}
+
+.updream-skills-heading {
+    display: flex;
+    width: 100%;
+    height: 28px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.updream-skills-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 28px;
+}
+
+.updream-skills-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: rgb(23 32 51 / 48%);
+    font-size: 13px;
+    line-height: 20px;
+    transition: color 180ms var(--ease-standard);
+}
+
+.updream-skills-all:hover {
+    color: rgb(23 32 51 / 82%);
+}
+
+.updream-skills-all:focus-visible,
+.updream-skill-link:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 3px;
+}
+
+.updream-skills-all-icon {
+    width: 14px;
+    height: 14px;
+}
+
+.updream-skills-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.updream-skill-link {
+    display: block;
+    min-width: 0;
+    border-radius: 16px;
+}
+
+.updream-skill-card {
+    position: relative;
+    height: 180px;
+    overflow: hidden;
+    border: 1px solid rgb(15 23 42 / 10%);
+    border-radius: 16px;
+    background: linear-gradient(128deg, #9076df, #6b5ed8);
+    transition:
+        border-color 180ms var(--ease-standard),
+        transform 180ms var(--ease-standard);
+}
+
+.updream-skill-card::after {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgb(8 10 18 / 18%), transparent 68%);
+    content: "";
+    pointer-events: none;
+}
+
+.updream-skill-card[data-tone="0"] {
+    background: linear-gradient(128deg, #bd71b8 0%, #a261b2 100%);
+}
+
+.updream-skill-card[data-tone="1"] {
+    background: linear-gradient(128deg, #5c9ee4 0%, #277ed0 100%);
+}
+
+.updream-skill-card[data-tone="2"] {
+    background: linear-gradient(128deg, #e4a573 0%, #ed7a2d 100%);
+}
+
+.updream-skill-card[data-tone="3"] {
+    background: linear-gradient(128deg, #7e94ec 0%, #4e70df 100%);
+}
+
+.updream-skill-card[data-tone="4"] {
+    background: linear-gradient(128deg, #dba4b9 0%, #d26884 100%);
+}
+
+.updream-skill-card[data-tone="5"] {
+    background: linear-gradient(128deg, #91c5dc 0%, #57aede 100%);
+}
+
+.updream-skill-link:hover .updream-skill-card {
+    border-color: rgb(255 255 255 / 28%);
+    transform: translateY(-2px);
+}
+
+.updream-skill-card-content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    width: calc(100% - 178px);
+    height: 100%;
+    min-width: 0;
+    flex-direction: column;
+    padding: 24px 0 22px 24px;
+    color: #ffffff;
+}
+
+.updream-skill-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+}
+
+.updream-skill-mark {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    flex: none;
+    place-items: center;
+    border-radius: 12px;
+    background: rgb(255 255 255 / 18%);
+}
+
+.updream-skill-mark-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.updream-skill-meta {
+    min-width: 0;
+}
+
+.updream-skill-title {
+    overflow: hidden;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 24px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.updream-skill-author {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px 0 0;
+    color: rgb(255 255 255 / 68%);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.updream-skill-author-icon {
+    width: 12px;
+    height: 12px;
+}
+
+.updream-skill-description {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 16px 0 0;
+    color: rgb(255 255 255 / 78%);
+    font-size: 12px;
+    line-height: 16px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.updream-skill-version {
+    overflow: hidden;
+    margin: auto 0 0;
+    color: rgb(255 255 255 / 62%);
+    font-size: 12px;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.updream-skill-thumbnail,
+.updream-skill-fallback {
+    position: absolute;
+    z-index: 1;
+    top: 24px;
+    right: 24px;
+    width: 128px;
+    height: 171px;
+    border-radius: 12px;
+}
+
+.updream-skill-thumbnail {
+    object-fit: cover;
+    box-shadow: 0 14px 32px rgb(10 12 20 / 20%);
+}
+
+.updream-skill-fallback {
+    display: grid;
+    place-items: center;
+    background: rgb(255 255 255 / 12%);
+}
+
+.updream-skill-fallback-icon {
+    width: 32px;
+    height: 32px;
+    color: rgb(255 255 255 / 64%);
+}
+
+.updream-skills-loading,
+.updream-skills-error {
+    display: flex;
+    min-height: 180px;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 0;
+    border-radius: 16px;
+    background: rgb(255 255 255 / 58%);
+    color: rgb(23 32 51 / 54%);
+    font-size: 14px;
+}
+
+.updream-skills-retry {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.updream-skills-retry-icon {
+    width: 14px;
+    height: 14px;
+}
+
+.dark .updream-skills {
+    color: #ffffff;
+}
+
+.dark .updream-skills-all {
+    color: rgb(255 255 255 / 38%);
+}
+
+.dark .updream-skills-all:hover {
+    color: rgb(255 255 255 / 76%);
+}
+
+.dark .updream-skill-card {
+    border-color: rgb(255 255 255 / 10%);
+}
+
+.dark .updream-skills-loading,
+.dark .updream-skills-error {
+    background: #171717;
+    color: rgb(255 255 255 / 46%);
+}
+
+@media (max-width: 1024px) {
+    .updream-skills {
+        padding-right: 16px;
+        padding-left: 16px;
+    }
+
+    .updream-skills-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .updream-skills-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .updream-skill-card-content {
+        width: calc(100% - 164px);
+    }
+
+    .updream-skill-thumbnail,
+    .updream-skill-fallback {
+        right: 16px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .updream-skill-card {
+        transition: none;
+    }
+}

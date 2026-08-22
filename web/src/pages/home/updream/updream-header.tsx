@@ -4,7 +4,7 @@ import "@/pages/home/updream/updream-sticky-header.css";
 
 export function UpdreamHeader() {
     return (
-        <header className="updream-header flex h-[72px] items-center justify-between px-5 sm:px-8">
+        <header className="updream-header">
             <SiteBrandLink />
             <SiteAccountActions />
         </header>

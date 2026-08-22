@@ -10,20 +10,11 @@ export function UpdreamVideoBackground() {
 
     return (
         <div className="updream-video-background" aria-hidden={!loadFailed}>
-            <video
-                className="updream-video-background-media"
-                autoPlay
-                loop
-                muted
-                playsInline
-                preload="metadata"
-                poster={heroPosterURL}
-                onCanPlay={() => setLoadFailed(false)}
-                onError={() => setLoadFailed(true)}
-            >
+            <video className="updream-video-background-media" autoPlay loop muted playsInline preload="metadata" poster={heroPosterURL} onCanPlay={() => setLoadFailed(false)} onError={() => setLoadFailed(true)}>
                 <source className="updream-video-background-source" src={heroVideoURL} type="video/mp4" />
             </video>
             <div className="updream-video-background-scrim" />
+            <div className="updream-video-background-pattern" />
             <div className="updream-video-background-glow" />
             {loadFailed ? (
                 <p className="updream-video-background-error" role="alert">
