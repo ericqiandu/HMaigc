@@ -13,6 +13,7 @@ import {
     type AgentRuntimeStartConfiguration,
     type AgentRuntimeView,
     type AgentThreadHistoryItem,
+    type AgentThreadHistoryTurn,
 } from "@/services/api/agent-runtime";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
@@ -56,6 +57,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     const threadIdRef = useRef("");
     const pendingRunRef = useRef<AgentRuntimeHandle["pendingRun"]>(undefined);
     const historyRequestRef = useRef(0);
+    const runRefreshRequestRef = useRef(0);
+    const historyReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const runRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const onRuntimeEventRef = useRef(onRuntimeEvent);
 
     useEffect(() => {
@@ -84,20 +88,37 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     );
 
     const selectThread = useCallback(
-        (item: AgentThreadHistoryItem) => {
+        async (item: AgentThreadHistoryItem) => {
+            const latestTurn = item.turns.at(-1);
+            if (runRefreshTimerRef.current) {
+                clearTimeout(runRefreshTimerRef.current);
+                runRefreshTimerRef.current = null;
+            }
             threadIdRef.current = item.thread.id;
             pendingRunRef.current = undefined;
-            cursorRef.current = item.latestRun && !terminalStatuses.has(item.latestRun.state.status) ? item.latestRun.run.lastEventSequence : 0;
+            cursorRef.current = latestTurn?.run.lastEventSequence ?? 0;
+            runRefreshRequestRef.current += 1;
             setThreadId(item.thread.id);
-            setView(item.latestRun);
+            setView(null);
             setEvents([]);
             setError("");
             setConnection("idle");
             setPendingUserMessage("");
             setPendingConfiguration(null);
-            void persist(item.latestRun, item.thread.id).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
+            if (!latestTurn) {
+                await persist(null, item.thread.id);
+                return;
+            }
+            const requestID = runRefreshRequestRef.current;
+            try {
+                const restoredView = await client.getRun(latestTurn.run.id);
+                if (threadIdRef.current !== item.thread.id || runRefreshRequestRef.current !== requestID) return;
+                adoptView(restoredView);
+            } catch (cause) {
+                if (threadIdRef.current === item.thread.id && runRefreshRequestRef.current === requestID) setError(errorMessage(cause, "Agent 会话恢复失败"));
+            }
         },
-        [persist],
+        [adoptView, client, persist],
     );
 
     const reloadThreads = useCallback(async () => {
@@ -114,10 +135,56 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         }
     }, [canvasId, client]);
 
+    const scheduleThreadReload = useCallback(() => {
+        if (historyReloadTimerRef.current) clearTimeout(historyReloadTimerRef.current);
+        historyReloadTimerRef.current = setTimeout(() => {
+            historyReloadTimerRef.current = null;
+            void reloadThreads();
+        }, 120);
+    }, [reloadThreads]);
+
+    const scheduleRunRefresh = useCallback(
+        (runId: string, expectedThreadId: string) => {
+            if (runRefreshTimerRef.current) clearTimeout(runRefreshTimerRef.current);
+            runRefreshTimerRef.current = setTimeout(() => {
+                runRefreshTimerRef.current = null;
+                const refreshRequestID = ++runRefreshRequestRef.current;
+                void client
+                    .getRun(runId)
+                    .then((next) => {
+                        if (runRefreshRequestRef.current !== refreshRequestID || next.run.id !== runId || threadIdRef.current !== expectedThreadId) return;
+                        adoptView(next);
+                    })
+                    .catch((cause: unknown) => {
+                        if (runRefreshRequestRef.current === refreshRequestID && threadIdRef.current === expectedThreadId) {
+                            setError(errorMessage(cause, "Agent 实时状态刷新失败"));
+                        }
+                    });
+            }, 50);
+        },
+        [adoptView, client],
+    );
+
+    useEffect(
+        () => () => {
+            if (historyReloadTimerRef.current) clearTimeout(historyReloadTimerRef.current);
+            if (runRefreshTimerRef.current) clearTimeout(runRefreshTimerRef.current);
+        },
+        [],
+    );
+
     useEffect(() => {
         let cancelled = false;
         const historyRequestID = ++historyRequestRef.current;
         threadIdRef.current = "";
+        if (historyReloadTimerRef.current) {
+            clearTimeout(historyReloadTimerRef.current);
+            historyReloadTimerRef.current = null;
+        }
+        if (runRefreshTimerRef.current) {
+            clearTimeout(runRefreshTimerRef.current);
+            runRefreshTimerRef.current = null;
+        }
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
         setThreadId("");
@@ -166,7 +233,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     return;
                 }
                 const selected = (handle ? historyItems.find((item) => item.thread.id === handle.threadId) : undefined) ?? historyItems[0];
-                if (selected) selectThread(selected);
+                if (selected) await selectThread(selected);
                 if (handleLoadError) setError(handleLoadError);
             })
             .catch((cause: unknown) => {
@@ -191,7 +258,8 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             return;
         }
         setConnection("connecting");
-        return client.subscribe(runId, cursorRef.current, {
+        let closeSubscription: () => void = () => undefined;
+        closeSubscription = client.subscribe(runId, cursorRef.current, {
             onOpen: () => setConnection("connected"),
             onError: (cause) => {
                 if (cause) {
@@ -201,28 +269,38 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             },
             onEvent: (event) => {
                 if (event.sequence <= cursorRef.current) return;
+                if (event.runId !== runId || event.threadId !== threadIdRef.current) {
+                    closeSubscription();
+                    setConnection("idle");
+                    setError("Agent 实时事件与当前会话归属冲突");
+                    return;
+                }
                 cursorRef.current = event.sequence;
-                setEvents((current) => [...current, event].slice(-30));
+                void storage.save(canvasId, { threadId: event.threadId, activeRunId: runId, lastSequence: event.sequence }).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
+                setEvents((current) => [...current, event]);
                 onRuntimeEventRef.current?.(event);
-                setView((current) => {
-                    if (!current || current.run.id !== runId) return current;
-                    const next = { ...current, run: { ...current.run, status: event.payload.status, lastEventSequence: event.sequence, stateVersion: event.payload.stateVersion, stepNumber: event.payload.stepNumber }, state: event.payload };
-                    void persist(next).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
-                    return next;
-                });
+                scheduleThreadReload();
+                scheduleRunRefresh(runId, event.threadId);
             },
         });
-    }, [client, persist, restored, runId, terminal]);
+        return () => closeSubscription();
+    }, [canvasId, client, restored, runId, scheduleRunRefresh, scheduleThreadReload, storage, terminal]);
 
-    const submit = useCallback(
+    const sendOrSteer = useCallback(
         async (userMessage: string, configuration: AgentRuntimeStartConfiguration) => {
             const message = userMessage.trim();
-            if (!message || busy || (view && !terminalStatuses.has(view.state.status))) return false;
+            if (!message || busy) return false;
             setBusy(true);
             setError("");
-            setEvents([]);
-            cursorRef.current = 0;
             try {
+                if (view && !terminalStatuses.has(view.state.status)) {
+                    const steered = await client.steer(view.run.id, { clientRequestId: nanoid(), message, expectedStateVersion: view.state.stateVersion });
+                    adoptView(steered);
+                    scheduleThreadReload();
+                    return true;
+                }
+                setEvents([]);
+                cursorRef.current = 0;
                 let activeThreadId = threadIdRef.current;
                 if (!activeThreadId) {
                     const thread = await client.createThread(canvasId);
@@ -248,14 +326,50 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 void reloadThreads();
                 return true;
             } catch (cause) {
-                setError(errorMessage(cause, "Agent 运行启动失败"));
+                if (view && cause instanceof AgentRuntimeRequestError && cause.status === 409) {
+                    try {
+                        adoptView(await client.getRun(view.run.id));
+                        scheduleThreadReload();
+                        setError("Agent 运行状态已更新，请核对后重试追加指令");
+                    } catch (refreshCause) {
+                        setError(errorMessage(refreshCause, "Agent 追加冲突后状态刷新失败"));
+                    }
+                    return false;
+                }
+                setError(errorMessage(cause, view ? "Agent 追加指令失败" : "Agent 运行启动失败"));
                 return false;
             } finally {
                 setBusy(false);
             }
         },
-        [adoptView, busy, canvasId, client, persist, reloadThreads, view],
+        [adoptView, busy, canvasId, client, persist, reloadThreads, scheduleThreadReload, view],
     );
+
+    const interrupt = useCallback(async () => {
+        if (!view || terminalStatuses.has(view.state.status) || busy) return false;
+        setBusy(true);
+        setError("");
+        try {
+            adoptView(await client.interrupt(view.run.id, { expectedStateVersion: view.state.stateVersion }));
+            scheduleThreadReload();
+            return true;
+        } catch (cause) {
+            if (cause instanceof AgentRuntimeRequestError && cause.status === 409) {
+                try {
+                    adoptView(await client.getRun(view.run.id));
+                    await reloadThreads();
+                    setError("Agent 运行状态已更新，停止请求未执行");
+                } catch (refreshCause) {
+                    setError(errorMessage(refreshCause, "Agent 停止冲突后状态刷新失败"));
+                }
+                return false;
+            }
+            setError(errorMessage(cause, "Agent 停止失败"));
+            return false;
+        } finally {
+            setBusy(false);
+        }
+    }, [adoptView, busy, client, reloadThreads, scheduleThreadReload, view]);
 
     const decideApproval = useCallback(
         async (decision: "approved" | "rejected") => {
@@ -313,6 +427,11 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     const newThread = useCallback(async () => {
         if (view && !terminalStatuses.has(view.state.status)) return;
         await storage.clear(canvasId);
+        if (runRefreshTimerRef.current) {
+            clearTimeout(runRefreshTimerRef.current);
+            runRefreshTimerRef.current = null;
+        }
+        runRefreshRequestRef.current += 1;
         threadIdRef.current = "";
         pendingRunRef.current = undefined;
         cursorRef.current = 0;
@@ -324,6 +443,8 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         setPendingConfiguration(null);
     }, [canvasId, storage, view]);
 
+    const turns = useMemo<AgentThreadHistoryTurn[]>(() => threads.find((item) => item.thread.id === threadId)?.turns ?? [], [threadId, threads]);
+
     return useMemo(
         () => ({
             threadId,
@@ -332,6 +453,8 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             historyLoading,
             historyError,
             view,
+            turns,
+            lastSequence: cursorRef.current,
             events,
             busy,
             error,
@@ -340,7 +463,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             terminal,
             pendingUserMessage,
             pendingConfiguration,
-            submit,
+            submit: sendOrSteer,
+            sendOrSteer,
+            interrupt,
             submitClarificationResponse,
             decideApproval,
             newThread,
@@ -355,17 +480,19 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             events,
             historyError,
             historyLoading,
+            interrupt,
             newThread,
             pendingConfiguration,
             pendingUserMessage,
             reloadThreads,
             restored,
             selectThread,
-            submit,
+            sendOrSteer,
             submitClarificationResponse,
             terminal,
             threadId,
             threads,
+            turns,
             view,
         ],
     );

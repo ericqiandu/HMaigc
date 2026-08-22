@@ -103,17 +103,18 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
     });
     await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
     const event: AgentRuntimeEvent = {
+        protocolVersion: 1,
+        threadId: "thread-1",
+        runId: "run-1",
         sequence: 3,
-        kind: "tool.result",
+        kind: "item.completed",
+        itemId: "tool-result-1",
         payload: {
-            ...running.state,
-            stateVersion: 4,
-            lastToolResult: {
-                toolCallId: "canvas-commit-1",
-                actionVersion: 1,
-                succeeded: true,
-                output: { canvasId: "canvas-1", committedRevision: 8 },
-            },
+            toolCallId: "canvas-commit-1",
+            toolName: "canvas.commit",
+            actionVersion: 1,
+            succeeded: true,
+            output: { canvasId: "canvas-1", committedRevision: 8 },
         },
         createdAt: "2026-08-19T00:00:00Z",
     };
@@ -391,6 +392,7 @@ test("没有本地句柄时采用服务端最近运行并保存恢复身份", as
     };
     const client = runtimeClient({
         listThreads: async () => ({ items: [historyItem("thread-active", running, "2026-08-15T04:00:00Z")] }),
+        getRun: async () => running,
         subscribe: (_runId, afterSequence) => {
             expect(afterSequence).toBe(6);
             return () => undefined;
@@ -412,6 +414,7 @@ test("历史对话可切换到旧终态运行并保存所选 Thread", async () =
     };
     const client = runtimeClient({
         listThreads: async () => ({ items: [historyItem("thread-current", current, "2026-08-15T04:00:00Z"), historyItem("thread-old", old, "2026-08-15T03:00:00Z")] }),
+        getRun: async (runId) => (runId === old.run.id ? old : current),
     });
     await mount(client, storage);
     await act(async () => button("历史对话").click());
@@ -449,7 +452,7 @@ test("服务端历史恢复成功也不会吞掉本地句柄读取错误", async
         save: async () => undefined,
         clear: async () => undefined,
     };
-    const client = runtimeClient({ listThreads: async () => ({ items: [historyItem("thread-1", completed, "2026-08-15T04:00:00Z")] }) });
+    const client = runtimeClient({ listThreads: async () => ({ items: [historyItem("thread-1", completed, "2026-08-15T04:00:00Z")] }), getRun: async () => completed });
     await mount(client, storage);
     expect(document.body.textContent).toContain("服务端结果");
     expect(document.body.textContent).toContain("本地句柄损坏");
@@ -490,7 +493,7 @@ test("询问状态在输入框上方显示结构化卡片并保留运行配置�
             answers: [],
         },
     });
-    const client = runtimeClient({ listThreads: async () => ({ items: [historyItem("thread-1", waiting, "2026-08-15T04:00:00Z")] }) });
+    const client = runtimeClient({ listThreads: async () => ({ items: [historyItem("thread-1", waiting, "2026-08-15T04:00:00Z")] }), getRun: async () => waiting });
     await mount(client);
 
     expect(document.body.textContent).toContain("询问中");
@@ -621,6 +624,8 @@ function runtimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntimeCli
         createThread: async (canvasId) => ({ id: "thread-1", canvasId, status: "active" }),
         startRun: async () => running,
         getRun: async () => running,
+        steer: async () => running,
+        interrupt: async () => running,
         submitApproval: async () => running,
         submitClarificationResponse: async () => running,
         subscribe: () => () => undefined,
@@ -629,10 +634,47 @@ function runtimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntimeCli
 }
 
 function historyItem(threadId: string, latestRun: AgentRuntimeView | null, activityAt: string): AgentThreadHistoryItem {
+    const turns = latestRun
+        ? [
+              {
+                  run: {
+                      id: latestRun.run.id,
+                      threadId,
+                      status: latestRun.run.status,
+                      lastEventSequence: latestRun.run.lastEventSequence,
+                      stateVersion: latestRun.run.stateVersion,
+                      stepNumber: latestRun.run.stepNumber,
+                      maxSteps: latestRun.run.maxSteps,
+                      modelKey: latestRun.run.modelKey,
+                      toolSchemaVersion: latestRun.run.toolSchemaVersion,
+                      runtimeVersion: 1,
+                      policyVersion: 1,
+                      createdAt: latestRun.run.createdAt,
+                      updatedAt: latestRun.run.updatedAt,
+                      completedAt: latestRun.run.completedAt,
+                  },
+                  items: [
+                      {
+                          id: `${latestRun.run.id}-user-message`,
+                          runId: latestRun.run.id,
+                          kind: "user_message" as const,
+                          status: "completed" as const,
+                          ordinal: 1,
+                          sourceEventSequence: 1,
+                          content: { message: latestRun.state.userMessage },
+                          startedAt: latestRun.run.createdAt,
+                          completedAt: latestRun.run.createdAt,
+                          createdAt: latestRun.run.createdAt,
+                          updatedAt: latestRun.run.createdAt,
+                      },
+                  ],
+              },
+          ]
+        : [];
     return {
         thread: { id: threadId, canvasId: "canvas-1", status: "active", createdAt: "2026-08-15T00:00:00Z", updatedAt: activityAt },
         activityAt,
-        latestRun,
+        turns,
     };
 }
 

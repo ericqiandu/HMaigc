@@ -204,7 +204,7 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
 		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Succeeded: true,
-		Output: []byte(`{"canvasId":"canvas-1","revision":7}`),
+		Output: []byte(`{"canvasId":"canvas-1","committedRevision":8}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +215,7 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	if err := db.First(&call, "id = ?", call.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if call.Status != agentruntime.ToolCallSucceeded || call.OutputJSON != `{"canvasId":"canvas-1","revision":7}` {
+	if call.Status != agentruntime.ToolCallSucceeded || call.OutputJSON != `{"canvasId":"canvas-1","committedRevision":8}` {
 		t.Fatalf("completed call = %#v", call)
 	}
 	loaded, err := repo.LoadAgentCheckpoint(scope)
@@ -230,7 +230,9 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 		t.Fatal(err)
 	}
 	if len(timelineItems) != 1 || timelineItems[0].Status != model.AgentTimelineItemCompleted ||
-		timelineItems[0].SourceEventSequence != 5 || !strings.Contains(timelineItems[0].ContentJSON, `"succeeded":true`) {
+		timelineItems[0].SourceEventSequence != 5 || !strings.Contains(timelineItems[0].ContentJSON, `"succeeded":true`) ||
+		!strings.Contains(timelineItems[0].ContentJSON, `"toolName":"canvas.commit"`) ||
+		!strings.Contains(timelineItems[0].ContentJSON, `"output":{"canvasId":"canvas-1","committedRevision":8}`) {
 		t.Fatalf("completed tool timeline lifecycle = %#v", timelineItems)
 	}
 	var activeTimelineCount int64

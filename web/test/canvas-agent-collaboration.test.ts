@@ -65,22 +65,18 @@ test("Agent 提交后协作查询未达到已确认版本时显式失败", () =>
 
 function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
     return {
+        protocolVersion: 1,
+        threadId: "thread-1",
+        runId: "run-1",
         sequence: 3,
-        kind: "tool.result",
+        kind: "item.completed",
+        itemId: "tool-result-1",
         payload: {
-            stateVersion: 4,
-            stepNumber: 3,
-            maxSteps: 24,
-            status: "running",
-            userMessage: "整理画布",
-            configuration: { generationModels: {}, skills: [], attachments: [], executionMode: "automatic" },
-            clarificationHistory: [],
-            lastToolResult: {
-                toolCallId: "canvas-commit-1",
-                actionVersion: 1,
-                succeeded: true,
-                output,
-            },
+            toolCallId: "canvas-commit-1",
+            toolName: "canvas.commit",
+            actionVersion: 1,
+            succeeded: true,
+            output,
         },
         createdAt: "2026-08-20T00:00:00Z",
     };

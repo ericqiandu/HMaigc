@@ -457,21 +457,17 @@ function isTerminal(status: AgentRuntimeState["status"]) {
 function eventLabel(kind: AgentRuntimeEvent["kind"]) {
     return (
         {
-            "run.created": "运行已创建",
-            "run.status_changed": "运行状态更新",
-            "model.delta": "模型输出已持久化",
-            "model.rejected": "模型决策正在自修",
-            "clarification.requested": "Agent 发起询问",
-            "clarification.answer_saved": "回答已保存",
-            "clarification.responded": "询问已完成",
-            "tool.call": "工具调用已冻结",
-            "approval.required": "需要用户确认",
-            "approval.decided": "审批已记录",
-            "tool.started": "工具开始执行",
-            "tool.result": "工具结果已记录",
-            "checkpoint.saved": "恢复点已保存",
+            "run.started": "运行已创建",
             "run.completed": "交付验收通过",
             "run.failed": "运行失败",
+            "run.interrupted": "运行已停止",
+            "item.started": "执行项已开始",
+            "item.delta": "执行项已更新",
+            "item.completed": "执行项已完成",
+            "item.failed": "执行项失败",
+            "approval.requested": "需要用户确认",
+            "approval.resolved": "审批已记录",
+            "state.snapshot": "运行状态已持久化",
         } satisfies Record<AgentRuntimeEvent["kind"], string>
     )[kind];
 }

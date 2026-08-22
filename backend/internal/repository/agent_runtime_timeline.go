@@ -23,6 +23,11 @@ type TimelineMutation struct {
 	ContentJSON         json.RawMessage
 }
 
+type agentCanvasCommitTimelineOutput struct {
+	CanvasID          string `json:"canvasId"`
+	CommittedRevision int64  `json:"committedRevision"`
+}
+
 func nextAgentTimelineOrdinal(db *gorm.DB, runID string) (int64, error) {
 	var latest model.AgentTimelineItem
 	err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -363,14 +368,28 @@ func agentTimelineMutationForEvent(
 		if state.LastToolResult == nil {
 			return nil, errors.New("agent tool result timeline facts are missing")
 		}
+		var toolName agentruntime.ToolName
+		var safeOutput *agentCanvasCommitTimelineOutput
+		if previous.PendingToolCall != nil {
+			toolName = previous.PendingToolCall.ToolName
+			if toolName == agentruntime.ToolCanvasCommit && state.LastToolResult.Succeeded {
+				var output agentCanvasCommitTimelineOutput
+				if err := json.Unmarshal(state.LastToolResult.Output, &output); err != nil || output.CanvasID == "" || output.CommittedRevision < 1 {
+					return nil, errors.New("agent canvas commit timeline output is invalid")
+				}
+				safeOutput = &output
+			}
+		}
 		content, err := marshalAgentTimelineContent(struct {
-			ToolCallID    string `json:"toolCallId"`
-			ActionVersion int    `json:"actionVersion"`
-			Succeeded     bool   `json:"succeeded"`
-			ErrorCode     string `json:"errorCode,omitempty"`
+			ToolCallID    string                           `json:"toolCallId"`
+			ToolName      agentruntime.ToolName            `json:"toolName,omitempty"`
+			ActionVersion int                              `json:"actionVersion"`
+			Succeeded     bool                             `json:"succeeded"`
+			ErrorCode     string                           `json:"errorCode,omitempty"`
+			Output        *agentCanvasCommitTimelineOutput `json:"output,omitempty"`
 		}{
-			ToolCallID: state.LastToolResult.ToolCallID, ActionVersion: state.LastToolResult.ActionVersion,
-			Succeeded: state.LastToolResult.Succeeded, ErrorCode: state.LastToolResult.ErrorCode,
+			ToolCallID: state.LastToolResult.ToolCallID, ToolName: toolName, ActionVersion: state.LastToolResult.ActionVersion,
+			Succeeded: state.LastToolResult.Succeeded, ErrorCode: state.LastToolResult.ErrorCode, Output: safeOutput,
 		})
 		if err != nil {
 			return nil, err

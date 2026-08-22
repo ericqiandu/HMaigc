@@ -75,6 +75,28 @@ func TestProjectAgentEventProducesVersionedRunAndItemEvents(t *testing.T) {
 	}
 }
 
+func TestProjectAgentEventPreservesOnlySafeCanvasCommitRefreshFacts(t *testing.T) {
+	now := time.Now().UTC()
+	item := model.AgentTimelineItem{
+		ID: "item-canvas-commit", ThreadID: "thread-1", RunID: "run-1",
+		Kind: model.AgentTimelineItemToolCall, Status: model.AgentTimelineItemCompleted,
+		Ordinal: 2, SourceEventSequence: 4,
+		ContentJSON: `{"toolCallId":"call-1","toolName":"canvas.commit","actionVersion":1,"succeeded":true,"output":{"canvasId":"canvas-1","committedRevision":8}}`,
+		StartedAt: now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventToolResult,
+		PayloadJSON: `{}`, CreatedAt: now,
+	}, &item, CurrentAgentUIProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected.Kind != AgentUIEventItemCompleted || !strings.Contains(string(projected.Payload), `"toolName":"canvas.commit"`) ||
+		!strings.Contains(string(projected.Payload), `"output":{"canvasId":"canvas-1","committedRevision":8}`) || strings.Contains(strings.ToLower(string(projected.Payload)), "url") {
+		t.Fatalf("projected canvas commit payload = %s", projected.Payload)
+	}
+}
+
 func TestProjectAgentEventRejectsUnknownProtocolInvalidFactsAndUnboundItems(t *testing.T) {
 	now := time.Now().UTC()
 	event := model.AgentRunEvent{

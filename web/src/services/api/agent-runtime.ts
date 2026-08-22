@@ -1,6 +1,6 @@
 import { localForageStorage } from "@/lib/localforage-storage";
 import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
-import { array, flag, integer, object, text } from "./strict-contract";
+import { array, exactObject, flag, integer, object, text } from "./strict-contract";
 
 export type {
     AgentClarificationAnswer,
@@ -15,21 +15,17 @@ export type {
 
 export type AgentRunStatus = "queued" | "running" | "waiting_input" | "waiting_approval" | "waiting_tool" | "succeeded" | "failed" | "cancelled";
 export type AgentRuntimeEventKind =
-    | "run.created"
-    | "run.status_changed"
-    | "model.delta"
-    | "model.rejected"
-    | "clarification.requested"
-    | "clarification.answer_saved"
-    | "clarification.responded"
-    | "tool.call"
-    | "approval.required"
-    | "approval.decided"
-    | "tool.started"
-    | "tool.result"
-    | "checkpoint.saved"
+    | "run.started"
     | "run.completed"
-    | "run.failed";
+    | "run.failed"
+    | "run.interrupted"
+    | "item.started"
+    | "item.delta"
+    | "item.completed"
+    | "item.failed"
+    | "approval.requested"
+    | "approval.resolved"
+    | "state.snapshot";
 export type AgentToolName = "skill.load" | "production.plan" | "production.render" | "canvas.commit";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
 export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact";
@@ -88,7 +84,50 @@ export type AgentRuntimeView = {
     };
     state: AgentRuntimeState;
 };
-export type AgentRuntimeEvent = { sequence: number; kind: AgentRuntimeEventKind; payload: AgentRuntimeState; createdAt: string };
+export type AgentTimelineItemKind = "user_message" | "agent_message" | "status" | "clarification" | "tool_call" | "tool_result" | "approval" | "artifact" | "error";
+export type AgentTimelineItemStatus = "in_progress" | "completed" | "failed" | "declined" | "interrupted";
+export type AgentTimelineItemContent = Record<string, unknown>;
+export type AgentRunEventPayload = {
+    status: AgentRunStatus;
+    stateVersion: number;
+    failureCode?: string;
+    item?: { kind: AgentTimelineItemKind; status: AgentTimelineItemStatus; content: AgentTimelineItemContent };
+};
+type AgentUIEventBase = { protocolVersion: 1; threadId: string; runId: string; sequence: number; createdAt: string };
+export type AgentRuntimeEvent =
+    | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
+    | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
+    | (AgentUIEventBase & { kind: "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved"; itemId: string; payload: AgentTimelineItemContent });
+export type AgentThreadHistoryRun = {
+    id: string;
+    threadId: string;
+    status: AgentRunStatus;
+    lastEventSequence: number;
+    stateVersion: number;
+    stepNumber: number;
+    maxSteps: number;
+    modelKey: string;
+    toolSchemaVersion: number;
+    runtimeVersion: number;
+    policyVersion: number;
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string;
+};
+export type AgentTimelineItem = {
+    id: string;
+    runId: string;
+    kind: AgentTimelineItemKind;
+    status: AgentTimelineItemStatus;
+    ordinal: number;
+    sourceEventSequence: number;
+    content: AgentTimelineItemContent;
+    startedAt: string;
+    completedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+export type AgentThreadHistoryTurn = { run: AgentThreadHistoryRun; items: AgentTimelineItem[] };
 export type AgentThreadHistoryItem = {
     thread: {
         id: string;
@@ -98,7 +137,7 @@ export type AgentThreadHistoryItem = {
         updatedAt: string;
     };
     activityAt: string;
-    latestRun: AgentRuntimeView | null;
+    turns: AgentThreadHistoryTurn[];
 };
 export type AgentThreadHistoryView = { items: AgentThreadHistoryItem[] };
 export type AgentRuntimeHandle = { threadId: string; activeRunId?: string; lastSequence: number; pendingRun?: { clientRequestId: string; userMessage: string; configuration: AgentRuntimeStartConfiguration } };
@@ -112,6 +151,8 @@ export type AgentRuntimeClient = {
     createThread: (canvasId: string) => Promise<{ id: string; canvasId: string; status: "active" }>;
     startRun: (threadId: string, input: { clientRequestId: string; userMessage: string; maxSteps: number; configuration: AgentRuntimeStartConfiguration }) => Promise<AgentRuntimeView>;
     getRun: (runId: string) => Promise<AgentRuntimeView>;
+    steer: (runId: string, input: { clientRequestId: string; message: string; expectedStateVersion: number }) => Promise<AgentRuntimeView>;
+    interrupt: (runId: string, input: { expectedStateVersion: number }) => Promise<AgentRuntimeView>;
     submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected" }) => Promise<AgentRuntimeView>;
     submitClarificationResponse: (runId: string, requestId: string, input: { expectedStateVersion: number; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => Promise<AgentRuntimeView>;
     subscribe: (runId: string, afterSequence: number, handlers: { onOpen?: () => void; onEvent: (event: AgentRuntimeEvent) => void; onError: (error?: Error) => void }) => () => void;
@@ -119,22 +160,21 @@ export type AgentRuntimeClient = {
 
 const runStatuses = new Set<AgentRunStatus>(["queued", "running", "waiting_input", "waiting_approval", "waiting_tool", "succeeded", "failed", "cancelled"]);
 const eventKinds = new Set<AgentRuntimeEventKind>([
-    "run.created",
-    "run.status_changed",
-    "model.delta",
-    "model.rejected",
-    "clarification.requested",
-    "clarification.answer_saved",
-    "clarification.responded",
-    "tool.call",
-    "approval.required",
-    "approval.decided",
-    "tool.started",
-    "tool.result",
-    "checkpoint.saved",
+    "run.started",
     "run.completed",
     "run.failed",
+    "run.interrupted",
+    "item.started",
+    "item.delta",
+    "item.completed",
+    "item.failed",
+    "approval.requested",
+    "approval.resolved",
+    "state.snapshot",
 ]);
+const runEventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "state.snapshot"]);
+const timelineItemKinds = new Set<AgentTimelineItemKind>(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"]);
+const timelineItemStatuses = new Set<AgentTimelineItemStatus>(["in_progress", "completed", "failed", "declined", "interrupted"]);
 const toolNames = new Set<AgentToolName>(["skill.load", "production.plan", "production.render", "canvas.commit"]);
 const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
@@ -184,10 +224,43 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
 }
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
-    const source = object(value, "Agent event");
+    const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "payload", "createdAt"]);
+    if (source.protocolVersion !== 1) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
-    return { sequence: integer(source.sequence, "event.sequence"), kind: kind as AgentRuntimeEventKind, payload: parseState(source.payload), createdAt: text(source.createdAt, "event.createdAt") };
+    const base = {
+        protocolVersion: 1 as const,
+        threadId: text(source.threadId, "event.threadId"),
+        runId: text(source.runId, "event.runId"),
+        sequence: integer(source.sequence, "event.sequence"),
+        createdAt: isoInstant(source.createdAt, "event.createdAt"),
+    };
+    if (runEventKinds.has(kind as AgentRuntimeEventKind)) {
+        const itemId = source.itemId === undefined ? undefined : text(source.itemId, "event.itemId");
+        const payload = parseRunEventPayload(source.payload);
+        validateRunUIEvent(kind as "run.started" | "run.completed" | "run.failed" | "run.interrupted" | "state.snapshot", itemId, payload);
+        if (kind === "run.completed" || kind === "run.failed" || kind === "run.interrupted") {
+            return { ...base, kind, itemId: itemId as string, payload: payload as AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } };
+        }
+        const event: AgentRuntimeEvent = { ...base, kind: kind as "run.started" | "state.snapshot", payload };
+        if (itemId !== undefined) event.itemId = itemId;
+        return event;
+    }
+    const payload = object(source.payload, "event.payload");
+    rejectTransientMediaLocator(payload, "event.payload");
+    return {
+        ...base,
+        kind: kind as "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved",
+        itemId: text(source.itemId, "event.itemId"),
+        payload,
+    };
+}
+
+function validateRunUIEvent(kind: "run.started" | "run.completed" | "run.failed" | "run.interrupted" | "state.snapshot", itemId: string | undefined, payload: AgentRunEventPayload) {
+    const expectedStatus = kind === "run.completed" ? "succeeded" : kind === "run.failed" ? "failed" : kind === "run.interrupted" ? "cancelled" : undefined;
+    if (expectedStatus && payload.status !== expectedStatus) throw new Error(`Agent ${kind} 事件状态必须是 ${expectedStatus}`);
+    if (expectedStatus && (!itemId || !payload.item)) throw new Error(`Agent ${kind} 事件缺少终态时间线事实`);
+    if (payload.item && !itemId) throw new Error(`Agent ${kind} 事件缺少 itemId`);
 }
 
 export function parseAgentThreadHistory(value: unknown): AgentThreadHistoryView {
@@ -198,8 +271,8 @@ export function parseAgentThreadHistory(value: unknown): AgentThreadHistoryView 
 }
 
 function parseAgentThreadHistoryItem(value: unknown, index: number): AgentThreadHistoryItem {
-    const source = object(value, `history.items[${index}]`);
-    const threadSource = object(source.thread, `history.items[${index}].thread`);
+    const source = exactObject(value, `history.items[${index}]`, ["thread", "activityAt", "turns"]);
+    const threadSource = exactObject(source.thread, `history.items[${index}].thread`, ["id", "canvasId", "status", "createdAt", "updatedAt"]);
     if (threadSource.status !== "active") throw new Error(`不受支持的 Agent thread 状态: ${String(threadSource.status)}`);
     const thread: AgentThreadHistoryItem["thread"] = {
         id: text(threadSource.id, `history.items[${index}].thread.id`),
@@ -208,14 +281,103 @@ function parseAgentThreadHistoryItem(value: unknown, index: number): AgentThread
         createdAt: isoInstant(threadSource.createdAt, `history.items[${index}].thread.createdAt`),
         updatedAt: isoInstant(threadSource.updatedAt, `history.items[${index}].thread.updatedAt`),
     };
-    if (!("latestRun" in source)) throw new Error(`history.items[${index}].latestRun 为必填字段`);
-    const latestRun = source.latestRun === null ? null : parseAgentRuntimeView(source.latestRun);
-    if (latestRun && latestRun.run.threadId !== thread.id) throw new Error("Agent 会话历史的最近运行归属冲突");
+    const turns = array(source.turns, `history.items[${index}].turns`).map((turn, turnIndex) => parseAgentThreadHistoryTurn(turn, index, turnIndex, thread.id));
     return {
         thread,
         activityAt: isoInstant(source.activityAt, `history.items[${index}].activityAt`),
-        latestRun,
+        turns,
     };
+}
+
+function parseAgentThreadHistoryTurn(value: unknown, historyIndex: number, turnIndex: number, threadId: string): AgentThreadHistoryTurn {
+    const label = `history.items[${historyIndex}].turns[${turnIndex}]`;
+    const source = exactObject(value, label, ["run", "items"]);
+    const run = parseAgentThreadHistoryRun(source.run, `${label}.run`);
+    if (run.threadId !== threadId) throw new Error("Agent 会话历史的运行归属冲突");
+    const items = array(source.items, `${label}.items`).map((item, itemIndex) => parseAgentTimelineItem(item, `${label}.items[${itemIndex}]`, run.id));
+    for (let index = 0; index < items.length; index += 1) {
+        if (items[index]?.ordinal !== index + 1) throw new Error(`${label}.items 序号必须连续`);
+        if ((items[index]?.sourceEventSequence ?? 0) > run.lastEventSequence) throw new Error(`${label}.items 事件序号超过 Run 游标`);
+    }
+    return { run, items };
+}
+
+function parseAgentThreadHistoryRun(value: unknown, label: string): AgentThreadHistoryRun {
+    const source = exactObject(value, label, ["id", "threadId", "status", "lastEventSequence", "stateVersion", "stepNumber", "maxSteps", "modelKey", "toolSchemaVersion", "runtimeVersion", "policyVersion", "createdAt", "updatedAt", "completedAt"]);
+    const run: AgentThreadHistoryRun = {
+        id: text(source.id, `${label}.id`),
+        threadId: text(source.threadId, `${label}.threadId`),
+        status: runStatus(source.status),
+        lastEventSequence: integer(source.lastEventSequence, `${label}.lastEventSequence`, true),
+        stateVersion: integer(source.stateVersion, `${label}.stateVersion`),
+        stepNumber: integer(source.stepNumber, `${label}.stepNumber`, true),
+        maxSteps: integer(source.maxSteps, `${label}.maxSteps`),
+        modelKey: text(source.modelKey, `${label}.modelKey`, true),
+        toolSchemaVersion: integer(source.toolSchemaVersion, `${label}.toolSchemaVersion`),
+        runtimeVersion: integer(source.runtimeVersion, `${label}.runtimeVersion`),
+        policyVersion: integer(source.policyVersion, `${label}.policyVersion`),
+        createdAt: isoInstant(source.createdAt, `${label}.createdAt`),
+        updatedAt: isoInstant(source.updatedAt, `${label}.updatedAt`),
+    };
+    if (source.completedAt !== undefined) run.completedAt = isoInstant(source.completedAt, `${label}.completedAt`);
+    return run;
+}
+
+function parseAgentTimelineItem(value: unknown, label: string, runId: string): AgentTimelineItem {
+    const source = exactObject(value, label, ["id", "runId", "kind", "status", "ordinal", "sourceEventSequence", "content", "startedAt", "completedAt", "createdAt", "updatedAt"]);
+    const itemRunId = text(source.runId, `${label}.runId`);
+    if (itemRunId !== runId) throw new Error("Agent 会话历史的时间线归属冲突");
+    const kind = timelineItemKind(source.kind, `${label}.kind`);
+    const item: AgentTimelineItem = {
+        id: text(source.id, `${label}.id`),
+        runId: itemRunId,
+        kind,
+        status: timelineItemStatus(source.status, `${label}.status`),
+        ordinal: integer(source.ordinal, `${label}.ordinal`),
+        sourceEventSequence: integer(source.sourceEventSequence, `${label}.sourceEventSequence`),
+        content: parseTimelineContent(source.content, `${label}.content`, kind),
+        startedAt: isoInstant(source.startedAt, `${label}.startedAt`),
+        createdAt: isoInstant(source.createdAt, `${label}.createdAt`),
+        updatedAt: isoInstant(source.updatedAt, `${label}.updatedAt`),
+    };
+    if (source.completedAt !== undefined) item.completedAt = isoInstant(source.completedAt, `${label}.completedAt`);
+    if (item.status === "in_progress" && item.completedAt) throw new Error(`${label}.completedAt 与进行中状态冲突`);
+    if (item.status !== "in_progress" && !item.completedAt) throw new Error(`${label}.completedAt 是终态时间线必填字段`);
+    return item;
+}
+
+function parseRunEventPayload(value: unknown): AgentRunEventPayload {
+    const source = exactObject(value, "event.payload", ["status", "stateVersion", "failureCode", "item"]);
+    const payload: AgentRunEventPayload = { status: runStatus(source.status), stateVersion: integer(source.stateVersion, "event.payload.stateVersion") };
+    if (source.failureCode !== undefined) payload.failureCode = text(source.failureCode, "event.payload.failureCode");
+    if (source.item !== undefined) {
+        const item = exactObject(source.item, "event.payload.item", ["kind", "status", "content"]);
+        const kind = timelineItemKind(item.kind, "event.payload.item.kind");
+        payload.item = {
+            kind,
+            status: timelineItemStatus(item.status, "event.payload.item.status"),
+            content: parseTimelineContent(item.content, "event.payload.item.content", kind),
+        };
+    }
+    return payload;
+}
+
+function parseTimelineContent(value: unknown, label: string, kind: AgentTimelineItemKind): AgentTimelineItemContent {
+    const content = kind === "artifact" ? exactObject(value, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"]) : object(value, label);
+    rejectTransientMediaLocator(content, label);
+    return content;
+}
+
+function rejectTransientMediaLocator(value: unknown, label: string): void {
+    if (Array.isArray(value)) {
+        value.forEach((item, index) => rejectTransientMediaLocator(item, `${label}[${index}]`));
+        return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value)) {
+        if (key === "url" || key === "signedUrl") throw new Error(`${label} 不允许返回短期媒体地址字段: ${key}`);
+        rejectTransientMediaLocator(nested, `${label}.${key}`);
+    }
 }
 
 function parseState(value: unknown): AgentRuntimeState {
@@ -426,6 +588,8 @@ export const agentRuntimeClient: AgentRuntimeClient = {
     },
     startRun: async (threadId, input) => parseAgentRuntimeView(await request(`/agent/threads/${encodeURIComponent(threadId)}/runs`, { method: "POST", body: JSON.stringify(input) })),
     getRun: async (runId) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}`)),
+    steer: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/steer`, { method: "POST", body: JSON.stringify(input) })),
+    interrupt: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/interrupt`, { method: "POST", body: JSON.stringify(input) })),
     submitApproval: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/approvals`, { method: "POST", body: JSON.stringify(input) })),
     submitClarificationResponse: async (runId, requestId, input) =>
         parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/clarifications/${encodeURIComponent(requestId)}/responses`, { method: "POST", body: JSON.stringify(input) })),
@@ -436,7 +600,10 @@ export const agentRuntimeClient: AgentRuntimeClient = {
         eventKinds.forEach((kind) =>
             stream.addEventListener(kind, (event) => {
                 try {
-                    handlers.onEvent(parseAgentRuntimeEvent(JSON.parse((event as MessageEvent<string>).data)));
+                    const parsed = parseAgentRuntimeEvent(JSON.parse((event as MessageEvent<string>).data));
+                    if (parsed.kind !== kind) throw new Error(`Agent SSE 事件名与载荷冲突: ${kind} / ${parsed.kind}`);
+                    if (parsed.runId !== runId) throw new Error(`Agent SSE 事件与订阅 Run 归属冲突: ${parsed.runId}`);
+                    handlers.onEvent(parsed);
                 } catch (cause) {
                     stream.close();
                     handlers.onError(cause instanceof Error ? cause : new Error("Agent 事件格式无效"));
@@ -477,6 +644,14 @@ export const agentRuntimeHandleStorage: AgentRuntimeHandleStorage = {
 function runStatus(value: unknown): AgentRunStatus {
     if (typeof value !== "string" || !runStatuses.has(value as AgentRunStatus)) throw new Error(`不受支持的 Agent 状态: ${String(value)}`);
     return value as AgentRunStatus;
+}
+function timelineItemKind(value: unknown, label: string): AgentTimelineItemKind {
+    if (typeof value !== "string" || !timelineItemKinds.has(value as AgentTimelineItemKind)) throw new Error(`${label} 是不受支持的 Agent 时间线类型: ${String(value)}`);
+    return value as AgentTimelineItemKind;
+}
+function timelineItemStatus(value: unknown, label: string): AgentTimelineItemStatus {
+    if (typeof value !== "string" || !timelineItemStatuses.has(value as AgentTimelineItemStatus)) throw new Error(`${label} 是不受支持的 Agent 时间线状态: ${String(value)}`);
+    return value as AgentTimelineItemStatus;
 }
 function artifact(value: unknown, label: string): AgentArtifactKind {
     const kind = text(value, label);
