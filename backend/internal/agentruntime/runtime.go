@@ -187,7 +187,6 @@ func ConsumePendingSteersAtSafeBoundary(current RuntimeState) (RuntimeState, []P
 	}
 	consumed := append([]PendingSteer(nil), current.PendingSteers...)
 	next := current
-	next.StateVersion++
 	next.PendingSteers = nil
 	if err := validateRuntimeState(next); err != nil {
 		return RuntimeState{}, nil, err
@@ -269,7 +268,11 @@ func Terminate(current RuntimeState, failureCode string) (RuntimeTransition, err
 	next.PendingToolCall = nil
 	next.PendingToolStarted = false
 	next.PendingClarification = nil
-	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+	eventKinds := []EventKind{EventRunFailed}
+	if current.PendingToolCall != nil {
+		eventKinds = []EventKind{EventToolResult, EventRunFailed}
+	}
+	return RuntimeTransition{State: next, EventKinds: eventKinds}, nil
 }
 
 func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error) {

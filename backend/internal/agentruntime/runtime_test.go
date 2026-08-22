@@ -322,7 +322,7 @@ func TestConsumePendingSteersOnlyAtSafeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.StateVersion != 8 || len(next.PendingSteers) != 0 || len(consumed) != 2 || consumed[0].ClientRequestID != "steer-1" {
+	if next.StateVersion != current.StateVersion || len(next.PendingSteers) != 0 || len(consumed) != 2 || consumed[0].ClientRequestID != "steer-1" {
 		t.Fatalf("consumed steer state = %#v, consumed=%#v", next, consumed)
 	}
 
@@ -672,5 +672,26 @@ func TestFailRuntimeConsumesCurrentStepAndTerminates(t *testing.T) {
 	}
 	if _, err := agentruntime.Fail(base, "invalid code"); err == nil {
 		t.Fatal("invalid failure code was accepted")
+	}
+}
+
+func TestTerminatePendingToolEmitsResultBeforeRunFailure(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 2, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingTool,
+		UserMessage: "生成画面", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "call-terminate", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+			Arguments: json.RawMessage(`{"expectedRevision":7}`), ExpectedDelivery: agentruntime.ExpectedDelivery{
+				Kind:               agentruntime.DeliveryCanvasChange,
+				CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasRevision}},
+			},
+		},
+	}
+	transition, err := agentruntime.Terminate(current, "scope_access_revoked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transition.EventKinds) != 2 || transition.EventKinds[0] != agentruntime.EventToolResult || transition.EventKinds[1] != agentruntime.EventRunFailed {
+		t.Fatalf("terminated tool events = %#v", transition.EventKinds)
 	}
 }

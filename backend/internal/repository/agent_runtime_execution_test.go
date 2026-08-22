@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,6 +70,13 @@ func TestCommitRejectedAgentToolDecisionPersistsOneFailedCallAndCheckpoint(t *te
 	if count != 1 {
 		t.Fatalf("rejected tool call count = %d, want 1", count)
 	}
+	var timelineItem model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemToolResult).Take(&timelineItem).Error; err != nil {
+		t.Fatal(err)
+	}
+	if timelineItem.Status != model.AgentTimelineItemFailed || strings.Contains(timelineItem.ContentJSON, `"succeeded":true`) {
+		t.Fatalf("rejected tool timeline = %#v", timelineItem)
+	}
 }
 
 func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
@@ -85,7 +93,7 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !initialized.Created || initialized.Run.StateVersion != 1 || initialized.Run.ModelRecordID != input.ModelRecordID || initialized.Run.ModelKey != input.ModelKey || initialized.Run.MaxSteps != input.MaxSteps || initialized.Run.RuntimeVersion != 1 || initialized.Run.PolicyVersion != 1 {
+	if !initialized.Created || initialized.Run.StateVersion != 1 || initialized.Run.LastEventSequence != 2 || initialized.Run.ModelRecordID != input.ModelRecordID || initialized.Run.ModelKey != input.ModelKey || initialized.Run.MaxSteps != input.MaxSteps || initialized.Run.RuntimeVersion != 1 || initialized.Run.PolicyVersion != 1 {
 		t.Fatalf("initialized run = %#v", initialized)
 	}
 	loaded, err := repo.LoadAgentCheckpoint(scope)
@@ -112,15 +120,41 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	if replayed.Created {
 		t.Fatalf("initialization replay created facts = %#v", replayed)
 	}
-	var eventCount, checkpointCount int64
+	var eventCount, checkpointCount, timelineCount int64
 	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if eventCount != 1 || checkpointCount != 1 {
-		t.Fatalf("initial facts duplicated: events=%d checkpoints=%d", eventCount, checkpointCount)
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", scope.RunID).Count(&timelineCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 2 || checkpointCount != 1 || timelineCount != 1 {
+		t.Fatalf("initial facts duplicated: events=%d checkpoints=%d timeline=%d", eventCount, checkpointCount, timelineCount)
+	}
+	var events []model.AgentRunEvent
+	if err := db.Where("run_id = ?", scope.RunID).Order("sequence").Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Kind != agentruntime.EventRunCreated || events[1].Kind != agentruntime.EventUserMessageAdded {
+		t.Fatalf("initial event history = %#v", events)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.Where("run_id = ?", scope.RunID).Take(&checkpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Sequence != 2 || checkpoint.StateVersion != 1 {
+		t.Fatalf("initial checkpoint facts = %#v", checkpoint)
+	}
+	var item model.AgentTimelineItem
+	if err := db.Where("run_id = ?", scope.RunID).Take(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.TenantKind != scope.TenantKind || item.TenantID != scope.TenantID || item.ThreadID != scope.ThreadID ||
+		item.Kind != model.AgentTimelineItemUserMessage || item.Status != model.AgentTimelineItemCompleted ||
+		item.Ordinal != 1 || item.SourceEventSequence != 2 || !strings.Contains(item.ContentJSON, input.UserMessage) {
+		t.Fatalf("initial timeline item = %#v", item)
 	}
 
 	conflict := input
@@ -190,6 +224,21 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 	if loaded.StateVersion != 3 || loaded.StepNumber != 1 || loaded.Status != agentruntime.RunRunning || loaded.LastToolResult == nil {
 		t.Fatalf("resolved checkpoint = %#v", loaded)
+	}
+	var timelineItems []model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemToolCall).Find(&timelineItems).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(timelineItems) != 1 || timelineItems[0].Status != model.AgentTimelineItemCompleted ||
+		timelineItems[0].SourceEventSequence != 5 || !strings.Contains(timelineItems[0].ContentJSON, `"succeeded":true`) {
+		t.Fatalf("completed tool timeline lifecycle = %#v", timelineItems)
+	}
+	var activeTimelineCount int64
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ? AND status = ?", scope.RunID, model.AgentTimelineItemInProgress).Count(&activeTimelineCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activeTimelineCount != 0 {
+		t.Fatalf("completed tool left %d active timeline items", activeTimelineCount)
 	}
 }
 
@@ -312,6 +361,21 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	}
 	if call.Status != agentruntime.ToolCallPending || call.ApprovalDecision != agentruntime.ToolApprovalApproved || call.ApprovalByUserID != scope.ActorUserID || call.ApprovalDecidedAt == nil {
 		t.Fatalf("approved call = %#v", call)
+	}
+	var toolItems []model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemToolCall).Find(&toolItems).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(toolItems) != 1 || toolItems[0].Status != model.AgentTimelineItemInProgress ||
+		!strings.Contains(toolItems[0].ContentJSON, `"decision":"approved"`) {
+		t.Fatalf("approved tool timeline lifecycle = %#v", toolItems)
+	}
+	var approvalItemCount int64
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemApproval).Count(&approvalItemCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if approvalItemCount != 0 {
+		t.Fatalf("approval created %d parallel timeline items", approvalItemCount)
 	}
 }
 
@@ -471,6 +535,403 @@ func TestCommitAgentRuntimeTransitionPersistsRunEventsAndCheckpointAtomically(t 
 	db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount)
 	if eventCount != 2 || checkpointCount != 1 {
 		t.Fatalf("facts: events=%d checkpoints=%d", eventCount, checkpointCount)
+	}
+}
+
+func TestCommitAgentRuntimeTransitionPersistsAgentMessageBeforeTerminalStatus(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   "完成当前画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := previous
+	state.StateVersion++
+	state.StepNumber++
+	state.Status = agentruntime.RunSucceeded
+	state.FinalMessage = "画布已完成"
+	transition := agentruntime.RuntimeTransition{
+		State: state,
+		EventKinds: []agentruntime.EventKind{
+			agentruntime.EventAgentMessageCompleted,
+			agentruntime.EventRunCompleted,
+		},
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, previous, transition, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var events []model.AgentRunEvent
+	if err := db.Where("run_id = ?", scope.RunID).Order("sequence").Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 || events[2].Kind != agentruntime.EventAgentMessageCompleted || events[3].Kind != agentruntime.EventRunCompleted {
+		t.Fatalf("terminal events = %#v", events)
+	}
+	var items []model.AgentTimelineItem
+	if err := db.Where("run_id = ?", scope.RunID).Order("ordinal").Find(&items).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 || items[0].Kind != model.AgentTimelineItemUserMessage ||
+		items[1].Kind != model.AgentTimelineItemAgentMessage || items[1].SourceEventSequence != 3 ||
+		items[2].Kind != model.AgentTimelineItemStatusKind || items[2].Status != model.AgentTimelineItemCompleted || items[2].SourceEventSequence != 4 {
+		t.Fatalf("terminal timeline = %#v", items)
+	}
+	if !strings.Contains(items[1].ContentJSON, state.FinalMessage) {
+		t.Fatalf("agent message content = %s", items[1].ContentJSON)
+	}
+}
+
+func TestAppendAgentSteerPersistsDurableIdempotencyAndKeepsOriginalMessage(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	initialMessage := "生成一个三十秒广告"
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 8,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   initialMessage,
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := agentruntime.SteerRequest{
+		ClientRequestID: "steer-keep-costume", Message: "角色服装和道具保持一致", ExpectedStateVersion: 1,
+	}
+	state, replayed, err := repo.AppendAgentSteer(scope, request, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed || state.StateVersion != 2 || state.UserMessage != initialMessage || len(state.PendingSteers) != 1 {
+		t.Fatalf("steered state = %#v replayed=%v", state, replayed)
+	}
+	replayedState, replayed, err := repo.AppendAgentSteer(scope, request, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed || replayedState.StateVersion != state.StateVersion || len(replayedState.PendingSteers) != 1 {
+		t.Fatalf("steer replay state = %#v replayed=%v", replayedState, replayed)
+	}
+	conflict := request
+	conflict.Message = "改成另外一套服装"
+	if _, _, err := repo.AppendAgentSteer(scope, conflict, now.Add(3*time.Second)); !errors.Is(err, ErrAgentTimelineConflict) {
+		t.Fatalf("steer identity conflict = %v", err)
+	}
+	var eventCount, checkpointCount, timelineCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", scope.RunID).Count(&timelineCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 3 || checkpointCount != 2 || timelineCount != 2 {
+		t.Fatalf("steer replay duplicated facts: events=%d checkpoints=%d timeline=%d", eventCount, checkpointCount, timelineCount)
+	}
+}
+
+func TestInterruptAgentRunUsesCASAndPersistsInterruptedTimeline(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 8,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := repo.InterruptAgentRun(scope, 1, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunCancelled || state.StateVersion != 2 {
+		t.Fatalf("interrupted state = %#v", state)
+	}
+	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); !errors.Is(err, agentruntime.ErrInterruptConflict) {
+		t.Fatalf("replayed interrupt error = %v", err)
+	}
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != agentruntime.RunCancelled || run.LastEventSequence != 3 || run.CompletedAt == nil {
+		t.Fatalf("interrupted run facts = %#v", run)
+	}
+	var item model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemStatusKind).Take(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != model.AgentTimelineItemInterrupted || item.SourceEventSequence != 3 {
+		t.Fatalf("interrupted timeline item = %#v", item)
+	}
+}
+
+func TestInterruptAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		decision agentruntime.ModelDecision
+		kind     model.AgentTimelineItemKind
+	}{
+		{
+			name: "clarification",
+			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionClarificationRequest, Clarification: &agentruntime.ClarificationDecision{
+				RequestID: "clarify-interrupt",
+				Questions: []agentruntime.ClarificationQuestion{{
+					ID: "style", Prompt: "需要什么风格？", Type: agentruntime.ClarificationFreeText,
+				}},
+				ExpectedDelivery: repositoryTestAnswerDelivery(),
+			}},
+			kind: model.AgentTimelineItemClarification,
+		},
+		{
+			name: "tool awaiting approval",
+			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+				ToolCallID: "call-interrupt", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+				Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+			}},
+			kind: model.AgentTimelineItemToolCall,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo, db := openAgentRuntimeRepositorySQLite(t)
+			scope := repositoryAgentScope()
+			scope.RunID += "-" + testCase.name
+			scope.ThreadID += "-" + testCase.name
+			createAgentRunForTest(t, repo, scope)
+			now := time.Now().UTC()
+			if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+				Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 8,
+				ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+				RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+				UserMessage: "执行后中断", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			current, err := repo.LoadAgentCheckpoint(scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: testCase.decision})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.InterruptAgentRun(scope, requested.State.StateVersion, now.Add(2*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var item model.AgentTimelineItem
+			if err := db.Where("run_id = ? AND kind = ?", scope.RunID, testCase.kind).Take(&item).Error; err != nil {
+				t.Fatal(err)
+			}
+			if item.Status != model.AgentTimelineItemInterrupted {
+				t.Fatalf("interrupted lifecycle item = %#v", item)
+			}
+			var activeCount int64
+			if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ? AND status = ?", scope.RunID, model.AgentTimelineItemInProgress).Count(&activeCount).Error; err != nil {
+				t.Fatal(err)
+			}
+			if activeCount != 0 {
+				t.Fatalf("interrupt left %d active timeline items", activeCount)
+			}
+		})
+	}
+}
+
+func TestTerminateAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		decision agentruntime.ModelDecision
+		kind     model.AgentTimelineItemKind
+	}{
+		{
+			name: "clarification",
+			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionClarificationRequest, Clarification: &agentruntime.ClarificationDecision{
+				RequestID:        "clarify-terminate",
+				Questions:        []agentruntime.ClarificationQuestion{{ID: "style", Prompt: "需要什么风格？", Type: agentruntime.ClarificationFreeText}},
+				ExpectedDelivery: repositoryTestAnswerDelivery(),
+			}},
+			kind: model.AgentTimelineItemClarification,
+		},
+		{
+			name: "tool",
+			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+				ToolCallID: "call-terminate", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+				Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+			}},
+			kind: model.AgentTimelineItemToolCall,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo, db := openAgentRuntimeRepositorySQLite(t)
+			scope := repositoryAgentScope()
+			scope.RunID += "-terminate-" + testCase.name
+			scope.ThreadID += "-terminate-" + testCase.name
+			createAgentRunForTest(t, repo, scope)
+			now := time.Now().UTC()
+			if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+				Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 8,
+				ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+				RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+				UserMessage: "执行后失败", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			current, err := repo.LoadAgentCheckpoint(scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: testCase.decision})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			terminated, err := agentruntime.Terminate(requested.State, "scope_access_revoked")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.CommitAgentRuntimeTransition(scope, requested.State, terminated, now.Add(2*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var item model.AgentTimelineItem
+			if err := db.Where("run_id = ? AND kind = ?", scope.RunID, testCase.kind).Take(&item).Error; err != nil {
+				t.Fatal(err)
+			}
+			if item.Status != model.AgentTimelineItemFailed {
+				t.Fatalf("terminated lifecycle item = %#v", item)
+			}
+			var activeCount int64
+			if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ? AND status = ?", scope.RunID, model.AgentTimelineItemInProgress).Count(&activeCount).Error; err != nil {
+				t.Fatal(err)
+			}
+			if activeCount != 0 {
+				t.Fatalf("termination left %d active timeline items", activeCount)
+			}
+		})
+	}
+}
+
+func TestAgentTimelineMutationRejectsInvalidFactsOrdinalGapAndTerminalReopen(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutation := range []TimelineMutation{
+		{ItemID: "invalid-json", Kind: model.AgentTimelineItemStatusKind, ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: 3, ContentJSON: json.RawMessage(`{broken`)},
+		{ItemID: "invalid-kind", Kind: model.AgentTimelineItemKind("unknown"), ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: 3, ContentJSON: json.RawMessage(`{}`)},
+		{ItemID: "invalid-status", Kind: model.AgentTimelineItemStatusKind, ToStatus: model.AgentTimelineItemStatus("unknown"), SourceEventSequence: 3, ContentJSON: json.RawMessage(`{}`)},
+	} {
+		nextOrdinal := int64(2)
+		if err := persistAgentTimelineMutation(db, scope, mutation, &nextOrdinal, now.Add(time.Second)); !errors.Is(err, ErrAgentTimelineConflict) {
+			t.Fatalf("invalid timeline mutation %#v error = %v", mutation, err)
+		}
+	}
+	gapOrdinal := int64(3)
+	if err := persistAgentTimelineMutation(db, scope, TimelineMutation{
+		ItemID: "ordinal-gap", Kind: model.AgentTimelineItemStatusKind, ToStatus: model.AgentTimelineItemCompleted,
+		SourceEventSequence: 3, ContentJSON: json.RawMessage(`{}`),
+	}, &gapOrdinal, now.Add(time.Second)); !errors.Is(err, ErrAgentTimelineConflict) {
+		t.Fatalf("ordinal gap error = %v", err)
+	}
+	var initial model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND ordinal = 1", scope.RunID).Take(&initial).Error; err != nil {
+		t.Fatal(err)
+	}
+	fromCompleted := model.AgentTimelineItemCompleted
+	nextOrdinal := int64(2)
+	if err := persistAgentTimelineMutation(db, scope, TimelineMutation{
+		ItemID: initial.ID, Kind: initial.Kind, FromStatus: &fromCompleted, ToStatus: model.AgentTimelineItemInProgress,
+		SourceEventSequence: 3, ContentJSON: json.RawMessage(`{"message":"reopen"}`),
+	}, &nextOrdinal, now.Add(time.Second)); !errors.Is(err, ErrAgentTimelineConflict) {
+		t.Fatalf("terminal reopen error = %v", err)
+	}
+	if err := persistAgentTimelineEvent(db, scope, agentruntime.RuntimeState{}, agentruntime.RuntimeState{}, agentruntime.EventRunCompleted, 3, &nextOrdinal, time.Time{}); !errors.Is(err, ErrAgentTimelineConflict) {
+		t.Fatalf("invalid timeline event boundary error = %v", err)
+	}
+}
+
+func TestCommitAgentRuntimeTransitionRollsBackAllFactsWhenTimelineSequenceConflicts(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completedAt := now
+	poison := model.AgentTimelineItem{
+		ID: "timeline-sequence-poison", TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		ThreadID: scope.ThreadID, RunID: scope.RunID,
+		Kind: model.AgentTimelineItemStatusKind, Status: model.AgentTimelineItemCompleted,
+		Ordinal: 2, SourceEventSequence: 3, ContentJSON: `{"status":"poison"}`,
+		StartedAt: now, CompletedAt: &completedAt, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&poison).Error; err != nil {
+		t.Fatal(err)
+	}
+	previous, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := previous
+	state.StateVersion++
+	state.Status = agentruntime.RunRunning
+	transition := agentruntime.RuntimeTransition{State: state, EventKinds: []agentruntime.EventKind{agentruntime.EventRunStatusChanged}}
+	if err := repo.CommitAgentRuntimeTransition(scope, previous, transition, now.Add(time.Second)); !errors.Is(err, ErrAgentTimelineConflict) {
+		t.Fatalf("timeline sequence conflict error = %v", err)
+	}
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.StateVersion != 1 || run.LastEventSequence != 2 || run.Status != agentruntime.RunQueued {
+		t.Fatalf("run changed despite timeline rollback: %#v", run)
+	}
+	var eventCount, checkpointCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 2 || checkpointCount != 1 {
+		t.Fatalf("runtime facts changed despite timeline rollback: events=%d checkpoints=%d", eventCount, checkpointCount)
 	}
 }
 

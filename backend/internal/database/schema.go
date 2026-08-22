@@ -92,6 +92,7 @@ func Models() []any {
 		&model.CanvasChange{},
 		&model.AgentThread{},
 		&model.AgentRun{},
+		&model.AgentTimelineItem{},
 		&model.AgentProductionPlanVersion{},
 		&model.AgentProductionArtifact{},
 		&model.AgentRunEvent{},

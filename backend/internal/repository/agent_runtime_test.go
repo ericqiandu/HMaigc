@@ -305,6 +305,7 @@ func openAgentRuntimeRepositorySQLite(t *testing.T) (*Repository, *gorm.DB) {
 	if err := db.AutoMigrate(
 		&model.AgentThread{},
 		&model.AgentRun{},
+		&model.AgentTimelineItem{},
 		&model.AgentRunEvent{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},
@@ -332,7 +333,7 @@ func openAgentRuntimeRepositorySQLiteFile(t *testing.T) (*Repository, *gorm.DB) 
 	}
 	sqlDB.SetMaxOpenConns(16)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {

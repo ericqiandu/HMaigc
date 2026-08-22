@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -118,6 +119,94 @@ func TestAgentProductionArtifactTransitionUsesStatusAndAttemptCAS(t *testing.T) 
 	}
 }
 
+func TestAgentProductionArtifactSuccessAppendsTimelineAfterRunInterruptedAndReplaysIdempotently(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 8,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   "生成分镜图",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "late-artifact", BaseVersion: 0,
+		Draft: twoShotProductionPlanDraft("迟到资产剧本"), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := firstProductionArtifact(t, created.Artifacts, "shot-1", model.AgentProductionArtifactStoryboardImage)
+	if _, err := repo.TransitionAgentProductionArtifact(scope, ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactPlanned,
+		NextStatus: model.AgentProductionArtifactQueued, ExpectedAttempt: 0, NextAttempt: 1,
+		TaskID: "task-late-image", BillingOrderID: "billing-late-image", Now: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	transition := ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactQueued,
+		NextStatus: model.AgentProductionArtifactSucceeded, ExpectedAttempt: 1, NextAttempt: 1,
+		TaskID: "task-late-image", BillingOrderID: "billing-late-image", ResourceID: "resource-late-image",
+		Now: now.Add(3 * time.Second),
+	}
+	succeeded, err := repo.TransitionAgentProductionArtifact(scope, transition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if succeeded.Status != model.AgentProductionArtifactSucceeded || succeeded.ResourceID != transition.ResourceID {
+		t.Fatalf("late succeeded artifact = %#v", succeeded)
+	}
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != agentruntime.RunCancelled || run.StateVersion != 2 || run.LastEventSequence != 4 {
+		t.Fatalf("late artifact changed terminal runtime facts = %#v", run)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.Where("run_id = ?", scope.RunID).Order("sequence DESC").Take(&checkpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Sequence != 3 {
+		t.Fatalf("late artifact rewrote runtime checkpoint = %#v", checkpoint)
+	}
+	var event model.AgentRunEvent
+	if err := db.Where("run_id = ? AND sequence = ?", scope.RunID, 4).Take(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != agentruntime.EventArtifactAvailable || !strings.Contains(event.PayloadJSON, transition.ResourceID) || strings.Contains(event.PayloadJSON, "Signature=") {
+		t.Fatalf("late artifact event = %#v", event)
+	}
+	var item model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemArtifact).Take(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != model.AgentTimelineItemCompleted || item.SourceEventSequence != 4 || !strings.Contains(item.ContentJSON, transition.ResourceID) {
+		t.Fatalf("late artifact timeline item = %#v", item)
+	}
+	if _, err := repo.TransitionAgentProductionArtifact(scope, transition); err != nil {
+		t.Fatalf("identical late artifact callback replay = %v", err)
+	}
+	var eventCount, itemCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", scope.RunID).Count(&itemCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 4 || itemCount != 3 {
+		t.Fatalf("late artifact replay duplicated facts: events=%d items=%d", eventCount, itemCount)
+	}
+}
+
 func TestAgentProductionPlanReadIsScopeIsolated(t *testing.T) {
 	repo, _ := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
@@ -137,6 +226,14 @@ func TestAgentProductionPlanReadIsScopeIsolated(t *testing.T) {
 	other.ActorUserID = "other-user"
 	if _, err := repo.AgentProductionPlanVersionForScope(other, created.Plan.PlanKey, created.Plan.Version); err == nil {
 		t.Fatal("cross-tenant plan read succeeded")
+	}
+	sameTenantOtherActor := scope
+	sameTenantOtherActor.ActorUserID = "other-user"
+	if _, err := repo.AgentProductionPlanVersionForScope(sameTenantOtherActor, created.Plan.PlanKey, created.Plan.Version); err == nil {
+		t.Fatal("same-tenant cross-actor plan read succeeded")
+	}
+	if _, err := repo.ActiveAgentProductionPlanForThread(sameTenantOtherActor); err == nil {
+		t.Fatal("same-tenant cross-actor active plan read succeeded")
 	}
 	wrongProject := scope
 	wrongProject.DomainProjectID = "another-project"
@@ -228,7 +325,7 @@ func TestActiveAgentProductionPlanForThreadFollowsThreadAndScope(t *testing.T) {
 	otherTenant.TenantID = "another-user"
 	otherTenant.ActorUserID = "another-user"
 	active, err = repo.ActiveAgentProductionPlanForThread(otherTenant)
-	if err != nil || active != nil {
+	if err == nil || active != nil {
 		t.Fatalf("other tenant active plan = %#v, err = %v", active, err)
 	}
 }

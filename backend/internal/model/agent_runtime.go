@@ -38,6 +38,68 @@ type AgentRun struct {
 	CompletedAt       *time.Time             `json:"completedAt,omitempty"`
 }
 
+type AgentTimelineItemKind string
+
+const (
+	AgentTimelineItemUserMessage   AgentTimelineItemKind = "user_message"
+	AgentTimelineItemAgentMessage  AgentTimelineItemKind = "agent_message"
+	AgentTimelineItemStatusKind    AgentTimelineItemKind = "status"
+	AgentTimelineItemClarification AgentTimelineItemKind = "clarification"
+	AgentTimelineItemToolCall      AgentTimelineItemKind = "tool_call"
+	AgentTimelineItemToolResult    AgentTimelineItemKind = "tool_result"
+	AgentTimelineItemApproval      AgentTimelineItemKind = "approval"
+	AgentTimelineItemArtifact      AgentTimelineItemKind = "artifact"
+	AgentTimelineItemError         AgentTimelineItemKind = "error"
+)
+
+func (kind AgentTimelineItemKind) Valid() bool {
+	switch kind {
+	case AgentTimelineItemUserMessage, AgentTimelineItemAgentMessage, AgentTimelineItemStatusKind,
+		AgentTimelineItemClarification, AgentTimelineItemToolCall, AgentTimelineItemToolResult,
+		AgentTimelineItemApproval, AgentTimelineItemArtifact, AgentTimelineItemError:
+		return true
+	default:
+		return false
+	}
+}
+
+type AgentTimelineItemStatus string
+
+const (
+	AgentTimelineItemInProgress  AgentTimelineItemStatus = "in_progress"
+	AgentTimelineItemCompleted   AgentTimelineItemStatus = "completed"
+	AgentTimelineItemFailed      AgentTimelineItemStatus = "failed"
+	AgentTimelineItemDeclined    AgentTimelineItemStatus = "declined"
+	AgentTimelineItemInterrupted AgentTimelineItemStatus = "interrupted"
+)
+
+func (status AgentTimelineItemStatus) Valid() bool {
+	switch status {
+	case AgentTimelineItemInProgress, AgentTimelineItemCompleted, AgentTimelineItemFailed,
+		AgentTimelineItemDeclined, AgentTimelineItemInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+type AgentTimelineItem struct {
+	ID                  string                  `json:"id" gorm:"primaryKey;size:80"`
+	TenantKind          agentruntime.TenantKind `json:"tenantKind" gorm:"size:16;not null"`
+	TenantID            string                  `json:"tenantId" gorm:"size:80;not null"`
+	ThreadID            string                  `json:"threadId" gorm:"size:80;not null"`
+	RunID               string                  `json:"runId" gorm:"size:80;not null"`
+	Kind                AgentTimelineItemKind   `json:"kind" gorm:"size:32;not null"`
+	Status              AgentTimelineItemStatus `json:"status" gorm:"size:24;not null"`
+	Ordinal             int64                   `json:"ordinal" gorm:"not null"`
+	SourceEventSequence int64                   `json:"sourceEventSequence" gorm:"not null"`
+	ContentJSON         string                  `json:"-" gorm:"type:text;not null"`
+	StartedAt           time.Time               `json:"startedAt"`
+	CompletedAt         *time.Time              `json:"completedAt,omitempty"`
+	CreatedAt           time.Time               `json:"createdAt"`
+	UpdatedAt           time.Time               `json:"updatedAt"`
+}
+
 type AgentProductionPlanStatus string
 
 const (

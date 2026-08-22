@@ -22,6 +22,9 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 ### 单一 Agent Runtime
 
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
+- `AgentRunEvent` 是追加式审计真源，`AgentTimelineItem` 是与 Run、Event、Checkpoint、ToolCall 同事务维护的查询投影。Run 初始化固定写入 `run.created`、`user.message`、初始 Checkpoint 和已完成的用户消息 Item；Item 使用确定性身份、连续 ordinal 与唯一来源 sequence，任何投影冲突都会回滚整次状态迁移，禁止以不完整时间线伪装成功。
+- 工具、审批和结果共用同一个 `tool_call` Item 生命周期：等待审批、已批准、已开始、完成、失败、拒绝或中断都更新同一身份，不创建并行的“执行中”残留项。运行中的追加指令以 `clientRequestId` 持久化并幂等去重；显式中断使用 `stateVersion` CAS，并关闭尚在等待的澄清或工具 Item。已经提交的媒体任务不被回滚，迟到成功结果追加独立 `artifact.available` 事件和 Artifact Item，保持 Run 终态及 Checkpoint 不变。
+- 时间线、生产计划和迟到资产的每一次读写都重新校验租户、操作者、项目、画布、Thread 与 Run 所有权；时间线只保存已鉴权的 `resourceId` 和媒体元数据，不保存会过期的 OSS 签名地址。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。
 - Runtime 只有一个事件驱动协调入口：run 创建、模型任务终结、审批决定和媒体任务终结都会以持久化事实唤醒同一协调器；协调器在有界转换次数内继续免费工具或创建唯一下一模型任务。worker 不再每 5 秒扫描并盲推全部运行，只按分钟检查超过恢复阈值且仍未终结的 run，并使用跨实例互斥与游标恢复进程中断后的事件。
 - 信息确实不足时，模型可返回严格的 `clarification_request`，由 Runtime 在同一 Run 冻结交付合同和 1–3 个结构化问题，并切换到不占用 worker 的 `waiting_input`。问题类型只允许单选、多选和自由文本；逐题保存只写 checkpoint/event，不消耗模型 Token，也不创建工具、媒体任务、账单或积分冻结。最终提交使用 `stateVersion` CAS 将 pending 问答原子追加到不可变 history，产生 `clarification.responded` 后只唤醒一次同一协调器；下一模型步骤读取原始结构化问答继续执行，不创建第二条 Run。完全相同重放不增加事件或任务，并发提交只有一个事务可推进。

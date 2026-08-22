@@ -43,6 +43,18 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 		createSQL: `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
 	},
 	{
+		name: "idx_agent_timeline_items_run_ordinal", table: "agent_timeline_items", columns: "run_id,ordinal", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_timeline_items_run_ordinal ON agent_timeline_items(run_id, ordinal)`,
+	},
+	{
+		name: "idx_agent_timeline_items_run_sequence", table: "agent_timeline_items", columns: "run_id,source_event_sequence", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_timeline_items_run_sequence ON agent_timeline_items(run_id, source_event_sequence)`,
+	},
+	{
+		name: "idx_agent_timeline_items_thread_query", table: "agent_timeline_items", columns: "thread_id,created_at,id",
+		createSQL: `CREATE INDEX idx_agent_timeline_items_thread_query ON agent_timeline_items(thread_id, created_at, id)`,
+	},
+	{
 		name: "idx_agent_tool_calls_action", table: "agent_tool_calls", columns: "run_id,tool_call_id,action_version", unique: true,
 		createSQL: `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
 	},
@@ -116,11 +128,10 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 
 const (
 	retiredAgentToolSchemaFailureCode            = "tool_schema_retired"
+	retiredAgentRuntimeContractFailureCode       = "runtime_contract_retired"
 	legacyAgentToolSchemaVersion                 = 2
 	agentRuntimeMigrationTargetToolSchemaVersion = 3
-	legacyAgentModelTaskType                     = "agent_runtime_model"
 	legacyAgentModelTaskOperationPrefix          = "agent_model:"
-	legacyAgentModelBillingScene                 = "agent_runtime_model"
 	agentRuntimeMigrationEventPayloadLimit       = 256 * 1024
 	agentRuntimeMigrationCheckpointPayloadLimit  = 1024 * 1024
 )
@@ -155,21 +166,40 @@ func retireIncompatibleQueuedAgentRuns(db *gorm.DB) error {
 	}
 	var runs []model.AgentRun
 	result := db.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("status = ? AND tool_schema_version = ?", agentruntime.RunQueued, legacyAgentToolSchemaVersion).
+		Where(
+			`status = ? AND tool_schema_version <= ? AND runtime_version <= ? AND policy_version <= ?
+			 AND (tool_schema_version = ? OR runtime_version <> ? OR policy_version <> ?)`,
+			agentruntime.RunQueued,
+			agentruntime.CurrentToolSchemaVersion,
+			agentruntime.CurrentRuntimeVersion,
+			agentruntime.CurrentPolicyVersion,
+			legacyAgentToolSchemaVersion,
+			agentruntime.CurrentRuntimeVersion,
+			agentruntime.CurrentPolicyVersion,
+		).
 		Order("created_at, id").
 		Find(&runs)
 	if result.Error != nil {
 		return result.Error
 	}
 	for _, run := range runs {
-		if err := retireIncompatibleQueuedAgentRun(db, run, time.Now().UTC()); err != nil {
+		if err := verifyAgentRuntimeHasNoExternalFacts(db, run); err != nil {
+			return err
+		}
+		var err error
+		if run.ToolSchemaVersion == legacyAgentToolSchemaVersion {
+			err = retireLegacyIncompatibleQueuedAgentRun(db, run, time.Now().UTC())
+		} else {
+			err = retireCurrentIncompatibleQueuedAgentRun(db, run, time.Now().UTC())
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func retireIncompatibleQueuedAgentRun(db *gorm.DB, run model.AgentRun, now time.Time) error {
+func retireLegacyIncompatibleQueuedAgentRun(db *gorm.DB, run model.AgentRun, now time.Time) error {
 	if run.StateVersion != 1 || run.StepNumber != 0 || run.LastEventSequence != 1 {
 		return fmt.Errorf(
 			"queued incompatible agent run is not pristine: run_id=%s state_version=%d step_number=%d last_event_sequence=%d",
@@ -182,9 +212,6 @@ func retireIncompatibleQueuedAgentRun(db *gorm.DB, run model.AgentRun, now time.
 	}
 	if toolCallCount != 0 {
 		return fmt.Errorf("queued incompatible agent run has tool call facts: run_id=%s tool_calls=%d", run.ID, toolCallCount)
-	}
-	if err := verifyLegacyAgentModelCommercialFacts(db, run); err != nil {
-		return err
 	}
 	var eventCount int64
 	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", run.ID).Count(&eventCount).Error; err != nil {
@@ -269,45 +296,133 @@ func retireIncompatibleQueuedAgentRun(db *gorm.DB, run model.AgentRun, now time.
 	return db.Create(&checkpoint).Error
 }
 
-func verifyLegacyAgentModelCommercialFacts(db *gorm.DB, run model.AgentRun) error {
+func retireCurrentIncompatibleQueuedAgentRun(db *gorm.DB, run model.AgentRun, now time.Time) error {
+	if run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion ||
+		run.RuntimeVersion >= agentruntime.CurrentRuntimeVersion && run.PolicyVersion >= agentruntime.CurrentPolicyVersion {
+		return fmt.Errorf(
+			"queued incompatible agent run cannot use current-contract retirement: run_id=%s tool_schema_version=%d runtime_version=%d policy_version=%d",
+			run.ID, run.ToolSchemaVersion, run.RuntimeVersion, run.PolicyVersion,
+		)
+	}
+	if run.StateVersion != 1 || run.StepNumber != 0 || run.LastEventSequence != 1 {
+		return fmt.Errorf(
+			"queued incompatible agent run is not pristine: run_id=%s state_version=%d step_number=%d last_event_sequence=%d",
+			run.ID, run.StateVersion, run.StepNumber, run.LastEventSequence,
+		)
+	}
+	var eventCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", run.ID).Count(&eventCount).Error; err != nil {
+		return err
+	}
+	if eventCount != 1 {
+		return fmt.Errorf("queued incompatible agent run has invalid event history: run_id=%s events=%d", run.ID, eventCount)
+	}
+	var initialEvent model.AgentRunEvent
+	if err := db.Where("run_id = ? AND sequence = ?", run.ID, run.LastEventSequence).Take(&initialEvent).Error; err != nil {
+		return fmt.Errorf("load incompatible queued agent event: run_id=%s: %w", run.ID, err)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.Where("run_id = ?", run.ID).Order("sequence DESC").Take(&checkpoint).Error; err != nil {
+		return fmt.Errorf("load incompatible queued agent checkpoint: run_id=%s: %w", run.ID, err)
+	}
+	if len(checkpoint.StateJSON) > agentRuntimeMigrationCheckpointPayloadLimit {
+		return fmt.Errorf("incompatible queued agent checkpoint is too large: run_id=%s bytes=%d", run.ID, len(checkpoint.StateJSON))
+	}
+	decoder := json.NewDecoder(bytes.NewBufferString(checkpoint.StateJSON))
+	decoder.DisallowUnknownFields()
+	var state agentruntime.RuntimeState
+	if err := decoder.Decode(&state); err != nil {
+		return fmt.Errorf("decode incompatible queued agent checkpoint: run_id=%s: %w", run.ID, err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("incompatible queued agent checkpoint has trailing data: run_id=%s", run.ID)
+	}
+	if state.Status != agentruntime.RunQueued || state.StateVersion != run.StateVersion || state.StepNumber != run.StepNumber ||
+		state.MaxSteps != run.MaxSteps || checkpoint.StateVersion != run.StateVersion || checkpoint.Sequence != run.LastEventSequence {
+		return fmt.Errorf("incompatible queued agent checkpoint is inconsistent: run_id=%s", run.ID)
+	}
+	if initialEvent.Kind != agentruntime.EventRunCreated || initialEvent.PayloadJSON != checkpoint.StateJSON {
+		return fmt.Errorf("incompatible queued agent initial facts disagree: run_id=%s", run.ID)
+	}
+	if len(initialEvent.PayloadJSON) > agentRuntimeMigrationEventPayloadLimit {
+		return fmt.Errorf("incompatible queued agent event is too large: run_id=%s bytes=%d", run.ID, len(initialEvent.PayloadJSON))
+	}
+	transition, err := agentruntime.Terminate(state, retiredAgentRuntimeContractFailureCode)
+	if err != nil {
+		return fmt.Errorf("retire incompatible queued agent run: run_id=%s: %w", run.ID, err)
+	}
+	terminalJSON, err := json.Marshal(transition.State)
+	if err != nil {
+		return err
+	}
+	if len(terminalJSON) > agentRuntimeMigrationEventPayloadLimit {
+		return fmt.Errorf("retired incompatible agent event is too large: run_id=%s bytes=%d", run.ID, len(terminalJSON))
+	}
+	sequence := run.LastEventSequence + 1
+	updated := db.Model(&model.AgentRun{}).
+		Where(
+			"id = ? AND status = ? AND tool_schema_version = ? AND runtime_version = ? AND policy_version = ? AND state_version = ? AND step_number = ? AND last_event_sequence = ?",
+			run.ID, agentruntime.RunQueued, run.ToolSchemaVersion, run.RuntimeVersion, run.PolicyVersion,
+			run.StateVersion, run.StepNumber, run.LastEventSequence,
+		).
+		Select("status", "state_version", "step_number", "last_event_sequence", "updated_at", "completed_at").
+		Updates(retiredAgentRunUpdates{
+			Status: transition.State.Status, StateVersion: transition.State.StateVersion,
+			StepNumber: transition.State.StepNumber, LastEventSequence: sequence,
+			UpdatedAt: now, CompletedAt: now,
+		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return fmt.Errorf("retire incompatible queued agent run conflict: run_id=%s", run.ID)
+	}
+	event := model.AgentRunEvent{
+		ID:    agentRuntimeMigrationFactID("event", run.ID, strconv.FormatInt(sequence, 10)),
+		RunID: run.ID, Sequence: sequence, Kind: agentruntime.EventRunFailed,
+		PayloadJSON: string(terminalJSON), CreatedAt: now,
+	}
+	if err := db.Create(&event).Error; err != nil {
+		return err
+	}
+	checkpoint = model.AgentCheckpoint{
+		ID:    agentRuntimeMigrationFactID("checkpoint", run.ID, strconv.FormatInt(sequence, 10)),
+		RunID: run.ID, Sequence: sequence, StateVersion: transition.State.StateVersion,
+		StateJSON: string(terminalJSON), CreatedAt: now,
+	}
+	return db.Create(&checkpoint).Error
+}
+
+func verifyAgentRuntimeHasNoExternalFacts(db *gorm.DB, run model.AgentRun) error {
 	operation := legacyAgentModelTaskOperationPrefix + run.ID
 	expectedTaskID := legacyAgentModelTaskID(run.ID, 0)
-	var tasks []model.Task
-	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? OR operation = ?", expectedTaskID, operation).
-		Order("id").Limit(2).Find(&tasks).Error; err != nil {
-		return fmt.Errorf("load legacy agent model tasks: run_id=%s: %w", run.ID, err)
+	var taskCount int64
+	if err := db.Model(&model.Task{}).Where("id = ? OR operation = ?", expectedTaskID, operation).Count(&taskCount).Error; err != nil {
+		return fmt.Errorf("count agent runtime model tasks: run_id=%s: %w", run.ID, err)
 	}
 	billingKeys := []string{
 		"agent-runtime:" + run.ID + ":0",
 		"proxy-token:agent-runtime:" + run.ID + ":0",
 	}
-	var orders []model.BillingOrder
-	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+	var billingCount int64
+	if err := db.Model(&model.BillingOrder{}).
 		Where("user_id = ? AND idempotency_key IN ?", run.ActorUserID, billingKeys).
-		Order("id").Limit(2).Find(&orders).Error; err != nil {
-		return fmt.Errorf("load legacy agent model billing: run_id=%s: %w", run.ID, err)
+		Count(&billingCount).Error; err != nil {
+		return fmt.Errorf("count agent runtime billing orders: run_id=%s: %w", run.ID, err)
 	}
-	if len(tasks) == 0 && len(orders) == 0 {
-		return nil
+	var toolCallCount int64
+	if err := db.Model(&model.AgentToolCall{}).Where("run_id = ?", run.ID).Count(&toolCallCount).Error; err != nil {
+		return fmt.Errorf("count agent runtime tool calls: run_id=%s: %w", run.ID, err)
 	}
-	if len(tasks) != 1 || len(orders) != 1 {
-		return fmt.Errorf("legacy agent model commercial facts conflict: run_id=%s tasks=%d billing_orders=%d", run.ID, len(tasks), len(orders))
+	var planCount int64
+	if err := db.Model(&model.AgentProductionPlanVersion{}).Where("created_by_run_id = ?", run.ID).Count(&planCount).Error; err != nil {
+		return fmt.Errorf("count agent runtime production plans: run_id=%s: %w", run.ID, err)
 	}
-	task, order := tasks[0], orders[0]
-	if task.ID != expectedTaskID || task.Type != legacyAgentModelTaskType || task.Operation != operation ||
-		task.UserID != run.ActorUserID || task.Capability != "text" || task.Provider != "system" || task.Model != run.ModelKey ||
-		task.BillingOrderID == "" || order.ID != task.BillingOrderID || order.TaskID != task.ID ||
-		order.UserID != run.ActorUserID || order.ChannelModelID != run.ModelRecordID || order.Model != run.ModelKey ||
-		order.Scene != legacyAgentModelBillingScene || order.Capability != "text" || order.Quantity != 1 || order.AmountMicrocredits <= 0 {
-		return fmt.Errorf("legacy agent model commercial facts disagree: run_id=%s task_id=%s billing_order_id=%s", run.ID, task.ID, order.ID)
-	}
-	terminalSettled := task.Status == model.TaskStatusSucceeded && order.Status == model.BillingStatusSettled
-	terminalRefunded := (task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled) && order.Status == model.BillingStatusRefunded
-	if !terminalSettled && !terminalRefunded {
+	if taskCount != 0 || billingCount != 0 || toolCallCount != 0 || planCount != 0 {
 		return fmt.Errorf(
-			"legacy agent model commercial facts are not terminal: run_id=%s task_id=%s task_status=%s billing_order_id=%s billing_status=%s",
-			run.ID, task.ID, task.Status, order.ID, order.Status,
+			"queued incompatible agent run has external facts: run_id=%s model_tasks=%d billing_orders=%d tool_calls=%d production_plans=%d",
+			run.ID, taskCount, billingCount, toolCallCount, planCount,
 		)
 	}
 	return nil
@@ -345,6 +460,8 @@ func rejectIncompatibleActiveAgentRuns(db *gorm.DB) error {
 		ID                string                 `gorm:"column:id"`
 		Status            agentruntime.RunStatus `gorm:"column:status"`
 		ToolSchemaVersion int                    `gorm:"column:tool_schema_version"`
+		RuntimeVersion    int                    `gorm:"column:runtime_version"`
+		PolicyVersion     int                    `gorm:"column:policy_version"`
 	}
 	activeStatuses := []agentruntime.RunStatus{
 		agentruntime.RunQueued,
@@ -355,7 +472,13 @@ func rejectIncompatibleActiveAgentRuns(db *gorm.DB) error {
 	}
 	var count int64
 	if err := db.Table("agent_runs").
-		Where("status IN ? AND tool_schema_version <> ?", activeStatuses, agentruntime.CurrentToolSchemaVersion).
+		Where(
+			"status IN ? AND (tool_schema_version <> ? OR runtime_version <> ? OR policy_version <> ?)",
+			activeStatuses,
+			agentruntime.CurrentToolSchemaVersion,
+			agentruntime.CurrentRuntimeVersion,
+			agentruntime.CurrentPolicyVersion,
+		).
 		Count(&count).Error; err != nil {
 		return err
 	}
@@ -365,8 +488,14 @@ func rejectIncompatibleActiveAgentRuns(db *gorm.DB) error {
 	const detailLimit = 20
 	var runs []incompatibleRun
 	result := db.Table("agent_runs").
-		Select("id, status, tool_schema_version").
-		Where("status IN ? AND tool_schema_version <> ?", activeStatuses, agentruntime.CurrentToolSchemaVersion).
+		Select("id, status, tool_schema_version, runtime_version, policy_version").
+		Where(
+			"status IN ? AND (tool_schema_version <> ? OR runtime_version <> ? OR policy_version <> ?)",
+			activeStatuses,
+			agentruntime.CurrentToolSchemaVersion,
+			agentruntime.CurrentRuntimeVersion,
+			agentruntime.CurrentPolicyVersion,
+		).
 		Order("created_at, id").
 		Limit(detailLimit).
 		Scan(&runs)
@@ -375,14 +504,26 @@ func rejectIncompatibleActiveAgentRuns(db *gorm.DB) error {
 	}
 	details := make([]string, 0, len(runs)+1)
 	for _, run := range runs {
-		details = append(details, fmt.Sprintf("{run_id=%s status=%s tool_schema_version=%d}", run.ID, run.Status, run.ToolSchemaVersion))
+		details = append(details, fmt.Sprintf(
+			"{run_id=%s status=%s tool_schema_version=%d runtime_version=%d policy_version=%d}",
+			run.ID,
+			run.Status,
+			run.ToolSchemaVersion,
+			run.RuntimeVersion,
+			run.PolicyVersion,
+		))
 	}
 	if count > int64(len(runs)) {
 		details = append(details, fmt.Sprintf("+%d_more", count-int64(len(runs))))
 	}
 	return fmt.Errorf(
-		"active agent runs use incompatible tool schemas: incompatible_active_runs=%d required=%d runs=[%s]",
-		count, agentruntime.CurrentToolSchemaVersion, strings.Join(details, ","),
+		"active agent runs use incompatible runtime contracts: incompatible_active_runs=%d required=%d required_tool_schema_version=%d required_runtime_version=%d required_policy_version=%d runs=[%s]",
+		count,
+		agentruntime.CurrentToolSchemaVersion,
+		agentruntime.CurrentToolSchemaVersion,
+		agentruntime.CurrentRuntimeVersion,
+		agentruntime.CurrentPolicyVersion,
+		strings.Join(details, ","),
 	)
 }
 
@@ -466,6 +607,8 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		{"agent_runs", "thread_id AS first_value, client_request_id AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "thread_id, client_request_id", "agent run request"},
 		{"agent_run_events", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent run event"},
 		{"agent_checkpoints", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent checkpoint"},
+		{"agent_timeline_items", "run_id AS first_value, CAST(ordinal AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, ordinal", "agent timeline ordinal"},
+		{"agent_timeline_items", "run_id AS first_value, CAST(source_event_sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, source_event_sequence", "agent timeline source event"},
 		{"agent_tool_calls", "run_id AS first_value, tool_call_id AS second_value, CAST(action_version AS TEXT) AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, tool_call_id, action_version", "agent tool action"},
 		{"agent_production_plan_versions", "tenant_kind AS first_value, tenant_id AS second_value, domain_project_id AS third_value, canvas_id AS fourth_value, plan_key AS fifth_value, CAST(version AS TEXT) AS sixth_value, COUNT(*) AS count", "", "tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version", "agent production plan version"},
 		{"agent_production_artifacts", "plan_version_id AS first_value, reference_key AS second_value, shot_key AS third_value, kind AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "plan_version_id, reference_key, shot_key, kind", "agent production artifact"},

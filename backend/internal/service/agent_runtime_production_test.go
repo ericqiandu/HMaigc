@@ -13,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 func TestProductionPlanArgumentsRejectUnknownFields(t *testing.T) {
@@ -191,6 +193,7 @@ func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
 	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
 	plan := model.AgentProductionPlanVersion{
 		ID: "retry-unresolved-plan-version", PlanKey: "retry-unresolved-plan",
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
@@ -389,6 +392,7 @@ func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T)
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
 	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
 	plan := model.AgentProductionPlanVersion{
 		ID: "committed-storyboard-plan-version", PlanKey: "committed-storyboard-plan",
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
@@ -434,6 +438,31 @@ func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T)
 	}
 	if resolved.ID != resource.ID {
 		t.Fatalf("resolved storyboard resource = %s", resolved.ID)
+	}
+}
+
+func createAgentRuntimeScopedRunFacts(t *testing.T, db *gorm.DB, scope agentruntime.Scope, now time.Time) {
+	t.Helper()
+	thread := model.AgentThread{
+		ID: scope.ThreadID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		CreatedByUserID: scope.ActorUserID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, Status: agentruntime.ThreadActive, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&thread).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := model.AgentRun{
+		ID: scope.RunID, ThreadID: scope.ThreadID, ActorUserID: scope.ActorUserID,
+		ClientRequestID: "scoped-production-fixture", Status: agentruntime.RunRunning,
+		LastEventSequence: 2, StateVersion: 1, MaxSteps: 6,
+		ModelRecordID: "runtime-agent-model", ModelKey: "gpt-5.5",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		CreatedAt:         now, UpdatedAt: now,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
 	}
 }
 
