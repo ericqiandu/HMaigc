@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,6 +23,9 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 	}
 	if transition.State.Status != agentruntime.RunSucceeded || transition.State.StepNumber != 1 || transition.State.StateVersion != 2 {
 		t.Fatalf("satisfied transition = %#v", transition)
+	}
+	if len(transition.EventKinds) != 2 || transition.EventKinds[0] != agentruntime.EventAgentMessageCompleted || transition.EventKinds[1] != agentruntime.EventRunCompleted {
+		t.Fatalf("final events = %#v", transition.EventKinds)
 	}
 
 	repairable, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: final})
@@ -187,35 +192,211 @@ func TestAdvanceRuntimeFreezesExpectedDeliveryAndRejectsFinalDowngrade(t *testin
 	}
 }
 
-func TestProductionRenderApprovalCannotBeBypassedByExecutionMode(t *testing.T) {
-	answer := agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}}
-	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-write", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1, Arguments: []byte(`{"planKey":"plan-1","planVersion":1,"baseRevision":3}`), ExpectedDelivery: answer}}
-	costTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-cost", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1, Arguments: []byte(`{"model":"image"}`), ExpectedDelivery: answer}}
+func TestApprovalMatrixDependsOnExecutionModeAndToolRisk(t *testing.T) {
+	answer := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	testCases := []struct {
+		name       string
+		mode       agentruntime.ExecutionMode
+		tool       agentruntime.ToolName
+		wantStatus agentruntime.RunStatus
+	}{
+		{name: "guided read runs immediately", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolSkillLoad, wantStatus: agentruntime.RunWaitingTool},
+		{name: "guided plan requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolProductionPlan, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "guided canvas write requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolCanvasCommit, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "guided paid render requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolProductionRender, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "automatic read runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolSkillLoad, wantStatus: agentruntime.RunWaitingTool},
+		{name: "automatic plan runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolProductionPlan, wantStatus: agentruntime.RunWaitingTool},
+		{name: "automatic canvas write runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolCanvasCommit, wantStatus: agentruntime.RunWaitingTool},
+		{name: "automatic paid render requires approval", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolProductionRender, wantStatus: agentruntime.RunWaitingApproval},
+	}
 
-	guided := agentruntime.RuntimeState{StateVersion: 1, MaxSteps: 3, Status: agentruntime.RunQueued, UserMessage: "修改画布", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}}
-	guidedWrite, err := agentruntime.Advance(guided, agentruntime.RuntimeInput{Decision: writeTool})
-	if err != nil {
-		t.Fatal(err)
+	for index, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			current := agentruntime.RuntimeState{
+				StateVersion: 1,
+				MaxSteps:     3,
+				Status:       agentruntime.RunQueued,
+				UserMessage:  "执行任务",
+				Configuration: agentruntime.RunConfiguration{
+					ExecutionMode: testCase.mode,
+				},
+			}
+			decision := agentruntime.ModelDecision{
+				Kind: agentruntime.DecisionToolCall,
+				ToolCall: &agentruntime.ToolCallDecision{
+					ToolCallID:       fmt.Sprintf("call-%d", index),
+					ToolName:         testCase.tool,
+					ActionVersion:    1,
+					Arguments:        json.RawMessage(`{}`),
+					ExpectedDelivery: answer,
+				},
+			}
+
+			transition, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transition.State.Status != testCase.wantStatus {
+				t.Fatalf("status = %s, want %s", transition.State.Status, testCase.wantStatus)
+			}
+		})
 	}
-	if guidedWrite.State.Status != agentruntime.RunWaitingTool {
-		t.Fatalf("guided write state = %s", guidedWrite.State.Status)
+}
+
+func TestAppendSteerIsIdempotentAndPreservesOriginalUserMessage(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 4,
+		StepNumber:   1,
+		MaxSteps:     8,
+		Status:       agentruntime.RunRunning,
+		UserMessage:  "制作一支三十秒广告",
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionAutomatic,
+		},
+	}
+	request := agentruntime.SteerRequest{
+		ClientRequestID:      "steer-1",
+		Message:              "把主角的外套统一改成红色",
+		ExpectedStateVersion: 4,
 	}
 
-	automatic := guided
-	automatic.Configuration.ExecutionMode = agentruntime.ExecutionAutomatic
-	automaticWrite, err := agentruntime.Advance(automatic, agentruntime.RuntimeInput{Decision: writeTool})
+	appended, replayed, err := agentruntime.AppendSteer(current, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if automaticWrite.State.Status != agentruntime.RunWaitingTool {
-		t.Fatalf("automatic write state = %s", automaticWrite.State.Status)
+	if replayed {
+		t.Fatal("first steer was reported as a replay")
 	}
-	automaticCost, err := agentruntime.Advance(automatic, agentruntime.RuntimeInput{Decision: costTool})
+	if appended.State.StateVersion != 5 || appended.State.UserMessage != current.UserMessage || len(appended.State.PendingSteers) != 1 {
+		t.Fatalf("appended state = %#v", appended.State)
+	}
+	if len(appended.EventKinds) != 1 || appended.EventKinds[0] != agentruntime.EventRunSteered {
+		t.Fatalf("steer events = %#v", appended.EventKinds)
+	}
+
+	idempotent, replayed, err := agentruntime.AppendSteer(appended.State, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if automaticCost.State.Status != agentruntime.RunWaitingApproval {
-		t.Fatalf("automatic cost state = %s", automaticCost.State.Status)
+	if !replayed || idempotent.State.StateVersion != appended.State.StateVersion || len(idempotent.EventKinds) != 0 {
+		t.Fatalf("idempotent replay = %#v, replayed=%t", idempotent, replayed)
+	}
+
+	conflicting := request
+	conflicting.Message = "把主角的外套统一改成蓝色"
+	if _, _, err := agentruntime.AppendSteer(appended.State, conflicting); !errors.Is(err, agentruntime.ErrSteerConflict) {
+		t.Fatalf("conflicting identity error = %v", err)
+	}
+
+	terminal := current
+	terminal.Status = agentruntime.RunSucceeded
+	if _, _, err := agentruntime.AppendSteer(terminal, agentruntime.SteerRequest{
+		ClientRequestID:      "steer-terminal",
+		Message:              "继续执行",
+		ExpectedStateVersion: terminal.StateVersion,
+	}); !errors.Is(err, agentruntime.ErrSteerConflict) {
+		t.Fatalf("terminal steer error = %v", err)
+	}
+}
+
+func TestConsumePendingSteersOnlyAtSafeBoundary(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 7,
+		StepNumber:   2,
+		MaxSteps:     8,
+		Status:       agentruntime.RunRunning,
+		UserMessage:  "制作短片",
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionAutomatic,
+		},
+		PendingSteers: []agentruntime.PendingSteer{
+			{ClientRequestID: "steer-1", Message: "服装保持一致"},
+			{ClientRequestID: "steer-2", Message: "镜头节奏更快"},
+		},
+	}
+
+	next, consumed, err := agentruntime.ConsumePendingSteersAtSafeBoundary(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.StateVersion != 8 || len(next.PendingSteers) != 0 || len(consumed) != 2 || consumed[0].ClientRequestID != "steer-1" {
+		t.Fatalf("consumed steer state = %#v, consumed=%#v", next, consumed)
+	}
+
+	unsafe := current
+	unsafe.Status = agentruntime.RunWaitingTool
+	unsafe.PendingToolCall = &agentruntime.ToolCallDecision{
+		ToolCallID:       "render-1",
+		ToolName:         agentruntime.ToolProductionRender,
+		ActionVersion:    1,
+		Arguments:        json.RawMessage(`{}`),
+		ExpectedDelivery: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}},
+	}
+	unsafe.PendingToolStarted = true
+	if _, _, err := agentruntime.ConsumePendingSteersAtSafeBoundary(unsafe); !errors.Is(err, agentruntime.ErrSteerConflict) {
+		t.Fatalf("unsafe boundary error = %v", err)
+	}
+}
+
+func TestInterruptUsesStateVersionAndPreservesStartedToolFacts(t *testing.T) {
+	answer := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	pendingApproval := agentruntime.RuntimeState{
+		StateVersion: 9,
+		StepNumber:   3,
+		MaxSteps:     8,
+		Status:       agentruntime.RunWaitingApproval,
+		UserMessage:  "制作短片",
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionGuided,
+		},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "commit-1", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+			Arguments: json.RawMessage(`{}`), ExpectedDelivery: answer,
+		},
+		PendingSteers: []agentruntime.PendingSteer{{ClientRequestID: "steer-1", Message: "先停止"}},
+	}
+
+	interrupted, err := agentruntime.Interrupt(pendingApproval, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interrupted.State.Status != agentruntime.RunCancelled || interrupted.State.StateVersion != 10 ||
+		interrupted.State.PendingToolCall != nil || interrupted.State.PendingToolStarted || len(interrupted.State.PendingSteers) != 0 {
+		t.Fatalf("interrupted pending state = %#v", interrupted.State)
+	}
+	if len(interrupted.EventKinds) != 1 || interrupted.EventKinds[0] != agentruntime.EventRunInterrupted {
+		t.Fatalf("interrupt events = %#v", interrupted.EventKinds)
+	}
+
+	startedPaidTool := pendingApproval
+	startedPaidTool.Status = agentruntime.RunWaitingTool
+	startedPaidTool.PendingToolCall = &agentruntime.ToolCallDecision{
+		ToolCallID: "render-1", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
+		Arguments: json.RawMessage(`{}`), ExpectedDelivery: answer,
+	}
+	startedPaidTool.PendingToolStarted = true
+	startedInterrupted, err := agentruntime.Interrupt(startedPaidTool, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startedInterrupted.State.PendingToolCall == nil || !startedInterrupted.State.PendingToolStarted || startedInterrupted.State.LastToolResult != nil {
+		t.Fatalf("started paid tool facts were rewritten = %#v", startedInterrupted.State)
+	}
+
+	if _, err := agentruntime.Interrupt(pendingApproval, 8); !errors.Is(err, agentruntime.ErrInterruptConflict) {
+		t.Fatalf("version conflict error = %v", err)
+	}
+	terminal := pendingApproval
+	terminal.Status = agentruntime.RunFailed
+	terminal.PendingToolCall = nil
+	if _, err := agentruntime.Interrupt(terminal, terminal.StateVersion); !errors.Is(err, agentruntime.ErrInterruptConflict) {
+		t.Fatalf("terminal interrupt error = %v", err)
 	}
 }
 

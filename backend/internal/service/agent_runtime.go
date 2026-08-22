@@ -34,8 +34,6 @@ func agentRuntimeModelRunID(operation string) (string, bool) {
 	return runID, runID != ""
 }
 
-const agentRuntimeVersion = 1
-const agentRuntimePolicyVersion = 1
 const agentRuntimeMaxSteps = 24
 
 type StartAgentRuntimeInput struct {
@@ -111,7 +109,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 		initialized, initializeErr := s.repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 			Scope: scope, ModelRecordID: selected.ID, ModelKey: selected.ModelKey,
 			MaxSteps: agentRuntimeMaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
-			RuntimeVersion: agentRuntimeVersion, PolicyVersion: agentRuntimePolicyVersion,
+			RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
 			UserMessage: input.UserMessage, Configuration: configuration, Now: time.Now().UTC(),
 		})
 		if initializeErr != nil {

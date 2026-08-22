@@ -42,6 +42,8 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
+	CurrentRuntimeVersion    = 2
+	CurrentPolicyVersion     = 2
 	CurrentToolSchemaVersion = 3
 
 	RunQueued          RunStatus = "queued"
@@ -86,7 +88,10 @@ type EventKind string
 
 const (
 	EventRunCreated               EventKind = "run.created"
+	EventUserMessageAdded         EventKind = "user.message"
 	EventRunStatusChanged         EventKind = "run.status_changed"
+	EventRunSteered               EventKind = "run.steered"
+	EventRunInterrupted           EventKind = "run.interrupted"
 	EventModelDelta               EventKind = "model.delta"
 	EventModelRejected            EventKind = "model.rejected"
 	EventClarificationRequested   EventKind = "clarification.requested"
@@ -100,14 +105,22 @@ const (
 	EventCheckpointSaved          EventKind = "checkpoint.saved"
 	EventRunCompleted             EventKind = "run.completed"
 	EventRunFailed                EventKind = "run.failed"
+	EventAgentMessageCompleted    EventKind = "agent.message"
+	EventArtifactAvailable        EventKind = "artifact.available"
+)
+
+var (
+	ErrSteerConflict     = errors.New("agent steer conflict")
+	ErrInterruptConflict = errors.New("agent interrupt conflict")
 )
 
 func (kind EventKind) Valid() bool {
 	switch kind {
-	case EventRunCreated, EventRunStatusChanged, EventModelDelta, EventModelRejected,
+	case EventRunCreated, EventUserMessageAdded, EventRunStatusChanged, EventRunSteered, EventRunInterrupted,
+		EventModelDelta, EventModelRejected,
 		EventClarificationRequested, EventClarificationAnswerSaved, EventClarificationResponded,
 		EventToolCall, EventApprovalRequired, EventApprovalDecided, EventToolStarted, EventToolResult,
-		EventCheckpointSaved, EventRunCompleted, EventRunFailed:
+		EventCheckpointSaved, EventRunCompleted, EventRunFailed, EventAgentMessageCompleted, EventArtifactAvailable:
 		return true
 	default:
 		return false

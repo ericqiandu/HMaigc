@@ -16,7 +16,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 
 - 首页创作框先上传参考图片并创建真实画布项目，把提示词、账号级资源 ID、系统动态模型选择、平台第一方公开 Skill 目录与显式执行模式写入项目内的 `pendingAgentLaunch`；提示词和临时 Blob URL 均不进入 URL 或持久事实。
 - 打开新画布后，Agent 面板用该请求创建或复用服务端 thread，并以持久化 `clientRequestId` 启动 run；只有取得运行事实后才消费启动请求。启动响应丢失时刷新或重试仍复用同一请求 ID，不重复创建运行。
-- Agent 推理模型、工具规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，允许用户从系统动态目录显式指定本次运行的图片/视频模型、公开 Skills、参考图片与执行模式；Web 只提交 `channelId + model`、Skill 目录标识、账号级 `resourceId + name` 和模式枚举。服务端重新校验模型可调用且已定价、读取 Skill 详情、核对资源归属与可用状态，并将模型、Skill 指令、资源 MIME/尺寸及执行模式冻结进 run checkpoint。每个 run 的步骤预算由服务端固定为 24，浏览器提交的步数不参与运行事实。自动模式可连续完成无费用的规划和画布提交，但每一个 `production.render` 付费 Artifact 都必须展示冻结报价并由用户确认后才创建 Task、BillingOrder 和积分预留。
+- Agent 推理模型、工具规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，允许用户从系统动态目录显式指定本次运行的图片/视频模型、公开 Skills、参考图片与执行模式；Web 只提交 `channelId + model`、Skill 目录标识、账号级 `resourceId + name` 和模式枚举。服务端重新校验模型可调用且已定价、读取 Skill 详情、核对资源归属与可用状态，并将模型、Skill 指令、资源 MIME/尺寸及执行模式冻结进 run checkpoint。每个 run 的步骤预算由服务端固定为 24，浏览器提交的步数不参与运行事实。手动模式自动执行只读工具，规划与画布写入必须审批；自动模式可连续完成无费用的规划和画布提交；两种模式下每一个 `production.render` 付费 Artifact 都必须展示冻结报价并由用户确认后才创建 Task、BillingOrder 和积分预留。
 - 模型只可调用 `skill.load`、`production.plan`、`production.render`、`canvas.commit` 四个高层工具；角色、服装、道具、场景参考图和正式分镜/视频结果只以服务端 Task、BillingOrder、Resource、Artifact Ledger 和交付验收事实为准。
 
 ### 单一 Agent Runtime

@@ -289,7 +289,7 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if first.State.Status != agentruntime.RunQueued || first.State.StepNumber != 0 || first.State.UserMessage != input.UserMessage {
 		t.Fatalf("initial runtime = %#v", first)
 	}
-	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion || first.Run.RuntimeVersion != agentRuntimeVersion || first.Run.PolicyVersion != agentRuntimePolicyVersion {
+	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion || first.Run.RuntimeVersion != agentruntime.CurrentRuntimeVersion || first.Run.PolicyVersion != agentruntime.CurrentPolicyVersion {
 		t.Fatalf("frozen run model = %#v", first.Run)
 	}
 	if first.ModelTask == nil || first.ModelTask.Status != model.TaskStatusQueued || first.ModelTask.Type != agentRuntimeModelTaskType || first.ModelTask.Model != fixture.channelModel.ModelKey {

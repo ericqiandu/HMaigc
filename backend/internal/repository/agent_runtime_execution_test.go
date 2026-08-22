@@ -142,7 +142,7 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
 		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
 		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
