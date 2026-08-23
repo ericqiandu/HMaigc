@@ -393,11 +393,8 @@
 .canvas-agent-runtime-heading,
 .canvas-agent-runtime-header-actions,
 .canvas-agent-runtime-composer-footer,
-.canvas-agent-runtime-process-summary,
-.canvas-agent-runtime-process-main,
 .canvas-agent-runtime-approval-heading,
 .canvas-agent-runtime-approval-actions,
-.canvas-agent-runtime-final-heading,
 .canvas-agent-runtime-tool-result,
 .canvas-agent-runtime-error,
 .canvas-agent-runtime-failure {
@@ -666,88 +663,153 @@
     line-height: 21px;
 }
 
-.canvas-agent-runtime-process {
+.canvas-agent-thinking {
+    width: 100%;
     min-width: 0;
 }
-.canvas-agent-runtime-process-summary {
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 32px;
-    cursor: pointer;
-    list-style: none;
-}
-.canvas-agent-runtime-process-summary::-webkit-details-marker {
-    display: none;
-}
-.canvas-agent-runtime-process-main {
-    min-width: 0;
+.canvas-agent-thinking-toggle {
+    display: flex;
+    width: fit-content;
+    min-height: 28px;
+    align-items: center;
     gap: 8px;
+    margin-left: -6px;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    transition: background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.canvas-agent-runtime-chevron {
+.canvas-agent-thinking-toggle:hover,
+.canvas-agent-thinking-toggle:focus-visible {
+    background: color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+.canvas-agent-thinking-toggle:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+.canvas-agent-thinking-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    color: color-mix(in srgb, var(--foreground) 52%, transparent);
+    stroke-width: 1.6;
+}
+.canvas-agent-thinking-label {
+    color: color-mix(in srgb, var(--foreground) 68%, transparent);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+}
+.canvas-agent-thinking-label[data-active="true"] {
+    background: linear-gradient(90deg, color-mix(in srgb, var(--foreground) 42%, transparent) 35%, var(--foreground) 50%, color-mix(in srgb, var(--foreground) 42%, transparent) 65%);
+    background-clip: text;
+    background-size: 200% 100%;
+    color: transparent;
+    animation: canvas-agent-thinking-shimmer 1.4s linear infinite;
+}
+.canvas-agent-thinking-chevron {
     width: 14px;
     height: 14px;
-    transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    flex: 0 0 14px;
+    color: color-mix(in srgb, var(--foreground) 42%, transparent);
+    stroke-width: 2.2;
+    transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.canvas-agent-runtime-process:not([open]) .canvas-agent-runtime-chevron {
-    transform: rotate(-90deg);
+.canvas-agent-thinking-chevron[data-expanded="true"] {
+    transform: rotate(180deg);
 }
-.canvas-agent-runtime-status-dot {
-    width: 7px;
-    height: 7px;
-    flex: 0 0 7px;
-    border-radius: 50%;
-    background: var(--brand-primary);
+.canvas-agent-thinking-disclosure {
+    display: grid;
+    opacity: 0;
+    grid-template-rows: 0fr;
+    transition:
+        grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        opacity 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.canvas-agent-runtime-status-dot[data-status="succeeded"] {
-    background: var(--status-success);
+.canvas-agent-thinking-disclosure[data-expanded="true"] {
+    opacity: 1;
+    grid-template-rows: 1fr;
 }
-.canvas-agent-runtime-status-dot[data-status="failed"],
-.canvas-agent-runtime-status-dot[data-status="cancelled"] {
-    background: var(--status-danger);
+.canvas-agent-thinking-disclosure-inner {
+    min-height: 0;
+    overflow: hidden;
 }
-.canvas-agent-runtime-status-dot[data-status="waiting_approval"] {
-    background: var(--status-warning);
+.canvas-agent-thinking-trace {
+    position: relative;
+    margin: 4px 0 0 5px;
+    padding: 4px 0 4px 16px;
 }
-.canvas-agent-runtime-status-label {
+.canvas-agent-thinking-line {
+    position: absolute;
+    top: 0;
+    bottom: 16px;
+    left: 3px;
+    width: 1px;
+    background: color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.canvas-agent-thinking-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.canvas-agent-thinking-row {
+    display: flex;
+    width: 100%;
+    min-height: 28px;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    color: color-mix(in srgb, var(--foreground) 68%, transparent);
+    animation: canvas-agent-thinking-row-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.canvas-agent-thinking-row[data-state="active"] {
+    color: color-mix(in srgb, var(--foreground) 84%, transparent);
+}
+.canvas-agent-thinking-row[data-state="failed"] {
+    color: var(--status-danger);
+}
+.canvas-agent-thinking-spinner {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+    border: 2px solid color-mix(in srgb, var(--foreground) 14%, transparent);
+    border-top-color: color-mix(in srgb, var(--foreground) 68%, transparent);
+    border-radius: 999px;
+    animation: canvas-agent-thinking-spin 700ms linear infinite;
+}
+.canvas-agent-thinking-check,
+.canvas-agent-thinking-error {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    stroke-width: 2.4;
+}
+.canvas-agent-thinking-check {
+    color: color-mix(in srgb, var(--foreground) 42%, transparent);
+}
+.canvas-agent-thinking-row-label {
+    min-width: 0;
+    flex: 1;
     overflow: hidden;
     font-size: 12px;
-    line-height: 18px;
+    font-weight: 500;
+    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.canvas-agent-runtime-status-label[data-active="true"] {
-    color: color-mix(in srgb, var(--foreground) 84%, transparent);
-}
-.canvas-agent-runtime-step {
+.canvas-agent-thinking-row-secondary {
     flex: 0 0 auto;
-    font-size: 10px;
+    color: color-mix(in srgb, var(--foreground) 38%, transparent);
+    font-size: 11px;
+    font-weight: 400;
     line-height: 16px;
-}
-.canvas-agent-runtime-event-list {
-    display: grid;
-    gap: 4px;
-    padding: 4px 0 4px 22px;
-}
-.canvas-agent-runtime-event {
-    display: grid;
-    min-height: 24px;
-    grid-template-columns: 20px minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    line-height: 17px;
-}
-.canvas-agent-runtime-event-sequence {
-    color: color-mix(in srgb, var(--foreground) 36%, transparent);
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-}
-.canvas-agent-runtime-event-label {
-    color: color-mix(in srgb, var(--foreground) 72%, transparent);
-}
-.canvas-agent-runtime-event-empty {
-    font-size: 11px;
-    line-height: 17px;
+    white-space: nowrap;
 }
 
 .canvas-agent-runtime-approval {
@@ -757,6 +819,8 @@
 }
 .canvas-agent-runtime-final {
     min-width: 0;
+    font-size: 13px;
+    line-height: 21px;
 }
 .canvas-agent-runtime-approval-heading {
     align-items: flex-start;
@@ -814,33 +878,6 @@
 .canvas-agent-runtime-reject.ant-btn,
 .canvas-agent-runtime-approve.ant-btn {
     min-height: 34px;
-}
-.canvas-agent-runtime-final-heading {
-    gap: 8px;
-    margin-bottom: 6px;
-}
-.canvas-agent-runtime-final-icon {
-    width: 14px;
-    height: 14px;
-    color: color-mix(in srgb, var(--foreground) 56%, transparent);
-}
-.canvas-agent-runtime-final-title {
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-}
-.canvas-agent-runtime-final-state {
-    color: var(--muted-foreground);
-    font-size: 11px;
-    line-height: 16px;
-}
-.canvas-agent-runtime-streaming-caret {
-    display: inline-block;
-    width: 7px;
-    height: 1em;
-    margin-left: 2px;
-    background: currentColor;
-    vertical-align: -0.12em;
 }
 .canvas-agent-runtime-tool-result {
     width: fit-content;
@@ -1228,7 +1265,35 @@
     color: color-mix(in srgb, var(--foreground) 84%, transparent);
 }
 
+@keyframes canvas-agent-thinking-shimmer {
+    to {
+        background-position: -200% 0;
+    }
+}
+
+@keyframes canvas-agent-thinking-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes canvas-agent-thinking-row-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
+    .canvas-agent-thinking-label,
+    .canvas-agent-thinking-chevron,
+    .canvas-agent-thinking-disclosure,
+    .canvas-agent-thinking-row,
+    .canvas-agent-thinking-spinner,
     .agent-clarification-card,
     .agent-clarification-nav-button,
     .agent-clarification-option,

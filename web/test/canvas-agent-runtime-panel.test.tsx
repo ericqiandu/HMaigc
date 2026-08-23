@@ -265,8 +265,14 @@ test("真实回复增量到达前显示思考中并在首个增量后切换为�
 
     await mount(client, storage);
 
-    const activity = document.querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
-    expect(activity?.textContent).toContain("思考中");
+    const thinking = document.querySelector<HTMLElement>('[aria-label="Agent 思考过程"]');
+    const thinkingToggle = thinking?.querySelector<HTMLButtonElement>(".canvas-agent-thinking-toggle");
+    expect(thinkingToggle?.textContent).toContain("思考中");
+    expect(thinkingToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(thinking?.querySelector(".canvas-agent-thinking-disclosure")?.getAttribute("aria-hidden")).toBe("false");
+    expect(thinking?.querySelector(".canvas-agent-thinking-icon")).not.toBeNull();
+    expect(thinking?.querySelector(".canvas-agent-thinking-label[data-active='true']")).not.toBeNull();
+    expect(thinking?.querySelector(".canvas-agent-thinking-spinner")).not.toBeNull();
     expect(document.querySelector('[aria-label="Agent 回复"]')).toBeNull();
 
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
@@ -285,10 +291,42 @@ test("真实回复增量到达前显示思考中并在首个增量后切换为�
     );
     await settle();
 
-    expect(activity?.textContent).toContain("回复中");
+    expect(thinkingToggle?.textContent).toContain("已思考");
+    expect(thinkingToggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(thinking?.querySelector(".canvas-agent-thinking-disclosure")?.getAttribute("aria-hidden")).toBe("true");
     const response = document.querySelector<HTMLElement>('[aria-label="Agent 回复"]');
     expect(response?.textContent).toContain("第一句");
-    expect(response?.querySelector('[aria-hidden="true"].canvas-agent-runtime-streaming-caret')).not.toBeNull();
+    expect(response?.querySelector(".canvas-agent-runtime-final-heading")).toBeNull();
+    expect(response?.querySelector(".canvas-agent-runtime-streaming-caret")).toBeNull();
+});
+
+test("新一轮运行不继承上一轮手动折叠并默认展开思考轨迹", async () => {
+    const completed = runtimeView("succeeded", { finalMessage: "上一轮完成", verification: { status: "satisfied", rationale: "ok" } });
+    const running = runtimeView("running", { userMessage: "新一轮" }, { id: "run-2", clientRequestId: "request-2" });
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 0 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        getRun: async () => completed,
+        startRun: async () => running,
+    });
+
+    await mount(client, storage);
+    const previousToggle = document.querySelector<HTMLButtonElement>(".canvas-agent-thinking-toggle");
+    if (!previousToggle) throw new Error("未找到上一轮思考轨迹");
+    await act(async () => previousToggle.click());
+    await act(async () => previousToggle.click());
+    expect(previousToggle.getAttribute("aria-expanded")).toBe("false");
+
+    await setPrompt("新一轮");
+    await act(async () => button("发送").click());
+    await settle();
+
+    const currentToggle = document.querySelector<HTMLButtonElement>(".canvas-agent-thinking-toggle");
+    expect(currentToggle?.textContent).toContain("思考中");
+    expect(currentToggle?.getAttribute("aria-expanded")).toBe("true");
 });
 
 test("运行已终止时即使完成事件稍晚到达也不继续显示流式光标", async () => {
@@ -326,7 +364,7 @@ test("运行已终止时即使完成事件稍晚到达也不继续显示流式�
     );
     await act(async () => new Promise((resolve) => setTimeout(resolve, 80)));
 
-    expect(document.querySelector('[role="status"][aria-live="polite"]')?.textContent).toContain("已完成");
+    expect(document.querySelector('[aria-label="Agent 思考过程"]')?.textContent).toContain("已思考");
     expect(document.querySelector('[aria-label="Agent 回复"] .canvas-agent-runtime-streaming-caret')).toBeNull();
 });
 
