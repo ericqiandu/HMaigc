@@ -33,6 +33,25 @@ type AppendAgentMessageDeltaInput struct {
 	Now         time.Time
 }
 
+type FailAgentMessageStreamInput struct {
+	Scope       agentruntime.Scope
+	ItemID      string
+	Message     string
+	FailureCode string
+	Now         time.Time
+}
+
+type agentMessageFailurePayload struct {
+	ItemID      string `json:"itemId"`
+	Message     string `json:"message"`
+	FailureCode string `json:"failureCode"`
+}
+
+type agentMessageFailureContent struct {
+	Message     string `json:"message"`
+	FailureCode string `json:"failureCode"`
+}
+
 func (r *Repository) AppendAgentMessageDelta(input AppendAgentMessageDeltaInput) (*model.AgentRunEvent, error) {
 	if err := input.Scope.Validate(); err != nil || input.ItemID == "" || input.Message == "" || input.Now.IsZero() || !json.Valid([]byte(input.PayloadJSON)) {
 		return nil, errors.Join(ErrAgentTimelineConflict, errors.New("agent message delta boundary is invalid"), err)
@@ -57,12 +76,56 @@ func (r *Repository) AppendAgentMessageDelta(input AppendAgentMessageDeltaInput)
 		if ordinalErr != nil {
 			return ordinalErr
 		}
-		mutation := TimelineMutation{ItemID: input.ItemID, Kind: model.AgentTimelineItemAgentMessage, ToStatus: model.AgentTimelineItemInProgress, SourceEventSequence: sequence, ContentJSON: content}
-		if !input.Started {
-			fromStatus := model.AgentTimelineItemInProgress
-			mutation.FromStatus = &fromStatus
+		fromStatus := model.AgentTimelineItemInProgress
+		mutation := TimelineMutation{
+			ItemID: input.ItemID, Kind: model.AgentTimelineItemAgentMessage,
+			FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemInProgress,
+			SourceEventSequence: sequence, ContentJSON: content, AllowInsert: input.Started,
 		}
 		return persistAgentTimelineMutation(tx, input.Scope, mutation, &nextOrdinal, input.Now)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+func (r *Repository) FailAgentMessageStream(input FailAgentMessageStreamInput) (*model.AgentRunEvent, error) {
+	if err := input.Scope.Validate(); err != nil || input.ItemID == "" || input.Message == "" ||
+		input.FailureCode == "" || len(input.FailureCode) > 80 || input.Now.IsZero() {
+		return nil, errors.Join(ErrAgentTimelineConflict, errors.New("agent message failure boundary is invalid"), err)
+	}
+	payload, err := json.Marshal(agentMessageFailurePayload{ItemID: input.ItemID, Message: input.Message, FailureCode: input.FailureCode})
+	if err != nil {
+		return nil, err
+	}
+	content, err := marshalAgentTimelineContent(agentMessageFailureContent{Message: input.Message, FailureCode: input.FailureCode})
+	if err != nil {
+		return nil, err
+	}
+	var event model.AgentRunEvent
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		sequence, allocateErr := allocateAgentEventSequence(tx, input.Scope, input.Now)
+		if allocateErr != nil {
+			return allocateErr
+		}
+		event = model.AgentRunEvent{
+			ID: agentFactID("event", input.Scope.RunID, strconv.FormatInt(sequence, 10)), RunID: input.Scope.RunID,
+			Sequence: sequence, Kind: agentruntime.EventAgentMessageFailed, PayloadJSON: string(payload), CreatedAt: input.Now,
+		}
+		if createErr := tx.Create(&event).Error; createErr != nil {
+			return createErr
+		}
+		nextOrdinal, ordinalErr := nextAgentTimelineOrdinal(tx, input.Scope.RunID)
+		if ordinalErr != nil {
+			return ordinalErr
+		}
+		fromStatus := model.AgentTimelineItemInProgress
+		return persistAgentTimelineMutation(tx, input.Scope, TimelineMutation{
+			ItemID: input.ItemID, Kind: model.AgentTimelineItemAgentMessage,
+			FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemFailed,
+			SourceEventSequence: sequence, ContentJSON: content,
+		}, &nextOrdinal, input.Now)
 	})
 	if err != nil {
 		return nil, err

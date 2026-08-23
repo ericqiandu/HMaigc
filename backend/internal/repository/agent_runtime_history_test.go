@@ -79,6 +79,106 @@ func TestAppendAgentMessageDeltaPersistsEventAndItemAtomicallyForReplay(t *testi
 	}
 }
 
+func TestAppendAgentMessageDeltaRestartsOneInterruptedMessageProjection(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := agentruntime.Scope{
+		TenantKind: agentruntime.TenantPersonal, TenantID: "restart-user", ActorUserID: "restart-user",
+		CanvasID: "restart-canvas", ThreadID: "restart-thread", RunID: "restart-run",
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
+	}
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-record", ModelKey: "model-key", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion,
+		PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	itemID := agentruntime.AgentMessageItemID(scope.RunID, 0)
+	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
+		Scope: scope, ItemID: itemID,
+		PayloadJSON: `{"itemId":"` + itemID + `","delta":"旧的半截","userVisible":true,"started":true}`,
+		Message:     "旧的半截", Started: true, Now: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
+		Scope: scope, ItemID: itemID,
+		PayloadJSON: `{"itemId":"` + itemID + `","delta":"重新开始","userVisible":true,"started":true}`,
+		Message:     "重新开始", Started: true, Now: now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("restarted stream could not replace the interrupted projection: %v", err)
+	}
+	var item model.AgentTimelineItem
+	if err := db.First(&item, "id = ?", itemID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != model.AgentTimelineItemInProgress || item.ContentJSON != `{"message":"重新开始"}` || item.SourceEventSequence != 4 {
+		t.Fatalf("restarted message projection = %#v", item)
+	}
+	var itemCount int64
+	if err := db.Model(&model.AgentTimelineItem{}).Where("id = ?", itemID).Count(&itemCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if itemCount != 1 {
+		t.Fatalf("restarted stream created %d message items", itemCount)
+	}
+}
+
+func TestFailAgentMessageStreamPersistsFailedTerminalItemForReplay(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := agentruntime.Scope{
+		TenantKind: agentruntime.TenantPersonal, TenantID: "failed-message-user", ActorUserID: "failed-message-user",
+		CanvasID: "failed-message-canvas", ThreadID: "failed-message-thread", RunID: "failed-message-run",
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
+	}
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-record", ModelKey: "model-key", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion,
+		PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	itemID := agentruntime.AgentMessageItemID(scope.RunID, 0)
+	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
+		Scope: scope, ItemID: itemID,
+		PayloadJSON: `{"itemId":"` + itemID + `","delta":"未完成正文","userVisible":true,"started":true}`,
+		Message:     "未完成正文", Started: true, Now: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := repo.FailAgentMessageStream(FailAgentMessageStreamInput{
+		Scope: scope, ItemID: itemID, Message: "未完成正文",
+		FailureCode: "agent_provider_stream_truncated", Now: now.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("failed stream did not terminate its message item: %v", err)
+	}
+	if failed.Kind != agentruntime.EventAgentMessageFailed || failed.Sequence != 4 {
+		t.Fatalf("failed message event = %#v", failed)
+	}
+	var item model.AgentTimelineItem
+	if err := db.First(&item, "id = ?", itemID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != model.AgentTimelineItemFailed || item.CompletedAt == nil || item.SourceEventSequence != failed.Sequence ||
+		item.ContentJSON != `{"message":"未完成正文","failureCode":"agent_provider_stream_truncated"}` {
+		t.Fatalf("failed message item = %#v", item)
+	}
+	records, err := repo.AgentTimelineEventsAfter(scope, 3, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Event.Kind != agentruntime.EventAgentMessageFailed || records[0].Item == nil || records[0].Item.Status != model.AgentTimelineItemFailed {
+		t.Fatalf("failed message replay = %#v", records)
+	}
+}
+
 func TestAgentTimelineEventsAfterRejectsStoredItemOutsideRunScope(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := agentruntime.Scope{

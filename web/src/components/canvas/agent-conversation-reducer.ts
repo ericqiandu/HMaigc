@@ -30,6 +30,10 @@ export function reduceAgentConversation(state: AgentConversationState, event: Ag
         next.items.push(item);
     }
     if (!item) return next;
+    if (event.kind === "item.started") {
+        item.text = "";
+        item.status = "in_progress";
+    }
     if (delta) item.text += delta;
     if (event.kind === "item.completed" && finalMessage) {
         if (!finalMessage.startsWith(item.text)) return { ...next, protocolError: "agent_message_delta_conflict" };

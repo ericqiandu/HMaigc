@@ -106,6 +106,7 @@ const (
 	EventRunCompleted             EventKind = "run.completed"
 	EventRunFailed                EventKind = "run.failed"
 	EventAgentMessageCompleted    EventKind = "agent.message"
+	EventAgentMessageFailed       EventKind = "agent.message_failed"
 	EventArtifactAvailable        EventKind = "artifact.available"
 )
 
@@ -120,7 +121,7 @@ func (kind EventKind) Valid() bool {
 		EventModelDelta, EventModelRejected,
 		EventClarificationRequested, EventClarificationAnswerSaved, EventClarificationResponded,
 		EventToolCall, EventApprovalRequired, EventApprovalDecided, EventToolStarted, EventToolResult,
-		EventCheckpointSaved, EventRunCompleted, EventRunFailed, EventAgentMessageCompleted, EventArtifactAvailable:
+		EventCheckpointSaved, EventRunCompleted, EventRunFailed, EventAgentMessageCompleted, EventAgentMessageFailed, EventArtifactAvailable:
 		return true
 	default:
 		return false

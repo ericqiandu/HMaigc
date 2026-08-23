@@ -277,7 +277,7 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc, _, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	input := StartAgentRuntimeInput{
 		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-invalid-decision-repair",
 		UserMessage: "生成一张图片", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
@@ -288,6 +288,13 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	}
 	if err := svc.ProcessNextTask(); err != nil {
 		t.Fatalf("invalid model decision must remain a repairable runtime fact: %v", err)
+	}
+	var rejectedMessage model.AgentTimelineItem
+	if err := db.First(&rejectedMessage, "id = ?", agentruntime.AgentMessageItemID(input.Scope.RunID, 0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rejectedMessage.Status != model.AgentTimelineItemFailed || rejectedMessage.CompletedAt == nil {
+		t.Fatalf("rejected streamed message remained active = %#v", rejectedMessage)
 	}
 
 	progress, err := svc.ResumeAgentRuntime(input.Scope)
@@ -307,6 +314,44 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	}
 	if started.ModelTask == nil || nextTask.ID == started.ModelTask.ID {
 		t.Fatalf("repair reused the failed model step: started=%#v next=%#v", started.ModelTask, nextTask)
+	}
+}
+
+func TestAgentRuntimeTruncatedStreamMarksPartialMessageFailed(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		chunk := map[string]any{
+			"id":      "chatcmpl-truncated-message",
+			"choices": []map[string]any{{"delta": map[string]any{"content": `{"kind":"final","final":{"message":"正在生成`}}},
+		}
+		encoded, err := json.Marshal(chunk)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, _ = writer.Write([]byte("data: " + string(encoded) + "\n\n"))
+	}))
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-truncated-visible-message",
+		UserMessage: "告诉我下一步", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err == nil {
+		t.Fatal("truncated provider stream was reported as successful")
+	}
+	var failedMessage model.AgentTimelineItem
+	if err := db.First(&failedMessage, "id = ?", agentruntime.AgentMessageItemID(input.Scope.RunID, 0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedMessage.Status != model.AgentTimelineItemFailed || failedMessage.CompletedAt == nil ||
+		!strings.Contains(failedMessage.ContentJSON, `"failureCode":"agent_provider_stream_truncated"`) {
+		t.Fatalf("truncated streamed message = %#v", failedMessage)
 	}
 }
 

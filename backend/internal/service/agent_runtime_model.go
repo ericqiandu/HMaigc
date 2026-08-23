@@ -71,10 +71,11 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 			if marshalErr != nil {
 				return marshalErr
 			}
-			visibleMessage += visible
-			if _, appendErr := s.repo.AppendAgentMessageDelta(repository.AppendAgentMessageDeltaInput{Scope: scope, ItemID: itemID, PayloadJSON: string(payload), Message: visibleMessage, Started: !started, Now: time.Now().UTC()}); appendErr != nil {
+			nextVisibleMessage := visibleMessage + visible
+			if _, appendErr := s.repo.AppendAgentMessageDelta(repository.AppendAgentMessageDeltaInput{Scope: scope, ItemID: itemID, PayloadJSON: string(payload), Message: nextVisibleMessage, Started: !started, Now: time.Now().UTC()}); appendErr != nil {
 				return fmt.Errorf("agent_visible_delta_projection_failed: %w", appendErr)
 			}
+			visibleMessage = nextVisibleMessage
 			started = true
 			return nil
 		})
@@ -82,6 +83,9 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 			return agentRuntimeModelTaskResult{}, evidenceErr
 		}
 		if requestErr != nil {
+			if failErr := s.failAgentRuntimeVisibleMessage(scope, itemID, visibleMessage, agentRuntimeProviderStreamFailureCode(requestErr)); failErr != nil {
+				return agentRuntimeModelTaskResult{}, failErr
+			}
 			if config.MaxOutputTokens > 0 && (result.ProviderRequestID != "" || result.Usage.Available) {
 				if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "Agent 响应协议失败，等待上游账单核对"); evidenceErr != nil {
 					return agentRuntimeModelTaskResult{}, evidenceErr
@@ -94,6 +98,9 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 		text = result.Text
 		if _, finishErr := observer.Finish(); finishErr != nil {
+			if failErr := s.failAgentRuntimeVisibleMessage(scope, itemID, visibleMessage, "model_decision_invalid"); failErr != nil {
+				return agentRuntimeModelTaskResult{}, failErr
+			}
 			if config.MaxOutputTokens > 0 {
 				if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "Agent 决策校验失败，等待上游账单核对"); evidenceErr != nil {
 					return agentRuntimeModelTaskResult{}, evidenceErr
@@ -117,26 +124,42 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 	return agentRuntimeModelTaskResult{Mode: "text", Text: text}, nil
 }
 
-func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, result kuaiziChatCompletionResult, streamErr error) error {
-	errorCode := ""
-	switch {
-	case errors.Is(streamErr, context.Canceled):
-		errorCode = "agent_provider_stream_cancelled"
-	case errors.Is(streamErr, errAgentProviderStreamTruncated):
-		errorCode = "agent_provider_stream_truncated"
-	case streamErr != nil:
-		errorCode = "agent_provider_stream_failed"
+func (s *Service) failAgentRuntimeVisibleMessage(scope agentruntime.Scope, itemID string, message string, failureCode string) error {
+	if message == "" {
+		return nil
 	}
+	if _, err := s.repo.FailAgentMessageStream(repository.FailAgentMessageStreamInput{
+		Scope: scope, ItemID: itemID, Message: message, FailureCode: failureCode, Now: time.Now().UTC(),
+	}); err != nil {
+		return errors.New("Agent 可见消息失败事实保存失败")
+	}
+	return nil
+}
+
+func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, result kuaiziChatCompletionResult, streamErr error) error {
 	payload, err := json.Marshal(struct {
 		ProviderRequestID string `json:"providerRequestId,omitempty"`
 		FinishReason      string `json:"finishReason,omitempty"`
 		UsageAvailable    bool   `json:"usageAvailable"`
 		ErrorCode         string `json:"errorCode,omitempty"`
-	}{ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, UsageAvailable: result.Usage.Available, ErrorCode: errorCode})
+	}{ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, UsageAvailable: result.Usage.Available, ErrorCode: agentRuntimeProviderStreamFailureCode(streamErr)})
 	if err != nil || s.log(task.UserID, task.ID, "info", "Agent provider stream evidence", string(payload)) != nil {
 		return errors.New("Agent 供应商流式事实保存失败")
 	}
 	return nil
+}
+
+func agentRuntimeProviderStreamFailureCode(streamErr error) string {
+	switch {
+	case errors.Is(streamErr, context.Canceled):
+		return "agent_provider_stream_cancelled"
+	case errors.Is(streamErr, errAgentProviderStreamTruncated):
+		return "agent_provider_stream_truncated"
+	case streamErr != nil:
+		return "agent_provider_stream_failed"
+	default:
+		return ""
+	}
 }
 
 func (s *Service) persistAgentRuntimeTokenBillingEvidence(task model.Task, result kuaiziChatCompletionResult, reason string) error {

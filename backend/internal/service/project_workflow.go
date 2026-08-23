@@ -183,7 +183,7 @@ func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID str
 	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
 		return model.WorkflowStepInstance{}, err
 	}
-	task, err := s.repo.TaskForUser(userID, strings.TrimSpace(req.TaskID))
+	task, err := s.repo.TaskForCustomer(userID, strings.TrimSpace(req.TaskID))
 	if err != nil {
 		return model.WorkflowStepInstance{}, err
 	}

@@ -28,4 +28,11 @@ describe("Agent conversation reducer", () => {
         expect(state.protocolError).toBe("agent_message_delta_conflict");
         expect(state.items[0]?.text).toBe("真实前缀");
     });
+
+    test("replaces an interrupted prefix when the same message stream restarts", () => {
+        let state = reduceAgentConversation(initialAgentConversationState(), event(1, "item.started", { itemId: "message", delta: "旧的半截", userVisible: true, started: true }));
+        state = reduceAgentConversation(state, event(2, "item.started", { itemId: "message", delta: "重新开始", userVisible: true, started: true }));
+        expect(state.items).toEqual([{ id: "message", text: "重新开始", status: "in_progress" }]);
+        expect(state.lastSequence).toBe(2);
+    });
 });

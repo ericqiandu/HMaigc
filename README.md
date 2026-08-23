@@ -24,7 +24,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
 - `AgentRunEvent` 是追加式审计真源，`AgentTimelineItem` 是与 Run、Event、Checkpoint、ToolCall 同事务维护的查询投影。Run 初始化固定写入 `run.created`、`user.message`、初始 Checkpoint 和已完成的用户消息 Item；Item 使用确定性身份、连续 ordinal 与唯一来源 sequence，任何投影冲突都会回滚整次状态迁移，禁止以不完整时间线伪装成功。
 - Agent 文本模型仍通过耐久 Task 保留队列恢复、计费、供应商请求与审计事实，但 Task 受众固定为 `internal`；普通用户任务列表、详情、日志、取消和重试接口只查询 `customer` Task，管理员、账务与 Runtime 协调器继续按权限读取内部事实。媒体 Task 仍保持客户可见。
-- Agent Chat Completions 固定使用供应商 `text/event-stream` 与 `stream_options.include_usage=true`。服务端只从严格 `ModelDecision` JSON 中释放已确认属于顶层 `kind=final` 的 `final.message` 增量；`reasoning_content`、工具参数、澄清结构和交付合同不进入用户正文。每段可见增量与助手 Item 同事务写入连续 sequence，再由 SSE 断线补发；UI 协议 v2 在刷新时从零重放耐久事件、仅对新游标执行业务副作用，React 按 `itemId + sequence` 让同一个助手气泡增长；不提供完整响应回退、模型降级或前端假打字。
+- Agent Chat Completions 固定使用供应商 `text/event-stream` 与 `stream_options.include_usage=true`。服务端只从严格 `ModelDecision` JSON 中释放已确认属于顶层 `kind=final` 的 `final.message` 增量；`reasoning_content`、工具参数、澄清结构和交付合同不进入用户正文。每段可见增量与助手 Item 同事务写入连续 sequence，再由 SSE 断线补发；任务断线重领会以新的 `item.started` 原子重置同一消息，协议截断或最终决策无效则追加 `agent.message_failed` 并保留已流出正文。UI 协议 v2 在刷新时从零重放耐久事件、仅对新游标执行业务副作用，React 按 `itemId + sequence` 让同一个助手气泡增长；不提供完整响应回退、模型降级或前端假打字。
 - 工具、审批和结果共用同一个 `tool_call` Item 生命周期：等待审批、已批准、已开始、完成、失败、拒绝或中断都更新同一身份，不创建并行的“执行中”残留项。运行中的追加指令以 `clientRequestId` 持久化并幂等去重；显式中断使用 `stateVersion` CAS，并关闭尚在等待的澄清或工具 Item。已经提交的媒体任务不被回滚，迟到成功结果追加独立 `artifact.available` 事件和 Artifact Item，保持 Run 终态及 Checkpoint 不变。
 - 时间线、生产计划和迟到资产的每一次读写都重新校验租户、操作者、项目、画布、Thread 与 Run 所有权；时间线只保存已鉴权的 `resourceId` 和媒体元数据，不保存会过期的 OSS 签名地址。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。

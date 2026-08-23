@@ -151,6 +151,7 @@ func TestEventKindSetRejectsUnknownValues(t *testing.T) {
 		agentruntime.EventRunCompleted,
 		agentruntime.EventRunFailed,
 		agentruntime.EventAgentMessageCompleted,
+		agentruntime.EventAgentMessageFailed,
 		agentruntime.EventArtifactAvailable,
 	} {
 		if !kind.Valid() {

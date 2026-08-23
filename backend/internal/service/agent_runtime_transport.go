@@ -112,6 +112,8 @@ func ProjectAgentEvent(threadID string, event model.AgentRunEvent, item *model.A
 		agentruntime.EventAgentMessageCompleted, agentruntime.EventClarificationResponded,
 		agentruntime.EventArtifactAvailable:
 		projected.Kind = AgentUIEventItemCompleted
+	case agentruntime.EventAgentMessageFailed:
+		projected.Kind = AgentUIEventItemFailed
 	case agentruntime.EventClarificationRequested, agentruntime.EventToolCall:
 		projected.Kind = AgentUIEventItemStarted
 	case agentruntime.EventClarificationAnswerSaved, agentruntime.EventToolStarted:

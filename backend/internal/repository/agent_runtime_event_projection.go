@@ -61,6 +61,22 @@ func agentTimelineMutationForStoredEvent(
 			ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
 			ContentJSON: json.RawMessage(event.PayloadJSON),
 		}, nil
+	case agentruntime.EventAgentMessageFailed:
+		var payload agentMessageFailurePayload
+		if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil || payload.ItemID == "" || payload.Message == "" ||
+			payload.FailureCode == "" || len(payload.FailureCode) > 80 {
+			return nil, errors.New("agent message failure event facts are invalid")
+		}
+		content, err := marshalAgentTimelineContent(agentMessageFailureContent{Message: payload.Message, FailureCode: payload.FailureCode})
+		if err != nil {
+			return nil, err
+		}
+		fromStatus := model.AgentTimelineItemInProgress
+		return &TimelineMutation{
+			ItemID: payload.ItemID, Kind: model.AgentTimelineItemAgentMessage,
+			FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemFailed,
+			SourceEventSequence: event.Sequence, ContentJSON: content,
+		}, nil
 	case agentruntime.EventModelDelta:
 		return nil, nil
 	default:
