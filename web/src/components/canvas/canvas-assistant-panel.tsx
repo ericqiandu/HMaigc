@@ -414,8 +414,13 @@ function AgentRunContent({ state, conversation, meaningfulEvents, connection, mu
 }
 
 function agentFailureMessage(failureCode: string): string {
-    if (failureCode === "insufficient_credits") return "余额不足";
-    return `运行失败：${failureCode}`;
+    return knownAgentErrorMessage(failureCode) ?? `运行失败：${failureCode}`;
+}
+
+function knownAgentErrorMessage(errorCode: string): string | undefined {
+    if (errorCode === "insufficient_credits") return "余额不足";
+    if (errorCode === "production_previous_billing_unresolved") return "上一次生成费用仍待确认，请先处理后再重试";
+    return undefined;
 }
 
 function AgentApprovalCard({ state, busy, muted, onDecision }: { state: AgentRuntimeState; busy: boolean; muted: string; onDecision: (decision: "approved" | "rejected") => void }) {
@@ -458,7 +463,7 @@ function ToolResult({ state, muted }: { state: AgentRuntimeState; muted: string 
             </span>
             <span className="canvas-agent-runtime-tool-result-id" style={{ color: muted }}>
                 {result.toolCallId}
-                {result.errorCode ? ` · ${result.errorCode}` : ""}
+                {result.errorCode ? ` · ${knownAgentErrorMessage(result.errorCode) ?? result.errorCode}` : ""}
             </span>
         </div>
     );

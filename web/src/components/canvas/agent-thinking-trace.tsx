@@ -59,7 +59,7 @@ export function AgentThinkingTrace({ status, stepNumber, maxSteps, hasVisibleRep
 
 function thinkingActivity(status: AgentRuntimeState["status"], hasVisibleReply: boolean, reconnecting: boolean) {
     if (reconnecting) return { active: true, label: "正在恢复连接" } as const;
-    if (status === "queued") return { active: true, label: "准备中" } as const;
+    if (status === "queued") return { active: true, label: "思考中" } as const;
     if (status === "running" && !hasVisibleReply) return { active: true, label: "思考中" } as const;
     if (status === "waiting_tool") return { active: true, label: "执行工具" } as const;
     if (status === "waiting_input") return { active: false, label: "等待回答" } as const;

@@ -247,6 +247,21 @@ test("刷新时从持久句柄恢复运行并重放耐久事件", async () => {
     expect(document.body.textContent).toContain("已执行 2 步 · 上限 8");
 });
 
+test("运行刚建立且尚无回复时立即显示思考中", async () => {
+    const queued = runtimeView("queued", { stateVersion: 1, stepNumber: 0 });
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem("thread-1", queued, "2026-08-15T04:00:00Z")] }),
+        getRun: async () => queued,
+    });
+
+    await mount(client);
+
+    const thinking = document.querySelector<HTMLElement>('[aria-label="Agent 思考过程"]');
+    expect(thinking?.querySelector(".canvas-agent-thinking-toggle")?.textContent).toContain("思考中");
+    expect(thinking?.textContent).toContain("等待模型任务");
+    expect(thinking?.textContent).not.toContain("准备中");
+});
+
 test("真实回复增量到达前显示思考中并在首个增量后切换为同一流式回复", async () => {
     let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
     const running = runtimeView("running", { stateVersion: 3, stepNumber: 1 });
@@ -576,6 +591,30 @@ test("余额不足时向用户显示可理解文案而不是内部错误码", as
 
     expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe("余额不足");
     expect(document.body.textContent).not.toContain("insufficient_credits");
+});
+
+test("上一生成费用待确认时在失败卡和工具卡隐藏内部错误码", async () => {
+    const failed = runtimeView("failed", {
+        failureCode: "production_previous_billing_unresolved",
+        lastToolResult: {
+            toolCallId: "tool_retry_video_clip_002",
+            actionVersion: 1,
+            succeeded: false,
+            output: {},
+            errorCode: "production_previous_billing_unresolved",
+        },
+    });
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem("thread-1", failed, "2026-08-15T04:00:00Z")] }),
+        getRun: async () => failed,
+    });
+
+    await mount(client);
+
+    const message = "上一次生成费用仍待确认，请先处理后再重试";
+    expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe(message);
+    expect(document.querySelector(".canvas-agent-runtime-tool-result")?.textContent).toContain(message);
+    expect(document.body.textContent).not.toContain("production_previous_billing_unresolved");
 });
 
 test("服务端历史恢复成功也不会吞掉本地句柄读取错误", async () => {
