@@ -1,11 +1,11 @@
-import { lazy, Suspense, useRef, useState, type UIEventHandler } from "react";
+import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { WorkspaceFloatingNavigation } from "@/components/layout/workspace-floating-navigation";
+import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import { DeferredSection } from "@/components/ui/deferred-section";
 import { UpdreamAnnouncementBar } from "@/pages/home/updream/updream-announcement-bar";
 import { UpdreamFooter } from "@/pages/home/updream/updream-footer";
-import { UpdreamHeader } from "@/pages/home/updream/updream-header";
 import { UpdreamHero } from "@/pages/home/updream/updream-hero";
 import { UpdreamVideoBackground } from "@/pages/home/updream/updream-video-background";
 import { listSkillsCatalog } from "@/services/api/skills";
@@ -16,8 +16,6 @@ const UpdreamRecentProjects = lazy(() => import("@/pages/home/updream/updream-re
 const UpdreamSkillsSection = lazy(() => import("@/pages/home/updream/updream-skills-section").then((module) => ({ default: module.UpdreamSkillsSection })));
 
 export function UpdreamHomePage() {
-    const [isHeaderElevated, setIsHeaderElevated] = useState(false);
-    const isHeaderElevatedRef = useRef(false);
     const skillsQuery = useQuery({
         queryKey: ["skills", "homepage", 6],
         queryFn: () => listSkillsCatalog({ page: 1, page_size: 6 }),
@@ -25,23 +23,14 @@ export function UpdreamHomePage() {
     });
     const skills = skillsQuery.data?.skills ?? [];
 
-    const handlePageScroll: UIEventHandler<HTMLDivElement> = (event) => {
-        const nextIsElevated = event.currentTarget.scrollTop > 8;
-
-        if (nextIsElevated === isHeaderElevatedRef.current) return;
-
-        isHeaderElevatedRef.current = nextIsElevated;
-        setIsHeaderElevated(nextIsElevated);
-    };
-
     return (
-        <div className="updream-home-page" onScroll={handlePageScroll}>
+        <div className="updream-home-page">
             <UpdreamVideoBackground />
             <div className="updream-home-content">
+                <WorkspaceTopBar />
                 <WorkspaceFloatingNavigation />
-                <div className={`updream-sticky-stack${isHeaderElevated ? " updream-sticky-stack--elevated" : ""}`}>
+                <div className="updream-announcement-layer">
                     <UpdreamAnnouncementBar />
-                    <UpdreamHeader />
                 </div>
                 <main className="updream-home-main">
                     <UpdreamHero skills={skills} />

@@ -1,6 +1,6 @@
 import "./setup-happy-dom";
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "antd";
 import { act, createElement } from "react";
@@ -17,9 +17,6 @@ const configuredSiteSettings = {
     icpRegistrationUrl: "",
     publicSecurityRegistrationNumber: "",
     publicSecurityRegistrationUrl: "",
-    userAgreement: "",
-    privacyPolicy: "",
-    membershipAgreement: "",
     homeBannerEnabled: false,
     homeBannerLabel: "",
     homeBannerText: "",
@@ -35,15 +32,8 @@ const configuredSiteSettings = {
     marketingPopupActionLabel: "",
     marketingPopupActionUrl: "",
     marketingPopupFrequency: "once",
-    updatedBy: "",
-    createdAt: "",
     updatedAt: "",
 };
-
-mock.module("@/services/api/site-settings", () => ({
-    publicSiteSettingsQueryKey: ["public-site-settings"],
-    getPublicSiteSettings: async () => configuredSiteSettings,
-}));
 
 let root: Root | null = null;
 

@@ -92,6 +92,17 @@
     --floating-surface-border: rgb(15 23 42 / 10%);
     --floating-surface-shadow: 0 4px 20px rgb(0 0 0 / 10%);
     --account-popover-surface: #ffffff;
+    --home-skill-tone-default: linear-gradient(128deg, #9076df, #6b5ed8);
+    --home-skill-tone-0: linear-gradient(128deg, #ca7ac5 0%, #b56bc0 100%);
+    --home-skill-tone-1: linear-gradient(128deg, #6aabea 0%, #3b8bdc 100%);
+    --home-skill-tone-2: linear-gradient(128deg, #edb07d 0%, #f28a3c 100%);
+    --home-skill-tone-3: linear-gradient(128deg, #8ba1f2 0%, #627ee8 100%);
+    --home-skill-tone-4: linear-gradient(128deg, #e4aec2 0%, #dc7894 100%);
+    --home-skill-tone-5: linear-gradient(128deg, #9ed1e4 0%, #69bde5 100%);
+    --home-skill-overlay-alpha: 6%;
+    --home-skill-shortcut-selected-border: rgb(37 99 235 / 38%);
+    --home-skill-shortcut-selected-background: rgb(37 99 235 / 12%);
+    --home-skill-shortcut-selected-text: rgb(23 32 51 / 92%);
 
     /* Creator workspace surfaces. Keep these scoped through workspace-ui.css. */
     --creator-workspace-page: #f5f7fb;
@@ -137,6 +148,9 @@
     --floating-surface-border: rgb(255 255 255 / 10%);
     --floating-surface-shadow: 0 4px 20px rgb(0 0 0 / 10%);
     --account-popover-surface: #262626;
+    --home-skill-shortcut-selected-border: rgb(96 165 250 / 42%);
+    --home-skill-shortcut-selected-background: rgb(96 165 250 / 14%);
+    --home-skill-shortcut-selected-text: rgb(255 255 255 / 92%);
 
     --creator-workspace-page: #0a0a0a;
     --creator-workspace-surface: #171717;

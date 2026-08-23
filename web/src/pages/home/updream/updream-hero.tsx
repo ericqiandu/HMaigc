@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 import { Sparkles } from "lucide-react";
@@ -13,27 +13,51 @@ import { AgentChatComposer } from "@/components/canvas/canvas-agent-chat-ui";
 import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "@/components/canvas/canvas-agent-selection-summary";
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection, type CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
+import { toCanvasAgentSkillSelection } from "@/lib/canvas/canvas-agent-composer-context";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useSiteSettings } from "@/components/site/site-settings-provider";
 import type { PlatformSkill } from "@/services/api/skills";
+import type { CanvasAgentSkillSelection } from "@/types/canvas";
 
 const MAX_REFERENCE_IMAGES = 4;
 
 const PLACEHOLDERS = ['试试说"在画布上为我创建…"，生成不阻塞，随时开启下一轮对话', "描述你想创作的内容，AI 帮你生成分镜", "进入项目后，按 @ 可引用资产库素材"] as const;
 
-export function UpdreamHeroSkillShortcuts({ skills }: { skills: PlatformSkill[] }) {
+type UpdreamHeroSkillShortcutsProps = {
+    skills: PlatformSkill[];
+    selectedSkills: CanvasAgentSkillSelection[];
+    disabled?: boolean;
+    onChange: (skills: CanvasAgentSkillSelection[]) => void;
+};
+
+export function UpdreamHeroSkillShortcuts({ skills, selectedSkills, disabled = false, onChange }: UpdreamHeroSkillShortcutsProps) {
     if (skills.length === 0) {
         return <div className="updream-hero-skill-shortcuts updream-hero-skill-shortcuts--empty" aria-hidden="true" />;
     }
 
+    const selectedDirs = new Set(selectedSkills.map((skill) => skill.dir));
+
     return (
         <nav className="updream-hero-skill-shortcuts" aria-label="推荐导演技能">
-            {skills.slice(0, 4).map((skill) => (
-                <Link key={skill.dir} className="updream-hero-skill-shortcut" to="/skills" title={skill.description}>
-                    <Sparkles className="updream-hero-skill-shortcut-icon" aria-hidden="true" />
-                    <span className="updream-hero-skill-shortcut-label">{skill.name}</span>
-                </Link>
-            ))}
+            {skills.slice(0, 4).map((skill) => {
+                const selected = selectedDirs.has(skill.dir);
+                return (
+                    <button
+                        key={skill.dir}
+                        type="button"
+                        className="updream-hero-skill-shortcut"
+                        title={skill.description}
+                        aria-pressed={selected}
+                        disabled={disabled}
+                        onClick={() =>
+                            onChange(selected ? selectedSkills.filter((item) => item.dir !== skill.dir) : [...selectedSkills, toCanvasAgentSkillSelection(skill)])
+                        }
+                    >
+                        <Sparkles className="updream-hero-skill-shortcut-icon" aria-hidden="true" />
+                        <span className="updream-hero-skill-shortcut-label">{skill.name}</span>
+                    </button>
+                );
+            })}
         </nav>
     );
 }
@@ -185,7 +209,12 @@ export function UpdreamHero({ skills = [] }: { skills?: PlatformSkill[] }) {
                         />
                     }
                 />
-                <UpdreamHeroSkillShortcuts skills={skills} />
+                <UpdreamHeroSkillShortcuts
+                    skills={skills}
+                    selectedSkills={draft.skillSelections}
+                    disabled={submitting}
+                    onChange={(skillSelections) => setDraft((current) => ({ ...current, skillSelections }))}
+                />
             </div>
         </section>
     );

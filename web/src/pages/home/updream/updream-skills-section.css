@@ -60,12 +60,14 @@
 }
 
 .updream-skill-card {
+    --skill-card-overlay-alpha: var(--home-skill-overlay-alpha);
+
     position: relative;
     height: 180px;
     overflow: hidden;
     border: 1px solid rgb(15 23 42 / 10%);
     border-radius: 16px;
-    background: linear-gradient(128deg, #9076df, #6b5ed8);
+    background: var(--home-skill-tone-default);
     transition:
         border-color 180ms var(--ease-standard),
         transform 180ms var(--ease-standard);
@@ -74,33 +76,33 @@
 .updream-skill-card::after {
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, rgb(8 10 18 / 18%), transparent 68%);
+    background: linear-gradient(90deg, rgb(8 10 18 / var(--skill-card-overlay-alpha)), transparent 68%);
     content: "";
     pointer-events: none;
 }
 
 .updream-skill-card[data-tone="0"] {
-    background: linear-gradient(128deg, #bd71b8 0%, #a261b2 100%);
+    background: var(--home-skill-tone-0);
 }
 
 .updream-skill-card[data-tone="1"] {
-    background: linear-gradient(128deg, #5c9ee4 0%, #277ed0 100%);
+    background: var(--home-skill-tone-1);
 }
 
 .updream-skill-card[data-tone="2"] {
-    background: linear-gradient(128deg, #e4a573 0%, #ed7a2d 100%);
+    background: var(--home-skill-tone-2);
 }
 
 .updream-skill-card[data-tone="3"] {
-    background: linear-gradient(128deg, #7e94ec 0%, #4e70df 100%);
+    background: var(--home-skill-tone-3);
 }
 
 .updream-skill-card[data-tone="4"] {
-    background: linear-gradient(128deg, #dba4b9 0%, #d26884 100%);
+    background: var(--home-skill-tone-4);
 }
 
 .updream-skill-card[data-tone="5"] {
-    background: linear-gradient(128deg, #91c5dc 0%, #57aede 100%);
+    background: var(--home-skill-tone-5);
 }
 
 .updream-skill-link:hover .updream-skill-card {

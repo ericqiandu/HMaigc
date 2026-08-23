@@ -1,13 +1,16 @@
 import "./setup-happy-dom";
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, createElement } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
 import { UpdreamHeroSkillShortcuts } from "../src/pages/home/updream/updream-hero";
 import { UpdreamVideoBackground } from "../src/pages/home/updream/updream-video-background";
 import type { PlatformSkill } from "@/services/api/skills";
+import type { CanvasAgentSkillSelection } from "@/types/canvas";
 
 let root: Root | null = null;
 let idleCallback: IdleRequestCallback | null = null;
@@ -26,10 +29,10 @@ afterEach(async () => {
     document.body.replaceChildren();
 });
 
-function configureDeferredMedia() {
+function configureDeferredMedia(reducedMotion = false) {
     window.matchMedia = () =>
         ({
-            matches: false,
+            matches: reducedMotion,
             media: "(prefers-reduced-motion: reduce)",
             onchange: null,
             addListener: () => undefined,
@@ -74,19 +77,40 @@ function skill(index: number): PlatformSkill {
 }
 
 describe("Updream homepage reference layout behavior", () => {
-    test("skill shortcuts render the first four live catalog skills as real links", async () => {
+    test("deferred homepage sections reserve their final vertical space before observation", () => {
+        const stylesheet = readFileSync(resolve(import.meta.dir, "../src/pages/home/updream/updream-home.css"), "utf8");
+        expect(stylesheet).toMatch(/\.updream-home-deferred--projects\s*\{[^}]*min-height:\s*268px/s);
+        expect(stylesheet).toMatch(/\.updream-home-deferred--skills\s*\{[^}]*min-height:\s*420px/s);
+    });
+
+    test("skill shortcuts select a live catalog skill into the current Agent draft", async () => {
         const host = document.createElement("div");
         document.body.append(host);
         root = createRoot(host);
 
+        function Harness() {
+            const [selectedSkills, setSelectedSkills] = useState<CanvasAgentSkillSelection[]>([]);
+            return createElement(UpdreamHeroSkillShortcuts, {
+                skills: [1, 2, 3, 4, 5].map(skill),
+                selectedSkills,
+                onChange: setSelectedSkills,
+            });
+        }
+
         await act(async () => {
-            root?.render(createElement(MemoryRouter, null, createElement(UpdreamHeroSkillShortcuts, { skills: [1, 2, 3, 4, 5].map(skill) })));
+            root?.render(createElement(MemoryRouter, null, createElement(Harness)));
         });
 
-        const shortcuts = [...document.querySelectorAll<HTMLAnchorElement>(".updream-hero-skill-shortcut")];
+        const shortcuts = [...document.querySelectorAll<HTMLButtonElement>(".updream-hero-skill-shortcut")];
         expect(shortcuts).toHaveLength(4);
         expect(shortcuts.map((shortcut) => shortcut.textContent?.trim())).toEqual(["导演技能 1", "导演技能 2", "导演技能 3", "导演技能 4"]);
-        expect(shortcuts.every((shortcut) => shortcut.getAttribute("href") === "/skills")).toBe(true);
+        expect(shortcuts[0]?.getAttribute("aria-pressed")).toBe("false");
+
+        await act(async () => shortcuts[0]?.click());
+        expect(shortcuts[0]?.getAttribute("aria-pressed")).toBe("true");
+
+        await act(async () => shortcuts[0]?.click());
+        expect(shortcuts[0]?.getAttribute("aria-pressed")).toBe("false");
     });
 
     test("skill shortcut loading keeps the reference layout slot stable", async () => {
@@ -95,7 +119,7 @@ describe("Updream homepage reference layout behavior", () => {
         root = createRoot(host);
 
         await act(async () => {
-            root?.render(createElement(MemoryRouter, null, createElement(UpdreamHeroSkillShortcuts, { skills: [] })));
+            root?.render(createElement(MemoryRouter, null, createElement(UpdreamHeroSkillShortcuts, { skills: [], selectedSkills: [], onChange: () => undefined })));
         });
 
         expect(document.querySelector(".updream-hero-skill-shortcuts--empty")).not.toBeNull();
@@ -147,5 +171,21 @@ describe("Updream homepage reference layout behavior", () => {
         await act(async () => video?.dispatchEvent(new Event("error")));
 
         expect(document.querySelector("[role='alert']")?.textContent).toContain("首页背景视频加载失败");
+    });
+
+    test("homepage background keeps the MP4 unloaded for reduced-motion users", async () => {
+        configureDeferredMedia(true);
+        const host = document.createElement("div");
+        document.body.append(host);
+        root = createRoot(host);
+
+        await act(async () => {
+            root?.render(createElement(UpdreamVideoBackground));
+            window.dispatchEvent(new Event("load"));
+        });
+
+        expect(idleCallback).toBeNull();
+        expect(document.querySelector(".updream-video-background-source")).toBeNull();
+        expect(document.querySelector<HTMLVideoElement>(".updream-video-background-media")?.preload).toBe("none");
     });
 });

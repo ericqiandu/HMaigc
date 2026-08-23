@@ -8,7 +8,14 @@
     background: #f5f7fb;
     color: #172033;
     font-family: var(--font-family-sans);
+    scrollbar-width: none;
     -webkit-font-smoothing: antialiased;
+}
+
+.updream-home-page::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
 }
 
 .dark .updream-home-page {
@@ -20,6 +27,14 @@
     position: relative;
     z-index: 1;
     min-height: 100%;
+}
+
+.updream-announcement-layer {
+    position: fixed;
+    top: var(--space-9);
+    right: 0;
+    left: 0;
+    z-index: var(--layer-header);
 }
 
 .updream-video-background {
@@ -139,30 +154,6 @@
     min-height: 420px;
 }
 
-.updream-home-page .workspace-floating-navigation {
-    top: 50%;
-    left: 24px;
-    gap: 8px;
-}
-
-.updream-home-page .workspace-floating-navigation-link {
-    width: 48px;
-    height: 72px;
-    gap: 6px;
-    padding: 14px 4px;
-    border-radius: 999px;
-}
-
-.updream-home-page .workspace-floating-navigation-link.is-active {
-    background: rgb(255 255 255 / 8%);
-}
-
-.updream-home-page .workspace-floating-navigation-label {
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-}
-
 .updream-announcement-share {
     color: #1f2d3d;
 }
@@ -213,6 +204,7 @@
 
 .updream-home-page .canvas-agent-composer-textarea {
     min-height: 60px;
+    max-height: 164px;
     color: rgb(15 23 42 / 86%) !important;
 }
 
@@ -254,6 +246,8 @@
     border-radius: 999px;
     background: rgb(15 23 42 / 5%);
     color: rgb(23 32 51 / 58%);
+    cursor: pointer;
+    font-family: inherit;
     font-size: 14px;
     font-weight: 400;
     line-height: 20px;
@@ -262,6 +256,17 @@
         border-color 200ms var(--ease-standard),
         background-color 200ms var(--ease-standard),
         color 200ms var(--ease-standard);
+}
+
+.updream-hero-skill-shortcut[aria-pressed="true"] {
+    border-color: var(--home-skill-shortcut-selected-border);
+    background: var(--home-skill-shortcut-selected-background);
+    color: var(--home-skill-shortcut-selected-text);
+}
+
+.updream-hero-skill-shortcut:disabled {
+    cursor: not-allowed;
+    opacity: 0.46;
 }
 
 .updream-hero-skill-shortcut:hover,
@@ -328,7 +333,17 @@
     color: rgb(255 255 255 / 90%);
 }
 
+.dark .updream-hero-skill-shortcut[aria-pressed="true"] {
+    border-color: var(--home-skill-shortcut-selected-border);
+    background: var(--home-skill-shortcut-selected-background);
+    color: var(--home-skill-shortcut-selected-text);
+}
+
 @media (max-width: 640px) {
+    .updream-announcement-layer {
+        top: 68px;
+    }
+
     .updream-home-main {
         padding-top: 240px;
     }
