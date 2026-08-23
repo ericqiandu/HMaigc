@@ -88,16 +88,12 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if input.ClientRequestID == "" || input.UserMessage == "" || len(input.UserMessage) > 64*1024 {
 		return nil, BadAuthRequest("Agent 请求事实无效")
 	}
-	record, err := s.repo.CreateAgentRun(repository.CreateAgentRunInput{
-		Scope: input.Scope, ClientRequestID: input.ClientRequestID, Now: time.Now().UTC(),
-	})
-	if err != nil {
-		return nil, err
-	}
 	scope := input.Scope
-	scope.RunID = record.Run.ID
-	run := record.Run
-	if run.MaxSteps == 0 {
+	existing, err := s.repo.AgentRunForClientRequest(scope, input.ClientRequestID)
+	var run model.AgentRun
+	if err == nil {
+		run = *existing
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		configuration, resolveErr := s.resolveAgentRuntimeConfiguration(input.Context, input.Scope.ActorUserID, input.Configuration)
 		if resolveErr != nil {
 			return nil, resolveErr
@@ -106,17 +102,26 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 		if selectErr != nil {
 			return nil, selectErr
 		}
-		initialized, initializeErr := s.repo.InitializeAgentRun(repository.InitializeAgentRunInput{
-			Scope: scope, ModelRecordID: selected.ID, ModelKey: selected.ModelKey,
-			MaxSteps: agentRuntimeMaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
-			RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
-			UserMessage: input.UserMessage, Configuration: configuration, Now: time.Now().UTC(),
+		now := time.Now().UTC()
+		initialized, initializeErr := s.repo.CreateInitializedAgentRun(repository.CreateInitializedAgentRunInput{
+			Create: repository.CreateAgentRunInput{
+				Scope: scope, ClientRequestID: input.ClientRequestID, Now: now,
+			},
+			Initialize: repository.InitializeAgentRunInput{
+				Scope: scope, ModelRecordID: selected.ID, ModelKey: selected.ModelKey,
+				MaxSteps: agentRuntimeMaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+				RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+				UserMessage: input.UserMessage, Configuration: configuration, Now: now,
+			},
 		})
 		if initializeErr != nil {
 			return nil, initializeErr
 		}
 		run = initialized.Run
+	} else {
+		return nil, err
 	}
+	scope.RunID = run.ID
 	state, err := s.repo.LoadAgentCheckpoint(scope)
 	if err != nil {
 		return nil, err

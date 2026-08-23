@@ -17,6 +17,7 @@ import {
 } from "@/services/api/agent-runtime";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
+const liveSubscriptionStatuses = new Set<AgentRuntimeView["state"]["status"]>(["queued", "running", "waiting_tool"]);
 
 const statusLabels: Record<AgentRuntimeView["state"]["status"], string> = {
     queued: "准备中",
@@ -31,6 +32,10 @@ const statusLabels: Record<AgentRuntimeView["state"]["status"], string> = {
 
 export function agentRuntimeStatusLabel(status: AgentRuntimeView["state"]["status"]) {
     return statusLabels[status];
+}
+
+export function agentRuntimeUsesLiveSubscription(status: AgentRuntimeView["state"]["status"]) {
+    return liveSubscriptionStatuses.has(status);
 }
 
 type UseAgentRuntimeInput = {
@@ -252,8 +257,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
 
     const runId = view?.run.id || "";
     const terminal = Boolean(view && terminalStatuses.has(view.state.status));
+    const liveSubscription = Boolean(view && agentRuntimeUsesLiveSubscription(view.state.status));
     useEffect(() => {
-        if (!restored || !runId || terminal) {
+        if (!restored || !runId || !liveSubscription) {
             setConnection("idle");
             return;
         }
@@ -284,7 +290,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             },
         });
         return () => closeSubscription();
-    }, [canvasId, client, restored, runId, scheduleRunRefresh, scheduleThreadReload, storage, terminal]);
+    }, [canvasId, client, liveSubscription, restored, runId, scheduleRunRefresh, scheduleThreadReload, storage]);
 
     const sendOrSteer = useCallback(
         async (userMessage: string, configuration: AgentRuntimeStartConfiguration) => {

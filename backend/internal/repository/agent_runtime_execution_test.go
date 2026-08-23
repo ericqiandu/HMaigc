@@ -169,6 +169,34 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	}
 }
 
+func TestCreateInitializedAgentRunRollsBackIdentityWhenInitializationFails(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	scope := repositoryAgentScope()
+	now := time.Now().UTC()
+	_, err := repo.CreateInitializedAgentRun(CreateInitializedAgentRunInput{
+		Create: CreateAgentRunInput{Scope: scope, ClientRequestID: "atomic-initialization", Now: now},
+		Initialize: InitializeAgentRunInput{
+			Scope: scope, ModelRecordID: "", ModelKey: "gpt-5.5", MaxSteps: 4,
+			ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取画布",
+			Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "initialization boundary") {
+		t.Fatalf("invalid atomic initialization error = %v", err)
+	}
+	var runCount int64
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Count(&runCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	var threadCount int64
+	if err := db.Model(&model.AgentThread{}).Where("id = ?", scope.ThreadID).Count(&threadCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 0 || threadCount != 0 {
+		t.Fatalf("failed atomic initialization leaked identity facts: runs=%d threads=%d", runCount, threadCount)
+	}
+}
+
 func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()

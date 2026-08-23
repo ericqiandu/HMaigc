@@ -18,7 +18,7 @@ import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
 import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
-import { agentRuntimeStatusLabel, useAgentRuntime } from "./use-agent-runtime";
+import { agentRuntimeStatusLabel, agentRuntimeUsesLiveSubscription, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 240;
@@ -351,6 +351,7 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
 function AgentRunContent({ state, events, connection, muted }: { state: AgentRuntimeState; events: AgentRuntimeEvent[]; connection: string; muted: string }) {
     const status = agentRuntimeStatusLabel(state.status);
     const lastEvents = useMemo(() => events.slice(-8), [events]);
+    const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
     return (
         <div className="canvas-agent-runtime-run">
             <div className="canvas-agent-runtime-user-message">
@@ -367,7 +368,7 @@ function AgentRunContent({ state, events, connection, muted }: { state: AgentRun
                         <strong className="canvas-agent-runtime-status-label">{status}</strong>
                     </span>
                     <span className="canvas-agent-runtime-step" style={{ color: muted }}>
-                        第 {state.stepNumber} / {state.maxSteps} 步{connection === "reconnecting" ? " · 正在重连" : ""}
+                        第 {state.stepNumber} / {state.maxSteps} 步{liveSubscription && connection === "reconnecting" ? " · 正在重连" : ""}
                     </span>
                 </summary>
                 <div className="canvas-agent-runtime-event-list">
@@ -380,7 +381,7 @@ function AgentRunContent({ state, events, connection, muted }: { state: AgentRun
                         ))
                     ) : (
                         <span className="canvas-agent-runtime-event-empty" style={{ color: muted }}>
-                            等待新的持久化事件
+                            {agentRuntimeEmptyEventLabel(state.status)}
                         </span>
                     )}
                 </div>
@@ -453,6 +454,13 @@ function ToolResult({ state, muted }: { state: AgentRuntimeState; muted: string 
 
 function isTerminal(status: AgentRuntimeState["status"]) {
     return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function agentRuntimeEmptyEventLabel(status: AgentRuntimeState["status"]) {
+    if (status === "waiting_input") return "等待你的回答";
+    if (status === "waiting_approval") return "等待你的确认";
+    if (status === "waiting_tool") return "等待工具结果";
+    return "等待新的持久化事件";
 }
 function eventLabel(kind: AgentRuntimeEvent["kind"]) {
     return (

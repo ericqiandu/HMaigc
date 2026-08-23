@@ -132,6 +132,29 @@ func (r *Repository) CreateAgentRun(input CreateAgentRunInput) (*AgentRunRecord,
 	return &record, nil
 }
 
+func (r *Repository) AgentRunForClientRequest(scope agentruntime.Scope, clientRequestID string) (*model.AgentRun, error) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if clientRequestID == "" || len(clientRequestID) > 120 {
+		return nil, errors.New("agent run client request id is invalid")
+	}
+	var run model.AgentRun
+	err := r.db.Table("agent_runs").Select("agent_runs.*").
+		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
+		Where(`agent_runs.thread_id = ? AND agent_runs.client_request_id = ? AND agent_runs.actor_user_id = ?
+			AND agent_threads.tenant_kind = ? AND agent_threads.tenant_id = ?
+			AND agent_threads.created_by_user_id = ? AND agent_threads.domain_project_id = ?
+			AND agent_threads.canvas_id = ?`, scope.ThreadID, clientRequestID, scope.ActorUserID,
+			scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID).
+		Take(&run).Error
+	if err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
 func agentThreadForCreate(db *gorm.DB, scope agentruntime.Scope, now time.Time) (*model.AgentThread, error) {
 	candidate := model.AgentThread{
 		ID: scope.ThreadID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,

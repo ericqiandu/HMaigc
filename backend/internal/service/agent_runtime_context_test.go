@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/database"
@@ -189,6 +190,75 @@ func TestAgentRuntimeFreezesCallableMediaModelFactsWithoutProviderSecrets(t *tes
 	}
 	if unchanged.Prompt != stored.Prompt {
 		t.Fatal("frozen callable model facts changed during replay")
+	}
+}
+
+func TestValidateAgentRuntimeCallableModelsAcceptsInputImageUsagePricing(t *testing.T) {
+	models := []agentRuntimeCallableModelFact{{
+		ChannelID: "image-channel", Model: "seedream5.0pro", DisplayName: "Seedream 5.0 Pro", Capability: "image",
+		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 120_000_000,
+		PriceTiers: []PublicChannelModelPriceTier{{
+			UsageMetric: inputImageUsageMetric, IncludedQuantity: 1, UnitPriceMicrocredits: 4_000_000,
+		}},
+	}}
+
+	if err := validateAgentRuntimeCallableModels(models); err != nil {
+		t.Fatalf("valid input-image usage pricing rejected: %v", err)
+	}
+}
+
+func TestStartAgentRuntimeRejectsInvalidCallablePricingWithoutPersistingPartialRun(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeCanvas(t, db)
+	createAgentRuntimeImageModel(t, db, fixture)
+	now := time.Now().UTC()
+	if err := db.Create(&model.ChannelModelPriceTier{
+		ID: "invalid-runtime-usage-tier", ChannelModelID: "runtime-image-model",
+		UsageMetric: "unsupported_usage", IncludedQuantity: 1, UnitPriceMicrocredits: 10,
+		PriceVersion: 1, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "invalid-callable-pricing-request",
+		UserMessage: "读取当前画布", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err == nil || err.Error() != "agent callable model pricing facts are invalid" {
+		t.Fatalf("invalid callable pricing error = %v", err)
+	}
+	var runCount int64
+	if err := db.Model(&model.AgentRun{}).Where("client_request_id = ?", input.ClientRequestID).Count(&runCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 0 {
+		t.Fatalf("invalid callable pricing persisted %d partial runs", runCount)
+	}
+}
+
+func TestValidateAgentRuntimeCallableModelsRejectsInvalidInputImageUsagePricing(t *testing.T) {
+	tests := []struct {
+		name  string
+		tiers []PublicChannelModelPriceTier
+	}{
+		{name: "unsupported metric", tiers: []PublicChannelModelPriceTier{{UsageMetric: "output_image", UnitPriceMicrocredits: 4_000_000}}},
+		{name: "mixed dimensions", tiers: []PublicChannelModelPriceTier{{UsageMetric: inputImageUsageMetric, Resolution: "1K", UnitPriceMicrocredits: 4_000_000}}},
+		{name: "negative included quantity", tiers: []PublicChannelModelPriceTier{{UsageMetric: inputImageUsageMetric, IncludedQuantity: -1, UnitPriceMicrocredits: 4_000_000}}},
+		{name: "duplicate metric", tiers: []PublicChannelModelPriceTier{
+			{UsageMetric: inputImageUsageMetric, IncludedQuantity: 1, UnitPriceMicrocredits: 4_000_000},
+			{UsageMetric: inputImageUsageMetric, IncludedQuantity: 2, UnitPriceMicrocredits: 5_000_000},
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			models := []agentRuntimeCallableModelFact{{
+				ChannelID: "image-channel", Model: "seedream5.0pro", DisplayName: "Seedream 5.0 Pro", Capability: "image",
+				BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 120_000_000, PriceTiers: test.tiers,
+			}}
+			if err := validateAgentRuntimeCallableModels(models); err == nil || err.Error() != "agent callable model pricing facts are invalid" {
+				t.Fatalf("invalid usage pricing error = %v", err)
+			}
+		})
 	}
 }
 

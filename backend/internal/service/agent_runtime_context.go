@@ -215,8 +215,23 @@ func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) 
 		seen[key] = struct{}{}
 		previous = key
 		priced := item.UnitPriceMicrocredits > 0
+		usageMetrics := make(map[string]struct{}, len(item.PriceTiers))
 		for _, tier := range item.PriceTiers {
-			if (strings.TrimSpace(tier.Resolution) == "" && strings.TrimSpace(tier.InputVariant) == "") || tier.UnitPriceMicrocredits <= 0 {
+			resolution := strings.TrimSpace(tier.Resolution)
+			inputVariant := strings.TrimSpace(tier.InputVariant)
+			usageMetric := strings.ToLower(strings.TrimSpace(tier.UsageMetric))
+			if tier.UnitPriceMicrocredits <= 0 {
+				return errors.New("agent callable model pricing facts are invalid")
+			}
+			if usageMetric != "" {
+				if usageMetric != inputImageUsageMetric || item.Capability != "image" || item.BillingMode != "fixed_request" || tier.IncludedQuantity < 0 || resolution != "" || inputVariant != "" {
+					return errors.New("agent callable model pricing facts are invalid")
+				}
+				if _, duplicate := usageMetrics[usageMetric]; duplicate {
+					return errors.New("agent callable model pricing facts are invalid")
+				}
+				usageMetrics[usageMetric] = struct{}{}
+			} else if resolution == "" && inputVariant == "" {
 				return errors.New("agent callable model pricing facts are invalid")
 			}
 			priced = true

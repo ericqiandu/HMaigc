@@ -91,6 +91,30 @@ test("waiting_input 显示为询问中而不是执行中", () => {
     ]).toEqual(["准备中", "思考中", "询问中", "执行中", "等待确认", "已完成", "已失败", "已取消"]);
 });
 
+test("等待用户输入或审批时不保持无效的实时订阅", async () => {
+    for (const status of ["waiting_input", "waiting_approval"] as const) {
+        let subscribeCalls = 0;
+        const paused = status === "waiting_input" ? waitingView(4) : view("waiting_approval", 4, {});
+        const client = runtimeClient({
+            listThreads: async () => ({ items: [historyItem(paused)] }),
+            getRun: async () => paused,
+            subscribe: () => {
+                subscribeCalls += 1;
+                return () => undefined;
+            },
+        });
+        await mount(client);
+
+        expect(subscribeCalls).toBe(0);
+        expect(runtime?.connection).toBe("idle");
+
+        if (root) await act(async () => root?.unmount());
+        root = null;
+        runtime = null;
+        document.body.replaceChildren();
+    }
+});
+
 async function mount(client: AgentRuntimeClient) {
     const host = document.createElement("div");
     document.body.append(host);

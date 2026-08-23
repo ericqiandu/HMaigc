@@ -38,6 +38,40 @@ type InitializedAgentRun struct {
 	Created bool
 }
 
+type CreateInitializedAgentRunInput struct {
+	Create     CreateAgentRunInput
+	Initialize InitializeAgentRunInput
+}
+
+func (r *Repository) CreateInitializedAgentRun(input CreateInitializedAgentRunInput) (*InitializedAgentRun, error) {
+	var result *InitializedAgentRun
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		txRepository := New(tx)
+		record, err := txRepository.CreateAgentRun(input.Create)
+		if err != nil {
+			return err
+		}
+		if !record.Created {
+			if record.Run.StateVersion == 0 || record.Run.MaxSteps == 0 || record.Run.LastEventSequence == 0 {
+				return ErrAgentRuntimeInitializationConflict
+			}
+			result = &InitializedAgentRun{Run: record.Run}
+			return nil
+		}
+		input.Initialize.Scope.RunID = record.Run.ID
+		initialized, err := txRepository.InitializeAgentRun(input.Initialize)
+		if err != nil {
+			return err
+		}
+		result = initialized
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 type agentRunInitializationUpdates struct {
 	MaxSteps          int       `gorm:"column:max_steps"`
 	ModelRecordID     string    `gorm:"column:model_record_id"`
