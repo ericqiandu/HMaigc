@@ -112,6 +112,12 @@ func TestProductionCanvasCommitProjectsVideoOnlyPlanWithoutImageNode(t *testing.
 	if scriptNode.Type != "script" || videoNode.Type != "video" || videoNode.Metadata.Content != "/api/resources/resource-video/file" {
 		t.Fatalf("video-only nodes: script=%#v video=%#v", scriptNode, videoNode)
 	}
+	if videoNode.Metadata.Seconds != "5" {
+		t.Fatalf("video-only node seconds = %q, want 5", videoNode.Metadata.Seconds)
+	}
+	if !bytes.Contains(patch.UpsertNodes[1], []byte(`"seconds":"5"`)) {
+		t.Fatalf("video-only node omitted the web duration contract: %s", patch.UpsertNodes[1])
+	}
 	if scriptNode.Metadata.Storyboard == nil || len(scriptNode.Metadata.Storyboard.Rows) != 1 ||
 		scriptNode.Metadata.Storyboard.Rows[0].ImageNodeID != "" || scriptNode.Metadata.Storyboard.Rows[0].VideoNodeID != videoNode.ID {
 		t.Fatalf("video-only storyboard row = %#v", scriptNode.Metadata.Storyboard)

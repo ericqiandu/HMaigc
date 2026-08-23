@@ -37,6 +37,7 @@ type productionCanvasNodeMetadata struct {
 	StorageKey      string                      `json:"storageKey,omitempty"`
 	MimeType        string                      `json:"mimeType,omitempty"`
 	DurationMS      int64                       `json:"durationMs,omitempty"`
+	Seconds         string                      `json:"seconds,omitempty"`
 	WorkflowKind    string                      `json:"workflowKind"`
 	WorkflowTitle   string                      `json:"workflowTitle"`
 	ShotIndex       int                         `json:"shotIndex,omitempty"`
@@ -311,12 +312,15 @@ func productionMediaCanvasNode(plan model.AgentProductionPlanVersion, shot agent
 	titleSuffix := "分镜图"
 	prompt := shot.ImagePrompt
 	width, height := 340.0, 240.0
+	seconds := ""
 	if artifact.Kind == model.AgentProductionArtifactVideoClip {
 		nodeType, titleSuffix, prompt, width, height = "video", "视频", shot.VideoPrompt, 420, 236
+		seconds = strconv.FormatFloat(float64(shot.DurationMS)/1000, 'f', -1, 64)
 	}
 	metadata := productionCanvasNodeMetadata{
 		Prompt: prompt, ComposerContent: prompt, Status: productionArtifactCanvasStatus(artifact.Status),
 		GenerationMode: nodeType, WorkflowKind: "shot", WorkflowTitle: "镜头 " + strconv.Itoa(shot.Order) + " " + titleSuffix,
+		Seconds:   seconds,
 		ShotIndex: shot.Order, TaskID: artifact.TaskID, TaskStatus: string(artifact.Status),
 		TaskProgress: productionArtifactProgress(artifact.Status), TaskStage: productionArtifactStage(artifact.Status), ErrorDetails: artifact.LastErrorCode,
 	}
