@@ -366,6 +366,30 @@ test("刷新时从持久句柄恢复运行并重放耐久事件", async () => {
     expect(document.body.textContent).toContain("已执行 2 步 · 上限 8");
 });
 
+test("活动 Agent 运行使用发送按钮原位停止并提交状态版本 CAS", async () => {
+    const calls: string[] = [];
+    const running = runtimeView("running", { stateVersion: 6, stepNumber: 3 });
+    const cancelled = runtimeView("cancelled", { stateVersion: 7, stepNumber: 3 });
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem("thread-1", running, "2026-08-23T13:39:07Z")] }),
+        getRun: async () => running,
+        interrupt: async (runId, input) => {
+            calls.push(`${runId}:${input.expectedStateVersion}`);
+            return cancelled;
+        },
+    });
+
+    await mount(client);
+
+    const stop = button("停止 Agent");
+    expect(stop.disabled).toBe(false);
+    expect(stop.classList.contains("canvas-submit-button")).toBe(true);
+    await act(async () => stop.click());
+    await settle();
+    expect(calls).toEqual(["run-1:6"]);
+    expect(button("发送")).not.toBeNull();
+});
+
 test("运行刚建立且尚无回复时立即显示思考中", async () => {
     const queued = runtimeView("queued", { stateVersion: 1, stepNumber: 0 });
     const client = runtimeClient({

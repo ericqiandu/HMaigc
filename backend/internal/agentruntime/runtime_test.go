@@ -584,13 +584,41 @@ func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rejected.State.Status != agentruntime.RunRunning || rejected.State.PendingToolCall != nil || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+	if rejected.State.Status != agentruntime.RunCancelled || rejected.State.PendingToolCall != nil || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("rejected transition = %#v", rejected)
+	}
+	if len(rejected.EventKinds) != 3 || rejected.EventKinds[2] != agentruntime.EventRunInterrupted {
+		t.Fatalf("rejected events = %#v", rejected.EventKinds)
 	}
 	if _, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
 		ToolCallID: "another-call", ActionVersion: 2, Decision: agentruntime.ToolApprovalApproved,
 	}); err == nil {
 		t.Fatal("mismatched approval identity was accepted")
+	}
+}
+
+func TestReviewWriteToolRejectionRemainsRepairable(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 2, MaxSteps: 6, Status: agentruntime.RunWaitingApproval,
+		UserMessage: "更新生产计划", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "plan-update", ToolName: agentruntime.ToolProductionPlan,
+			ActionVersion: 1, Arguments: json.RawMessage(`{"planKey":"plan-1"}`),
+		},
+	}
+
+	transition, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
+		ToolCallID: "plan-update", ActionVersion: 1, Decision: agentruntime.ToolApprovalRejected,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunRunning || transition.State.PendingToolCall != nil ||
+		transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+		t.Fatalf("write rejection = %#v", transition.State)
+	}
+	if len(transition.EventKinds) != 3 || transition.EventKinds[2] != agentruntime.EventRunStatusChanged {
+		t.Fatalf("write rejection events = %#v", transition.EventKinds)
 	}
 }
 
@@ -608,7 +636,7 @@ func TestRejectFinalStepApprovalTerminatesWithoutExecutingTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transition.State.Status != agentruntime.RunFailed || transition.State.FailureCode != "step_budget_exhausted" || transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+	if transition.State.Status != agentruntime.RunCancelled || transition.State.FailureCode != "" || transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("final-step rejection = %#v", transition.State)
 	}
 }

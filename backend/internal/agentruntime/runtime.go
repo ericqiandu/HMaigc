@@ -581,12 +581,21 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 		next.Status = RunWaitingTool
 		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}}, nil
 	case ToolApprovalRejected:
+		policy, ok := ToolPolicyFor(next.PendingToolCall.ToolName)
+		if !ok {
+			return RuntimeTransition{}, errors.New("agent tool approval policy is invalid")
+		}
 		next.Status = RunRunning
 		next.PendingToolCall = nil
 		next.PendingToolStarted = false
 		next.LastToolResult = &ToolResult{
 			ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
+		}
+		if policy.RiskLevel == ToolRiskCost {
+			next.Status = RunCancelled
+			next.FailureCode = ""
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunInterrupted}}, nil
 		}
 		if next.StepNumber >= next.MaxSteps {
 			next.Status = RunFailed

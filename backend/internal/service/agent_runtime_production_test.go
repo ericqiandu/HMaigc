@@ -866,7 +866,7 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rejected.State.Status != agentruntime.RunRunning || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+	if rejected.State.Status != agentruntime.RunCancelled || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("rejected production render state = %#v", rejected.State)
 	}
 	artifacts, err = svc.repo.AgentProductionArtifactsForVersion(scope, record.Plan.PlanKey, record.Plan.Version)
@@ -886,6 +886,13 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 	}
 	if mediaTasks != 0 || mediaOrders != 0 {
 		t.Fatalf("rejected approval created commercial facts: tasks=%d orders=%d", mediaTasks, mediaOrders)
+	}
+	var modelTasks int64
+	if err := db.Model(&model.Task{}).Where("user_id = ? AND type = ?", scope.ActorUserID, agentRuntimeModelTaskType).Count(&modelTasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if modelTasks != 1 {
+		t.Fatalf("rejected cost approval created another model task: %d", modelTasks)
 	}
 }
 

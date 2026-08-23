@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"slices"
 	"testing"
 	"time"
 
@@ -315,6 +315,54 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 			}
 		}
 	})
+
+	t.Run("incomplete artifact ledger returns exact repair facts", func(t *testing.T) {
+		svc, db, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
+		var receivedArtifactID string
+		for _, artifact := range artifacts {
+			if artifact.Kind == model.AgentProductionArtifactVideoClip {
+				receivedArtifactID = artifact.ID
+				break
+			}
+		}
+		if receivedArtifactID == "" {
+			t.Fatal("video artifact was not created")
+		}
+		setDecision(productionCanvasCommitDecisionWithArtifactIDs(t, "commit-incomplete", plan, []string{receivedArtifactID}, 7))
+		if err := svc.ProcessNextTask(); err != nil {
+			t.Fatal(err)
+		}
+		progress, err := svc.ResumeAgentRuntime(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "production_canvas_invalid" {
+			t.Fatalf("incomplete canvas commit state = %#v", progress.State)
+		}
+		var facts struct {
+			Reason              string   `json:"reason"`
+			ExpectedArtifactIDs []string `json:"expectedArtifactIds"`
+			ReceivedArtifactIDs []string `json:"receivedArtifactIds"`
+		}
+		if err := json.Unmarshal(progress.State.LastToolResult.Output, &facts); err != nil {
+			t.Fatal(err)
+		}
+		if facts.Reason != "production canvas artifacts do not match the plan" || len(facts.ExpectedArtifactIDs) != len(artifacts) || len(facts.ReceivedArtifactIDs) != 1 || facts.ReceivedArtifactIDs[0] != receivedArtifactID {
+			t.Fatalf("incomplete canvas repair facts = %#v", facts)
+		}
+		for _, artifact := range artifacts {
+			if !slices.Contains(facts.ExpectedArtifactIDs, artifact.ID) {
+				t.Fatalf("expected artifact ledger omitted %s: %#v", artifact.ID, facts.ExpectedArtifactIDs)
+			}
+		}
+		var canvas model.CanvasProject
+		if err := db.First(&canvas, "id = ?", scope.CanvasID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if canvas.Revision != 7 {
+			t.Fatalf("incomplete commit changed canvas revision to %d", canvas.Revision)
+		}
+	})
 }
 
 func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentruntime.Scope, model.AgentProductionPlanVersion, []model.AgentProductionArtifact, func(string)) {
@@ -330,7 +378,7 @@ func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentr
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
-		Scope: scope, ClientRequestID: "production-canvas-" + strings.ReplaceAll(t.Name(), "/", "-"),
+		Scope: scope, ClientRequestID: "production-canvas-" + newID(),
 		UserMessage: "把生产计划提交到画布", MaxSteps: 6,
 		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
 	})
@@ -425,6 +473,11 @@ func productionCanvasCommitDecision(t *testing.T, toolCallID string, plan model.
 	for _, artifact := range artifacts {
 		artifactIDs = append(artifactIDs, artifact.ID)
 	}
+	return productionCanvasCommitDecisionWithArtifactIDs(t, toolCallID, plan, artifactIDs, baseRevision)
+}
+
+func productionCanvasCommitDecisionWithArtifactIDs(t *testing.T, toolCallID string, plan model.AgentProductionPlanVersion, artifactIDs []string, baseRevision int64) string {
+	t.Helper()
 	arguments, err := json.Marshal(agentProductionCanvasCommitArguments{PlanKey: plan.PlanKey, PlanVersion: plan.Version, BaseRevision: baseRevision, ArtifactIDs: artifactIDs})
 	if err != nil {
 		t.Fatal(err)

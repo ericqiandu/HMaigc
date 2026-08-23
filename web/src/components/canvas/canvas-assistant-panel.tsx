@@ -288,11 +288,13 @@ export function CanvasAssistantPanel({
                     prompt={prompt}
                     attachments={draft.attachments}
                     sending={runtime.busy}
-                    disabled={!runtime.restored || active}
+                    running={active}
+                    disabled={!runtime.restored}
                     placeholder={active ? "当前任务运行中" : "描述你想让 Agent 如何操作画布"}
                     theme={theme}
                     onPromptChange={setPrompt}
                     onSubmit={submit}
+                    onStop={() => void runtime.interrupt()}
                     onAddFiles={addAttachments}
                     onRemoveAttachment={(id) => setDraft((current) => ({ ...current, attachments: current.attachments.filter((attachment) => attachment.id !== id) }))}
                     onDeleteBackwardAtStart={() => {

@@ -384,6 +384,16 @@ func (s *Service) resolvePendingAgentToolFailureWithOutput(
 	if err != nil {
 		return nil, err
 	}
+	return s.resolvePendingAgentToolFailureWithJSONOutput(scope, state, call, failureCode, output)
+}
+
+func (s *Service) resolvePendingAgentToolFailureWithJSONOutput(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	call *agentruntime.ToolCallDecision,
+	failureCode string,
+	output json.RawMessage,
+) (*AgentRuntimeProgress, error) {
 	failureClass, err := s.rejectedToolFailureClass(
 		scope,
 		state,

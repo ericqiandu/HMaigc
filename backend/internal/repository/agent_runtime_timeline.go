@@ -314,7 +314,10 @@ func agentTimelineMutationForEvent(
 				SourceEventSequence: sequence, ContentJSON: content,
 			}, nil
 		}
-		if previous.PendingToolCall != nil {
+		pendingToolResolved := previous.PendingToolCall != nil && state.LastToolResult != nil &&
+			state.LastToolResult.ToolCallID == previous.PendingToolCall.ToolCallID &&
+			state.LastToolResult.ActionVersion == previous.PendingToolCall.ActionVersion
+		if previous.PendingToolCall != nil && !pendingToolResolved {
 			content, err := marshalAgentTimelineContent(struct {
 				ToolCallID    string `json:"toolCallId"`
 				ActionVersion int    `json:"actionVersion"`

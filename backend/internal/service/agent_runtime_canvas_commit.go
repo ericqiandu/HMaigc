@@ -32,6 +32,15 @@ type agentProductionCanvasCommitResult struct {
 	Bindings          []productionCanvasBinding `json:"bindings"`
 }
 
+type agentProductionCanvasArtifactsMismatchError struct {
+	ExpectedArtifactIDs []string
+	ReceivedArtifactIDs []string
+}
+
+func (err *agentProductionCanvasArtifactsMismatchError) Error() string {
+	return "production canvas artifacts do not match the plan"
+}
+
 func decodeAgentProductionCanvasCommitArguments(raw json.RawMessage) (agentProductionCanvasCommitArguments, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -75,6 +84,21 @@ func (s *Service) coordinatePendingAgentProductionCanvasCommit(
 	}
 	plan, artifacts, resources, renderArguments, err := s.productionCanvasCommitFacts(scope, arguments)
 	if err != nil {
+		var mismatch *agentProductionCanvasArtifactsMismatchError
+		if errors.As(err, &mismatch) {
+			output, marshalErr := json.Marshal(struct {
+				Reason              string   `json:"reason"`
+				ExpectedArtifactIDs []string `json:"expectedArtifactIds"`
+				ReceivedArtifactIDs []string `json:"receivedArtifactIds"`
+			}{
+				Reason: mismatch.Error(), ExpectedArtifactIDs: mismatch.ExpectedArtifactIDs,
+				ReceivedArtifactIDs: mismatch.ReceivedArtifactIDs,
+			})
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			return s.resolvePendingAgentToolFailureWithJSONOutput(scope, state, call, "production_canvas_invalid", output)
+		}
 		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_canvas_invalid", map[string]string{"reason": err.Error()})
 	}
 	patch, bindings, err := buildProductionCanvasPatch(*plan, artifacts, resources, renderArguments)
@@ -190,7 +214,10 @@ func (s *Service) productionCanvasCommitFacts(scope agentruntime.Scope, argument
 	}
 	slices.Sort(actualIDs)
 	if !slices.Equal(actualIDs, arguments.ArtifactIDs) {
-		return nil, nil, nil, nil, errors.New("production canvas artifacts do not match the plan")
+		return nil, nil, nil, nil, &agentProductionCanvasArtifactsMismatchError{
+			ExpectedArtifactIDs: append([]string(nil), actualIDs...),
+			ReceivedArtifactIDs: append([]string(nil), arguments.ArtifactIDs...),
+		}
 	}
 	calls, err := s.repo.AgentToolCallsForScope(scope)
 	if err != nil {

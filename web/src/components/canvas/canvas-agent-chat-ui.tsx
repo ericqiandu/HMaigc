@@ -222,10 +222,12 @@ export function AgentChatComposer({
     attachments = [],
     disabled,
     sending,
+    running,
     placeholder,
     theme,
     onPromptChange,
     onSubmit,
+    onStop,
     onAddFiles,
     onRemoveAttachment,
     onDeleteBackwardAtStart,
@@ -237,10 +239,12 @@ export function AgentChatComposer({
     attachments?: CanvasAgentChatAttachment[];
     disabled?: boolean;
     sending?: boolean;
+    running?: boolean;
     placeholder: string;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onPromptChange: (value: string) => void;
     onSubmit: () => void;
+    onStop?: () => void;
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
     onDeleteBackwardAtStart?: () => boolean;
@@ -250,6 +254,7 @@ export function AgentChatComposer({
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canSubmit = !disabled && !sending && (submitReady ?? Boolean(prompt.trim() || attachments.length));
+    const canStop = Boolean(running && !sending && onStop);
     return (
         <div className="canvas-agent-composer-wrap" onWheelCapture={(event) => event.stopPropagation()}>
             <div className="canvas-agent-composer border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
@@ -278,7 +283,7 @@ export function AgentChatComposer({
                     <textarea
                         value={prompt}
                         aria-label="输入 Agent 指令"
-                        disabled={disabled || sending}
+                        disabled={disabled || sending || running}
                         onInput={(event) => onPromptChange(event.currentTarget.value)}
                         onPaste={(event) => {
                             if (!onAddFiles) return;
@@ -320,7 +325,7 @@ export function AgentChatComposer({
                                     <Button
                                         type="text"
                                         className="canvas-agent-composer-tool"
-                                        disabled={disabled || sending}
+                                        disabled={disabled || sending || running}
                                         style={{ color: theme.node.muted }}
                                         icon={<Plus className="canvas-agent-composer-glyph" strokeWidth={1.8} />}
                                         onClick={() => fileInputRef.current?.click()}
@@ -331,7 +336,12 @@ export function AgentChatComposer({
                         ) : null}
                         {left}
                     </div>
-                    <CanvasSubmitButton state={sending ? "loading" : "ready"} disabled={!canSubmit} onClick={() => void onSubmit()} ariaLabel={sending ? "正在发送" : "发送"} />
+                    <CanvasSubmitButton
+                        state={running ? (sending ? "loading" : "stop") : sending ? "loading" : "ready"}
+                        disabled={running ? !canStop : !canSubmit}
+                        onClick={() => void (running ? onStop?.() : onSubmit())}
+                        ariaLabel={running ? (sending ? "正在停止 Agent" : "停止 Agent") : sending ? "正在发送" : "发送"}
+                    />
                 </div>
             </div>
         </div>
