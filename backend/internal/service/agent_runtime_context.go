@@ -26,14 +26,15 @@ type agentRuntimeCallableModelFact struct {
 }
 
 type agentRuntimeProductionPlanFact struct {
-	PlanKey          string                             `json:"planKey"`
-	PlanVersion      int                                `json:"planVersion"`
-	Title            string                             `json:"title"`
-	TargetDurationMS int                                `json:"targetDurationMs"`
-	Script           string                             `json:"script"`
-	References       []agentruntime.ReferenceAssetDraft `json:"references"`
-	Shots            []agentruntime.ShotPlanDraft       `json:"shots"`
-	Artifacts        []agentProductionArtifactResult    `json:"artifacts"`
+	PlanKey           string                             `json:"planKey"`
+	PlanVersion       int                                `json:"planVersion"`
+	Title             string                             `json:"title"`
+	TargetDurationMS  int                                `json:"targetDurationMs"`
+	Script            string                             `json:"script"`
+	References        []agentruntime.ReferenceAssetDraft `json:"references"`
+	Shots             []agentruntime.ShotPlanDraft       `json:"shots"`
+	Artifacts         []agentProductionArtifactResult    `json:"artifacts"`
+	CommitArtifactIDs []string                           `json:"commitArtifactIds"`
 }
 
 func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState) (string, error) {
@@ -83,13 +84,15 @@ func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*age
 	fact := &agentRuntimeProductionPlanFact{
 		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, Title: record.Plan.Title,
 		TargetDurationMS: record.Plan.TargetDurationMS, Script: record.Plan.Script, References: references, Shots: shots,
-		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)),
+		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)), CommitArtifactIDs: make([]string, 0, len(record.Artifacts)),
 	}
 	for _, artifact := range record.Artifacts {
 		fact.Artifacts = append(fact.Artifacts, agentProductionArtifactResult{
 			ArtifactID: artifact.ID, Kind: artifact.Kind, ReferenceKey: artifact.ReferenceKey, ShotKey: artifact.ShotKey, Status: artifact.Status,
 		})
+		fact.CommitArtifactIDs = append(fact.CommitArtifactIDs, artifact.ID)
 	}
+	sort.Strings(fact.CommitArtifactIDs)
 	return fact, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -408,6 +409,37 @@ func TestAgentRuntimePromptCarriesAccumulatedDeliveryVerificationAfterCanvasComm
 	if context.DeliveryVerification == nil || context.DeliveryVerification.Status != agentruntime.VerificationRepairable ||
 		len(context.DeliveryVerification.MissingCriteria) != 1 || context.DeliveryVerification.MissingCriteria[0].Fact != agentruntime.DeliveryFactFinalMessage {
 		t.Fatalf("delivery verification = %#v", context.DeliveryVerification)
+	}
+}
+
+func TestAgentRuntimePromptProvidesCanonicalCanvasCommitArtifactIDs(t *testing.T) {
+	svc, _, scope, _, artifacts, _ := prepareProductionCanvasCommitTest(t)
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := svc.agentRuntimeModelPrompt(scope, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context struct {
+		ProductionPlan *struct {
+			CommitArtifactIDs []string `json:"commitArtifactIds"`
+		} `json:"productionPlan"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix)), &context); err != nil {
+		t.Fatal(err)
+	}
+	if context.ProductionPlan == nil {
+		t.Fatal("production plan is missing from the model prompt")
+	}
+	want := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		want = append(want, artifact.ID)
+	}
+	slices.Sort(want)
+	if !slices.Equal(context.ProductionPlan.CommitArtifactIDs, want) {
+		t.Fatalf("commit artifact ids = %#v, want %#v", context.ProductionPlan.CommitArtifactIDs, want)
 	}
 }
 
