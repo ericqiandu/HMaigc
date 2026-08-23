@@ -97,7 +97,7 @@ type AgentUIEventBase = { protocolVersion: 2; threadId: string; runId: string; s
 export type AgentRuntimeEvent =
     | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
     | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
-    | (AgentUIEventBase & { kind: "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved"; itemId: string; payload: AgentTimelineItemContent });
+    | (AgentUIEventBase & { kind: "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved"; itemId: string; itemKind: AgentTimelineItemKind; payload: AgentTimelineItemContent });
 export type AgentThreadHistoryRun = {
     id: string;
     threadId: string;
@@ -224,7 +224,7 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
 }
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
-    const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "payload", "createdAt"]);
+    const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "itemKind", "payload", "createdAt"]);
     if (source.protocolVersion !== 2) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
@@ -236,6 +236,7 @@ export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
         createdAt: isoInstant(source.createdAt, "event.createdAt"),
     };
     if (runEventKinds.has(kind as AgentRuntimeEventKind)) {
+        if (source.itemKind !== undefined) throw new Error(`Agent ${kind} 事件不允许 itemKind`);
         const itemId = source.itemId === undefined ? undefined : text(source.itemId, "event.itemId");
         const payload = parseRunEventPayload(source.payload);
         validateRunUIEvent(kind as "run.started" | "run.completed" | "run.failed" | "run.interrupted" | "state.snapshot", itemId, payload);
@@ -252,6 +253,7 @@ export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
         ...base,
         kind: kind as "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved",
         itemId: text(source.itemId, "event.itemId"),
+        itemKind: timelineItemKind(source.itemKind, "event.itemKind"),
         payload,
     };
 }

@@ -20,6 +20,7 @@ export function reduceAgentConversation(state: AgentConversationState, event: Ag
     if (event.sequence <= state.lastSequence || !event.itemId) return state;
     const next: AgentConversationState = { ...state, lastSequence: event.sequence, items: state.items.map((item) => ({ ...item })) };
     if (event.kind !== "item.started" && event.kind !== "item.delta" && event.kind !== "item.completed" && event.kind !== "item.failed") return next;
+    if (event.itemKind !== "agent_message") return next;
 
     const payload = event.payload;
     const delta = typeof payload.delta === "string" && payload.userVisible === true ? payload.delta : "";

@@ -54,10 +54,11 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             sequence: 4,
             kind: "approval.requested",
             itemId: "approval-1",
+            itemKind: "approval",
             payload: { toolCallId: "tool-1", actionVersion: 3 },
             createdAt: "2026-08-15T00:00:01Z",
         }),
-    ).toEqual({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
+    ).toEqual({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
 });
 
 test.each(["skill.load", "production.plan", "production.render", "canvas.commit"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
@@ -333,7 +334,7 @@ test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => 
     expect(parsed.state.pendingClarification?.answers[0]?.customText).toBe("都市夜景");
     expect(parsed.state.clarificationHistory[0]?.answers[0]?.customText).toBe("BMW X5");
     for (const kind of ["item.started", "item.delta", "item.completed"] as const) {
-        expect(parseAgentRuntimeEvent({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
+        expect(parseAgentRuntimeEvent({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
     }
 });
 
@@ -341,6 +342,9 @@ test("UI 事件拒绝未知协议、缺失 itemId 与非法运行载荷", () => 
     const base = { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
     expect(() => parseAgentRuntimeEvent({ ...base, protocolVersion: 1, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("协议版本");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", payload: { delta: "a" } })).toThrow("itemId");
+    expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("itemKind");
+    expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", itemId: "message-1", itemKind: "assistant_guess", payload: { delta: "a" } })).toThrow("时间线类型");
+    expect(() => parseAgentRuntimeEvent({ ...base, kind: "run.started", itemKind: "status", payload: { status: "queued", stateVersion: 1 } })).toThrow("不允许 itemKind");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "run.completed", payload: { status: "succeeded" } })).toThrow("stateVersion");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "run.completed", payload: { status: "succeeded", stateVersion: 4 } })).toThrow("终态时间线");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "run.completed", itemId: "status-1", payload: { status: "failed", stateVersion: 4, item: { kind: "status", status: "completed", content: {} } } })).toThrow("succeeded");

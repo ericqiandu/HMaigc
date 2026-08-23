@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { initialAgentConversationState, reduceAgentConversation } from "../src/components/canvas/agent-conversation-reducer";
-import type { AgentRuntimeEvent } from "../src/services/api/agent-runtime";
+import type { AgentRuntimeEvent, AgentTimelineItemKind } from "../src/services/api/agent-runtime";
 
-const event = (sequence: number, kind: "item.started" | "item.delta" | "item.completed", payload: Record<string, unknown>): AgentRuntimeEvent => ({
+const event = (sequence: number, kind: "item.started" | "item.delta" | "item.completed", payload: Record<string, unknown>, itemKind: AgentTimelineItemKind = "agent_message"): AgentRuntimeEvent => ({
     protocolVersion: 2,
     threadId: "thread",
     runId: "run",
@@ -10,6 +10,7 @@ const event = (sequence: number, kind: "item.started" | "item.delta" | "item.com
     createdAt: "2026-08-23T00:00:00Z",
     kind,
     itemId: "message",
+    itemKind,
     payload,
 });
 
@@ -34,5 +35,11 @@ describe("Agent conversation reducer", () => {
         state = reduceAgentConversation(state, event(2, "item.started", { itemId: "message", delta: "重新开始", userVisible: true, started: true }));
         expect(state.items).toEqual([{ id: "message", text: "重新开始", status: "in_progress" }]);
         expect(state.lastSequence).toBe(2);
+    });
+
+    test("does not render a completed user message as an assistant item", () => {
+        const state = reduceAgentConversation(initialAgentConversationState(), event(1, "item.completed", { message: "用户输入" }, "user_message"));
+        expect(state.items).toEqual([]);
+        expect(state.lastSequence).toBe(1);
     });
 });

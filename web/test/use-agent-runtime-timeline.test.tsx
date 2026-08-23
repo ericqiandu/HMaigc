@@ -352,7 +352,7 @@ function timelineItem(id: string, kind: "user_message" | "artifact", content: Re
 }
 
 function uiItemEvent(sequence: number, kind: "item.delta", payload: Record<string, unknown>): AgentRuntimeEvent {
-    return { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence, kind, itemId: "item-message-1", payload, createdAt: "2026-08-18T00:00:02Z" };
+    return { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence, kind, itemId: "item-message-1", itemKind: "agent_message", payload, createdAt: "2026-08-18T00:00:02Z" };
 }
 
 async function settle() {

@@ -109,6 +109,7 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
         sequence: 3,
         kind: "item.completed",
         itemId: "tool-result-1",
+        itemKind: "tool_call",
         payload: {
             toolCallId: "canvas-commit-1",
             toolName: "canvas.commit",

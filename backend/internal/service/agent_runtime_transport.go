@@ -51,14 +51,15 @@ const (
 )
 
 type AgentUIEvent struct {
-	ProtocolVersion int              `json:"protocolVersion"`
-	ThreadID        string           `json:"threadId"`
-	RunID           string           `json:"runId"`
-	Sequence        int64            `json:"sequence"`
-	Kind            AgentUIEventKind `json:"kind"`
-	ItemID          string           `json:"itemId,omitempty"`
-	Payload         json.RawMessage  `json:"payload"`
-	CreatedAt       time.Time        `json:"createdAt"`
+	ProtocolVersion int                         `json:"protocolVersion"`
+	ThreadID        string                      `json:"threadId"`
+	RunID           string                      `json:"runId"`
+	Sequence        int64                       `json:"sequence"`
+	Kind            AgentUIEventKind            `json:"kind"`
+	ItemID          string                      `json:"itemId,omitempty"`
+	ItemKind        model.AgentTimelineItemKind `json:"itemKind,omitempty"`
+	Payload         json.RawMessage             `json:"payload"`
+	CreatedAt       time.Time                   `json:"createdAt"`
 }
 
 type agentArtifactTimelinePayload struct {
@@ -183,6 +184,7 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 		return AgentUIEvent{}, err
 	}
 	projected.ItemID = item.ID
+	projected.ItemKind = item.Kind
 	if item.Kind != model.AgentTimelineItemArtifact {
 		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
 		return projected, nil
@@ -225,6 +227,7 @@ func projectAgentVisibleModelDelta(projected AgentUIEvent, event model.AgentRunE
 		projected.Kind = AgentUIEventItemStarted
 	}
 	projected.ItemID = payload.ItemID
+	projected.ItemKind = item.Kind
 	projected.Payload = json.RawMessage(event.PayloadJSON)
 	return projected, nil
 }

@@ -75,6 +75,47 @@ func TestProjectAgentEventProducesVersionedRunAndItemEvents(t *testing.T) {
 	}
 }
 
+func TestProjectAgentItemEventCarriesTimelineKind(t *testing.T) {
+	now := time.Now().UTC()
+	item := model.AgentTimelineItem{
+		ID: "item-user-1", ThreadID: "thread-1", RunID: "run-1",
+		Kind: model.AgentTimelineItemUserMessage, Status: model.AgentTimelineItemCompleted,
+		Ordinal: 1, SourceEventSequence: 2, ContentJSON: `{"message":"用户输入"}`,
+		StartedAt: now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventUserMessageAdded,
+		PayloadJSON: `{}`, CreatedAt: now,
+	}, &item, CurrentAgentUIProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"itemKind":"user_message"`) {
+		t.Fatalf("projected item event must carry its timeline kind: %s", encoded)
+	}
+
+	deltaItem := model.AgentTimelineItem{
+		ID: "item-agent-1", ThreadID: "thread-1", RunID: "run-1",
+		Kind: model.AgentTimelineItemAgentMessage, Status: model.AgentTimelineItemInProgress,
+		Ordinal: 2, SourceEventSequence: 3, ContentJSON: `{"message":"你"}`,
+		StartedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	delta, err := ProjectAgentEvent(deltaItem.ThreadID, model.AgentRunEvent{
+		RunID: deltaItem.RunID, Sequence: deltaItem.SourceEventSequence, Kind: agentruntime.EventModelDelta,
+		PayloadJSON: `{"itemId":"item-agent-1","delta":"你","userVisible":true,"started":true}`, CreatedAt: now,
+	}, &deltaItem, CurrentAgentUIProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta.ItemKind != model.AgentTimelineItemAgentMessage {
+		t.Fatalf("projected model delta item kind = %q", delta.ItemKind)
+	}
+}
+
 func TestProjectAgentEventPreservesOnlySafeCanvasCommitRefreshFacts(t *testing.T) {
 	now := time.Now().UTC()
 	item := model.AgentTimelineItem{
@@ -82,7 +123,7 @@ func TestProjectAgentEventPreservesOnlySafeCanvasCommitRefreshFacts(t *testing.T
 		Kind: model.AgentTimelineItemToolCall, Status: model.AgentTimelineItemCompleted,
 		Ordinal: 2, SourceEventSequence: 4,
 		ContentJSON: `{"toolCallId":"call-1","toolName":"canvas.commit","actionVersion":1,"succeeded":true,"output":{"canvasId":"canvas-1","committedRevision":8}}`,
-		StartedAt: now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+		StartedAt:   now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
 	}
 	projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
 		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventToolResult,

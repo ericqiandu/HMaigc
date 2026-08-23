@@ -71,6 +71,7 @@ function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
         sequence: 3,
         kind: "item.completed",
         itemId: "tool-result-1",
+        itemKind: "tool_call",
         payload: {
             toolCallId: "canvas-commit-1",
             toolName: "canvas.commit",
