@@ -54,26 +54,27 @@ type productionCanvasStoryboard struct {
 }
 
 type productionCanvasStoryboardRow struct {
-	ID                    string   `json:"id"`
-	ShotNumber            int      `json:"shotNumber"`
-	DurationSeconds       float64  `json:"durationSeconds"`
-	PlotDescription       string   `json:"plotDescription"`
-	Dialogue              string   `json:"dialogue"`
-	Characters            []string `json:"characters"`
-	ShotSize              string   `json:"shotSize"`
-	Emotion               string   `json:"emotion"`
-	LightingAndAtmosphere string   `json:"lightingAndAtmosphere"`
-	AudioEffects          string   `json:"audioEffects"`
-	Camera                string   `json:"camera"`
-	Motion                string   `json:"motion"`
-	TimeBeats             string   `json:"timeBeats"`
-	ImageGenerationPrompt string   `json:"imageGenerationPrompt"`
-	VideoMotionPrompt     string   `json:"videoMotionPrompt"`
-	NegativePrompt        string   `json:"negativePrompt"`
-	ReferenceNodeIDs      []string `json:"referenceNodeIds"`
-	ImageNodeID           string   `json:"imageNodeId,omitempty"`
-	VideoNodeID           string   `json:"videoNodeId,omitempty"`
-	Status                string   `json:"status"`
+	ID                    string                                   `json:"id"`
+	ShotNumber            int                                      `json:"shotNumber"`
+	DurationSeconds       float64                                  `json:"durationSeconds"`
+	Deliverables          []agentruntime.ProductionShotDeliverable `json:"deliverables"`
+	PlotDescription       string                                   `json:"plotDescription"`
+	Dialogue              string                                   `json:"dialogue"`
+	Characters            []string                                 `json:"characters"`
+	ShotSize              string                                   `json:"shotSize"`
+	Emotion               string                                   `json:"emotion"`
+	LightingAndAtmosphere string                                   `json:"lightingAndAtmosphere"`
+	AudioEffects          string                                   `json:"audioEffects"`
+	Camera                string                                   `json:"camera"`
+	Motion                string                                   `json:"motion"`
+	TimeBeats             string                                   `json:"timeBeats"`
+	ImageGenerationPrompt string                                   `json:"imageGenerationPrompt"`
+	VideoMotionPrompt     string                                   `json:"videoMotionPrompt"`
+	NegativePrompt        string                                   `json:"negativePrompt"`
+	ReferenceNodeIDs      []string                                 `json:"referenceNodeIds"`
+	ImageNodeID           string                                   `json:"imageNodeId,omitempty"`
+	VideoNodeID           string                                   `json:"videoNodeId,omitempty"`
+	Status                string                                   `json:"status"`
 }
 
 type productionCanvasConnection struct {
@@ -176,6 +177,7 @@ func buildProductionCanvasPatch(
 		}
 		rows = append(rows, productionCanvasStoryboardRow{
 			ID: shot.ShotKey, ShotNumber: shot.Order, DurationSeconds: float64(shot.DurationMS) / 1000,
+			Deliverables:    append([]agentruntime.ProductionShotDeliverable(nil), shot.Deliverables...),
 			PlotDescription: shot.ScriptText, Characters: []string{}, ShotSize: "", Emotion: "", LightingAndAtmosphere: "",
 			AudioEffects: "", Camera: "", Motion: "", TimeBeats: "",
 			ImageGenerationPrompt: shot.ImagePrompt, VideoMotionPrompt: shot.VideoPrompt, NegativePrompt: "",

@@ -83,6 +83,7 @@ export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionR
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const simpleMode = workspaceMode === "simple";
     const rows = node.metadata?.storyboard?.rows || [];
+    const mediaStages = storyboardMediaStages(rows);
     const [prompt, setPrompt] = useState(node.metadata?.composerContent || "");
     const [scrollTop, setScrollTop] = useState(0);
     const composerHeightChangeRef = useRef(onComposerHeightChange);
@@ -127,12 +128,14 @@ export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionR
                     {hasWaitingBatchItems ? <Tooltip title="停止剩余任务"><button type="button" className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/10" style={{ "--tw-ring-color": theme.node.muted } as CSSProperties} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onStopBatch(batch.id); }} aria-label="停止剩余任务"><Square className="size-3.5" /></button></Tooltip> : null}
                     <Popover rootClassName="canvas-overlay-popover canvas-overlay-popover--batch" placement="bottomRight" trigger="click" content={<GenerationBatchDetails batch={batch} rows={rows} onRetryItem={(itemId) => onRetryBatchItem(batch.id, itemId)} onCancelItem={(itemId) => onCancelBatchItem(batch.id, itemId)} />}><Tooltip title="查看详情"><button type="button" className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/10" style={{ "--tw-ring-color": theme.node.muted } as CSSProperties} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} aria-label="查看批次详情"><ListTree className="size-3.5" /></button></Tooltip></Popover>
                 </> : null}
-                {simpleMode ? null : <Tooltip title="生成动作拆分 12 宫格"><button type="button" disabled={!rows.length || hasActiveBatchItems} className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/10" style={{ "--tw-ring-color": theme.node.muted } as CSSProperties} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCreateActionBoards(); }}><Grid3X3 className="size-3.5" /></button></Tooltip>}
+                {simpleMode || !mediaStages.images ? null : <Tooltip title="生成动作拆分 12 宫格"><button type="button" disabled={!rows.length || hasActiveBatchItems} className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/10" style={{ "--tw-ring-color": theme.node.muted } as CSSProperties} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCreateActionBoards(); }}><Grid3X3 className="size-3.5" /></button></Tooltip>}
                 {simpleMode ? null : <Tooltip title="全屏编辑"><button type="button" className="grid size-7 place-items-center rounded outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/10" style={{ "--tw-ring-color": theme.node.muted } as CSSProperties} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpen(); }}><Expand className="size-3.5" /></button></Tooltip>}
             </div>
             <StoryboardPipelineBar
                 pipeline={pipeline}
                 simpleMode={simpleMode}
+                showImages={mediaStages.images}
+                showVideos={mediaStages.videos}
                 disabled={!rows.length || node.metadata?.status === "loading" || hasActiveBatchItems}
                 theme={theme}
                 onCreateImageNodes={onCreateImageNodes}
@@ -253,9 +256,11 @@ export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionR
     );
 }
 
-function StoryboardPipelineBar({ pipeline, simpleMode, disabled, theme, onCreateImageNodes, onCreateVideoNodes, onGenerateImages, onGenerateVideos, onMergeVideos }: {
+function StoryboardPipelineBar({ pipeline, simpleMode, showImages, showVideos, disabled, theme, onCreateImageNodes, onCreateVideoNodes, onGenerateImages, onGenerateVideos, onMergeVideos }: {
     pipeline: CanvasStoryboardPipelineProgress;
     simpleMode: boolean;
+    showImages: boolean;
+    showVideos: boolean;
     disabled: boolean;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onCreateImageNodes: () => void;
@@ -267,9 +272,10 @@ function StoryboardPipelineBar({ pipeline, simpleMode, disabled, theme, onCreate
     const missingImages = Math.max(0, pipeline.images.total - pipeline.images.created);
     const missingVideos = Math.max(0, pipeline.videos.total - pipeline.videos.created);
     const canMerge = pipeline.successfulVideoNodeIds.length >= 2 && pipeline.final.success === 0;
+    const visibleStageCount = (showImages ? 1 : 0) + (showVideos ? 2 : 0);
     return (
-        <div className="grid h-12 shrink-0 grid-cols-3 border-b" style={{ borderColor: theme.node.stroke, background: theme.node.fill }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-            <PipelineStageCell label="分镜图" stage={pipeline.images} theme={theme}>
+        <div className="grid h-12 shrink-0 border-b" style={{ borderColor: theme.node.stroke, background: theme.node.fill, gridTemplateColumns: `repeat(${visibleStageCount}, minmax(0, 1fr))` }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            {showImages ? <PipelineStageCell label="分镜图" stage={pipeline.images} theme={theme} last={!showVideos}>
                 {simpleMode ? (
                     <Button size="small" type="text" icon={<ImageIcon className="size-3" />} disabled={disabled || pipeline.images.incomplete === 0} onClick={onGenerateImages}>
                         {pipeline.images.incomplete ? `生成 ${pipeline.images.incomplete} 张分镜图` : "分镜图已完成"}
@@ -280,8 +286,8 @@ function StoryboardPipelineBar({ pipeline, simpleMode, disabled, theme, onCreate
                         <Button size="small" type="text" disabled={disabled || pipeline.images.incomplete === 0} onClick={onGenerateImages}>生成未完成的图片</Button>
                     </>
                 )}
-            </PipelineStageCell>
-            <PipelineStageCell label="镜头视频" stage={pipeline.videos} theme={theme}>
+            </PipelineStageCell> : null}
+            {showVideos ? <PipelineStageCell label="镜头视频" stage={pipeline.videos} theme={theme}>
                 {simpleMode ? (
                     <Button size="small" type="text" icon={<Video className="size-3" />} disabled={disabled || pipeline.videos.incomplete === 0} onClick={onGenerateVideos}>
                         {pipeline.videos.incomplete ? `生成 ${pipeline.videos.incomplete} 个镜头视频` : "镜头视频已完成"}
@@ -292,14 +298,23 @@ function StoryboardPipelineBar({ pipeline, simpleMode, disabled, theme, onCreate
                         <Button size="small" type="text" disabled={disabled || pipeline.videos.incomplete === 0} onClick={onGenerateVideos}>生成未完成的视频</Button>
                     </>
                 )}
-            </PipelineStageCell>
-            <PipelineStageCell label="合并成片" stage={pipeline.final} theme={theme} last>
+            </PipelineStageCell> : null}
+            {showVideos ? <PipelineStageCell label="合并成片" stage={pipeline.final} theme={theme} last>
                 <Button size="small" type={canMerge ? "primary" : "text"} icon={<Merge className="size-3" />} disabled={!canMerge} onClick={onMergeVideos}>
                     {pipeline.final.success ? "成片已完成" : pipeline.successfulVideoNodeIds.length >= 2 ? `合并 ${pipeline.successfulVideoNodeIds.length} 段视频` : "至少完成 2 段视频"}
                 </Button>
-            </PipelineStageCell>
+            </PipelineStageCell> : null}
         </div>
     );
+}
+
+function storyboardMediaStages(rows: StoryboardRow[]) {
+    const hasExplicitContract = rows.length > 0 && rows.every((row) => Boolean(row.deliverables?.length));
+    if (!hasExplicitContract) return { images: true, videos: true };
+    return {
+        images: rows.some((row) => row.deliverables?.includes("storyboard_image")),
+        videos: rows.some((row) => row.deliverables?.includes("video_clip")),
+    };
 }
 
 function PipelineStageCell({ label, stage, theme, children, last = false }: { label: string; stage: StoryboardPipelineStage; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; children: ReactNode; last?: boolean }) {
@@ -371,6 +386,7 @@ export function CanvasScriptEditor({ node, open, onClose, onUpdateRows, onVisibl
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const rows = node?.metadata?.storyboard?.rows || EMPTY_STORYBOARD_ROWS;
+    const mediaStages = storyboardMediaStages(rows);
     const visibleColumns = node?.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "plotDescription", "dialogue"];
     const filteredRows = useMemo(() => {
         const keyword = query.trim().toLowerCase();
@@ -419,8 +435,8 @@ export function CanvasScriptEditor({ node, open, onClose, onUpdateRows, onVisibl
                 <Checkbox.Group className="script-column-picker" options={columnOptions} value={visibleColumns} onChange={(values) => onVisibleColumnsChange(values as StoryboardColumn[])} />
                 <span className="min-w-0 flex-1" />
                 <Button icon={<Plus className="size-4" />} onClick={() => onUpdateRows([...rows, editorRow(rows.length + 1)])}>新增镜头</Button>
-                <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>生成分镜图</Button>
-                <Button type="primary" icon={<Film className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateVideos(selectedIds)}>生成视频</Button>
+                {mediaStages.images ? <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>生成分镜图</Button> : null}
+                {mediaStages.videos ? <Button type="primary" icon={<Film className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateVideos(selectedIds)}>生成视频</Button> : null}
             </div>
             <Table<StoryboardRow> rowKey="id" size="small" bordered sticky pagination={false} scroll={{ x: Math.max(900, columns.length * 180), y: "calc(78vh - 170px)" }} dataSource={filteredRows} columns={columns} rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) }} />
         </Modal>

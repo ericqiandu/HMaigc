@@ -119,6 +119,9 @@ func TestProductionCanvasCommitProjectsVideoOnlyPlanWithoutImageNode(t *testing.
 	if bytes.Contains(patch.UpsertNodes[0], []byte(`"imageNodeId"`)) {
 		t.Fatalf("video-only script node serialized an image binding: %s", patch.UpsertNodes[0])
 	}
+	if !bytes.Contains(patch.UpsertNodes[0], []byte(`"deliverables":["video_clip"]`)) {
+		t.Fatalf("video-only script node omitted the explicit deliverable contract: %s", patch.UpsertNodes[0])
+	}
 	var connection productionCanvasConnection
 	if err := json.Unmarshal(patch.UpsertConnections[0], &connection); err != nil {
 		t.Fatal(err)

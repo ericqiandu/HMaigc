@@ -43,6 +43,7 @@ export type CanvasSkillCategory = "writing" | "storyboard" | "image" | "video" |
 export type CanvasSkillOutputMode = "text" | "json" | "image_prompt" | "workflow";
 export type StoryboardColumn =
     "shotNumber" | "durationSeconds" | "plotDescription" | "dialogue" | "shotSize" | "emotion" | "lightingAndAtmosphere" | "audioEffects" | "camera" | "motion" | "timeBeats" | "imageGenerationPrompt" | "videoMotionPrompt" | "negativePrompt";
+export type StoryboardDeliverable = "storyboard_image" | "video_clip";
 
 export type StoryboardCharacterReference = {
     characterName: string;
@@ -54,6 +55,7 @@ export type StoryboardRow = {
     id: string;
     shotNumber: number;
     durationSeconds: number;
+    deliverables?: StoryboardDeliverable[];
     plotDescription: string;
     dialogue: string;
     characters: StoryboardCharacterReference[];
