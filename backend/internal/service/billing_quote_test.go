@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -211,6 +212,34 @@ func TestQuoteTaskBillingPricesSeedanceReferenceVideoPerSecond(t *testing.T) {
 	}
 	if quote.PricingInputVariant != "reference_video" || quote.PricingResolution != "720P" || quote.Quantity != 6 {
 		t.Fatalf("reference video pricing facts = %#v", quote)
+	}
+}
+
+func TestQuoteTaskBillingPricesKlingGeneratedAudioPerSecond(t *testing.T) {
+	item := model.ChannelModel{
+		ID: "kling", ChannelID: "channel", ModelKey: kuaiziKlingModel, Capability: "video",
+		AccessPolicy: model.ModelAccessAuthenticated, BillingMode: "per_second", PriceStrategy: "video_resolution",
+		PriceConfigured: true, Enabled: true, PriceVersion: 6,
+		PriceTiers: []model.ChannelModelPriceTier{
+			{ID: "silent", Resolution: "STD", InputVariant: "standard", UnitPriceMicrocredits: 60_000_000},
+			{ID: "audio", Resolution: "STD", InputVariant: "standard_audio", UnitPriceMicrocredits: 80_000_000},
+		},
+	}
+	svc, _ := newBillingQuoteTestService(t, item)
+	var request TaskBillingQuoteRequest
+	if err := json.Unmarshal([]byte(`{
+		"type":"canvas_video","operation":"generate","batchCount":1,
+		"input":{"mode":"video","referenceVideoCount":0,"config":{"channelId":"channel","model":"kling-v3-omni","videoSeconds":"3","vquality":"std","videoGenerateAudio":true}}
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+
+	quote, err := svc.QuoteTaskBilling("user", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.PricingInputVariant != "standard_audio" || quote.PerTaskAmountMicrocredits != 240_000_000 {
+		t.Fatalf("generated-audio quote = %#v, want STD / standard_audio at 80 credits per second", quote)
 	}
 }
 

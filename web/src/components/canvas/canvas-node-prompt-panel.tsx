@@ -3,7 +3,7 @@ import { AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2
 import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { configuredModelMatchesCapability, defaultConfig, modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { configuredModelMatchesCapability, defaultConfig, encodeChannelModel, modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useCanvasTaskBillingQuote } from "@/hooks/use-canvas-task-billing-quote";
 import type { TaskBillingQuote } from "@/services/api/task-center";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -630,11 +630,11 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text || type === CanvasNodeType.Skill ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
 }
 
-function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
+export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
-    const storedModel = node.metadata?.model;
-    const model = storedModel && configuredModelMatchesCapability(globalConfig, storedModel, mode) ? storedModel : defaultModel && configuredModelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel;
+    const storedModel = node.metadata?.channelId && node.metadata?.model ? encodeChannelModel(node.metadata.channelId, node.metadata.model) : node.metadata?.model;
+    const model = storedModel || (defaultModel && configuredModelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel);
     const config: AiConfig = {
         ...globalConfig,
         model,

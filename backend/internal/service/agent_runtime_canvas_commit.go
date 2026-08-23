@@ -73,11 +73,11 @@ func (s *Service) coordinatePendingAgentProductionCanvasCommit(
 	if err != nil {
 		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_canvas_invalid", map[string]string{"reason": err.Error()})
 	}
-	plan, artifacts, resources, err := s.productionCanvasCommitFacts(scope, arguments)
+	plan, artifacts, resources, renderArguments, err := s.productionCanvasCommitFacts(scope, arguments)
 	if err != nil {
 		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_canvas_invalid", map[string]string{"reason": err.Error()})
 	}
-	patch, bindings, err := buildProductionCanvasPatch(*plan, artifacts, resources)
+	patch, bindings, err := buildProductionCanvasPatch(*plan, artifacts, resources, renderArguments)
 	if err != nil {
 		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_canvas_invalid", map[string]string{"reason": err.Error()})
 	}
@@ -163,17 +163,17 @@ func (s *Service) coordinatePendingAgentProductionCanvasCommit(
 	return s.productionCanvasCommitCompletedToolProgress(scope, progress.State, call)
 }
 
-func (s *Service) productionCanvasCommitFacts(scope agentruntime.Scope, arguments agentProductionCanvasCommitArguments) (*model.AgentProductionPlanVersion, []model.AgentProductionArtifact, map[string]model.Resource, error) {
+func (s *Service) productionCanvasCommitFacts(scope agentruntime.Scope, arguments agentProductionCanvasCommitArguments) (*model.AgentProductionPlanVersion, []model.AgentProductionArtifact, map[string]model.Resource, map[string]agentruntime.ProductionRenderArguments, error) {
 	plan, err := s.repo.AgentProductionPlanVersionForScope(scope, arguments.PlanKey, arguments.PlanVersion)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if plan.Status != model.AgentProductionPlanActive {
-		return nil, nil, nil, errors.New("production canvas plan is not active")
+		return nil, nil, nil, nil, errors.New("production canvas plan is not active")
 	}
 	artifacts, err := s.repo.AgentProductionArtifactsForVersion(scope, arguments.PlanKey, arguments.PlanVersion)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	actualIDs := make([]string, 0, len(artifacts))
 	resources := make(map[string]model.Resource)
@@ -184,15 +184,36 @@ func (s *Service) productionCanvasCommitFacts(scope agentruntime.Scope, argument
 		}
 		resource, loadErr := s.productionResourceForScope(scope, artifact.ResourceID)
 		if loadErr != nil {
-			return nil, nil, nil, loadErr
+			return nil, nil, nil, nil, loadErr
 		}
 		resources[resource.ID] = *resource
 	}
 	slices.Sort(actualIDs)
 	if !slices.Equal(actualIDs, arguments.ArtifactIDs) {
-		return nil, nil, nil, errors.New("production canvas artifacts do not match the plan")
+		return nil, nil, nil, nil, errors.New("production canvas artifacts do not match the plan")
 	}
-	return plan, artifacts, resources, nil
+	calls, err := s.repo.AgentToolCallsForScope(scope)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	renderArguments := make(map[string]agentruntime.ProductionRenderArguments)
+	for _, call := range calls {
+		if call.ToolName != string(agentruntime.ToolProductionRender) || call.Status != agentruntime.ToolCallSucceeded {
+			continue
+		}
+		frozen, decodeErr := decodeFrozenProductionRenderArguments(json.RawMessage(call.InputJSON))
+		if decodeErr != nil {
+			return nil, nil, nil, nil, decodeErr
+		}
+		if frozen.PlanKey != arguments.PlanKey || frozen.PlanVersion != arguments.PlanVersion {
+			continue
+		}
+		if _, exists := renderArguments[frozen.ArtifactID]; exists {
+			return nil, nil, nil, nil, errors.New("production canvas render facts are duplicated")
+		}
+		renderArguments[frozen.ArtifactID] = frozen
+	}
+	return plan, artifacts, resources, renderArguments, nil
 }
 
 func (s *Service) productionCanvasCommitCompletedToolProgress(scope agentruntime.Scope, state agentruntime.RuntimeState, call *agentruntime.ToolCallDecision) (*AgentRuntimeProgress, error) {

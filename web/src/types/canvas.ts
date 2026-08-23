@@ -131,6 +131,7 @@ export type CanvasNodeMetadata = {
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;
+    channelId?: string;
     model?: string;
     size?: string;
     quality?: string;

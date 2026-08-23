@@ -68,7 +68,7 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			!strings.Contains(body.Messages[0].Content, "qualities 为空时必须省略 quality") ||
 			!strings.Contains(body.Messages[0].Content, "参数值必须来自所选 callableModels 的 providerCapabilities") ||
 			!strings.Contains(body.Messages[0].Content, `"artifactId":"<video_clip artifactId>"`) ||
-			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"quality":"720p","generateAudio":true}`) ||
+			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"aspectRatio":"9:16","quality":"720p","generateAudio":true}`) ||
 			!strings.Contains(body.Messages[0].Content, "supportsTextToVideo=true") ||
 			!strings.Contains(body.Messages[0].Content, "无同镜就绪分镜时直接按文生视频执行") ||
 			!strings.Contains(body.Messages[0].Content, "必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval") ||

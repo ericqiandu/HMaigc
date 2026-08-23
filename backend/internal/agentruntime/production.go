@@ -20,6 +20,7 @@ type ImageRenderConfig struct {
 
 type VideoRenderConfig struct {
 	DurationSeconds int    `json:"durationSeconds"`
+	AspectRatio     string `json:"aspectRatio"`
 	Quality         string `json:"quality"`
 	GenerateAudio   bool   `json:"generateAudio"`
 }

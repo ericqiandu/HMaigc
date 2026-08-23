@@ -176,7 +176,8 @@ func decodeFrozenProductionRenderArguments(raw json.RawMessage) (agentruntime.Pr
 		return agentruntime.ProductionRenderArguments{}, errAgentRuntimeProductionRenderInput
 	}
 	if arguments.VideoConfig != nil {
-		if !arguments.VideoInputMode.Valid() ||
+		arguments.VideoConfig.AspectRatio = strings.TrimSpace(arguments.VideoConfig.AspectRatio)
+		if arguments.VideoConfig.AspectRatio == "" || !arguments.VideoInputMode.Valid() ||
 			(arguments.VideoInputMode == agentruntime.ProductionVideoInputTextToVideo && arguments.VideoInputResourceID != "") ||
 			(arguments.VideoInputMode == agentruntime.ProductionVideoInputStoryboard && arguments.VideoInputResourceID == "") {
 			return agentruntime.ProductionRenderArguments{}, errAgentRuntimeProductionRenderInput

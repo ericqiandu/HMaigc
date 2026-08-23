@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import { buildTaskBillingQuoteRequest, prepareGenerationTaskSubmission, taskBillingQuoteMatches, taskPriceChangedQuoteFromEnvelope } from "../src/lib/billing/task-billing-quote";
 import type { CreateTaskInput, TaskBillingQuote } from "../src/services/api/task-center";
@@ -10,6 +11,7 @@ const providerConfig = {
     quality: "low",
     videoSeconds: "6",
     vquality: "720p",
+    videoGenerateAudio: "true",
     videoSuperResolutionEnabled: "true",
     videoSuperResolutionResolution: "1080p",
     videoSuperResolutionVersion: "v1",
@@ -44,6 +46,11 @@ test("generation quote compares frozen facts without using displayed amounts", (
 });
 
 describe("generation billing quote contract", () => {
+    test("recomputes the canvas quote when generated audio changes", () => {
+        const source = readFileSync(new URL("../src/hooks/use-canvas-task-billing-quote.ts", import.meta.url), "utf8");
+        expect(source).toContain("config.videoGenerateAudio,");
+    });
+
     test("builds an exact video request without a frontend price formula", () => {
         expect(buildTaskBillingQuoteRequest({ projectId: "canvas-project", mode: "video", operation: "extend", batchCount: 4, usage: { referenceImageCount: 0, referenceVideoCount: 2 }, config: providerConfig })).toEqual({
             projectId: "canvas-project",
@@ -61,6 +68,7 @@ describe("generation billing quote contract", () => {
                     quality: "low",
                     videoSeconds: "6",
                     vquality: "720p",
+                    videoGenerateAudio: true,
                     videoSuperResolutionEnabled: true,
                     videoSuperResolutionResolution: "1080p",
                     videoSuperResolutionVersion: "v1",

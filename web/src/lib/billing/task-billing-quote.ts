@@ -49,6 +49,7 @@ export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batch
                 quality: optionalString(config.quality),
                 videoSeconds: optionalString(config.videoSeconds),
                 vquality: optionalString(config.vquality),
+                videoGenerateAudio: config.videoGenerateAudio === true || config.videoGenerateAudio === "true",
                 videoSuperResolutionEnabled: config.videoSuperResolutionEnabled === true || config.videoSuperResolutionEnabled === "true",
                 videoSuperResolutionResolution: optionalString(config.videoSuperResolutionResolution),
                 videoSuperResolutionVersion: optionalString(config.videoSuperResolutionVersion),

@@ -35,6 +35,7 @@ type TaskBillingQuoteConfig struct {
 	Quality                        string `json:"quality"`
 	VideoSeconds                   string `json:"videoSeconds"`
 	VideoQuality                   string `json:"vquality"`
+	VideoGenerateAudio             bool   `json:"videoGenerateAudio"`
 	SuperResolutionEnabled         bool   `json:"videoSuperResolutionEnabled"`
 	SuperResolutionResolution      string `json:"videoSuperResolutionResolution"`
 	SuperResolutionVersion         string `json:"videoSuperResolutionVersion"`
@@ -163,6 +164,8 @@ func billingUsageFromQuoteInput(capability string, modelKey string, input TaskBi
 		}
 		if _, spec, managed := kuaiziProviderFamilyForModel(modelKey); managed && spec.Capability == "video" && input.ReferenceVideoCount > 0 {
 			usage.InputVariant = "reference_video"
+		} else if managed && spec.Capability == "video" && config.VideoGenerateAudio {
+			usage.InputVariant = "standard_audio"
 		}
 		return usage, nil
 	default:

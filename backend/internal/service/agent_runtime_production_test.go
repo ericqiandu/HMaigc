@@ -189,6 +189,28 @@ func TestProductionRenderCapabilitiesRejectUnsupportedQualityBeforeApproval(t *t
 	}
 }
 
+func TestProductionRenderCapabilitiesRejectUnsupportedVideoAspectRatioBeforeApproval(t *testing.T) {
+	artifact := model.AgentProductionArtifact{Kind: model.AgentProductionArtifactVideoClip}
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: "video-channel", Model: "video-model", Capability: "video",
+		ProviderCapabilities: &PublicProviderCapabilities{
+			ModelKey: "video-model", Capability: "video", Ratios: []string{"16:9", "9:16"},
+			Resolutions: []string{"720p"}, DurationMin: 4, DurationMax: 15, SupportsGeneratedAudio: false,
+		},
+	}
+	request := agentProductionRenderRequest{
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "1:1", Quality: "720p"},
+	}
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err == nil || !strings.Contains(err.Error(), "aspect ratio") {
+		t.Fatalf("unsupported aspect ratio error = %v", err)
+	}
+	request.VideoConfig.AspectRatio = "9:16"
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err != nil {
+		t.Fatalf("capability-valid video config rejected: %v", err)
+	}
+}
+
 func TestProductionRenderRejectsLegacyPlanWithoutDeliverables(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
@@ -220,7 +242,7 @@ func TestProductionRenderRejectsLegacyPlanWithoutDeliverables(t *testing.T) {
 		"planVersion":1,
 		"artifactId":"legacy-video-artifact",
 		"generationModel":{"channelId":"video-channel","model":"video-model"},
-		"videoConfig":{"durationSeconds":5,"quality":"720p","generateAudio":false}
+		"videoConfig":{"durationSeconds":5,"aspectRatio":"16:9","quality":"720p","generateAudio":false}
 	}`))
 	code, _, ok := agentProductionRenderFailureDetails(err)
 	if !ok || code != "production_plan_invalid" || !strings.Contains(err.Error(), "deliverables") {
@@ -308,7 +330,7 @@ func TestProductionRenderLegacyApprovedRetryDoesNotReuseUnresolvedTask(t *testin
 	arguments := agentruntime.ProductionRenderArguments{
 		ArtifactID: artifact.ID, Attempt: 1,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "video-model"},
-		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 10, Quality: "720p"},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 10, AspectRatio: "16:9", Quality: "720p"},
 	}
 
 	_, _, err := svc.ensureProductionArtifactTask(scope, &call, arguments, artifact)
@@ -490,7 +512,7 @@ func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T)
 	input, taskType, err := svc.productionRenderTaskInput(scope, agentruntime.ProductionRenderArguments{
 		PlanKey: plan.PlanKey, PlanVersion: plan.Version,
 		VideoInputMode: inputMode, VideoInputResourceID: frozenID,
-		VideoConfig: &agentruntime.VideoRenderConfig{DurationSeconds: 5, Quality: "720p"},
+		VideoConfig: &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "16:9", Quality: "720p"},
 	}, video, "镜头缓慢推进")
 	if err != nil {
 		t.Fatal(err)
@@ -552,12 +574,12 @@ func TestProductionRenderBuildsTextToVideoTaskWithoutStoryboardResource(t *testi
 		GenerationModel:      agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "doubao-seedance-2-0-260128"},
 		VideoInputMode:       agentruntime.ProductionVideoInputTextToVideo,
 		VideoInputResourceID: frozenID,
-		VideoConfig:          &agentruntime.VideoRenderConfig{DurationSeconds: 5, Quality: "720p", GenerateAudio: false},
+		VideoConfig:          &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "9:16", Quality: "720p", GenerateAudio: false},
 	}, video, "微风吹动衣角，镜头缓慢推进")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if taskType != "canvas_video" || input.Mode != "video" || len(input.ReferenceImages) != 0 || input.Prompt != "微风吹动衣角，镜头缓慢推进" {
+	if taskType != "canvas_video" || input.Mode != "video" || input.Config.Size != "9:16" || len(input.ReferenceImages) != 0 || input.Prompt != "微风吹动衣角，镜头缓慢推进" {
 		t.Fatalf("text-to-video task input = %#v, taskType=%s", input, taskType)
 	}
 	legacyFrozen, err := json.Marshal(agentruntime.ProductionRenderArguments{

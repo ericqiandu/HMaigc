@@ -23,6 +23,7 @@ export function useCanvasTaskBillingQuote(projectId: string, config: AiConfig, m
         config.model,
         config.quality,
         config.size,
+        config.videoGenerateAudio,
         config.videoSeconds,
         config.videoSuperResolutionEnabled,
         config.videoSuperResolutionFps,

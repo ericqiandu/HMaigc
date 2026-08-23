@@ -161,6 +161,7 @@ func (s *Service) productionRenderTaskInput(
 	}
 	input.Mode = "video"
 	input.Config.VideoSeconds = strconv.Itoa(arguments.VideoConfig.DurationSeconds)
+	input.Config.Size = arguments.VideoConfig.AspectRatio
 	input.Config.VQuality = arguments.VideoConfig.Quality
 	input.Config.VideoGenerateAudio = strconv.FormatBool(arguments.VideoConfig.GenerateAudio)
 	switch arguments.VideoInputMode {

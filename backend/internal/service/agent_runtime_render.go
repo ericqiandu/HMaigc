@@ -245,6 +245,9 @@ func validateProductionRenderCapabilities(request agentProductionRenderRequest, 
 		if !containsString(capabilities.Resolutions, request.VideoConfig.Quality) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video quality is not published by provider capabilities")
 		}
+		if !containsString(capabilities.Ratios, request.VideoConfig.AspectRatio) {
+			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video aspect ratio is not published by provider capabilities")
+		}
 		if (capabilities.DurationMin > 0 && request.VideoConfig.DurationSeconds < capabilities.DurationMin) ||
 			(capabilities.DurationMax > 0 && request.VideoConfig.DurationSeconds > capabilities.DurationMax) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video duration is outside provider capabilities")
@@ -285,8 +288,9 @@ func decodeAgentProductionRenderRequest(raw json.RawMessage) (agentProductionRen
 		}
 	}
 	if request.VideoConfig != nil {
+		request.VideoConfig.AspectRatio = strings.TrimSpace(request.VideoConfig.AspectRatio)
 		request.VideoConfig.Quality = strings.TrimSpace(request.VideoConfig.Quality)
-		if request.VideoConfig.DurationSeconds < 1 || request.VideoConfig.DurationSeconds > 30 || request.VideoConfig.Quality == "" {
+		if request.VideoConfig.DurationSeconds < 1 || request.VideoConfig.DurationSeconds > 30 || request.VideoConfig.AspectRatio == "" || request.VideoConfig.Quality == "" {
 			return agentProductionRenderRequest{}, newAgentProductionRenderInputError("generation_parameter_unsupported", "video config is invalid")
 		}
 	}
@@ -311,7 +315,9 @@ func productionRenderQuoteRequest(canvasID string, request agentProductionRender
 			return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "video config is invalid")
 		}
 		config.VideoSeconds = strconv.Itoa(request.VideoConfig.DurationSeconds)
+		config.Size = request.VideoConfig.AspectRatio
 		config.VideoQuality = request.VideoConfig.Quality
+		config.VideoGenerateAudio = request.VideoConfig.GenerateAudio
 	default:
 		return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "artifact kind is unsupported")
 	}
