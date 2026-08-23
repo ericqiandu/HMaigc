@@ -477,6 +477,7 @@ func (s *Service) SubmitScopedAgentInterrupt(actor *model.User, runID string, ex
 	if err != nil {
 		return nil, s.mapAgentControlError(scope, err, "agent_interrupt_conflict", "Agent 运行状态已经变化，请按最新状态重试")
 	}
+	s.cancelActiveTask(agentRuntimeModelTaskID(scope.RunID, state.StepNumber))
 	return s.agentRuntimeViewForState(scope, state)
 }
 

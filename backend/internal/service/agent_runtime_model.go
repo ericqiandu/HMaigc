@@ -25,6 +25,10 @@ type agentRuntimeModelDecisionRejectedError struct {
 	feedback agentruntime.ModelDecisionFeedback
 }
 
+var errAgentRuntimeStateObservation = errors.New("Agent 运行状态观察失败")
+
+const agentRuntimeStateObservationInterval = 250 * time.Millisecond
+
 func (err *agentRuntimeModelDecisionRejectedError) Error() string {
 	return err.feedback.Reason
 }
@@ -66,7 +70,11 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		itemID := agentruntime.AgentMessageItemID(runID, state.StepNumber)
 		started := false
 		visibleMessage := ""
-		result, requestErr := runKuaiziChatCompletionStream(ctx, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
+		providerContext, cancelProvider := context.WithCancelCause(ctx)
+		stopObservation := make(chan struct{})
+		observationStopped := make(chan struct{})
+		go s.observeAgentRuntimeModelRequest(providerContext, cancelProvider, stopObservation, observationStopped, scope)
+		result, requestErr := runKuaiziChatCompletionStream(providerContext, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
 			visible, observeErr := observer.Push(rawDelta)
 			if observeErr != nil || visible == "" {
 				return observeErr
@@ -83,11 +91,27 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 			started = true
 			return nil
 		})
+		close(stopObservation)
+		<-observationStopped
+		providerCause := context.Cause(providerContext)
+		if providerCause == nil {
+			latestState, stateErr := s.repo.LoadAgentCheckpoint(scope)
+			switch {
+			case stateErr != nil:
+				providerCause = fmt.Errorf("%w: %v", errAgentRuntimeStateObservation, stateErr)
+			case agentRuntimeRunTerminal(latestState.Status):
+				providerCause = context.Canceled
+			}
+		}
+		cancelProvider(nil)
+		if providerCause != nil {
+			requestErr = providerCause
+		}
 		if evidenceErr := s.persistAgentRuntimeProviderStreamEvidence(task, result, requestErr); evidenceErr != nil {
 			return agentRuntimeModelTaskResult{}, evidenceErr
 		}
 		if requestErr != nil {
-			if errors.Is(requestErr, repository.ErrAgentMessageStreamClosed) {
+			if errors.Is(requestErr, context.Canceled) || errors.Is(requestErr, repository.ErrAgentMessageStreamClosed) {
 				if config.MaxOutputTokens > 0 && (result.ProviderRequestID != "" || result.Usage.Available) {
 					if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "Agent 运行已停止，等待上游账单核对"); evidenceErr != nil {
 						return agentRuntimeModelTaskResult{}, evidenceErr
@@ -105,6 +129,9 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 			}
 			if errors.Is(requestErr, errKuaiziChatCompletionTextMissing) {
 				return agentRuntimeModelTaskResult{}, errors.New("Agent 模型响应没有正文")
+			}
+			if errors.Is(requestErr, errAgentRuntimeStateObservation) {
+				return agentRuntimeModelTaskResult{}, errAgentRuntimeStateObservation
 			}
 			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型请求失败")
 		}
@@ -134,6 +161,36 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}, nil
 	}
 	return agentRuntimeModelTaskResult{Mode: "text", Text: text}, nil
+}
+
+func (s *Service) observeAgentRuntimeModelRequest(
+	ctx context.Context,
+	cancel context.CancelCauseFunc,
+	stop <-chan struct{},
+	stopped chan<- struct{},
+	scope agentruntime.Scope,
+) {
+	defer close(stopped)
+	ticker := time.NewTicker(agentRuntimeStateObservationInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stop:
+			return
+		case <-ticker.C:
+			state, err := s.repo.LoadAgentCheckpoint(scope)
+			if err != nil {
+				cancel(fmt.Errorf("%w: %v", errAgentRuntimeStateObservation, err))
+				return
+			}
+			if agentRuntimeRunTerminal(state.Status) {
+				cancel(context.Canceled)
+				return
+			}
+		}
+	}
 }
 
 func (s *Service) beginAgentRuntimeModelRequest(scope agentruntime.Scope, expectedStep int) (agentruntime.RuntimeState, error) {
