@@ -285,9 +285,28 @@ test("用户消息展示本轮服务端冻结的模型和 Skills 而不是只显
 
 test("单一运行链等待付费审批并展示验收后的最终消息", async () => {
     const calls: string[] = [];
+    const videoModel = encodeChannelModel("channel-video", "video-model-mini");
+    useConfigStore.setState({
+        config: { ...defaultConfig, channels: [videoChannel()], models: [videoModel], videoModels: [videoModel], videoModel },
+    });
     const approvalView = runtimeView("waiting_approval", {
         stateVersion: 3,
-        pendingToolCall: { toolCallId: "render-1", toolName: "production.render", actionVersion: 2, arguments: { planKey: "plan-1", planVersion: 1, artifactId: "artifact-1" }, expectedDelivery: answerDelivery() },
+        pendingToolCall: {
+            toolCallId: "render-1",
+            toolName: "production.render",
+            actionVersion: 2,
+            arguments: {
+                planKey: "plan-1",
+                planVersion: 1,
+                artifactId: "artifact-1",
+                generationModel: { channelId: "channel-video", model: "video-model-mini" },
+                videoInputMode: "text_to_video",
+                videoConfig: { durationSeconds: 5, aspectRatio: "16:9", quality: "720p", generateAudio: false },
+                amountMicrocredits: 1_000_000,
+                quantity: 1,
+            },
+            expectedDelivery: answerDelivery(),
+        },
     });
     const completedView = runtimeView("succeeded", {
         stateVersion: 4,
@@ -331,6 +350,11 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
     expect(calls).toEqual(["create-thread", "start:整理当前画布"]);
     expect(document.body.textContent).toContain("等待确认");
     expect(document.body.textContent).toContain("production.render");
+    const approvalSummary = document.querySelector<HTMLElement>('[aria-label="冻结生成费用"]');
+    expect(approvalSummary?.textContent).toContain("预计扣除");
+    expect(approvalSummary?.textContent).toContain("1 积分");
+    expect(approvalSummary?.textContent).toContain("Seedance Mini");
+    expect(approvalSummary?.textContent).toContain("文生视频 · 720P · 16:9 · 5s · 1 个 · 无声");
     await act(async () => button("批准执行").click());
     await settle();
     expect(calls.at(-1)).toBe("approval:approved:render-1:2");

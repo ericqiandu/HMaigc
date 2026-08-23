@@ -850,6 +850,47 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.canvas-agent-runtime-approval-summary {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+}
+.canvas-agent-runtime-approval-cost,
+.canvas-agent-runtime-approval-fact {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+.canvas-agent-runtime-approval-cost-label,
+.canvas-agent-runtime-approval-fact-label {
+    flex: 0 0 auto;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 16px;
+}
+.canvas-agent-runtime-approval-cost-value {
+    color: var(--foreground);
+    font-size: 14px;
+    line-height: 20px;
+}
+.canvas-agent-runtime-approval-facts {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+}
+.canvas-agent-runtime-approval-fact-value {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: color-mix(in srgb, var(--foreground) 76%, transparent);
+    font-size: 11px;
+    line-height: 16px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .canvas-agent-runtime-arguments {
     margin-top: 10px;
 }

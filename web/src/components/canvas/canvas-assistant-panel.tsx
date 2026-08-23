@@ -22,6 +22,7 @@ import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
 import type { AgentConversationState } from "./agent-conversation-reducer";
 import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
+import { AgentApprovalSummary } from "./agent-approval-summary";
 import { agentRuntimeUsesLiveSubscription, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
 
@@ -274,7 +275,7 @@ export function CanvasAssistantPanel({
                         </div>
                     ) : null}
                     {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall ? (
-                        <AgentApprovalCard state={runtime.view.state} busy={runtime.busy} muted={theme.node.muted} onDecision={(decision) => void runtime.decideApproval(decision)} />
+                        <AgentApprovalCard state={runtime.view.state} busy={runtime.busy} muted={theme.node.muted} config={effectiveConfig} onDecision={(decision) => void runtime.decideApproval(decision)} />
                     ) : null}
                 </section>
 
@@ -448,7 +449,7 @@ function knownAgentErrorMessage(errorCode: string): string | undefined {
     return undefined;
 }
 
-function AgentApprovalCard({ state, busy, muted, onDecision }: { state: AgentRuntimeState; busy: boolean; muted: string; onDecision: (decision: "approved" | "rejected") => void }) {
+function AgentApprovalCard({ state, busy, muted, config, onDecision }: { state: AgentRuntimeState; busy: boolean; muted: string; config: AiConfig; onDecision: (decision: "approved" | "rejected") => void }) {
     const call = state.pendingToolCall;
     if (!call) return null;
     return (
@@ -462,6 +463,7 @@ function AgentApprovalCard({ state, busy, muted, onDecision }: { state: AgentRun
                     </span>
                 </div>
             </div>
+            <AgentApprovalSummary call={call} config={config} />
             <details className="canvas-agent-runtime-arguments">
                 <summary className="canvas-agent-runtime-arguments-summary">查看确定性参数</summary>
                 <pre className="canvas-agent-runtime-arguments-code">{JSON.stringify(call.arguments, null, 2)}</pre>
