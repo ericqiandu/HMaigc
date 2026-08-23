@@ -52,6 +52,21 @@ test("共享提交按钮只把启用状态的点击交给调用方", async () =>
     expect(calls).toEqual(["ready"]);
 });
 
+test("共享提交按钮使用全圆角 Token 保持所有入口为正圆", async () => {
+    const stylesheet = await Bun.file(new URL("../src/components/canvas/canvas-submit-button.css", import.meta.url)).text();
+
+    expect(stylesheet).toContain("border-radius: var(--radius-full) !important;");
+    expect(stylesheet).not.toContain("border-radius: 8px !important;");
+});
+
+test("分镜脚本输入框复用共享提交按钮而不是维护独立发送外壳", async () => {
+    const source = await Bun.file(new URL("../src/components/canvas/canvas-script-node.tsx", import.meta.url)).text();
+
+    expect(source).toContain('import { CanvasSubmitButton } from "./canvas-submit-button";');
+    expect(source).toContain("<CanvasSubmitButton");
+    expect(source).not.toContain('shape="circle"');
+});
+
 type ButtonFixture = {
     state: "ready" | "loading" | "stop";
     ariaLabel: string;

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Button, Checkbox, Input, InputNumber, Modal, Popover, Select, Table, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ChevronDown, ChevronUp, Clapperboard, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, Minus, Plus, RefreshCw, Send, Square, Trash2, Video, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Clapperboard, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, Minus, Plus, RefreshCw, Square, Trash2, Video, X } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
+import { CanvasSubmitButton } from "./canvas-submit-button";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { pipelineStatusLabel, type CanvasStoryboardPipelineProgress, type StoryboardPipelineStage } from "@/lib/canvas/canvas-storyboard-progress";
 import { isContentModerationError } from "@/lib/generation-error";
@@ -230,13 +231,10 @@ export function CanvasScriptNodeContent({ node, batch, pipeline, scale, mentionR
                         popupMatchSelectWidth={false}
                         onChange={onShotDurationChange}
                     />}
-                    <Button
-                        shape="circle"
-                        icon={<Send className="size-4" />}
+                    <CanvasSubmitButton
+                        state={node.metadata?.status === "loading" ? "loading" : "ready"}
                         disabled={!prompt.trim() || node.metadata?.status === "loading"}
-                        loading={node.metadata?.status === "loading"}
-                        style={{ background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.text }}
-                        onMouseDown={(event) => event.stopPropagation()}
+                        ariaLabel={node.metadata?.status === "loading" ? "正在生成分镜脚本" : "生成分镜脚本"}
                         onClick={submitPrompt}
                     />
                 </div>
