@@ -420,7 +420,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if taskType == "" {
 		taskType = "video_image_to_video"
 	}
-	task := model.Task{ID: identity.TaskID, UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	task := model.Task{ID: identity.TaskID, UserID: userID, Audience: model.TaskAudienceCustomer, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
@@ -563,7 +563,7 @@ func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]Ta
 }
 
 func (s *Service) Task(userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
+	task, err := s.repo.TaskForCustomer(userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +571,7 @@ func (s *Service) Task(userID string, id string) (*model.Task, error) {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
+	task, err := s.repo.TaskForCustomer(userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +693,7 @@ func creditInsufficientMessage(teamID string) string {
 }
 
 func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
+	task, err := s.repo.TaskForCustomer(userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +756,7 @@ func (s *Service) CancelTask(userID string, id string) (*model.Task, error) {
 }
 
 func (s *Service) TaskLogs(userID string, id string) ([]model.TaskLog, error) {
-	return s.repo.TaskLogs(userID, id)
+	return s.repo.TaskLogsForCustomer(userID, id)
 }
 
 func taskSummariesForOutput(tasks []model.Task) []TaskSummary {

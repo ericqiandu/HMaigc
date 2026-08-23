@@ -45,6 +45,48 @@ func TestModelsRegistersAgentRuntimeFacts(t *testing.T) {
 	}
 }
 
+func TestTaskAudienceMigrationBackfillsCustomerAndInternalTasks(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE tasks (
+		id text PRIMARY KEY,
+		user_id text,
+		type text,
+		status text,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, type, status, created_at, updated_at) VALUES
+		(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+		"customer-task", "user-1", "canvas_image", model.TaskStatusQueued, now, now,
+		"agent-task", "user-1", "agent_runtime_model", model.TaskStatusQueued, now, now,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var tasks []model.Task
+	if err := db.Order("id asc").Find(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("tasks = %d, want 2", len(tasks))
+	}
+	byID := map[string]model.Task{tasks[0].ID: tasks[0], tasks[1].ID: tasks[1]}
+	if byID["customer-task"].Audience != model.TaskAudienceCustomer {
+		t.Fatalf("customer audience = %q", byID["customer-task"].Audience)
+	}
+	if byID["agent-task"].Audience != model.TaskAudienceInternal {
+		t.Fatalf("agent audience = %q", byID["agent-task"].Audience)
+	}
+}
+
 func TestWatermarkPolicySchemaCreatesTablesTaskFactsAndExactIndexes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

@@ -435,7 +435,7 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 		return nil, err
 	}
 	task := &model.Task{
-		ID: taskID, UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		ID: taskID, UserID: scope.ActorUserID, Audience: model.TaskAudienceInternal, ProjectID: scope.CanvasID,
 		Type: agentRuntimeModelTaskType, Capability: capability, Status: model.TaskStatusQueued,
 		Stage: "等待 Agent 模型调度", Progress: 5, Prompt: prompt, Operation: agentRuntimeModelOperation(scope.RunID),
 		Provider: "system", Model: item.ModelKey, InputJSON: string(encodedInput),

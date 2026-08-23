@@ -256,6 +256,14 @@ func (r *Repository) TaskForUser(userID string, id string) (*model.Task, error) 
 	return &task, nil
 }
 
+func (r *Repository) TaskForCustomer(userID string, id string) (*model.Task, error) {
+	var task model.Task
+	if err := r.db.First(&task, "id = ? AND user_id = ? AND audience = ?", id, userID, model.TaskAudienceCustomer).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 func (r *Repository) AttachSucceededTaskResource(userID string, taskID string, expectedResultJSON string, nextResultJSON string) (*model.Task, error) {
 	var task model.Task
 	err := r.db.Transaction(func(tx *gorm.DB) error {
@@ -498,8 +506,8 @@ func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnl
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	query := r.db.Select("id", "session_id", "project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "result_json", "billing_order_id", "attempts", "started_at", "completed_at", "created_at", "updated_at").
-		Where("user_id = ?", userID)
+	query := r.db.Select("id", "audience", "session_id", "project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "result_json", "billing_order_id", "attempts", "started_at", "completed_at", "created_at", "updated_at").
+		Where("user_id = ? AND audience = ?", userID, model.TaskAudienceCustomer)
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
 	}
@@ -559,6 +567,13 @@ func (r *Repository) TaskLogs(userID string, taskID string) ([]model.TaskLog, er
 	var logs []model.TaskLog
 	err := r.db.Order("created_at asc").Find(&logs, "user_id = ? AND task_id = ?", userID, taskID).Error
 	return logs, err
+}
+
+func (r *Repository) TaskLogsForCustomer(userID string, taskID string) ([]model.TaskLog, error) {
+	if _, err := r.TaskForCustomer(userID, taskID); err != nil {
+		return nil, err
+	}
+	return r.TaskLogs(userID, taskID)
 }
 
 func (r *Repository) SystemChannels(includeDisabled bool) ([]model.ModelChannel, error) {

@@ -368,6 +368,9 @@ func TestStartAgentRuntimeCreatesTokenBilledFrozenModelTask(t *testing.T) {
 	if started.ModelTask == nil {
 		t.Fatal("token-billed Agent task was not created")
 	}
+	if started.ModelTask.Audience != model.TaskAudienceInternal {
+		t.Fatalf("Agent model task audience = %q", started.ModelTask.Audience)
+	}
 	var order model.BillingOrder
 	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
 		t.Fatal(err)

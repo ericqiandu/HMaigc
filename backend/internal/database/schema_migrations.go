@@ -35,6 +35,11 @@ func MigrateBaseSchema(db *gorm.DB) error {
 	if err := db.AutoMigrate(Models()...); err != nil {
 		return err
 	}
+	if err := db.Model(&model.Task{}).
+		Where("type = ? AND audience <> ?", "agent_runtime_model", model.TaskAudienceInternal).
+		Update("audience", model.TaskAudienceInternal).Error; err != nil {
+		return fmt.Errorf("回填 Agent 内部任务受众失败: %w", err)
+	}
 	if db.Dialector.Name() != "postgres" {
 		return nil
 	}

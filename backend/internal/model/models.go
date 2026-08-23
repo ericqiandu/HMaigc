@@ -986,9 +986,17 @@ type UserAnnouncementRead struct {
 	ReadAt         time.Time `json:"readAt"`
 }
 
+type TaskAudience string
+
+const (
+	TaskAudienceCustomer TaskAudience = "customer"
+	TaskAudienceInternal TaskAudience = "internal"
+)
+
 type Task struct {
 	ID                           string              `json:"id" gorm:"primaryKey;size:36"`
 	UserID                       string              `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1;index:idx_tasks_user_capability_status,priority:1"`
+	Audience                     TaskAudience        `json:"audience" gorm:"not null;default:customer;size:16;index;check:task_audience_valid,audience IN ('customer','internal')"`
 	SessionID                    string              `json:"sessionId" gorm:"index;size:36"`
 	ProjectID                    string              `json:"projectId" gorm:"index;size:80"`
 	Type                         string              `json:"type" gorm:"index;size:64"`
