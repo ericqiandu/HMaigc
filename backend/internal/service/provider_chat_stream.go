@@ -143,6 +143,12 @@ func parseChatCompletionSSE(ctx context.Context, reader io.Reader, emit func(str
 			if err := flush(); err != nil {
 				return result, err
 			}
+			if done {
+				if result.Text == "" {
+					return result, errKuaiziChatCompletionTextMissing
+				}
+				return result, nil
+			}
 			continue
 		}
 		if strings.HasPrefix(line, ":") {

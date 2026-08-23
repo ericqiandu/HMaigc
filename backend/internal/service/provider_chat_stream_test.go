@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunKuaiziChatCompletionStreamRequestsStrictStreaming(t *testing.T) {
@@ -58,6 +60,30 @@ func TestParseChatCompletionSSEEmitsContentUsageAndDone(t *testing.T) {
 	}
 	if !result.Usage.Available || result.Usage.InputTokens != 12 || result.Usage.CachedTokens != 3 || result.Usage.OutputTokens != 2 {
 		t.Fatalf("usage = %#v", result.Usage)
+	}
+}
+
+func TestParseChatCompletionSSEReturnsOnDoneWithoutWaitingForEOF(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+
+	parsed := make(chan error, 1)
+	go func() {
+		_, err := parseChatCompletionSSE(context.Background(), reader, func(string) error { return nil })
+		parsed <- err
+	}()
+	if _, err := writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-parsed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("parser waited for transport EOF after the terminal [DONE] frame")
 	}
 }
 

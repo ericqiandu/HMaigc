@@ -47,17 +47,28 @@ test("服务端 turns/items 是恢复真源且重复或乱序事件不会重复�
 
     expect(runtime?.turns[0]?.items[0]?.content.message).toBe("生成短片");
     const delta = uiItemEvent(3, "item.delta", { delta: "第一句", userVisible: true });
+    const snapshot: AgentRuntimeEvent = {
+        protocolVersion: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence: 4,
+        kind: "state.snapshot",
+        payload: { status: "running", stateVersion: 2 },
+        createdAt: "2026-08-18T00:00:03Z",
+    };
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () => {
         handlers?.onEvent(delta);
         handlers?.onEvent(delta);
         handlers?.onEvent({ ...delta, sequence: 2 });
+        handlers?.onEvent(snapshot);
+        handlers?.onEvent(snapshot);
     });
     await settle();
 
-    expect(runtime?.events).toEqual([delta]);
-    expect(runtime?.lastSequence).toBe(3);
-    expect(received).toEqual([delta]);
+    expect(runtime?.events).toEqual([delta, snapshot]);
+    expect(runtime?.lastSequence).toBe(4);
+    expect(received).toEqual([delta, snapshot]);
 });
 
 test("活动 Run 刷新后从零重放气泡文本但不重复业务副作用", async () => {
@@ -93,6 +104,30 @@ test("活动 Run 刷新后从零重放气泡文本但不重复业务副作用", 
     expect(runtime?.events).toEqual([replayed, fresh]);
     expect(runtime?.lastSequence).toBe(5);
     expect(received).toEqual([fresh]);
+});
+
+test("长流式回复保留完整气泡但不会把全部 delta 留在 React 事件窗口", async () => {
+    const running = runtimeView("running", 2, 0);
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem(running)] }),
+        getRun: async () => running,
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+    await mount(client);
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+
+    await act(async () => {
+        for (let sequence = 1; sequence <= 600; sequence += 1) {
+            handlers?.onEvent(uiItemEvent(sequence, "item.delta", { delta: "x", userVisible: true }));
+        }
+    });
+
+    expect(runtime?.conversation.items[0]?.text).toBe("x".repeat(600));
+    expect(runtime?.events.length).toBeLessThanOrEqual(256);
 });
 
 test("活动运行再次发送走 steer，终态运行才创建新 Run", async () => {

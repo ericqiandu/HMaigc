@@ -15,9 +15,30 @@ import {
     type AgentThreadHistoryItem,
     type AgentThreadHistoryTurn,
 } from "@/services/api/agent-runtime";
+import { initialAgentConversationState, reduceAgentConversation, type AgentConversationState } from "./agent-conversation-reducer";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 const liveSubscriptionStatuses = new Set<AgentRuntimeView["state"]["status"]>(["queued", "running", "waiting_tool"]);
+const agentRuntimeEventWindowLimit = 256;
+const hiddenProcessEventKinds = new Set<AgentRuntimeEvent["kind"]>(["item.delta", "item.started", "state.snapshot"]);
+
+type AgentTimelineState = {
+    events: AgentRuntimeEvent[];
+    conversation: AgentConversationState;
+    meaningfulEvents: AgentRuntimeEvent[];
+    lastSequence: number;
+};
+
+function initialAgentTimelineState(): AgentTimelineState {
+    return { events: [], conversation: initialAgentConversationState(), meaningfulEvents: [], lastSequence: 0 };
+}
+
+function appendAgentTimelineEvent(state: AgentTimelineState, event: AgentRuntimeEvent): AgentTimelineState {
+    if (event.sequence <= state.lastSequence) return state;
+    const events = [...state.events, event].slice(-agentRuntimeEventWindowLimit);
+    const meaningfulEvents = hiddenProcessEventKinds.has(event.kind) ? state.meaningfulEvents : [...state.meaningfulEvents, event].slice(-4);
+    return { events, conversation: reduceAgentConversation(state.conversation, event), meaningfulEvents, lastSequence: event.sequence };
+}
 
 const statusLabels: Record<AgentRuntimeView["state"]["status"], string> = {
     queued: "准备中",
@@ -48,7 +69,7 @@ type UseAgentRuntimeInput = {
 export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeEvent }: UseAgentRuntimeInput) {
     const [threadId, setThreadId] = useState("");
     const [view, setView] = useState<AgentRuntimeView | null>(null);
-    const [events, setEvents] = useState<AgentRuntimeEvent[]>([]);
+    const [timeline, setTimeline] = useState(initialAgentTimelineState);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "reconnecting">("idle");
@@ -105,7 +126,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             runRefreshRequestRef.current += 1;
             setThreadId(item.thread.id);
             setView(null);
-            setEvents([]);
+            setTimeline(initialAgentTimelineState());
             setError("");
             setConnection("idle");
             setPendingUserMessage("");
@@ -194,7 +215,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         cursorRef.current = 0;
         setThreadId("");
         setView(null);
-        setEvents([]);
+        setTimeline(initialAgentTimelineState());
         setError("");
         setConnection("idle");
         setPendingUserMessage("");
@@ -283,10 +304,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     setError("Agent 实时事件与当前会话归属冲突");
                     return;
                 }
-                setEvents((current) => {
-                    const last = current.at(-1);
-                    return current.some((candidate) => candidate.sequence === event.sequence) || (last && event.sequence < last.sequence) ? current : [...current, event];
-                });
+                setTimeline((current) => appendAgentTimelineEvent(current, event));
                 if (event.sequence <= cursorRef.current) return;
                 cursorRef.current = event.sequence;
                 void storage.save(canvasId, { threadId: event.threadId, activeRunId: runId, lastSequence: event.sequence }).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
@@ -311,7 +329,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     scheduleThreadReload();
                     return true;
                 }
-                setEvents([]);
+                setTimeline(initialAgentTimelineState());
                 cursorRef.current = 0;
                 let activeThreadId = threadIdRef.current;
                 if (!activeThreadId) {
@@ -449,7 +467,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         cursorRef.current = 0;
         setThreadId("");
         setView(null);
-        setEvents([]);
+        setTimeline(initialAgentTimelineState());
         setError("");
         setPendingUserMessage("");
         setPendingConfiguration(null);
@@ -467,7 +485,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             view,
             turns,
             lastSequence: cursorRef.current,
-            events,
+            events: timeline.events,
+            conversation: timeline.conversation,
+            meaningfulEvents: timeline.meaningfulEvents,
             busy,
             error,
             connection,
@@ -489,7 +509,6 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             connection,
             decideApproval,
             error,
-            events,
             historyError,
             historyLoading,
             interrupt,
@@ -504,6 +523,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             terminal,
             threadId,
             threads,
+            timeline,
             turns,
             view,
         ],

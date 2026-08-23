@@ -17,7 +17,7 @@ import { AgentChatComposer } from "./canvas-agent-chat-ui";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
-import { foldAgentConversation } from "./agent-conversation-reducer";
+import type { AgentConversationState } from "./agent-conversation-reducer";
 import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
 import { agentRuntimeStatusLabel, agentRuntimeUsesLiveSubscription, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
@@ -228,7 +228,7 @@ export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeId
                     ) : !runtime.view ? (
                         <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} onSuggestion={setPrompt} />
                     ) : (
-                        <AgentRunContent state={runtime.view.state} events={runtime.events} connection={runtime.connection} muted={theme.node.muted} />
+                        <AgentRunContent state={runtime.view.state} conversation={runtime.conversation} meaningfulEvents={runtime.meaningfulEvents} connection={runtime.connection} muted={theme.node.muted} />
                     )}
                     {!historyOpen && runtime.view?.state.clarificationHistory.length ? <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} /> : null}
                     {!historyOpen && runtime.view?.state.status === "waiting_input" ? <AgentClarificationStatus /> : null}
@@ -349,10 +349,8 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
     );
 }
 
-function AgentRunContent({ state, events, connection, muted }: { state: AgentRuntimeState; events: AgentRuntimeEvent[]; connection: string; muted: string }) {
+function AgentRunContent({ state, conversation, meaningfulEvents, connection, muted }: { state: AgentRuntimeState; conversation: AgentConversationState; meaningfulEvents: AgentRuntimeEvent[]; connection: string; muted: string }) {
     const status = agentRuntimeStatusLabel(state.status);
-    const conversation = useMemo(() => foldAgentConversation(events), [events]);
-    const meaningfulEvents = useMemo(() => events.filter((event) => event.kind !== "item.delta" && event.kind !== "item.started" && event.kind !== "state.snapshot").slice(-4), [events]);
     const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
     return (
         <div className="canvas-agent-runtime-run">
