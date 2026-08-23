@@ -157,7 +157,7 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Models: []ProviderModelSpec{
 				seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
 				seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3, false, []string{"web_search"}),
-				seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
+				seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p"}, 15, 9, 3, 3, false, []string{"web_search"}),
 				seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10, true, nil),
 			},
 		},
