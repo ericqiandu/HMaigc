@@ -7,7 +7,7 @@ import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
-import { UpdreamHeroSkillShortcuts } from "../src/pages/home/updream/updream-hero";
+import { UpdreamHeroSkillShortcuts } from "../src/pages/home/updream/updream-hero-composer";
 import { UpdreamVideoBackground } from "../src/pages/home/updream/updream-video-background";
 import type { PlatformSkill } from "@/services/api/skills";
 import type { CanvasAgentSkillSelection } from "@/types/canvas";

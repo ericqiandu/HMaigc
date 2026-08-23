@@ -187,6 +187,10 @@
     margin-top: 50px;
 }
 
+.updream-home-agent-composer-loading {
+    min-height: 206px;
+}
+
 .updream-home-page .canvas-agent-composer-wrap {
     padding: 0;
 }
@@ -356,6 +360,10 @@
 
     .updream-home-agent-composer {
         margin-top: 50px;
+    }
+
+    .updream-home-agent-composer-loading {
+        min-height: 260px;
     }
 
     .updream-hero-skill-shortcuts {
