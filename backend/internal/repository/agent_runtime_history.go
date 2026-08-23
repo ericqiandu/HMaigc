@@ -39,33 +39,64 @@ func (r *Repository) AgentTimelineEventsAfter(scope agentruntime.Scope, afterSeq
 	if err != nil || len(events) == 0 {
 		return nil, err
 	}
-	sequences := make([]int64, 0, len(events))
 	for _, event := range events {
 		if event.RunID != scope.RunID || event.Sequence <= afterSequence {
 			return nil, errors.New("agent timeline event facts are inconsistent")
 		}
-		sequences = append(sequences, event.Sequence)
 	}
-	var items []model.AgentTimelineItem
-	if err := r.db.Where("run_id = ? AND source_event_sequence IN ?", scope.RunID, sequences).
-		Order("source_event_sequence ASC").Find(&items).Error; err != nil {
+	statesByVersion, err := r.agentCheckpointStatesByVersion(scope.RunID)
+	if err != nil {
 		return nil, err
 	}
-	itemsBySequence := make(map[int64]model.AgentTimelineItem, len(items))
-	for _, item := range items {
-		if item.TenantKind != scope.TenantKind || item.TenantID != scope.TenantID || item.ThreadID != scope.ThreadID ||
-			item.RunID != scope.RunID || item.SourceEventSequence <= afterSequence {
-			return nil, errors.New("agent timeline item facts are inconsistent")
+	mutations := make([]*TimelineMutation, len(events))
+	itemIDs := make([]string, 0, len(events))
+	itemIDSet := make(map[string]struct{}, len(events))
+	deltaSequences := make([]int64, 0)
+	for index, event := range events {
+		if event.Kind == agentruntime.EventModelDelta {
+			deltaSequences = append(deltaSequences, event.Sequence)
+			continue
 		}
-		if _, exists := itemsBySequence[item.SourceEventSequence]; exists {
-			return nil, errors.New("agent timeline event has multiple item projections")
+		mutation, mutationErr := agentTimelineMutationForStoredEvent(scope.RunID, event, statesByVersion)
+		if mutationErr != nil {
+			return nil, mutationErr
 		}
-		itemsBySequence[item.SourceEventSequence] = item
+		mutations[index] = mutation
+		if mutation == nil {
+			continue
+		}
+		if _, exists := itemIDSet[mutation.ItemID]; !exists {
+			itemIDSet[mutation.ItemID] = struct{}{}
+			itemIDs = append(itemIDs, mutation.ItemID)
+		}
+	}
+	itemsByID, itemsBySequence, err := r.agentTimelineProjectionItems(scope, itemIDs, deltaSequences)
+	if err != nil {
+		return nil, err
 	}
 	records := make([]AgentTimelineEventRecord, 0, len(events))
-	for _, event := range events {
+	for index, event := range events {
 		record := AgentTimelineEventRecord{Event: event}
-		if item, ok := itemsBySequence[event.Sequence]; ok {
+		if event.Kind == agentruntime.EventModelDelta {
+			if item, ok := itemsBySequence[event.Sequence]; ok {
+				copied := item
+				record.Item = &copied
+			}
+			records = append(records, record)
+			continue
+		}
+		mutation := mutations[index]
+		if mutation != nil {
+			stored, ok := itemsByID[mutation.ItemID]
+			if !ok || stored.Kind != mutation.Kind || stored.SourceEventSequence < event.Sequence {
+				return nil, errors.New("agent timeline materialized item is inconsistent with event history")
+			}
+			item := stored
+			item.Status = mutation.ToStatus
+			item.SourceEventSequence = event.Sequence
+			item.ContentJSON = string(mutation.ContentJSON)
+			item.UpdatedAt = event.CreatedAt
+			item.CompletedAt = agentTimelineCompletedAt(mutation.ToStatus, event.CreatedAt)
 			copied := item
 			record.Item = &copied
 		}

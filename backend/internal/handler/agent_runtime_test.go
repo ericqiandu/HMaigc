@@ -135,6 +135,85 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 }
 
+func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(fixture.db)
+	svc := service.New(repo, t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-tool-replay-canvas")
+	scope, err := svc.AuthorizeAgentScope(
+		fixture.userID, "handler-agent-tool-replay-canvas", "handler-tool-replay-thread", "handler-tool-replay-run",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := repo.CreateAgentRun(repository.CreateAgentRunInput{Scope: scope, ClientRequestID: "handler-tool-replay-request", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
+		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "读取并更新画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasCommit,
+			ActionVersion: 1, Arguments: json.RawMessage(`{"expectedRevision":12}`),
+			ExpectedDelivery: agentruntime.ExpectedDelivery{
+				Kind:               agentruntime.DeliveryAnswer,
+				CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
+		ToolCallID: "handler-tool-replay-call", ActionVersion: 1, Succeeded: true,
+		Output: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","committedRevision":13}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := agentruntime.Fail(resolved.State, "handler_tool_replay_complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, resolved.State, terminal, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=2", "", fixture.userCookie, "")
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("tool lifecycle replay status = %d, body = %s", replayed.Code, replayed.Body.String())
+	}
+	body := replayed.Body.String()
+	if !strings.Contains(body, "id: 3\n") || !strings.Contains(body, "event: item.started\n") ||
+		!strings.Contains(body, `"toolCallId":"handler-tool-replay-call"`) ||
+		!strings.Contains(body, "id: 5\n") || !strings.Contains(body, "event: item.completed\n") ||
+		!strings.Contains(body, `"succeeded":true`) {
+		t.Fatalf("tool lifecycle replay body = %s", body)
+	}
+}
+
 func TestAgentRuntimeHTTPStrictSteerAndInterruptContracts(t *testing.T) {
 	fixture := openProviderAccountHandlerFixture(t)
 	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
