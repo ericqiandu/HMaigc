@@ -35,17 +35,30 @@ type FrozenRenderQuote struct {
 	QuoteFingerprint          string `json:"quoteFingerprint"`
 }
 
+type ProductionVideoInputMode string
+
+const (
+	ProductionVideoInputTextToVideo ProductionVideoInputMode = "text_to_video"
+	ProductionVideoInputStoryboard  ProductionVideoInputMode = "storyboard"
+)
+
+func (mode ProductionVideoInputMode) Valid() bool {
+	return mode == ProductionVideoInputTextToVideo || mode == ProductionVideoInputStoryboard
+}
+
 // ProductionRenderArguments are trusted server-frozen approval facts. Model
 // output is decoded through a separate request type and cannot supply Quote or
 // Attempt.
 type ProductionRenderArguments struct {
-	PlanKey         string                   `json:"planKey"`
-	PlanVersion     int                      `json:"planVersion"`
-	ArtifactID      string                   `json:"artifactId"`
-	Attempt         int                      `json:"attempt"`
-	GenerationModel GenerationModelSelection `json:"generationModel"`
-	ImageConfig     *ImageRenderConfig       `json:"imageConfig,omitempty"`
-	VideoConfig     *VideoRenderConfig       `json:"videoConfig,omitempty"`
+	PlanKey              string                   `json:"planKey"`
+	PlanVersion          int                      `json:"planVersion"`
+	ArtifactID           string                   `json:"artifactId"`
+	Attempt              int                      `json:"attempt"`
+	GenerationModel      GenerationModelSelection `json:"generationModel"`
+	VideoInputMode       ProductionVideoInputMode `json:"videoInputMode,omitempty"`
+	VideoInputResourceID string                   `json:"videoInputResourceId,omitempty"`
+	ImageConfig          *ImageRenderConfig       `json:"imageConfig,omitempty"`
+	VideoConfig          *VideoRenderConfig       `json:"videoConfig,omitempty"`
 	FrozenRenderQuote
 }
 

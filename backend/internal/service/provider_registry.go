@@ -28,6 +28,7 @@ type ProviderModelSpec struct {
 	DurationMin               int                       `json:"durationMin"`
 	DurationMax               int                       `json:"durationMax"`
 	SupportsSmartDuration     bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo       bool                      `json:"supportsTextToVideo"`
 	SupportsGeneratedAudio    bool                      `json:"supportsGeneratedAudio"`
 	WatermarkCapability       model.WatermarkCapability `json:"watermarkCapability"`
 	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
@@ -167,7 +168,7 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 				ModelKey: kuaiziKlingModel, DisplayName: "Kling 3 Omni", MarketingCopy: "支持文本、首尾帧、多图与参考视频的可灵 3 全能视频生成",
 				UpstreamMode: kuaiziKlingModel, Capability: "video",
 				Resolutions: []string{"std", "pro", "4k"}, ReferenceVideoResolutions: []string{"std", "pro"}, Ratios: []string{"16:9", "9:16", "1:1"}, Qualities: []string{"std", "pro", "4k"}, OutputCounts: []int{1},
-				DurationMin: 3, DurationMax: 15, SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityUnsupported,
+				DurationMin: 3, DurationMax: 15, SupportsTextToVideo: true, SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityUnsupported,
 				MaxImages: 7, MaxImagesWithVideo: 4, MaxVideos: 1, MaxVideoDurationSeconds: 10,
 			}},
 		},
@@ -235,7 +236,7 @@ func seedanceProviderModel(modelKey string, displayName string, resolutions []st
 		Resolutions: resolutions, Ratios: []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"},
 		ReferenceVideoResolutions: append([]string{}, resolutions...),
 		OutputCounts:              []int{1, 2, 4},
-		DurationMin:               4, DurationMax: durationMax, SupportsSmartDuration: true,
+		DurationMin:               4, DurationMax: durationMax, SupportsSmartDuration: true, SupportsTextToVideo: true,
 		SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityControlled,
 		SupportsAudioOnly: supportsAudioOnly, RequiresAdaptiveFrames: supportsAudioOnly,
 		MaxImages: maxImages, MaxVideos: maxVideos, MaxAudios: maxAudios,

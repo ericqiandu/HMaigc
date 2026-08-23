@@ -439,6 +439,101 @@ func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T)
 	if resolved.ID != resource.ID {
 		t.Fatalf("resolved storyboard resource = %s", resolved.ID)
 	}
+	inputMode, frozenID, err := svc.freezeProductionVideoInputResource(scope, agentProductionRenderRequest{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version,
+	}, video, agentRuntimeCallableModelFact{ProviderCapabilities: &PublicProviderCapabilities{SupportsTextToVideo: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputMode != "storyboard" || frozenID != resource.ID {
+		t.Fatalf("frozen video input = mode %q resource %q, want storyboard / %q", inputMode, frozenID, resource.ID)
+	}
+	input, taskType, err := svc.productionRenderTaskInput(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version,
+		VideoInputMode: inputMode, VideoInputResourceID: frozenID,
+		VideoConfig: &agentruntime.VideoRenderConfig{DurationSeconds: 5, Quality: "720p"},
+	}, video, "镜头缓慢推进")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskType != "canvas_video" || len(input.ReferenceImages) != 1 || input.ReferenceImages[0].ID != resource.ID {
+		t.Fatalf("storyboard video task input = %#v, taskType=%s", input, taskType)
+	}
+}
+
+func TestProductionRenderBuildsTextToVideoTaskWithoutStoryboardResource(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
+	record, err := svc.repo.AppendAgentProductionPlanVersion(repository.AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "text-to-video-plan", BaseVersion: 0,
+		Draft: agentruntime.ProductionPlanDraft{
+			Title: "五秒文生视频", TargetDurationMS: 5_000, Script: "城市天台镜头。",
+			Shots: []agentruntime.ShotPlanDraft{{
+				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "人物站在城市天台",
+				ImagePrompt: "城市天台人物定帧", VideoPrompt: "微风吹动衣角，镜头缓慢推进", Dependencies: []string{},
+			}},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var video model.AgentProductionArtifact
+	for _, artifact := range record.Artifacts {
+		if artifact.Kind == model.AgentProductionArtifactVideoClip {
+			video = artifact
+			break
+		}
+	}
+	if video.ID == "" {
+		t.Fatal("video artifact was not created")
+	}
+	request := agentProductionRenderRequest{PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version}
+	inputMode, frozenID, err := svc.freezeProductionVideoInputResource(scope, request, video, agentRuntimeCallableModelFact{
+		ProviderCapabilities: &PublicProviderCapabilities{SupportsTextToVideo: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputMode != "text_to_video" || frozenID != "" {
+		t.Fatalf("text-to-video frozen input = mode %q resource %q", inputMode, frozenID)
+	}
+	_, _, err = svc.freezeProductionVideoInputResource(scope, request, video, agentRuntimeCallableModelFact{
+		ProviderCapabilities: &PublicProviderCapabilities{SupportsTextToVideo: false},
+	})
+	if code, ok := agentProductionRenderFailureCode(err); !ok || code != "production_prerequisite_missing" {
+		t.Fatalf("missing non-text-to-video prerequisite error = %v, code=%q", err, code)
+	}
+
+	input, taskType, err := svc.productionRenderTaskInput(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version,
+		GenerationModel:      agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "doubao-seedance-2-0-260128"},
+		VideoInputMode:       agentruntime.ProductionVideoInputTextToVideo,
+		VideoInputResourceID: frozenID,
+		VideoConfig:          &agentruntime.VideoRenderConfig{DurationSeconds: 5, Quality: "720p", GenerateAudio: false},
+	}, video, "微风吹动衣角，镜头缓慢推进")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskType != "canvas_video" || input.Mode != "video" || len(input.ReferenceImages) != 0 || input.Prompt != "微风吹动衣角，镜头缓慢推进" {
+		t.Fatalf("text-to-video task input = %#v, taskType=%s", input, taskType)
+	}
+	legacyFrozen, err := json.Marshal(agentruntime.ProductionRenderArguments{
+		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, ArtifactID: video.ID,
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "doubao-seedance-2-0-260128"},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 5, Quality: "720p"},
+		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
+			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "legacy-video-quote",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeFrozenProductionRenderArguments(legacyFrozen); !errors.Is(err, errAgentRuntimeProductionRenderInput) {
+		t.Fatalf("legacy frozen video arguments error = %v, want explicit invalid input", err)
+	}
 }
 
 func createAgentRuntimeScopedRunFacts(t *testing.T, db *gorm.DB, scope agentruntime.Scope, now time.Time) {

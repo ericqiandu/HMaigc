@@ -101,6 +101,10 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if err := validateProductionRenderCapabilities(request, *artifact, callable); err != nil {
 		return nil, err
 	}
+	videoInputMode, videoInputResourceID, err := s.freezeProductionVideoInputResource(scope, request, *artifact, callable)
+	if err != nil {
+		return nil, err
+	}
 	quoteRequest, err := productionRenderQuoteRequest(scope.CanvasID, request, *artifact)
 	if err != nil {
 		return nil, err
@@ -112,7 +116,9 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	frozen := agentruntime.ProductionRenderArguments{
 		PlanKey: request.PlanKey, PlanVersion: request.PlanVersion, ArtifactID: request.ArtifactID,
 		Attempt: artifact.Attempt, GenerationModel: request.GenerationModel,
-		ImageConfig: request.ImageConfig, VideoConfig: request.VideoConfig,
+		VideoInputMode:       videoInputMode,
+		VideoInputResourceID: videoInputResourceID,
+		ImageConfig:          request.ImageConfig, VideoConfig: request.VideoConfig,
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: quote.AmountMicrocredits, PerTaskAmountMicrocredits: quote.PerTaskAmountMicrocredits,
 			PriceVersion: quote.PriceVersion, BillingMode: quote.BillingMode,
@@ -121,6 +127,33 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 		},
 	}
 	return json.Marshal(frozen)
+}
+
+func (s *Service) freezeProductionVideoInputResource(
+	scope agentruntime.Scope,
+	request agentProductionRenderRequest,
+	artifact model.AgentProductionArtifact,
+	callable agentRuntimeCallableModelFact,
+) (agentruntime.ProductionVideoInputMode, string, error) {
+	if artifact.Kind != model.AgentProductionArtifactVideoClip {
+		return "", "", nil
+	}
+	resource, err := s.productionStoryboardResource(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: request.PlanKey, PlanVersion: request.PlanVersion,
+	}, artifact)
+	if err == nil {
+		return agentruntime.ProductionVideoInputStoryboard, resource.ID, nil
+	}
+	if !errors.Is(err, errProductionPrerequisiteAssetMissing) {
+		return "", "", err
+	}
+	if callable.ProviderCapabilities != nil && callable.ProviderCapabilities.SupportsTextToVideo {
+		return agentruntime.ProductionVideoInputTextToVideo, "", nil
+	}
+	return "", "", newAgentProductionRenderInputError(
+		"production_prerequisite_missing",
+		"the selected video model requires a ready storyboard image for the same shot",
+	)
 }
 
 func (s *Service) validatePreviousProductionAttemptForRetry(scope agentruntime.Scope, artifact model.AgentProductionArtifact) error {

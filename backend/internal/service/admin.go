@@ -156,6 +156,7 @@ type PublicProviderCapabilities struct {
 	DurationMin               int                       `json:"durationMin"`
 	DurationMax               int                       `json:"durationMax"`
 	SupportsSmartDuration     bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo       bool                      `json:"supportsTextToVideo"`
 	SupportsGeneratedAudio    bool                      `json:"supportsGeneratedAudio"`
 	WatermarkCapability       model.WatermarkCapability `json:"watermarkCapability"`
 	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
@@ -867,6 +868,7 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 		ResolutionPixels: cloneStringInt64Map(capabilities.ResolutionPixels),
 		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
+		SupportsTextToVideo:   capabilities.SupportsTextToVideo,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
 		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
 		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
