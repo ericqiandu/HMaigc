@@ -36,6 +36,49 @@ func TestAgentTimelineEventsAfterReturnsScopedEventsAndAssociatedItems(t *testin
 	}
 }
 
+func TestAppendAgentMessageDeltaPersistsEventAndItemAtomicallyForReplay(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	scope := agentruntime.Scope{
+		TenantKind: agentruntime.TenantPersonal, TenantID: "delta-user", ActorUserID: "delta-user",
+		CanvasID: "delta-canvas", ThreadID: "delta-thread", RunID: "delta-run",
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
+	}
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-record", ModelKey: "model-key", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion,
+		PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	itemID := agentruntime.AgentMessageItemID(scope.RunID, 0)
+	first, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{Scope: scope, ItemID: itemID, PayloadJSON: `{"itemId":"` + itemID + `","delta":"你","userVisible":true,"started":true}`, Message: "你", Started: true, Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{Scope: scope, ItemID: itemID, PayloadJSON: `{"itemId":"` + itemID + `","delta":"好","userVisible":true}`, Message: "你好", Now: now.Add(2 * time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Sequence != 3 || second.Sequence != 4 {
+		t.Fatalf("delta sequences = %d, %d", first.Sequence, second.Sequence)
+	}
+	records, err := repo.AgentTimelineEventsAfter(scope, 2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("delta replay records = %#v", records)
+	}
+	for _, record := range records {
+		if record.Item == nil || record.Item.ID != itemID || record.Item.Kind != model.AgentTimelineItemAgentMessage || record.Item.Status != model.AgentTimelineItemInProgress || record.Item.SourceEventSequence != record.Event.Sequence {
+			t.Fatalf("delta replay item = %#v", record)
+		}
+	}
+}
+
 func TestAgentTimelineEventsAfterRejectsStoredItemOutsideRunScope(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := agentruntime.Scope{

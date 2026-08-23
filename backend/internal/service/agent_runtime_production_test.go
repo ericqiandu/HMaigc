@@ -614,11 +614,7 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 			writer.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
@@ -737,11 +733,7 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing.T) {
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
@@ -857,11 +849,7 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource(t *testing.T) {
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")

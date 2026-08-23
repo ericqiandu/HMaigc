@@ -29,7 +29,7 @@ type AgentRuntimeView struct {
 	State agentruntime.RuntimeState `json:"state"`
 }
 
-const CurrentAgentUIProtocolVersion = 1
+const CurrentAgentUIProtocolVersion = 2
 
 var ErrAgentEventProjectionFailed = errors.New("agent event projection failed")
 var ErrAgentStreamCursorInvalid = errors.New("agent stream cursor invalid")
@@ -215,11 +215,14 @@ func projectAgentVisibleModelDelta(projected AgentUIEvent, event model.AgentRunE
 		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent model delta is not bound to a visible message"))
 	}
 	payload, err := decodeAgentVisibleModelDeltaPayload(event.PayloadJSON)
-	if err != nil || !payload.UserVisible || payload.Delta == "" {
+	if err != nil || !payload.UserVisible || payload.Delta == "" || payload.ItemID == "" || payload.ItemID != item.ID {
 		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent model delta is not user visible"))
 	}
 	projected.Kind = AgentUIEventItemDelta
-	projected.ItemID = item.ID
+	if payload.Started {
+		projected.Kind = AgentUIEventItemStarted
+	}
+	projected.ItemID = payload.ItemID
 	projected.Payload = json.RawMessage(event.PayloadJSON)
 	return projected, nil
 }
@@ -239,8 +242,10 @@ func decodeAgentArtifactTimelinePayload(raw string) (agentArtifactTimelinePayloa
 }
 
 type agentVisibleModelDeltaPayload struct {
+	ItemID      string `json:"itemId"`
 	Delta       string `json:"delta"`
 	UserVisible bool   `json:"userVisible"`
+	Started     bool   `json:"started,omitempty"`
 }
 
 func decodeAgentVisibleModelDeltaPayload(raw string) (agentVisibleModelDeltaPayload, error) {

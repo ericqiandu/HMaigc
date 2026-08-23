@@ -65,7 +65,7 @@ test("Agent 提交后协作查询未达到已确认版本时显式失败", () =>
 
 function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
     return {
-        protocolVersion: 1,
+        protocolVersion: 2,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,

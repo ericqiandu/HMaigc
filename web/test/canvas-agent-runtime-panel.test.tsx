@@ -103,7 +103,7 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
     });
     await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
     const event: AgentRuntimeEvent = {
-        protocolVersion: 1,
+        protocolVersion: 2,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,
@@ -218,7 +218,7 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
     expect(document.body.textContent).toContain("交付已验收");
 });
 
-test("刷新时从持久句柄恢复运行并从已确认游标续接事件", async () => {
+test("刷新时从持久句柄恢复运行并重放耐久事件", async () => {
     const calls: string[] = [];
     const runningView = runtimeView("running", { stateVersion: 3, stepNumber: 2 });
     const storage: AgentRuntimeHandleStorage = {
@@ -242,7 +242,7 @@ test("刷新时从持久句柄恢复运行并从已确认游标续接事件", as
         },
     };
     await mount(client, storage);
-    expect(calls).toEqual(["resume:run-1", "subscribe:9"]);
+    expect(calls).toEqual(["resume:run-1", "subscribe:0"]);
     expect(document.body.textContent).toContain("第 2 / 8 步");
 });
 
@@ -394,7 +394,7 @@ test("没有本地句柄时采用服务端最近运行并保存恢复身份", as
         listThreads: async () => ({ items: [historyItem("thread-active", running, "2026-08-15T04:00:00Z")] }),
         getRun: async () => running,
         subscribe: (_runId, afterSequence) => {
-            expect(afterSequence).toBe(6);
+            expect(afterSequence).toBe(0);
             return () => undefined;
         },
     });

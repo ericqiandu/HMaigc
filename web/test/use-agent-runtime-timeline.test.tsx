@@ -60,6 +60,41 @@ test("服务端 turns/items 是恢复真源且重复或乱序事件不会重复�
     expect(received).toEqual([delta]);
 });
 
+test("活动 Run 刷新后从零重放气泡文本但不重复业务副作用", async () => {
+    const running = runtimeView("running", 2, 4);
+    let subscribedAfter = -1;
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    const received: AgentRuntimeEvent[] = [];
+    const restoredStorage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 4 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem(running)] }),
+        getRun: async () => running,
+        subscribe: (_runId, afterSequence, nextHandlers) => {
+            subscribedAfter = afterSequence;
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+    await mount(client, (event) => received.push(event), restoredStorage);
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+
+    const replayed = uiItemEvent(3, "item.delta", { delta: "已流出", userVisible: true });
+    const fresh = uiItemEvent(5, "item.delta", { delta: "新增量", userVisible: true });
+    await act(async () => {
+        handlers?.onEvent(replayed);
+        handlers?.onEvent(fresh);
+    });
+
+    expect(subscribedAfter).toBe(0);
+    expect(runtime?.events).toEqual([replayed, fresh]);
+    expect(runtime?.lastSequence).toBe(5);
+    expect(received).toEqual([fresh]);
+});
+
 test("活动运行再次发送走 steer，终态运行才创建新 Run", async () => {
     const running = runtimeView("running", 2, 2);
     const succeeded = runtimeView("succeeded", 3, 4);
@@ -218,7 +253,7 @@ test("订阅协议错误保持为用户可见事实", async () => {
     await mount(client);
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
 
-    await act(async () => handlers?.onError(new Error("不受支持的 Agent UI 协议版本: 2")));
+    await act(async () => handlers?.onError(new Error("不受支持的 Agent UI 协议版本: 1")));
 
     expect(runtime?.error).toContain("协议版本");
     expect(runtime?.connection).toBe("idle");
@@ -227,16 +262,16 @@ test("订阅协议错误保持为用户可见事实", async () => {
 const configuration: AgentRuntimeStartConfiguration = { generationModels: {}, skillDirs: [], attachments: [], executionMode: "guided" };
 const storage: AgentRuntimeHandleStorage = { load: async () => null, save: async () => undefined, clear: async () => undefined };
 
-async function mount(client: AgentRuntimeClient, onRuntimeEvent?: (event: AgentRuntimeEvent) => void) {
+async function mount(client: AgentRuntimeClient, onRuntimeEvent?: (event: AgentRuntimeEvent) => void, handleStorage: AgentRuntimeHandleStorage = storage) {
     const host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    await act(async () => root?.render(createElement(Harness, { client, onRuntimeEvent })));
+    await act(async () => root?.render(createElement(Harness, { client, onRuntimeEvent, storage: handleStorage })));
     await settle();
 }
 
-function Harness({ canvasId = "canvas-1", client, onRuntimeEvent }: { canvasId?: string; client: AgentRuntimeClient; onRuntimeEvent?: (event: AgentRuntimeEvent) => void }) {
-    runtime = useAgentRuntime({ canvasId, client, storage, onRuntimeEvent });
+function Harness({ canvasId = "canvas-1", client, onRuntimeEvent, storage: handleStorage = storage }: { canvasId?: string; client: AgentRuntimeClient; onRuntimeEvent?: (event: AgentRuntimeEvent) => void; storage?: AgentRuntimeHandleStorage }) {
+    runtime = useAgentRuntime({ canvasId, client, storage: handleStorage, onRuntimeEvent });
     return createElement("div", { className: "agent-runtime-timeline-harness" });
 }
 
@@ -282,7 +317,7 @@ function timelineItem(id: string, kind: "user_message" | "artifact", content: Re
 }
 
 function uiItemEvent(sequence: number, kind: "item.delta", payload: Record<string, unknown>): AgentRuntimeEvent {
-    return { protocolVersion: 1, threadId: "thread-1", runId: "run-1", sequence, kind, itemId: "item-message-1", payload, createdAt: "2026-08-18T00:00:02Z" };
+    return { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence, kind, itemId: "item-message-1", payload, createdAt: "2026-08-18T00:00:02Z" };
 }
 
 async function settle() {

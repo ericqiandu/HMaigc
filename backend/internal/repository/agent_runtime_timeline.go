@@ -21,6 +21,53 @@ type TimelineMutation struct {
 	ToStatus            model.AgentTimelineItemStatus
 	SourceEventSequence int64
 	ContentJSON         json.RawMessage
+	AllowInsert         bool
+}
+
+type AppendAgentMessageDeltaInput struct {
+	Scope       agentruntime.Scope
+	ItemID      string
+	PayloadJSON string
+	Message     string
+	Started     bool
+	Now         time.Time
+}
+
+func (r *Repository) AppendAgentMessageDelta(input AppendAgentMessageDeltaInput) (*model.AgentRunEvent, error) {
+	if err := input.Scope.Validate(); err != nil || input.ItemID == "" || input.Message == "" || input.Now.IsZero() || !json.Valid([]byte(input.PayloadJSON)) {
+		return nil, errors.Join(ErrAgentTimelineConflict, errors.New("agent message delta boundary is invalid"), err)
+	}
+	content, err := marshalAgentTimelineContent(struct {
+		Message string `json:"message"`
+	}{Message: input.Message})
+	if err != nil {
+		return nil, err
+	}
+	var event model.AgentRunEvent
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		sequence, allocateErr := allocateAgentEventSequence(tx, input.Scope, input.Now)
+		if allocateErr != nil {
+			return allocateErr
+		}
+		event = model.AgentRunEvent{ID: agentFactID("event", input.Scope.RunID, strconv.FormatInt(sequence, 10)), RunID: input.Scope.RunID, Sequence: sequence, Kind: agentruntime.EventModelDelta, PayloadJSON: input.PayloadJSON, CreatedAt: input.Now}
+		if createErr := tx.Create(&event).Error; createErr != nil {
+			return createErr
+		}
+		nextOrdinal, ordinalErr := nextAgentTimelineOrdinal(tx, input.Scope.RunID)
+		if ordinalErr != nil {
+			return ordinalErr
+		}
+		mutation := TimelineMutation{ItemID: input.ItemID, Kind: model.AgentTimelineItemAgentMessage, ToStatus: model.AgentTimelineItemInProgress, SourceEventSequence: sequence, ContentJSON: content}
+		if !input.Started {
+			fromStatus := model.AgentTimelineItemInProgress
+			mutation.FromStatus = &fromStatus
+		}
+		return persistAgentTimelineMutation(tx, input.Scope, mutation, &nextOrdinal, input.Now)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
 
 type agentCanvasCommitTimelineOutput struct {
@@ -80,7 +127,7 @@ func persistAgentTimelineMutation(
 	var existing model.AgentTimelineItem
 	err := db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", mutation.ItemID).Take(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		if mutation.FromStatus != nil {
+		if mutation.FromStatus != nil && !mutation.AllowInsert {
 			return errors.Join(ErrAgentTimelineConflict, errors.New("agent timeline insert has a source status"))
 		}
 		expectedOrdinal, ordinalErr := nextAgentTimelineOrdinal(db, scope.RunID)
@@ -182,10 +229,11 @@ func agentTimelineMutationForEvent(
 		if err != nil {
 			return nil, err
 		}
+		fromStatus := model.AgentTimelineItemInProgress
 		return &TimelineMutation{
-			ItemID: agentFactID("timeline", runID, "agent-message", strconv.FormatInt(sequence, 10)),
-			Kind:   model.AgentTimelineItemAgentMessage, ToStatus: model.AgentTimelineItemCompleted,
-			SourceEventSequence: sequence, ContentJSON: content,
+			ItemID: agentruntime.AgentMessageItemID(runID, state.StepNumber-1),
+			Kind:   model.AgentTimelineItemAgentMessage, FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemCompleted,
+			SourceEventSequence: sequence, ContentJSON: content, AllowInsert: true,
 		}, nil
 	case agentruntime.EventRunInterrupted:
 		if previous.PendingClarification != nil {

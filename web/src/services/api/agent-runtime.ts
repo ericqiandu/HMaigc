@@ -93,7 +93,7 @@ export type AgentRunEventPayload = {
     failureCode?: string;
     item?: { kind: AgentTimelineItemKind; status: AgentTimelineItemStatus; content: AgentTimelineItemContent };
 };
-type AgentUIEventBase = { protocolVersion: 1; threadId: string; runId: string; sequence: number; createdAt: string };
+type AgentUIEventBase = { protocolVersion: 2; threadId: string; runId: string; sequence: number; createdAt: string };
 export type AgentRuntimeEvent =
     | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
     | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
@@ -225,11 +225,11 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
     const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "payload", "createdAt"]);
-    if (source.protocolVersion !== 1) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
+    if (source.protocolVersion !== 2) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
     const base = {
-        protocolVersion: 1 as const,
+        protocolVersion: 2 as const,
         threadId: text(source.threadId, "event.threadId"),
         runId: text(source.runId, "event.runId"),
         sequence: integer(source.sequence, "event.sequence"),

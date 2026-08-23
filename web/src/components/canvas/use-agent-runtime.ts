@@ -265,7 +265,10 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         }
         setConnection("connecting");
         let closeSubscription: () => void = () => undefined;
-        closeSubscription = client.subscribe(runId, cursorRef.current, {
+        // UI text is reconstructed from the durable event log after a refresh. The
+        // saved cursor still fences business side effects, so replay never repeats
+        // canvas mutations, notifications, or persisted recovery progress.
+        closeSubscription = client.subscribe(runId, 0, {
             onOpen: () => setConnection("connected"),
             onError: (cause) => {
                 if (cause) {
@@ -274,16 +277,19 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 } else setConnection("reconnecting");
             },
             onEvent: (event) => {
-                if (event.sequence <= cursorRef.current) return;
                 if (event.runId !== runId || event.threadId !== threadIdRef.current) {
                     closeSubscription();
                     setConnection("idle");
                     setError("Agent 实时事件与当前会话归属冲突");
                     return;
                 }
+                setEvents((current) => {
+                    const last = current.at(-1);
+                    return current.some((candidate) => candidate.sequence === event.sequence) || (last && event.sequence < last.sequence) ? current : [...current, event];
+                });
+                if (event.sequence <= cursorRef.current) return;
                 cursorRef.current = event.sequence;
                 void storage.save(canvasId, { threadId: event.threadId, activeRunId: runId, lastSequence: event.sequence }).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
-                setEvents((current) => [...current, event]);
                 onRuntimeEventRef.current?.(event);
                 scheduleThreadReload();
                 scheduleRunRefresh(runId, event.threadId);

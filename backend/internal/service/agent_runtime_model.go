@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
@@ -43,29 +45,67 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		return agentRuntimeModelTaskResult{}, errors.New("Agent 冻结模型配置不可用")
 	}
 	text := ""
-	if config.MaxOutputTokens > 0 {
-		result, requestErr := runKuaiziChatCompletion(ctx, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config})
+	{
+		runID, ok := agentRuntimeModelRunID(task.Operation)
+		if !ok {
+			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型任务运行身份无效")
+		}
+		scope, scopeErr := s.scopeForAgentRun(&model.User{ID: task.UserID}, runID)
+		if scopeErr != nil {
+			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型任务运行作用域无效")
+		}
+		run, runErr := s.repo.AgentRunForScope(scope)
+		if runErr != nil {
+			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型任务运行事实不可用")
+		}
+		observer := agentruntime.NewDecisionStreamObserver()
+		itemID := agentruntime.AgentMessageItemID(runID, run.StepNumber)
+		started := false
+		visibleMessage := ""
+		result, requestErr := runKuaiziChatCompletionStream(ctx, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
+			visible, observeErr := observer.Push(rawDelta)
+			if observeErr != nil || visible == "" {
+				return observeErr
+			}
+			payload, marshalErr := json.Marshal(agentVisibleModelDeltaPayload{ItemID: itemID, Delta: visible, UserVisible: true, Started: !started})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			visibleMessage += visible
+			if _, appendErr := s.repo.AppendAgentMessageDelta(repository.AppendAgentMessageDeltaInput{Scope: scope, ItemID: itemID, PayloadJSON: string(payload), Message: visibleMessage, Started: !started, Now: time.Now().UTC()}); appendErr != nil {
+				return fmt.Errorf("agent_visible_delta_projection_failed: %w", appendErr)
+			}
+			started = true
+			return nil
+		})
+		if evidenceErr := s.persistAgentRuntimeProviderStreamEvidence(task, result, requestErr); evidenceErr != nil {
+			return agentRuntimeModelTaskResult{}, evidenceErr
+		}
 		if requestErr != nil {
+			if config.MaxOutputTokens > 0 && (result.ProviderRequestID != "" || result.Usage.Available) {
+				if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "Agent 响应协议失败，等待上游账单核对"); evidenceErr != nil {
+					return agentRuntimeModelTaskResult{}, evidenceErr
+				}
+			}
+			if errors.Is(requestErr, errKuaiziChatCompletionTextMissing) {
+				return agentRuntimeModelTaskResult{}, errors.New("Agent 模型响应没有正文")
+			}
 			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型请求失败")
 		}
 		text = result.Text
-		if result.ProviderRequestID == "" {
-			usageStatus, usage := normalizeTokenUsageFact(result.Usage)
-			if recordErr := s.repo.RecordTokenBillingUsage(task.BillingOrderID, repository.TokenUsageFact{InputTokens: usage.InputTokens, CachedTokens: usage.CachedTokens, OutputTokens: usage.OutputTokens}, usageStatus); recordErr != nil {
-				return agentRuntimeModelTaskResult{}, errors.New("Agent 模型计费事实保存失败")
+		if _, finishErr := observer.Finish(); finishErr != nil {
+			if config.MaxOutputTokens > 0 {
+				if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "Agent 决策校验失败，等待上游账单核对"); evidenceErr != nil {
+					return agentRuntimeModelTaskResult{}, evidenceErr
+				}
 			}
-			if markErr := s.MarkBillingUncertain(task.BillingOrderID, "上游响应缺少可核对的任务 ID"); markErr != nil {
-				return agentRuntimeModelTaskResult{}, errors.New("Agent 模型计费状态保存失败")
+			return agentRuntimeModelTaskResult{Mode: "text", DecisionFeedback: &agentruntime.ModelDecisionFeedback{Code: "model_decision_invalid", Reason: finishErr.Error()}}, nil
+		}
+		if config.MaxOutputTokens > 0 {
+			if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "等待 Agent 结果持久化后核对"); evidenceErr != nil {
+				return agentRuntimeModelTaskResult{}, evidenceErr
 			}
-		} else if scheduleErr := s.ScheduleTokenBillingReconciliation(task.BillingOrderID, result.ProviderRequestID, "等待 Agent 结果持久化后核对", result.Usage); scheduleErr != nil {
-			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型计费事实保存失败")
 		}
-	} else {
-		result, requestErr := runTextTask(ctx, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config})
-		if requestErr != nil {
-			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型请求失败")
-		}
-		text, _ = result["text"].(string)
 	}
 	text = strings.TrimSpace(text)
 	if _, err := agentruntime.ParseModelDecision([]byte(text)); err != nil {
@@ -75,6 +115,45 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}, nil
 	}
 	return agentRuntimeModelTaskResult{Mode: "text", Text: text}, nil
+}
+
+func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, result kuaiziChatCompletionResult, streamErr error) error {
+	errorCode := ""
+	switch {
+	case errors.Is(streamErr, context.Canceled):
+		errorCode = "agent_provider_stream_cancelled"
+	case errors.Is(streamErr, errAgentProviderStreamTruncated):
+		errorCode = "agent_provider_stream_truncated"
+	case streamErr != nil:
+		errorCode = "agent_provider_stream_failed"
+	}
+	payload, err := json.Marshal(struct {
+		ProviderRequestID string `json:"providerRequestId,omitempty"`
+		FinishReason      string `json:"finishReason,omitempty"`
+		UsageAvailable    bool   `json:"usageAvailable"`
+		ErrorCode         string `json:"errorCode,omitempty"`
+	}{ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, UsageAvailable: result.Usage.Available, ErrorCode: errorCode})
+	if err != nil || s.log(task.UserID, task.ID, "info", "Agent provider stream evidence", string(payload)) != nil {
+		return errors.New("Agent 供应商流式事实保存失败")
+	}
+	return nil
+}
+
+func (s *Service) persistAgentRuntimeTokenBillingEvidence(task model.Task, result kuaiziChatCompletionResult, reason string) error {
+	if result.ProviderRequestID != "" {
+		if err := s.ScheduleTokenBillingReconciliation(task.BillingOrderID, result.ProviderRequestID, reason, result.Usage); err != nil {
+			return errors.New("Agent 模型计费事实保存失败")
+		}
+		return nil
+	}
+	usageStatus, usage := normalizeTokenUsageFact(result.Usage)
+	if err := s.repo.RecordTokenBillingUsage(task.BillingOrderID, repository.TokenUsageFact{InputTokens: usage.InputTokens, CachedTokens: usage.CachedTokens, OutputTokens: usage.OutputTokens}, usageStatus); err != nil {
+		return errors.New("Agent 模型计费事实保存失败")
+	}
+	if err := s.MarkBillingUncertain(task.BillingOrderID, "上游响应缺少可核对的任务 ID"); err != nil {
+		return errors.New("Agent 模型计费状态保存失败")
+	}
+	return nil
 }
 
 func parseAgentRuntimeModelTaskResult(raw string) (agentruntime.ModelDecision, error) {

@@ -17,6 +17,7 @@ import { AgentChatComposer } from "./canvas-agent-chat-ui";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
+import { foldAgentConversation } from "./agent-conversation-reducer";
 import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
 import { agentRuntimeStatusLabel, agentRuntimeUsesLiveSubscription, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
@@ -350,7 +351,8 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
 
 function AgentRunContent({ state, events, connection, muted }: { state: AgentRuntimeState; events: AgentRuntimeEvent[]; connection: string; muted: string }) {
     const status = agentRuntimeStatusLabel(state.status);
-    const lastEvents = useMemo(() => events.slice(-8), [events]);
+    const conversation = useMemo(() => foldAgentConversation(events), [events]);
+    const meaningfulEvents = useMemo(() => events.filter((event) => event.kind !== "item.delta" && event.kind !== "item.started" && event.kind !== "state.snapshot").slice(-4), [events]);
     const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
     return (
         <div className="canvas-agent-runtime-run">
@@ -372,8 +374,8 @@ function AgentRunContent({ state, events, connection, muted }: { state: AgentRun
                     </span>
                 </summary>
                 <div className="canvas-agent-runtime-event-list">
-                    {lastEvents.length ? (
-                        lastEvents.map((event) => (
+                    {meaningfulEvents.length ? (
+                        meaningfulEvents.map((event) => (
                             <div key={event.sequence} className="canvas-agent-runtime-event">
                                 <span className="canvas-agent-runtime-event-sequence">{event.sequence}</span>
                                 <span className="canvas-agent-runtime-event-label">{eventLabel(event.kind)}</span>
@@ -386,8 +388,18 @@ function AgentRunContent({ state, events, connection, muted }: { state: AgentRun
                     )}
                 </div>
             </details>
+            {conversation.items.map((item) => (
+                <div key={item.id} className="canvas-agent-runtime-final" data-status={item.status}>
+                    <div className="canvas-agent-runtime-final-heading">
+                        <Bot className="canvas-agent-runtime-final-icon" />
+                        <strong className="canvas-agent-runtime-final-title">Agent</strong>
+                    </div>
+                    <p className="canvas-agent-runtime-final-copy">{item.text}</p>
+                </div>
+            ))}
+            {conversation.protocolError ? <div className="canvas-agent-runtime-error" role="alert">Agent 流式回复与最终事实冲突，请重新读取本轮运行。</div> : null}
             {state.lastToolResult ? <ToolResult state={state} muted={muted} /> : null}
-            {state.finalMessage ? (
+            {state.finalMessage && !conversation.items.some((item) => (state.finalMessage ?? "").startsWith(item.text)) ? (
                 <div className="canvas-agent-runtime-final">
                     <div className="canvas-agent-runtime-final-heading">
                         <CheckCircle2 className="canvas-agent-runtime-final-icon" />

@@ -23,6 +23,8 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 
 - 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
 - `AgentRunEvent` 是追加式审计真源，`AgentTimelineItem` 是与 Run、Event、Checkpoint、ToolCall 同事务维护的查询投影。Run 初始化固定写入 `run.created`、`user.message`、初始 Checkpoint 和已完成的用户消息 Item；Item 使用确定性身份、连续 ordinal 与唯一来源 sequence，任何投影冲突都会回滚整次状态迁移，禁止以不完整时间线伪装成功。
+- Agent 文本模型仍通过耐久 Task 保留队列恢复、计费、供应商请求与审计事实，但 Task 受众固定为 `internal`；普通用户任务列表、详情、日志、取消和重试接口只查询 `customer` Task，管理员、账务与 Runtime 协调器继续按权限读取内部事实。媒体 Task 仍保持客户可见。
+- Agent Chat Completions 固定使用供应商 `text/event-stream` 与 `stream_options.include_usage=true`。服务端只从严格 `ModelDecision` JSON 中释放已确认属于顶层 `kind=final` 的 `final.message` 增量；`reasoning_content`、工具参数、澄清结构和交付合同不进入用户正文。每段可见增量与助手 Item 同事务写入连续 sequence，再由 SSE 断线补发；UI 协议 v2 在刷新时从零重放耐久事件、仅对新游标执行业务副作用，React 按 `itemId + sequence` 让同一个助手气泡增长；不提供完整响应回退、模型降级或前端假打字。
 - 工具、审批和结果共用同一个 `tool_call` Item 生命周期：等待审批、已批准、已开始、完成、失败、拒绝或中断都更新同一身份，不创建并行的“执行中”残留项。运行中的追加指令以 `clientRequestId` 持久化并幂等去重；显式中断使用 `stateVersion` CAS，并关闭尚在等待的澄清或工具 Item。已经提交的媒体任务不被回滚，迟到成功结果追加独立 `artifact.available` 事件和 Artifact Item，保持 Run 终态及 Checkpoint 不变。
 - 时间线、生产计划和迟到资产的每一次读写都重新校验租户、操作者、项目、画布、Thread 与 Run 所有权；时间线只保存已鉴权的 `resourceId` 和媒体元数据，不保存会过期的 OSS 签名地址。
 - `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。
@@ -48,7 +50,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - 网站 Agent 的每次模型请求分别创建计费订单；工具调用本身不计费，图片、视频等媒体生成继续使用各自独立订单。
 - Agent 模型任务创建前若确认账号余额不足或团队月额度耗尽，运行会以 `insufficient_credits` 或 `team_credit_limit_reached` 明确终结，不创建下一任务或账单，也不会由后台驱动器无限重试；并发与暂时性额度错误仍保持原有显式错误语义。
 - 托管的筷子 DeepSeek 模型使用 `token_usage`：系统代理和服务端 Agent Runtime 共用同一预留/结算内核；请求发出前按后台发布的输入/缓存命中/输出单价和最大输出 Token 原子预留积分，并把同一最大输出值写入真实请求，同时冻结当时的服务地址版本和凭据版本；首版倍率固定为 1.0。
-- 流式请求会强制开启 `stream_options.include_usage`，响应 usage 会先持久化；缺失或无效 usage 分别标记为 `missing` / `invalid`，但资金结算仍以筷子账单的订单号、任务状态、总 Token 和实扣金额为准。账单 pending 时只异步核对，不重复调用模型。
+- Agent 流式请求强制开启 `stream=true` 与 `stream_options.include_usage=true`，响应 usage、Chat Completion request ID、finish reason 和断流事实会在 Task 终结前保留；缺失或无效 usage 分别标记为 `missing` / `invalid`，但资金结算仍以筷子账单的订单号、任务状态、总 Token 和实扣金额为准。账单 pending 时只异步核对，不重复调用模型。
 - 筷子图片、视频与 Token 任务共用同一条账单核对 worker。新建付费任务会把供应商服务地址版本和凭据版本同时冻结到任务与账单；已取得上游任务号但本地结果不明确时，worker 只查询对应筷子账单：上游确认成功则结算本地冻结报价，明确失败且未扣费则退款，pending、矛盾或无法取得可复现运行时的账单继续保留人工核对，禁止猜测扣费结果。
 - Chat Completion 响应 ID 按筷子契约从 `chatcmpl-<task_id>` 提取唯一内部任务 ID，写入计费订单后再通过任务账单接口取得真实扣费金额。成功账单原子消费实际积分并释放差额；待生成、缺失、重复或不可判定账单进入有租约、有限次数的后台核对，绝不重复发送模型请求。
 - 上游账单事实不足时不会回退到固定 1 分或估算终值。超过预留、达到核对上限或凭据事实损坏都会保留冻结积分并进入显式人工核对。

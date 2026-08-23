@@ -124,7 +124,7 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 		t.Fatalf("events content type = %q", contentType)
 	}
 	if body := events.Body.String(); !strings.Contains(body, "id: 1\n") || !strings.Contains(body, "event: run.started\n") ||
-		!strings.Contains(body, `"protocolVersion":1`) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
+		!strings.Contains(body, `"protocolVersion":2`) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
 		!strings.Contains(body, `"runId":"`+scope.RunID+`"`) || !strings.Contains(body, `"sequence":1`) {
 		t.Fatalf("events body = %s", body)
 	}

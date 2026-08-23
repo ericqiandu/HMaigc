@@ -51,10 +51,20 @@ func (r *Repository) AgentTimelineEventsAfter(scope agentruntime.Scope, afterSeq
 	mutations := make([]*TimelineMutation, len(events))
 	itemIDs := make([]string, 0, len(events))
 	itemIDSet := make(map[string]struct{}, len(events))
-	deltaSequences := make([]int64, 0)
 	for index, event := range events {
 		if event.Kind == agentruntime.EventModelDelta {
-			deltaSequences = append(deltaSequences, event.Sequence)
+			var payload struct {
+				ItemID      string `json:"itemId"`
+				Delta       string `json:"delta"`
+				UserVisible bool   `json:"userVisible"`
+			}
+			if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil || payload.ItemID == "" || payload.Delta == "" || !payload.UserVisible {
+				return nil, errors.New("agent model delta event facts are invalid")
+			}
+			if _, exists := itemIDSet[payload.ItemID]; !exists {
+				itemIDSet[payload.ItemID] = struct{}{}
+				itemIDs = append(itemIDs, payload.ItemID)
+			}
 			continue
 		}
 		mutation, mutationErr := agentTimelineMutationForStoredEvent(scope.RunID, event, statesByVersion)
@@ -70,7 +80,7 @@ func (r *Repository) AgentTimelineEventsAfter(scope agentruntime.Scope, afterSeq
 			itemIDs = append(itemIDs, mutation.ItemID)
 		}
 	}
-	itemsByID, itemsBySequence, err := r.agentTimelineProjectionItems(scope, itemIDs, deltaSequences)
+	itemsByID, _, err := r.agentTimelineProjectionItems(scope, itemIDs, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -78,10 +88,21 @@ func (r *Repository) AgentTimelineEventsAfter(scope agentruntime.Scope, afterSeq
 	for index, event := range events {
 		record := AgentTimelineEventRecord{Event: event}
 		if event.Kind == agentruntime.EventModelDelta {
-			if item, ok := itemsBySequence[event.Sequence]; ok {
-				copied := item
-				record.Item = &copied
+			var payload struct {
+				ItemID string `json:"itemId"`
 			}
+			if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil {
+				return nil, errors.New("agent model delta event identity is invalid")
+			}
+			item, ok := itemsByID[payload.ItemID]
+			if !ok || item.Kind != model.AgentTimelineItemAgentMessage || item.SourceEventSequence < event.Sequence {
+				return nil, errors.New("agent model delta item projection is missing")
+			}
+			item.Status = model.AgentTimelineItemInProgress
+			item.SourceEventSequence = event.Sequence
+			item.UpdatedAt = event.CreatedAt
+			item.CompletedAt = nil
+			record.Item = &item
 			records = append(records, record)
 			continue
 		}
