@@ -1,13 +1,29 @@
 import { Alert, Button, Empty, Skeleton } from "antd";
+import { useQuery } from "@tanstack/react-query";
 import { FileText } from "lucide-react";
 
-import { useSiteSettings } from "@/components/site/site-settings-provider";
 import { LegalRichTextViewer } from "@/components/legal/legal-rich-text-viewer";
 import { legalDocumentDefinition, type LegalDocumentKind } from "@/constants/legal-documents";
+import { getPublicLegalDocument, publicLegalDocumentQueryKey } from "@/services/api/site-settings";
 
 export function LegalDocumentPage({ document }: { document: LegalDocumentKind }) {
-    const { settings, loading, error, refresh } = useSiteSettings();
-    return <LegalDocumentView document={document} content={settings[document]} loading={loading} error={error} onRetry={refresh} />;
+    const query = useQuery({
+        queryKey: publicLegalDocumentQueryKey(document),
+        queryFn: ({ signal }) => getPublicLegalDocument(document, signal),
+        staleTime: 5 * 60_000,
+    });
+
+    return (
+        <LegalDocumentView
+            document={document}
+            content={query.data?.content ?? ""}
+            loading={query.isLoading}
+            error={query.error instanceof Error ? query.error : null}
+            onRetry={async () => {
+                await query.refetch();
+            }}
+        />
+    );
 }
 
 export function LegalDocumentView({ document, content, loading, error, onRetry }: { document: LegalDocumentKind; content: string; loading: boolean; error: Error | null; onRetry: () => void | Promise<void> }) {

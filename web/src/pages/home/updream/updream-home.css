@@ -123,6 +123,14 @@
     margin-top: 56px;
 }
 
+.updream-home-deferred--projects {
+    min-height: 268px;
+}
+
+.updream-home-deferred--skills {
+    min-height: 420px;
+}
+
 .updream-home-deferred-placeholder--projects {
     min-height: 268px;
 }

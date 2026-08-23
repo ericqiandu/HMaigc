@@ -10,12 +10,47 @@ import { UpdreamVideoBackground } from "../src/pages/home/updream/updream-video-
 import type { PlatformSkill } from "@/services/api/skills";
 
 let root: Root | null = null;
+let idleCallback: IdleRequestCallback | null = null;
+
+const originalMatchMedia = window.matchMedia;
+const originalRequestIdleCallback = window.requestIdleCallback;
+const originalCancelIdleCallback = window.cancelIdleCallback;
 
 afterEach(async () => {
     if (root) await act(async () => root?.unmount());
     root = null;
+    idleCallback = null;
+    window.matchMedia = originalMatchMedia;
+    window.requestIdleCallback = originalRequestIdleCallback;
+    window.cancelIdleCallback = originalCancelIdleCallback;
     document.body.replaceChildren();
 });
+
+function configureDeferredMedia() {
+    window.matchMedia = () =>
+        ({
+            matches: false,
+            media: "(prefers-reduced-motion: reduce)",
+            onchange: null,
+            addListener: () => undefined,
+            removeListener: () => undefined,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+            dispatchEvent: () => true,
+        }) satisfies MediaQueryList;
+    window.requestIdleCallback = (callback) => {
+        idleCallback = callback;
+        return 1;
+    };
+    window.cancelIdleCallback = () => undefined;
+}
+
+async function releaseDeferredMedia() {
+    await act(async () => window.dispatchEvent(new Event("load")));
+    const callback = idleCallback;
+    if (!callback) throw new Error("背景媒体未在 window.load 后安排空闲加载");
+    await act(async () => callback({ didTimeout: false, timeRemaining: () => 50 }));
+}
 
 function skill(index: number): PlatformSkill {
     return {
@@ -67,7 +102,8 @@ describe("Updream homepage reference layout behavior", () => {
         expect(document.querySelectorAll(".updream-hero-skill-shortcut")).toHaveLength(0);
     });
 
-    test("homepage background renders an autoplay-safe video behind the existing overlays", async () => {
+    test("homepage background defers its autoplay-safe source until load and idle", async () => {
+        configureDeferredMedia();
         const host = document.createElement("div");
         document.body.append(host);
         root = createRoot(host);
@@ -77,15 +113,19 @@ describe("Updream homepage reference layout behavior", () => {
         });
 
         const video = document.querySelector<HTMLVideoElement>(".updream-video-background-media");
-        const source = document.querySelector<HTMLSourceElement>(".updream-video-background-source");
-
         expect(video).not.toBeNull();
         expect(video?.autoplay).toBe(true);
         expect(video?.muted).toBe(true);
         expect(video?.loop).toBe(true);
         expect(video?.hasAttribute("playsinline")).toBe(true);
-        expect(video?.preload).toBe("metadata");
+        expect(video?.preload).toBe("none");
         expect(video?.getAttribute("poster")).toEndWith("/videos/hero-poster.svg");
+        expect(document.querySelector(".updream-video-background-source")).toBeNull();
+
+        await releaseDeferredMedia();
+
+        const source = document.querySelector<HTMLSourceElement>(".updream-video-background-source");
+        expect(document.querySelector<HTMLVideoElement>(".updream-video-background-media")?.preload).toBe("metadata");
         expect(source?.getAttribute("src")).toEndWith("/videos/hero.mp4");
         expect(document.querySelector(".updream-video-background-scrim")).not.toBeNull();
         expect(document.querySelector(".updream-video-background-pattern")).not.toBeNull();
@@ -93,6 +133,7 @@ describe("Updream homepage reference layout behavior", () => {
     });
 
     test("homepage background exposes a real loading error instead of silently hiding it", async () => {
+        configureDeferredMedia();
         const host = document.createElement("div");
         document.body.append(host);
         root = createRoot(host);
@@ -100,6 +141,7 @@ describe("Updream homepage reference layout behavior", () => {
         await act(async () => {
             root?.render(createElement(UpdreamVideoBackground));
         });
+        await releaseDeferredMedia();
 
         const video = document.querySelector<HTMLVideoElement>(".updream-video-background-media");
         await act(async () => video?.dispatchEvent(new Event("error")));

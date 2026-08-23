@@ -45,6 +45,7 @@ const (
 
 var ErrSiteLogoNotConfigured = errors.New("站点 Logo 尚未配置")
 var ErrSiteMarketingImageNotConfigured = errors.New("营销弹窗图片尚未配置")
+var ErrUnsupportedLegalDocument = errors.New("不支持的法律文档类型")
 
 type SiteSettingRequest struct {
 	SiteName                         string `json:"siteName"`
@@ -108,6 +109,39 @@ type PublicSiteSetting struct {
 	UpdatedAt                        string `json:"updatedAt"`
 }
 
+type PublicSiteShellSetting struct {
+	SiteName                         string `json:"siteName"`
+	HomeHeroSlogan                   string `json:"homeHeroSlogan"`
+	LogoURL                          string `json:"logoUrl"`
+	FooterCopyright                  string `json:"footerCopyright"`
+	ICPRegistrationNumber            string `json:"icpRegistrationNumber"`
+	ICPRegistrationURL               string `json:"icpRegistrationUrl"`
+	PublicSecurityRegistrationNumber string `json:"publicSecurityRegistrationNumber"`
+	PublicSecurityRegistrationURL    string `json:"publicSecurityRegistrationUrl"`
+	HomeBannerEnabled                bool   `json:"homeBannerEnabled"`
+	HomeBannerLabel                  string `json:"homeBannerLabel"`
+	HomeBannerText                   string `json:"homeBannerText"`
+	HomeBannerPrimaryActionLabel     string `json:"homeBannerPrimaryActionLabel"`
+	HomeBannerPrimaryActionURL       string `json:"homeBannerPrimaryActionUrl"`
+	HomeBannerSecondaryActionLabel   string `json:"homeBannerSecondaryActionLabel"`
+	HomeBannerSecondaryActionURL     string `json:"homeBannerSecondaryActionUrl"`
+	HomeBannerFrequency              string `json:"homeBannerFrequency"`
+	MarketingPopupEnabled            bool   `json:"marketingPopupEnabled"`
+	MarketingPopupImageURL           string `json:"marketingPopupImageUrl"`
+	MarketingPopupTitle              string `json:"marketingPopupTitle"`
+	MarketingPopupDescription        string `json:"marketingPopupDescription"`
+	MarketingPopupActionLabel        string `json:"marketingPopupActionLabel"`
+	MarketingPopupActionURL          string `json:"marketingPopupActionUrl"`
+	MarketingPopupFrequency          string `json:"marketingPopupFrequency"`
+	UpdatedAt                        string `json:"updatedAt"`
+}
+
+type PublicLegalDocumentResult struct {
+	Document  string `json:"document"`
+	Content   string `json:"content"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 type siteSettingValue struct {
 	SiteName                         string `json:"siteName"`
 	HomeHeroSlogan                   string `json:"homeHeroSlogan"`
@@ -146,6 +180,39 @@ func (s *Service) PublicSiteSetting() (*PublicSiteSetting, error) {
 	}
 	result := publicSiteSetting(setting, value)
 	return &result, nil
+}
+
+func (s *Service) PublicSiteShellSetting() (*PublicSiteShellSetting, error) {
+	setting, err := s.PublicSiteSetting()
+	if err != nil {
+		return nil, err
+	}
+	result := publicSiteShellSetting(*setting)
+	return &result, nil
+}
+
+func (s *Service) PublicLegalDocument(document string) (*PublicLegalDocumentResult, error) {
+	setting, value, err := s.readSiteSetting()
+	if err != nil {
+		return nil, err
+	}
+	document = strings.TrimSpace(document)
+	content := ""
+	switch document {
+	case "userAgreement":
+		content = value.UserAgreement
+	case "privacyPolicy":
+		content = value.PrivacyPolicy
+	case "membershipAgreement":
+		content = value.MembershipAgreement
+	default:
+		return nil, fmt.Errorf("%w：%s", ErrUnsupportedLegalDocument, document)
+	}
+	updatedAt := ""
+	if setting != nil && !setting.UpdatedAt.IsZero() {
+		updatedAt = setting.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return &PublicLegalDocumentResult{Document: document, Content: content, UpdatedAt: updatedAt}, nil
 }
 
 // LegalDocumentsConfigured reports whether both public legal documents have
@@ -856,6 +923,35 @@ func publicSiteSetting(setting *model.SystemSetting, value siteSettingValue) Pub
 		result.MarketingPopupImageURL = "/api/public/site/marketing-image?v=" + version
 	}
 	return result
+}
+
+func publicSiteShellSetting(setting PublicSiteSetting) PublicSiteShellSetting {
+	return PublicSiteShellSetting{
+		SiteName:                         setting.SiteName,
+		HomeHeroSlogan:                   setting.HomeHeroSlogan,
+		LogoURL:                          setting.LogoURL,
+		FooterCopyright:                  setting.FooterCopyright,
+		ICPRegistrationNumber:            setting.ICPRegistrationNumber,
+		ICPRegistrationURL:               setting.ICPRegistrationURL,
+		PublicSecurityRegistrationNumber: setting.PublicSecurityRegistrationNumber,
+		PublicSecurityRegistrationURL:    setting.PublicSecurityRegistrationURL,
+		HomeBannerEnabled:                setting.HomeBannerEnabled,
+		HomeBannerLabel:                  setting.HomeBannerLabel,
+		HomeBannerText:                   setting.HomeBannerText,
+		HomeBannerPrimaryActionLabel:     setting.HomeBannerPrimaryActionLabel,
+		HomeBannerPrimaryActionURL:       setting.HomeBannerPrimaryActionURL,
+		HomeBannerSecondaryActionLabel:   setting.HomeBannerSecondaryActionLabel,
+		HomeBannerSecondaryActionURL:     setting.HomeBannerSecondaryActionURL,
+		HomeBannerFrequency:              setting.HomeBannerFrequency,
+		MarketingPopupEnabled:            setting.MarketingPopupEnabled,
+		MarketingPopupImageURL:           setting.MarketingPopupImageURL,
+		MarketingPopupTitle:              setting.MarketingPopupTitle,
+		MarketingPopupDescription:        setting.MarketingPopupDescription,
+		MarketingPopupActionLabel:        setting.MarketingPopupActionLabel,
+		MarketingPopupActionURL:          setting.MarketingPopupActionURL,
+		MarketingPopupFrequency:          setting.MarketingPopupFrequency,
+		UpdatedAt:                        setting.UpdatedAt,
+	}
 }
 
 func (s *Service) siteLogoDir() string {

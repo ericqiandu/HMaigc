@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import { Link } from "react-router";
 
 import { projectSummaryCompletion, projectSummaryStage } from "@/lib/project-workbench";
+import { prefetchRouteModule } from "@/lib/route-module-prefetch";
 import type { ProjectSummary } from "@/services/api/projects";
 
 export function ProjectGallery({ rows, onCreate }: { rows: ProjectSummary[]; onCreate?: () => void }) {
@@ -30,7 +31,13 @@ function ProjectCard({ row }: { row: ProjectSummary }) {
 
     return (
         <article className="projects-gallery-card">
-            <Link to={`/projects/${project.id}/overview`} className="projects-gallery-card-link" aria-label={`打开项目：${project.name}`}>
+            <Link
+                to={`/projects/${project.id}/overview`}
+                className="projects-gallery-card-link"
+                aria-label={`打开项目：${project.name}`}
+                onPointerEnter={() => requestProjectDetailPrefetch(project.id)}
+                onFocus={() => requestProjectDetailPrefetch(project.id)}
+            >
                 <span className="projects-gallery-card-preview">
                     <span className="projects-gallery-card-cover-empty" aria-hidden="true">
                         <FolderKanban className="projects-gallery-card-cover-icon" />
@@ -60,6 +67,13 @@ function ProjectCard({ row }: { row: ProjectSummary }) {
             </Link>
         </article>
     );
+}
+
+function requestProjectDetailPrefetch(projectId: string) {
+    const pathname = `/projects/${projectId}/overview`;
+    void prefetchRouteModule(pathname).catch((error: unknown) => {
+        console.warn("项目详情模块预取失败", { pathname, error });
+    });
 }
 
 function ProjectCount({ icon, label, value }: { icon: ReactElement; label: string; value: number }) {

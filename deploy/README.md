@@ -63,26 +63,46 @@ bash deploy/hmaigc-ops.sh rollback
 
 从 `v1.0.13` 起，正式标签发布会先把 Web 构建产物写入独立静态资源 Bucket，再构建引用该不可变目录的 Web 镜像。用户媒体 Bucket 保持私有且通过业务接口鉴权读取，禁止与公开静态资源 Bucket 混用。
 
-当前正式静态资源直接使用 `hmaigc-prod-static` Bucket 的 HTTPS 读取域名，对象前缀为 `hmaigc/web`。仓库需要配置：
+正式静态资源由已备案的 `static.hm.kunagent.com` 中国大陆 CDN 域名交付，`hmaigc-prod-static` 香港 Bucket 只作为回源和发布写入端点，对象前缀为 `hmaigc/web`。用户浏览器禁止直接读取 OSS 域名。仓库需要配置：
 
 | 类型 | 名称 | 示例 |
 | --- | --- | --- |
-| Repository variable | `HMAIGC_STATIC_ASSET_BASE_URL` | `https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web` |
+| Repository variable | `HMAIGC_STATIC_ASSET_BASE_URL` | `https://static.hm.kunagent.com/hmaigc/web` |
 | Repository variable | `HMAIGC_STATIC_OSS_ENDPOINT` | `https://oss-cn-hongkong.aliyuncs.com` |
 | Repository variable | `HMAIGC_STATIC_OSS_BUCKET` | `hmaigc-prod-static` |
 | Repository variable | `HMAIGC_STATIC_OSS_PREFIX` | `hmaigc/web` |
 | Repository secret | `HMAIGC_STATIC_OSS_ACCESS_KEY_ID` | 仅允许该 Bucket 写入与读取元数据的 RAM AccessKey |
 | Repository secret | `HMAIGC_STATIC_OSS_ACCESS_KEY_SECRET` | 对应 Secret |
 
-`HMAIGC_STATIC_ASSET_BASE_URL` 末尾不能带 `/`，并且 URL 路径必须与 CDN 回源后的 `HMAIGC_STATIC_OSS_PREFIX` 一致。Bucket/CDN 还必须满足：
+`HMAIGC_STATIC_ASSET_BASE_URL` 固定为 `https://static.hm.kunagent.com/hmaigc/web`，末尾不能带 `/`；`HMAIGC_STATIC_OSS_ENDPOINT` 仍是香港 OSS 写入端点，两者不得填成同一个地址。CDN 回源路径必须与 `HMAIGC_STATIC_OSS_PREFIX` 一致。Bucket/CDN 还必须满足：
 
 正式 Web CSP 必须允许 `HMAIGC_STATIC_ASSET_BASE_URL` 的精确 Origin。若以后切换自定义 CDN 域名，必须在同一版本同步修改仓库变量和 `nginx.conf`；Nginx 与 Chromium 发布门禁会以仓库变量为准拒绝域名漂移，禁止先改变量、后补 CSP。
 
-- CDN 对 `hmaigc/web/releases/*` 缓存 365 天；对象名与版本目录不可变，不执行覆盖发布；
-- 只允许 `https://hmaigc.ai`、`https://www.hmaigc.ai` 与正式业务主域 `https://hm.kunagent.com` 跨域 GET/HEAD，禁止开放写方法；
+- 发布器为 `hmaigc/web/releases/*` 对象写入 `Cache-Control: public,max-age=31536000,immutable`；CDN 不配置会覆盖该响应头的“缓存过期时间”规则，直接遵循源站策略；对象名与版本目录不可变，不执行覆盖发布；
+- `static.hm.kunagent.com` 配置有效 HTTPS 证书并开启 HTTP/2；HTTP/3 可按客户端覆盖情况选开，同时开启 Brotli 与 gzip；入口 JS/CSS 必须返回 `Content-Encoding: br` 或 `gzip`；
+- CDN CORS 精确允许正式业务主域 `https://hm.kunagent.com` 的 GET/HEAD/OPTIONS，禁止通配 Origin 和写方法；品牌跳转域不承载正式应用，不加入静态模块 CORS；
 - `index.html` 不上传 OSS，继续由版本化 Web 镜像提供且不得配置长期缓存；
 - 发布器逐文件 PUT 后执行 HEAD 大小和 ETag 校验，最后才写 `manifest.json`；清单经 CDN 无法读取时镜像发布被阻止；
+- 发布门禁逐个读取入口 JS/CSS，要求 HTTP/2 或 HTTP/3、正确 MIME、压缩、365 天不可变缓存与正式 Origin CORS；任一项缺失都阻止镜像发布；
 - 旧版本目录不自动删除，因此镜像回滚可继续读取同版本静态资源。
+
+阿里云控制台一次性配置顺序：
+
+1. 新增 CDN 加速域名 `static.hm.kunagent.com`，加速区域选择“中国内地”，业务类型选择图片小文件；
+2. 源站类型选择 OSS 域名，指向 `hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com`，回源 Host 保持该 Bucket 域名；
+3. 将 DNS CNAME 指向 CDN 分配的 CNAME，配置 `static.hm.kunagent.com` HTTPS 证书并开启 HTTP/2；HTTP/3 可选；
+4. 开启 Brotli 与智能压缩；不要为 `hmaigc/web/releases/*` 新增控制台“缓存过期时间”规则，避免覆盖发布器写入的完整 `Cache-Control`；
+5. 配置响应头 CORS 后，先用临时版本目录验证，再修改 GitHub Repository variable；禁止先切变量、后补 CDN 配置。
+
+配置完成后的人工核验：
+
+```bash
+curl --http2 --compressed -I \
+  -H 'Origin: https://hm.kunagent.com' \
+  'https://static.hm.kunagent.com/hmaigc/web/releases/vX.Y.Z/assets/<entry>.js'
+```
+
+必须同时看到 HTTP/2 或 HTTP/3、`Content-Encoding: br|gzip`、`Cache-Control: public,max-age=31536000,immutable`、`Access-Control-Allow-Origin: https://hm.kunagent.com` 和 `Access-Control-Allow-Methods: GET,HEAD,OPTIONS`。
 
 生产服务器不需要保存静态 Bucket 的 AccessKey。密钥只存在于 GitHub Actions secrets，业务服务器仍只配置用户媒体 OSS。
 

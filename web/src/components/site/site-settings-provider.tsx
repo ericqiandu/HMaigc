@@ -2,9 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 
 import { staticAssetURL } from "@/lib/static-assets";
-import { getPublicSiteSettings, publicSiteSettingsQueryKey, type SiteSettings } from "@/services/api/site-settings";
+import { getPublicSiteSettings, publicSiteSettingsQueryKey, type PublicSiteSettings } from "@/services/api/site-settings";
 
-const bootstrapSiteSettings: SiteSettings = {
+const bootstrapSiteSettings: PublicSiteSettings = {
     siteName: "HMaigc",
     homeHeroSlogan: "让算力更有想象力！",
     logoUrl: "",
@@ -13,9 +13,6 @@ const bootstrapSiteSettings: SiteSettings = {
     icpRegistrationUrl: "",
     publicSecurityRegistrationNumber: "",
     publicSecurityRegistrationUrl: "",
-    userAgreement: "",
-    privacyPolicy: "",
-    membershipAgreement: "",
     homeBannerEnabled: false,
     homeBannerLabel: "",
     homeBannerText: "",
@@ -31,13 +28,11 @@ const bootstrapSiteSettings: SiteSettings = {
     marketingPopupActionLabel: "",
     marketingPopupActionUrl: "",
     marketingPopupFrequency: "once",
-    updatedBy: "",
-    createdAt: "",
     updatedAt: "",
 };
 
 type SiteSettingsContextValue = {
-    settings: SiteSettings;
+    settings: PublicSiteSettings;
     loading: boolean;
     error: Error | null;
     refresh: () => Promise<void>;
@@ -89,6 +84,6 @@ export function useSiteSettings() {
     return context;
 }
 
-export function siteLogoURL(settings: SiteSettings) {
+export function siteLogoURL(settings: Pick<PublicSiteSettings, "logoUrl">) {
     return settings.logoUrl || staticAssetURL("/logo.svg");
 }

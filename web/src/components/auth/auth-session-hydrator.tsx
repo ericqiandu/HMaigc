@@ -3,12 +3,8 @@ import { useEffect } from "react";
 
 import { applyUserSession } from "@/lib/user-session";
 import { getAuthSession } from "@/services/api/auth";
-import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
-import { useUserStore } from "@/stores/use-user-store";
 
 export function AuthSessionHydrator({ children }: { children: ReactNode }) {
-    const hydrated = useUserStore((state) => state.hydrated);
-
     useEffect(() => {
         let cancelled = false;
         getAuthSession()
@@ -23,5 +19,5 @@ export function AuthSessionHydrator({ children }: { children: ReactNode }) {
         };
     }, []);
 
-    return hydrated ? children : <FullScreenLoader />;
+    return children;
 }

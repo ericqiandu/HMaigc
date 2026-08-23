@@ -143,6 +143,71 @@ func TestSiteSettingDefaultsAndAdminUpdate(t *testing.T) {
 	}
 }
 
+func TestPublicSiteShellExcludesLegalDocumentBodies(t *testing.T) {
+	svc, _ := newSiteSettingTestService(t)
+	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{
+		UserAgreement:       "<p>用户协议正文-不可进入公共启动响应</p>",
+		PrivacyPolicy:       "<p>隐私政策正文-不可进入公共启动响应</p>",
+		MembershipAgreement: "<p>会员协议正文-不可进入公共启动响应</p>",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	setting, err := svc.PublicSiteShellSetting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"用户协议正文", "隐私政策正文", "会员协议正文", "userAgreement", "privacyPolicy", "membershipAgreement"} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("public site shell leaked %q: %s", forbidden, payload)
+		}
+	}
+	if setting.SiteName != "HMaigc" || setting.HomeHeroSlogan != expectedDefaultHomeHeroSlogan {
+		t.Fatalf("public site shell lost required brand fields: %#v", setting)
+	}
+}
+
+func TestPublicLegalDocumentReadsOnlyAnExplicitDocument(t *testing.T) {
+	svc, _ := newSiteSettingTestService(t)
+	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
+	if _, err := svc.UpdateLegalContentSetting(admin, LegalContentSettingRequest{
+		UserAgreement:       "<p>用户协议正文</p>",
+		PrivacyPolicy:       "<p>隐私政策正文</p>",
+		MembershipAgreement: "<p>会员协议正文</p>",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		document string
+		want     string
+	}{
+		{document: "userAgreement", want: "<p>用户协议正文</p>"},
+		{document: "privacyPolicy", want: "<p>隐私政策正文</p>"},
+		{document: "membershipAgreement", want: "<p>会员协议正文</p>"},
+	}
+	for _, test := range tests {
+		t.Run(test.document, func(t *testing.T) {
+			result, err := svc.PublicLegalDocument(test.document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Document != test.document || result.Content != test.want {
+				t.Fatalf("PublicLegalDocument(%q) = %#v", test.document, result)
+			}
+		})
+	}
+
+	if _, err := svc.PublicLegalDocument("unknown"); err == nil || !strings.Contains(err.Error(), "不支持") {
+		t.Fatalf("PublicLegalDocument(unknown) error = %v", err)
+	}
+}
+
 func TestSiteSettingHomeHeroSloganContract(t *testing.T) {
 	svc, _ := newSiteSettingTestService(t)
 	admin := &model.User{ID: "site-admin", Role: model.UserRoleAdmin}
