@@ -41,7 +41,22 @@ type CanvasAssistantPanelProps = {
     runtimeStorage?: AgentRuntimeHandleStorage;
 };
 
-export function CanvasAssistantPanel({ projectId, canvasRevision, selectedNodeIds, closing, width, onResizeStart, onResizeKeyDown, onCollapse, agentLaunchRequest, onAgentLaunchHandled, onBeforeRun, onRuntimeEvent, runtimeClient, runtimeStorage }: CanvasAssistantPanelProps) {
+export function CanvasAssistantPanel({
+    projectId,
+    canvasRevision,
+    selectedNodeIds,
+    closing,
+    width,
+    onResizeStart,
+    onResizeKeyDown,
+    onCollapse,
+    agentLaunchRequest,
+    onAgentLaunchHandled,
+    onBeforeRun,
+    onRuntimeEvent,
+    runtimeClient,
+    runtimeStorage,
+}: CanvasAssistantPanelProps) {
     const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
@@ -350,32 +365,37 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
 }
 
 function AgentRunContent({ state, conversation, meaningfulEvents, connection, muted }: { state: AgentRuntimeState; conversation: AgentConversationState; meaningfulEvents: AgentRuntimeEvent[]; connection: string; muted: string }) {
-    const status = agentRuntimeStatusLabel(state.status);
     const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
+    const streaming = conversation.items.some((item) => item.status === "in_progress" && item.text.length > 0);
+    const status = agentRuntimeActivityLabel(state.status, streaming, liveSubscription && connection === "reconnecting");
     return (
         <div className="canvas-agent-runtime-run">
-            <div className="canvas-agent-runtime-user-message">
+            <article className="canvas-agent-runtime-user-message" aria-label="你的消息">
                 <span className="canvas-agent-runtime-message-label" style={{ color: muted }}>
                     你
                 </span>
                 <p className="canvas-agent-runtime-message-copy">{state.userMessage}</p>
-            </div>
+            </article>
             <details className="canvas-agent-runtime-process" open={!isTerminal(state.status)}>
                 <summary className="canvas-agent-runtime-process-summary">
-                    <span className="canvas-agent-runtime-process-main">
+                    <span className="canvas-agent-runtime-process-main" role="status" aria-live="polite">
                         <ChevronDown className="canvas-agent-runtime-chevron" />
                         <span className="canvas-agent-runtime-status-dot" data-status={state.status} />
-                        <strong className="canvas-agent-runtime-status-label">{status}</strong>
+                        <strong className="canvas-agent-runtime-status-label" data-active={!isTerminal(state.status)}>
+                            {status}
+                        </strong>
                     </span>
                     <span className="canvas-agent-runtime-step" style={{ color: muted }}>
-                        第 {state.stepNumber} / {state.maxSteps} 步{liveSubscription && connection === "reconnecting" ? " · 正在重连" : ""}
+                        {agentRuntimeStepLabel(state.stepNumber, state.maxSteps)}
                     </span>
                 </summary>
-                <div className="canvas-agent-runtime-event-list">
+                <div className="canvas-agent-runtime-event-list" role="list" aria-label="Agent 执行记录">
                     {meaningfulEvents.length ? (
                         meaningfulEvents.map((event) => (
-                            <div key={event.sequence} className="canvas-agent-runtime-event">
-                                <span className="canvas-agent-runtime-event-sequence">{event.sequence}</span>
+                            <div key={event.sequence} className="canvas-agent-runtime-event" role="listitem">
+                                <span className="canvas-agent-runtime-event-sequence" aria-hidden="true">
+                                    {event.sequence}
+                                </span>
                                 <span className="canvas-agent-runtime-event-label">{eventLabel(event.kind)}</span>
                             </div>
                         ))
@@ -386,25 +406,36 @@ function AgentRunContent({ state, conversation, meaningfulEvents, connection, mu
                     )}
                 </div>
             </details>
-            {conversation.items.map((item) => (
-                <div key={item.id} className="canvas-agent-runtime-final" data-status={item.status}>
-                    <div className="canvas-agent-runtime-final-heading">
-                        <Bot className="canvas-agent-runtime-final-icon" />
-                        <strong className="canvas-agent-runtime-final-title">Agent</strong>
-                    </div>
-                    <p className="canvas-agent-runtime-final-copy">{item.text}</p>
+            {conversation.items.map((item) => {
+                const itemStreaming = item.status === "in_progress" && !isTerminal(state.status);
+                return (
+                    <article key={item.id} className="canvas-agent-runtime-final" data-status={item.status} aria-label="Agent 回复">
+                        <div className="canvas-agent-runtime-final-heading">
+                            <Bot className="canvas-agent-runtime-final-icon" />
+                            <strong className="canvas-agent-runtime-final-title">Agent</strong>
+                            {itemStreaming ? <span className="canvas-agent-runtime-final-state">正在回复</span> : null}
+                        </div>
+                        <p className="canvas-agent-runtime-final-copy">
+                            {item.text}
+                            {itemStreaming ? <span className="canvas-agent-runtime-streaming-caret" aria-hidden="true" /> : null}
+                        </p>
+                    </article>
+                );
+            })}
+            {conversation.protocolError ? (
+                <div className="canvas-agent-runtime-error" role="alert">
+                    Agent 流式回复与最终事实冲突，请重新读取本轮运行。
                 </div>
-            ))}
-            {conversation.protocolError ? <div className="canvas-agent-runtime-error" role="alert">Agent 流式回复与最终事实冲突，请重新读取本轮运行。</div> : null}
+            ) : null}
             {state.lastToolResult ? <ToolResult state={state} muted={muted} /> : null}
             {state.finalMessage && !conversation.items.some((item) => (state.finalMessage ?? "").startsWith(item.text)) ? (
-                <div className="canvas-agent-runtime-final">
+                <article className="canvas-agent-runtime-final" aria-label="Agent 回复">
                     <div className="canvas-agent-runtime-final-heading">
                         <CheckCircle2 className="canvas-agent-runtime-final-icon" />
                         <strong className="canvas-agent-runtime-final-title">{state.verification?.status === "satisfied" ? "交付已验收" : "Agent 回复"}</strong>
                     </div>
                     <p className="canvas-agent-runtime-final-copy">{state.finalMessage}</p>
-                </div>
+                </article>
             ) : null}
             {state.failureCode ? (
                 <div className="canvas-agent-runtime-failure">
@@ -464,6 +495,16 @@ function ToolResult({ state, muted }: { state: AgentRuntimeState; muted: string 
 
 function isTerminal(status: AgentRuntimeState["status"]) {
     return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function agentRuntimeActivityLabel(status: AgentRuntimeState["status"], streaming: boolean, reconnecting: boolean) {
+    if (reconnecting) return "正在恢复连接";
+    if (status === "running" && streaming) return "回复中";
+    return agentRuntimeStatusLabel(status);
+}
+
+function agentRuntimeStepLabel(stepNumber: number, maxSteps: number) {
+    return stepNumber > 0 ? `已执行 ${stepNumber} 步 · 上限 ${maxSteps}` : `上限 ${maxSteps} 步`;
 }
 
 function agentRuntimeEmptyEventLabel(status: AgentRuntimeState["status"]) {

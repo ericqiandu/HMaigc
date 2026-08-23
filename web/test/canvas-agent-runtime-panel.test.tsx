@@ -244,7 +244,90 @@ test("刷新时从持久句柄恢复运行并重放耐久事件", async () => {
     };
     await mount(client, storage);
     expect(calls).toEqual(["resume:run-1", "subscribe:0"]);
-    expect(document.body.textContent).toContain("第 2 / 8 步");
+    expect(document.body.textContent).toContain("已执行 2 步 · 上限 8");
+});
+
+test("真实回复增量到达前显示思考中并在首个增量后切换为同一流式回复", async () => {
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    const running = runtimeView("running", { stateVersion: 3, stepNumber: 1 });
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 0 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        getRun: async () => running,
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+
+    await mount(client, storage);
+
+    const activity = document.querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
+    expect(activity?.textContent).toContain("思考中");
+    expect(document.querySelector('[aria-label="Agent 回复"]')).toBeNull();
+
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+    await act(async () =>
+        handlers?.onEvent({
+            protocolVersion: 2,
+            threadId: "thread-1",
+            runId: "run-1",
+            sequence: 2,
+            kind: "item.delta",
+            itemId: "message-1",
+            itemKind: "agent_message",
+            payload: { delta: "第一句", userVisible: true },
+            createdAt: "2026-08-23T00:00:00Z",
+        }),
+    );
+    await settle();
+
+    expect(activity?.textContent).toContain("回复中");
+    const response = document.querySelector<HTMLElement>('[aria-label="Agent 回复"]');
+    expect(response?.textContent).toContain("第一句");
+    expect(response?.querySelector('[aria-hidden="true"].canvas-agent-runtime-streaming-caret')).not.toBeNull();
+});
+
+test("运行已终止时即使完成事件稍晚到达也不继续显示流式光标", async () => {
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    let runReads = 0;
+    const running = runtimeView("running", { stateVersion: 3 });
+    const completed = runtimeView("succeeded", { stateVersion: 4, finalMessage: "第一句", verification: { status: "satisfied", rationale: "ok" } });
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 0 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        getRun: async () => (runReads++ === 0 ? running : completed),
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+
+    await mount(client, storage);
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+    await act(async () =>
+        handlers?.onEvent({
+            protocolVersion: 2,
+            threadId: "thread-1",
+            runId: "run-1",
+            sequence: 2,
+            kind: "item.delta",
+            itemId: "message-1",
+            itemKind: "agent_message",
+            payload: { delta: "第一句", userVisible: true },
+            createdAt: "2026-08-23T00:00:00Z",
+        }),
+    );
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 80)));
+
+    expect(document.querySelector('[role="status"][aria-live="polite"]')?.textContent).toContain("已完成");
+    expect(document.querySelector('[aria-label="Agent 回复"] .canvas-agent-runtime-streaming-caret')).toBeNull();
 });
 
 test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () => {
@@ -489,7 +572,18 @@ test("询问状态在输入框上方显示结构化卡片并保留运行配置�
             request: {
                 requestId: "clarification-1",
                 expectedDelivery: answerDelivery(),
-                questions: [{ id: "question-1", prompt: "广告时长大概多长？", type: "single_choice", options: [{ id: "15s", label: "15 秒" }, { id: "30s", label: "30 秒" }], allowCustomAnswer: false }],
+                questions: [
+                    {
+                        id: "question-1",
+                        prompt: "广告时长大概多长？",
+                        type: "single_choice",
+                        options: [
+                            { id: "15s", label: "15 秒" },
+                            { id: "30s", label: "30 秒" },
+                        ],
+                        allowCustomAnswer: false,
+                    },
+                ],
             },
             answers: [],
         },
