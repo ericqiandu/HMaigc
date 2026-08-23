@@ -42,7 +42,7 @@ referer_sentinel="TASK4_REFERER_SENTINEL_NGINX"
 query_sentinel="TASK4_QUERY_SENTINEL_NGINX"
 ordinary_error_marker="TASK4_ORDINARY_API_ERROR_MARKER"
 sensitive_query="token_hash=${token_hash_sentinel}&code_url=https%3A%2F%2Fqr.invalid%2F${qr_url_sentinel}&provider_error=${provider_error_sentinel}&trace=${query_sentinel}"
-static_asset_base_url="${HMAIGC_STATIC_ASSET_BASE_URL:-https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web}"
+static_asset_base_url="${HMAIGC_STATIC_ASSET_BASE_URL:-https://static.hm.kunagent.com/hmaigc/web}"
 if [[ ! "$static_asset_base_url" =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?)(/[^?#]*)?$ ]]; then
   echo "HMAIGC_STATIC_ASSET_BASE_URL 不是可用于 CSP 的 HTTPS 静态资源地址：${static_asset_base_url}" >&2
   exit 1

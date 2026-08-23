@@ -9,7 +9,7 @@ const REQUIRED_CSP_DIRECTIVES = new Map([
     ["object-src", ["'none'"]],
 ]);
 
-const staticAssetBaseURL = (process.env.HMAIGC_STATIC_ASSET_BASE_URL ?? "").trim() || "https://hmaigc-prod-static.oss-cn-hongkong.aliyuncs.com/hmaigc/web";
+const staticAssetBaseURL = (process.env.HMAIGC_STATIC_ASSET_BASE_URL ?? "").trim() || "https://static.hm.kunagent.com/hmaigc/web";
 const staticAssetOrigin = new URL(staticAssetBaseURL).origin;
 
 function parseCSP(value) {

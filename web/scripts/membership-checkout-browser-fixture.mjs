@@ -430,6 +430,18 @@ const server = http.createServer(async (request, response) => {
             sendJSON(response, 200, envelope(siteSettings));
             return;
         }
+        if (request.method === "GET" && url.pathname === "/api/public/legal/membershipAgreement") {
+            sendJSON(
+                response,
+                200,
+                envelope({
+                    document: "membershipAgreement",
+                    content: siteSettings.membershipAgreement,
+                    updatedAt: siteSettings.updatedAt,
+                }),
+            );
+            return;
+        }
         if (request.method === "GET" && url.pathname === "/api/auth/session") {
             sendJSON(response, 200, envelope({ user: fixtureUser, systemChannels: [], runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, sessionUploadMB: 32 } }));
             return;
