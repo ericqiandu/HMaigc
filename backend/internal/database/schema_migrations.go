@@ -30,6 +30,8 @@ var paymentRequiredStringFields = []schemaField{
 	{table: "payment_webhook_events", column: "failure_code"},
 }
 
+const tokenOutputCeilingMigrationID = "20260822-token-output-ceiling-v1"
+
 // MigrateBaseSchema 只建立可承载历史数据的表、列和默认值；数据复制后再施加支付唯一性约束。
 func MigrateBaseSchema(db *gorm.DB) error {
 	if err := db.AutoMigrate(Models()...); err != nil {
@@ -57,6 +59,54 @@ func MigrateBaseSchema(db *gorm.DB) error {
 		return fmt.Errorf("设置价格规格默认值: %w", err)
 	}
 	return nil
+}
+
+// backfillLegacyTokenOutputCeilings performs the one-time split of the
+// historical overloaded expected_output_tokens value into an explicit request
+// ceiling. The migration record prevents later administrator edits from being
+// mistaken for legacy rows during a subsequent startup.
+func backfillLegacyTokenOutputCeilings(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var completed []model.DataMigration
+		result := tx.Where("id = ? AND completed_at IS NOT NULL", tokenOutputCeilingMigrationID).Limit(1).Find(&completed)
+		if result.Error != nil {
+			return fmt.Errorf("读取 Token 输出上限迁移状态失败: %w", result.Error)
+		}
+		if len(completed) == 1 {
+			return nil
+		}
+
+		now := time.Now()
+		pending := model.DataMigration{ID: tokenOutputCeilingMigrationID, CreatedAt: now, UpdatedAt: now}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&pending).Error; err != nil {
+			return fmt.Errorf("创建 Token 输出上限迁移状态失败: %w", err)
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&pending, "id = ?", tokenOutputCeilingMigrationID).Error; err != nil {
+			return fmt.Errorf("锁定 Token 输出上限迁移状态失败: %w", err)
+		}
+		if pending.CompletedAt != nil {
+			return nil
+		}
+		if err := tx.Exec(`UPDATE model_pricings
+			SET max_output_tokens = expected_output_tokens
+			WHERE capability = ? AND (max_output_tokens IS NULL OR max_output_tokens = 0) AND expected_output_tokens > 0`, "text").Error; err != nil {
+			return fmt.Errorf("回填 Token 输出上限失败: %w", err)
+		}
+		completedAt := time.Now()
+		updated := tx.Model(&model.DataMigration{}).
+			Where("id = ? AND completed_at IS NULL", tokenOutputCeilingMigrationID).
+			Updates(struct {
+				CompletedAt *time.Time
+				UpdatedAt   time.Time
+			}{CompletedAt: &completedAt, UpdatedAt: completedAt})
+		if updated.Error != nil {
+			return fmt.Errorf("完成 Token 输出上限迁移状态失败: %w", updated.Error)
+		}
+		if updated.RowsAffected != 1 {
+			return errors.New("Token 输出上限迁移完成状态发生并发冲突")
+		}
+		return nil
+	})
 }
 
 // EnsureUserPublicIdentitySchema creates and backfills the UUID-to-short-number mapping.

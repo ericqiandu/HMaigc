@@ -16,6 +16,7 @@ export type VideoModelCapabilities = Readonly<{
     outputCounts: readonly number[];
     supportedGenerationModes: readonly CanvasVideoGenerationMode[];
     supportsGeneratedAudio: boolean;
+    generatedAudioResolutions: readonly string[];
     watermarkCapability: WatermarkCapability;
     supportsSuperResolution: boolean;
     referenceLimits?: Readonly<{ images: number; imagesWithVideo: number; videos: number; audios: number; totalVideoDurationSeconds: number; totalAudioDurationSeconds: number }>;
@@ -49,6 +50,7 @@ const miniMaxH3Capabilities: VideoModelCapabilities = {
     outputCounts: [1, 2, 4],
     supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
     supportsGeneratedAudio: false,
+    generatedAudioResolutions: [],
     watermarkCapability: "controlled",
     supportsSuperResolution: false,
     supportedTools: [],
@@ -66,6 +68,7 @@ const klingCapabilities: VideoModelCapabilities = {
     outputCounts: [1, 2, 4],
     supportedGenerationModes: ["text", "image", "first_last_frame"],
     supportsGeneratedAudio: false,
+    generatedAudioResolutions: [],
     watermarkCapability: "unsupported",
     supportsSuperResolution: false,
     supportedTools: [],
@@ -97,6 +100,7 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
             outputCounts: providerCapabilities.outputCounts,
             supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
             supportsGeneratedAudio: providerCapabilities.supportsGeneratedAudio,
+            generatedAudioResolutions: providerCapabilities.generatedAudioResolutions,
             watermarkCapability: providerCapabilities.watermarkCapability,
             supportsSuperResolution: false,
             referenceLimits: {
@@ -120,6 +124,7 @@ export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapab
         outputCounts: [1, 2, 4],
         supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
         supportsGeneratedAudio: true,
+        generatedAudioResolutions: [],
         watermarkCapability: selectedModelWatermarkCapability(config),
         supportsSuperResolution: true,
         supportedTools: [],
@@ -188,7 +193,7 @@ export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: 
         videoSeconds: String(normalizedDuration),
         size: supportedRatio,
         count: String(normalizedCount),
-        videoGenerateAudio: videoSupportsGeneratedAudio(capabilities, generationMode) ? config.videoGenerateAudio : "false",
+        videoGenerateAudio: videoSupportsGeneratedAudio(capabilities, generationMode, normalizedResolution) ? config.videoGenerateAudio : "false",
         videoSuperResolutionEnabled: capabilities.supportsSuperResolution ? config.videoSuperResolutionEnabled : "false",
         videoSuperResolutionFps: capabilities.supportsSuperResolution ? config.videoSuperResolutionFps : "",
     };
@@ -237,8 +242,11 @@ export function videoResolutionsForMode(capabilities: VideoModelCapabilities, mo
     return capabilities.resolutions.filter((option) => option.value !== "4k");
 }
 
-export function videoSupportsGeneratedAudio(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
-    return capabilities.supportsGeneratedAudio && !(capabilities.id === "kuaizi-kling" && mode === "omni_reference");
+export function videoSupportsGeneratedAudio(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode, resolution?: string) {
+    if (!capabilities.supportsGeneratedAudio || (capabilities.id === "kuaizi-kling" && mode === "omni_reference")) return false;
+    if (!resolution || capabilities.generatedAudioResolutions.length === 0) return true;
+    const requested = resolution.trim().toLowerCase();
+    return capabilities.generatedAudioResolutions.some((candidate) => candidate.trim().toLowerCase() === requested);
 }
 
 export function videoModelMetadataPatch(config: AiConfig, model: string, generationMode?: CanvasVideoGenerationMode) {

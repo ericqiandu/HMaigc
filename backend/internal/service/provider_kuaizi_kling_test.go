@@ -75,6 +75,10 @@ func TestKuaiziKlingCreatePayloadRejectsDocumentedBoundaryViolations(t *testing.
 		{name: "duration below minimum", mutate: func(input *canvasGenerationInput) { input.Config.VideoSeconds = "2" }, want: "3–15"},
 		{name: "invalid ratio", mutate: func(input *canvasGenerationInput) { input.Config.Size = "4:3" }, want: "不支持画面比例"},
 		{name: "unsupported mode", mutate: func(input *canvasGenerationInput) { input.Config.VQuality = "1080p" }, want: "仅支持 std、pro 或 4k"},
+		{name: "4k with generated audio", mutate: func(input *canvasGenerationInput) {
+			input.Config.VQuality = "4k"
+			input.Config.VideoGenerateAudio = "true"
+		}, want: "4k 不支持同步音频"},
 		{name: "audio with video", mutate: func(input *canvasGenerationInput) {
 			input.Config.VideoGenerateAudio = "true"
 			input.ReferenceVideos = []providerMedia{{URL: "https://assets.example.com/reference.mp4", DurationMs: 5_000}}

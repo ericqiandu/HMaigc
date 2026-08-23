@@ -5,7 +5,7 @@ export type PricingSpecification = {
     label: string;
     group: "base" | "supplier-only";
     resolution?: string;
-    inputVariant?: "standard" | "reference_video";
+    inputVariant?: "standard" | "standard_audio" | "reference_video";
     unit?: "秒" | "张" | "万字符";
     note?: string;
 };
@@ -42,19 +42,29 @@ export function specificationsForStrategy(strategy: ChannelModel["priceStrategy"
     return [];
 }
 
+export function normalizedPricingTierKey(resolution: string, inputVariant = "standard") {
+    return `${resolution.trim().toLowerCase()}::${inputVariant.trim().toLowerCase()}`;
+}
+
 export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "priceStrategy" | "providerCapabilities">): PricingSpecification[] {
     const base = specificationsForStrategy(model.priceStrategy);
     const modelKey = model.modelKey.trim().toLowerCase();
     const capabilities = model.providerCapabilities;
     if (model.priceStrategy === "video_resolution" && capabilities && capabilities.inputVariants.length > 0) {
         return capabilities.resolutions.flatMap((resolution) =>
-            capabilities.inputVariants.filter((inputVariant) => inputVariant === "standard" || capabilities.referenceVideoResolutions.includes(resolution)).map((inputVariant) => ({
-                key: `${resolution}::${inputVariant}`,
-                label: `${resolution} · ${inputVariant === "reference_video" ? "参考视频" : "普通生成"}`,
-                group: "base" as const,
-                resolution,
-                inputVariant,
-            })),
+            capabilities.inputVariants
+                .filter((inputVariant) => {
+                    if (inputVariant === "standard") return true;
+                    if (inputVariant === "standard_audio") return capabilities.generatedAudioResolutions.includes(resolution);
+                    return capabilities.referenceVideoResolutions.includes(resolution);
+                })
+                .map((inputVariant) => ({
+                    key: `${resolution}::${inputVariant}`,
+                    label: `${resolution} · ${inputVariant === "reference_video" ? "参考视频" : inputVariant === "standard_audio" ? "普通生成（有声）" : "普通生成（无声）"}`,
+                    group: "base" as const,
+                    resolution,
+                    inputVariant,
+                })),
         );
     }
     if (modelKey === "minimax-h3") return [...base, ...miniMaxH3SupplierSpecifications];

@@ -464,8 +464,10 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	}
 	configured := make(map[string]bool, len(baseRequests))
 	variants := []string{"standard"}
+	var managedSpec *ProviderModelSpec
 	if _, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey); managed && spec.Capability == "video" {
-		variants = []string{"standard", "reference_video"}
+		managedSpec = &spec
+		variants = providerPricingInputVariants(spec)
 		allowed = make(map[string]bool, len(spec.Resolutions))
 		for _, resolution := range spec.Resolutions {
 			allowed[strings.ToUpper(strings.TrimSpace(resolution))] = true
@@ -509,7 +511,11 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 		}
 		if requireAll {
 			for resolution := range allowed {
-				for _, variant := range variants {
+				requiredVariants := variants
+				if managedSpec != nil {
+					requiredVariants = providerPricingVariantsForResolution(*managedSpec, resolution)
+				}
+				for _, variant := range requiredVariants {
 					if configured[channelModelPriceTierKey(resolution, variant)] {
 						continue
 					}

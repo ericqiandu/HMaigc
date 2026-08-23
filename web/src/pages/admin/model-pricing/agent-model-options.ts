@@ -11,16 +11,12 @@ type TokenPricingFacts = {
     outputPerMillionMicros?: number;
     cachedPerMillionMicros?: number;
     expectedOutputTokens?: number;
+    maxOutputTokens?: number;
 };
 
 export function pricingContractForModel(model: Pick<ChannelModel, "billingMode" | "priceStrategy" | "capability" | "providerCapabilities">, pricing?: TokenPricingFacts) {
     const completeTokenPricing =
-        model.capability === "text" &&
-        supportsTokenUsageBilling(model) &&
-        (pricing?.inputPerMillionMicros || 0) > 0 &&
-        (pricing?.outputPerMillionMicros || 0) > 0 &&
-        (pricing?.cachedPerMillionMicros || 0) >= 0 &&
-        (pricing?.expectedOutputTokens || 0) > 0;
+        model.capability === "text" && supportsTokenUsageBilling(model) && (pricing?.inputPerMillionMicros || 0) > 0 && (pricing?.outputPerMillionMicros || 0) > 0 && (pricing?.cachedPerMillionMicros || 0) >= 0 && (pricing?.maxOutputTokens || 0) > 0;
     return completeTokenPricing ? ({ billingMode: "token_usage", priceStrategy: "token" } as const) : { billingMode: model.billingMode, priceStrategy: model.priceStrategy };
 }
 

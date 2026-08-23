@@ -122,3 +122,30 @@ func TestChannelModelPricingSnapshotIncludesUsageAdjustmentFacts(t *testing.T) {
 		t.Fatal("changing the included quantity must increment the price version")
 	}
 }
+
+func TestBuildChannelModelPriceTiersRequiresEveryKlingExecutablePricingVariant(t *testing.T) {
+	item := &model.ChannelModel{
+		ID: "kling", ModelKey: kuaiziKlingModel, Capability: "video", BillingMode: "per_second",
+		PriceStrategy: "video_resolution", PriceConfigured: true, PriceVersion: 2,
+	}
+	requests := []ChannelModelPriceTierRequest{
+		{Resolution: "std", InputVariant: "standard", UnitPriceMicrocredits: 60_000_000},
+		{Resolution: "std", InputVariant: "standard_audio", UnitPriceMicrocredits: 80_000_000},
+		{Resolution: "std", InputVariant: "reference_video", UnitPriceMicrocredits: 90_000_000},
+		{Resolution: "pro", InputVariant: "standard", UnitPriceMicrocredits: 80_000_000},
+		{Resolution: "pro", InputVariant: "standard_audio", UnitPriceMicrocredits: 100_000_000},
+		{Resolution: "pro", InputVariant: "reference_video", UnitPriceMicrocredits: 120_000_000},
+		{Resolution: "4k", InputVariant: "standard", UnitPriceMicrocredits: 300_000_000},
+	}
+
+	tiers, err := buildChannelModelPriceTiers(item, requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tiers) != 7 {
+		t.Fatalf("len(tiers) = %d, want 7 executable Kling variants", len(tiers))
+	}
+	if _, err := buildChannelModelPriceTiers(item, requests[:6]); err == nil || !strings.Contains(err.Error(), "4K / standard") {
+		t.Fatalf("missing 4K standard error = %v", err)
+	}
+}

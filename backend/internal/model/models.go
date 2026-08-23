@@ -547,6 +547,7 @@ type ModelPricing struct {
 	ExpectedInputTokens    int64              `json:"expectedInputTokens"`
 	ExpectedOutputTokens   int64              `json:"expectedOutputTokens"`
 	ExpectedCachedTokens   int64              `json:"expectedCachedTokens"`
+	MaxOutputTokens        int64              `json:"maxOutputTokens"`
 	PerRequestMicros       int64              `json:"perRequestMicros"`
 	PerMediaMicros         int64              `json:"perMediaMicros"`
 	PerVideoSecondMicros   int64              `json:"perVideoSecondMicros"`

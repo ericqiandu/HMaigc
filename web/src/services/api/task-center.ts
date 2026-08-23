@@ -135,6 +135,7 @@ export type TaskBillingQuoteConfig = {
     quality: string;
     videoSeconds: string;
     vquality: string;
+    videoGenerateAudio: boolean;
     videoSuperResolutionEnabled: boolean;
     videoSuperResolutionResolution: string;
     videoSuperResolutionVersion: string;

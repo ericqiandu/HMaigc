@@ -26,7 +26,7 @@ import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
 import { buildInputImageUsagePricing, readInputImageUsagePricing } from "./media-input-usage-pricing";
-import { imagePricingSpecifications, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
+import { imagePricingSpecifications, normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
 type PricingFormValues = {
@@ -40,6 +40,7 @@ type PricingFormValues = {
     expectedInputTokens?: number;
     expectedOutputTokens?: number;
     expectedCachedTokens?: number;
+    maxOutputTokens?: number;
     perRequest?: number;
     perMedia?: number;
     perVideoSecond?: number;
@@ -128,6 +129,7 @@ export default function ModelPricingPage() {
             expectedInputTokens: optionalCount(pricing?.expectedInputTokens),
             expectedOutputTokens: optionalCount(pricing?.expectedOutputTokens),
             expectedCachedTokens: optionalCount(pricing?.expectedCachedTokens),
+            maxOutputTokens: optionalCount(pricing?.maxOutputTokens),
             perRequest: optionalMoney(pricing?.perRequestMicros),
             perMedia: optionalMoney(pricing?.perMediaMicros),
             perVideoSecond: optionalMoney(pricing?.perVideoSecondMicros),
@@ -250,6 +252,7 @@ export default function ModelPricingPage() {
             expectedInputTokens: values.expectedInputTokens || 0,
             expectedOutputTokens: values.expectedOutputTokens || 0,
             expectedCachedTokens: values.expectedCachedTokens || 0,
+            maxOutputTokens: values.maxOutputTokens || 0,
             perRequestMicros: toMicro(values.perRequest),
             perMediaMicros: toMicro(values.perMedia),
             perVideoSecondMicros: toMicro(values.perVideoSecond),
@@ -283,7 +286,7 @@ export default function ModelPricingPage() {
                 ...(inputImageUsagePricing ? [inputImageUsagePricing.userTier] : []),
             ],
             priceConfigured: tokenPricing
-                ? pricingInput.inputPerMillionMicros > 0 && pricingInput.outputPerMillionMicros > 0 && pricingInput.expectedOutputTokens > 0
+                ? pricingInput.inputPerMillionMicros > 0 && pricingInput.outputPerMillionMicros > 0 && pricingInput.maxOutputTokens > 0
                 : values.priceStrategy === "flat"
                   ? Boolean(values.unitCredits && values.unitCredits > 0)
                   : baseSaleTierInputs.length > 0,
@@ -639,6 +642,10 @@ function FlatPricingFields({ capability, strategy }: { capability?: ChannelModel
                         <CountField name="expectedOutputTokens" label="平均输出 Token" />
                         <CountField name="expectedCachedTokens" label="平均缓存 Token" />
                     </div>
+                    <p className="model-pricing-section-description mb-3 text-xs leading-5 text-foreground/48">最大输出 Token 是发送给上游模型的硬限制，必须按模型真实能力单独配置，不参与平均成本估算。</p>
+                    <div className="model-pricing-token-limit-grid grid grid-cols-1 sm:grid-cols-2">
+                        <CountField name="maxOutputTokens" label="最大输出 Token" />
+                    </div>
                 </>
             ) : null}
             {capability === "image" || capability === "audio" ? <MoneyField name="perMedia" label={capability === "image" ? "供应商成本 / 张" : "供应商成本 / 个音频"} /> : null}
@@ -906,11 +913,11 @@ function tierLabel(value: string) {
     };
     if (value.includes("::")) {
         const [resolution, variant] = value.split("::");
-        return `${resolution}·${variant === "reference_video" ? "参考视频" : "普通生成"}`;
+        return `${resolution}·${variant === "reference_video" ? "参考视频" : variant === "standard_audio" ? "普通生成（有声）" : "普通生成（无声）"}`;
     }
     return labels[value] || value;
 }
 
 function pricingTierKey(resolution: string, inputVariant?: string) {
-    return `${resolution}::${inputVariant || "standard"}`;
+    return normalizedPricingTierKey(resolution, inputVariant);
 }

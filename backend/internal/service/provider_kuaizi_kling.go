@@ -182,6 +182,11 @@ func kuaiziKlingCreatePayload(input canvasGenerationInput) (map[string]interface
 		return nil, errors.New("Kling 参考视频任务时长必须为 3–10 秒")
 	}
 	generateAudio := parseBool(input.Config.VideoGenerateAudio, false)
+	if spec, ok := kuaiziProviderModelSpec(kuaiziKlingModel); !ok {
+		return nil, errors.New("Kling 模型能力契约不存在")
+	} else if generateAudio && !providerGeneratedAudioSupported(spec.SupportsGeneratedAudio, spec.GeneratedAudioResolutions, mode) {
+		return nil, fmt.Errorf("Kling %s 不支持同步音频", mode)
+	}
 	if len(videos) > 0 && generateAudio {
 		return nil, errors.New("Kling 携带参考视频时不能生成同步音频")
 	}

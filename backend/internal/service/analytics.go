@@ -135,6 +135,7 @@ type ModelPricingRequest struct {
 	ExpectedInputTokens    int64                     `json:"expectedInputTokens"`
 	ExpectedOutputTokens   int64                     `json:"expectedOutputTokens"`
 	ExpectedCachedTokens   int64                     `json:"expectedCachedTokens"`
+	MaxOutputTokens        int64                     `json:"maxOutputTokens"`
 	PerRequestMicros       int64                     `json:"perRequestMicros"`
 	PerMediaMicros         int64                     `json:"perMediaMicros"`
 	PerVideoSecondMicros   int64                     `json:"perVideoSecondMicros"`
@@ -443,6 +444,7 @@ func (s *Service) SaveModelPricing(actor *model.User, id string, req ModelPricin
 	pricing.ExpectedInputTokens = req.ExpectedInputTokens
 	pricing.ExpectedOutputTokens = req.ExpectedOutputTokens
 	pricing.ExpectedCachedTokens = req.ExpectedCachedTokens
+	pricing.MaxOutputTokens = req.MaxOutputTokens
 	pricing.PerRequestMicros = req.PerRequestMicros
 	pricing.PerMediaMicros = req.PerMediaMicros
 	pricing.PerVideoSecondMicros = req.PerVideoSecondMicros
@@ -471,7 +473,7 @@ func (s *Service) DeleteModelPricing(actor *model.User, id string) error {
 
 func hasNegativePricing(req ModelPricingRequest) bool {
 	return req.InputPerMillionMicros < 0 || req.OutputPerMillionMicros < 0 || req.CachedPerMillionMicros < 0 ||
-		req.ExpectedInputTokens < 0 || req.ExpectedOutputTokens < 0 || req.ExpectedCachedTokens < 0 ||
+		req.ExpectedInputTokens < 0 || req.ExpectedOutputTokens < 0 || req.ExpectedCachedTokens < 0 || req.MaxOutputTokens < 0 ||
 		req.PerRequestMicros < 0 || req.PerMediaMicros < 0 || req.PerVideoSecondMicros < 0
 }
 

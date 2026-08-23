@@ -62,6 +62,30 @@ func TestSaveModelPricingIsIdempotentForScope(t *testing.T) {
 	}
 }
 
+func TestSaveModelPricingPersistsTokenMaximumSeparatelyFromExpectedUsage(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelPricing{}, &model.ModelPricingTier{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(repository.New(db), t.TempDir())
+	actor := &model.User{ID: "admin", Role: model.UserRoleAdmin}
+
+	pricing, err := svc.SaveModelPricing(actor, "", ModelPricingRequest{
+		ChannelID: "channel", Model: "deepseek-v4-pro", Capability: "text", Currency: "CNY",
+		InputPerMillionMicros: 3_000_000, OutputPerMillionMicros: 6_000_000, CachedPerMillionMicros: 25_000,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 16_384,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pricing.ExpectedOutputTokens != 2_048 || pricing.MaxOutputTokens != 16_384 {
+		t.Fatalf("saved output tokens = expected:%d max:%d", pricing.ExpectedOutputTokens, pricing.MaxOutputTokens)
+	}
+}
+
 func TestSaveModelPricingPersistsInputImageUsageCost(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

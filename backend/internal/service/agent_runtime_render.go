@@ -252,7 +252,7 @@ func validateProductionRenderCapabilities(request agentProductionRenderRequest, 
 			(capabilities.DurationMax > 0 && request.VideoConfig.DurationSeconds > capabilities.DurationMax) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video duration is outside provider capabilities")
 		}
-		if request.VideoConfig.GenerateAudio && !capabilities.SupportsGeneratedAudio {
+		if request.VideoConfig.GenerateAudio && !providerGeneratedAudioSupported(capabilities.SupportsGeneratedAudio, capabilities.GeneratedAudioResolutions, request.VideoConfig.Quality) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "generated audio is not supported by provider capabilities")
 		}
 	default:

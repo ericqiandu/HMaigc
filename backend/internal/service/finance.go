@@ -651,7 +651,11 @@ func billingUsage(capability string, modelKey string, config map[string]any, inp
 		if _, spec, managed := kuaiziProviderFamilyForModel(modelKey); managed && spec.Capability == "video" && len(input) > 0 {
 			if references, ok := input[0]["referenceVideos"].([]any); ok && len(references) > 0 {
 				usage.InputVariant = "reference_video"
+			} else if strings.EqualFold(strings.TrimSpace(fmt.Sprint(config["videoGenerateAudio"])), "true") {
+				usage.InputVariant = "standard_audio"
 			}
+		} else if managed && spec.Capability == "video" && strings.EqualFold(strings.TrimSpace(fmt.Sprint(config["videoGenerateAudio"])), "true") {
+			usage.InputVariant = "standard_audio"
 		}
 	}
 	return usage
@@ -728,6 +732,10 @@ func normalizeVideoPricingResolution(usage BillingUsage) string {
 		return "2K"
 	case "4k":
 		return "4K"
+	case "std":
+		return "STD"
+	case "pro":
+		return "PRO"
 	default:
 		return ""
 	}

@@ -211,6 +211,29 @@ func TestProductionRenderCapabilitiesRejectUnsupportedVideoAspectRatioBeforeAppr
 	}
 }
 
+func TestProductionRenderCapabilitiesRejectGeneratedAudioOutsidePublishedResolution(t *testing.T) {
+	artifact := model.AgentProductionArtifact{Kind: model.AgentProductionArtifactVideoClip}
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: "kuaizi-kling", Model: kuaiziKlingModel, Capability: "video",
+		ProviderCapabilities: &PublicProviderCapabilities{
+			ModelKey: kuaiziKlingModel, Capability: "video", Ratios: []string{"16:9"},
+			Resolutions: []string{"std", "pro", "4k"}, DurationMin: 3, DurationMax: 15,
+			SupportsGeneratedAudio: true, GeneratedAudioResolutions: []string{"std", "pro"},
+		},
+	}
+	request := agentProductionRenderRequest{
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "16:9", Quality: "4k", GenerateAudio: true},
+	}
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err == nil || !strings.Contains(err.Error(), "generated audio") {
+		t.Fatalf("unsupported generated-audio resolution error = %v", err)
+	}
+	request.VideoConfig.Quality = "pro"
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err != nil {
+		t.Fatalf("published generated-audio resolution rejected: %v", err)
+	}
+}
+
 func TestProductionRenderRejectsLegacyPlanWithoutDeliverables(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()

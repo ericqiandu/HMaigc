@@ -350,6 +350,37 @@ func TestTaskBillingOrderSelectsReferenceVideoPriceAndFreezesVariant(t *testing.
 	}
 }
 
+func TestTaskBillingOrderSelectsKlingGeneratedAudioPrice(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
+		t.Fatal(err)
+	}
+	item := model.ChannelModel{
+		ID: "kling", ChannelID: "channel", ModelKey: kuaiziKlingModel, Capability: "video",
+		BillingMode: "per_second", PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
+		PriceTiers: []model.ChannelModelPriceTier{
+			{ID: "silent", Resolution: "STD", InputVariant: "standard", UnitPriceMicrocredits: 60_000_000},
+			{ID: "audio", Resolution: "STD", InputVariant: "standard_audio", UnitPriceMicrocredits: 80_000_000},
+		},
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	order, err := svc.taskBillingOrder("user", &model.Task{ID: "task", Type: "canvas_video"}, map[string]any{
+		"mode": "video", "config": map[string]any{"channelId": "channel", "model": item.ModelKey, "videoSeconds": "3", "vquality": "std", "videoGenerateAudio": "true"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.PriceTierID != "audio" || order.PricingInputVariant != "standard_audio" || order.AmountMicrocredits != 240_000_000 {
+		t.Fatalf("generated-audio billing order = %#v", order)
+	}
+}
+
 func TestTaskBillingOrderDoesNotApplySeedanceReferenceTierToOtherVideoModels(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

@@ -52,6 +52,7 @@ function videoConfig(overrides: Partial<AiConfig> = {}): AiConfig {
                             resolutionPixels: {},
                             inputVariants: ["standard", "reference_video"],
                             referenceVideoResolutions: ["480p", "720p", "1080p", "4k"],
+                            generatedAudioResolutions: [],
                             ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
                             qualities: [],
                             outputCounts: [1, 2, 4],

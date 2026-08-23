@@ -150,6 +150,7 @@ type PublicProviderCapabilities struct {
 	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
 	InputVariants             []string                  `json:"inputVariants"`
 	ReferenceVideoResolutions []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions []string                  `json:"generatedAudioResolutions"`
 	Ratios                    []string                  `json:"ratios"`
 	Qualities                 []string                  `json:"qualities"`
 	OutputCounts              []int                     `json:"outputCounts"`
@@ -832,11 +833,7 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 		configured[channelModelPriceTierKey(tier.Resolution, variant)] = true
 	}
 	for _, resolution := range spec.Resolutions {
-		variants := []string{"standard"}
-		if stringInSlice(resolution, spec.ReferenceVideoResolutions) {
-			variants = append(variants, "reference_video")
-		}
-		for _, variant := range variants {
+		for _, variant := range providerPricingVariantsForResolution(spec, resolution) {
 			if !configured[channelModelPriceTierKey(resolution, variant)] {
 				return false
 			}
@@ -855,16 +852,13 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 	}
 	inputVariants := []string{}
 	if capabilities.Capability == "video" {
-		inputVariants = []string{"standard"}
-		if len(capabilities.ReferenceVideoResolutions) > 0 {
-			inputVariants = append(inputVariants, "reference_video")
-		}
+		inputVariants = providerPricingInputVariants(capabilities)
 	}
 	return &PublicProviderCapabilities{
 		ProviderFamily: family,
 		ModelKey:       capabilities.ModelKey, DisplayName: capabilities.DisplayName,
 		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
-		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, ReferenceVideoResolutions: append([]string{}, capabilities.ReferenceVideoResolutions...), Ratios: append([]string{}, capabilities.Ratios...),
+		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, ReferenceVideoResolutions: append([]string{}, capabilities.ReferenceVideoResolutions...), GeneratedAudioResolutions: append([]string{}, capabilities.GeneratedAudioResolutions...), Ratios: append([]string{}, capabilities.Ratios...),
 		ResolutionPixels: cloneStringInt64Map(capabilities.ResolutionPixels),
 		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,

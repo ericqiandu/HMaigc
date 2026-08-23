@@ -18,6 +18,8 @@ func TestNormalizeVideoPricingResolution(t *testing.T) {
 		{name: "1080p suffix", usage: BillingUsage{Resolution: "1080p"}, want: "1080P"},
 		{name: "base 2k", usage: BillingUsage{Resolution: "2K"}, want: "2K"},
 		{name: "base 4k", usage: BillingUsage{Resolution: "4k"}, want: "4K"},
+		{name: "Kling standard mode", usage: BillingUsage{Resolution: "std"}, want: "STD"},
+		{name: "Kling professional mode", usage: BillingUsage{Resolution: "pro"}, want: "PRO"},
 		{name: "super resolution does not replace base tier", usage: BillingUsage{Resolution: "720", SuperResolutionEnabled: true, SuperResolutionResolution: "4K"}, want: "720P"},
 	}
 

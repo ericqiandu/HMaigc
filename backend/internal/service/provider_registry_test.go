@@ -77,6 +77,17 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	if got := kling.Models[0]; got.ModelKey != "kling-v3-omni" || got.DisplayName != "Kling 3 Omni" || got.UpstreamMode != "kling-v3-omni" || got.Capability != "video" || got.DurationMin != 3 || got.DurationMax != 15 || !got.SupportsGeneratedAudio || got.MaxImages != 7 || got.MaxVideos != 1 || got.MaxAudios != 0 || strings.Join(got.Resolutions, ",") != "std,pro,4k" || strings.Join(got.ReferenceVideoResolutions, ",") != "std,pro" || strings.Join(got.Ratios, ",") != "16:9,9:16,1:1" {
 		t.Fatalf("Kling 3 Omni capabilities = %#v", got)
 	}
+	encodedKling, err := json.Marshal(kling.Models[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var klingFacts map[string]any
+	if err := json.Unmarshal(encodedKling, &klingFacts); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := klingFacts["generatedAudioResolutions"].([]any); !ok || len(got) != 2 || got[0] != "std" || got[1] != "pro" {
+		t.Fatalf("Kling generated-audio resolutions = %#v, want [std pro]", klingFacts["generatedAudioResolutions"])
+	}
 	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel)
 	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" {
 		t.Fatalf("Kling public capabilities = %#v", public)
@@ -89,8 +100,10 @@ func TestKuaiziKlingPricingReadinessDoesNotRequireForbidden4KReferenceTier(t *te
 		PriceConfigured: true,
 		PriceTiers: []modelpkg.ChannelModelPriceTier{
 			{Resolution: "std", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "std", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
 			{Resolution: "std", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
 			{Resolution: "pro", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "pro", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
 			{Resolution: "pro", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
 			{Resolution: "4k", InputVariant: "standard", UnitPriceMicrocredits: 1},
 		},
@@ -98,7 +111,7 @@ func TestKuaiziKlingPricingReadinessDoesNotRequireForbidden4KReferenceTier(t *te
 	if !channelModelPricingReady(item) {
 		t.Fatal("Kling pricing with every supported mode/variant was rejected")
 	}
-	item.PriceTiers = item.PriceTiers[:4]
+	item.PriceTiers = item.PriceTiers[:6]
 	if channelModelPricingReady(item) {
 		t.Fatal("Kling pricing without the required 4k standard tier was accepted")
 	}
@@ -256,6 +269,21 @@ func TestKuaiziCompatibleInputEnforcesPerModelCapabilities(t *testing.T) {
 	spec, _ := kuaiziSeedanceModelSpec(input.Config.Model)
 	if _, _, duration, err := validateKuaiziCompatibleVideoInput(input, spec); err != nil || duration != 30 {
 		t.Fatalf("2.5 compatible input = duration %d, error %v", duration, err)
+	}
+}
+
+func TestKuaiziCompatibleInputPreservesKlingResolutionTokens(t *testing.T) {
+	spec, ok := kuaiziProviderModelSpec("kling-v3-omni")
+	if !ok {
+		t.Fatal("Kling provider specification is missing")
+	}
+	input := canvasGenerationInput{Prompt: "生成风筝视频", Config: providerConfig{Model: "kling-v3-omni", Size: "16:9", VQuality: "std", VideoSeconds: "3"}}
+	_, resolution, _, err := validateKuaiziCompatibleVideoInput(input, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution != "std" {
+		t.Fatalf("resolution = %q, want std", resolution)
 	}
 }
 

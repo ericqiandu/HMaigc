@@ -185,7 +185,7 @@ func validateKuaiziCompatibleVideoInput(input canvasGenerationInput, spec Provid
 	if err != nil {
 		return "", "", 0, err
 	}
-	resolution := normalizeVideoResolution(strings.ToLower(strings.TrimSpace(input.Config.VQuality)))
+	resolution := normalizeKuaiziCompatibleResolution(input.Config.VQuality, spec.Resolutions)
 	if !containsProviderCapability(spec.Resolutions, resolution) {
 		return "", "", 0, fmt.Errorf("%s 不支持分辨率 %s", spec.DisplayName, resolution)
 	}
@@ -217,6 +217,22 @@ func validateKuaiziCompatibleVideoInput(input canvasGenerationInput, spec Provid
 		}
 	}
 	return ratio, resolution, duration, nil
+}
+
+func normalizeKuaiziCompatibleResolution(value string, supported []string) string {
+	requested := strings.TrimSpace(value)
+	for _, candidate := range supported {
+		if strings.EqualFold(strings.TrimSpace(candidate), requested) {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	requestedWithoutP := strings.TrimSuffix(strings.ToLower(requested), "p")
+	for _, candidate := range supported {
+		if strings.TrimSuffix(strings.ToLower(strings.TrimSpace(candidate)), "p") == requestedWithoutP {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	return strings.ToLower(requested)
 }
 
 func validateKuaiziReferenceDurations(items []providerMedia, maximumSeconds int, label string) error {

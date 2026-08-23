@@ -214,6 +214,7 @@ export type ModelPricing = {
     expectedInputTokens: number;
     expectedOutputTokens: number;
     expectedCachedTokens: number;
+    maxOutputTokens: number;
     perRequestMicros: number;
     perMediaMicros: number;
     perVideoSecondMicros: number;

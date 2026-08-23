@@ -492,6 +492,54 @@ func TestMigrateSchemaBackfillsLegacyEmptyPriceStrategy(t *testing.T) {
 	}
 }
 
+func TestMigrateSchemaSeparatesLegacyTokenOutputCeiling(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE model_pricings (
+		id text PRIMARY KEY,
+		channel_id text,
+		model text,
+		capability text,
+		expected_output_tokens integer NOT NULL DEFAULT 0
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO model_pricings (id, channel_id, model, capability, expected_output_tokens)
+		VALUES ('legacy-token-pricing', 'channel-1', 'deepseek-v4-pro', 'text', 16384)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var pricing model.ModelPricing
+	if err := db.First(&pricing, "id = ?", "legacy-token-pricing").Error; err != nil {
+		t.Fatal(err)
+	}
+	if pricing.ExpectedOutputTokens != 16_384 || pricing.MaxOutputTokens != 16_384 {
+		t.Fatalf("migrated output tokens = expected:%d max:%d", pricing.ExpectedOutputTokens, pricing.MaxOutputTokens)
+	}
+	if err := db.Model(&model.ModelPricing{}).Where("id = ?", pricing.ID).
+		Select("expected_output_tokens", "max_output_tokens").
+		Updates(struct {
+			ExpectedOutputTokens int64
+			MaxOutputTokens      int64
+		}{ExpectedOutputTokens: 2_048, MaxOutputTokens: 0}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&pricing, "id = ?", pricing.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pricing.ExpectedOutputTokens != 2_048 || pricing.MaxOutputTokens != 0 {
+		t.Fatalf("repeated migration overwrote explicit output tokens = expected:%d max:%d", pricing.ExpectedOutputTokens, pricing.MaxOutputTokens)
+	}
+}
+
 func TestChannelModelVariantMigrationBackfillsLegacyTierAndHardCutsUniqueKey(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

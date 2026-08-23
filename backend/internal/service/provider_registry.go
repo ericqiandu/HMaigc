@@ -21,6 +21,7 @@ type ProviderModelSpec struct {
 	Capability                string                    `json:"capability"`
 	Resolutions               []string                  `json:"resolutions"`
 	ReferenceVideoResolutions []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions []string                  `json:"generatedAudioResolutions"`
 	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
 	Ratios                    []string                  `json:"ratios"`
 	Qualities                 []string                  `json:"qualities"`
@@ -132,6 +133,7 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 		result.Models[index] = model
 		result.Models[index].Resolutions = append([]string{}, model.Resolutions...)
 		result.Models[index].ReferenceVideoResolutions = append([]string{}, model.ReferenceVideoResolutions...)
+		result.Models[index].GeneratedAudioResolutions = append([]string{}, model.GeneratedAudioResolutions...)
 		result.Models[index].ResolutionPixels = cloneStringInt64Map(model.ResolutionPixels)
 		result.Models[index].Ratios = append([]string{}, model.Ratios...)
 		result.Models[index].Qualities = append([]string{}, model.Qualities...)
@@ -167,7 +169,7 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Models: []ProviderModelSpec{{
 				ModelKey: kuaiziKlingModel, DisplayName: "Kling 3 Omni", MarketingCopy: "支持文本、首尾帧、多图与参考视频的可灵 3 全能视频生成",
 				UpstreamMode: kuaiziKlingModel, Capability: "video",
-				Resolutions: []string{"std", "pro", "4k"}, ReferenceVideoResolutions: []string{"std", "pro"}, Ratios: []string{"16:9", "9:16", "1:1"}, Qualities: []string{"std", "pro", "4k"}, OutputCounts: []int{1},
+				Resolutions: []string{"std", "pro", "4k"}, ReferenceVideoResolutions: []string{"std", "pro"}, GeneratedAudioResolutions: []string{"std", "pro"}, Ratios: []string{"16:9", "9:16", "1:1"}, Qualities: []string{"std", "pro", "4k"}, OutputCounts: []int{1},
 				DurationMin: 3, DurationMax: 15, SupportsTextToVideo: true, SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityUnsupported,
 				MaxImages: 7, MaxImagesWithVideo: 4, MaxVideos: 1, MaxVideoDurationSeconds: 10,
 			}},
@@ -215,6 +217,48 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			},
 		},
 	}
+}
+
+func providerPricingVariantsForResolution(spec ProviderModelSpec, resolution string) []string {
+	variants := []string{"standard"}
+	if providerResolutionSupported(resolution, spec.GeneratedAudioResolutions) {
+		variants = append(variants, "standard_audio")
+	}
+	if providerResolutionSupported(resolution, spec.ReferenceVideoResolutions) {
+		variants = append(variants, "reference_video")
+	}
+	return variants
+}
+
+func providerResolutionSupported(resolution string, supported []string) bool {
+	for _, candidate := range supported {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(resolution)) {
+			return true
+		}
+	}
+	return false
+}
+
+func providerGeneratedAudioSupported(supportsGeneratedAudio bool, supportedResolutions []string, resolution string) bool {
+	if !supportsGeneratedAudio {
+		return false
+	}
+	return len(supportedResolutions) == 0 || providerResolutionSupported(resolution, supportedResolutions)
+}
+
+func providerPricingInputVariants(spec ProviderModelSpec) []string {
+	seen := make(map[string]bool)
+	variants := make([]string, 0, 3)
+	for _, resolution := range spec.Resolutions {
+		for _, variant := range providerPricingVariantsForResolution(spec, resolution) {
+			if seen[variant] {
+				continue
+			}
+			seen[variant] = true
+			variants = append(variants, variant)
+		}
+	}
+	return variants
 }
 
 func seedreamProviderModel(modelKey string, displayName string, marketingCopy string, maxImages int) ProviderModelSpec {

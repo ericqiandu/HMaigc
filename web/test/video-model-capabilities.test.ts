@@ -8,7 +8,7 @@ import { VideoSettingsPanel, validateVideoDuration, videoSecondsLabel } from "..
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 import { seedanceReferenceError } from "../src/lib/seedance-video";
-import { specificationsForModel } from "../src/pages/admin/model-pricing/pricing-specifications";
+import { normalizedPricingTierKey, specificationsForModel } from "../src/pages/admin/model-pricing/pricing-specifications";
 
 function miniMaxConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     const model = "MiniMax-H3";
@@ -64,6 +64,7 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         resolutionPixels: {},
         inputVariants: ["standard", "reference_video"] as Array<"standard" | "reference_video">,
         referenceVideoResolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        generatedAudioResolutions: [],
         ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
         qualities: [],
         outputCounts: [1, 2, 4],
@@ -131,8 +132,9 @@ function kuaiziKlingConfig(overrides: Partial<AiConfig> = {}): AiConfig {
         capability: "video",
         resolutions: ["std", "pro", "4k"],
         resolutionPixels: {},
-        inputVariants: ["standard", "reference_video"] as Array<"standard" | "reference_video">,
+        inputVariants: ["standard", "standard_audio", "reference_video"] as Array<"standard" | "standard_audio" | "reference_video">,
         referenceVideoResolutions: ["std", "pro"],
+        generatedAudioResolutions: ["std", "pro"],
         ratios: ["16:9", "9:16", "1:1"],
         qualities: ["std", "pro", "4k"],
         outputCounts: [1],
@@ -191,6 +193,11 @@ function kuaiziKlingConfig(overrides: Partial<AiConfig> = {}): AiConfig {
 }
 
 describe("筷子 Kling 3 Omni 视频能力", () => {
+    test("商业定价键忽略分辨率和输入模式的大小写差异", () => {
+        expect(normalizedPricingTierKey("STD", "STANDARD_AUDIO")).toBe("std::standard_audio");
+        expect(normalizedPricingTierKey("4K", "standard")).toBe("4k::standard");
+    });
+
     test("从后台发布契约读取模式、时长、音频与单任务限制", () => {
         const capabilities = resolveVideoModelCapabilities(kuaiziKlingConfig());
         expect(capabilities.id).toBe("kuaizi-kling");
@@ -199,6 +206,11 @@ describe("筷子 Kling 3 Omni 视频能力", () => {
         expect(capabilities.outputCounts).toEqual([1]);
         expect(capabilities.supportsGeneratedAudio).toBe(true);
         expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "pro" }), "text").vquality).toBe("pro");
+    });
+
+    test("4K 不在后台有声分辨率目录时强制关闭同步音频", () => {
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "4k", videoGenerateAudio: "true" }), "text").videoGenerateAudio).toBe("false");
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "pro", videoGenerateAudio: "true" }), "text").videoGenerateAudio).toBe("true");
     });
 
     test("参考视频模式只开放上游允许的 std 与 pro", () => {
@@ -211,7 +223,8 @@ describe("筷子 Kling 3 Omni 视频能力", () => {
         const providerCapabilities = kuaiziKlingConfig().channels[0].modelCosts?.[0].providerCapabilities;
         if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
         const specifications = specificationsForModel({ modelKey: "kling-v3-omni", priceStrategy: "video_resolution", providerCapabilities });
-        expect(specifications.map((item) => item.key)).toEqual(["std::standard", "std::reference_video", "pro::standard", "pro::reference_video", "4k::standard"]);
+        expect(specifications.map((item) => item.key)).toEqual(["std::standard", "std::standard_audio", "std::reference_video", "pro::standard", "pro::standard_audio", "pro::reference_video", "4k::standard"]);
+        expect(specifications.find((item) => item.key === "std::standard_audio")?.label).toBe("std · 普通生成（有声）");
     });
 });
 

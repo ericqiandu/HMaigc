@@ -81,7 +81,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 ) : null}
 
                 <CanvasGenerationSettingsSection label="生成音频" theme={theme}>
-                    {videoSupportsGeneratedAudio(capabilities, generationMode) ? (
+                    {videoSupportsGeneratedAudio(capabilities, generationMode, resolution) ? (
                         <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">
                             <OptionButton selected={generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "true")}>
                                 开启

@@ -517,7 +517,7 @@ func TestStartAgentRuntimeCreatesTokenBilledFrozenModelTask(t *testing.T) {
 	if order.BillingMode != "token_usage" || order.IdempotencyKey != wantKey || order.Status != model.BillingStatusReserved {
 		t.Fatalf("token billing identity = %#v", order)
 	}
-	if order.EstimatedInputTokens <= int64(len(input.UserMessage)) || order.MaxOutputTokens != pricing.ExpectedOutputTokens || order.TokenPricingSnapshotJSON == "" {
+	if order.EstimatedInputTokens <= int64(len(input.UserMessage)) || order.MaxOutputTokens != pricing.MaxOutputTokens || order.TokenPricingSnapshotJSON == "" {
 		t.Fatalf("token billing reservation = %#v", order)
 	}
 	if order.ProviderEndpointVersionID != fixture.endpoint.ID || order.ProviderCredentialVersionID != fixture.version.ID || order.AmountMicrocredits <= 0 {
@@ -924,7 +924,7 @@ func configureTokenBilledAgentFixture(t *testing.T, svc *Service, db *gorm.DB, f
 	pricing := model.ModelPricing{
 		ID: "runtime-token-pricing", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
 		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
-		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&pricing).Error; err != nil {
 		t.Fatal(err)

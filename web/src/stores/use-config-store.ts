@@ -57,7 +57,7 @@ export type ModelChannel = {
         unitPriceMicrocredits: number;
         priceTiers: Array<{
             resolution: string;
-            inputVariant: "standard" | "reference_video";
+            inputVariant: "standard" | "standard_audio" | "reference_video";
             unitPriceMicrocredits: number;
         }>;
         providerCapabilities?: ProviderModelCapabilities;
@@ -73,8 +73,9 @@ export type ProviderModelCapabilities = {
     capability: string;
     resolutions: string[];
     resolutionPixels: Record<string, number>;
-    inputVariants: Array<"standard" | "reference_video">;
+    inputVariants: Array<"standard" | "standard_audio" | "reference_video">;
     referenceVideoResolutions: string[];
+    generatedAudioResolutions: string[];
     ratios: string[];
     qualities: string[];
     outputCounts: number[];
