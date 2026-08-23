@@ -16,6 +16,7 @@ func TestProductionPlanDraftValidatesReferenceAssetsAndShotBindings(t *testing.T
 		},
 		Shots: []ShotPlanDraft{{
 			ShotKey: "shot-1", Order: 1, DurationMS: 30_000, ScriptText: "顾棠在钟表铺拨动怀表。",
+			Deliverables: []ProductionShotDeliverable{ProductionShotDeliverableStoryboardImage, ProductionShotDeliverableVideoClip},
 			ImagePrompt: "顾棠在钟表铺拿着月牙怀表", VideoPrompt: "镜头缓慢推进",
 			ReferenceKeys: []string{"character", "costume", "prop-watch", "clock-shop"}, Dependencies: []string{},
 		}},

@@ -22,7 +22,7 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 		ID: "plan-version-1", PlanKey: "orange-ad", Version: 1, Title: "10秒橙子广告", TargetDurationMS: 10_000,
 		Script:         "鲜橙唤醒清晨。",
 		ReferencesJSON: `[]`,
-		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"鲜橙落水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
 	}
 	artifacts := []model.AgentProductionArtifact{
 		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
@@ -79,13 +79,62 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 	}
 }
 
+func TestProductionCanvasCommitProjectsVideoOnlyPlanWithoutImageNode(t *testing.T) {
+	now := time.Now().UTC()
+	plan := model.AgentProductionPlanVersion{
+		ID: "plan-version-video-only", PlanKey: "video-only", Version: 1, Title: "5秒原创抽象光影", TargetDurationMS: 5_000,
+		Script:         "抽象光带汇聚并消散。",
+		ReferencesJSON: `[]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"光带聚合","deliverables":["video_clip"],"videoPrompt":"原创抽象光影，镜头缓慢推进","dependencies":[]}]`,
+	}
+	artifacts := []model.AgentProductionArtifact{
+		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
+		{ID: "artifact-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-video"},
+	}
+	resources := map[string]model.Resource{
+		"resource-video": {ID: "resource-video", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", ObjectKey: "production/video-only.mp4", DurationMs: 5_000, CreatedAt: now, UpdatedAt: now},
+	}
+
+	patch, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch.UpsertNodes) != 2 || len(patch.UpsertConnections) != 1 || len(bindings) != 2 {
+		t.Fatalf("video-only projection counts: nodes=%d connections=%d bindings=%d", len(patch.UpsertNodes), len(patch.UpsertConnections), len(bindings))
+	}
+	var scriptNode, videoNode productionCanvasNode
+	if err := json.Unmarshal(patch.UpsertNodes[0], &scriptNode); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(patch.UpsertNodes[1], &videoNode); err != nil {
+		t.Fatal(err)
+	}
+	if scriptNode.Type != "script" || videoNode.Type != "video" || videoNode.Metadata.Content != "/api/resources/resource-video/file" {
+		t.Fatalf("video-only nodes: script=%#v video=%#v", scriptNode, videoNode)
+	}
+	if scriptNode.Metadata.Storyboard == nil || len(scriptNode.Metadata.Storyboard.Rows) != 1 ||
+		scriptNode.Metadata.Storyboard.Rows[0].ImageNodeID != "" || scriptNode.Metadata.Storyboard.Rows[0].VideoNodeID != videoNode.ID {
+		t.Fatalf("video-only storyboard row = %#v", scriptNode.Metadata.Storyboard)
+	}
+	if bytes.Contains(patch.UpsertNodes[0], []byte(`"imageNodeId"`)) {
+		t.Fatalf("video-only script node serialized an image binding: %s", patch.UpsertNodes[0])
+	}
+	var connection productionCanvasConnection
+	if err := json.Unmarshal(patch.UpsertConnections[0], &connection); err != nil {
+		t.Fatal(err)
+	}
+	if connection.FromNodeID != scriptNode.ID || connection.ToNodeID != videoNode.ID || connection.FromHandleID != "row:shot-1" {
+		t.Fatalf("video-only connection = %#v", connection)
+	}
+}
+
 func TestProductionCanvasCommitProjectsReferenceNodesAndBindings(t *testing.T) {
 	now := time.Now().UTC()
 	plan := model.AgentProductionPlanVersion{
 		ID: "plan-version-reference", PlanKey: "watch-film", Version: 1, Title: "雨夜怀表", TargetDurationMS: 6_000,
 		Script:         "顾棠在雨夜钟表店为怀表上弦。",
 		ReferencesJSON: `[{"referenceKey":"character-gu-tang","role":"character","title":"顾棠角色定妆","imagePrompt":"黑色齐下巴短发，右侧银色发夹，深青色风衣"}]`,
-		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":6000,"scriptText":"顾棠拿起怀表","imagePrompt":"雨夜钟表店中景","videoPrompt":"缓慢推进","referenceKeys":["character-gu-tang"],"dependencies":[]}]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":6000,"scriptText":"顾棠拿起怀表","deliverables":["storyboard_image","video_clip"],"imagePrompt":"雨夜钟表店中景","videoPrompt":"缓慢推进","referenceKeys":["character-gu-tang"],"dependencies":[]}]`,
 	}
 	artifacts := []model.AgentProductionArtifact{
 		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
@@ -236,7 +285,7 @@ func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentr
 		Scope: scope, RunID: started.Run.ID, PlanKey: "plan-canvas-commit", BaseVersion: 0,
 		Draft: agentruntime.ProductionPlanDraft{
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
-			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水", ImagePrompt: "鲜橙特写", VideoPrompt: "慢镜水花", Dependencies: []string{}}},
+			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水", Deliverables: agentRuntimeDualProductionDeliverables(), ImagePrompt: "鲜橙特写", VideoPrompt: "慢镜水花", Dependencies: []string{}}},
 		},
 		Now: time.Now().UTC(),
 	})

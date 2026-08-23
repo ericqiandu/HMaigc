@@ -49,6 +49,25 @@ type agentProductionArtifactResult struct {
 	Status       model.AgentProductionArtifactStatus `json:"status"`
 }
 
+func decodeStoredAgentProductionPlan(plan model.AgentProductionPlanVersion) (agentruntime.ProductionPlanDraft, error) {
+	var references []agentruntime.ReferenceAssetDraft
+	if err := json.Unmarshal([]byte(plan.ReferencesJSON), &references); err != nil {
+		return agentruntime.ProductionPlanDraft{}, fmt.Errorf("decode production references: %w", err)
+	}
+	var shots []agentruntime.ShotPlanDraft
+	if err := json.Unmarshal([]byte(plan.ShotsJSON), &shots); err != nil {
+		return agentruntime.ProductionPlanDraft{}, fmt.Errorf("decode production shots: %w", err)
+	}
+	draft := agentruntime.ProductionPlanDraft{
+		Title: plan.Title, TargetDurationMS: plan.TargetDurationMS, Script: plan.Script,
+		References: references, Shots: shots,
+	}
+	if err := draft.Validate(); err != nil {
+		return agentruntime.ProductionPlanDraft{}, fmt.Errorf("production plan contract is invalid: %w", err)
+	}
+	return draft, nil
+}
+
 func executeAgentSkillLoad(configuration agentruntime.RunConfiguration, raw json.RawMessage) ([]byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()

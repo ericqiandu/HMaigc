@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -10,6 +11,88 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestAppendAgentProductionPlanDerivesArtifactsFromDeliverables(t *testing.T) {
+	tests := []struct {
+		name                string
+		deliverables        []agentruntime.ProductionShotDeliverable
+		imagePrompt         string
+		videoPrompt         string
+		wantArtifactKinds   []model.AgentProductionArtifactKind
+		wantStoryboardCount int
+		wantVideoCount      int
+	}{
+		{
+			name: "video only", deliverables: []agentruntime.ProductionShotDeliverable{agentruntime.ProductionShotDeliverableVideoClip},
+			videoPrompt:       "原创抽象光影，镜头缓慢推进",
+			wantArtifactKinds: []model.AgentProductionArtifactKind{model.AgentProductionArtifactScript, model.AgentProductionArtifactVideoClip},
+			wantVideoCount:    1,
+		},
+		{
+			name: "storyboard only", deliverables: []agentruntime.ProductionShotDeliverable{agentruntime.ProductionShotDeliverableStoryboardImage},
+			imagePrompt:         "原创抽象光影分镜图",
+			wantArtifactKinds:   []model.AgentProductionArtifactKind{model.AgentProductionArtifactScript, model.AgentProductionArtifactStoryboardImage},
+			wantStoryboardCount: 1,
+		},
+		{
+			name: "storyboard and video",
+			deliverables: []agentruntime.ProductionShotDeliverable{
+				agentruntime.ProductionShotDeliverableStoryboardImage,
+				agentruntime.ProductionShotDeliverableVideoClip,
+			},
+			imagePrompt: "原创抽象光影分镜图", videoPrompt: "原创抽象光影，镜头缓慢推进",
+			wantArtifactKinds: []model.AgentProductionArtifactKind{
+				model.AgentProductionArtifactScript,
+				model.AgentProductionArtifactStoryboardImage,
+				model.AgentProductionArtifactVideoClip,
+			},
+			wantStoryboardCount: 1, wantVideoCount: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo, _ := openAgentRuntimeRepositorySQLite(t)
+			scope := repositoryAgentScope()
+			createAgentRunForTest(t, repo, scope)
+			draft := agentruntime.ProductionPlanDraft{
+				Title: "5秒原创抽象光影", TargetDurationMS: 5_000, Script: "抽象光带汇聚并消散。",
+				Shots: []agentruntime.ShotPlanDraft{{
+					ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "光带聚合",
+					Deliverables: test.deliverables, ImagePrompt: test.imagePrompt, VideoPrompt: test.videoPrompt,
+					Dependencies: []string{},
+				}},
+			}
+			record, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+				Scope: scope, RunID: scope.RunID, PlanKey: "deliverable-plan", BaseVersion: 0,
+				Draft: draft, Now: time.Now().UTC(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(record.Artifacts) != len(test.wantArtifactKinds) {
+				t.Fatalf("artifact count = %d, want %d: %#v", len(record.Artifacts), len(test.wantArtifactKinds), record.Artifacts)
+			}
+			for index, wantKind := range test.wantArtifactKinds {
+				if record.Artifacts[index].Kind != wantKind {
+					t.Fatalf("artifact %d kind = %s, want %s", index, record.Artifacts[index].Kind, wantKind)
+				}
+			}
+			var delivery struct {
+				Scripts          int `json:"scripts"`
+				ReferenceImages  int `json:"referenceImages"`
+				StoryboardImages int `json:"storyboardImages"`
+				VideoClips       int `json:"videoClips"`
+			}
+			if err := json.Unmarshal([]byte(record.Plan.ExpectedDeliveryJSON), &delivery); err != nil {
+				t.Fatal(err)
+			}
+			if delivery.Scripts != 1 || delivery.ReferenceImages != 0 ||
+				delivery.StoryboardImages != test.wantStoryboardCount || delivery.VideoClips != test.wantVideoCount {
+				t.Fatalf("expected delivery = %#v", delivery)
+			}
+		})
+	}
+}
 
 func TestAppendAgentProductionPlanCreatesImmutableVersionAndLedger(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
@@ -471,9 +554,22 @@ func twoShotProductionPlanDraft(script string) agentruntime.ProductionPlanDraft 
 	return agentruntime.ProductionPlanDraft{
 		Title: "10 秒橙子广告", TargetDurationMS: 10_000, Script: script,
 		Shots: []agentruntime.ShotPlanDraft{
-			{ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水", ImagePrompt: "橙子产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{}},
-			{ShotKey: "shot-2", Order: 2, DurationMS: 5_000, ScriptText: "果汁收尾", ImagePrompt: "果汁英雄镜头", VideoPrompt: "镜头推进", Dependencies: []string{"shot-1"}},
+			{
+				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
+				Deliverables: dualProductionShotDeliverables(), ImagePrompt: "橙子产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+			},
+			{
+				ShotKey: "shot-2", Order: 2, DurationMS: 5_000, ScriptText: "果汁收尾",
+				Deliverables: dualProductionShotDeliverables(), ImagePrompt: "果汁英雄镜头", VideoPrompt: "镜头推进", Dependencies: []string{"shot-1"},
+			},
 		},
+	}
+}
+
+func dualProductionShotDeliverables() []agentruntime.ProductionShotDeliverable {
+	return []agentruntime.ProductionShotDeliverable{
+		agentruntime.ProductionShotDeliverableStoryboardImage,
+		agentruntime.ProductionShotDeliverableVideoClip,
 	}
 }
 

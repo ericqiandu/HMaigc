@@ -37,6 +37,33 @@ func TestCommittedPlanDeliveryArtifactsIncludesResumedPlanFacts(t *testing.T) {
 	}
 }
 
+func TestCommittedPlanDeliveryArtifactsAcceptsVideoOnlyPlan(t *testing.T) {
+	artifacts := []model.AgentProductionArtifact{
+		{ID: "script-1", Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactCommitted, CanvasNodeID: "node-script"},
+		{ID: "video-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactCommitted, CanvasNodeID: "node-video", ResourceID: "resource-video"},
+	}
+	resources := map[string]model.Resource{
+		"resource-video": {ID: "resource-video", Status: model.ResourceStatusReady},
+	}
+
+	actual, err := committedPlanDeliveryArtifacts("canvas-video-only", artifacts, resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agentruntime.DeliveryArtifact{
+		{Kind: agentruntime.ArtifactText, URL: "canvas://canvas-video-only/nodes/node-script"},
+		{Kind: agentruntime.ArtifactVideo, URL: "/api/resources/resource-video/file"},
+	}
+	if len(actual) != len(want) {
+		t.Fatalf("video-only delivery artifacts = %#v", actual)
+	}
+	for index := range want {
+		if actual[index] != want[index] {
+			t.Fatalf("video-only delivery artifact %d = %#v, want %#v", index, actual[index], want[index])
+		}
+	}
+}
+
 func TestCommittedPlanDeliveryArtifactsRejectsIncompleteCommitFacts(t *testing.T) {
 	_, err := committedPlanDeliveryArtifacts("canvas-1", []model.AgentProductionArtifact{{
 		ID: "image-1", Kind: model.AgentProductionArtifactStoryboardImage,

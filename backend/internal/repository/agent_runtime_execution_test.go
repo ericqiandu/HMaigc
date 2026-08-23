@@ -344,7 +344,7 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 		Scope: scope, RunID: scope.RunID, PlanKey: "approval-plan", BaseVersion: 0,
 		Draft: agentruntime.ProductionPlanDraft{
 			Title: "审批计划", TargetDurationMS: 1_000, Script: "镜头",
-			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "镜头", ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{}}},
+			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "镜头", Deliverables: dualProductionShotDeliverables(), ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{}}},
 		},
 		Now: time.Now().UTC(),
 	})
@@ -432,7 +432,7 @@ func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t 
 		Scope: scope, RunID: scope.RunID, PlanKey: "refunded-retry-plan", BaseVersion: 0,
 		Draft: agentruntime.ProductionPlanDraft{
 			Title: "退款后重试", TargetDurationMS: 1_000, Script: "镜头",
-			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "镜头", ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{}}},
+			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "镜头", Deliverables: dualProductionShotDeliverables(), ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{}}},
 		},
 		Now: now,
 	})

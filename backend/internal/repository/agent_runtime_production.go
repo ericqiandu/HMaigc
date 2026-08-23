@@ -86,12 +86,25 @@ func (r *Repository) AppendAgentProductionPlanVersion(input AppendAgentProductio
 	if err != nil {
 		return nil, fmt.Errorf("encode production plan references: %w", err)
 	}
+	storyboardImages := 0
+	videoClips := 0
+	for _, shot := range input.Draft.Shots {
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			storyboardImages++
+		}
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			videoClips++
+		}
+	}
 	expectedDeliveryJSON, err := json.Marshal(struct {
 		Scripts          int `json:"scripts"`
 		ReferenceImages  int `json:"referenceImages"`
 		StoryboardImages int `json:"storyboardImages"`
 		VideoClips       int `json:"videoClips"`
-	}{Scripts: 1, ReferenceImages: len(input.Draft.References), StoryboardImages: len(input.Draft.Shots), VideoClips: len(input.Draft.Shots)})
+	}{
+		Scripts: 1, ReferenceImages: len(input.Draft.References),
+		StoryboardImages: storyboardImages, VideoClips: videoClips,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("encode production plan delivery: %w", err)
 	}
@@ -533,8 +546,12 @@ func productionArtifactsForPlan(plan model.AgentProductionPlanVersion, reference
 		appendArtifact(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage, model.AgentProductionArtifactPlanned)
 	}
 	for _, shot := range shots {
-		appendArtifact("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage, model.AgentProductionArtifactPlanned)
-		appendArtifact("", shot.ShotKey, model.AgentProductionArtifactVideoClip, model.AgentProductionArtifactPlanned)
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			appendArtifact("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage, model.AgentProductionArtifactPlanned)
+		}
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			appendArtifact("", shot.ShotKey, model.AgentProductionArtifactVideoClip, model.AgentProductionArtifactPlanned)
+		}
 	}
 	return artifacts
 }

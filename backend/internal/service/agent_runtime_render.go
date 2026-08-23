@@ -75,6 +75,9 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if plan.Status != model.AgentProductionPlanActive {
 		return nil, newAgentProductionRenderInputError("production_plan_version_conflict", "plan version is not active")
 	}
+	if _, err := decodeStoredAgentProductionPlan(*plan); err != nil {
+		return nil, newAgentProductionRenderInputError("production_plan_invalid", err.Error())
+	}
 	artifacts, err := s.repo.AgentProductionArtifactsForVersion(scope, request.PlanKey, request.PlanVersion)
 	if err != nil {
 		return nil, err

@@ -48,10 +48,15 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			!strings.Contains(body.Messages[0].Content, `"planKey":"","baseVersion":0`) ||
 			!strings.Contains(body.Messages[0].Content, `"targetDurationMs":10000`) ||
 			!strings.Contains(body.Messages[0].Content, `"shotKey":"shot-1"`) ||
+			!strings.Contains(body.Messages[0].Content, `"deliverables":["video_clip"]`) ||
+			!strings.Contains(body.Messages[0].Content, `"deliverables":["storyboard_image","video_clip"]`) ||
+			!strings.Contains(body.Messages[0].Content, `"scriptText":"...","deliverables":["video_clip"],"videoPrompt":"..."`) ||
 			!strings.Contains(body.Messages[0].Content, `"referenceKey":"hero"`) ||
 			!strings.Contains(body.Messages[0].Content, `"referenceKeys":["hero"]`) ||
 			!strings.Contains(body.Messages[0].Content, `"imagePrompt":"..."`) ||
 			!strings.Contains(body.Messages[0].Content, `"videoPrompt":"..."`) ||
+			!strings.Contains(body.Messages[0].Content, "未声明 storyboard_image 时必须省略 imagePrompt") ||
+			!strings.Contains(body.Messages[0].Content, "referenceKeys 只允许用于包含 storyboard_image") ||
 			!strings.Contains(body.Messages[0].Content, "所有正式镜头 durationMs 必须大于 0 且总和等于 targetDurationMs") ||
 			!strings.Contains(body.Messages[0].Content, "禁止添加未声明字段") ||
 			!strings.Contains(body.Messages[0].Content, "fact 为 final_message 或 canvas_revision 时必须省略 artifact") ||

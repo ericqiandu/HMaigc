@@ -90,7 +90,7 @@ func TestAgentRuntimeSkillLoadExposesFrozenInstructionsOnNextStep(t *testing.T) 
 }
 
 func TestProductionPlanToolPersistsPlanAndArtifactsWithoutMediaBilling(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"plan-orange-ad","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"","baseVersion":0,"draft":{"title":"10秒橙子广告","targetDurationMs":10000,"script":"鲜橙唤醒清晨。","shots":[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]},{"shotKey":"shot-2","order":2,"durationMs":5000,"scriptText":"果汁收尾","imagePrompt":"果汁英雄镜头","videoPrompt":"镜头推进","dependencies":["shot-1"]}]}}}}`
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"plan-orange-ad","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"","baseVersion":0,"draft":{"title":"10秒橙子广告","targetDurationMs":10000,"script":"鲜橙唤醒清晨。","shots":[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]},{"shotKey":"shot-2","order":2,"durationMs":5000,"scriptText":"果汁收尾","deliverables":["storyboard_image","video_clip"],"imagePrompt":"果汁英雄镜头","videoPrompt":"镜头推进","dependencies":["shot-1"]}]}}}}`
 	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
@@ -189,6 +189,45 @@ func TestProductionRenderCapabilitiesRejectUnsupportedQualityBeforeApproval(t *t
 	}
 }
 
+func TestProductionRenderRejectsLegacyPlanWithoutDeliverables(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
+	plan := model.AgentProductionPlanVersion{
+		ID: "legacy-plan-version", PlanKey: "legacy-plan",
+		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, CreatedByRunID: scope.RunID, Version: 1,
+		Status: model.AgentProductionPlanActive, Title: "旧纯视频计划", TargetDurationMS: 5_000,
+		Script: "抽象光影。", ReferencesJSON: `[]`,
+		ShotsJSON:            `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"光带聚合","imagePrompt":"旧分镜提示词","videoPrompt":"镜头推进","dependencies":[]}]`,
+		ExpectedDeliveryJSON: `{"scripts":1,"referenceImages":0,"storyboardImages":1,"videoClips":1}`,
+		CreatedAt:            now, UpdatedAt: now,
+	}
+	artifact := model.AgentProductionArtifact{
+		ID: "legacy-video-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+		ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactPlanned,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	for _, value := range []any{&plan, &artifact} {
+		if err := db.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := svc.freezeAgentProductionRenderArguments(scope, nil, json.RawMessage(`{
+		"planKey":"legacy-plan",
+		"planVersion":1,
+		"artifactId":"legacy-video-artifact",
+		"generationModel":{"channelId":"video-channel","model":"video-model"},
+		"videoConfig":{"durationSeconds":5,"quality":"720p","generateAudio":false}
+	}`))
+	code, _, ok := agentProductionRenderFailureDetails(err)
+	if !ok || code != "production_plan_invalid" || !strings.Contains(err.Error(), "deliverables") {
+		t.Fatalf("legacy production plan freeze error = %v code=%q", err, code)
+	}
+}
+
 func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
@@ -199,7 +238,7 @@ func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
 		CanvasID: scope.CanvasID, CreatedByRunID: scope.RunID, Version: 1,
 		Status: model.AgentProductionPlanActive, Title: "待核账重试", TargetDurationMS: 5_000,
-		Script: "鲜橙入水。", ShotsJSON: `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙入水","imagePrompt":"鲜橙特写","videoPrompt":"水花慢镜头","dependencies":[]}]`,
+		Script: "鲜橙入水。", ShotsJSON: `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙入水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙特写","videoPrompt":"水花慢镜头","dependencies":[]}]`,
 		ExpectedDeliveryJSON: `{}`, CreatedAt: now, UpdatedAt: now,
 	}
 	task := model.Task{
@@ -472,7 +511,8 @@ func TestProductionRenderBuildsTextToVideoTaskWithoutStoryboardResource(t *testi
 			Title: "五秒文生视频", TargetDurationMS: 5_000, Script: "城市天台镜头。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "人物站在城市天台",
-				ImagePrompt: "城市天台人物定帧", VideoPrompt: "微风吹动衣角，镜头缓慢推进", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "城市天台人物定帧", VideoPrompt: "微风吹动衣角，镜头缓慢推进", Dependencies: []string{},
 			}},
 		},
 		Now: now,
@@ -601,7 +641,8 @@ func TestReconcileSucceededProductionArtifactMaterializesRemoteResultExactlyOnce
 			Title: "恢复付费产物", TargetDurationMS: 1_000, Script: "画面。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "画面",
-				ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "画面", VideoPrompt: "动作", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -732,7 +773,8 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
-				ImagePrompt: "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -851,7 +893,8 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
-				ImagePrompt: "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -972,7 +1015,8 @@ func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
-				ImagePrompt: "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -1072,5 +1116,12 @@ func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource
 		if artifact.ID == imageArtifact.ID && (artifact.Status != model.AgentProductionArtifactSucceeded || artifact.ResourceID != resource.ID || artifact.Attempt != 1) {
 			t.Fatalf("completed production artifact = %#v", artifact)
 		}
+	}
+}
+
+func agentRuntimeDualProductionDeliverables() []agentruntime.ProductionShotDeliverable {
+	return []agentruntime.ProductionShotDeliverable{
+		agentruntime.ProductionShotDeliverableStoryboardImage,
+		agentruntime.ProductionShotDeliverableVideoClip,
 	}
 }
