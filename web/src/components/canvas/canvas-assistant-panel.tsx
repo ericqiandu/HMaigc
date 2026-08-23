@@ -6,13 +6,15 @@ import { nanoid } from "nanoid";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_DOCK_MAX_WIDTH, CANVAS_AGENT_DOCK_MIN_WIDTH } from "@/lib/canvas/canvas-agent-dock";
+import { deriveCanvasAgentSelectionDefaults } from "@/lib/canvas/canvas-agent-composer-context";
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection } from "@/lib/canvas/canvas-agent-draft";
 import { uploadImage } from "@/services/image-storage";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState } from "@/services/api/agent-runtime";
-import { decodeChannelModel, useEffectiveConfig } from "@/stores/use-config-store";
+import type { PlatformSkill } from "@/services/api/skills";
+import { decodeChannelModel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { CanvasAgentGenerationModels, CanvasAgentLaunchRequest, CanvasAgentSkillSelection } from "@/types/canvas";
+import type { CanvasAgentGenerationModels, CanvasAgentLaunchRequest, CanvasAgentSkillSelection, CanvasNodeData } from "@/types/canvas";
 import { AgentChatComposer } from "./canvas-agent-chat-ui";
 import { AgentThinkingTrace } from "./agent-thinking-trace";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
@@ -29,6 +31,8 @@ type CanvasAssistantPanelProps = {
     projectId: string;
     canvasRevision: number;
     selectedNodeIds: Set<string>;
+    getSelectedNodes: () => CanvasNodeData[];
+    activatedSkills: PlatformSkill[];
     closing: boolean;
     width: number;
     onResizeStart: PointerEventHandler<HTMLDivElement>;
@@ -46,6 +50,8 @@ export function CanvasAssistantPanel({
     projectId,
     canvasRevision,
     selectedNodeIds,
+    getSelectedNodes,
+    activatedSkills,
     closing,
     width,
     onResizeStart,
@@ -72,6 +78,17 @@ export function CanvasAssistantPanel({
     const setPrompt = useCallback((value: SetStateAction<string>) => setDraft((current) => ({ ...current, prompt: typeof value === "function" ? value(current.prompt) : value })), []);
     const setAgentModels = useCallback((generationModels: CanvasAgentGenerationModels) => setDraft((current) => ({ ...current, generationModels })), []);
     const setSelectedSkills = useCallback((skillSelections: CanvasAgentSkillSelection[]) => setDraft((current) => ({ ...current, skillSelections })), []);
+
+    useEffect(() => {
+        if (!runtime.restored || runtime.pendingUserMessage || agentLaunchRequest) return;
+        const selectionDefaults = deriveCanvasAgentSelectionDefaults(getSelectedNodes(), activatedSkills);
+        setDraft((current) => {
+            const generationModels = current.generationModels.video ? current.generationModels : { ...current.generationModels, video: selectionDefaults.generationModels.video };
+            const skillSelections = current.skillSelections.length ? current.skillSelections : selectionDefaults.skillSelections;
+            if (generationModels === current.generationModels && skillSelections === current.skillSelections) return current;
+            return { ...current, generationModels, skillSelections };
+        });
+    }, [activatedSkills, agentLaunchRequest, getSelectedNodes, runtime.pendingUserMessage, runtime.restored, selectedNodeIds]);
 
     useEffect(() => {
         if (!runtime.pendingUserMessage) return;
@@ -244,7 +261,7 @@ export function CanvasAssistantPanel({
                     ) : !runtime.view ? (
                         <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} onSuggestion={setPrompt} />
                     ) : (
-                        <AgentRunContent key={runtime.view.run.id} state={runtime.view.state} conversation={runtime.conversation} meaningfulEvents={runtime.meaningfulEvents} connection={runtime.connection} muted={theme.node.muted} />
+                        <AgentRunContent key={runtime.view.run.id} state={runtime.view.state} conversation={runtime.conversation} meaningfulEvents={runtime.meaningfulEvents} connection={runtime.connection} muted={theme.node.muted} config={effectiveConfig} />
                     )}
                     {!historyOpen && runtime.view?.state.clarificationHistory.length ? <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} /> : null}
                     {!historyOpen && runtime.view?.state.status === "waiting_input" ? <AgentClarificationStatus /> : null}
@@ -285,7 +302,7 @@ export function CanvasAssistantPanel({
                         return true;
                     }}
                     submitReady={Boolean(prompt.trim())}
-                    selectionSummary={<CanvasAgentSelectionSummary config={effectiveConfig} models={agentModels} selectedSkills={selectedSkills} disabled={active || runtime.busy} onModelsChange={setAgentModels} onSkillsChange={setSelectedSkills} />}
+                    selectionSummary={active ? undefined : <CanvasAgentSelectionSummary config={effectiveConfig} models={agentModels} selectedSkills={selectedSkills} disabled={runtime.busy} onModelsChange={setAgentModels} onSkillsChange={setSelectedSkills} />}
                     left={
                         <CanvasAgentComposerControls
                             config={effectiveConfig}
@@ -365,15 +382,21 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
     );
 }
 
-function AgentRunContent({ state, conversation, meaningfulEvents, connection, muted }: { state: AgentRuntimeState; conversation: AgentConversationState; meaningfulEvents: AgentRuntimeEvent[]; connection: string; muted: string }) {
+function AgentRunContent({ state, conversation, meaningfulEvents, connection, muted, config }: { state: AgentRuntimeState; conversation: AgentConversationState; meaningfulEvents: AgentRuntimeEvent[]; connection: string; muted: string; config: AiConfig }) {
     const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
     const hasVisibleReply = conversation.items.some((item) => item.text.length > 0) || Boolean(state.finalMessage?.trim());
+    const submittedModels: CanvasAgentGenerationModels = {
+        image: encodePendingModel(state.configuration.generationModels.image),
+        video: encodePendingModel(state.configuration.generationModels.video),
+    };
+    const submittedSkills = state.configuration.skills.map(({ dir, name, description }) => ({ dir, name, description }));
     return (
         <div className="canvas-agent-runtime-run">
             <article className="canvas-agent-runtime-user-message" aria-label="你的消息">
                 <span className="canvas-agent-runtime-message-label" style={{ color: muted }}>
                     你
                 </span>
+                <CanvasAgentSelectionSummary config={config} models={submittedModels} selectedSkills={submittedSkills} readOnly ariaLabel="本轮已提交配置" />
                 <p className="canvas-agent-runtime-message-copy">{state.userMessage}</p>
             </article>
             <AgentThinkingTrace

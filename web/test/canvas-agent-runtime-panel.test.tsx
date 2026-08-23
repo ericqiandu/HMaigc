@@ -6,7 +6,9 @@ import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
 import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandle, AgentRuntimeHandleStorage, AgentRuntimeView, AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
+import type { PlatformSkill } from "../src/services/api/skills";
 import { defaultConfig, encodeChannelModel, useConfigStore, type ModelChannel } from "../src/stores/use-config-store";
+import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 let Panel: typeof import("../src/components/canvas/canvas-assistant-panel").CanvasAssistantPanel;
 let createRoot: (container: Element | DocumentFragment) => Root;
@@ -162,6 +164,123 @@ test("输入框选择的动态生成模型随本次 Agent 运行提交", async (
         attachments: [],
         executionMode: "guided",
     });
+});
+
+test("选中视频节点后默认提交该节点的真实模型和明确提及的 Skills", async () => {
+    const videoModel = encodeChannelModel("channel-video", "video-model-mini");
+    useConfigStore.setState({
+        config: { ...defaultConfig, channels: [videoChannel()], models: [videoModel], videoModels: [videoModel], videoModel },
+    });
+    const selectedVideo: CanvasNodeData = {
+        id: "video-node",
+        type: CanvasNodeType.Video,
+        title: "Agent 视频",
+        position: { x: 0, y: 0 },
+        width: 420,
+        height: 236,
+        metadata: {
+            channelId: "channel-video",
+            model: "video-model-mini",
+            composerContent: "使用 @视频提示词 优化镜头运动",
+        },
+    };
+    let submittedConfiguration: Parameters<AgentRuntimeClient["startRun"]>[1]["configuration"] | null = null;
+    const client = runtimeClient({
+        startRun: async (_threadId, input) => {
+            submittedConfiguration = input.configuration;
+            return runtimeView("running", {
+                userMessage: input.userMessage,
+                configuration: {
+                    generationModels: input.configuration.generationModels,
+                    skills: [runtimeSkill()],
+                    attachments: [],
+                    executionMode: input.configuration.executionMode,
+                },
+            });
+        },
+    });
+
+    await mount(client, undefined, {
+        selectedNodeIds: new Set([selectedVideo.id]),
+        getSelectedNodes: () => [selectedVideo],
+        activatedSkills: [platformSkill()],
+    });
+    await setPrompt("继续生成这个视频");
+    await act(async () => button("发送").click());
+    await settle();
+
+    expect(submittedConfiguration).toEqual({
+        generationModels: { video: { channelId: "channel-video", model: "video-model-mini" } },
+        skillDirs: ["skills/video-prompt"],
+        attachments: [],
+        executionMode: "guided",
+    });
+});
+
+test("多个选中视频节点的模型不一致时不猜测默认模型", async () => {
+    const firstVideo: CanvasNodeData = {
+        id: "video-a",
+        type: CanvasNodeType.Video,
+        title: "视频 A",
+        position: { x: 0, y: 0 },
+        width: 420,
+        height: 236,
+        metadata: { channelId: "channel-video", model: "video-model-mini" },
+    };
+    const secondVideo: CanvasNodeData = {
+        ...firstVideo,
+        id: "video-b",
+        title: "视频 B",
+        metadata: { channelId: "channel-video", model: "video-model-pro" },
+    };
+    let submittedConfiguration: Parameters<AgentRuntimeClient["startRun"]>[1]["configuration"] | null = null;
+    const client = runtimeClient({
+        startRun: async (_threadId, input) => {
+            submittedConfiguration = input.configuration;
+            return runtimeView("running", { userMessage: input.userMessage });
+        },
+    });
+
+    await mount(client, undefined, {
+        selectedNodeIds: new Set([firstVideo.id, secondVideo.id]),
+        getSelectedNodes: () => [firstVideo, secondVideo],
+    });
+    await setPrompt("检查这两个视频");
+    await act(async () => button("发送").click());
+    await settle();
+
+    expect(submittedConfiguration?.generationModels).toEqual({});
+});
+
+test("用户消息展示本轮服务端冻结的模型和 Skills 而不是只显示文本", async () => {
+    const videoModel = encodeChannelModel("channel-video", "video-model-mini");
+    useConfigStore.setState({
+        config: { ...defaultConfig, channels: [videoChannel()], models: [videoModel], videoModels: [videoModel], videoModel },
+    });
+    const completed = runtimeView("succeeded", {
+        userMessage: "生成五秒视频",
+        finalMessage: "视频已经生成。",
+        verification: { status: "satisfied", rationale: "ok" },
+        configuration: {
+            generationModels: { video: { channelId: "channel-video", model: "video-model-mini" } },
+            skills: [runtimeSkill()],
+            attachments: [],
+            executionMode: "guided",
+        },
+    });
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem("thread-1", completed, "2026-08-23T00:00:00Z")] }),
+        getRun: async () => completed,
+    });
+
+    await mount(client);
+
+    const userMessage = document.querySelector<HTMLElement>('.canvas-agent-runtime-user-message[aria-label="你的消息"]');
+    expect(userMessage?.textContent).toContain("生成五秒视频");
+    expect(userMessage?.textContent).toContain("Seedance Mini");
+    expect(userMessage?.textContent).toContain("视频提示词");
+    expect(userMessage?.querySelector('[aria-label^="移除"]')).toBeNull();
+    expect(userMessage?.querySelector('[aria-label="本轮已提交配置"]')).not.toBeNull();
 });
 
 test("单一运行链等待付费审批并展示验收后的最终消息", async () => {
@@ -471,9 +590,12 @@ test("切换画布时先清空上一画布的运行事实", async () => {
                 projectId,
                 canvasRevision: 7,
                 selectedNodeIds: new Set<string>(),
+                getSelectedNodes: () => [],
+                activatedSkills: [],
                 closing: false,
                 width: 400,
                 onResizeStart: () => undefined,
+                onResizeKeyDown: () => undefined,
                 onCollapse: () => undefined,
                 runtimeClient: client,
                 runtimeStorage: storage,
@@ -708,6 +830,8 @@ async function mount(client: AgentRuntimeClient, storage?: AgentRuntimeHandleSto
                     projectId: "canvas-1",
                     canvasRevision: 7,
                     selectedNodeIds: new Set(["node-a", "node-b"]),
+                    getSelectedNodes: () => [],
+                    activatedSkills: [],
                     closing: false,
                     width: 400,
                     onResizeStart: () => undefined,
@@ -799,6 +923,71 @@ function imageChannel(): ModelChannel {
                 priceTiers: [],
             },
         ],
+    };
+}
+
+function videoChannel(): ModelChannel {
+    return {
+        id: "channel-video",
+        name: "视频模型渠道",
+        baseUrl: "/api/ai/system/channel-video",
+        apiKey: "system",
+        apiFormat: "openai",
+        interfaceType: "ai-open-platform-video-volcengine",
+        models: ["video-model-mini"],
+        scope: "system",
+        enabled: true,
+        hasApiKey: true,
+        modelCosts: [
+            {
+                model: "video-model-mini",
+                displayName: "Seedance Mini",
+                marketingCopy: "视频生成",
+                promotionBadge: "",
+                estimatedDurationSeconds: 30,
+                brandKey: "seedance",
+                accessPolicy: "authenticated",
+                accessible: true,
+                capability: "video",
+                watermarkCapability: "controlled",
+                billingMode: "per_second",
+                priceStrategy: "video_resolution",
+                unitPriceMicrocredits: 0,
+                priceTiers: [{ resolution: "720p", inputVariant: "standard", unitPriceMicrocredits: 200_000 }],
+            },
+        ],
+    };
+}
+
+function platformSkill(): PlatformSkill {
+    return {
+        dir: "skills/video-prompt",
+        name: "视频提示词",
+        description: "优化视频镜头运动",
+        icon: "",
+        cover_url: "",
+        detail_text: "",
+        categories: ["video"],
+        version: 1,
+        checksum: "skill-checksum",
+        status: "published",
+        source_kind: "original",
+        source_license: "proprietary",
+        published_at: "2026-08-23T00:00:00Z",
+        uploader_name: "HMaigc",
+        liked: false,
+        activated: true,
+    };
+}
+
+function runtimeSkill(): AgentRuntimeView["state"]["configuration"]["skills"][number] {
+    return {
+        dir: "skills/video-prompt",
+        name: "视频提示词",
+        description: "优化视频镜头运动",
+        instructions: "",
+        version: 1,
+        checksum: "skill-checksum",
     };
 }
 
