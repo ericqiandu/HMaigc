@@ -268,6 +268,57 @@ func TestAgentRuntimeModelFailureTerminatesWithoutRetryOrDoubleCharge(t *testing
 	}
 }
 
+func TestAgentRuntimeModelRequestPersistsRunningBeforeProviderReply(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	requestStarted := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		close(requestStarted)
+		<-releaseResponse
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-running-state", `{"kind":"final","final":{"message":"已完成","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`, 12, 0, 3)
+	}))
+	defer server.Close()
+
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-running-before-provider-reply",
+		UserMessage: "只用文字回答", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	processed := make(chan error, 1)
+	go func() { processed <- svc.ProcessNextTask() }()
+	select {
+	case <-requestStarted:
+	case <-time.After(3 * time.Second):
+		close(releaseResponse)
+		t.Fatal("provider request did not start")
+	}
+
+	state, err := svc.repo.LoadAgentCheckpoint(input.Scope)
+	if err != nil {
+		close(releaseResponse)
+		t.Fatal(err)
+	}
+	var latestEvent model.AgentRunEvent
+	if err := db.Where("run_id = ?", input.Scope.RunID).Order("sequence desc").First(&latestEvent).Error; err != nil {
+		close(releaseResponse)
+		t.Fatal(err)
+	}
+	close(releaseResponse)
+	if err := <-processed; err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunRunning || state.StateVersion != 2 || state.StepNumber != 0 {
+		t.Fatalf("provider request runtime state = %#v", state)
+	}
+	if latestEvent.Kind != agentruntime.EventRunStatusChanged || !strings.Contains(latestEvent.PayloadJSON, `"status":"running"`) {
+		t.Fatalf("provider request start event = %#v", latestEvent)
+	}
+}
+
 func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")

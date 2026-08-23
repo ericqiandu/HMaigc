@@ -223,6 +223,24 @@ func runtimeStatusTerminal(status RunStatus) bool {
 	return status == RunSucceeded || status == RunFailed || status == RunCancelled
 }
 
+// BeginModelRequest 在首个供应商请求发出前持久化 queued -> running；
+// 后续模型步骤已经处于 running，不重复制造状态事件。
+func BeginModelRequest(current RuntimeState) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status != RunQueued {
+		return RuntimeTransition{}, errors.New("agent runtime is not queued for a model request")
+	}
+	next := current
+	next.StateVersion++
+	next.Status = RunRunning
+	if err := validateRuntimeState(next); err != nil {
+		return RuntimeTransition{}, err
+	}
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunStatusChanged}}, nil
+}
+
 func Fail(current RuntimeState, failureCode string) (RuntimeTransition, error) {
 	if err := validateAdvancingState(current); err != nil {
 		return RuntimeTransition{}, err

@@ -58,8 +58,12 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		if runErr != nil {
 			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型任务运行事实不可用")
 		}
+		state, stateErr := s.beginAgentRuntimeModelRequest(scope, run.StepNumber)
+		if stateErr != nil {
+			return agentRuntimeModelTaskResult{}, stateErr
+		}
 		observer := agentruntime.NewDecisionStreamObserver()
-		itemID := agentruntime.AgentMessageItemID(runID, run.StepNumber)
+		itemID := agentruntime.AgentMessageItemID(runID, state.StepNumber)
 		started := false
 		visibleMessage := ""
 		result, requestErr := runKuaiziChatCompletionStream(ctx, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
@@ -122,6 +126,31 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}, nil
 	}
 	return agentRuntimeModelTaskResult{Mode: "text", Text: text}, nil
+}
+
+func (s *Service) beginAgentRuntimeModelRequest(scope agentruntime.Scope, expectedStep int) (agentruntime.RuntimeState, error) {
+	state, err := s.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		return agentruntime.RuntimeState{}, errors.New("Agent 模型任务检查点不可用")
+	}
+	if state.StepNumber != expectedStep {
+		return agentruntime.RuntimeState{}, errors.New("Agent 模型任务步骤事实冲突")
+	}
+	if state.Status == agentruntime.RunRunning {
+		return state, nil
+	}
+	transition, err := agentruntime.BeginModelRequest(state)
+	if err != nil {
+		return agentruntime.RuntimeState{}, errors.New("Agent 模型任务运行状态不可推进")
+	}
+	progress, err := s.commitAgentRuntimeState(scope, state, transition)
+	if err != nil {
+		return agentruntime.RuntimeState{}, errors.New("Agent 模型任务运行状态保存失败")
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.StepNumber != expectedStep {
+		return agentruntime.RuntimeState{}, errors.New("Agent 模型任务运行状态冲突")
+	}
+	return progress.State, nil
 }
 
 func (s *Service) failAgentRuntimeVisibleMessage(scope agentruntime.Scope, itemID string, message string, failureCode string) error {

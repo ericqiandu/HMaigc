@@ -55,6 +55,26 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 	}
 }
 
+func TestBeginModelRequestChangesOnlyQueuedRuntimeStatus(t *testing.T) {
+	queued := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued,
+		UserMessage: "请回答", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+	}
+	transition, err := agentruntime.BeginModelRequest(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunRunning || transition.State.StateVersion != 2 || transition.State.StepNumber != 0 {
+		t.Fatalf("model request transition = %#v", transition.State)
+	}
+	if len(transition.EventKinds) != 1 || transition.EventKinds[0] != agentruntime.EventRunStatusChanged {
+		t.Fatalf("model request events = %#v", transition.EventKinds)
+	}
+	if _, err := agentruntime.BeginModelRequest(transition.State); err == nil {
+		t.Fatal("running runtime accepted as a new model request")
+	}
+}
+
 func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
 	answer := agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}}
 	base := agentruntime.RuntimeState{
