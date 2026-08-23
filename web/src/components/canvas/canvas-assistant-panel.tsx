@@ -406,11 +406,16 @@ function AgentRunContent({ state, conversation, meaningfulEvents, connection, mu
             {state.failureCode ? (
                 <div className="canvas-agent-runtime-failure">
                     <XCircle className="canvas-agent-runtime-failure-icon" />
-                    <span className="canvas-agent-runtime-failure-copy">运行失败：{state.failureCode}</span>
+                    <span className="canvas-agent-runtime-failure-copy">{agentFailureMessage(state.failureCode)}</span>
                 </div>
             ) : null}
         </div>
     );
+}
+
+function agentFailureMessage(failureCode: string): string {
+    if (failureCode === "insufficient_credits") return "余额不足";
+    return `运行失败：${failureCode}`;
 }
 
 function AgentApprovalCard({ state, busy, muted, onDecision }: { state: AgentRuntimeState; busy: boolean; muted: string; onDecision: (decision: "approved" | "rejected") => void }) {

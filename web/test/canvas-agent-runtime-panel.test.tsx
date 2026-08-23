@@ -565,6 +565,19 @@ test("历史接口失败独立显示但不阻断本地运行恢复", async () =>
     expect(document.body.textContent).toContain("历史服务暂不可用");
 });
 
+test("余额不足时向用户显示可理解文案而不是内部错误码", async () => {
+    const failed = runtimeView("failed", { failureCode: "insufficient_credits" });
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem("thread-1", failed, "2026-08-15T04:00:00Z")] }),
+        getRun: async () => failed,
+    });
+
+    await mount(client);
+
+    expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe("余额不足");
+    expect(document.body.textContent).not.toContain("insufficient_credits");
+});
+
 test("服务端历史恢复成功也不会吞掉本地句柄读取错误", async () => {
     const completed = runtimeView("succeeded", { userMessage: "服务端恢复的对话", finalMessage: "服务端结果", verification: { status: "satisfied", rationale: "ok" } });
     const storage: AgentRuntimeHandleStorage = {
