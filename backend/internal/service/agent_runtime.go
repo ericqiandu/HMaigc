@@ -65,6 +65,7 @@ type agentRuntimeModelContext struct {
 	MaxSteps             int                                   `json:"maxSteps"`
 	UserMessage          string                                `json:"userMessage"`
 	ExpectedDelivery     *agentruntime.ExpectedDelivery        `json:"expectedDelivery,omitempty"`
+	DeliveryEvidence     *agentruntime.DeliveryEvidence        `json:"deliveryEvidence,omitempty"`
 	Verification         *agentruntime.DeliveryVerification    `json:"deliveryVerification,omitempty"`
 	LastToolResult       *agentruntime.ToolResult              `json:"lastToolResult,omitempty"`
 	DecisionFeedback     *agentruntime.ModelDecisionFeedback   `json:"decisionFeedback,omitempty"`
@@ -566,6 +567,7 @@ const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基�
 仅当完成用户目标所需事实确实缺失时才允许追问；每次 1 至 3 个问题。single_choice 与 multi_choice 必须提供 2 至 6 个 options，free_text 必须省略 options 且 allowCustomAnswer=false。每个新的 requestId 必须唯一；用户已完成的问答会出现在 clarificationHistory 中，必须把它们作为真实事实继续执行，禁止重复询问已回答的问题。
 expectedDelivery 的 completionCriteria 只允许三种精确结构：{"fact":"final_message"}、{"fact":"canvas_revision"}、{"fact":"artifact","artifact":"image|video|audio|text|canvas_revision"}。fact 为 final_message 或 canvas_revision 时必须省略 artifact；只有 fact 为 artifact 时才必须提供 artifact。禁止给未声明字段或把联合候选字符串作为实际值。
 首次决策必须根据用户目标声明 expectedDelivery；Runtime 会立即冻结该合同。之后每个工具调用与 final 都必须逐字段复用同一 expectedDelivery，禁止在工具失败、审批拒绝或证据不足后把资产/画布交付降级成文字回答。
+deliveryEvidence 与 deliveryVerification 是 Runtime 根据当前 Run 的真实工具、资源、画布 revision 和 Artifact Ledger 累计生成的权威交付事实。已经满足的 criterion 禁止重复执行；当 missingCriteria 只剩 final_message 时必须直接返回 final，不得再次规划、生成或提交画布。
 每次新的工具调用必须使用从未出现过的 toolCallId；包括重试同一个工具时也必须生成新的 toolCallId，禁止复用历史 toolCallId + actionVersion。
 显式选择的 Skill 只会先提供目录、名称、描述与版本；必须通过 skill.load 的 {"dir":"已选目录"} 加载冻结说明后才能 final。
 production.plan 用于持久化版本化剧本、非时间线参考资产与镜头计划，不触发媒体扣费。纯文生视频的新建 arguments 精确结构是 {"planKey":"","baseVersion":0,"draft":{"title":"...","targetDurationMs":10000,"script":"...","shots":[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"...","deliverables":["video_clip"],"videoPrompt":"...","dependencies":[]}]}}。需要参考图、分镜图和视频时，镜头结构是 {"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"...","deliverables":["storyboard_image","video_clip"],"imagePrompt":"...","videoPrompt":"...","referenceKeys":["hero"],"dependencies":[]}，draft.references 使用 [{"referenceKey":"hero","role":"character","title":"主角参考","imagePrompt":"..."}]；没有参考资产时 references 和 referenceKeys 可省略。deliverables 必须包含一到两个不重复值，且只允许 storyboard_image、video_clip；它是正式镜头 Artifact 的唯一来源。声明 storyboard_image 时必须提供 imagePrompt，未声明 storyboard_image 时必须省略 imagePrompt；声明 video_clip 时必须提供 videoPrompt，未声明 video_clip 时必须省略 videoPrompt。referenceKeys 只允许用于包含 storyboard_image 的镜头，并且只能引用已声明参考资产。禁止添加未声明字段。referenceKey 必须唯一。参考资产不占时间线时长，禁止伪装为 0 秒镜头。所有正式镜头 durationMs 必须大于 0 且总和等于 targetDurationMs，order 必须从 1 连续递增，dependencies 只能引用更早的 shotKey。更新计划时必须复用已返回的 planKey，并把 baseVersion 设为当前 planVersion，同时仍传完整 draft；缺少 deliverables 的旧计划必须先创建显式交付物的新版本，禁止根据 Prompt 或已有 Artifact 猜测。

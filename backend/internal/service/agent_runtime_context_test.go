@@ -284,7 +284,7 @@ func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
 			CompletionQuestionID: "duration", CompletionExpectedStateVersion: 3,
 		}},
 	}
-	prompt, err := encodeAgentRuntimeModelPrompt(agentRuntimeServiceScope(), state, 11, nil, nil)
+	prompt, err := encodeAgentRuntimeModelPrompt(agentRuntimeServiceScope(), state, 11, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,8 +310,22 @@ func TestAgentRuntimeSystemPromptDeclaresStructuredClarificationDecision(t *test
 	}
 }
 
+func TestAgentRuntimeSystemPromptRequiresCompletionFromAccumulatedEvidence(t *testing.T) {
+	for _, required := range []string{
+		"deliveryEvidence 与 deliveryVerification",
+		"已经满足的 criterion 禁止重复执行",
+		"missingCriteria 只剩 final_message 时必须直接返回 final",
+	} {
+		if !strings.Contains(agentRuntimeSystemPrompt, required) {
+			t.Fatalf("agent runtime system prompt is missing %q", required)
+		}
+	}
+}
+
 type agentRuntimePromptContextForTest struct {
 	CanvasRevision       int64                                 `json:"canvasRevision"`
+	DeliveryEvidence     *agentruntime.DeliveryEvidence        `json:"deliveryEvidence"`
+	DeliveryVerification *agentruntime.DeliveryVerification    `json:"deliveryVerification"`
 	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                              `json:"loadedSkillDirs"`
 	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory"`

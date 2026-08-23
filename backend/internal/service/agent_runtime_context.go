@@ -53,7 +53,18 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	if err != nil {
 		return "", err
 	}
-	return encodeAgentRuntimeModelPrompt(scope, state, canvas.Revision, models, productionPlan)
+	var deliveryEvidence *agentruntime.DeliveryEvidence
+	var deliveryVerification *agentruntime.DeliveryVerification
+	if state.ExpectedDelivery != nil {
+		evidence, evidenceErr := s.agentRuntimeDeliveryEvidence(scope, state.FinalMessage)
+		if evidenceErr != nil {
+			return "", evidenceErr
+		}
+		verification := agentruntime.VerifyDelivery(*state.ExpectedDelivery, evidence)
+		deliveryEvidence = &evidence
+		deliveryVerification = &verification
+	}
+	return encodeAgentRuntimeModelPrompt(scope, state, canvas.Revision, models, productionPlan, deliveryEvidence, deliveryVerification)
 }
 
 func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*agentRuntimeProductionPlanFact, error) {
@@ -130,11 +141,19 @@ func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntime
 	return result, nil
 }
 
-func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState, canvasRevision int64, models []agentRuntimeCallableModelFact, productionPlan *agentRuntimeProductionPlanFact) (string, error) {
+func encodeAgentRuntimeModelPrompt(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	canvasRevision int64,
+	models []agentRuntimeCallableModelFact,
+	productionPlan *agentRuntimeProductionPlanFact,
+	deliveryEvidence *agentruntime.DeliveryEvidence,
+	deliveryVerification *agentruntime.DeliveryVerification,
+) (string, error) {
 	context := agentRuntimeModelContext{
 		RunID: scope.RunID, CanvasID: scope.CanvasID, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
-		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
-		Verification: state.Verification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
+		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
+		Verification: deliveryVerification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
 		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableModels: models,
 		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), ProductionPlan: productionPlan,
 	}
@@ -186,7 +205,7 @@ func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime
 	if err := validateAgentRuntimeCallableModels(frozen.CallableModels); err != nil {
 		return agentRuntimeModelContext{}, err
 	}
-	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CanvasRevision, frozen.CallableModels, frozen.ProductionPlan)
+	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CanvasRevision, frozen.CallableModels, frozen.ProductionPlan, frozen.DeliveryEvidence, frozen.Verification)
 	if err != nil {
 		return agentRuntimeModelContext{}, err
 	}

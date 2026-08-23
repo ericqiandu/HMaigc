@@ -365,6 +365,60 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 	})
 }
 
+func TestAgentRuntimePromptCarriesAccumulatedDeliveryVerificationAfterCanvasCommit(t *testing.T) {
+	svc, _, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
+	delivery := agentruntime.ExpectedDelivery{
+		Kind: agentruntime.DeliveryMixed, TargetCanvasID: scope.CanvasID,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo, agentruntime.ArtifactCanvasRevision},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactFinalMessage},
+			{Fact: agentruntime.DeliveryFactCanvasRevision},
+			{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactVideo},
+		},
+	}
+	arguments, err := json.Marshal(agentProductionCanvasCommitArguments{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version, BaseRevision: 7,
+		ArtifactIDs: productionArtifactIDs(artifacts),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := json.Marshal(agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+		ToolCallID: "commit-delivery-evidence", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+		Arguments: arguments, ExpectedDelivery: delivery,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setDecision(string(decision))
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.ModelTask == nil {
+		t.Fatal("canvas commit did not schedule the final Agent model step")
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, progress.ModelTask.Prompt)
+	if context.DeliveryEvidence == nil || context.DeliveryEvidence.CanvasID != scope.CanvasID || context.DeliveryEvidence.CanvasRevision != 8 {
+		t.Fatalf("delivery evidence = %#v", context.DeliveryEvidence)
+	}
+	if context.DeliveryVerification == nil || context.DeliveryVerification.Status != agentruntime.VerificationRepairable ||
+		len(context.DeliveryVerification.MissingCriteria) != 1 || context.DeliveryVerification.MissingCriteria[0].Fact != agentruntime.DeliveryFactFinalMessage {
+		t.Fatalf("delivery verification = %#v", context.DeliveryVerification)
+	}
+}
+
+func productionArtifactIDs(artifacts []model.AgentProductionArtifact) []string {
+	ids := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		ids = append(ids, artifact.ID)
+	}
+	return ids
+}
+
 func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentruntime.Scope, model.AgentProductionPlanVersion, []model.AgentProductionArtifact, func(string)) {
 	t.Helper()
 	var decision string
