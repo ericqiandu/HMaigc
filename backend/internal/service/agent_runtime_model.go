@@ -87,6 +87,14 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 			return agentRuntimeModelTaskResult{}, evidenceErr
 		}
 		if requestErr != nil {
+			if errors.Is(requestErr, repository.ErrAgentMessageStreamClosed) {
+				if config.MaxOutputTokens > 0 && (result.ProviderRequestID != "" || result.Usage.Available) {
+					if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "Agent 运行已停止，等待上游账单核对"); evidenceErr != nil {
+						return agentRuntimeModelTaskResult{}, evidenceErr
+					}
+				}
+				return agentRuntimeModelTaskResult{}, context.Canceled
+			}
 			if failErr := s.failAgentRuntimeVisibleMessage(scope, itemID, visibleMessage, agentRuntimeProviderStreamFailureCode(requestErr)); failErr != nil {
 				return agentRuntimeModelTaskResult{}, failErr
 			}
@@ -180,7 +188,7 @@ func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, res
 
 func agentRuntimeProviderStreamFailureCode(streamErr error) string {
 	switch {
-	case errors.Is(streamErr, context.Canceled):
+	case errors.Is(streamErr, context.Canceled), errors.Is(streamErr, repository.ErrAgentMessageStreamClosed):
 		return "agent_provider_stream_cancelled"
 	case errors.Is(streamErr, errAgentProviderStreamTruncated):
 		return "agent_provider_stream_truncated"

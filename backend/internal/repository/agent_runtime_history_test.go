@@ -79,6 +79,69 @@ func TestAppendAgentMessageDeltaPersistsEventAndItemAtomicallyForReplay(t *testi
 	}
 }
 
+func TestAgentMessageStreamRejectsLateFactsAfterRunInterrupt(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := agentruntime.Scope{
+		TenantKind: agentruntime.TenantPersonal, TenantID: "stopped-stream-user", ActorUserID: "stopped-stream-user",
+		CanvasID: "stopped-stream-canvas", ThreadID: "stopped-stream-thread", RunID: "stopped-stream-run",
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
+	}
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-record", ModelKey: "model-key", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion,
+		PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成短片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	itemID := agentruntime.AgentMessageItemID(scope.RunID, 0)
+	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
+		Scope: scope, ItemID: itemID,
+		PayloadJSON: `{"itemId":"` + itemID + `","delta":"第一段","userVisible":true,"started":true}`,
+		Message:     "第一段", Started: true, Now: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
+		Scope: scope, ItemID: itemID,
+		PayloadJSON: `{"itemId":"` + itemID + `","delta":"第二段","userVisible":true}`,
+		Message:     "第一段第二段", Now: now.Add(3 * time.Second),
+	}); err == nil {
+		t.Fatal("interrupted run accepted a late visible delta")
+	}
+	if _, err := repo.FailAgentMessageStream(FailAgentMessageStreamInput{
+		Scope: scope, ItemID: itemID, Message: "第一段", FailureCode: "agent_provider_stream_failed", Now: now.Add(4 * time.Second),
+	}); err == nil {
+		t.Fatal("interrupted run accepted a late message failure")
+	}
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != agentruntime.RunCancelled || run.LastEventSequence != 4 {
+		t.Fatalf("interrupted run changed after late stream facts = %#v", run)
+	}
+	var item model.AgentTimelineItem
+	if err := db.First(&item, "id = ?", itemID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.ContentJSON != `{"message":"第一段"}` || item.SourceEventSequence != 3 {
+		t.Fatalf("message projection changed after interruption = %#v", item)
+	}
+	records, err := repo.AgentTimelineEventsAfter(scope, 4, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("late stream facts persisted after interruption = %#v", records)
+	}
+}
+
 func TestAppendAgentMessageDeltaRestartsOneInterruptedMessageProjection(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := agentruntime.Scope{

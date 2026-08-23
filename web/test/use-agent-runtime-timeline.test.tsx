@@ -163,6 +163,44 @@ test("活动运行再次发送走 steer，终态运行才创建新 Run", async (
     expect(startCalls).toBe(1);
 });
 
+test("点击停止后在接口返回前立即忽略迟到的正文增量", async () => {
+    const running = runtimeView("running", 4, 2);
+    const interrupted = runtimeView("cancelled", 5, 3);
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    let finishInterrupt: (view: AgentRuntimeView) => void = () => undefined;
+    const interruptResponse = new Promise<AgentRuntimeView>((resolve) => {
+        finishInterrupt = resolve;
+    });
+    const client = runtimeClient({
+        listThreads: async () => ({ items: [historyItem(running)] }),
+        getRun: async () => running,
+        interrupt: async () => interruptResponse,
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+    await mount(client);
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+
+    let stopPromise: Promise<boolean> | undefined;
+    await act(async () => {
+        stopPromise = runtime?.interrupt();
+        await Promise.resolve();
+    });
+    await act(async () => {
+        handlers?.onEvent(uiItemEvent(3, "item.delta", { delta: "不应显示", userVisible: true }));
+    });
+
+    expect(runtime?.conversation.items).toEqual([]);
+
+    await act(async () => {
+        finishInterrupt(interrupted);
+        await stopPromise;
+    });
+    expect(runtime?.view?.state.status).toBe("cancelled");
+});
+
 test("interrupt 使用当前版本，409 后刷新 Run 与 History 并保留明确冲突", async () => {
     const running = runtimeView("running", 4, 3);
     const refreshed = runtimeView("running", 6, 5);

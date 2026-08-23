@@ -52,6 +52,8 @@ type agentMessageFailureContent struct {
 	FailureCode string `json:"failureCode"`
 }
 
+var ErrAgentMessageStreamClosed = errors.New("agent message stream is closed")
+
 func (r *Repository) AppendAgentMessageDelta(input AppendAgentMessageDeltaInput) (*model.AgentRunEvent, error) {
 	if err := input.Scope.Validate(); err != nil || input.ItemID == "" || input.Message == "" || input.Now.IsZero() || !json.Valid([]byte(input.PayloadJSON)) {
 		return nil, errors.Join(ErrAgentTimelineConflict, errors.New("agent message delta boundary is invalid"), err)
@@ -64,6 +66,9 @@ func (r *Repository) AppendAgentMessageDelta(input AppendAgentMessageDeltaInput)
 	}
 	var event model.AgentRunEvent
 	err = r.db.Transaction(func(tx *gorm.DB) error {
+		if writableErr := ensureAgentMessageStreamWritable(tx, input.Scope); writableErr != nil {
+			return writableErr
+		}
 		sequence, allocateErr := allocateAgentEventSequence(tx, input.Scope, input.Now)
 		if allocateErr != nil {
 			return allocateErr
@@ -105,6 +110,9 @@ func (r *Repository) FailAgentMessageStream(input FailAgentMessageStreamInput) (
 	}
 	var event model.AgentRunEvent
 	err = r.db.Transaction(func(tx *gorm.DB) error {
+		if writableErr := ensureAgentMessageStreamWritable(tx, input.Scope); writableErr != nil {
+			return writableErr
+		}
 		sequence, allocateErr := allocateAgentEventSequence(tx, input.Scope, input.Now)
 		if allocateErr != nil {
 			return allocateErr
@@ -131,6 +139,17 @@ func (r *Repository) FailAgentMessageStream(input FailAgentMessageStreamInput) (
 		return nil, err
 	}
 	return &event, nil
+}
+
+func ensureAgentMessageStreamWritable(db *gorm.DB, scope agentruntime.Scope) error {
+	state, err := loadAgentCheckpointForScope(db, scope, true)
+	if err != nil {
+		return err
+	}
+	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled {
+		return ErrAgentMessageStreamClosed
+	}
+	return nil
 }
 
 type agentCanvasCommitTimelineOutput struct {

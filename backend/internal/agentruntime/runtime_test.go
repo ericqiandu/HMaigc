@@ -597,7 +597,7 @@ func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
 	}
 }
 
-func TestReviewWriteToolRejectionRemainsRepairable(t *testing.T) {
+func TestReviewWriteToolRejectionCancelsRun(t *testing.T) {
 	current := agentruntime.RuntimeState{
 		StateVersion: 4, StepNumber: 2, MaxSteps: 6, Status: agentruntime.RunWaitingApproval,
 		UserMessage: "更新生产计划", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
@@ -613,11 +613,11 @@ func TestReviewWriteToolRejectionRemainsRepairable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transition.State.Status != agentruntime.RunRunning || transition.State.PendingToolCall != nil ||
+	if transition.State.Status != agentruntime.RunCancelled || transition.State.PendingToolCall != nil ||
 		transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("write rejection = %#v", transition.State)
 	}
-	if len(transition.EventKinds) != 3 || transition.EventKinds[2] != agentruntime.EventRunStatusChanged {
+	if len(transition.EventKinds) != 3 || transition.EventKinds[2] != agentruntime.EventRunInterrupted {
 		t.Fatalf("write rejection events = %#v", transition.EventKinds)
 	}
 }
