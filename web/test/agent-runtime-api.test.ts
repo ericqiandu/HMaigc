@@ -38,6 +38,8 @@ const view = {
         modelRecordId: "model-1",
         modelKey: "agent-model",
         toolSchemaVersion: 1,
+        runtimeVersion: 1,
+        policyVersion: 1,
         createdAt: "2026-08-15T00:00:00Z",
         updatedAt: "2026-08-15T00:00:01Z",
     },
@@ -120,6 +122,44 @@ test("运行配置缺少附件或执行模式时显式拒绝而不是插入默�
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutMode } })).toThrow("executionMode");
     const { attachments: _attachments, ...withoutAttachments } = state.configuration;
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutAttachments } })).toThrow("attachments");
+});
+
+test("旧终态运行只读投影显式保留 historical 配置而不伪造用户选择", () => {
+    const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
+    const parsed = parseAgentRuntimeView({
+        ...view,
+        run: {
+            ...view.run,
+            status: "failed",
+            runtimeVersion: 1,
+            policyVersion: 1,
+            completedAt: "2026-08-15T00:00:02Z",
+        },
+        state: {
+            ...terminalState,
+            status: "failed",
+            failureCode: "legacy_failure",
+            configuration: {
+                generationModels: {},
+                skills: [],
+                attachments: [],
+                executionMode: "historical",
+            },
+        },
+    });
+
+    expect(parsed.state.configuration.executionMode).toBe("historical");
+    expect(parsed.state.configuration.skills).toEqual([]);
+    expect(parsed.state.configuration.attachments).toEqual([]);
+});
+
+test("historical 执行模式只接受首代已终结运行", () => {
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            state: { ...state, configuration: { ...state.configuration, executionMode: "historical" } },
+        }),
+    ).toThrow("historical");
 });
 
 test("运行配置缺少已冻结 Skill 校验值时显式拒绝", () => {

@@ -123,6 +123,9 @@ func MigrateSchema(db *gorm.DB) error {
 		if err := MigrateBaseSchema(tx); err != nil {
 			return err
 		}
+		if err := migrateLegacyAgentContractVersions(tx); err != nil {
+			return err
+		}
 		if err := EnsureUserPublicIdentitySchema(tx); err != nil {
 			return err
 		}

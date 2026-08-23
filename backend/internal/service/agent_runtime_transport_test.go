@@ -75,6 +75,77 @@ func TestProjectAgentEventProducesVersionedRunAndItemEvents(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeViewMarshalsLegacyTerminalStateAsExplicitHistoricalConfiguration(t *testing.T) {
+	now := time.Now().UTC()
+	view := AgentRuntimeView{
+		Run: model.AgentRun{
+			ID: "legacy-run", ThreadID: "legacy-thread", ActorUserID: "legacy-user",
+			ClientRequestID: "legacy-request", Status: agentruntime.RunFailed, LastEventSequence: 4,
+			StateVersion: 3, StepNumber: 2, MaxSteps: 8, ModelRecordID: "legacy-model-record",
+			ModelKey: "legacy-model", ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1,
+			CreatedAt: now, UpdatedAt: now, CompletedAt: &now,
+		},
+		State: agentruntime.RuntimeState{
+			StateVersion: 3, StepNumber: 2, MaxSteps: 8, Status: agentruntime.RunFailed,
+			FailureCode: "legacy_failure", UserMessage: "旧运行请求",
+			Configuration: agentruntime.RunConfiguration{
+				GenerationModels: agentruntime.GenerationModelSelections{
+					Image: &agentruntime.GenerationModelSelection{ChannelID: "legacy-channel", Model: "gpt-image-2"},
+				},
+				Skills: []agentruntime.SkillSelection{{Dir: "legacy-skill", Name: "旧 Skill", Version: 1}},
+			},
+		},
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		State struct {
+			ClarificationHistory []json.RawMessage `json:"clarificationHistory"`
+			Configuration        struct {
+				GenerationModels struct {
+					Image *agentruntime.GenerationModelSelection `json:"image"`
+				} `json:"generationModels"`
+				Skills        []json.RawMessage `json:"skills"`
+				Attachments   []json.RawMessage `json:"attachments"`
+				ExecutionMode string            `json:"executionMode"`
+			} `json:"configuration"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.State.ClarificationHistory == nil || payload.State.Configuration.GenerationModels.Image == nil ||
+		payload.State.Configuration.GenerationModels.Image.Model != "gpt-image-2" ||
+		payload.State.Configuration.Skills == nil || payload.State.Configuration.Attachments == nil ||
+		payload.State.Configuration.ExecutionMode != "historical" {
+		t.Fatalf("legacy read-only state = %s", encoded)
+	}
+	if view.State.Configuration.ExecutionMode != "" || view.State.ClarificationHistory != nil {
+		t.Fatal("wire projection mutated immutable checkpoint state")
+	}
+
+	view.State.Configuration.ExecutionMode = agentruntime.ExecutionGuided
+	encoded, err = json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var guidedPayload struct {
+		State struct {
+			Configuration struct {
+				ExecutionMode string `json:"executionMode"`
+			} `json:"configuration"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(encoded, &guidedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if guidedPayload.State.Configuration.ExecutionMode != string(agentruntime.ExecutionGuided) {
+		t.Fatalf("existing legacy execution mode changed: %s", encoded)
+	}
+}
+
 func TestProjectAgentItemEventCarriesTimelineKind(t *testing.T) {
 	now := time.Now().UTC()
 	item := model.AgentTimelineItem{

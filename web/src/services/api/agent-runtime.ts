@@ -45,7 +45,7 @@ export type AgentRuntimeFrozenResource = AgentRuntimeResourceReference & { mimeT
 export type AgentRuntimeExecutionMode = "guided" | "automatic";
 export type AgentRuntimeStartConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skillDirs: string[]; attachments: AgentRuntimeResourceReference[]; executionMode: AgentRuntimeExecutionMode };
 export type AgentRuntimeSkillSelection = { dir: string; name: string; description: string; instructions: string; version: number; checksum: string };
-export type AgentRuntimeRunConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skills: AgentRuntimeSkillSelection[]; attachments: AgentRuntimeFrozenResource[]; executionMode: AgentRuntimeExecutionMode };
+export type AgentRuntimeRunConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skills: AgentRuntimeSkillSelection[]; attachments: AgentRuntimeFrozenResource[]; executionMode: AgentRuntimeExecutionMode | "historical" };
 export type AgentRuntimeState = {
     stateVersion: number;
     stepNumber: number;
@@ -78,6 +78,8 @@ export type AgentRuntimeView = {
         modelRecordId: string;
         modelKey: string;
         toolSchemaVersion: number;
+        runtimeVersion: number;
+        policyVersion: number;
         createdAt: string;
         updatedAt: string;
         completedAt?: string;
@@ -159,6 +161,7 @@ export type AgentRuntimeClient = {
 };
 
 const runStatuses = new Set<AgentRunStatus>(["queued", "running", "waiting_input", "waiting_approval", "waiting_tool", "succeeded", "failed", "cancelled"]);
+const terminalRunStatuses = new Set<AgentRunStatus>(["succeeded", "failed", "cancelled"]);
 const eventKinds = new Set<AgentRuntimeEventKind>([
     "run.started",
     "run.completed",
@@ -212,6 +215,8 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
         modelRecordId: text(run.modelRecordId, "run.modelRecordId", true),
         modelKey: text(run.modelKey, "run.modelKey", true),
         toolSchemaVersion: integer(run.toolSchemaVersion, "run.toolSchemaVersion"),
+        runtimeVersion: integer(run.runtimeVersion, "run.runtimeVersion"),
+        policyVersion: integer(run.policyVersion, "run.policyVersion"),
         createdAt: text(run.createdAt, "run.createdAt"),
         updatedAt: text(run.updatedAt, "run.updatedAt"),
     };
@@ -219,6 +224,12 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
     if (parsedRun.status !== state.status) throw new Error("Agent run 与 checkpoint 状态冲突");
     if (parsedRun.stateVersion !== state.stateVersion || parsedRun.stepNumber !== state.stepNumber || parsedRun.maxSteps !== state.maxSteps) {
         throw new Error("Agent run 与 checkpoint 版本事实冲突");
+    }
+    if (
+        state.configuration.executionMode === "historical" &&
+        (!terminalRunStatuses.has(parsedRun.status) || parsedRun.toolSchemaVersion !== 1 || parsedRun.runtimeVersion !== 1 || parsedRun.policyVersion !== 1 || parsedRun.completedAt === undefined)
+    ) {
+        throw new Error("historical 执行模式仅允许首代已终结 Agent 运行");
     }
     return { run: parsedRun, state };
 }
@@ -425,7 +436,7 @@ function parseRunConfiguration(value: unknown): AgentRuntimeRunConfiguration {
         };
     });
     const attachments = array(source.attachments, "state.configuration.attachments").map((item, index) => parseFrozenResource(item, `state.configuration.attachments[${index}]`));
-    return { generationModels: models, skills, attachments, executionMode: executionMode(source.executionMode, "state.configuration.executionMode") };
+    return { generationModels: models, skills, attachments, executionMode: runExecutionMode(source.executionMode, "state.configuration.executionMode") };
 }
 
 function parseStartConfiguration(value: unknown, label: string): AgentRuntimeStartConfiguration {
@@ -454,6 +465,11 @@ function parseFrozenResource(value: unknown, label: string): AgentRuntimeFrozenR
 function executionMode(value: unknown, label: string): AgentRuntimeExecutionMode {
     if (value !== "guided" && value !== "automatic") throw new Error(`${label} 必须是 guided 或 automatic`);
     return value;
+}
+
+function runExecutionMode(value: unknown, label: string): AgentRuntimeRunConfiguration["executionMode"] {
+    if (value === "historical") return value;
+    return executionMode(value, label);
 }
 
 function parseGenerationModelSelections(value: unknown, label: string): AgentRuntimeGenerationModelSelections {

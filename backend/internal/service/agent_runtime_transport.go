@@ -29,6 +29,31 @@ type AgentRuntimeView struct {
 	State agentruntime.RuntimeState `json:"state"`
 }
 
+func (view AgentRuntimeView) MarshalJSON() ([]byte, error) {
+	type wireAgentRuntimeView AgentRuntimeView
+	if !agentRuntimeViewNeedsHistoricalConfiguration(view) {
+		return json.Marshal(wireAgentRuntimeView(view))
+	}
+	projected := view
+	projected.State.ClarificationHistory = []agentruntime.CompletedClarification{}
+	if projected.State.Configuration.Skills == nil {
+		projected.State.Configuration.Skills = []agentruntime.SkillSelection{}
+	}
+	if projected.State.Configuration.Attachments == nil {
+		projected.State.Configuration.Attachments = []agentruntime.ResourceAttachment{}
+	}
+	if projected.State.Configuration.ExecutionMode == "" {
+		projected.State.Configuration.ExecutionMode = agentruntime.ExecutionMode("historical")
+	}
+	return json.Marshal(wireAgentRuntimeView(projected))
+}
+
+func agentRuntimeViewNeedsHistoricalConfiguration(view AgentRuntimeView) bool {
+	terminal := view.Run.Status == agentruntime.RunSucceeded || view.Run.Status == agentruntime.RunFailed || view.Run.Status == agentruntime.RunCancelled
+	return terminal && view.Run.ToolSchemaVersion == 1 && view.Run.RuntimeVersion == 1 && view.Run.PolicyVersion == 1 &&
+		view.State.ClarificationHistory == nil
+}
+
 const CurrentAgentUIProtocolVersion = 2
 
 var ErrAgentEventProjectionFailed = errors.New("agent event projection failed")
