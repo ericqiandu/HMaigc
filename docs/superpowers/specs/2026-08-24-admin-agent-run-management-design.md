@@ -177,7 +177,7 @@ v1.0.53 必须包含一次性、事务化、幂等的 `retire-incompatible-pause
 - 契约版本低于当前版本；高于当前版本的运行一律拒绝。
 - 状态为 `waiting_input` 或 `waiting_approval`。
 - 最新 Run 与 checkpoint 的状态、stateVersion、stepNumber、maxSteps、lastEventSequence 完全一致。
-- pending tool 尚未开始；不存在 running/waiting_tool 事实。
+- 当前 pending tool 尚未开始；不存在 running/waiting_tool 事实。此前已终结为 `succeeded` 或 `failed` 的历史 tool call 即使保留 `startedAt` 也不属于活动执行，迁移必须保留其状态、输出和审计时间。
 - 不存在已提交的供应商请求。
 - 不存在活动媒体 Task、未决 BillingOrder 或已开始的扣费事实。
 - 关联 production Artifact 仅允许 `planned` 或 `awaiting_approval`，不存在 queued/running/ready 资产冲突。
@@ -193,7 +193,7 @@ v1.0.53 必须包含一次性、事务化、幂等的 `retire-incompatible-pause
 - 将活动 timeline Item 标记为 interrupted。
 - 将等待审批的 tool call 标记为 failed、对应 timeline Item 标记为 interrupted、等待中的 Artifact 标记为 failed，并统一使用稳定原因 `runtime_contract_retired`。
 - 写入 `source=upgrade_migration` 与旧/新契约版本摘要。
-- 设置 completedAt，但不改写历史事件、计划、资源或 prompt。
+- 设置 completedAt，但不改写历史事件、已终结 tool call、计划、资源或 prompt。
 
 迁移批次必须全有或全无；一条候选记录无效时回滚整个批次。重复启动只验证已经完成的迁移，不重复追加事件。
 
@@ -264,7 +264,7 @@ Ops Controller 仍按既有顺序先创建 PostgreSQL 与后端数据恢复点�
 7. 未批准媒体生成被终止时不创建 Task/BillingOrder；等待 Artifact 收口且无费用。
 8. 已提交供应商的媒体 Task 只记录真实取消请求；迟到成功资产仍被保留。
 9. 预留、usage 不确定、已结算和退款中的 BillingOrder 分别遵循现有账务契约。
-10. v1.0.50 形状的 waiting_approval/waiting_input 无副作用 fixture 能被原子退休并允许新 schema 启动。
+10. v1.0.50 形状的 waiting_approval/waiting_input 无副作用 fixture 能被原子退休并允许新 schema 启动；历史 succeeded/failed tool call 保持原事实且不阻断当前等待项退休。
 11. 旧 running、waiting_tool、存在供应商请求、媒体 Task、BillingOrder 或非法 checkpoint 时升级明确失败且不部分退休。
 12. 迁移重复执行不增加 event/checkpoint；批次中一条非法记录会回滚全部退休。
 13. Web 正确展示加载、旧数据刷新、空数据、失败、409 冲突和取消请求待核对状态。
