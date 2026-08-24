@@ -111,6 +111,10 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	if response := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=-1", "", fixture.userCookie, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid cursor status = %d, body = %s", response.Code, response.Body.String())
 	}
+	future := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=4", "", fixture.userCookie, "")
+	if future.Code != http.StatusBadRequest || !strings.Contains(future.Body.String(), `"errorCode":"agent_stream_cursor_invalid"`) {
+		t.Fatalf("future cursor status = %d, body = %s", future.Code, future.Body.String())
+	}
 
 	events := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=0", "", fixture.userCookie, "")
 	if events.Code != http.StatusOK {
@@ -119,13 +123,177 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	if contentType := events.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
 		t.Fatalf("events content type = %q", contentType)
 	}
-	if body := events.Body.String(); !strings.Contains(body, "id: 1\n") || !strings.Contains(body, "event: run.created\n") || !strings.Contains(body, `"sequence":1`) {
+	if body := events.Body.String(); !strings.Contains(body, "id: 1\n") || !strings.Contains(body, "event: run.started\n") ||
+		!strings.Contains(body, `"protocolVersion":2`) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
+		!strings.Contains(body, `"runId":"`+scope.RunID+`"`) || !strings.Contains(body, `"sequence":1`) {
 		t.Fatalf("events body = %s", body)
 	}
 
 	after := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence="+strconv.FormatInt(1, 10), "", fixture.userCookie, "")
 	if after.Code != http.StatusOK || strings.Contains(after.Body.String(), "id: 1\n") {
 		t.Fatalf("resumed events status = %d, body = %s", after.Code, after.Body.String())
+	}
+}
+
+func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(fixture.db)
+	svc := service.New(repo, t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-tool-replay-canvas")
+	scope, err := svc.AuthorizeAgentScope(
+		fixture.userID, "handler-agent-tool-replay-canvas", "handler-tool-replay-thread", "handler-tool-replay-run",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := repo.CreateAgentRun(repository.CreateAgentRunInput{Scope: scope, ClientRequestID: "handler-tool-replay-request", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
+		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "读取并更新画布",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasCommit,
+			ActionVersion: 1, Arguments: json.RawMessage(`{"expectedRevision":12}`),
+			ExpectedDelivery: agentruntime.ExpectedDelivery{
+				Kind:               agentruntime.DeliveryAnswer,
+				CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
+		ToolCallID: "handler-tool-replay-call", ActionVersion: 1, Succeeded: true,
+		Output: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","committedRevision":13}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := agentruntime.Fail(resolved.State, "handler_tool_replay_complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, resolved.State, terminal, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=2", "", fixture.userCookie, "")
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("tool lifecycle replay status = %d, body = %s", replayed.Code, replayed.Body.String())
+	}
+	body := replayed.Body.String()
+	if !strings.Contains(body, "id: 3\n") || !strings.Contains(body, "event: item.started\n") ||
+		!strings.Contains(body, `"toolCallId":"handler-tool-replay-call"`) ||
+		!strings.Contains(body, "id: 5\n") || !strings.Contains(body, "event: item.completed\n") ||
+		!strings.Contains(body, `"succeeded":true`) {
+		t.Fatalf("tool lifecycle replay body = %s", body)
+	}
+}
+
+func TestAgentRuntimeHTTPStrictSteerAndInterruptContracts(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(fixture.db)
+	svc := service.New(repo, t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-control-canvas")
+	scope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-control-canvas", "control-thread", "control-run", "创建一段短片", time.Now().UTC())
+	steerPath := "/api/agent/runs/" + scope.RunID + "/steer"
+	interruptPath := "/api/agent/runs/" + scope.RunID + "/interrupt"
+
+	if response := fixture.request(http.MethodPost, steerPath, `{"clientRequestId":"steer-1","message":"补充夜景","expectedStateVersion":1,"extra":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_steer_conflict"`) {
+		t.Fatalf("unknown steer field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	overlongBody, err := json.Marshal(steerAgentRunRequest{
+		ClientRequestID: "steer-long", Message: strings.Repeat("a", 64*1024+1), ExpectedStateVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := fixture.request(http.MethodPost, steerPath, string(overlongBody), fixture.userCookie, ""); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_steer_conflict"`) {
+		t.Fatalf("overlong steer status = %d, body = %s", response.Code, response.Body.String())
+	}
+	steerBody := `{"clientRequestId":"steer-1","message":"补充夜景","expectedStateVersion":1}`
+	steered := fixture.request(http.MethodPost, steerPath, steerBody, fixture.userCookie, "")
+	if steered.Code != http.StatusOK || !strings.Contains(steered.Body.String(), `"stateVersion":2`) || !strings.Contains(steered.Body.String(), `"clientRequestId":"steer-1"`) {
+		t.Fatalf("steer status = %d, body = %s", steered.Code, steered.Body.String())
+	}
+	var eventCount int64
+	if err := fixture.db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 3 {
+		t.Fatalf("event count after steer = %d", eventCount)
+	}
+	replayed := fixture.request(http.MethodPost, steerPath, steerBody, fixture.userCookie, "")
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("steer replay status = %d, body = %s", replayed.Code, replayed.Body.String())
+	}
+	if err := fixture.db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 3 {
+		t.Fatalf("steer replay created events = %d", eventCount)
+	}
+	conflictBody := `{"clientRequestId":"steer-1","message":"改成白天","expectedStateVersion":1}`
+	if response := fixture.request(http.MethodPost, steerPath, conflictBody, fixture.userCookie, ""); response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"errorCode":"agent_steer_conflict"`) || !strings.Contains(response.Body.String(), `"latestStateVersion":2`) {
+		t.Fatalf("steer conflict status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, steerPath, steerBody, fixture.adminCookie, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("cross-user steer status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	if response := fixture.request(http.MethodPost, interruptPath, `{"expectedStateVersion":2,"extra":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_interrupt_conflict"`) {
+		t.Fatalf("unknown interrupt field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, interruptPath, `{"expectedStateVersion":1}`, fixture.userCookie, ""); response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"latestStateVersion":2`) {
+		t.Fatalf("stale interrupt status = %d, body = %s", response.Code, response.Body.String())
+	}
+	interrupted := fixture.request(http.MethodPost, interruptPath, `{"expectedStateVersion":2}`, fixture.userCookie, "")
+	if interrupted.Code != http.StatusOK || !strings.Contains(interrupted.Body.String(), `"stateVersion":3`) || !strings.Contains(interrupted.Body.String(), `"status":"cancelled"`) {
+		t.Fatalf("interrupt status = %d, body = %s", interrupted.Code, interrupted.Body.String())
+	}
+	terminalEvents := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=3", "", fixture.userCookie, "")
+	if terminalEvents.Code != http.StatusOK || !strings.Contains(terminalEvents.Body.String(), "id: 4\n") ||
+		!strings.Contains(terminalEvents.Body.String(), "event: run.interrupted\n") ||
+		!strings.Contains(terminalEvents.Body.String(), `"itemId":`) ||
+		!strings.Contains(terminalEvents.Body.String(), `"status":"interrupted"`) {
+		t.Fatalf("terminal events status = %d, body = %s", terminalEvents.Code, terminalEvents.Body.String())
+	}
+	terminalResume := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence=4", "", fixture.userCookie, "")
+	if terminalResume.Code != http.StatusOK || strings.Contains(terminalResume.Body.String(), "id:") {
+		t.Fatalf("terminal resume status = %d, body = %s", terminalResume.Code, terminalResume.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, interruptPath, `{"expectedStateVersion":3}`, fixture.userCookie, ""); response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"errorCode":"agent_interrupt_conflict"`) || !strings.Contains(response.Body.String(), `"latestStateVersion":3`) {
+		t.Fatalf("terminal interrupt status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 
@@ -143,6 +311,7 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	baseTime := time.Date(2026, time.August, 15, 1, 0, 0, 0, time.UTC)
 	olderScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", "history-thread-older", "history-run-older", "较早的任务", baseTime.Add(time.Hour))
 	newerScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", "history-thread-newer", "history-run-newer", "较新的任务", baseTime.Add(2*time.Hour))
+	continuedScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", newerScope.ThreadID, "history-run-newer-continued", "继续完成任务", baseTime.Add(3*time.Hour))
 
 	emptyScope, err := svc.AuthorizeAgentScope(fixture.userID, "handler-agent-history-canvas", "history-thread-empty", "history-empty-probe")
 	if err != nil {
@@ -177,9 +346,13 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 			Items []struct {
 				Thread     model.AgentThread
 				ActivityAt time.Time
-				LatestRun  *struct {
+				Turns      []struct {
 					Run   model.AgentRun
-					State agentruntime.RuntimeState
+					Items []struct {
+						Kind    model.AgentTimelineItemKind
+						Ordinal int64
+						Content json.RawMessage
+					}
 				}
 			}
 		}
@@ -190,17 +363,25 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	if len(envelope.Data.Items) != 3 {
 		t.Fatalf("history item count = %d, body = %s", len(envelope.Data.Items), response.Body.String())
 	}
-	if strings.Contains(response.Body.String(), `"tenantId"`) || strings.Contains(response.Body.String(), `"createdByUserId"`) || strings.Contains(response.Body.String(), `"domainProjectId"`) {
+	if strings.Contains(response.Body.String(), `"tenantId"`) || strings.Contains(response.Body.String(), `"createdByUserId"`) ||
+		strings.Contains(response.Body.String(), `"domainProjectId"`) || strings.Contains(response.Body.String(), `"actorUserId"`) ||
+		strings.Contains(response.Body.String(), `"latestRun"`) {
 		t.Fatalf("history response exposed internal scope facts: %s", response.Body.String())
 	}
-	if first := envelope.Data.Items[0]; first.Thread.ID != newerScope.ThreadID || first.LatestRun == nil || first.LatestRun.Run.ID != newerScope.RunID || first.LatestRun.State.UserMessage != "较新的任务" {
+	if first := envelope.Data.Items[0]; first.Thread.ID != newerScope.ThreadID || len(first.Turns) != 2 ||
+		len(first.Turns[0].Items) != 1 || len(first.Turns[1].Items) != 1 ||
+		first.Turns[0].Run.ID != newerScope.RunID || !strings.Contains(string(first.Turns[0].Items[0].Content), "较新的任务") ||
+		first.Turns[1].Run.ID != continuedScope.RunID || !strings.Contains(string(first.Turns[1].Items[0].Content), "继续完成任务") ||
+		first.Turns[0].Items[0].Kind != model.AgentTimelineItemUserMessage ||
+		first.Turns[0].Items[0].Ordinal != 1 {
 		t.Fatalf("newest item = %#v", first)
 	}
-	if second := envelope.Data.Items[1]; second.Thread.ID != olderScope.ThreadID || second.LatestRun == nil || second.LatestRun.Run.ID != olderScope.RunID || second.LatestRun.State.UserMessage != "较早的任务" {
+	if second := envelope.Data.Items[1]; second.Thread.ID != olderScope.ThreadID || len(second.Turns) != 1 || len(second.Turns[0].Items) != 1 ||
+		second.Turns[0].Run.ID != olderScope.RunID || !strings.Contains(string(second.Turns[0].Items[0].Content), "较早的任务") {
 		t.Fatalf("older item = %#v", second)
 	}
 	empty := envelope.Data.Items[2]
-	if empty.Thread.ID != emptyThread.ID || empty.LatestRun != nil || !empty.ActivityAt.Equal(empty.Thread.UpdatedAt) {
+	if empty.Thread.ID != emptyThread.ID || len(empty.Turns) != 0 || !empty.ActivityAt.Equal(empty.Thread.UpdatedAt) {
 		t.Fatalf("empty item = %#v", empty)
 	}
 	limited := fixture.request(http.MethodGet, "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=1", "", fixture.userCookie, "")

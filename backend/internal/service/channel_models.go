@@ -33,8 +33,12 @@ type ChannelModelRequest struct {
 type ChannelModelPriceTierRequest struct {
 	Resolution            string `json:"resolution"`
 	InputVariant          string `json:"inputVariant"`
+	UsageMetric           string `json:"usageMetric"`
+	IncludedQuantity      int64  `json:"includedQuantity"`
 	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
 }
+
+const inputImageUsageMetric = "input_image"
 
 // AdminChannelModelFetchResult 是管理员从上游拉目录后的汇总：models 为去重后的标识，added 为本次新建条数。
 type AdminChannelModelFetchResult struct {
@@ -295,13 +299,21 @@ type channelModelPricingSnapshot struct {
 	priceStrategy         string
 	unitPriceMicrocredits int64
 	priceConfigured       bool
-	priceTiers            map[string]int64
+	priceTiers            map[string]channelModelPriceTierSnapshot
+}
+
+type channelModelPriceTierSnapshot struct {
+	unitPriceMicrocredits int64
+	includedQuantity      int64
 }
 
 func snapshotChannelModelPricing(item *model.ChannelModel) channelModelPricingSnapshot {
-	priceTiers := make(map[string]int64, len(item.PriceTiers))
+	priceTiers := make(map[string]channelModelPriceTierSnapshot, len(item.PriceTiers))
 	for _, tier := range item.PriceTiers {
-		priceTiers[channelModelPriceTierKey(tier.Resolution, tier.InputVariant)] = tier.UnitPriceMicrocredits
+		priceTiers[channelModelPriceTierIdentity(tier.Resolution, tier.InputVariant, tier.UsageMetric)] = channelModelPriceTierSnapshot{
+			unitPriceMicrocredits: tier.UnitPriceMicrocredits,
+			includedQuantity:      tier.IncludedQuantity,
+		}
 	}
 	return channelModelPricingSnapshot{
 		billingMode:           item.BillingMode,
@@ -321,7 +333,8 @@ func (snapshot channelModelPricingSnapshot) differsFrom(item *model.ChannelModel
 		return true
 	}
 	for _, tier := range tiers {
-		if unitPrice, exists := snapshot.priceTiers[tier.Resolution]; !exists || unitPrice != tier.UnitPriceMicrocredits {
+		stored, exists := snapshot.priceTiers[channelModelPriceTierIdentity(tier.Resolution, tier.InputVariant, tier.UsageMetric)]
+		if !exists || stored.unitPriceMicrocredits != tier.UnitPriceMicrocredits || stored.includedQuantity != tier.IncludedQuantity {
 			return true
 		}
 	}
@@ -421,8 +434,25 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 }
 
 func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelModelPriceTierRequest) ([]model.ChannelModelPriceTier, error) {
+	baseRequests := make([]ChannelModelPriceTierRequest, 0, len(requests))
+	usageRequests := make([]ChannelModelPriceTierRequest, 0, 1)
+	for _, request := range requests {
+		request.UsageMetric = strings.ToLower(strings.TrimSpace(request.UsageMetric))
+		if request.UsageMetric == "" {
+			baseRequests = append(baseRequests, request)
+			continue
+		}
+		usageRequests = append(usageRequests, request)
+	}
+	usageTiers, err := buildChannelModelUsagePriceTiers(item, usageRequests)
+	if err != nil {
+		return nil, err
+	}
 	if item.PriceStrategy != "image_resolution" && item.PriceStrategy != "video_resolution" {
-		return nil, nil
+		if len(baseRequests) > 0 {
+			return nil, BadAuthRequest("固定价格模型不能配置分辨率价格规格")
+		}
+		return usageTiers, nil
 	}
 	allowed := map[string]bool{"1K": true, "2K": true, "4K": true}
 	requireAll := true
@@ -432,10 +462,12 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 		}
 		requireAll = false
 	}
-	configured := make(map[string]bool, len(requests))
+	configured := make(map[string]bool, len(baseRequests))
 	variants := []string{"standard"}
+	var managedSpec *ProviderModelSpec
 	if _, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey); managed && spec.Capability == "video" {
-		variants = []string{"standard", "reference_video"}
+		managedSpec = &spec
+		variants = providerPricingInputVariants(spec)
 		allowed = make(map[string]bool, len(spec.Resolutions))
 		for _, resolution := range spec.Resolutions {
 			allowed[strings.ToUpper(strings.TrimSpace(resolution))] = true
@@ -446,8 +478,8 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	for _, variant := range variants {
 		allowedVariants[variant] = true
 	}
-	tiers := make([]model.ChannelModelPriceTier, 0, len(requests))
-	for _, request := range requests {
+	tiers := make([]model.ChannelModelPriceTier, 0, len(baseRequests)+len(usageTiers))
+	for _, request := range baseRequests {
 		resolution := strings.ToUpper(strings.TrimSpace(request.Resolution))
 		if !allowed[resolution] {
 			return nil, BadAuthRequest("价格规格无效：" + resolution)
@@ -472,13 +504,18 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 			UnitPriceMicrocredits: request.UnitPriceMicrocredits, PriceVersion: item.PriceVersion,
 		})
 	}
+	tiers = append(tiers, usageTiers...)
 	if item.PriceConfigured {
 		if len(tiers) == 0 {
 			return nil, BadAuthRequest("启用分辨率定价前必须至少配置一个价格规格")
 		}
 		if requireAll {
 			for resolution := range allowed {
-				for _, variant := range variants {
+				requiredVariants := variants
+				if managedSpec != nil {
+					requiredVariants = providerPricingVariantsForResolution(*managedSpec, resolution)
+				}
+				for _, variant := range requiredVariants {
 					if configured[channelModelPriceTierKey(resolution, variant)] {
 						continue
 					}
@@ -490,8 +527,52 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	return tiers, nil
 }
 
+func buildChannelModelUsagePriceTiers(item *model.ChannelModel, requests []ChannelModelPriceTierRequest) ([]model.ChannelModelPriceTier, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+	if item.Capability != "image" || item.BillingMode != "fixed_request" {
+		return nil, BadAuthRequest("输入图片用量价格仅适用于按次计费的图片模型")
+	}
+	seen := make(map[string]struct{}, len(requests))
+	tiers := make([]model.ChannelModelPriceTier, 0, len(requests))
+	for _, request := range requests {
+		metric := strings.ToLower(strings.TrimSpace(request.UsageMetric))
+		if metric != inputImageUsageMetric {
+			return nil, BadAuthRequest("不支持的用量价格指标：" + metric)
+		}
+		if _, exists := seen[metric]; exists {
+			return nil, BadAuthRequest("同一用量价格不能重复")
+		}
+		if request.IncludedQuantity < 0 {
+			return nil, BadAuthRequest("输入图片免费数量不能小于 0")
+		}
+		if request.UnitPriceMicrocredits <= 0 {
+			return nil, BadAuthRequest("输入图片超额积分价格必须大于 0")
+		}
+		if strings.TrimSpace(request.Resolution) != "" || strings.TrimSpace(request.InputVariant) != "" {
+			return nil, BadAuthRequest("用量价格不能同时配置分辨率或输入类型")
+		}
+		seen[metric] = struct{}{}
+		tiers = append(tiers, model.ChannelModelPriceTier{
+			ID: newID(), ChannelModelID: item.ID, UsageMetric: metric,
+			IncludedQuantity: request.IncludedQuantity, UnitPriceMicrocredits: request.UnitPriceMicrocredits,
+			PriceVersion: item.PriceVersion,
+		})
+	}
+	return tiers, nil
+}
+
 func channelModelPriceTierKey(resolution string, inputVariant string) string {
 	return strings.ToUpper(strings.TrimSpace(resolution)) + "\n" + strings.ToLower(strings.TrimSpace(inputVariant))
+}
+
+func channelModelPriceTierIdentity(resolution string, inputVariant string, usageMetric string) string {
+	metric := strings.ToLower(strings.TrimSpace(usageMetric))
+	if metric != "" {
+		return "usage\n" + metric
+	}
+	return "base\n" + channelModelPriceTierKey(resolution, inputVariant)
 }
 
 func (s *Service) ensureChannelModels(channelID string, includeDisabled bool) ([]model.ChannelModel, error) {

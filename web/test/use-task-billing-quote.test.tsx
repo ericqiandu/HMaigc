@@ -30,6 +30,7 @@ const imageQuoteRequest = (model: string): TaskBillingQuoteRequest => ({
     batchCount: 1,
     input: {
         mode: "image",
+        referenceImageCount: 0,
         referenceVideoCount: 0,
         config: {
             channelId: "channel",

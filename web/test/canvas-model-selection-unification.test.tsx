@@ -135,6 +135,23 @@ describe("canvas model selection unification", () => {
         expect(markup).toContain('disabled=""');
     });
 
+    test("shared menu renders configured marketing, membership, and duration facts", () => {
+        const markup = renderToStaticMarkup(
+            createElement(CanvasModelSelectionMenu, {
+                config,
+                value: { image: imageModel, video: videoModel },
+                capabilities: ["image"],
+                modelSource: "catalog",
+                onChange: () => undefined,
+            }),
+        );
+
+        expect(markup).toContain("商业级图片生成");
+        expect(markup).toContain("推荐");
+        expect(markup).toContain('aria-label="会员专属模型"');
+        expect(markup).toContain("1min");
+    });
+
     test.each([
         ["image", imageModel, "GPT Image 2"],
         ["video", videoModel, "Seedance 2.0"],

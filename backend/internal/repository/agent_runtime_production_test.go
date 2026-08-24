@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +11,88 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestAppendAgentProductionPlanDerivesArtifactsFromDeliverables(t *testing.T) {
+	tests := []struct {
+		name                string
+		deliverables        []agentruntime.ProductionShotDeliverable
+		imagePrompt         string
+		videoPrompt         string
+		wantArtifactKinds   []model.AgentProductionArtifactKind
+		wantStoryboardCount int
+		wantVideoCount      int
+	}{
+		{
+			name: "video only", deliverables: []agentruntime.ProductionShotDeliverable{agentruntime.ProductionShotDeliverableVideoClip},
+			videoPrompt:       "原创抽象光影，镜头缓慢推进",
+			wantArtifactKinds: []model.AgentProductionArtifactKind{model.AgentProductionArtifactScript, model.AgentProductionArtifactVideoClip},
+			wantVideoCount:    1,
+		},
+		{
+			name: "storyboard only", deliverables: []agentruntime.ProductionShotDeliverable{agentruntime.ProductionShotDeliverableStoryboardImage},
+			imagePrompt:         "原创抽象光影分镜图",
+			wantArtifactKinds:   []model.AgentProductionArtifactKind{model.AgentProductionArtifactScript, model.AgentProductionArtifactStoryboardImage},
+			wantStoryboardCount: 1,
+		},
+		{
+			name: "storyboard and video",
+			deliverables: []agentruntime.ProductionShotDeliverable{
+				agentruntime.ProductionShotDeliverableStoryboardImage,
+				agentruntime.ProductionShotDeliverableVideoClip,
+			},
+			imagePrompt: "原创抽象光影分镜图", videoPrompt: "原创抽象光影，镜头缓慢推进",
+			wantArtifactKinds: []model.AgentProductionArtifactKind{
+				model.AgentProductionArtifactScript,
+				model.AgentProductionArtifactStoryboardImage,
+				model.AgentProductionArtifactVideoClip,
+			},
+			wantStoryboardCount: 1, wantVideoCount: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo, _ := openAgentRuntimeRepositorySQLite(t)
+			scope := repositoryAgentScope()
+			createAgentRunForTest(t, repo, scope)
+			draft := agentruntime.ProductionPlanDraft{
+				Title: "5秒原创抽象光影", TargetDurationMS: 5_000, Script: "抽象光带汇聚并消散。",
+				Shots: []agentruntime.ShotPlanDraft{{
+					ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "光带聚合",
+					Deliverables: test.deliverables, ImagePrompt: test.imagePrompt, VideoPrompt: test.videoPrompt,
+					Dependencies: []string{},
+				}},
+			}
+			record, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+				Scope: scope, RunID: scope.RunID, PlanKey: "deliverable-plan", BaseVersion: 0,
+				Draft: draft, Now: time.Now().UTC(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(record.Artifacts) != len(test.wantArtifactKinds) {
+				t.Fatalf("artifact count = %d, want %d: %#v", len(record.Artifacts), len(test.wantArtifactKinds), record.Artifacts)
+			}
+			for index, wantKind := range test.wantArtifactKinds {
+				if record.Artifacts[index].Kind != wantKind {
+					t.Fatalf("artifact %d kind = %s, want %s", index, record.Artifacts[index].Kind, wantKind)
+				}
+			}
+			var delivery struct {
+				Scripts          int `json:"scripts"`
+				ReferenceImages  int `json:"referenceImages"`
+				StoryboardImages int `json:"storyboardImages"`
+				VideoClips       int `json:"videoClips"`
+			}
+			if err := json.Unmarshal([]byte(record.Plan.ExpectedDeliveryJSON), &delivery); err != nil {
+				t.Fatal(err)
+			}
+			if delivery.Scripts != 1 || delivery.ReferenceImages != 0 ||
+				delivery.StoryboardImages != test.wantStoryboardCount || delivery.VideoClips != test.wantVideoCount {
+				t.Fatalf("expected delivery = %#v", delivery)
+			}
+		})
+	}
+}
 
 func TestAppendAgentProductionPlanCreatesImmutableVersionAndLedger(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
@@ -118,6 +202,94 @@ func TestAgentProductionArtifactTransitionUsesStatusAndAttemptCAS(t *testing.T) 
 	}
 }
 
+func TestAgentProductionArtifactSuccessAppendsTimelineAfterRunInterruptedAndReplaysIdempotently(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 8,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage:   "生成分镜图",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "late-artifact", BaseVersion: 0,
+		Draft: twoShotProductionPlanDraft("迟到资产剧本"), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := firstProductionArtifact(t, created.Artifacts, "shot-1", model.AgentProductionArtifactStoryboardImage)
+	if _, err := repo.TransitionAgentProductionArtifact(scope, ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactPlanned,
+		NextStatus: model.AgentProductionArtifactQueued, ExpectedAttempt: 0, NextAttempt: 1,
+		TaskID: "task-late-image", BillingOrderID: "billing-late-image", Now: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	transition := ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactQueued,
+		NextStatus: model.AgentProductionArtifactSucceeded, ExpectedAttempt: 1, NextAttempt: 1,
+		TaskID: "task-late-image", BillingOrderID: "billing-late-image", ResourceID: "resource-late-image",
+		Now: now.Add(3 * time.Second),
+	}
+	succeeded, err := repo.TransitionAgentProductionArtifact(scope, transition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if succeeded.Status != model.AgentProductionArtifactSucceeded || succeeded.ResourceID != transition.ResourceID {
+		t.Fatalf("late succeeded artifact = %#v", succeeded)
+	}
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != agentruntime.RunCancelled || run.StateVersion != 2 || run.LastEventSequence != 4 {
+		t.Fatalf("late artifact changed terminal runtime facts = %#v", run)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.Where("run_id = ?", scope.RunID).Order("sequence DESC").Take(&checkpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Sequence != 3 {
+		t.Fatalf("late artifact rewrote runtime checkpoint = %#v", checkpoint)
+	}
+	var event model.AgentRunEvent
+	if err := db.Where("run_id = ? AND sequence = ?", scope.RunID, 4).Take(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != agentruntime.EventArtifactAvailable || !strings.Contains(event.PayloadJSON, transition.ResourceID) || strings.Contains(event.PayloadJSON, "Signature=") {
+		t.Fatalf("late artifact event = %#v", event)
+	}
+	var item model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemArtifact).Take(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != model.AgentTimelineItemCompleted || item.SourceEventSequence != 4 || !strings.Contains(item.ContentJSON, transition.ResourceID) {
+		t.Fatalf("late artifact timeline item = %#v", item)
+	}
+	if _, err := repo.TransitionAgentProductionArtifact(scope, transition); err != nil {
+		t.Fatalf("identical late artifact callback replay = %v", err)
+	}
+	var eventCount, itemCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", scope.RunID).Count(&itemCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 4 || itemCount != 3 {
+		t.Fatalf("late artifact replay duplicated facts: events=%d items=%d", eventCount, itemCount)
+	}
+}
+
 func TestAgentProductionPlanReadIsScopeIsolated(t *testing.T) {
 	repo, _ := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
@@ -137,6 +309,14 @@ func TestAgentProductionPlanReadIsScopeIsolated(t *testing.T) {
 	other.ActorUserID = "other-user"
 	if _, err := repo.AgentProductionPlanVersionForScope(other, created.Plan.PlanKey, created.Plan.Version); err == nil {
 		t.Fatal("cross-tenant plan read succeeded")
+	}
+	sameTenantOtherActor := scope
+	sameTenantOtherActor.ActorUserID = "other-user"
+	if _, err := repo.AgentProductionPlanVersionForScope(sameTenantOtherActor, created.Plan.PlanKey, created.Plan.Version); err == nil {
+		t.Fatal("same-tenant cross-actor plan read succeeded")
+	}
+	if _, err := repo.ActiveAgentProductionPlanForThread(sameTenantOtherActor); err == nil {
+		t.Fatal("same-tenant cross-actor active plan read succeeded")
 	}
 	wrongProject := scope
 	wrongProject.DomainProjectID = "another-project"
@@ -228,7 +408,7 @@ func TestActiveAgentProductionPlanForThreadFollowsThreadAndScope(t *testing.T) {
 	otherTenant.TenantID = "another-user"
 	otherTenant.ActorUserID = "another-user"
 	active, err = repo.ActiveAgentProductionPlanForThread(otherTenant)
-	if err != nil || active != nil {
+	if err == nil || active != nil {
 		t.Fatalf("other tenant active plan = %#v, err = %v", active, err)
 	}
 }
@@ -374,9 +554,22 @@ func twoShotProductionPlanDraft(script string) agentruntime.ProductionPlanDraft 
 	return agentruntime.ProductionPlanDraft{
 		Title: "10 秒橙子广告", TargetDurationMS: 10_000, Script: script,
 		Shots: []agentruntime.ShotPlanDraft{
-			{ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水", ImagePrompt: "橙子产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{}},
-			{ShotKey: "shot-2", Order: 2, DurationMS: 5_000, ScriptText: "果汁收尾", ImagePrompt: "果汁英雄镜头", VideoPrompt: "镜头推进", Dependencies: []string{"shot-1"}},
+			{
+				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
+				Deliverables: dualProductionShotDeliverables(), ImagePrompt: "橙子产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+			},
+			{
+				ShotKey: "shot-2", Order: 2, DurationMS: 5_000, ScriptText: "果汁收尾",
+				Deliverables: dualProductionShotDeliverables(), ImagePrompt: "果汁英雄镜头", VideoPrompt: "镜头推进", Dependencies: []string{"shot-1"},
+			},
 		},
+	}
+}
+
+func dualProductionShotDeliverables() []agentruntime.ProductionShotDeliverable {
+	return []agentruntime.ProductionShotDeliverable{
+		agentruntime.ProductionShotDeliverableStoryboardImage,
+		agentruntime.ProductionShotDeliverableVideoClip,
 	}
 }
 

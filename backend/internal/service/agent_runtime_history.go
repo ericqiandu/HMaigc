@@ -23,7 +23,43 @@ type AgentThreadHistoryThreadView struct {
 type AgentThreadHistoryItem struct {
 	Thread     AgentThreadHistoryThreadView `json:"thread"`
 	ActivityAt time.Time                    `json:"activityAt"`
-	LatestRun  *AgentRuntimeView            `json:"latestRun"`
+	Turns      []AgentThreadHistoryTurnView `json:"turns"`
+}
+
+type AgentThreadHistoryRunView struct {
+	ID                string                 `json:"id"`
+	ThreadID          string                 `json:"threadId"`
+	Status            agentruntime.RunStatus `json:"status"`
+	LastEventSequence int64                  `json:"lastEventSequence"`
+	StateVersion      int                    `json:"stateVersion"`
+	StepNumber        int                    `json:"stepNumber"`
+	MaxSteps          int                    `json:"maxSteps"`
+	ModelKey          string                 `json:"modelKey"`
+	ToolSchemaVersion int                    `json:"toolSchemaVersion"`
+	RuntimeVersion    int                    `json:"runtimeVersion"`
+	PolicyVersion     int                    `json:"policyVersion"`
+	CreatedAt         time.Time              `json:"createdAt"`
+	UpdatedAt         time.Time              `json:"updatedAt"`
+	CompletedAt       *time.Time             `json:"completedAt,omitempty"`
+}
+
+type AgentThreadHistoryTimelineItemView struct {
+	ID                  string                        `json:"id"`
+	RunID               string                        `json:"runId"`
+	Kind                model.AgentTimelineItemKind   `json:"kind"`
+	Status              model.AgentTimelineItemStatus `json:"status"`
+	Ordinal             int64                         `json:"ordinal"`
+	SourceEventSequence int64                         `json:"sourceEventSequence"`
+	Content             json.RawMessage               `json:"content"`
+	StartedAt           time.Time                     `json:"startedAt"`
+	CompletedAt         *time.Time                    `json:"completedAt,omitempty"`
+	CreatedAt           time.Time                     `json:"createdAt"`
+	UpdatedAt           time.Time                     `json:"updatedAt"`
+}
+
+type AgentThreadHistoryTurnView struct {
+	Run   AgentThreadHistoryRunView            `json:"run"`
+	Items []AgentThreadHistoryTimelineItemView `json:"items"`
 }
 
 type AgentThreadHistoryView struct {
@@ -54,20 +90,69 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 				CreatedAt: record.Thread.CreatedAt, UpdatedAt: record.Thread.UpdatedAt,
 			},
 			ActivityAt: record.ActivityAt,
+			Turns:      make([]AgentThreadHistoryTurnView, 0, len(record.Turns)),
 		}
-		if record.Run != nil {
-			state, err := decodeAgentRuntimeState(record.StateJSON)
+		for _, recordTurn := range record.Turns {
+			state, err := decodeAgentRuntimeState(recordTurn.StateJSON)
 			if err != nil {
 				return nil, err
 			}
-			item.LatestRun, err = agentRuntimeViewFromFacts(*record.Run, state)
+			if _, err := agentRuntimeViewFromFacts(recordTurn.Run, state); err != nil {
+				return nil, err
+			}
+			turn, err := agentThreadHistoryTurnView(recordTurn.Run, recordTurn.Items)
 			if err != nil {
 				return nil, err
 			}
+			item.Turns = append(item.Turns, turn)
 		}
 		view.Items = append(view.Items, item)
 	}
 	return view, nil
+}
+
+func agentThreadHistoryTurnView(run model.AgentRun, items []model.AgentTimelineItem) (AgentThreadHistoryTurnView, error) {
+	view := AgentThreadHistoryTurnView{
+		Run: AgentThreadHistoryRunView{
+			ID: run.ID, ThreadID: run.ThreadID, Status: run.Status, LastEventSequence: run.LastEventSequence,
+			StateVersion: run.StateVersion, StepNumber: run.StepNumber, MaxSteps: run.MaxSteps,
+			ModelKey: run.ModelKey, ToolSchemaVersion: run.ToolSchemaVersion, RuntimeVersion: run.RuntimeVersion,
+			PolicyVersion: run.PolicyVersion, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+			CompletedAt: run.CompletedAt,
+		},
+		Items: make([]AgentThreadHistoryTimelineItemView, 0, len(items)),
+	}
+	for _, item := range items {
+		content, err := agentTimelineHistoryContent(item)
+		if err != nil {
+			return AgentThreadHistoryTurnView{}, err
+		}
+		view.Items = append(view.Items, AgentThreadHistoryTimelineItemView{
+			ID: item.ID, RunID: item.RunID, Kind: item.Kind, Status: item.Status, Ordinal: item.Ordinal,
+			SourceEventSequence: item.SourceEventSequence, Content: content, StartedAt: item.StartedAt,
+			CompletedAt: item.CompletedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return view, nil
+}
+
+func agentTimelineHistoryContent(item model.AgentTimelineItem) (json.RawMessage, error) {
+	if !json.Valid([]byte(item.ContentJSON)) {
+		return nil, errors.New("agent timeline item content is invalid")
+	}
+	if item.Kind != model.AgentTimelineItemArtifact {
+		return append(json.RawMessage(nil), item.ContentJSON...), nil
+	}
+	internal, err := decodeAgentArtifactTimelinePayload(item.ContentJSON)
+	if err != nil || internal.ArtifactID == "" || internal.PlanKey == "" || internal.PlanVersion < 1 ||
+		internal.ResourceID == "" || !internal.Status.Valid() {
+		return nil, errors.New("agent artifact timeline facts are invalid")
+	}
+	return json.Marshal(agentArtifactUIEventPayload{
+		ArtifactID: internal.ArtifactID, Kind: internal.Kind, PlanKey: internal.PlanKey,
+		PlanVersion: internal.PlanVersion, ReferenceKey: internal.ReferenceKey, ShotKey: internal.ShotKey,
+		ResourceID: internal.ResourceID, Status: internal.Status,
+	})
 }
 
 func decodeAgentRuntimeState(stateJSON string) (agentruntime.RuntimeState, error) {

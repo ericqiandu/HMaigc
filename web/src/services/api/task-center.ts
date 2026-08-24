@@ -135,6 +135,7 @@ export type TaskBillingQuoteConfig = {
     quality: string;
     videoSeconds: string;
     vquality: string;
+    videoGenerateAudio: boolean;
     videoSuperResolutionEnabled: boolean;
     videoSuperResolutionResolution: string;
     videoSuperResolutionVersion: string;
@@ -148,6 +149,7 @@ export type TaskBillingQuoteRequest = {
     batchCount: number;
     input: {
         mode: "image" | "video";
+        referenceImageCount: number;
         referenceVideoCount: number;
         config: TaskBillingQuoteConfig;
     };
@@ -163,6 +165,15 @@ export type TaskBillingQuote = {
     pricingInputVariant: string;
     quantity: number;
     enhancementAmountMicrocredits: number;
+    usageAdjustment?: {
+        metric: "input_image";
+        actualQuantity: number;
+        includedQuantity: number;
+        billableQuantity: number;
+        unitPriceMicrocredits: number;
+        perTaskAmountMicrocredits: number;
+        amountMicrocredits: number;
+    };
     quoteFingerprint: string;
 };
 

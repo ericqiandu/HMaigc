@@ -11,10 +11,9 @@ const (
 )
 
 type ToolPolicy struct {
-	Name             ToolName
-	RiskLevel        ToolRiskLevel
-	RequiredAccess   AccessLevel
-	ApprovalRequired bool
+	Name           ToolName
+	RiskLevel      ToolRiskLevel
+	RequiredAccess AccessLevel
 }
 
 func ToolPolicyFor(name ToolName) (ToolPolicy, bool) {
@@ -24,7 +23,7 @@ func ToolPolicyFor(name ToolName) (ToolPolicy, bool) {
 	case ToolProductionPlan:
 		return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
 	case ToolProductionRender:
-		return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor, ApprovalRequired: true}, true
+		return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
 	case ToolCanvasCommit:
 		return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
 	default:
@@ -33,6 +32,8 @@ func ToolPolicyFor(name ToolName) (ToolPolicy, bool) {
 }
 
 func ApprovalRequiredFor(policy ToolPolicy, mode ExecutionMode) bool {
-	_ = mode
-	return policy.ApprovalRequired
+	if policy.RiskLevel == ToolRiskCost {
+		return true
+	}
+	return mode == ExecutionGuided && policy.RiskLevel == ToolRiskWrite
 }

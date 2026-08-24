@@ -133,7 +133,10 @@ func TestRuntimeStatusSetsRejectUnknownValues(t *testing.T) {
 func TestEventKindSetRejectsUnknownValues(t *testing.T) {
 	for _, kind := range []agentruntime.EventKind{
 		agentruntime.EventRunCreated,
+		agentruntime.EventUserMessageAdded,
 		agentruntime.EventRunStatusChanged,
+		agentruntime.EventRunSteered,
+		agentruntime.EventRunInterrupted,
 		agentruntime.EventModelDelta,
 		agentruntime.EventModelRejected,
 		agentruntime.EventClarificationRequested,
@@ -147,6 +150,9 @@ func TestEventKindSetRejectsUnknownValues(t *testing.T) {
 		agentruntime.EventCheckpointSaved,
 		agentruntime.EventRunCompleted,
 		agentruntime.EventRunFailed,
+		agentruntime.EventAgentMessageCompleted,
+		agentruntime.EventAgentMessageFailed,
+		agentruntime.EventArtifactAvailable,
 	} {
 		if !kind.Valid() {
 			t.Fatalf("declared event kind %q rejected", kind)

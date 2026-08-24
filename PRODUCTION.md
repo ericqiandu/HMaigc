@@ -13,6 +13,8 @@ cd .. && bash scripts/tests/run-payment-integration.sh --all
 cd web && bun install --frozen-lockfile && bun test && bun run build
 HMAIGC_CHROMIUM_EXECUTABLE=/path/to/chrome bun run verify:membership-checkout-browser
 cd .. && bash scripts/tests/verify-payment-checkout-nginx.test.sh
+STATIC_RELEASE_URL='https://static.hm.kunagent.com/hmaigc/web/releases/vX.Y.Z'
+bash scripts/verify-static-release-assets.sh web/dist "$STATIC_RELEASE_URL"
 bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ```
 
@@ -24,6 +26,7 @@ bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 - 后端容器没有 Docker socket；只有独立控制器容器可以访问 Docker Engine。
 - `CANVAS_ENVIRONMENT=production` 已显式配置；缺失值、未知值或其他环境值都会阻止后端启动。
 - `CANVAS_CORS_ORIGINS` 只包含实际 HTTPS 站点 Origin。
+- `HMAIGC_STATIC_ASSET_BASE_URL` 为 `https://static.hm.kunagent.com/hmaigc/web`；入口 JS/CSS 经中国大陆 CDN 使用 HTTP/2 或 HTTP/3、Brotli/gzip 和 365 天不可变缓存，未直接暴露香港 OSS 读取域名。
 - 支付收银台地址是无 path、userinfo、query、fragment 的 HTTPS Origin；支付渠道回调地址允许 webhook path，但不得含 userinfo、query 或 fragment。
 - `CANVAS_HTTP_HOST=127.0.0.1`，只有反向代理对公网开放。
 - PostgreSQL、Redis 和后端端口没有映射到公网。

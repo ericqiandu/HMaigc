@@ -56,7 +56,10 @@ export function CanvasConfigNodePanel({ projectId, node, isRunning, inputSummary
     const quoteConfig = useMemo(() => (mode === "image" && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, mode]);
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
     const quoteReferenceVideoCount = mode === "video" && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? inputSummary.videoCount : 0;
-    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, mode === "video" ? node.metadata?.videoEditOperation || defaultVideoOperation(inputSummary) : mode, count, quoteReferenceVideoCount);
+    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, mode === "video" ? node.metadata?.videoEditOperation || defaultVideoOperation(inputSummary) : mode, count, {
+        referenceImageCount: inputSummary.imageCount,
+        referenceVideoCount: quoteReferenceVideoCount,
+    });
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());

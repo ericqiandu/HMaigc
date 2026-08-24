@@ -86,12 +86,25 @@ func (r *Repository) AppendAgentProductionPlanVersion(input AppendAgentProductio
 	if err != nil {
 		return nil, fmt.Errorf("encode production plan references: %w", err)
 	}
+	storyboardImages := 0
+	videoClips := 0
+	for _, shot := range input.Draft.Shots {
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			storyboardImages++
+		}
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			videoClips++
+		}
+	}
 	expectedDeliveryJSON, err := json.Marshal(struct {
 		Scripts          int `json:"scripts"`
 		ReferenceImages  int `json:"referenceImages"`
 		StoryboardImages int `json:"storyboardImages"`
 		VideoClips       int `json:"videoClips"`
-	}{Scripts: 1, ReferenceImages: len(input.Draft.References), StoryboardImages: len(input.Draft.Shots), VideoClips: len(input.Draft.Shots)})
+	}{
+		Scripts: 1, ReferenceImages: len(input.Draft.References),
+		StoryboardImages: storyboardImages, VideoClips: videoClips,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("encode production plan delivery: %w", err)
 	}
@@ -210,12 +223,24 @@ func (r *Repository) AgentProductionPlanVersionForScope(scope agentruntime.Scope
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
+	if err := verifyAgentRunScope(r.db, scope); err != nil {
+		return nil, err
+	}
 	planKey = strings.TrimSpace(planKey)
 	if planKey == "" || version < 1 {
 		return nil, errors.New("agent production plan identity is invalid")
 	}
 	var plan model.AgentProductionPlanVersion
-	err := r.db.Where("plan_key = ? AND version = ? AND tenant_kind = ? AND tenant_id = ? AND domain_project_id = ? AND canvas_id = ?", planKey, version, scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID).Take(&plan).Error
+	err := r.db.Table("agent_production_plan_versions").
+		Select("agent_production_plan_versions.*").
+		Joins("JOIN agent_runs ON agent_runs.id = agent_production_plan_versions.created_by_run_id").
+		Where(`agent_production_plan_versions.plan_key = ? AND agent_production_plan_versions.version = ?
+			AND agent_production_plan_versions.tenant_kind = ? AND agent_production_plan_versions.tenant_id = ?
+			AND agent_production_plan_versions.domain_project_id = ? AND agent_production_plan_versions.canvas_id = ?
+			AND agent_runs.thread_id = ? AND agent_runs.actor_user_id = ?`,
+			planKey, version, scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID,
+			scope.ThreadID, scope.ActorUserID).
+		Take(&plan).Error
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +263,9 @@ func (r *Repository) ActiveAgentProductionPlanForThread(scope agentruntime.Scope
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
+	if err := verifyAgentRunScope(r.db, scope); err != nil {
+		return nil, err
+	}
 	var plan model.AgentProductionPlanVersion
 	err := r.db.Table("agent_production_plan_versions").
 		Select("agent_production_plan_versions.*").
@@ -247,9 +275,10 @@ func (r *Repository) ActiveAgentProductionPlanForThread(scope agentruntime.Scope
 			AND agent_production_plan_versions.domain_project_id = ?
 			AND agent_production_plan_versions.canvas_id = ?
 			AND agent_production_plan_versions.status = ?
-			AND agent_runs.thread_id = ?`,
+			AND agent_runs.thread_id = ?
+			AND agent_runs.actor_user_id = ?`,
 			scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID,
-			model.AgentProductionPlanActive, scope.ThreadID).
+			model.AgentProductionPlanActive, scope.ThreadID, scope.ActorUserID).
 		Order("agent_production_plan_versions.created_at DESC, agent_production_plan_versions.version DESC, agent_production_plan_versions.id DESC").
 		Take(&plan).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -271,8 +300,12 @@ func (r *Repository) TransitionAgentProductionArtifact(scope agentruntime.Scope,
 	}
 	var transitioned model.AgentProductionArtifact
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := verifyAgentRunScope(tx, scope); err != nil {
+			return err
+		}
 		var current model.AgentProductionArtifact
-		err := tx.Table("agent_production_artifacts").Select("agent_production_artifacts.*").
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Table("agent_production_artifacts").Select("agent_production_artifacts.*").
 			Joins("JOIN agent_production_plan_versions ON agent_production_plan_versions.id = agent_production_artifacts.plan_version_id").
 			Where(`agent_production_artifacts.id = ?
 				AND agent_production_plan_versions.tenant_kind = ?
@@ -283,6 +316,14 @@ func (r *Repository) TransitionAgentProductionArtifact(scope agentruntime.Scope,
 			Take(&current).Error
 		if err != nil {
 			return err
+		}
+		if current.Status == model.AgentProductionArtifactSucceeded && input.NextStatus == model.AgentProductionArtifactSucceeded &&
+			current.Attempt == input.ExpectedAttempt && current.Attempt == input.NextAttempt {
+			if err := validateArtifactFactBindings(current, input); err != nil {
+				return err
+			}
+			transitioned = current
+			return nil
 		}
 		if current.Status != input.ExpectedStatus || current.Attempt != input.ExpectedAttempt {
 			return ErrAgentProductionArtifactConflict
@@ -310,12 +351,90 @@ func (r *Repository) TransitionAgentProductionArtifact(scope agentruntime.Scope,
 		if result.RowsAffected != 1 {
 			return ErrAgentProductionArtifactConflict
 		}
-		return tx.First(&transitioned, "id = ?", current.ID).Error
+		if err := tx.First(&transitioned, "id = ?", current.ID).Error; err != nil {
+			return err
+		}
+		if input.NextStatus == model.AgentProductionArtifactSucceeded {
+			return appendAgentProductionArtifactTimeline(tx, scope, transitioned, input.Now)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &transitioned, nil
+}
+
+func appendAgentProductionArtifactTimeline(
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	artifact model.AgentProductionArtifact,
+	now time.Time,
+) error {
+	var plan model.AgentProductionPlanVersion
+	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(`id = ? AND tenant_kind = ? AND tenant_id = ? AND domain_project_id = ? AND canvas_id = ? AND created_by_run_id = ?`,
+			artifact.PlanVersionID, scope.TenantKind, scope.TenantID, scope.DomainProjectID, scope.CanvasID, scope.RunID).
+		Take(&plan).Error; err != nil {
+		return err
+	}
+	var run model.AgentRun
+	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND thread_id = ? AND actor_user_id = ?", scope.RunID, scope.ThreadID, scope.ActorUserID).
+		Take(&run).Error; err != nil {
+		return err
+	}
+	sequence := run.LastEventSequence + 1
+	content, err := marshalAgentTimelineContent(struct {
+		ArtifactID     string                              `json:"artifactId"`
+		Kind           model.AgentProductionArtifactKind   `json:"kind"`
+		PlanKey        string                              `json:"planKey"`
+		PlanVersion    int                                 `json:"planVersion"`
+		ReferenceKey   string                              `json:"referenceKey,omitempty"`
+		ShotKey        string                              `json:"shotKey,omitempty"`
+		TaskID         string                              `json:"taskId,omitempty"`
+		BillingOrderID string                              `json:"billingOrderId,omitempty"`
+		ResourceID     string                              `json:"resourceId,omitempty"`
+		Status         model.AgentProductionArtifactStatus `json:"status"`
+	}{
+		ArtifactID: artifact.ID, Kind: artifact.Kind, PlanKey: plan.PlanKey, PlanVersion: plan.Version,
+		ReferenceKey: artifact.ReferenceKey, ShotKey: artifact.ShotKey,
+		TaskID: artifact.TaskID, BillingOrderID: artifact.BillingOrderID, ResourceID: artifact.ResourceID,
+		Status: artifact.Status,
+	})
+	if err != nil {
+		return err
+	}
+	result := db.Model(&model.AgentRun{}).
+		Where("id = ? AND last_event_sequence = ?", run.ID, run.LastEventSequence).
+		Select("last_event_sequence", "updated_at").
+		Updates(struct {
+			LastEventSequence int64     `gorm:"column:last_event_sequence"`
+			UpdatedAt         time.Time `gorm:"column:updated_at"`
+		}{LastEventSequence: sequence, UpdatedAt: now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrAgentRuntimeStepConflict
+	}
+	event := model.AgentRunEvent{
+		ID:    agentFactID("event", run.ID, strconv.FormatInt(sequence, 10)),
+		RunID: run.ID, Sequence: sequence, Kind: agentruntime.EventArtifactAvailable,
+		PayloadJSON: string(content), CreatedAt: now,
+	}
+	if err := db.Create(&event).Error; err != nil {
+		return err
+	}
+	nextOrdinal, err := nextAgentTimelineOrdinal(db, run.ID)
+	if err != nil {
+		return err
+	}
+	return persistAgentTimelineMutation(db, scope, TimelineMutation{
+		ItemID: agentFactID("timeline", run.ID, "artifact", artifact.ID),
+		Kind:   model.AgentTimelineItemArtifact, ToStatus: model.AgentTimelineItemCompleted,
+		SourceEventSequence: sequence, ContentJSON: content,
+	}, &nextOrdinal, now)
 }
 
 func (r *Repository) CommitAgentProductionArtifactCanvasNode(scope agentruntime.Scope, input ArtifactCanvasCommit) (*model.AgentProductionArtifact, error) {
@@ -427,8 +546,12 @@ func productionArtifactsForPlan(plan model.AgentProductionPlanVersion, reference
 		appendArtifact(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage, model.AgentProductionArtifactPlanned)
 	}
 	for _, shot := range shots {
-		appendArtifact("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage, model.AgentProductionArtifactPlanned)
-		appendArtifact("", shot.ShotKey, model.AgentProductionArtifactVideoClip, model.AgentProductionArtifactPlanned)
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			appendArtifact("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage, model.AgentProductionArtifactPlanned)
+		}
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			appendArtifact("", shot.ShotKey, model.AgentProductionArtifactVideoClip, model.AgentProductionArtifactPlanned)
+		}
 	}
 	return artifacts
 }

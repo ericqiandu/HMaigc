@@ -78,7 +78,9 @@ export type ChannelModel = {
     priceTiers: Array<{
         id: string;
         resolution: string;
-        inputVariant: "standard" | "reference_video";
+        inputVariant: "" | "standard" | "standard_audio" | "reference_video";
+        usageMetric: string;
+        includedQuantity: number;
         unitPriceMicrocredits: number;
         priceVersion: number;
     }>;
@@ -87,7 +89,9 @@ export type ChannelModel = {
     priceVersion: number;
     providerCapabilities?: {
         resolutions: string[];
-        inputVariants: Array<"standard" | "reference_video">;
+        inputVariants: Array<"standard" | "standard_audio" | "reference_video">;
+        referenceVideoResolutions: string[];
+        generatedAudioResolutions: string[];
         supportsTokenUsageBilling?: boolean;
     };
     createdAt: string;
@@ -97,7 +101,9 @@ export type ChannelModel = {
 export type ChannelModelInput = Omit<ChannelModel, "id" | "channelId" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"> & {
     priceTiers: Array<{
         resolution: string;
-        inputVariant: "standard" | "reference_video";
+        inputVariant: "" | "standard" | "standard_audio" | "reference_video";
+        usageMetric?: string;
+        includedQuantity?: number;
         unitPriceMicrocredits: number;
     }>;
 };

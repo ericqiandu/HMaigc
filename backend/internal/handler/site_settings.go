@@ -16,8 +16,21 @@ const siteMarketingImageUploadBodyLimit = (8 << 20) + (1 << 20)
 
 func RegisterSiteSettingRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/public/site", func(c *gin.Context) {
-		result, err := svc.PublicSiteSetting()
+		result, err := svc.PublicSiteShellSetting()
 		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
+	r.GET("/public/legal/:document", func(c *gin.Context) {
+		result, err := svc.PublicLegalDocument(c.Param("document"))
+		if err != nil {
+			if errors.Is(err, service.ErrUnsupportedLegalDocument) {
+				fail(c, http.StatusBadRequest, err)
+				return
+			}
 			failService(c, err)
 			return
 		}

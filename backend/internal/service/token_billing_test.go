@@ -34,6 +34,7 @@ func TestKuaiziTextModelAllowsTokenUsageBilling(t *testing.T) {
 				CachedPerMillionMicros: 20_000,
 				OutputPerMillionMicros: 2_000_000,
 				ExpectedOutputTokens:   8_192,
+				MaxOutputTokens:        8_192,
 			}
 
 			snapshot, err := validateTokenUsageModelBilling(item, pricing)
@@ -44,6 +45,33 @@ func TestKuaiziTextModelAllowsTokenUsageBilling(t *testing.T) {
 				t.Fatalf("pricing snapshot = %#v", snapshot)
 			}
 		})
+	}
+}
+
+func TestKuaiziTextModelSeparatesExpectedUsageFromMaximumOutput(t *testing.T) {
+	item := model.ChannelModel{
+		ModelKey:        "deepseek-v4-pro",
+		Capability:      "text",
+		BillingMode:     "token_usage",
+		PriceStrategy:   "token",
+		PriceConfigured: true,
+		Enabled:         true,
+	}
+	pricing := &model.ModelPricing{
+		Currency:               "CNY",
+		InputPerMillionMicros:  3_000_000,
+		CachedPerMillionMicros: 25_000,
+		OutputPerMillionMicros: 6_000_000,
+		ExpectedOutputTokens:   2_048,
+		MaxOutputTokens:        16_384,
+	}
+
+	snapshot, err := validateTokenUsageModelBilling(item, pricing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.MaxOutputTokens != 16_384 {
+		t.Fatalf("maximum output tokens = %d, want 16384", snapshot.MaxOutputTokens)
 	}
 }
 
@@ -59,7 +87,7 @@ func TestKuaiziTokenBilledTextModelPublicationRequiresSupplierPrice(t *testing.T
 	pricing := model.ModelPricing{
 		ID: "token-agent-price", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
 		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
-		ExpectedOutputTokens: 8_192, CreatedAt: now, UpdatedAt: now,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 8_192, CreatedAt: now, UpdatedAt: now,
 	}
 	for _, row := range []any{&channel, &item, &pricing} {
 		if err := db.Create(row).Error; err != nil {
@@ -102,6 +130,7 @@ func TestTokenUsageBillingRejectsNonTextAndMissingPrice(t *testing.T) {
 		CachedPerMillionMicros: 25_000,
 		OutputPerMillionMicros: 6_000_000,
 		ExpectedOutputTokens:   16_384,
+		MaxOutputTokens:        16_384,
 	}
 
 	tests := []struct {
@@ -118,7 +147,7 @@ func TestTokenUsageBillingRejectsNonTextAndMissingPrice(t *testing.T) {
 		{name: "zero input price", item: validItem, pricing: func() *model.ModelPricing { value := *validPricing; value.InputPerMillionMicros = 0; return &value }()},
 		{name: "zero output price", item: validItem, pricing: func() *model.ModelPricing { value := *validPricing; value.OutputPerMillionMicros = 0; return &value }()},
 		{name: "negative cached price", item: validItem, pricing: func() *model.ModelPricing { value := *validPricing; value.CachedPerMillionMicros = -1; return &value }()},
-		{name: "missing output ceiling", item: validItem, pricing: func() *model.ModelPricing { value := *validPricing; value.ExpectedOutputTokens = 0; return &value }()},
+		{name: "missing output ceiling", item: validItem, pricing: func() *model.ModelPricing { value := *validPricing; value.MaxOutputTokens = 0; return &value }()},
 	}
 
 	for _, testCase := range tests {
@@ -194,7 +223,7 @@ func TestReserveProxyTokenBillingAtomicallyFreezesMaximumCost(t *testing.T) {
 	pricing := model.ModelPricing{
 		ID: "reserve-token-price", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
 		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
-		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
 	}
 	account := model.CreditAccount{UserID: "reserve-token-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
 	for _, row := range []any{&channel, &item, &pricing, &account} {
@@ -756,7 +785,7 @@ func tokenReservationServiceFixture(t *testing.T) (*Service, *gorm.DB, model.Cre
 	pricing := model.ModelPricing{
 		ID: "idempotent-token-price", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
 		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
-		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
 	}
 	account := model.CreditAccount{UserID: "idempotent-token-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
 	for _, row := range []any{&channel, &item, &pricing, &account} {

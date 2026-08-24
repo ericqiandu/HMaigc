@@ -163,13 +163,26 @@ func decodeFrozenProductionRenderArguments(raw json.RawMessage) (agentruntime.Pr
 	arguments.ArtifactID = strings.TrimSpace(arguments.ArtifactID)
 	arguments.GenerationModel.ChannelID = strings.TrimSpace(arguments.GenerationModel.ChannelID)
 	arguments.GenerationModel.Model = strings.TrimSpace(arguments.GenerationModel.Model)
+	arguments.VideoInputMode = agentruntime.ProductionVideoInputMode(strings.TrimSpace(string(arguments.VideoInputMode)))
+	arguments.VideoInputResourceID = strings.TrimSpace(arguments.VideoInputResourceID)
 	arguments.BillingMode = strings.TrimSpace(arguments.BillingMode)
 	arguments.QuoteFingerprint = strings.TrimSpace(arguments.QuoteFingerprint)
 	if arguments.PlanKey == "" || arguments.PlanVersion < 1 || arguments.ArtifactID == "" || arguments.Attempt < 0 ||
 		arguments.GenerationModel.ChannelID == "" || arguments.GenerationModel.Model == "" ||
+		len(arguments.VideoInputResourceID) > 80 ||
 		(arguments.ImageConfig == nil) == (arguments.VideoConfig == nil) || arguments.AmountMicrocredits < 0 ||
 		arguments.PerTaskAmountMicrocredits < 0 || arguments.PriceVersion < 0 || arguments.Quantity < 1 ||
 		arguments.BillingMode == "" || arguments.QuoteFingerprint == "" {
+		return agentruntime.ProductionRenderArguments{}, errAgentRuntimeProductionRenderInput
+	}
+	if arguments.VideoConfig != nil {
+		arguments.VideoConfig.AspectRatio = strings.TrimSpace(arguments.VideoConfig.AspectRatio)
+		if arguments.VideoConfig.AspectRatio == "" || !arguments.VideoInputMode.Valid() ||
+			(arguments.VideoInputMode == agentruntime.ProductionVideoInputTextToVideo && arguments.VideoInputResourceID != "") ||
+			(arguments.VideoInputMode == agentruntime.ProductionVideoInputStoryboard && arguments.VideoInputResourceID == "") {
+			return agentruntime.ProductionRenderArguments{}, errAgentRuntimeProductionRenderInput
+		}
+	} else if arguments.VideoInputMode != "" || arguments.VideoInputResourceID != "" {
 		return agentruntime.ProductionRenderArguments{}, errAgentRuntimeProductionRenderInput
 	}
 	return arguments, nil

@@ -20,6 +20,7 @@ type ImageRenderConfig struct {
 
 type VideoRenderConfig struct {
 	DurationSeconds int    `json:"durationSeconds"`
+	AspectRatio     string `json:"aspectRatio"`
 	Quality         string `json:"quality"`
 	GenerateAudio   bool   `json:"generateAudio"`
 }
@@ -35,17 +36,30 @@ type FrozenRenderQuote struct {
 	QuoteFingerprint          string `json:"quoteFingerprint"`
 }
 
+type ProductionVideoInputMode string
+
+const (
+	ProductionVideoInputTextToVideo ProductionVideoInputMode = "text_to_video"
+	ProductionVideoInputStoryboard  ProductionVideoInputMode = "storyboard"
+)
+
+func (mode ProductionVideoInputMode) Valid() bool {
+	return mode == ProductionVideoInputTextToVideo || mode == ProductionVideoInputStoryboard
+}
+
 // ProductionRenderArguments are trusted server-frozen approval facts. Model
 // output is decoded through a separate request type and cannot supply Quote or
 // Attempt.
 type ProductionRenderArguments struct {
-	PlanKey         string                   `json:"planKey"`
-	PlanVersion     int                      `json:"planVersion"`
-	ArtifactID      string                   `json:"artifactId"`
-	Attempt         int                      `json:"attempt"`
-	GenerationModel GenerationModelSelection `json:"generationModel"`
-	ImageConfig     *ImageRenderConfig       `json:"imageConfig,omitempty"`
-	VideoConfig     *VideoRenderConfig       `json:"videoConfig,omitempty"`
+	PlanKey              string                   `json:"planKey"`
+	PlanVersion          int                      `json:"planVersion"`
+	ArtifactID           string                   `json:"artifactId"`
+	Attempt              int                      `json:"attempt"`
+	GenerationModel      GenerationModelSelection `json:"generationModel"`
+	VideoInputMode       ProductionVideoInputMode `json:"videoInputMode,omitempty"`
+	VideoInputResourceID string                   `json:"videoInputResourceId,omitempty"`
+	ImageConfig          *ImageRenderConfig       `json:"imageConfig,omitempty"`
+	VideoConfig          *VideoRenderConfig       `json:"videoConfig,omitempty"`
 	FrozenRenderQuote
 }
 
@@ -57,6 +71,13 @@ type ProductionPlanDraft struct {
 	Shots            []ShotPlanDraft       `json:"shots"`
 }
 
+type ProductionShotDeliverable string
+
+const (
+	ProductionShotDeliverableStoryboardImage ProductionShotDeliverable = "storyboard_image"
+	ProductionShotDeliverableVideoClip       ProductionShotDeliverable = "video_clip"
+)
+
 // ReferenceAssetDraft describes a non-timeline visual anchor. It is rendered
 // before dependent storyboard images and never contributes to film duration.
 type ReferenceAssetDraft struct {
@@ -67,14 +88,24 @@ type ReferenceAssetDraft struct {
 }
 
 type ShotPlanDraft struct {
-	ShotKey       string   `json:"shotKey"`
-	Order         int      `json:"order"`
-	DurationMS    int      `json:"durationMs"`
-	ScriptText    string   `json:"scriptText"`
-	ImagePrompt   string   `json:"imagePrompt"`
-	VideoPrompt   string   `json:"videoPrompt"`
-	ReferenceKeys []string `json:"referenceKeys,omitempty"`
-	Dependencies  []string `json:"dependencies"`
+	ShotKey       string                      `json:"shotKey"`
+	Order         int                         `json:"order"`
+	DurationMS    int                         `json:"durationMs"`
+	ScriptText    string                      `json:"scriptText"`
+	Deliverables  []ProductionShotDeliverable `json:"deliverables"`
+	ImagePrompt   string                      `json:"imagePrompt,omitempty"`
+	VideoPrompt   string                      `json:"videoPrompt,omitempty"`
+	ReferenceKeys []string                    `json:"referenceKeys,omitempty"`
+	Dependencies  []string                    `json:"dependencies"`
+}
+
+func (shot ShotPlanDraft) Delivers(deliverable ProductionShotDeliverable) bool {
+	for _, candidate := range shot.Deliverables {
+		if candidate == deliverable {
+			return true
+		}
+	}
+	return false
 }
 
 func (draft ProductionPlanDraft) Validate() error {
@@ -129,8 +160,36 @@ func (draft ProductionPlanDraft) Validate() error {
 		if shot.DurationMS <= 0 {
 			return fmt.Errorf("production plan shot %s duration is invalid", shotKey)
 		}
-		if strings.TrimSpace(shot.ScriptText) == "" || strings.TrimSpace(shot.ImagePrompt) == "" || strings.TrimSpace(shot.VideoPrompt) == "" {
+		if strings.TrimSpace(shot.ScriptText) == "" {
 			return fmt.Errorf("production plan shot %s content is incomplete", shotKey)
+		}
+		if len(shot.Deliverables) == 0 || len(shot.Deliverables) > 2 {
+			return fmt.Errorf("production plan shot %s deliverables are invalid", shotKey)
+		}
+		deliverables := make(map[ProductionShotDeliverable]struct{}, len(shot.Deliverables))
+		for _, deliverable := range shot.Deliverables {
+			switch deliverable {
+			case ProductionShotDeliverableStoryboardImage, ProductionShotDeliverableVideoClip:
+			default:
+				return fmt.Errorf("production plan shot %s deliverable %s is invalid", shotKey, deliverable)
+			}
+			if _, exists := deliverables[deliverable]; exists {
+				return fmt.Errorf("production plan shot %s deliverable %s is duplicated", shotKey, deliverable)
+			}
+			deliverables[deliverable] = struct{}{}
+		}
+		_, deliversStoryboard := deliverables[ProductionShotDeliverableStoryboardImage]
+		_, deliversVideo := deliverables[ProductionShotDeliverableVideoClip]
+		hasImagePrompt := strings.TrimSpace(shot.ImagePrompt) != ""
+		if (deliversStoryboard && !hasImagePrompt) || (!deliversStoryboard && shot.ImagePrompt != "") {
+			return fmt.Errorf("production plan shot %s image prompt does not match deliverables", shotKey)
+		}
+		hasVideoPrompt := strings.TrimSpace(shot.VideoPrompt) != ""
+		if (deliversVideo && !hasVideoPrompt) || (!deliversVideo && shot.VideoPrompt != "") {
+			return fmt.Errorf("production plan shot %s video prompt does not match deliverables", shotKey)
+		}
+		if len(shot.ReferenceKeys) > 0 && !deliversStoryboard {
+			return fmt.Errorf("production plan shot %s references require storyboard_image", shotKey)
 		}
 		seenReferences := make(map[string]struct{}, len(shot.ReferenceKeys))
 		for _, referenceKey := range shot.ReferenceKeys {

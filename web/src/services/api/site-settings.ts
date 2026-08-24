@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import type { LegalDocumentKind } from "@/constants/legal-documents";
+
 const api = axios.create({
     baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api",
     withCredentials: true,
@@ -43,6 +45,17 @@ export type SiteSettings = {
     updatedAt: string;
 };
 
+export type PublicSiteSettings = Omit<
+    SiteSettings,
+    "userAgreement" | "privacyPolicy" | "membershipAgreement" | "updatedBy" | "createdAt"
+>;
+
+export type PublicLegalDocument = {
+    document: LegalDocumentKind;
+    content: string;
+    updatedAt: string;
+};
+
 export type UpdateSiteSettingsInput = Pick<
     SiteSettings,
     | "siteName"
@@ -71,6 +84,7 @@ export type UpdateSiteSettingsInput = Pick<
 export type UpdateLegalSettingsInput = Pick<SiteSettings, "userAgreement" | "privacyPolicy" | "membershipAgreement">;
 
 export const publicSiteSettingsQueryKey = ["public-site-settings"] as const;
+export const publicLegalDocumentQueryKey = (document: LegalDocumentKind) => ["public-legal-document", document] as const;
 export const adminSiteSettingsQueryKey = ["admin-site-settings"] as const;
 
 async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promise<T> {
@@ -87,7 +101,11 @@ async function request<T>(promise: Promise<{ data: BackendEnvelope<T> }>): Promi
 }
 
 export function getPublicSiteSettings() {
-    return request<SiteSettings>(api.get("/public/site"));
+    return request<PublicSiteSettings>(api.get("/public/site"));
+}
+
+export function getPublicLegalDocument(document: LegalDocumentKind, signal?: AbortSignal) {
+    return request<PublicLegalDocument>(api.get(`/public/legal/${encodeURIComponent(document)}`, { signal }));
 }
 
 export function getAdminSiteSettings() {

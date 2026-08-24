@@ -22,6 +22,29 @@ import (
 
 const testReferenceImageDataURL = "data:image/png;base64,aGVsbG8="
 
+func TestRunKuaiziChatCompletionPreservesBillingEvidenceWhenTextIsEmpty(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"id":"chatcmpl-empty-response","choices":[{"message":{"content":""}}],"usage":{"prompt_tokens":3923,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":1408}}}`))
+	}))
+	defer server.Close()
+
+	result, err := runKuaiziChatCompletion(context.Background(), canvasGenerationInput{
+		Prompt: "return JSON",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "deepseek-v4-pro", MaxOutputTokens: 16_384},
+	})
+	if err == nil || !strings.Contains(err.Error(), "没有返回内容") {
+		t.Fatalf("error = %v, want empty text protocol error", err)
+	}
+	if result.ProviderRequestID != "chatcmpl-empty-response" {
+		t.Fatalf("provider request id = %q", result.ProviderRequestID)
+	}
+	if !result.Usage.Available || result.Usage.InputTokens != 3923 || result.Usage.CachedTokens != 1408 || result.Usage.OutputTokens != 1 {
+		t.Fatalf("usage = %#v", result.Usage)
+	}
+}
+
 func TestRunAIOpenPlatformVolcengineVideoTaskUsesCompatibleContract(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	var server *httptest.Server

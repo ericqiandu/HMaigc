@@ -2,6 +2,19 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate, Outlet } from "react-router";
 
 import { legalDocumentRoutes } from "@/constants/legal-documents";
+import {
+    loadAssetsPage,
+    loadCanvasPage,
+    loadCanvasProjectPage,
+    loadHomePage,
+    loadProjectDetailPage,
+    loadProjectsPage,
+    loadSettingsPage,
+    loadSkillsPage,
+    loadTasksPage,
+    loadTeamsPage,
+    loadWalletPage,
+} from "@/lib/route-module-prefetch";
 
 const RequireAuth = lazy(() => import("@/components/auth/require-auth").then((module) => ({ default: module.RequireAuth })));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
@@ -31,25 +44,25 @@ const StorageSettingsPage = lazy(() => import("@/pages/admin/settings/storage-se
 const StoryboardPromptsPage = lazy(() => import("@/pages/admin/storyboard-prompts/storyboard-prompts-page"));
 const UsersPage = lazy(() => import("@/pages/admin/users/users-page"));
 const VoicesPage = lazy(() => import("@/pages/admin/voices/voices-page"));
-const AssetsPage = lazy(() => import("@/pages/assets"));
+const AssetsPage = lazy(loadAssetsPage);
 const LoginPage = lazy(() => import("@/pages/auth/login"));
 const RegisterPage = lazy(() => import("@/pages/auth/register"));
-const CanvasPage = lazy(() => import("@/pages/canvas"));
-const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
+const CanvasPage = lazy(loadCanvasPage);
+const CanvasProjectPage = lazy(loadCanvasProjectPage);
 const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
-const HomePage = lazy(() => import("@/pages/home"));
+const HomePage = lazy(loadHomePage);
 const LegalDocumentPage = lazy(() => import("@/pages/legal/legal-document-page").then((module) => ({ default: module.LegalDocumentPage })));
 const MembershipPage = lazy(() => import("@/pages/membership"));
 const CreditStorePage = lazy(() => import("@/pages/credit-store"));
 const PaymentCheckoutPage = lazy(() => import("@/pages/payment/payment-checkout-page"));
 const NotFound = lazy(() => import("@/pages/not-found"));
-const ProjectDetailPage = lazy(() => import("@/pages/projects/detail"));
-const ProjectsPage = lazy(() => import("@/pages/projects"));
-const SettingsPage = lazy(() => import("@/pages/settings"));
-const SkillsPage = lazy(() => import("@/pages/skills"));
-const TasksPage = lazy(() => import("@/pages/tasks"));
-const TeamsPage = lazy(() => import("@/pages/teams"));
-const WalletPage = lazy(() => import("@/pages/wallet"));
+const ProjectDetailPage = lazy(loadProjectDetailPage);
+const ProjectsPage = lazy(loadProjectsPage);
+const SettingsPage = lazy(loadSettingsPage);
+const SkillsPage = lazy(loadSkillsPage);
+const TasksPage = lazy(loadTasksPage);
+const TeamsPage = lazy(loadTeamsPage);
+const WalletPage = lazy(loadWalletPage);
 
 function RouteLoadingFallback() {
     return (

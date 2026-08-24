@@ -103,8 +103,11 @@ type providerError struct {
 type kuaiziChatCompletionResult struct {
 	Text              string
 	ProviderRequestID string
+	FinishReason      string
 	Usage             TokenUsageFact
 }
+
+var errKuaiziChatCompletionTextMissing = errors.New("文本接口没有返回内容")
 
 type providerHTTPError struct {
 	StatusCode int
@@ -653,11 +656,7 @@ func runKuaiziChatCompletion(ctx context.Context, input canvasGenerationInput) (
 	if err := doJSON(req, &payload); err != nil {
 		return kuaiziChatCompletionResult{}, err
 	}
-	text := extractChatCompletionText(payload)
-	if text == "" {
-		return kuaiziChatCompletionResult{}, errors.New("文本接口没有返回内容")
-	}
-	result := kuaiziChatCompletionResult{Text: text, ProviderRequestID: strings.TrimSpace(stringField(payload, "id"))}
+	result := kuaiziChatCompletionResult{Text: extractChatCompletionText(payload), ProviderRequestID: strings.TrimSpace(stringField(payload, "id"))}
 	if usage, ok := payload["usage"].(map[string]interface{}); ok {
 		result.Usage = TokenUsageFact{
 			InputTokens: firstInt64(usage, "input_tokens", "prompt_tokens"), OutputTokens: firstInt64(usage, "output_tokens", "completion_tokens"), Available: true,
@@ -668,6 +667,9 @@ func runKuaiziChatCompletion(ctx context.Context, input canvasGenerationInput) (
 		if details, detailsOK := usage["prompt_tokens_details"].(map[string]interface{}); detailsOK && result.Usage.CachedTokens == 0 {
 			result.Usage.CachedTokens = firstInt64(details, "cached_tokens")
 		}
+	}
+	if result.Text == "" {
+		return result, errKuaiziChatCompletionTextMissing
 	}
 	return result, nil
 }

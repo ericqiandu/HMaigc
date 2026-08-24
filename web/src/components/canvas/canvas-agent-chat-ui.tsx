@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "antd";
 import { CheckCircle2, CircleAlert, Plus, UserRound, Wrench, X, XCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -24,6 +24,12 @@ export type CanvasAgentChatMessage = {
 };
 
 const WORKING_TEXT = "正在推演...";
+
+function resizeAgentComposerTextarea(element: HTMLTextAreaElement | null) {
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+}
 
 export function AgentChatMessage({
     item,
@@ -222,10 +228,12 @@ export function AgentChatComposer({
     attachments = [],
     disabled,
     sending,
+    running,
     placeholder,
     theme,
     onPromptChange,
     onSubmit,
+    onStop,
     onAddFiles,
     onRemoveAttachment,
     onDeleteBackwardAtStart,
@@ -237,10 +245,12 @@ export function AgentChatComposer({
     attachments?: CanvasAgentChatAttachment[];
     disabled?: boolean;
     sending?: boolean;
+    running?: boolean;
     placeholder: string;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onPromptChange: (value: string) => void;
     onSubmit: () => void;
+    onStop?: () => void;
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
     onDeleteBackwardAtStart?: () => boolean;
@@ -249,7 +259,14 @@ export function AgentChatComposer({
     submitReady?: boolean;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const canSubmit = !disabled && !sending && (submitReady ?? Boolean(prompt.trim() || attachments.length));
+    const canStop = Boolean(running && !sending && onStop);
+
+    useLayoutEffect(() => {
+        resizeAgentComposerTextarea(textareaRef.current);
+    }, [prompt]);
+
     return (
         <div className="canvas-agent-composer-wrap" onWheelCapture={(event) => event.stopPropagation()}>
             <div className="canvas-agent-composer border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
@@ -276,10 +293,14 @@ export function AgentChatComposer({
                 <div className="canvas-agent-composer-input-flow">
                     {selectionSummary}
                     <textarea
+                        ref={textareaRef}
                         value={prompt}
                         aria-label="输入 Agent 指令"
-                        disabled={disabled || sending}
-                        onInput={(event) => onPromptChange(event.currentTarget.value)}
+                        disabled={disabled || sending || running}
+                        onInput={(event) => {
+                            resizeAgentComposerTextarea(event.currentTarget);
+                            onPromptChange(event.currentTarget.value);
+                        }}
                         onPaste={(event) => {
                             if (!onAddFiles) return;
                             const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
@@ -320,7 +341,7 @@ export function AgentChatComposer({
                                     <Button
                                         type="text"
                                         className="canvas-agent-composer-tool"
-                                        disabled={disabled || sending}
+                                        disabled={disabled || sending || running}
                                         style={{ color: theme.node.muted }}
                                         icon={<Plus className="canvas-agent-composer-glyph" strokeWidth={1.8} />}
                                         onClick={() => fileInputRef.current?.click()}
@@ -331,7 +352,12 @@ export function AgentChatComposer({
                         ) : null}
                         {left}
                     </div>
-                    <CanvasSubmitButton state={sending ? "loading" : "ready"} disabled={!canSubmit} onClick={() => void onSubmit()} ariaLabel={sending ? "正在发送" : "发送"} />
+                    <CanvasSubmitButton
+                        state={running ? (sending ? "loading" : "stop") : sending ? "loading" : "ready"}
+                        disabled={running ? !canStop : !canSubmit}
+                        onClick={() => void (running ? onStop?.() : onSubmit())}
+                        ariaLabel={running ? (sending ? "正在停止 Agent" : "停止 Agent") : sending ? "正在发送" : "发送"}
+                    />
                 </div>
             </div>
         </div>

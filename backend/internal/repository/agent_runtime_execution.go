@@ -18,6 +18,7 @@ import (
 
 var ErrAgentRuntimeStepConflict = errors.New("agent runtime step conflict")
 var ErrAgentRuntimeInitializationConflict = errors.New("agent runtime initialization conflict")
+var ErrAgentTimelineConflict = errors.New("agent timeline conflict")
 
 type InitializeAgentRunInput struct {
 	Scope             agentruntime.Scope
@@ -35,6 +36,40 @@ type InitializeAgentRunInput struct {
 type InitializedAgentRun struct {
 	Run     model.AgentRun
 	Created bool
+}
+
+type CreateInitializedAgentRunInput struct {
+	Create     CreateAgentRunInput
+	Initialize InitializeAgentRunInput
+}
+
+func (r *Repository) CreateInitializedAgentRun(input CreateInitializedAgentRunInput) (*InitializedAgentRun, error) {
+	var result *InitializedAgentRun
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		txRepository := New(tx)
+		record, err := txRepository.CreateAgentRun(input.Create)
+		if err != nil {
+			return err
+		}
+		if !record.Created {
+			if record.Run.StateVersion == 0 || record.Run.MaxSteps == 0 || record.Run.LastEventSequence == 0 {
+				return ErrAgentRuntimeInitializationConflict
+			}
+			result = &InitializedAgentRun{Run: record.Run}
+			return nil
+		}
+		input.Initialize.Scope.RunID = record.Run.ID
+		initialized, err := txRepository.InitializeAgentRun(input.Initialize)
+		if err != nil {
+			return err
+		}
+		result = initialized
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 type agentRunInitializationUpdates struct {
@@ -91,7 +126,7 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 			Updates(agentRunInitializationUpdates{
 				MaxSteps: input.MaxSteps, ModelRecordID: input.ModelRecordID, ModelKey: input.ModelKey,
 				ToolSchemaVersion: input.ToolSchemaVersion, RuntimeVersion: input.RuntimeVersion, PolicyVersion: input.PolicyVersion,
-				LastEventSequence: 1, UpdatedAt: input.Now,
+				LastEventSequence: 2, UpdatedAt: input.Now,
 				StateVersion: 1,
 			})
 		if updated.Error != nil {
@@ -108,42 +143,80 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 			Take(&run).Error; err != nil {
 			return err
 		}
+		userMessagePayload, err := json.Marshal(struct {
+			ClientRequestID string `json:"clientRequestId"`
+			Message         string `json:"message"`
+		}{ClientRequestID: run.ClientRequestID, Message: input.UserMessage})
+		if err != nil {
+			return err
+		}
 		if updated.RowsAffected == 0 {
-			if run.StateVersion != 1 || run.MaxSteps != input.MaxSteps || run.ModelRecordID != input.ModelRecordID || run.ModelKey != input.ModelKey || run.ToolSchemaVersion != input.ToolSchemaVersion || run.RuntimeVersion != input.RuntimeVersion || run.PolicyVersion != input.PolicyVersion || run.LastEventSequence != 1 {
+			if run.StateVersion != 1 || run.MaxSteps != input.MaxSteps || run.ModelRecordID != input.ModelRecordID || run.ModelKey != input.ModelKey || run.ToolSchemaVersion != input.ToolSchemaVersion || run.RuntimeVersion != input.RuntimeVersion || run.PolicyVersion != input.PolicyVersion || run.LastEventSequence != 2 {
 				return ErrAgentRuntimeInitializationConflict
 			}
-			var event model.AgentRunEvent
-			if err := tx.Where("run_id = ? AND sequence = 1", input.Scope.RunID).Take(&event).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return ErrAgentRuntimeInitializationConflict
-				}
+			var events []model.AgentRunEvent
+			if err := tx.Where("run_id = ? AND sequence IN ?", input.Scope.RunID, []int64{1, 2}).Order("sequence").Find(&events).Error; err != nil {
 				return err
+			}
+			if len(events) != 2 {
+				return ErrAgentRuntimeInitializationConflict
 			}
 			var checkpoint model.AgentCheckpoint
-			if err := tx.Where("run_id = ? AND sequence = 1", input.Scope.RunID).Take(&checkpoint).Error; err != nil {
+			if err := tx.Where("run_id = ? AND sequence = 2", input.Scope.RunID).Take(&checkpoint).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return ErrAgentRuntimeInitializationConflict
 				}
 				return err
 			}
-			if event.Kind != agentruntime.EventRunCreated || event.PayloadJSON != string(stateJSON) || checkpoint.StateVersion != 1 || checkpoint.StateJSON != string(stateJSON) {
+			var item model.AgentTimelineItem
+			if err := tx.Where("run_id = ? AND ordinal = 1", input.Scope.RunID).Take(&item).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrAgentRuntimeInitializationConflict
+				}
+				return err
+			}
+			if events[0].Kind != agentruntime.EventRunCreated || events[0].PayloadJSON != string(stateJSON) ||
+				events[1].Kind != agentruntime.EventUserMessageAdded || events[1].PayloadJSON != string(userMessagePayload) ||
+				checkpoint.StateVersion != 1 || checkpoint.StateJSON != string(stateJSON) ||
+				item.TenantKind != input.Scope.TenantKind || item.TenantID != input.Scope.TenantID || item.ThreadID != input.Scope.ThreadID ||
+				item.Kind != model.AgentTimelineItemUserMessage || item.Status != model.AgentTimelineItemCompleted ||
+				item.SourceEventSequence != 2 || item.ContentJSON != string(userMessagePayload) {
 				return ErrAgentRuntimeInitializationConflict
 			}
 			result.Run = run
 			return nil
 		}
-		event := model.AgentRunEvent{
+		createdEvent := model.AgentRunEvent{
 			ID: agentFactID("event", input.Scope.RunID, "1"), RunID: input.Scope.RunID, Sequence: 1,
 			Kind: agentruntime.EventRunCreated, PayloadJSON: string(stateJSON), CreatedAt: input.Now,
 		}
-		if err := tx.Create(&event).Error; err != nil {
+		if err := tx.Create(&createdEvent).Error; err != nil {
+			return err
+		}
+		messageEvent := model.AgentRunEvent{
+			ID: agentFactID("event", input.Scope.RunID, "2"), RunID: input.Scope.RunID, Sequence: 2,
+			Kind: agentruntime.EventUserMessageAdded, PayloadJSON: string(userMessagePayload), CreatedAt: input.Now,
+		}
+		if err := tx.Create(&messageEvent).Error; err != nil {
 			return err
 		}
 		checkpoint := model.AgentCheckpoint{
-			ID: agentFactID("checkpoint", input.Scope.RunID, "1"), RunID: input.Scope.RunID, Sequence: 1,
+			ID: agentFactID("checkpoint", input.Scope.RunID, "2"), RunID: input.Scope.RunID, Sequence: 2,
 			StateVersion: 1, StateJSON: string(stateJSON), CreatedAt: input.Now,
 		}
 		if err := tx.Create(&checkpoint).Error; err != nil {
+			return err
+		}
+		completedAt := input.Now
+		item := model.AgentTimelineItem{
+			ID:         agentFactID("timeline", input.Scope.RunID, run.ClientRequestID),
+			TenantKind: input.Scope.TenantKind, TenantID: input.Scope.TenantID,
+			ThreadID: input.Scope.ThreadID, RunID: input.Scope.RunID,
+			Kind: model.AgentTimelineItemUserMessage, Status: model.AgentTimelineItemCompleted,
+			Ordinal: 1, SourceEventSequence: 2, ContentJSON: string(userMessagePayload),
+			StartedAt: input.Now, CompletedAt: &completedAt, CreatedAt: input.Now, UpdatedAt: input.Now,
+		}
+		if err := tx.Create(&item).Error; err != nil {
 			return err
 		}
 		result.Run = run
@@ -169,14 +242,27 @@ func (r *Repository) CommitAgentRuntimeTransition(scope agentruntime.Scope, prev
 		return ErrAgentPayloadTooLarge
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var facts struct {
-			LastEventSequence int64 `gorm:"column:last_event_sequence"`
-		}
-		var completedAt *time.Time
-		if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled {
-			completedAt = &now
-		}
-		result := tx.Raw(`
+		return r.commitAgentRuntimeTransitionTx(tx, scope, previous, transition, string(stateJSON), now)
+	})
+}
+
+func (r *Repository) commitAgentRuntimeTransitionTx(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+	previous agentruntime.RuntimeState,
+	transition agentruntime.RuntimeTransition,
+	stateJSON string,
+	now time.Time,
+) error {
+	state := transition.State
+	var facts struct {
+		LastEventSequence int64 `gorm:"column:last_event_sequence"`
+	}
+	var completedAt *time.Time
+	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled {
+		completedAt = &now
+	}
+	result := tx.Raw(`
 			UPDATE agent_runs
 			   SET state_version = ?, step_number = ?, status = ?, last_event_sequence = last_event_sequence + ?, updated_at = ?, completed_at = ?
 			 WHERE id = ? AND thread_id = ? AND actor_user_id = ? AND state_version = ? AND step_number = ? AND max_steps = ?
@@ -188,36 +274,154 @@ func (r *Repository) CommitAgentRuntimeTransition(scope agentruntime.Scope, prev
 			          AND domain_project_id = ? AND canvas_id = ?
 			   )
 			 RETURNING last_event_sequence`,
-			state.StateVersion, state.StepNumber, state.Status, len(transition.EventKinds), now, completedAt,
-			scope.RunID, scope.ThreadID, scope.ActorUserID, previous.StateVersion, previous.StepNumber, state.MaxSteps, previous.Status,
-			scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID,
-		).Scan(&facts)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			if _, err := r.AgentRunForScope(scope); err != nil {
-				return err
-			}
-			return ErrAgentRuntimeStepConflict
-		}
-		if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, now); err != nil {
+		state.StateVersion, state.StepNumber, state.Status, len(transition.EventKinds), now, completedAt,
+		scope.RunID, scope.ThreadID, scope.ActorUserID, previous.StateVersion, previous.StepNumber, state.MaxSteps, previous.Status,
+		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID,
+	).Scan(&facts)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		if _, err := r.AgentRunForScope(scope); err != nil {
 			return err
 		}
-		if err := persistAgentToolTransition(tx, scope, previous, state, now); err != nil {
+		return ErrAgentRuntimeStepConflict
+	}
+	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, now); err != nil {
+		return err
+	}
+	if err := persistAgentToolTransition(tx, scope, previous, state, now); err != nil {
+		return err
+	}
+	nextTimelineOrdinal, err := nextAgentTimelineOrdinal(tx, scope.RunID)
+	if err != nil {
+		return err
+	}
+	firstSequence := facts.LastEventSequence - int64(len(transition.EventKinds)) + 1
+	for index, kind := range transition.EventKinds {
+		sequence := firstSequence + int64(index)
+		event := model.AgentRunEvent{ID: agentFactID("event", scope.RunID, strconv.FormatInt(sequence, 10)), RunID: scope.RunID, Sequence: sequence, Kind: kind, PayloadJSON: string(stateJSON), CreatedAt: now}
+		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
-		firstSequence := facts.LastEventSequence - int64(len(transition.EventKinds)) + 1
-		for index, kind := range transition.EventKinds {
-			sequence := firstSequence + int64(index)
-			event := model.AgentRunEvent{ID: agentFactID("event", scope.RunID, strconv.FormatInt(sequence, 10)), RunID: scope.RunID, Sequence: sequence, Kind: kind, PayloadJSON: string(stateJSON), CreatedAt: now}
-			if err := tx.Create(&event).Error; err != nil {
-				return err
-			}
+		if err := persistAgentTimelineEvent(tx, scope, previous, state, kind, sequence, &nextTimelineOrdinal, now); err != nil {
+			return err
 		}
-		checkpoint := model.AgentCheckpoint{ID: agentFactID("checkpoint", scope.RunID, strconv.FormatInt(facts.LastEventSequence, 10)), RunID: scope.RunID, Sequence: facts.LastEventSequence, StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now}
-		return tx.Create(&checkpoint).Error
+	}
+	checkpoint := model.AgentCheckpoint{ID: agentFactID("checkpoint", scope.RunID, strconv.FormatInt(facts.LastEventSequence, 10)), RunID: scope.RunID, Sequence: facts.LastEventSequence, StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now}
+	return tx.Create(&checkpoint).Error
+}
+
+func (r *Repository) AppendAgentSteer(
+	scope agentruntime.Scope,
+	request agentruntime.SteerRequest,
+	now time.Time,
+) (agentruntime.RuntimeState, bool, error) {
+	if err := scope.Validate(); err != nil {
+		return agentruntime.RuntimeState{}, false, err
+	}
+	if now.IsZero() {
+		return agentruntime.RuntimeState{}, false, errors.New("agent steer timestamp is required")
+	}
+	var state agentruntime.RuntimeState
+	var replayed bool
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		current, err := loadAgentCheckpointForScope(tx, scope, true)
+		if err != nil {
+			return err
+		}
+		itemID := agentFactID("timeline", scope.RunID, "steer", strings.TrimSpace(request.ClientRequestID))
+		var existing model.AgentTimelineItem
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", itemID).Take(&existing).Error
+		if err == nil {
+			var stored agentruntime.PendingSteer
+			if existing.TenantKind != scope.TenantKind || existing.TenantID != scope.TenantID ||
+				existing.ThreadID != scope.ThreadID || existing.RunID != scope.RunID ||
+				existing.Kind != model.AgentTimelineItemUserMessage || existing.Status != model.AgentTimelineItemCompleted ||
+				json.Unmarshal([]byte(existing.ContentJSON), &stored) != nil ||
+				stored.ClientRequestID != strings.TrimSpace(request.ClientRequestID) || stored.Message != strings.TrimSpace(request.Message) {
+				return agentruntime.ErrSteerConflict
+			}
+			state = current
+			replayed = true
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		transition, domainReplay, err := agentruntime.AppendSteer(current, request)
+		if err != nil {
+			return err
+		}
+		if domainReplay {
+			return ErrAgentTimelineConflict
+		}
+		if err := validateAgentRuntimeTransition(scope, current, transition, now); err != nil {
+			return err
+		}
+		stateJSON, err := json.Marshal(transition.State)
+		if err != nil {
+			return err
+		}
+		if len(stateJSON) > agentEventPayloadLimit {
+			return ErrAgentPayloadTooLarge
+		}
+		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), now); err != nil {
+			return err
+		}
+		state = transition.State
+		return nil
 	})
+	if err != nil {
+		return agentruntime.RuntimeState{}, false, err
+	}
+	return state, replayed, nil
+}
+
+func (r *Repository) InterruptAgentRun(
+	scope agentruntime.Scope,
+	expectedStateVersion int,
+	now time.Time,
+) (agentruntime.RuntimeState, error) {
+	if err := scope.Validate(); err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	if expectedStateVersion < 1 || now.IsZero() {
+		return agentruntime.RuntimeState{}, agentruntime.ErrInterruptConflict
+	}
+	var state agentruntime.RuntimeState
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		current, err := loadAgentCheckpointForScope(tx, scope, true)
+		if err != nil {
+			return err
+		}
+		transition, err := agentruntime.Interrupt(current, expectedStateVersion)
+		if err != nil {
+			return err
+		}
+		if err := validateAgentRuntimeTransition(scope, current, transition, now); err != nil {
+			return err
+		}
+		stateJSON, err := json.Marshal(transition.State)
+		if err != nil {
+			return err
+		}
+		if len(stateJSON) > agentEventPayloadLimit {
+			return ErrAgentPayloadTooLarge
+		}
+		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), now); err != nil {
+			if errors.Is(err, ErrAgentRuntimeStepConflict) {
+				return agentruntime.ErrInterruptConflict
+			}
+			return err
+		}
+		state = transition.State
+		return nil
+	})
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	return state, nil
 }
 
 func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, now time.Time) error {
@@ -518,6 +722,10 @@ func approvalTimeForToolResult(now time.Time, previous agentruntime.RuntimeState
 }
 
 func (r *Repository) LoadAgentCheckpoint(scope agentruntime.Scope) (agentruntime.RuntimeState, error) {
+	return loadAgentCheckpointForScope(r.db, scope, false)
+}
+
+func loadAgentCheckpointForScope(db *gorm.DB, scope agentruntime.Scope, lock bool) (agentruntime.RuntimeState, error) {
 	if err := scope.Validate(); err != nil {
 		return agentruntime.RuntimeState{}, err
 	}
@@ -529,7 +737,7 @@ func (r *Repository) LoadAgentCheckpoint(scope agentruntime.Scope) (agentruntime
 		RunMaxSteps     int                    `gorm:"column:run_max_steps"`
 		RunStatus       agentruntime.RunStatus `gorm:"column:run_status"`
 	}
-	err := r.db.Table("agent_checkpoints").Select(`agent_checkpoints.state_json, agent_checkpoints.state_version,
+	query := db.Table("agent_checkpoints").Select(`agent_checkpoints.state_json, agent_checkpoints.state_version,
 		agent_runs.state_version AS run_state_version, agent_runs.step_number AS run_step_number, agent_runs.max_steps AS run_max_steps, agent_runs.status AS run_status`).
 		Joins("JOIN agent_runs ON agent_runs.id = agent_checkpoints.run_id").
 		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
@@ -538,7 +746,11 @@ func (r *Repository) LoadAgentCheckpoint(scope agentruntime.Scope) (agentruntime
 			AND agent_threads.created_by_user_id = ? AND agent_threads.domain_project_id = ?
 			AND agent_threads.canvas_id = ?`, scope.RunID, scope.ThreadID, scope.ActorUserID,
 			scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID).
-		Order("agent_checkpoints.sequence DESC").Take(&facts).Error
+		Order("agent_checkpoints.sequence DESC")
+	if lock {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err := query.Take(&facts).Error
 	if err != nil {
 		return agentruntime.RuntimeState{}, err
 	}

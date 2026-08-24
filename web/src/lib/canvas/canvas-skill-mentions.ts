@@ -39,6 +39,11 @@ export function expandSkillMentions(prompt: string, skills: PlatformSkill[]) {
     return next;
 }
 
+export function findMentionedSkills(prompt: string, skills: PlatformSkill[]) {
+    if (!prompt.trim()) return [];
+    return skills.filter((skill) => prompt.includes(`@[skill:${skill.dir}]`) || hasNaturalSkillMention(prompt, skill.name));
+}
+
 export function renderSkillPrompt(skill: Pick<PlatformSkill, "name" | "description" | "detail_text">) {
     return [`【技能：${skill.name}】`, skill.description ? `用途：${skill.description}` : "", skill.detail_text ? `技能详情：\n${skill.detail_text}` : "", "请严格执行该技能，只输出结果，不要输出解释性套话。"].filter(Boolean).join("\n\n");
 }
@@ -66,6 +71,16 @@ function replaceNaturalSkillMention(value: string, skill: PlatformSkill) {
     }
 
     return result;
+}
+
+function hasNaturalSkillMention(value: string, name: string) {
+    const token = `@${name}`;
+    let index = value.indexOf(token);
+    while (index >= 0) {
+        if (hasMentionBoundary(value, index + token.length)) return true;
+        index = value.indexOf(token, index + token.length);
+    }
+    return false;
 }
 
 function hasMentionBoundary(value: string, index: number) {

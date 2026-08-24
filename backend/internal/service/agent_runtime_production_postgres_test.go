@@ -40,12 +40,17 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 		Access: agentruntime.AccessGrant{Level: agentruntime.AccessEditor},
 	}
 	now := time.Now().UTC()
+	if _, err := primary.repo.CreateAgentRun(repository.CreateAgentRunInput{
+		Scope: scope, ClientRequestID: "postgres-production-request", Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	plan := model.AgentProductionPlanVersion{
 		ID: "postgres-production-version", PlanKey: "postgres-render-plan",
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID,
 		CreatedByRunID: scope.RunID, Version: 1, Status: model.AgentProductionPlanActive,
 		Title: "跨连接分镜", TargetDurationMS: 5_000, Script: "鲜橙落水。",
-		ShotsJSON:            `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
+		ShotsJSON:            `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
 		ExpectedDeliveryJSON: `{"scripts":1,"storyboardImages":1,"videoClips":1}`, CreatedAt: now, UpdatedAt: now,
 	}
 	artifact := model.AgentProductionArtifact{

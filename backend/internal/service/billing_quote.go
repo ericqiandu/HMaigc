@@ -23,6 +23,7 @@ type TaskBillingQuoteRequest struct {
 
 type TaskBillingQuoteInput struct {
 	Mode                string                 `json:"mode"`
+	ReferenceImageCount int64                  `json:"referenceImageCount"`
 	ReferenceVideoCount int64                  `json:"referenceVideoCount"`
 	Config              TaskBillingQuoteConfig `json:"config"`
 }
@@ -34,6 +35,7 @@ type TaskBillingQuoteConfig struct {
 	Quality                        string `json:"quality"`
 	VideoSeconds                   string `json:"videoSeconds"`
 	VideoQuality                   string `json:"vquality"`
+	VideoGenerateAudio             bool   `json:"videoGenerateAudio"`
 	SuperResolutionEnabled         bool   `json:"videoSuperResolutionEnabled"`
 	SuperResolutionResolution      string `json:"videoSuperResolutionResolution"`
 	SuperResolutionVersion         string `json:"videoSuperResolutionVersion"`
@@ -41,16 +43,27 @@ type TaskBillingQuoteConfig struct {
 }
 
 type TaskBillingQuote struct {
-	AmountMicrocredits            int64  `json:"amountMicrocredits"`
-	PerTaskAmountMicrocredits     int64  `json:"perTaskAmountMicrocredits"`
-	TaskCount                     int64  `json:"taskCount"`
-	PriceVersion                  int64  `json:"priceVersion"`
-	BillingMode                   string `json:"billingMode"`
-	PricingResolution             string `json:"pricingResolution"`
-	PricingInputVariant           string `json:"pricingInputVariant"`
-	Quantity                      int64  `json:"quantity"`
-	EnhancementAmountMicrocredits int64  `json:"enhancementAmountMicrocredits"`
-	QuoteFingerprint              string `json:"quoteFingerprint"`
+	AmountMicrocredits            int64                            `json:"amountMicrocredits"`
+	PerTaskAmountMicrocredits     int64                            `json:"perTaskAmountMicrocredits"`
+	TaskCount                     int64                            `json:"taskCount"`
+	PriceVersion                  int64                            `json:"priceVersion"`
+	BillingMode                   string                           `json:"billingMode"`
+	PricingResolution             string                           `json:"pricingResolution"`
+	PricingInputVariant           string                           `json:"pricingInputVariant"`
+	Quantity                      int64                            `json:"quantity"`
+	EnhancementAmountMicrocredits int64                            `json:"enhancementAmountMicrocredits"`
+	UsageAdjustment               *TaskBillingQuoteUsageAdjustment `json:"usageAdjustment,omitempty"`
+	QuoteFingerprint              string                           `json:"quoteFingerprint"`
+}
+
+type TaskBillingQuoteUsageAdjustment struct {
+	Metric                    string `json:"metric"`
+	ActualQuantity            int64  `json:"actualQuantity"`
+	IncludedQuantity          int64  `json:"includedQuantity"`
+	BillableQuantity          int64  `json:"billableQuantity"`
+	UnitPriceMicrocredits     int64  `json:"unitPriceMicrocredits"`
+	PerTaskAmountMicrocredits int64  `json:"perTaskAmountMicrocredits"`
+	AmountMicrocredits        int64  `json:"amountMicrocredits"`
 }
 
 type QuoteChangedError struct {
@@ -62,22 +75,28 @@ func (e *QuoteChangedError) Error() string {
 }
 
 type billingQuoteFingerprintFacts struct {
-	ChannelID                        string `json:"channelId"`
-	ChannelModelID                   string `json:"channelModelId"`
-	Model                            string `json:"model"`
-	Capability                       string `json:"capability"`
-	BillingMode                      string `json:"billingMode"`
-	PriceVersion                     int64  `json:"priceVersion"`
-	PriceTierID                      string `json:"priceTierId"`
-	PricingResolution                string `json:"pricingResolution"`
-	PricingInputVariant              string `json:"pricingInputVariant"`
-	UnitPriceMicrocredits            int64  `json:"unitPriceMicrocredits"`
-	MultiplierBasisPoints            int64  `json:"multiplierBasisPoints"`
-	Quantity                         int64  `json:"quantity"`
-	AmountMicrocredits               int64  `json:"amountMicrocredits"`
-	EnhancementPricingRuleID         string `json:"enhancementPricingRuleId"`
-	EnhancementUnitPriceMicrocredits int64  `json:"enhancementUnitPriceMicrocredits"`
-	EnhancementAmountMicrocredits    int64  `json:"enhancementAmountMicrocredits"`
+	ChannelID                             string `json:"channelId"`
+	ChannelModelID                        string `json:"channelModelId"`
+	Model                                 string `json:"model"`
+	Capability                            string `json:"capability"`
+	BillingMode                           string `json:"billingMode"`
+	PriceVersion                          int64  `json:"priceVersion"`
+	PriceTierID                           string `json:"priceTierId"`
+	PricingResolution                     string `json:"pricingResolution"`
+	PricingInputVariant                   string `json:"pricingInputVariant"`
+	UnitPriceMicrocredits                 int64  `json:"unitPriceMicrocredits"`
+	MultiplierBasisPoints                 int64  `json:"multiplierBasisPoints"`
+	Quantity                              int64  `json:"quantity"`
+	AmountMicrocredits                    int64  `json:"amountMicrocredits"`
+	EnhancementPricingRuleID              string `json:"enhancementPricingRuleId"`
+	EnhancementUnitPriceMicrocredits      int64  `json:"enhancementUnitPriceMicrocredits"`
+	EnhancementAmountMicrocredits         int64  `json:"enhancementAmountMicrocredits"`
+	UsageAdjustmentMetric                 string `json:"usageAdjustmentMetric"`
+	UsageAdjustmentActualQuantity         int64  `json:"usageAdjustmentActualQuantity"`
+	UsageAdjustmentIncludedQuantity       int64  `json:"usageAdjustmentIncludedQuantity"`
+	UsageAdjustmentBillableQuantity       int64  `json:"usageAdjustmentBillableQuantity"`
+	UsageAdjustmentUserUnitMicrocredits   int64  `json:"usageAdjustmentUserUnitMicrocredits"`
+	UsageAdjustmentUserAmountMicrocredits int64  `json:"usageAdjustmentUserAmountMicrocredits"`
 }
 
 func (s *Service) QuoteTaskBilling(userID string, request TaskBillingQuoteRequest) (*TaskBillingQuote, error) {
@@ -123,8 +142,11 @@ func billingUsageFromQuoteInput(capability string, modelKey string, input TaskBi
 	config := input.Config
 	switch capability {
 	case "image":
+		if input.ReferenceImageCount < 0 {
+			return BillingUsage{}, BadAuthRequest("参考图片数量无效")
+		}
 		return BillingUsage{
-			Quantity: 1,
+			Quantity: 1, InputImageCount: input.ReferenceImageCount,
 			Resolution: imagePricingResolutionFromConfig(map[string]any{
 				"size": config.Size, "quality": config.Quality,
 			}),
@@ -142,6 +164,8 @@ func billingUsageFromQuoteInput(capability string, modelKey string, input TaskBi
 		}
 		if _, spec, managed := kuaiziProviderFamilyForModel(modelKey); managed && spec.Capability == "video" && input.ReferenceVideoCount > 0 {
 			usage.InputVariant = "reference_video"
+		} else if managed && spec.Capability == "video" && config.VideoGenerateAudio {
+			usage.InputVariant = "standard_audio"
 		}
 		return usage, nil
 	default:
@@ -175,13 +199,26 @@ func taskBillingQuoteFromOrder(order *model.BillingOrder, taskCount int64) (*Tas
 	if err != nil {
 		return nil, err
 	}
-	return &TaskBillingQuote{
+	quote := &TaskBillingQuote{
 		AmountMicrocredits: amount, PerTaskAmountMicrocredits: order.AmountMicrocredits,
 		TaskCount: taskCount, PriceVersion: order.PriceVersion, BillingMode: order.BillingMode,
 		PricingResolution: order.PricingResolution, PricingInputVariant: order.PricingInputVariant,
 		Quantity: order.Quantity, EnhancementAmountMicrocredits: enhancementAmount,
 		QuoteFingerprint: fingerprint,
-	}, nil
+	}
+	if order.UsageAdjustmentMetric != "" {
+		adjustmentAmount, multiplyErr := multiplyQuoteAmount(order.UsageAdjustmentUserAmountMicrocredits, taskCount)
+		if multiplyErr != nil {
+			return nil, multiplyErr
+		}
+		quote.UsageAdjustment = &TaskBillingQuoteUsageAdjustment{
+			Metric: order.UsageAdjustmentMetric, ActualQuantity: order.UsageAdjustmentActualQuantity,
+			IncludedQuantity: order.UsageAdjustmentIncludedQuantity, BillableQuantity: order.UsageAdjustmentBillableQuantity,
+			UnitPriceMicrocredits:     order.UsageAdjustmentUserUnitMicrocredits,
+			PerTaskAmountMicrocredits: order.UsageAdjustmentUserAmountMicrocredits, AmountMicrocredits: adjustmentAmount,
+		}
+	}
+	return quote, nil
 }
 
 func validateTaskBillingQuoteConfirmation(request CreateTaskRequest, order *model.BillingOrder) error {
@@ -209,8 +246,14 @@ func billingOrderQuoteFingerprint(order *model.BillingOrder) (string, error) {
 		PricingInputVariant: order.PricingInputVariant, UnitPriceMicrocredits: order.UnitPriceMicrocredits,
 		MultiplierBasisPoints: order.MultiplierBasisPoints, Quantity: order.Quantity,
 		AmountMicrocredits: order.AmountMicrocredits, EnhancementPricingRuleID: order.EnhancementPricingRuleID,
-		EnhancementUnitPriceMicrocredits: order.EnhancementUnitPriceMicrocredits,
-		EnhancementAmountMicrocredits:    order.EnhancementAmountMicrocredits,
+		EnhancementUnitPriceMicrocredits:      order.EnhancementUnitPriceMicrocredits,
+		EnhancementAmountMicrocredits:         order.EnhancementAmountMicrocredits,
+		UsageAdjustmentMetric:                 order.UsageAdjustmentMetric,
+		UsageAdjustmentActualQuantity:         order.UsageAdjustmentActualQuantity,
+		UsageAdjustmentIncludedQuantity:       order.UsageAdjustmentIncludedQuantity,
+		UsageAdjustmentBillableQuantity:       order.UsageAdjustmentBillableQuantity,
+		UsageAdjustmentUserUnitMicrocredits:   order.UsageAdjustmentUserUnitMicrocredits,
+		UsageAdjustmentUserAmountMicrocredits: order.UsageAdjustmentUserAmountMicrocredits,
 	}
 	encoded, err := json.Marshal(facts)
 	if err != nil {

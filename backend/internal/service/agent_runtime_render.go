@@ -75,6 +75,9 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if plan.Status != model.AgentProductionPlanActive {
 		return nil, newAgentProductionRenderInputError("production_plan_version_conflict", "plan version is not active")
 	}
+	if _, err := decodeStoredAgentProductionPlan(*plan); err != nil {
+		return nil, newAgentProductionRenderInputError("production_plan_invalid", err.Error())
+	}
 	artifacts, err := s.repo.AgentProductionArtifactsForVersion(scope, request.PlanKey, request.PlanVersion)
 	if err != nil {
 		return nil, err
@@ -101,6 +104,10 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if err := validateProductionRenderCapabilities(request, *artifact, callable); err != nil {
 		return nil, err
 	}
+	videoInputMode, videoInputResourceID, err := s.freezeProductionVideoInputResource(scope, request, *artifact, callable)
+	if err != nil {
+		return nil, err
+	}
 	quoteRequest, err := productionRenderQuoteRequest(scope.CanvasID, request, *artifact)
 	if err != nil {
 		return nil, err
@@ -112,7 +119,9 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	frozen := agentruntime.ProductionRenderArguments{
 		PlanKey: request.PlanKey, PlanVersion: request.PlanVersion, ArtifactID: request.ArtifactID,
 		Attempt: artifact.Attempt, GenerationModel: request.GenerationModel,
-		ImageConfig: request.ImageConfig, VideoConfig: request.VideoConfig,
+		VideoInputMode:       videoInputMode,
+		VideoInputResourceID: videoInputResourceID,
+		ImageConfig:          request.ImageConfig, VideoConfig: request.VideoConfig,
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: quote.AmountMicrocredits, PerTaskAmountMicrocredits: quote.PerTaskAmountMicrocredits,
 			PriceVersion: quote.PriceVersion, BillingMode: quote.BillingMode,
@@ -121,6 +130,33 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 		},
 	}
 	return json.Marshal(frozen)
+}
+
+func (s *Service) freezeProductionVideoInputResource(
+	scope agentruntime.Scope,
+	request agentProductionRenderRequest,
+	artifact model.AgentProductionArtifact,
+	callable agentRuntimeCallableModelFact,
+) (agentruntime.ProductionVideoInputMode, string, error) {
+	if artifact.Kind != model.AgentProductionArtifactVideoClip {
+		return "", "", nil
+	}
+	resource, err := s.productionStoryboardResource(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: request.PlanKey, PlanVersion: request.PlanVersion,
+	}, artifact)
+	if err == nil {
+		return agentruntime.ProductionVideoInputStoryboard, resource.ID, nil
+	}
+	if !errors.Is(err, errProductionPrerequisiteAssetMissing) {
+		return "", "", err
+	}
+	if callable.ProviderCapabilities != nil && callable.ProviderCapabilities.SupportsTextToVideo {
+		return agentruntime.ProductionVideoInputTextToVideo, "", nil
+	}
+	return "", "", newAgentProductionRenderInputError(
+		"production_prerequisite_missing",
+		"the selected video model requires a ready storyboard image for the same shot",
+	)
 }
 
 func (s *Service) validatePreviousProductionAttemptForRetry(scope agentruntime.Scope, artifact model.AgentProductionArtifact) error {
@@ -209,11 +245,14 @@ func validateProductionRenderCapabilities(request agentProductionRenderRequest, 
 		if !containsString(capabilities.Resolutions, request.VideoConfig.Quality) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video quality is not published by provider capabilities")
 		}
+		if !containsString(capabilities.Ratios, request.VideoConfig.AspectRatio) {
+			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video aspect ratio is not published by provider capabilities")
+		}
 		if (capabilities.DurationMin > 0 && request.VideoConfig.DurationSeconds < capabilities.DurationMin) ||
 			(capabilities.DurationMax > 0 && request.VideoConfig.DurationSeconds > capabilities.DurationMax) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "video duration is outside provider capabilities")
 		}
-		if request.VideoConfig.GenerateAudio && !capabilities.SupportsGeneratedAudio {
+		if request.VideoConfig.GenerateAudio && !providerGeneratedAudioSupported(capabilities.SupportsGeneratedAudio, capabilities.GeneratedAudioResolutions, request.VideoConfig.Quality) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "generated audio is not supported by provider capabilities")
 		}
 	default:
@@ -249,8 +288,9 @@ func decodeAgentProductionRenderRequest(raw json.RawMessage) (agentProductionRen
 		}
 	}
 	if request.VideoConfig != nil {
+		request.VideoConfig.AspectRatio = strings.TrimSpace(request.VideoConfig.AspectRatio)
 		request.VideoConfig.Quality = strings.TrimSpace(request.VideoConfig.Quality)
-		if request.VideoConfig.DurationSeconds < 1 || request.VideoConfig.DurationSeconds > 30 || request.VideoConfig.Quality == "" {
+		if request.VideoConfig.DurationSeconds < 1 || request.VideoConfig.DurationSeconds > 30 || request.VideoConfig.AspectRatio == "" || request.VideoConfig.Quality == "" {
 			return agentProductionRenderRequest{}, newAgentProductionRenderInputError("generation_parameter_unsupported", "video config is invalid")
 		}
 	}
@@ -275,7 +315,9 @@ func productionRenderQuoteRequest(canvasID string, request agentProductionRender
 			return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "video config is invalid")
 		}
 		config.VideoSeconds = strconv.Itoa(request.VideoConfig.DurationSeconds)
+		config.Size = request.VideoConfig.AspectRatio
 		config.VideoQuality = request.VideoConfig.Quality
+		config.VideoGenerateAudio = request.VideoConfig.GenerateAudio
 	default:
 		return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "artifact kind is unsupported")
 	}

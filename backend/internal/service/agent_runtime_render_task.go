@@ -159,18 +159,37 @@ func (s *Service) productionRenderTaskInput(
 	if arguments.VideoConfig == nil {
 		return canvasGenerationInput{}, "", errAgentRuntimeProductionRenderInput
 	}
-	resource, err := s.productionStoryboardResource(scope, arguments, artifact)
-	if err != nil {
-		return canvasGenerationInput{}, "", err
-	}
 	input.Mode = "video"
 	input.Config.VideoSeconds = strconv.Itoa(arguments.VideoConfig.DurationSeconds)
+	input.Config.Size = arguments.VideoConfig.AspectRatio
 	input.Config.VQuality = arguments.VideoConfig.Quality
 	input.Config.VideoGenerateAudio = strconv.FormatBool(arguments.VideoConfig.GenerateAudio)
-	input.ReferenceImages = []providerMedia{{
-		ID: resource.ID, Name: resource.ID, Type: "image", URL: "/api/resources/" + resource.ID + "/file",
-		StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType,
-	}}
+	switch arguments.VideoInputMode {
+	case agentruntime.ProductionVideoInputTextToVideo:
+		if arguments.VideoInputResourceID != "" {
+			return canvasGenerationInput{}, "", errAgentRuntimeProductionRenderInput
+		}
+	case agentruntime.ProductionVideoInputStoryboard:
+		if arguments.VideoInputResourceID == "" {
+			return canvasGenerationInput{}, "", errAgentRuntimeProductionRenderInput
+		}
+		resource, err := s.productionResourceForScope(scope, arguments.VideoInputResourceID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return canvasGenerationInput{}, "", errProductionPrerequisiteAssetMissing
+			}
+			return canvasGenerationInput{}, "", err
+		}
+		if resource.Status != model.ResourceStatusReady || resource.Kind != "image" {
+			return canvasGenerationInput{}, "", errProductionPrerequisiteAssetMissing
+		}
+		input.ReferenceImages = []providerMedia{{
+			ID: resource.ID, Name: resource.ID, Type: "image", URL: "/api/resources/" + resource.ID + "/file",
+			StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType,
+		}}
+	default:
+		return canvasGenerationInput{}, "", errAgentRuntimeProductionRenderInput
+	}
 	return input, "canvas_video", nil
 }
 

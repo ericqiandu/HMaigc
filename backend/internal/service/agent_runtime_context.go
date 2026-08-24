@@ -26,14 +26,15 @@ type agentRuntimeCallableModelFact struct {
 }
 
 type agentRuntimeProductionPlanFact struct {
-	PlanKey          string                             `json:"planKey"`
-	PlanVersion      int                                `json:"planVersion"`
-	Title            string                             `json:"title"`
-	TargetDurationMS int                                `json:"targetDurationMs"`
-	Script           string                             `json:"script"`
-	References       []agentruntime.ReferenceAssetDraft `json:"references"`
-	Shots            []agentruntime.ShotPlanDraft       `json:"shots"`
-	Artifacts        []agentProductionArtifactResult    `json:"artifacts"`
+	PlanKey           string                             `json:"planKey"`
+	PlanVersion       int                                `json:"planVersion"`
+	Title             string                             `json:"title"`
+	TargetDurationMS  int                                `json:"targetDurationMs"`
+	Script            string                             `json:"script"`
+	References        []agentruntime.ReferenceAssetDraft `json:"references"`
+	Shots             []agentruntime.ShotPlanDraft       `json:"shots"`
+	Artifacts         []agentProductionArtifactResult    `json:"artifacts"`
+	CommitArtifactIDs []string                           `json:"commitArtifactIds"`
 }
 
 func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState) (string, error) {
@@ -53,7 +54,18 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	if err != nil {
 		return "", err
 	}
-	return encodeAgentRuntimeModelPrompt(scope, state, canvas.Revision, models, productionPlan)
+	var deliveryEvidence *agentruntime.DeliveryEvidence
+	var deliveryVerification *agentruntime.DeliveryVerification
+	if state.ExpectedDelivery != nil {
+		evidence, evidenceErr := s.agentRuntimeDeliveryEvidence(scope, state.FinalMessage)
+		if evidenceErr != nil {
+			return "", evidenceErr
+		}
+		verification := agentruntime.VerifyDelivery(*state.ExpectedDelivery, evidence)
+		deliveryEvidence = &evidence
+		deliveryVerification = &verification
+	}
+	return encodeAgentRuntimeModelPrompt(scope, state, canvas.Revision, models, productionPlan, deliveryEvidence, deliveryVerification)
 }
 
 func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*agentRuntimeProductionPlanFact, error) {
@@ -72,13 +84,15 @@ func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*age
 	fact := &agentRuntimeProductionPlanFact{
 		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, Title: record.Plan.Title,
 		TargetDurationMS: record.Plan.TargetDurationMS, Script: record.Plan.Script, References: references, Shots: shots,
-		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)),
+		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)), CommitArtifactIDs: make([]string, 0, len(record.Artifacts)),
 	}
 	for _, artifact := range record.Artifacts {
 		fact.Artifacts = append(fact.Artifacts, agentProductionArtifactResult{
 			ArtifactID: artifact.ID, Kind: artifact.Kind, ReferenceKey: artifact.ReferenceKey, ShotKey: artifact.ShotKey, Status: artifact.Status,
 		})
+		fact.CommitArtifactIDs = append(fact.CommitArtifactIDs, artifact.ID)
 	}
+	sort.Strings(fact.CommitArtifactIDs)
 	return fact, nil
 }
 
@@ -130,11 +144,19 @@ func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntime
 	return result, nil
 }
 
-func encodeAgentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState, canvasRevision int64, models []agentRuntimeCallableModelFact, productionPlan *agentRuntimeProductionPlanFact) (string, error) {
+func encodeAgentRuntimeModelPrompt(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	canvasRevision int64,
+	models []agentRuntimeCallableModelFact,
+	productionPlan *agentRuntimeProductionPlanFact,
+	deliveryEvidence *agentruntime.DeliveryEvidence,
+	deliveryVerification *agentruntime.DeliveryVerification,
+) (string, error) {
 	context := agentRuntimeModelContext{
 		RunID: scope.RunID, CanvasID: scope.CanvasID, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
-		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery,
-		Verification: state.Verification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
+		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
+		Verification: deliveryVerification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
 		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableModels: models,
 		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), ProductionPlan: productionPlan,
 	}
@@ -186,7 +208,7 @@ func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime
 	if err := validateAgentRuntimeCallableModels(frozen.CallableModels); err != nil {
 		return agentRuntimeModelContext{}, err
 	}
-	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CanvasRevision, frozen.CallableModels, frozen.ProductionPlan)
+	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CanvasRevision, frozen.CallableModels, frozen.ProductionPlan, frozen.DeliveryEvidence, frozen.Verification)
 	if err != nil {
 		return agentRuntimeModelContext{}, err
 	}
@@ -215,8 +237,23 @@ func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) 
 		seen[key] = struct{}{}
 		previous = key
 		priced := item.UnitPriceMicrocredits > 0
+		usageMetrics := make(map[string]struct{}, len(item.PriceTiers))
 		for _, tier := range item.PriceTiers {
-			if (strings.TrimSpace(tier.Resolution) == "" && strings.TrimSpace(tier.InputVariant) == "") || tier.UnitPriceMicrocredits <= 0 {
+			resolution := strings.TrimSpace(tier.Resolution)
+			inputVariant := strings.TrimSpace(tier.InputVariant)
+			usageMetric := strings.ToLower(strings.TrimSpace(tier.UsageMetric))
+			if tier.UnitPriceMicrocredits <= 0 {
+				return errors.New("agent callable model pricing facts are invalid")
+			}
+			if usageMetric != "" {
+				if usageMetric != inputImageUsageMetric || item.Capability != "image" || item.BillingMode != "fixed_request" || tier.IncludedQuantity < 0 || resolution != "" || inputVariant != "" {
+					return errors.New("agent callable model pricing facts are invalid")
+				}
+				if _, duplicate := usageMetrics[usageMetric]; duplicate {
+					return errors.New("agent callable model pricing facts are invalid")
+				}
+				usageMetrics[usageMetric] = struct{}{}
+			} else if resolution == "" && inputVariant == "" {
 				return errors.New("agent callable model pricing facts are invalid")
 			}
 			priced = true

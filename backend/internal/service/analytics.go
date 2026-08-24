@@ -135,6 +135,7 @@ type ModelPricingRequest struct {
 	ExpectedInputTokens    int64                     `json:"expectedInputTokens"`
 	ExpectedOutputTokens   int64                     `json:"expectedOutputTokens"`
 	ExpectedCachedTokens   int64                     `json:"expectedCachedTokens"`
+	MaxOutputTokens        int64                     `json:"maxOutputTokens"`
 	PerRequestMicros       int64                     `json:"perRequestMicros"`
 	PerMediaMicros         int64                     `json:"perMediaMicros"`
 	PerVideoSecondMicros   int64                     `json:"perVideoSecondMicros"`
@@ -143,6 +144,8 @@ type ModelPricingRequest struct {
 
 type ModelPricingTierRequest struct {
 	Specification      string `json:"specification"`
+	UsageMetric        string `json:"usageMetric"`
+	IncludedQuantity   int64  `json:"includedQuantity"`
 	SupplierCostMicros int64  `json:"supplierCostMicros"`
 }
 
@@ -441,6 +444,7 @@ func (s *Service) SaveModelPricing(actor *model.User, id string, req ModelPricin
 	pricing.ExpectedInputTokens = req.ExpectedInputTokens
 	pricing.ExpectedOutputTokens = req.ExpectedOutputTokens
 	pricing.ExpectedCachedTokens = req.ExpectedCachedTokens
+	pricing.MaxOutputTokens = req.MaxOutputTokens
 	pricing.PerRequestMicros = req.PerRequestMicros
 	pricing.PerMediaMicros = req.PerMediaMicros
 	pricing.PerVideoSecondMicros = req.PerVideoSecondMicros
@@ -450,6 +454,7 @@ func (s *Service) SaveModelPricing(actor *model.User, id string, req ModelPricin
 	for _, tier := range tiers {
 		tierModels = append(tierModels, model.ModelPricingTier{
 			ID: newID(), ModelPricingID: pricing.ID, Specification: tier.Specification,
+			UsageMetric: tier.UsageMetric, IncludedQuantity: tier.IncludedQuantity,
 			SupplierCostMicros: tier.SupplierCostMicros, CreatedAt: now, UpdatedAt: now,
 		})
 	}
@@ -468,21 +473,40 @@ func (s *Service) DeleteModelPricing(actor *model.User, id string) error {
 
 func hasNegativePricing(req ModelPricingRequest) bool {
 	return req.InputPerMillionMicros < 0 || req.OutputPerMillionMicros < 0 || req.CachedPerMillionMicros < 0 ||
-		req.ExpectedInputTokens < 0 || req.ExpectedOutputTokens < 0 || req.ExpectedCachedTokens < 0 ||
+		req.ExpectedInputTokens < 0 || req.ExpectedOutputTokens < 0 || req.ExpectedCachedTokens < 0 || req.MaxOutputTokens < 0 ||
 		req.PerRequestMicros < 0 || req.PerMediaMicros < 0 || req.PerVideoSecondMicros < 0
 }
 
 func normalizeModelPricingTiers(requests []ModelPricingTierRequest) ([]ModelPricingTierRequest, error) {
 	tiers := make([]ModelPricingTierRequest, 0, len(requests))
 	seen := make(map[string]struct{}, len(requests))
+	seenUsageMetrics := make(map[string]struct{}, len(requests))
 	for _, request := range requests {
 		request.Specification = strings.TrimSpace(request.Specification)
+		request.UsageMetric = strings.ToLower(strings.TrimSpace(request.UsageMetric))
 		key := strings.ToLower(request.Specification)
 		if request.Specification == "" || len(request.Specification) > 64 || request.SupplierCostMicros < 0 {
 			return nil, BadAuthRequest("规格成本配置格式无效")
 		}
+		if request.IncludedQuantity < 0 {
+			return nil, BadAuthRequest("输入图片免费数量不能小于 0")
+		}
 		if _, exists := seen[key]; exists {
 			return nil, BadAuthRequest("同一成本规格不能重复")
+		}
+		if request.UsageMetric != "" {
+			if request.UsageMetric != inputImageUsageMetric {
+				return nil, BadAuthRequest("不支持的用量成本指标：" + request.UsageMetric)
+			}
+			if request.SupplierCostMicros <= 0 {
+				return nil, BadAuthRequest("输入图片超额成本必须大于 0")
+			}
+			if _, exists := seenUsageMetrics[request.UsageMetric]; exists {
+				return nil, BadAuthRequest("同一用量成本不能重复")
+			}
+			seenUsageMetrics[request.UsageMetric] = struct{}{}
+		} else if request.IncludedQuantity != 0 {
+			return nil, BadAuthRequest("普通成本规格不能配置免费数量")
 		}
 		seen[key] = struct{}{}
 		tiers = append(tiers, request)
@@ -970,8 +994,39 @@ func (s *Service) estimateCallCost(log *model.ApiCallLog) {
 	cost += log.CachedTokens * pricing.CachedPerMillionMicros / 1_000_000
 	cost += int64(log.MediaCount) * pricing.PerMediaMicros
 	cost += int64(log.VideoSeconds) * pricing.PerVideoSecondMicros
+	usageTier, usageTierErr := supplierInputImageUsageTier(pricing.Tiers)
+	if usageTierErr != nil {
+		log.CostAvailable = false
+		log.CostCalculationError = usageTierErr.Error()
+		log.Currency = pricing.Currency
+		return
+	}
+	usageCostFactAvailable := log.Billable
+	if pricing.PerMediaMicros > 0 {
+		usageCostFactAvailable = log.MediaCount > 0
+	}
+	if usageTier != nil && usageCostFactAvailable {
+		adjustment, adjustmentErr := calculateMediaInputUsageAdjustment(
+			usageTier.UsageMetric, int64(log.InputImageCount), usageTier.IncludedQuantity, usageTier.SupplierCostMicros,
+		)
+		if adjustmentErr != nil {
+			log.CostAvailable = false
+			log.CostCalculationError = adjustmentErr.Error()
+			log.Currency = pricing.Currency
+			return
+		}
+		const maxInt64 = int64(^uint64(0) >> 1)
+		if cost < 0 || adjustment.Amount > maxInt64-cost {
+			log.CostAvailable = false
+			log.CostCalculationError = "上游成本金额溢出"
+			log.Currency = pricing.Currency
+			return
+		}
+		cost += adjustment.Amount
+	}
 	log.EstimatedCostMicros = cost
 	log.CostAvailable = true
+	log.CostCalculationError = ""
 	log.Currency = pricing.Currency
 }
 
@@ -1037,6 +1092,8 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 			log.MediaCount = len(data)
 		} else if images, ok := payload["images"].([]any); ok {
 			log.MediaCount = len(images)
+		} else if imageURLs, ok := payload["image_urls"].([]any); ok {
+			log.MediaCount = len(imageURLs)
 		}
 	}
 	if log.Capability == "audio" && log.Status == model.ApiCallStatusSucceeded {

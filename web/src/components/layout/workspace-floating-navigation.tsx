@@ -2,6 +2,7 @@ import { Home } from "lucide-react";
 import { NavLink } from "react-router";
 
 import { navigationTools } from "@/constant/navigation-tools";
+import { prefetchRouteModule } from "@/lib/route-module-prefetch";
 import { cn } from "@/lib/utils";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -16,6 +17,8 @@ export function WorkspaceFloatingNavigation() {
             <NavLink
                 to="/"
                 end
+                onPointerEnter={() => requestRouteModulePrefetch("/")}
+                onFocus={() => requestRouteModulePrefetch("/")}
                 className={({ isActive }) => cn("workspace-floating-navigation-link", isActive && "is-active")}
                 aria-label="首页"
                 title="首页"
@@ -31,6 +34,8 @@ export function WorkspaceFloatingNavigation() {
                     <NavLink
                         key={tool.slug}
                         to={`/${tool.slug}`}
+                        onPointerEnter={() => requestRouteModulePrefetch(`/${tool.slug}`)}
+                        onFocus={() => requestRouteModulePrefetch(`/${tool.slug}`)}
                         className={({ isActive }) => cn("workspace-floating-navigation-link", isActive && "is-active")}
                         aria-label={tool.label}
                         title={tool.label}
@@ -44,4 +49,10 @@ export function WorkspaceFloatingNavigation() {
             })}
         </nav>
     );
+}
+
+function requestRouteModulePrefetch(pathname: string) {
+    void prefetchRouteModule(pathname).catch((error: unknown) => {
+        console.warn("路由模块预取失败", { pathname, error });
+    });
 }

@@ -38,17 +38,31 @@ func (s *Service) processKuaiziCompatibleTask(ctx context.Context, task model.Ta
 	}
 	input.Config.BaseURL = runtime.BaseURL
 	input.Config.APIKey = apiKey
-	spec, ok := kuaiziProviderModelSpec(task.Model)
+	family, spec, ok := kuaiziProviderFamilyForModel(task.Model)
 	if !ok {
 		return nil, fmt.Errorf("筷子科技模型未登记：%s", task.Model)
 	}
 	switch spec.Capability {
 	case "video":
-		input.Config.InterfaceType = "ai-open-platform-video-volcengine"
-		return runAIOpenPlatformVolcengineVideoTask(ctx, input)
+		switch family {
+		case "seedance":
+			input.Config.InterfaceType = "ai-open-platform-video-volcengine"
+			return runAIOpenPlatformVolcengineVideoTask(ctx, input)
+		case "kling":
+			return runKuaiziKlingTask(ctx, input)
+		default:
+			return nil, fmt.Errorf("筷子科技视频模型系列未实现：%s", family)
+		}
 	case "image":
 		input.Mode = "image"
-		return runKuaiziGPTImage2Task(ctx, input)
+		switch family {
+		case "gpt-image2":
+			return runKuaiziGPTImage2Task(ctx, input)
+		case "seedream":
+			return runKuaiziSeedreamTask(ctx, input)
+		default:
+			return nil, fmt.Errorf("筷子科技图片模型系列未实现：%s", family)
+		}
 	case "text":
 		input.Mode = "text"
 		input.Config.InterfaceType = string(model.ChannelInterfaceChatCompletion)

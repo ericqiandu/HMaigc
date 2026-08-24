@@ -75,14 +75,14 @@ func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.Mode
 	if item.BillingMode != "token_usage" || item.PriceStrategy != "token" || item.UnitPriceMicrocredits != 0 || !item.PriceConfigured {
 		return TokenPricingSnapshot{}, errors.New("Token 用量计费模型配置不完整")
 	}
-	if pricing == nil || strings.ToUpper(strings.TrimSpace(pricing.Currency)) != "CNY" || pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.ExpectedOutputTokens <= 0 {
+	if pricing == nil || strings.ToUpper(strings.TrimSpace(pricing.Currency)) != "CNY" || pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.MaxOutputTokens <= 0 {
 		return TokenPricingSnapshot{}, errors.New("Token 供应商价格配置不完整")
 	}
 	return TokenPricingSnapshot{
 		InputPerMillionMicros:  pricing.InputPerMillionMicros,
 		CachedPerMillionMicros: pricing.CachedPerMillionMicros,
 		OutputPerMillionMicros: pricing.OutputPerMillionMicros,
-		MaxOutputTokens:        pricing.ExpectedOutputTokens,
+		MaxOutputTokens:        pricing.MaxOutputTokens,
 	}, nil
 }
 

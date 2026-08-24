@@ -14,6 +14,7 @@ import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { resolveVideoGenerationMode, videoModeOperation } from "@/lib/canvas/canvas-video-generation-mode";
 import { normalizeVideoConfigForModel } from "@/lib/video-model-capabilities";
+import { resolveMediaAspectRatio, resolveVideoResolution } from "@/lib/generation-defaults";
 
 export async function runBackendCanvasGenerationTask({
     projectId,
@@ -344,10 +345,10 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         ...config,
         model,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: node?.metadata?.size || config.size || defaultConfig.size,
+        size: mode === "image" || mode === "video" ? resolveMediaAspectRatio(node?.metadata?.size) : node?.metadata?.size || config.size || defaultConfig.size,
         transparentBackground: (node?.metadata?.transparentBackground || config.transparentBackground) === "true" ? "true" : "false",
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
+        vquality: mode === "video" ? resolveVideoResolution(node?.metadata?.vquality) : node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoSuperResolutionEnabled: node?.metadata?.superResolutionEnabled || config.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
         videoSuperResolutionResolution: node?.metadata?.superResolutionResolution || config.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,

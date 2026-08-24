@@ -264,6 +264,7 @@ function InfiniteCanvasPage() {
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
     const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
+    const getSelectedAgentNodes = useCallback(() => nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id)), []);
 
     const { getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
         projectLoaded,
@@ -1971,6 +1972,8 @@ function InfiniteCanvasPage() {
                     <CanvasAssistantPanel
                         key={projectId}
                         selectedNodeIds={selectedNodeIds}
+                        getSelectedNodes={getSelectedAgentNodes}
+                        activatedSkills={activatedSkills}
                         projectId={projectId}
                         canvasRevision={currentProject?.revision || 0}
                         closing={assistantClosing}

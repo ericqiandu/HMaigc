@@ -66,7 +66,7 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 		if err != nil {
 			return agentruntime.DeliveryEvidence{}, errors.New("agent committed plan delivery input is invalid")
 		}
-		_, artifacts, resources, err := s.productionCanvasCommitFacts(scope, arguments)
+		_, artifacts, resources, _, err := s.productionCanvasCommitFacts(scope, arguments)
 		if err != nil {
 			return agentruntime.DeliveryEvidence{}, err
 		}

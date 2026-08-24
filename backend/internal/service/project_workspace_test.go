@@ -59,3 +59,50 @@ func TestCreateProjectRejectsTeamMemberWithoutProjectManagementCapability(t *tes
 		t.Fatalf("unauthorized team project count = %d, want 0", projectCount)
 	}
 }
+
+func TestRegisterTaskOutputRejectsInternalAgentTask(t *testing.T) {
+	svc, db := newMembershipTestService(t)
+	if err := db.AutoMigrate(&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}); err != nil {
+		t.Fatal(err)
+	}
+	user := createTeamTestUser(t, db, "workflow-internal-task-user", "workflow-internal-task@example.com")
+	project, err := svc.CreateProject(user.ID, CreateProjectRequest{Name: "内部任务隔离项目"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows, err := svc.ProjectWorkflows(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workflows) != 1 || len(workflows[0].Steps) == 0 {
+		t.Fatalf("project workflows = %#v", workflows)
+	}
+	step := workflows[0].Steps[0]
+	now := time.Now().UTC()
+	internalTask := model.Task{
+		ID: "internal-agent-workflow-task", UserID: user.ID, Audience: model.TaskAudienceInternal,
+		ProjectID: project.ID, Type: agentRuntimeModelTaskType, Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"message":"internal model result"}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&internalTask).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.RegisterTaskOutput(user.ID, project.ID, step.ID, RegisterTaskOutputRequest{TaskID: internalTask.ID}); err == nil {
+		t.Fatal("internal Agent task was accepted as a customer workflow output")
+	}
+	var storedStep model.WorkflowStepInstance
+	if err := db.First(&storedStep, "id = ?", step.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedStep.Status != model.WorkflowStepStatusReady || storedStep.OutputJSON != "{}" {
+		t.Fatalf("rejected internal task changed workflow step = %#v", storedStep)
+	}
+	var linkCount int64
+	if err := db.Model(&model.WorkflowStepTask{}).Where("task_id = ?", internalTask.ID).Count(&linkCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if linkCount != 0 {
+		t.Fatalf("rejected internal task created %d workflow links", linkCount)
+	}
+}

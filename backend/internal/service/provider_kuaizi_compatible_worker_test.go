@@ -85,6 +85,63 @@ func TestProcessTaskUsesFrozenKuaiziCompatibleRuntimeForSeedance20And25(t *testi
 	}
 }
 
+func TestProcessKuaiziCompatibleTaskDispatchesSeedreamFamily(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	createCalls := 0
+	statusCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case kuaiziSeedreamCreatePath:
+			createCalls++
+			if request.Header.Get("ApiKey") != "frozen-key" {
+				t.Errorf("ApiKey = %q", request.Header.Get("ApiKey"))
+			}
+			_, _ = response.Write([]byte(`{"code":0,"message":"","data":{"task_id":"kz-cgt-seedream-dispatch"},"trace_id":"trace-create"}`))
+		case kuaiziSeedreamStatusPath:
+			statusCalls++
+			_, _ = response.Write([]byte(`{"code":0,"message":"","data":{"task_id":"kz-cgt-seedream-dispatch","status":"succeeded","image_urls":["` + server.URL + `/result.jpg"]},"trace_id":"trace-status"}`))
+		case "/result.jpg":
+			response.Header().Set("Content-Type", "image/jpeg")
+			_, _ = response.Write([]byte("image-bytes"))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	svc, repo := openProviderSecretSQLite(t, t.TempDir())
+	seedFrozenKuaiziTaskRuntime(t, svc, repo, server.URL, "frozen-key")
+	inputJSON, err := json.Marshal(canvasGenerationInput{Mode: "image", Prompt: "生成橙子广告", Config: providerConfig{Model: kuaiziSeedreamLiteModel, Size: "2048x2048", Count: "1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "seedream-task", UserID: "user", Type: "canvas_image", Model: kuaiziSeedreamLiteModel, Status: model.TaskStatusRunning, LeaseOwner: "worker-seedream", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
+	if err := repo.Create(&task); err != nil {
+		t.Fatal(err)
+	}
+	result, _, err := svc.processTask(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	images, ok := result["images"].([]map[string]string)
+	if !ok || len(images) != 1 || images[0]["taskId"] != "kz-cgt-seedream-dispatch" || images[0]["traceId"] != "trace-status" {
+		t.Fatalf("images = %#v", result["images"])
+	}
+	stored, err := repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProviderRequestID != "kz-cgt-seedream-dispatch" {
+		t.Fatalf("ProviderRequestID = %q", stored.ProviderRequestID)
+	}
+	if createCalls != 1 || statusCalls != 1 {
+		t.Fatalf("calls = create:%d status:%d", createCalls, statusCalls)
+	}
+}
+
 func TestKuaiziAsyncCreateFencePreventsSecondPostAfterWorkerCrash(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")

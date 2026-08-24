@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
-import { buildTaskBillingQuoteRequest, prepareGenerationTaskSubmission, taskPriceChangedQuoteFromEnvelope } from "../src/lib/billing/task-billing-quote";
+import { buildTaskBillingQuoteRequest, prepareGenerationTaskSubmission, taskBillingQuoteMatches, taskPriceChangedQuoteFromEnvelope } from "../src/lib/billing/task-billing-quote";
 import type { CreateTaskInput, TaskBillingQuote } from "../src/services/api/task-center";
 
 const providerConfig = {
@@ -10,6 +11,7 @@ const providerConfig = {
     quality: "low",
     videoSeconds: "6",
     vquality: "720p",
+    videoGenerateAudio: "true",
     videoSuperResolutionEnabled: "true",
     videoSuperResolutionResolution: "1080p",
     videoSuperResolutionVersion: "v1",
@@ -26,18 +28,38 @@ const currentQuote: TaskBillingQuote = {
     pricingInputVariant: "reference_video",
     quantity: 24,
     enhancementAmountMicrocredits: 0,
+    usageAdjustment: {
+        metric: "input_image",
+        actualQuantity: 3,
+        includedQuantity: 1,
+        billableQuantity: 2,
+        unitPriceMicrocredits: 4_000,
+        perTaskAmountMicrocredits: 8_000,
+        amountMicrocredits: 32_000,
+    },
     quoteFingerprint: "quote-v7",
 };
 
+test("generation quote compares frozen facts without using displayed amounts", () => {
+    expect(taskBillingQuoteMatches({ priceVersion: 3, quoteFingerprint: "same" }, { priceVersion: 3, quoteFingerprint: "same" })).toBe(true);
+    expect(taskBillingQuoteMatches({ priceVersion: 3, quoteFingerprint: "old" }, { priceVersion: 3, quoteFingerprint: "new" })).toBe(false);
+});
+
 describe("generation billing quote contract", () => {
+    test("recomputes the canvas quote when generated audio changes", () => {
+        const source = readFileSync(new URL("../src/hooks/use-canvas-task-billing-quote.ts", import.meta.url), "utf8");
+        expect(source).toContain("config.videoGenerateAudio,");
+    });
+
     test("builds an exact video request without a frontend price formula", () => {
-        expect(buildTaskBillingQuoteRequest({ projectId: "canvas-project", mode: "video", operation: "extend", batchCount: 4, referenceVideoCount: 2, config: providerConfig })).toEqual({
+        expect(buildTaskBillingQuoteRequest({ projectId: "canvas-project", mode: "video", operation: "extend", batchCount: 4, usage: { referenceImageCount: 0, referenceVideoCount: 2 }, config: providerConfig })).toEqual({
             projectId: "canvas-project",
             type: "canvas_video",
             operation: "extend",
             batchCount: 4,
             input: {
                 mode: "video",
+                referenceImageCount: 0,
                 referenceVideoCount: 2,
                 config: {
                     channelId: "kuaizi",
@@ -46,12 +68,38 @@ describe("generation billing quote contract", () => {
                     quality: "low",
                     videoSeconds: "6",
                     vquality: "720p",
+                    videoGenerateAudio: true,
                     videoSuperResolutionEnabled: true,
                     videoSuperResolutionResolution: "1080p",
                     videoSuperResolutionVersion: "v1",
                     videoSuperResolutionFps: 30,
                 },
             },
+        });
+    });
+
+    test("sends the real reference-image count for image quotes", async () => {
+        const input: CreateTaskInput = {
+            projectId: "project",
+            type: "canvas_image",
+            operation: "image",
+            prompt: "prompt",
+            input: {
+                mode: "image",
+                config: providerConfig,
+                referenceImages: [{ id: "one" }, { id: "two" }, { id: "three" }],
+            },
+        };
+        const requested: unknown[] = [];
+
+        await prepareGenerationTaskSubmission(input, undefined, async (request) => {
+            requested.push(request);
+            return { ...currentQuote, amountMicrocredits: currentQuote.perTaskAmountMicrocredits, taskCount: 1 };
+        });
+
+        expect(requested[0]).toMatchObject({
+            batchCount: 1,
+            input: { referenceImageCount: 3, referenceVideoCount: 0 },
         });
     });
 

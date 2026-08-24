@@ -141,23 +141,29 @@ type PublicChannelModelPrice struct {
 }
 
 type PublicProviderCapabilities struct {
+	ProviderFamily            string                    `json:"providerFamily"`
 	ModelKey                  string                    `json:"modelKey"`
 	DisplayName               string                    `json:"displayName"`
 	UpstreamMode              string                    `json:"upstreamMode"`
 	Capability                string                    `json:"capability"`
 	Resolutions               []string                  `json:"resolutions"`
+	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
 	InputVariants             []string                  `json:"inputVariants"`
+	ReferenceVideoResolutions []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions []string                  `json:"generatedAudioResolutions"`
 	Ratios                    []string                  `json:"ratios"`
 	Qualities                 []string                  `json:"qualities"`
 	OutputCounts              []int                     `json:"outputCounts"`
 	DurationMin               int                       `json:"durationMin"`
 	DurationMax               int                       `json:"durationMax"`
 	SupportsSmartDuration     bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo       bool                      `json:"supportsTextToVideo"`
 	SupportsGeneratedAudio    bool                      `json:"supportsGeneratedAudio"`
 	WatermarkCapability       model.WatermarkCapability `json:"watermarkCapability"`
 	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
 	RequiresAdaptiveFrames    bool                      `json:"requiresAdaptiveFrames"`
 	MaxImages                 int                       `json:"maxImages"`
+	MaxImagesWithVideo        int                       `json:"maxImagesWithVideo"`
 	MaxVideos                 int                       `json:"maxVideos"`
 	MaxAudios                 int                       `json:"maxAudios"`
 	MaxVideoDurationSeconds   int                       `json:"maxVideoDurationSeconds"`
@@ -169,6 +175,8 @@ type PublicProviderCapabilities struct {
 type PublicChannelModelPriceTier struct {
 	Resolution            string `json:"resolution"`
 	InputVariant          string `json:"inputVariant"`
+	UsageMetric           string `json:"usageMetric"`
+	IncludedQuantity      int64  `json:"includedQuantity"`
 	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
 }
 
@@ -747,7 +755,13 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		if item.Enabled && (admin && item.PriceConfigured || pricingReady) {
 			tiers := make([]PublicChannelModelPriceTier, 0, len(item.PriceTiers))
 			for _, tier := range item.PriceTiers {
-				tiers = append(tiers, PublicChannelModelPriceTier{Resolution: tier.Resolution, InputVariant: tier.InputVariant, UnitPriceMicrocredits: tier.UnitPriceMicrocredits})
+				tiers = append(tiers, PublicChannelModelPriceTier{
+					Resolution:            tier.Resolution,
+					InputVariant:          tier.InputVariant,
+					UsageMetric:           tier.UsageMetric,
+					IncludedQuantity:      tier.IncludedQuantity,
+					UnitPriceMicrocredits: tier.UnitPriceMicrocredits,
+				})
 			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{
 				Model: item.ModelKey, DisplayName: item.DisplayName, MarketingCopy: item.MarketingCopy,
@@ -809,6 +823,9 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 		if tier.UnitPriceMicrocredits <= 0 {
 			return false
 		}
+		if strings.TrimSpace(tier.UsageMetric) != "" {
+			continue
+		}
 		variant := strings.ToLower(strings.TrimSpace(tier.InputVariant))
 		if variant == "" {
 			variant = "standard"
@@ -816,7 +833,7 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 		configured[channelModelPriceTierKey(tier.Resolution, variant)] = true
 	}
 	for _, resolution := range spec.Resolutions {
-		for _, variant := range []string{"standard", "reference_video"} {
+		for _, variant := range providerPricingVariantsForResolution(spec, resolution) {
 			if !configured[channelModelPriceTierKey(resolution, variant)] {
 				return false
 			}
@@ -829,24 +846,27 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 	if interfaceType == model.ChannelInterfaceAPIMartImage {
 		return publicAPIMartImageCapabilities(modelKey)
 	}
-	capabilities, ok := kuaiziProviderModelSpec(modelKey)
+	family, capabilities, ok := kuaiziProviderFamilyForModel(modelKey)
 	if !ok {
 		return nil
 	}
 	inputVariants := []string{}
 	if capabilities.Capability == "video" {
-		inputVariants = []string{"standard", "reference_video"}
+		inputVariants = providerPricingInputVariants(capabilities)
 	}
 	return &PublicProviderCapabilities{
-		ModelKey: capabilities.ModelKey, DisplayName: capabilities.DisplayName,
+		ProviderFamily: family,
+		ModelKey:       capabilities.ModelKey, DisplayName: capabilities.DisplayName,
 		UpstreamMode: capabilities.UpstreamMode, Capability: capabilities.Capability,
-		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, Ratios: append([]string{}, capabilities.Ratios...),
-		Qualities: append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
+		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, ReferenceVideoResolutions: append([]string{}, capabilities.ReferenceVideoResolutions...), GeneratedAudioResolutions: append([]string{}, capabilities.GeneratedAudioResolutions...), Ratios: append([]string{}, capabilities.Ratios...),
+		ResolutionPixels: cloneStringInt64Map(capabilities.ResolutionPixels),
+		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
+		SupportsTextToVideo:   capabilities.SupportsTextToVideo,
 		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
 		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
 		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
-		MaxImages:              capabilities.MaxImages, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
+		MaxImages:              capabilities.MaxImages, MaxImagesWithVideo: capabilities.MaxImagesWithVideo, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
 		Tools:                     append([]string{}, capabilities.Tools...),
 		SupportsTokenUsageBilling: kuaiziModelSupportsTokenUsageBilling(modelKey),
@@ -865,7 +885,8 @@ func publicAPIMartImageCapabilities(modelKey string) *PublicProviderCapabilities
 	return &PublicProviderCapabilities{
 		ModelKey: modelKey, DisplayName: profile.label, UpstreamMode: modelKey, Capability: "image",
 		Resolutions: append([]string{}, profile.resolutions...), InputVariants: []string{},
-		Ratios: apimartPublishedAspectRatios(profile), Qualities: qualities, OutputCounts: []int{1},
+		ResolutionPixels: map[string]int64{},
+		Ratios:           apimartPublishedAspectRatios(profile), Qualities: qualities, OutputCounts: []int{1},
 		WatermarkCapability: model.WatermarkCapabilityUnsupported,
 		MaxImages:           profile.maxReferenceImages,
 		Tools:               []string{},

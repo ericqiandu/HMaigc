@@ -48,10 +48,15 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			!strings.Contains(body.Messages[0].Content, `"planKey":"","baseVersion":0`) ||
 			!strings.Contains(body.Messages[0].Content, `"targetDurationMs":10000`) ||
 			!strings.Contains(body.Messages[0].Content, `"shotKey":"shot-1"`) ||
+			!strings.Contains(body.Messages[0].Content, `"deliverables":["video_clip"]`) ||
+			!strings.Contains(body.Messages[0].Content, `"deliverables":["storyboard_image","video_clip"]`) ||
+			!strings.Contains(body.Messages[0].Content, `"scriptText":"...","deliverables":["video_clip"],"videoPrompt":"..."`) ||
 			!strings.Contains(body.Messages[0].Content, `"referenceKey":"hero"`) ||
 			!strings.Contains(body.Messages[0].Content, `"referenceKeys":["hero"]`) ||
 			!strings.Contains(body.Messages[0].Content, `"imagePrompt":"..."`) ||
 			!strings.Contains(body.Messages[0].Content, `"videoPrompt":"..."`) ||
+			!strings.Contains(body.Messages[0].Content, "未声明 storyboard_image 时必须省略 imagePrompt") ||
+			!strings.Contains(body.Messages[0].Content, "referenceKeys 只允许用于包含 storyboard_image") ||
 			!strings.Contains(body.Messages[0].Content, "所有正式镜头 durationMs 必须大于 0 且总和等于 targetDurationMs") ||
 			!strings.Contains(body.Messages[0].Content, "禁止添加未声明字段") ||
 			!strings.Contains(body.Messages[0].Content, "fact 为 final_message 或 canvas_revision 时必须省略 artifact") ||
@@ -63,7 +68,9 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			!strings.Contains(body.Messages[0].Content, "qualities 为空时必须省略 quality") ||
 			!strings.Contains(body.Messages[0].Content, "参数值必须来自所选 callableModels 的 providerCapabilities") ||
 			!strings.Contains(body.Messages[0].Content, `"artifactId":"<video_clip artifactId>"`) ||
-			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"quality":"720p","generateAudio":true}`) ||
+			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"aspectRatio":"9:16","quality":"720p","generateAudio":true}`) ||
+			!strings.Contains(body.Messages[0].Content, "supportsTextToVideo=true") ||
+			!strings.Contains(body.Messages[0].Content, "无同镜就绪分镜时直接按文生视频执行") ||
 			!strings.Contains(body.Messages[0].Content, "必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval") ||
 			!strings.Contains(body.Messages[0].Content, "禁止用 final 消息代替扣费确认") ||
 			!strings.Contains(body.Messages[0].Content, "禁止重复新建 production.plan") ||
@@ -87,10 +94,7 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			} `json:"message"`
 		}, 1)}
 		response.Choices[0].Message.Content = decision
-		writer.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-runtime", response.Choices[0].Message.Content, 0, 0, 0)
 	}))
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
@@ -152,6 +156,47 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 	combined := completedTask.InputJSON + completedTask.ResultJSON + completedTask.Error + checkpoint.StateJSON
 	if strings.Contains(combined, "runtime-secret-key") || strings.Contains(combined, "Authorization") {
 		t.Fatalf("secret reached persisted runtime facts: %s", combined)
+	}
+}
+
+func TestAgentRuntimeModelTaskPreservesBillingEvidenceOnEmptyProviderText(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-empty-agent-evidence", "", 3923, 1, 1408)
+	}))
+	defer server.Close()
+
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	configureTokenBilledAgentFixture(t, svc, db, fixture)
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "empty-agent-response",
+		UserMessage: "读取当前画布并返回下一步", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.ModelTask == nil {
+		t.Fatal("token-billed Agent task was not created")
+	}
+	err = svc.ProcessNextTask()
+	if err == nil || !strings.Contains(err.Error(), "响应没有正文") {
+		t.Fatalf("error = %v, want explicit empty response error", err)
+	}
+	var failedTask model.Task
+	if err := db.First(&failedTask, "id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedTask.Status != model.TaskStatusFailed || !strings.Contains(failedTask.Error, "响应没有正文") {
+		t.Fatalf("failed task = %#v", failedTask)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.ProviderRequestID != "empty-agent-evidence" || order.TokenUsageStatus != "reported" || order.InputTokens != 3923 || order.CachedTokens != 1408 || order.OutputTokens != 1 {
+		t.Fatalf("billing evidence = %#v", order)
 	}
 }
 
@@ -230,19 +275,67 @@ func TestAgentRuntimeModelFailureTerminatesWithoutRetryOrDoubleCharge(t *testing
 	}
 }
 
+func TestAgentRuntimeModelRequestPersistsRunningBeforeProviderReply(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	requestStarted := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		close(requestStarted)
+		<-releaseResponse
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-running-state", `{"kind":"final","final":{"message":"已完成","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`, 12, 0, 3)
+	}))
+	defer server.Close()
+
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-running-before-provider-reply",
+		UserMessage: "只用文字回答", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	processed := make(chan error, 1)
+	go func() { processed <- svc.ProcessNextTask() }()
+	select {
+	case <-requestStarted:
+	case <-time.After(3 * time.Second):
+		close(releaseResponse)
+		t.Fatal("provider request did not start")
+	}
+
+	state, err := svc.repo.LoadAgentCheckpoint(input.Scope)
+	if err != nil {
+		close(releaseResponse)
+		t.Fatal(err)
+	}
+	var latestEvent model.AgentRunEvent
+	if err := db.Where("run_id = ?", input.Scope.RunID).Order("sequence desc").First(&latestEvent).Error; err != nil {
+		close(releaseResponse)
+		t.Fatal(err)
+	}
+	close(releaseResponse)
+	if err := <-processed; err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunRunning || state.StateVersion != 2 || state.StepNumber != 0 {
+		t.Fatalf("provider request runtime state = %#v", state)
+	}
+	if latestEvent.Kind != agentruntime.EventRunStatusChanged || !strings.Contains(latestEvent.PayloadJSON, `"status":"running"`) {
+		t.Fatalf("provider request start event = %#v", latestEvent)
+	}
+}
+
 func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
 		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: `{"kind":"final","final":{"message":"已完成","expectedDelivery":{"kind":"answer","requiredArtifacts":["image"],"completionCriteria":[{"fact":"artifact","artifact":"image"}]}}}`}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-repair", response.Choices[0].Message.Content, 0, 0, 0)
 	}))
 	defer server.Close()
 
-	svc, _, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
 	input := StartAgentRuntimeInput{
 		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-invalid-decision-repair",
 		UserMessage: "生成一张图片", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
@@ -253,6 +346,13 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	}
 	if err := svc.ProcessNextTask(); err != nil {
 		t.Fatalf("invalid model decision must remain a repairable runtime fact: %v", err)
+	}
+	var rejectedMessage model.AgentTimelineItem
+	if err := db.First(&rejectedMessage, "id = ?", agentruntime.AgentMessageItemID(input.Scope.RunID, 0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rejectedMessage.Status != model.AgentTimelineItemFailed || rejectedMessage.CompletedAt == nil {
+		t.Fatalf("rejected streamed message remained active = %#v", rejectedMessage)
 	}
 
 	progress, err := svc.ResumeAgentRuntime(input.Scope)
@@ -275,6 +375,44 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeTruncatedStreamMarksPartialMessageFailed(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		chunk := map[string]any{
+			"id":      "chatcmpl-truncated-message",
+			"choices": []map[string]any{{"delta": map[string]any{"content": `{"kind":"final","final":{"message":"正在生成`}}},
+		}
+		encoded, err := json.Marshal(chunk)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, _ = writer.Write([]byte("data: " + string(encoded) + "\n\n"))
+	}))
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-truncated-visible-message",
+		UserMessage: "告诉我下一步", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err == nil {
+		t.Fatal("truncated provider stream was reported as successful")
+	}
+	var failedMessage model.AgentTimelineItem
+	if err := db.First(&failedMessage, "id = ?", agentruntime.AgentMessageItemID(input.Scope.RunID, 0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedMessage.Status != model.AgentTimelineItemFailed || failedMessage.CompletedAt == nil ||
+		!strings.Contains(failedMessage.ContentJSON, `"failureCode":"agent_provider_stream_truncated"`) {
+		t.Fatalf("truncated streamed message = %#v", failedMessage)
+	}
+}
+
 func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
 	input := StartAgentRuntimeInput{
@@ -289,7 +427,7 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if first.State.Status != agentruntime.RunQueued || first.State.StepNumber != 0 || first.State.UserMessage != input.UserMessage {
 		t.Fatalf("initial runtime = %#v", first)
 	}
-	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion || first.Run.RuntimeVersion != agentRuntimeVersion || first.Run.PolicyVersion != agentRuntimePolicyVersion {
+	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion || first.Run.RuntimeVersion != agentruntime.CurrentRuntimeVersion || first.Run.PolicyVersion != agentruntime.CurrentPolicyVersion {
 		t.Fatalf("frozen run model = %#v", first.Run)
 	}
 	if first.ModelTask == nil || first.ModelTask.Status != model.TaskStatusQueued || first.ModelTask.Type != agentRuntimeModelTaskType || first.ModelTask.Model != fixture.channelModel.ModelKey {
@@ -368,6 +506,9 @@ func TestStartAgentRuntimeCreatesTokenBilledFrozenModelTask(t *testing.T) {
 	if started.ModelTask == nil {
 		t.Fatal("token-billed Agent task was not created")
 	}
+	if started.ModelTask.Audience != model.TaskAudienceInternal {
+		t.Fatalf("Agent model task audience = %q", started.ModelTask.Audience)
+	}
 	var order model.BillingOrder
 	if err := db.First(&order, "task_id = ?", started.ModelTask.ID).Error; err != nil {
 		t.Fatal(err)
@@ -376,7 +517,7 @@ func TestStartAgentRuntimeCreatesTokenBilledFrozenModelTask(t *testing.T) {
 	if order.BillingMode != "token_usage" || order.IdempotencyKey != wantKey || order.Status != model.BillingStatusReserved {
 		t.Fatalf("token billing identity = %#v", order)
 	}
-	if order.EstimatedInputTokens <= int64(len(input.UserMessage)) || order.MaxOutputTokens != pricing.ExpectedOutputTokens || order.TokenPricingSnapshotJSON == "" {
+	if order.EstimatedInputTokens <= int64(len(input.UserMessage)) || order.MaxOutputTokens != pricing.MaxOutputTokens || order.TokenPricingSnapshotJSON == "" {
 		t.Fatalf("token billing reservation = %#v", order)
 	}
 	if order.ProviderEndpointVersionID != fixture.endpoint.ID || order.ProviderCredentialVersionID != fixture.version.ID || order.AmountMicrocredits <= 0 {
@@ -547,7 +688,6 @@ func TestAgentRuntimeTokenBillingSettlesFromProviderUsageAndBill(t *testing.T) {
 	var chatCalls atomic.Int32
 	var billingCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/ai-open-platform-api/v1/chat/completions":
 			chatCalls.Add(1)
@@ -562,8 +702,9 @@ func TestAgentRuntimeTokenBillingSettlesFromProviderUsageAndBill(t *testing.T) {
 				t.Errorf("chat request = %#v", body)
 			}
 			decision := `{"kind":"final","final":{"message":"已完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
-			_, _ = writer.Write([]byte(`{"id":"chatcmpl-runtime-token-task","choices":[{"message":{"content":` + strconv.Quote(decision) + `}}],"usage":{"prompt_tokens":30,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":5}}}`))
+			writeAgentRuntimeChatStream(t, writer, "chatcmpl-runtime-token-task", decision, 30, 10, 5)
 		case kuaiziBillingPath:
+			writer.Header().Set("Content-Type", "application/json")
 			billingCalls.Add(1)
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"order_id":"provider-order-1","amount":1,"status":"succeeded","task_id":"runtime-token-task","task_status":"succeeded","task_duration":1,"total_tokens":40,"created_at":"2026-08-16T08:00:00Z"}]}}`))
 		default:
@@ -613,12 +754,12 @@ func TestAgentRuntimeInvalidDecisionDoesNotRefundSuccessfulTokenCall(t *testing.
 	var chatCalls atomic.Int32
 	var billingCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/ai-open-platform-api/v1/chat/completions":
 			chatCalls.Add(1)
-			_, _ = writer.Write([]byte(`{"id":"chatcmpl-invalid-decision-task","choices":[{"message":{"content":"not-json"}}],"usage":{"prompt_tokens":20,"completion_tokens":3}}`))
+			writeAgentRuntimeChatStream(t, writer, "chatcmpl-invalid-decision-task", "not-json", 20, 3, 0)
 		case kuaiziBillingPath:
+			writer.Header().Set("Content-Type", "application/json")
 			billingCalls.Add(1)
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"order_id":"provider-order-invalid-decision","amount":1,"status":"succeeded","task_id":"invalid-decision-task","task_status":"succeeded","task_duration":1,"total_tokens":23,"created_at":"2026-08-16T08:00:00Z"}]}}`))
 		default:
@@ -783,7 +924,7 @@ func configureTokenBilledAgentFixture(t *testing.T, svc *Service, db *gorm.DB, f
 	pricing := model.ModelPricing{
 		ID: "runtime-token-pricing", ChannelID: channel.ID, Model: item.ModelKey, Capability: "text", Currency: "CNY",
 		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
-		ExpectedOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&pricing).Error; err != nil {
 		t.Fatal(err)
@@ -795,6 +936,21 @@ func configureTokenBilledAgentFixture(t *testing.T, svc *Service, db *gorm.DB, f
 		t.Fatal(err)
 	}
 	return item, pricing
+}
+
+func writeAgentRuntimeChatStream(t *testing.T, writer http.ResponseWriter, requestID string, content string, inputTokens int64, outputTokens int64, cachedTokens int64) {
+	t.Helper()
+	writer.Header().Set("Content-Type", "text/event-stream")
+	chunk := map[string]any{
+		"id":      requestID,
+		"choices": []map[string]any{{"delta": map[string]any{"content": content}, "finish_reason": "stop"}},
+		"usage":   map[string]any{"prompt_tokens": inputTokens, "completion_tokens": outputTokens, "prompt_tokens_details": map[string]any{"cached_tokens": cachedTokens}},
+	}
+	encoded, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = writer.Write([]byte("data: " + string(encoded) + "\n\ndata: [DONE]\n\n"))
 }
 
 func agentRuntimeServiceScope() agentruntime.Scope {

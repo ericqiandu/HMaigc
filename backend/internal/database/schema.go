@@ -92,6 +92,7 @@ func Models() []any {
 		&model.CanvasChange{},
 		&model.AgentThread{},
 		&model.AgentRun{},
+		&model.AgentTimelineItem{},
 		&model.AgentProductionPlanVersion{},
 		&model.AgentProductionArtifact{},
 		&model.AgentRunEvent{},
@@ -120,6 +121,12 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := MigrateBaseSchema(tx); err != nil {
+			return err
+		}
+		if err := migrateLegacyAgentContractVersions(tx); err != nil {
+			return err
+		}
+		if err := backfillLegacyTokenOutputCeilings(tx); err != nil {
 			return err
 		}
 		if err := EnsureUserPublicIdentitySchema(tx); err != nil {

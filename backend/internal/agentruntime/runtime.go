@@ -31,6 +31,18 @@ type RuntimeState struct {
 	UserMessage          string                   `json:"userMessage"`
 	Configuration        RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                 `json:"loadedSkillDirs,omitempty"`
+	PendingSteers        []PendingSteer           `json:"pendingSteers,omitempty"`
+}
+
+type SteerRequest struct {
+	ClientRequestID      string `json:"clientRequestId"`
+	Message              string `json:"message"`
+	ExpectedStateVersion int    `json:"expectedStateVersion"`
+}
+
+type PendingSteer struct {
+	ClientRequestID string `json:"clientRequestId"`
+	Message         string `json:"message"`
 }
 
 type GenerationModelSelection struct {
@@ -127,6 +139,108 @@ type ToolApproval struct {
 	Decision      ToolApprovalDecision
 }
 
+func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition, bool, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, false, err
+	}
+	request.ClientRequestID = strings.TrimSpace(request.ClientRequestID)
+	request.Message = strings.TrimSpace(request.Message)
+	if request.ClientRequestID == "" || len(request.ClientRequestID) > 120 || request.Message == "" || len(request.Message) > 64*1024 || request.ExpectedStateVersion < 1 {
+		return RuntimeTransition{}, false, ErrSteerConflict
+	}
+	for _, pending := range current.PendingSteers {
+		if pending.ClientRequestID != request.ClientRequestID {
+			continue
+		}
+		if pending.Message != request.Message {
+			return RuntimeTransition{}, false, ErrSteerConflict
+		}
+		return RuntimeTransition{State: current}, true, nil
+	}
+	if runtimeStatusTerminal(current.Status) || current.StateVersion != request.ExpectedStateVersion {
+		return RuntimeTransition{}, false, ErrSteerConflict
+	}
+	next := current
+	next.StateVersion++
+	next.PendingSteers = append(append([]PendingSteer(nil), current.PendingSteers...), PendingSteer{
+		ClientRequestID: request.ClientRequestID,
+		Message:         request.Message,
+	})
+	if err := validateRuntimeState(next); err != nil {
+		return RuntimeTransition{}, false, err
+	}
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunSteered}}, false, nil
+}
+
+func ConsumePendingSteersAtSafeBoundary(current RuntimeState) (RuntimeState, []PendingSteer, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeState{}, nil, err
+	}
+	if current.Status != RunQueued && current.Status != RunRunning {
+		return RuntimeState{}, nil, ErrSteerConflict
+	}
+	if current.PendingToolCall != nil || current.PendingToolStarted || current.PendingClarification != nil {
+		return RuntimeState{}, nil, ErrSteerConflict
+	}
+	if len(current.PendingSteers) == 0 {
+		return current, nil, nil
+	}
+	consumed := append([]PendingSteer(nil), current.PendingSteers...)
+	next := current
+	next.PendingSteers = nil
+	if err := validateRuntimeState(next); err != nil {
+		return RuntimeState{}, nil, err
+	}
+	return next, consumed, nil
+}
+
+func Interrupt(current RuntimeState, expectedStateVersion int) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if expectedStateVersion < 1 || current.StateVersion != expectedStateVersion || runtimeStatusTerminal(current.Status) {
+		return RuntimeTransition{}, ErrInterruptConflict
+	}
+	next := current
+	next.StateVersion++
+	next.Status = RunCancelled
+	next.PendingSteers = nil
+	next.PendingClarification = nil
+	next.DecisionFeedback = nil
+	next.Verification = nil
+	next.FailureCode = ""
+	if !current.PendingToolStarted {
+		next.PendingToolCall = nil
+		next.PendingToolStarted = false
+	}
+	if err := validateRuntimeState(next); err != nil {
+		return RuntimeTransition{}, err
+	}
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunInterrupted}}, nil
+}
+
+func runtimeStatusTerminal(status RunStatus) bool {
+	return status == RunSucceeded || status == RunFailed || status == RunCancelled
+}
+
+// BeginModelRequest 在首个供应商请求发出前持久化 queued -> running；
+// 后续模型步骤已经处于 running，不重复制造状态事件。
+func BeginModelRequest(current RuntimeState) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status != RunQueued {
+		return RuntimeTransition{}, errors.New("agent runtime is not queued for a model request")
+	}
+	next := current
+	next.StateVersion++
+	next.Status = RunRunning
+	if err := validateRuntimeState(next); err != nil {
+		return RuntimeTransition{}, err
+	}
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunStatusChanged}}, nil
+}
+
 func Fail(current RuntimeState, failureCode string) (RuntimeTransition, error) {
 	if err := validateAdvancingState(current); err != nil {
 		return RuntimeTransition{}, err
@@ -172,7 +286,11 @@ func Terminate(current RuntimeState, failureCode string) (RuntimeTransition, err
 	next.PendingToolCall = nil
 	next.PendingToolStarted = false
 	next.PendingClarification = nil
-	return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+	eventKinds := []EventKind{EventRunFailed}
+	if current.PendingToolCall != nil {
+		eventKinds = []EventKind{EventToolResult, EventRunFailed}
+	}
+	return RuntimeTransition{State: next, EventKinds: eventKinds}, nil
 }
 
 func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error) {
@@ -281,7 +399,7 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 	switch verification.Status {
 	case VerificationSatisfied:
 		next.Status = RunSucceeded
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunCompleted}}, nil
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventAgentMessageCompleted, EventRunCompleted}}, nil
 	case VerificationFailed:
 		next.Status = RunFailed
 		next.FailureCode = "delivery_contract_invalid"
@@ -463,22 +581,18 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 		next.Status = RunWaitingTool
 		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}}, nil
 	case ToolApprovalRejected:
-		next.Status = RunRunning
+		next.Status = RunCancelled
 		next.PendingToolCall = nil
 		next.PendingToolStarted = false
 		next.LastToolResult = &ToolResult{
 			ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
 		}
-		if next.StepNumber >= next.MaxSteps {
-			next.Status = RunFailed
-			next.FailureCode = "step_budget_exhausted"
-			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}}, nil
-		}
+		next.FailureCode = ""
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunInterrupted}}, nil
 	default:
 		return RuntimeTransition{}, errors.New("agent tool approval decision is invalid")
 	}
-	return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunStatusChanged}}, nil
 }
 
 func validateAdvancingState(state RuntimeState) error {
@@ -504,8 +618,11 @@ func validateRuntimeState(state RuntimeState) error {
 	if !state.Status.Valid() {
 		return errors.New("agent runtime status is invalid")
 	}
-	if state.PendingToolStarted && (state.Status != RunWaitingTool || state.PendingToolCall == nil) {
+	if state.PendingToolStarted && ((state.Status != RunWaitingTool && state.Status != RunCancelled) || state.PendingToolCall == nil) {
 		return errors.New("agent runtime tool execution state is invalid")
+	}
+	if err := validatePendingSteers(state.PendingSteers); err != nil {
+		return err
 	}
 	if err := validateClarificationState(state); err != nil {
 		return err
@@ -531,6 +648,21 @@ func validateRuntimeState(state RuntimeState) error {
 	}
 	if err := validateLoadedSkillDirs(state.Configuration.Skills, state.LoadedSkillDirs); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validatePendingSteers(pendingSteers []PendingSteer) error {
+	identities := make(map[string]struct{}, len(pendingSteers))
+	for _, pending := range pendingSteers {
+		if strings.TrimSpace(pending.ClientRequestID) != pending.ClientRequestID || pending.ClientRequestID == "" || len(pending.ClientRequestID) > 120 ||
+			strings.TrimSpace(pending.Message) != pending.Message || pending.Message == "" || len(pending.Message) > 64*1024 {
+			return errors.New("agent runtime pending steer is invalid")
+		}
+		if _, duplicated := identities[pending.ClientRequestID]; duplicated {
+			return errors.New("agent runtime pending steer is duplicated")
+		}
+		identities[pending.ClientRequestID] = struct{}{}
 	}
 	return nil
 }

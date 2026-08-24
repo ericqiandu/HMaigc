@@ -14,32 +14,37 @@ type ProviderAdapterDescriptor struct {
 }
 
 type ProviderModelSpec struct {
-	ModelKey                string                    `json:"modelKey"`
-	DisplayName             string                    `json:"displayName"`
-	MarketingCopy           string                    `json:"marketingCopy"`
-	UpstreamMode            string                    `json:"upstreamMode"`
-	Capability              string                    `json:"capability"`
-	Resolutions             []string                  `json:"resolutions"`
-	Ratios                  []string                  `json:"ratios"`
-	Qualities               []string                  `json:"qualities"`
-	OutputCounts            []int                     `json:"outputCounts"`
-	DurationMin             int                       `json:"durationMin"`
-	DurationMax             int                       `json:"durationMax"`
-	SupportsSmartDuration   bool                      `json:"supportsSmartDuration"`
-	SupportsGeneratedAudio  bool                      `json:"supportsGeneratedAudio"`
-	WatermarkCapability     model.WatermarkCapability `json:"watermarkCapability"`
-	SupportsAudioOnly       bool                      `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames  bool                      `json:"requiresAdaptiveFrames"`
-	MaxImages               int                       `json:"maxImages"`
-	MaxVideos               int                       `json:"maxVideos"`
-	MaxAudios               int                       `json:"maxAudios"`
-	MaxVideoDurationSeconds int                       `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds int                       `json:"maxAudioDurationSeconds"`
-	Tools                   []string                  `json:"tools"`
-	Published               bool                      `json:"published"`
-	ChannelModelID          string                    `json:"channelModelId"`
-	Enabled                 bool                      `json:"enabled"`
-	PriceConfigured         bool                      `json:"priceConfigured"`
+	ModelKey                  string                    `json:"modelKey"`
+	DisplayName               string                    `json:"displayName"`
+	MarketingCopy             string                    `json:"marketingCopy"`
+	UpstreamMode              string                    `json:"upstreamMode"`
+	Capability                string                    `json:"capability"`
+	Resolutions               []string                  `json:"resolutions"`
+	ReferenceVideoResolutions []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions []string                  `json:"generatedAudioResolutions"`
+	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
+	Ratios                    []string                  `json:"ratios"`
+	Qualities                 []string                  `json:"qualities"`
+	OutputCounts              []int                     `json:"outputCounts"`
+	DurationMin               int                       `json:"durationMin"`
+	DurationMax               int                       `json:"durationMax"`
+	SupportsSmartDuration     bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo       bool                      `json:"supportsTextToVideo"`
+	SupportsGeneratedAudio    bool                      `json:"supportsGeneratedAudio"`
+	WatermarkCapability       model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames    bool                      `json:"requiresAdaptiveFrames"`
+	MaxImages                 int                       `json:"maxImages"`
+	MaxImagesWithVideo        int                       `json:"maxImagesWithVideo"`
+	MaxVideos                 int                       `json:"maxVideos"`
+	MaxAudios                 int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds   int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds   int                       `json:"maxAudioDurationSeconds"`
+	Tools                     []string                  `json:"tools"`
+	Published                 bool                      `json:"published"`
+	ChannelModelID            string                    `json:"channelModelId"`
+	Enabled                   bool                      `json:"enabled"`
+	PriceConfigured           bool                      `json:"priceConfigured"`
 }
 
 type ProviderRegistry struct {
@@ -127,10 +132,21 @@ func cloneProviderAdapterDescriptor(source ProviderAdapterDescriptor) ProviderAd
 	for index, model := range source.Models {
 		result.Models[index] = model
 		result.Models[index].Resolutions = append([]string{}, model.Resolutions...)
+		result.Models[index].ReferenceVideoResolutions = append([]string{}, model.ReferenceVideoResolutions...)
+		result.Models[index].GeneratedAudioResolutions = append([]string{}, model.GeneratedAudioResolutions...)
+		result.Models[index].ResolutionPixels = cloneStringInt64Map(model.ResolutionPixels)
 		result.Models[index].Ratios = append([]string{}, model.Ratios...)
 		result.Models[index].Qualities = append([]string{}, model.Qualities...)
 		result.Models[index].OutputCounts = append([]int{}, model.OutputCounts...)
 		result.Models[index].Tools = append([]string{}, model.Tools...)
+	}
+	return result
+}
+
+func cloneStringInt64Map(source map[string]int64) map[string]int64 {
+	result := make(map[string]int64, len(source))
+	for key, value := range source {
+		result[key] = value
 	}
 	return result
 }
@@ -143,9 +159,20 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 			Models: []ProviderModelSpec{
 				seedanceProviderModel("doubao-seedance-2-0-fast-260128", "Seedance 2.0 Fast", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
 				seedanceProviderModel("doubao-seedance-2-0-260128", "Seedance 2.0 Pro", []string{"480p", "720p", "1080p", "4k"}, 15, 9, 3, 3, false, []string{"web_search"}),
-				seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p", "1080p"}, 15, 9, 3, 3, false, []string{"web_search"}),
+				seedanceProviderModel("doubao-seedance-2-0-mini-260615", "Seedance 2.0 Mini", []string{"480p", "720p"}, 15, 9, 3, 3, false, []string{"web_search"}),
 				seedanceProviderModel("doubao-seedance-2-5-260628", "Seedance 2.5", []string{"480p", "720p"}, 30, 30, 10, 10, true, nil),
 			},
+		},
+		{
+			ProviderKind: "kuaizi",
+			Family:       "kling",
+			Models: []ProviderModelSpec{{
+				ModelKey: kuaiziKlingModel, DisplayName: "Kling 3 Omni", MarketingCopy: "支持文本、首尾帧、多图与参考视频的可灵 3 全能视频生成",
+				UpstreamMode: kuaiziKlingModel, Capability: "video",
+				Resolutions: []string{"std", "pro", "4k"}, ReferenceVideoResolutions: []string{"std", "pro"}, GeneratedAudioResolutions: []string{"std", "pro"}, Ratios: []string{"16:9", "9:16", "1:1"}, Qualities: []string{"std", "pro", "4k"}, OutputCounts: []int{1},
+				DurationMin: 3, DurationMax: 15, SupportsTextToVideo: true, SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityUnsupported,
+				MaxImages: 7, MaxImagesWithVideo: 4, MaxVideos: 1, MaxVideoDurationSeconds: 10,
+			}},
 		},
 		{
 			ProviderKind: "kuaizi",
@@ -158,6 +185,14 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 				Qualities:           []string{"low", "medium", "high"},
 				OutputCounts:        []int{1},
 			}},
+		},
+		{
+			ProviderKind: "kuaizi",
+			Family:       "seedream",
+			Models: []ProviderModelSpec{
+				seedreamProviderModel("seedream5.0lite", "Seedream 5.0 Lite", "支持文生图与最多 14 张参考图的图像编辑", 14),
+				seedreamProviderModel("seedream5.0pro", "Seedream 5.0 Pro", "高质量文生图与最多 10 张参考图的精准编辑", 10),
+			},
 		},
 		{
 			ProviderKind: "kuaizi",
@@ -184,11 +219,68 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 	}
 }
 
+func providerPricingVariantsForResolution(spec ProviderModelSpec, resolution string) []string {
+	variants := []string{"standard"}
+	if providerResolutionSupported(resolution, spec.GeneratedAudioResolutions) {
+		variants = append(variants, "standard_audio")
+	}
+	if providerResolutionSupported(resolution, spec.ReferenceVideoResolutions) {
+		variants = append(variants, "reference_video")
+	}
+	return variants
+}
+
+func providerResolutionSupported(resolution string, supported []string) bool {
+	for _, candidate := range supported {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(resolution)) {
+			return true
+		}
+	}
+	return false
+}
+
+func providerGeneratedAudioSupported(supportsGeneratedAudio bool, supportedResolutions []string, resolution string) bool {
+	if !supportsGeneratedAudio {
+		return false
+	}
+	return len(supportedResolutions) == 0 || providerResolutionSupported(resolution, supportedResolutions)
+}
+
+func providerPricingInputVariants(spec ProviderModelSpec) []string {
+	seen := make(map[string]bool)
+	variants := make([]string, 0, 3)
+	for _, resolution := range spec.Resolutions {
+		for _, variant := range providerPricingVariantsForResolution(spec, resolution) {
+			if seen[variant] {
+				continue
+			}
+			seen[variant] = true
+			variants = append(variants, variant)
+		}
+	}
+	return variants
+}
+
+func seedreamProviderModel(modelKey string, displayName string, marketingCopy string, maxImages int) ProviderModelSpec {
+	return ProviderModelSpec{
+		ModelKey: modelKey, DisplayName: displayName, MarketingCopy: marketingCopy,
+		UpstreamMode: modelKey, Capability: "image",
+		Resolutions:         []string{"2K", "3K"},
+		ResolutionPixels:    map[string]int64{"2K": 4_194_304, "3K": 9_437_184},
+		Ratios:              []string{"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "9:21"},
+		OutputCounts:        []int{1},
+		WatermarkCapability: model.WatermarkCapabilityControlled,
+		MaxImages:           maxImages,
+	}
+}
+
 func seedanceProviderModel(modelKey string, displayName string, resolutions []string, durationMax int, maxImages int, maxVideos int, maxAudios int, supportsAudioOnly bool, tools []string) ProviderModelSpec {
 	return ProviderModelSpec{
 		ModelKey: modelKey, DisplayName: displayName, UpstreamMode: modelKey, Capability: "video",
 		Resolutions: resolutions, Ratios: []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"},
-		DurationMin: 4, DurationMax: durationMax, SupportsSmartDuration: true,
+		ReferenceVideoResolutions: append([]string{}, resolutions...),
+		OutputCounts:              []int{1, 2, 4},
+		DurationMin:               4, DurationMax: durationMax, SupportsSmartDuration: true, SupportsTextToVideo: true,
 		SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityControlled,
 		SupportsAudioOnly: supportsAudioOnly, RequiresAdaptiveFrames: supportsAudioOnly,
 		MaxImages: maxImages, MaxVideos: maxVideos, MaxAudios: maxAudios,

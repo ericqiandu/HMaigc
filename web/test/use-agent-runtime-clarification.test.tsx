@@ -27,7 +27,8 @@ test("追问回答使用当前 stateVersion 并采用服务端新状态", async 
     const waiting = waitingView(4);
     const running = runningView(5);
     const client = runtimeClient({
-        listThreads: async () => ({ items: [{ thread: thread(), activityAt: "2026-08-18T00:00:01Z", latestRun: waiting }] }),
+        listThreads: async () => ({ items: [historyItem(waiting)] }),
+        getRun: async () => waiting,
         submitClarificationResponse: async (runId, requestId, input) => {
             calls.push({ runId, requestId, ...input });
             return running;
@@ -48,9 +49,14 @@ test("追问回答发生 409 时只刷新一次并要求用户核对后重试", 
     let refreshCalls = 0;
     const waiting = waitingView(4);
     const refreshed = waitingView(6);
+    let initialLoad = true;
     const client = runtimeClient({
-        listThreads: async () => ({ items: [{ thread: thread(), activityAt: "2026-08-18T00:00:01Z", latestRun: waiting }] }),
+        listThreads: async () => ({ items: [historyItem(waiting)] }),
         getRun: async () => {
+            if (initialLoad) {
+                initialLoad = false;
+                return waiting;
+            }
             refreshCalls += 1;
             return refreshed;
         },
@@ -85,6 +91,30 @@ test("waiting_input 显示为询问中而不是执行中", () => {
     ]).toEqual(["准备中", "思考中", "询问中", "执行中", "等待确认", "已完成", "已失败", "已取消"]);
 });
 
+test("等待用户输入或审批时不保持无效的实时订阅", async () => {
+    for (const status of ["waiting_input", "waiting_approval"] as const) {
+        let subscribeCalls = 0;
+        const paused = status === "waiting_input" ? waitingView(4) : view("waiting_approval", 4, {});
+        const client = runtimeClient({
+            listThreads: async () => ({ items: [historyItem(paused)] }),
+            getRun: async () => paused,
+            subscribe: () => {
+                subscribeCalls += 1;
+                return () => undefined;
+            },
+        });
+        await mount(client);
+
+        expect(subscribeCalls).toBe(0);
+        expect(runtime?.connection).toBe("idle");
+
+        if (root) await act(async () => root?.unmount());
+        root = null;
+        runtime = null;
+        document.body.replaceChildren();
+    }
+});
+
 async function mount(client: AgentRuntimeClient) {
     const host = document.createElement("div");
     document.body.append(host);
@@ -111,6 +141,8 @@ function runtimeClient(patch: Partial<AgentRuntimeClient>): AgentRuntimeClient {
         createThread: async () => ({ id: "thread-1", canvasId: "canvas-1", status: "active" }),
         startRun: async () => running,
         getRun: async () => running,
+        steer: async () => running,
+        interrupt: async () => running,
         submitApproval: async () => running,
         submitClarificationResponse: async () => running,
         subscribe: () => () => undefined,
@@ -120,6 +152,47 @@ function runtimeClient(patch: Partial<AgentRuntimeClient>): AgentRuntimeClient {
 
 function thread() {
     return { id: "thread-1", canvasId: "canvas-1", status: "active" as const, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:01Z" };
+}
+
+function historyItem(runtimeView: AgentRuntimeView) {
+    return {
+        thread: thread(),
+        activityAt: "2026-08-18T00:00:01Z",
+        turns: [
+            {
+                run: {
+                    id: runtimeView.run.id,
+                    threadId: runtimeView.run.threadId,
+                    status: runtimeView.run.status,
+                    lastEventSequence: runtimeView.run.lastEventSequence,
+                    stateVersion: runtimeView.run.stateVersion,
+                    stepNumber: runtimeView.run.stepNumber,
+                    maxSteps: runtimeView.run.maxSteps,
+                    modelKey: runtimeView.run.modelKey,
+                    toolSchemaVersion: runtimeView.run.toolSchemaVersion,
+                    runtimeVersion: 1,
+                    policyVersion: 1,
+                    createdAt: runtimeView.run.createdAt,
+                    updatedAt: runtimeView.run.updatedAt,
+                },
+                items: [
+                    {
+                        id: "item-user-1",
+                        runId: runtimeView.run.id,
+                        kind: "user_message" as const,
+                        status: "completed" as const,
+                        ordinal: 1,
+                        sourceEventSequence: 1,
+                        content: { message: runtimeView.state.userMessage },
+                        startedAt: runtimeView.run.createdAt,
+                        completedAt: runtimeView.run.createdAt,
+                        createdAt: runtimeView.run.createdAt,
+                        updatedAt: runtimeView.run.createdAt,
+                    },
+                ],
+            },
+        ],
+    };
 }
 
 function waitingView(stateVersion: number): AgentRuntimeView {

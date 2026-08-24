@@ -45,6 +45,51 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 	}
 }
 
+func TestEnsureAgentRuntimeIntegritySchemaCreatesTimelineTableAndExactIndexes(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasTable(&model.AgentTimelineItem{}) {
+		t.Fatal("agent timeline table was not created")
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"idx_agent_timeline_items_run_ordinal":  `CREATE UNIQUE INDEX idx_agent_timeline_items_run_ordinal ON agent_timeline_items(run_id, ordinal)`,
+		"idx_agent_timeline_items_run_sequence": `CREATE UNIQUE INDEX idx_agent_timeline_items_run_sequence ON agent_timeline_items(run_id, source_event_sequence)`,
+		"idx_agent_timeline_items_thread_query": `CREATE INDEX idx_agent_timeline_items_thread_query ON agent_timeline_items(thread_id, created_at, id)`,
+	}
+	for name, expected := range want {
+		var actual string
+		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
+			t.Fatal(err)
+		}
+		if compactSQL(actual) != compactSQL(expected) {
+			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
+		}
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("repeated timeline migration must be idempotent: %v", err)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRejectsWrongNamedTimelineIndex(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	const wrong = `CREATE UNIQUE INDEX idx_agent_timeline_items_run_ordinal ON agent_timeline_items(run_id, source_event_sequence)`
+	if err := db.Exec(wrong).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureAgentRuntimeIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "idx_agent_timeline_items_run_ordinal") {
+		t.Fatalf("wrong timeline index error = %v", err)
+	}
+}
+
 func TestEnsureAgentRuntimeIntegritySchemaReplacesLegacyGlobalProductionIndexes(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {
@@ -129,6 +174,63 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsLegacyDuplicateFacts(t *testing
 	}
 }
 
+func TestEnsureAgentRuntimeIntegritySchemaRejectsTimelineDuplicateFacts(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		second     model.AgentTimelineItem
+		wantDetail string
+	}{
+		{
+			name: "ordinal",
+			second: model.AgentTimelineItem{
+				ID: "timeline-b", Ordinal: 1, SourceEventSequence: 2,
+			},
+			wantDetail: "agent timeline ordinal",
+		},
+		{
+			name: "source event sequence",
+			second: model.AgentTimelineItem{
+				ID: "timeline-b", Ordinal: 2, SourceEventSequence: 1,
+			},
+			wantDetail: "agent timeline source event",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			db := openAgentRuntimeSchemaSQLite(t)
+			if err := MigrateBaseSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			first := model.AgentTimelineItem{
+				ID: "timeline-a", TenantKind: "user", TenantID: "user-timeline", ThreadID: "thread-timeline", RunID: "run-timeline",
+				Kind: model.AgentTimelineItemStatusKind, Status: model.AgentTimelineItemCompleted,
+				Ordinal: 1, SourceEventSequence: 1, ContentJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+			}
+			second := testCase.second
+			second.TenantKind = first.TenantKind
+			second.TenantID = first.TenantID
+			second.ThreadID = first.ThreadID
+			second.RunID = first.RunID
+			second.Kind = model.AgentTimelineItemStatusKind
+			second.Status = model.AgentTimelineItemCompleted
+			second.ContentJSON = `{}`
+			second.CreatedAt = now
+			second.UpdatedAt = now
+			if err := db.Create(&[]model.AgentTimelineItem{first, second}).Error; err != nil {
+				t.Fatal(err)
+			}
+			err := EnsureAgentRuntimeIntegritySchema(db)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantDetail) || !strings.Contains(err.Error(), first.RunID) {
+				t.Fatalf("timeline conflict error = %v", err)
+			}
+			var count int64
+			if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", first.RunID).Count(&count).Error; err != nil || count != 2 {
+				t.Fatalf("duplicate timeline rows changed: count=%d err=%v", count, err)
+			}
+		})
+	}
+}
+
 func TestEnsureAgentRuntimeIntegritySchemaRejectsIncompatibleActiveRunWithoutMutation(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {
@@ -162,6 +264,39 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsIncompatibleActiveRunWithoutMut
 	}
 	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
 		t.Fatalf("terminal historical run should not block the current runtime: %v", err)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRejectsRuntimeAndPolicyVersionMismatch(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		runtimeVersion int
+		policyVersion  int
+		wantFact       string
+	}{
+		{name: "runtime", runtimeVersion: agentruntime.CurrentRuntimeVersion - 1, policyVersion: agentruntime.CurrentPolicyVersion, wantFact: "runtime_version="},
+		{name: "policy", runtimeVersion: agentruntime.CurrentRuntimeVersion, policyVersion: agentruntime.CurrentPolicyVersion - 1, wantFact: "policy_version="},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			db := openAgentRuntimeSchemaSQLite(t)
+			if err := MigrateBaseSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			run := model.AgentRun{
+				ID: "run-version-" + testCase.name, ThreadID: "thread-version", ActorUserID: "user-version", ClientRequestID: "request-version-" + testCase.name,
+				Status: agentruntime.RunRunning, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+				RuntimeVersion: testCase.runtimeVersion, PolicyVersion: testCase.policyVersion,
+				CreatedAt: now, UpdatedAt: now,
+			}
+			if err := db.Create(&run).Error; err != nil {
+				t.Fatal(err)
+			}
+			err := EnsureAgentRuntimeIntegritySchema(db)
+			if err == nil || !strings.Contains(err.Error(), "run_id="+run.ID) || !strings.Contains(err.Error(), testCase.wantFact) {
+				t.Fatalf("version mismatch error = %v", err)
+			}
+		})
 	}
 }
 
@@ -239,6 +374,70 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresIncompatibleQueuedRunWithTermin
 	}
 	if checkpoint.StateVersion != terminal.StateVersion || checkpoint.StateJSON != event.PayloadJSON {
 		t.Fatalf("terminal checkpoint does not match event: %#v", checkpoint)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRetiresPristineQueuedRunWithOlderRuntimeContract(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	state := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 6, Status: agentruntime.RunQueued,
+		UserMessage:   "生成短剧样片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := model.AgentRun{
+		ID: "run-old-runtime-queued", ThreadID: "thread-old-runtime", ActorUserID: "user-old", ClientRequestID: "request-old-runtime",
+		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
+		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion - 1, PolicyVersion: agentruntime.CurrentPolicyVersion - 1,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRunEvent{
+		ID: "event-old-runtime-1", RunID: run.ID, Sequence: 1, Kind: agentruntime.EventRunCreated,
+		PayloadJSON: string(stateJSON), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentCheckpoint{
+		ID: "checkpoint-old-runtime-1", RunID: run.ID, Sequence: 1,
+		StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("pristine queued runtime should be retired during the hard cutover: %v", err)
+	}
+	var stored model.AgentRun
+	if err := db.First(&stored, "id = ?", run.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != agentruntime.RunFailed || stored.StateVersion != 2 || stored.LastEventSequence != 2 || stored.CompletedAt == nil {
+		t.Fatalf("retired runtime facts = %#v", stored)
+	}
+	if stored.RuntimeVersion != run.RuntimeVersion || stored.PolicyVersion != run.PolicyVersion {
+		t.Fatalf("historical runtime contract changed: %#v", stored)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.First(&checkpoint, "run_id = ? AND sequence = ?", run.ID, 2).Error; err != nil {
+		t.Fatal(err)
+	}
+	var terminal agentruntime.RuntimeState
+	if err := json.Unmarshal([]byte(checkpoint.StateJSON), &terminal); err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Status != agentruntime.RunFailed || terminal.FailureCode != "runtime_contract_retired" || terminal.StateVersion != 2 {
+		t.Fatalf("terminal runtime state = %#v", terminal)
 	}
 }
 
@@ -454,7 +653,7 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunWithActiveModelB
 	}
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "run_id="+runID) || !strings.Contains(err.Error(), "task_status=queued") {
+	if err == nil || !strings.Contains(err.Error(), "run_id="+runID) || !strings.Contains(err.Error(), "external facts") {
 		t.Fatalf("active legacy model task error = %v", err)
 	}
 	var storedRun model.AgentRun
@@ -474,7 +673,7 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunWithActiveModelB
 	}
 }
 
-func TestEnsureAgentRuntimeIntegritySchemaRetiresLegacyRunAfterModelBillingIsTerminal(t *testing.T) {
+func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunAfterModelBillingIsTerminal(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {
 		t.Fatal(err)
@@ -502,15 +701,15 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresLegacyRunAfterModelBillingIsTer
 		t.Fatal(err)
 	}
 
-	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
-		t.Fatalf("terminal legacy model facts should allow run retirement: %v", err)
+	if err := EnsureAgentRuntimeIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "external facts") {
+		t.Fatalf("terminal legacy model facts must block automatic retirement: %v", err)
 	}
 	var storedRun model.AgentRun
 	if err := db.First(&storedRun, "id = ?", runID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedRun.Status != agentruntime.RunFailed || storedRun.CompletedAt == nil {
-		t.Fatalf("legacy run was not retired after commercial finalization: %#v", storedRun)
+	if storedRun.Status != agentruntime.RunQueued || storedRun.CompletedAt != nil {
+		t.Fatalf("legacy run changed despite external commercial facts: %#v", storedRun)
 	}
 	var storedTask model.Task
 	if err := db.First(&storedTask, "id = ?", task.ID).Error; err != nil {
@@ -525,7 +724,7 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresLegacyRunAfterModelBillingIsTer
 	}
 }
 
-func TestEnsureAgentRuntimeIntegritySchemaRetiresLegacyRunAfterTokenBillingRefund(t *testing.T) {
+func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunAfterTokenBillingRefund(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {
 		t.Fatal(err)
@@ -553,15 +752,15 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresLegacyRunAfterTokenBillingRefun
 		t.Fatal(err)
 	}
 
-	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
-		t.Fatalf("refunded legacy token billing should allow run retirement: %v", err)
+	if err := EnsureAgentRuntimeIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "external facts") {
+		t.Fatalf("refunded legacy token billing must block automatic retirement: %v", err)
 	}
 	var storedRun model.AgentRun
 	if err := db.First(&storedRun, "id = ?", runID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedRun.Status != agentruntime.RunFailed || storedRun.CompletedAt == nil {
-		t.Fatalf("legacy run was not retired after token refund: %#v", storedRun)
+	if storedRun.Status != agentruntime.RunQueued || storedRun.CompletedAt != nil {
+		t.Fatalf("legacy run changed despite refunded billing facts: %#v", storedRun)
 	}
 	var storedTask model.Task
 	if err := db.First(&storedTask, "id = ?", task.ID).Error; err != nil {

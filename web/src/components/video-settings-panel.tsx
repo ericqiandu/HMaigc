@@ -4,7 +4,7 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { boolConfig, normalizeSeedanceRatio, seedanceRatioOptions } from "@/lib/seedance-video";
 import { normalizeVideoResolution } from "@/lib/video-generation-options";
-import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "@/lib/video-model-capabilities";
+import { normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode, videoResolutionsForMode, videoSupportsGeneratedAudio } from "@/lib/video-model-capabilities";
 import { type AiConfig } from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
 import { CanvasGenerationSettingsOption, CanvasGenerationSettingsRatioOption, CanvasGenerationSettingsSection } from "@/components/canvas/canvas-generation-settings-ui";
@@ -22,6 +22,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const capabilities = resolveVideoModelCapabilities(config);
     const normalizedConfig = normalizeVideoConfigForModel(config, generationMode);
     const ratioOptions = videoRatiosForMode(capabilities, generationMode);
+    const resolutionOptions = videoResolutionsForMode(capabilities, generationMode);
     const resolution = normalizedConfig.vquality;
     const ratio = ratioOptions.some((option) => option.value === normalizedConfig.size) ? normalizedConfig.size : ratioOptions[0].value;
     const durationOptions = capabilities.durations;
@@ -44,7 +45,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
                 <CanvasGenerationSettingsSection label="清晰度" theme={theme}>
                     <div className="canvas-video-resolution-grid grid gap-2">
-                        {capabilities.resolutions.map((item) => (
+                        {resolutionOptions.map((item) => (
                             <OptionButton key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
                             </OptionButton>
@@ -59,7 +60,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {capabilities.referenceLimits ? (
                     <CanvasGenerationSettingsSection label="参考素材" theme={theme}>
                         <div className="canvas-video-reference-limits text-[11px] leading-5" style={{ color: theme.node.muted }}>
-                            最多 {capabilities.referenceLimits.images} 图 + {capabilities.referenceLimits.videos} 视频 + {capabilities.referenceLimits.audios} 音频
+                            最多 {generationMode === "omni_reference" ? capabilities.referenceLimits.imagesWithVideo : capabilities.referenceLimits.images} 图 + {capabilities.referenceLimits.videos} 视频 + {capabilities.referenceLimits.audios} 音频
                             <span className="canvas-video-reference-duration-limits block">
                                 视频累计不超过 {capabilities.referenceLimits.totalVideoDurationSeconds} 秒 · 音频累计不超过 {capabilities.referenceLimits.totalAudioDurationSeconds} 秒
                             </span>
@@ -80,7 +81,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 ) : null}
 
                 <CanvasGenerationSettingsSection label="生成音频" theme={theme}>
-                    {capabilities.supportsGeneratedAudio ? (
+                    {videoSupportsGeneratedAudio(capabilities, generationMode, resolution) ? (
                         <div className="canvas-video-audio-grid grid grid-cols-2 gap-2">
                             <OptionButton selected={generateAudio} theme={theme} onClick={() => onConfigChange("videoGenerateAudio", "true")}>
                                 开启

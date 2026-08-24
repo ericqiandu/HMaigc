@@ -30,6 +30,7 @@ func TestProductionStoryboardTaskInputUsesSucceededReferenceAssets(t *testing.T)
 		},
 		Shots: []agentruntime.ShotPlanDraft{{
 			ShotKey: "shot-1", Order: 1, DurationMS: 6_000, ScriptText: "顾棠拿起怀表。",
+			Deliverables: agentRuntimeDualProductionDeliverables(),
 			ImagePrompt: "顾棠拿起月牙怀表", VideoPrompt: "镜头推进",
 			ReferenceKeys: []string{"hero", "watch"}, Dependencies: []string{},
 		}},

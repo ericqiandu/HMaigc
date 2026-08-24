@@ -8,7 +8,7 @@
     justify-content: center !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: var(--radius-full) !important;
     background: var(--foreground) !important;
     color: var(--background) !important;
     box-shadow: none !important;

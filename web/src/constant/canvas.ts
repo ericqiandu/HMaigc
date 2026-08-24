@@ -1,5 +1,6 @@
 import { CanvasNodeType } from "@/types/canvas";
 import type { CanvasNodeMetadata } from "@/types/canvas";
+import { DEFAULT_MEDIA_ASPECT_RATIO, DEFAULT_VIDEO_RESOLUTION } from "@/lib/generation-defaults";
 
 type CanvasNodeSpec = {
     width: number;
@@ -22,7 +23,7 @@ export const NODE_DEFAULT_SIZE = {
 export const NODE_SPECS = {
     [CanvasNodeType.Image]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Image],
-        metadata: { content: "", status: "idle" },
+        metadata: { content: "", status: "idle", size: DEFAULT_MEDIA_ASPECT_RATIO },
     },
     [CanvasNodeType.Text]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Text],
@@ -50,7 +51,7 @@ export const NODE_SPECS = {
     },
     [CanvasNodeType.Video]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Video],
-        metadata: { content: "", status: "idle" },
+        metadata: { content: "", status: "idle", size: DEFAULT_MEDIA_ASPECT_RATIO, vquality: DEFAULT_VIDEO_RESOLUTION },
     },
     [CanvasNodeType.Audio]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Audio],

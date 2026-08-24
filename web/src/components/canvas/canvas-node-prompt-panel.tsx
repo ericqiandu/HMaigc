@@ -3,7 +3,7 @@ import { AtSign, Boxes, Check, FileText, ImageIcon, ImagePlus, Maximize2, Music2
 import { Button, Modal, Popover, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { configuredModelMatchesCapability, defaultConfig, modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { configuredModelMatchesCapability, defaultConfig, encodeChannelModel, modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useCanvasTaskBillingQuote } from "@/hooks/use-canvas-task-billing-quote";
 import type { TaskBillingQuote } from "@/services/api/task-center";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -28,6 +28,7 @@ import "./canvas-audio-composer.css";
 import "./canvas-video-composer.css";
 import "./canvas-media-composer.css";
 import { GenerationCreditQuoteBadge } from "./generation-credit-quote-badge";
+import { resolveMediaAspectRatio, resolveVideoResolution } from "@/lib/generation-defaults";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -88,7 +89,11 @@ export function CanvasNodePromptPanel({
     const quoteConfig = useMemo(() => (isImageMode && findImageModelCapabilities(config) ? normalizeImageConfigForModel(config) : effectiveVideoConfig || config), [config, effectiveVideoConfig, isImageMode]);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(quoteConfig.count)) || 1)));
     const quoteReferenceVideoCount = isVideoMode && resolveVideoGenerationMode(node.metadata) === "omni_reference" ? activeVideoReferenceCount : 0;
-    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, quoteReferenceVideoCount);
+    const quoteReferenceImageCount = mentionReferences.filter((item) => item.active && item.kind === "image").length;
+    const quoteState = useCanvasTaskBillingQuote(projectId, quoteConfig, mode, isVideoMode ? node.metadata?.videoEditOperation || "video" : mode, generationCount, {
+        referenceImageCount: quoteReferenceImageCount,
+        referenceVideoCount: quoteReferenceVideoCount,
+    });
     const activeReferenceCount = mentionReferences.filter((item) => item.active && item.kind !== "skill").length;
     const activeVideoReferenceCounts = useMemo(
         () => ({
@@ -285,12 +290,7 @@ export function CanvasNodePromptPanel({
                 <span className="min-w-0 truncate px-2 text-[11px] leading-4" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
-                <CanvasSubmitButton
-                    state={isRunning ? "stop" : "ready"}
-                    disabled={isSubmitDisabled}
-                    onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                    ariaLabel={isRunning ? "停止生成" : "生成"}
-                />
+                <CanvasSubmitButton state={isRunning ? "stop" : "ready"} disabled={isSubmitDisabled} onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())} ariaLabel={isRunning ? "停止生成" : "生成"} />
             </div>
         ) : (
             <div className={`canvas-media-controls-row flex min-w-0 items-center justify-between gap-0.5 px-0.5 ${isImageMode ? "canvas-node-prompt-controls-row--image" : isVideoMode ? "canvas-node-prompt-controls-row--video" : ""}`}>
@@ -347,12 +347,7 @@ export function CanvasNodePromptPanel({
                     <span className={isImageMode ? "canvas-image-generation-cost canvas-media-meta ml-auto inline-flex" : isVideoMode ? "canvas-video-generation-cost canvas-media-meta ml-auto inline-flex" : "inline-flex"}>
                         <GenerationCreditQuoteBadge state={quoteState} color={theme.node.muted} />
                     </span>
-                    <CanvasSubmitButton
-                        state={isRunning ? "stop" : "ready"}
-                        disabled={isSubmitDisabled}
-                        onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())}
-                        ariaLabel={isRunning ? "停止生成" : "生成"}
-                    />
+                    <CanvasSubmitButton state={isRunning ? "stop" : "ready"} disabled={isSubmitDisabled} onClick={() => (isRunning ? onStop(node.id) : expanded ? submitExpandedPrompt() : submit())} ariaLabel={isRunning ? "停止生成" : "生成"} />
                 </div>
             </div>
         );
@@ -635,19 +630,19 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text || type === CanvasNodeType.Skill ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
 }
 
-function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
+export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
-    const storedModel = node.metadata?.model;
-    const model = storedModel && configuredModelMatchesCapability(globalConfig, storedModel, mode) ? storedModel : defaultModel && configuredModelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel;
+    const storedModel = node.metadata?.channelId && node.metadata?.model ? encodeChannelModel(node.metadata.channelId, node.metadata.model) : node.metadata?.model;
+    const model = storedModel || (defaultModel && configuredModelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel);
     const config: AiConfig = {
         ...globalConfig,
         model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
+        size: mode === "image" || mode === "video" ? resolveMediaAspectRatio(node.metadata?.size) : node.metadata?.size || globalConfig.size || defaultConfig.size,
         transparentBackground: (node.metadata?.transparentBackground || globalConfig.transparentBackground) === "true" ? "true" : "false",
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
+        vquality: mode === "video" ? resolveVideoResolution(node.metadata?.vquality) : node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoSuperResolutionEnabled: node.metadata?.superResolutionEnabled || globalConfig.videoSuperResolutionEnabled || defaultConfig.videoSuperResolutionEnabled,
         videoSuperResolutionResolution: node.metadata?.superResolutionResolution || globalConfig.videoSuperResolutionResolution || defaultConfig.videoSuperResolutionResolution,

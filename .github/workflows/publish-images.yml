@@ -40,7 +40,7 @@ jobs:
       - name: Test PostgreSQL and Redis integration
         run: >-
           bash scripts/tests/run-payment-integration.sh --all
-          --require TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts
+          --require TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -156,6 +156,10 @@ jobs:
           }
           [[ "$STATIC_ASSET_BASE_URL" != */ ]] || {
             echo "HMAIGC_STATIC_ASSET_BASE_URL 末尾不能包含 /" >&2
+            exit 1
+          }
+          [[ "$STATIC_ASSET_BASE_URL" == "https://static.hm.kunagent.com/hmaigc/web" ]] || {
+            echo "HMAIGC_STATIC_ASSET_BASE_URL 必须使用已备案的中国大陆 CDN 域名 https://static.hm.kunagent.com/hmaigc/web，禁止直接 OSS 读取域名" >&2
             exit 1
           }
 

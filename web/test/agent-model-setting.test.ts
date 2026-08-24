@@ -67,8 +67,20 @@ describe("Agent default model setting", () => {
                 outputPerMillionMicros: 6_000_000,
                 cachedPerMillionMicros: 25_000,
                 expectedOutputTokens: 8192,
+                maxOutputTokens: 16_384,
             }),
         ).toEqual({ billingMode: "token_usage", priceStrategy: "token" });
+    });
+
+    test("token supplier pricing without an explicit output ceiling stays unpublished", () => {
+        expect(
+            pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }), {
+                inputPerMillionMicros: 3_000_000,
+                outputPerMillionMicros: 6_000_000,
+                cachedPerMillionMicros: 25_000,
+                expectedOutputTokens: 8192,
+            }),
+        ).toEqual({ billingMode: "fixed_request", priceStrategy: "flat" });
     });
 
     test("an unmanaged text channel keeps its published billing contract", () => {

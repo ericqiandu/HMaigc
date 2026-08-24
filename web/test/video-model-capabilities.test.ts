@@ -3,11 +3,12 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode } from "../src/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode, videoResolutionsForMode } from "../src/lib/video-model-capabilities";
 import { VideoSettingsPanel, validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 import { seedanceReferenceError } from "../src/lib/seedance-video";
+import { normalizedPricingTierKey, specificationsForModel } from "../src/pages/admin/model-pricing/pricing-specifications";
 
 function miniMaxConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     const model = "MiniMax-H3";
@@ -52,13 +53,21 @@ function miniMaxConfig(overrides: Partial<AiConfig> = {}): AiConfig {
 function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiConfig {
     const is25 = model === "doubao-seedance-2-5-260628";
     const isPro = model === "doubao-seedance-2-0-260128";
+    const isMini = model === "doubao-seedance-2-0-mini-260615";
     const providerCapabilities = {
+        providerFamily: "seedance",
         modelKey: model,
         displayName: is25 ? "Seedance 2.5" : isPro ? "Seedance 2.0 Pro" : model.includes("fast") ? "Seedance 2.0 Fast" : "Seedance 2.0 Mini",
         upstreamMode: model,
         capability: "video",
-        resolutions: is25 ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        resolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        resolutionPixels: {},
+        inputVariants: ["standard", "reference_video"] as Array<"standard" | "reference_video">,
+        referenceVideoResolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        generatedAudioResolutions: [],
         ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        qualities: [],
+        outputCounts: [1, 2, 4],
         durationMin: 4,
         durationMax: is25 ? 30 : 15,
         supportsSmartDuration: true,
@@ -67,6 +76,7 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         supportsAudioOnly: is25,
         requiresAdaptiveFrames: is25,
         maxImages: is25 ? 30 : 9,
+        maxImagesWithVideo: is25 ? 30 : 9,
         maxVideos: is25 ? 10 : 3,
         maxAudios: is25 ? 10 : 3,
         maxVideoDurationSeconds: is25 ? 30 : 15,
@@ -112,7 +122,118 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
     };
 }
 
+function kuaiziKlingConfig(overrides: Partial<AiConfig> = {}): AiConfig {
+    const model = "kling-v3-omni";
+    const providerCapabilities = {
+        providerFamily: "kling",
+        modelKey: model,
+        displayName: "Kling 3 Omni",
+        upstreamMode: model,
+        capability: "video",
+        resolutions: ["std", "pro", "4k"],
+        resolutionPixels: {},
+        inputVariants: ["standard", "standard_audio", "reference_video"] as Array<"standard" | "standard_audio" | "reference_video">,
+        referenceVideoResolutions: ["std", "pro"],
+        generatedAudioResolutions: ["std", "pro"],
+        ratios: ["16:9", "9:16", "1:1"],
+        qualities: ["std", "pro", "4k"],
+        outputCounts: [1],
+        durationMin: 3,
+        durationMax: 15,
+        supportsSmartDuration: false,
+        supportsGeneratedAudio: true,
+        watermarkCapability: "unsupported" as const,
+        supportsAudioOnly: false,
+        requiresAdaptiveFrames: false,
+        maxImages: 7,
+        maxImagesWithVideo: 4,
+        maxVideos: 1,
+        maxAudios: 0,
+        maxVideoDurationSeconds: 10,
+        maxAudioDurationSeconds: 0,
+        tools: [],
+    };
+    return {
+        ...defaultConfig,
+        model,
+        videoModel: model,
+        channels: [
+            {
+                id: "kuaizi-video",
+                name: "筷子科技",
+                baseUrl: "https://aiopenapi.kuaizi.cn",
+                apiKey: "system",
+                apiFormat: "openai",
+                interfaceType: "ai-open-platform-video-volcengine",
+                models: [model],
+                scope: "system",
+                enabled: true,
+                modelCosts: [
+                    {
+                        model,
+                        marketingCopy: "",
+                        promotionBadge: "",
+                        estimatedDurationSeconds: 0,
+                        brandKey: "kling",
+                        accessPolicy: "authenticated",
+                        accessible: true,
+                        capability: "video",
+                        watermarkCapability: "unsupported",
+                        billingMode: "per_second",
+                        priceStrategy: "video_resolution",
+                        unitPriceMicrocredits: 1,
+                        priceTiers: [],
+                        providerCapabilities,
+                    },
+                ],
+            },
+        ],
+        ...overrides,
+    };
+}
+
+describe("筷子 Kling 3 Omni 视频能力", () => {
+    test("商业定价键忽略分辨率和输入模式的大小写差异", () => {
+        expect(normalizedPricingTierKey("STD", "STANDARD_AUDIO")).toBe("std::standard_audio");
+        expect(normalizedPricingTierKey("4K", "standard")).toBe("4k::standard");
+    });
+
+    test("从后台发布契约读取模式、时长、音频与单任务限制", () => {
+        const capabilities = resolveVideoModelCapabilities(kuaiziKlingConfig());
+        expect(capabilities.id).toBe("kuaizi-kling");
+        expect(capabilities.resolutions.map((option) => option.value)).toEqual(["std", "pro", "4k"]);
+        expect(capabilities.customDurationRange).toEqual({ min: 3, max: 15 });
+        expect(capabilities.outputCounts).toEqual([1]);
+        expect(capabilities.supportsGeneratedAudio).toBe(true);
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "pro" }), "text").vquality).toBe("pro");
+    });
+
+    test("4K 不在后台有声分辨率目录时强制关闭同步音频", () => {
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "4k", videoGenerateAudio: "true" }), "text").videoGenerateAudio).toBe("false");
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "pro", videoGenerateAudio: "true" }), "text").videoGenerateAudio).toBe("true");
+    });
+
+    test("参考视频模式只开放上游允许的 std 与 pro", () => {
+        const capabilities = resolveVideoModelCapabilities(kuaiziKlingConfig());
+        expect(videoResolutionsForMode(capabilities, "omni_reference").map((option) => option.value)).toEqual(["std", "pro"]);
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "4k", videoSeconds: "12" }), "omni_reference")).toMatchObject({ vquality: "std", videoSeconds: "10", videoGenerateAudio: "false" });
+    });
+
+    test("定价规格不生成上游禁止的 4k 参考视频组合", () => {
+        const providerCapabilities = kuaiziKlingConfig().channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        const specifications = specificationsForModel({ modelKey: "kling-v3-omni", priceStrategy: "video_resolution", providerCapabilities });
+        expect(specifications.map((item) => item.key)).toEqual(["std::standard", "std::standard_audio", "std::reference_video", "pro::standard", "pro::standard_audio", "pro::reference_video", "4k::standard"]);
+        expect(specifications.find((item) => item.key === "std::standard_audio")?.label).toBe("std · 普通生成（有声）");
+    });
+});
+
 describe("MiniMax H3 视频能力", () => {
+    test("新视频节点默认使用 16:9 与 720P", () => {
+        const normalized = normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-fast-260128"), "text");
+        expect(normalized).toMatchObject({ size: "16:9", vquality: "720p" });
+    });
+
     test("后台未发布视频模型时不进入视频能力解析", () => {
         expect(hasPublishedVideoModel(defaultConfig)).toBe(false);
     });
@@ -227,17 +348,17 @@ describe("Seedance 2.0 分辨率能力", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
     });
 
-    test("Mini 开放 480P、720P 与 1080P", () => {
-        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
+    test("Mini 只开放供应商支持的 480P 与 720P", () => {
+        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
     });
 
     test("Pro 开放 480P、720P、1080P 与 4K", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p", "4k"]);
     });
 
-    test("旧节点切换到 Fast 或 Mini 后只移除不支持的 4K", () => {
+    test("旧节点切换到 Fast 或 Mini 后移除目标模型不支持的分辨率", () => {
         expect(normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-fast-260128", { vquality: "4k" }), "text").vquality).toBe("720p");
-        expect(normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-mini-260615", { vquality: "1080p" }), "text").vquality).toBe("1080p");
+        expect(normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-mini-260615", { vquality: "1080p" }), "text").vquality).toBe("720p");
     });
 
     test("Pro 的 4K 参数在执行前保持不变", () => {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 		ID: "plan-version-1", PlanKey: "orange-ad", Version: 1, Title: "10秒橙子广告", TargetDurationMS: 10_000,
 		Script:         "鲜橙唤醒清晨。",
 		ReferencesJSON: `[]`,
-		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":10000,"scriptText":"鲜橙落水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]}]`,
 	}
 	artifacts := []model.AgentProductionArtifact{
 		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
@@ -34,11 +35,16 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 		"resource-video": {ID: "resource-video", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", ObjectKey: "production/shot-1.mp4", DurationMs: 10_000, CreatedAt: now, UpdatedAt: now},
 	}
 
-	first, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources)
+	renderArguments := productionCanvasTestRenderArguments(artifacts)
+	videoRender := renderArguments["artifact-video"]
+	videoRender.VideoInputMode = agentruntime.ProductionVideoInputStoryboard
+	videoRender.VideoInputResourceID = "resource-image"
+	renderArguments["artifact-video"] = videoRender
+	first, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources, renderArguments)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, secondBindings, err := buildProductionCanvasPatch(plan, artifacts, resources)
+	second, secondBindings, err := buildProductionCanvasPatch(plan, artifacts, resources, renderArguments)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +80,90 @@ func TestProductionCanvasCommitBuildsStableTypedProjection(t *testing.T) {
 	if nodes[2].Type != "video" || nodes[2].Metadata.Content != "/api/resources/resource-video/file" || nodes[2].Metadata.DurationMS != 10_000 || nodes[2].Metadata.Status != "success" {
 		t.Fatalf("video node = %#v", nodes[2])
 	}
+	if nodes[2].Metadata.VideoGenerationMode != "image" || nodes[2].Metadata.VideoEditOperation != "image_to_video" || nodes[2].Metadata.VideoStartFrameNodeID != nodes[1].ID {
+		t.Fatalf("video start frame facts = %#v", nodes[2].Metadata)
+	}
 	if nodes[0].ID != productionCanvasNodeID(plan, artifacts[0]) || nodes[1].ID != productionCanvasNodeID(plan, artifacts[1]) || nodes[2].ID != productionCanvasNodeID(plan, artifacts[2]) {
 		t.Fatalf("production node identities = %s, %s, %s", nodes[0].ID, nodes[1].ID, nodes[2].ID)
+	}
+}
+
+func TestProductionCanvasCommitProjectsVideoOnlyPlanWithoutImageNode(t *testing.T) {
+	now := time.Now().UTC()
+	plan := model.AgentProductionPlanVersion{
+		ID: "plan-version-video-only", PlanKey: "video-only", Version: 1, Title: "5秒原创抽象光影", TargetDurationMS: 5_000,
+		Script:         "抽象光带汇聚并消散。",
+		ReferencesJSON: `[]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"光带聚合","deliverables":["video_clip"],"videoPrompt":"原创抽象光影，镜头缓慢推进","dependencies":[]}]`,
+	}
+	artifacts := []model.AgentProductionArtifact{
+		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
+		{ID: "artifact-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactSucceeded, Attempt: 1, ResourceID: "resource-video"},
+	}
+	resources := map[string]model.Resource{
+		"resource-video": {ID: "resource-video", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", ObjectKey: "production/video-only.mp4", DurationMs: 5_000, CreatedAt: now, UpdatedAt: now},
+	}
+	renderArguments := map[string]agentruntime.ProductionRenderArguments{
+		"artifact-video": {
+			PlanKey: plan.PlanKey, PlanVersion: plan.Version, ArtifactID: "artifact-video", Attempt: 0,
+			GenerationModel: agentruntime.GenerationModelSelection{
+				ChannelID: "seedance-channel",
+				Model:     "doubao-seedance-2-0-mini-260615",
+			},
+			VideoInputMode: agentruntime.ProductionVideoInputTextToVideo,
+			VideoConfig: &agentruntime.VideoRenderConfig{
+				DurationSeconds: 5,
+				AspectRatio:     "9:16",
+				Quality:         "720p",
+				GenerateAudio:   false,
+			},
+		},
+	}
+
+	patch, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources, renderArguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch.UpsertNodes) != 2 || len(patch.UpsertConnections) != 1 || len(bindings) != 2 {
+		t.Fatalf("video-only projection counts: nodes=%d connections=%d bindings=%d", len(patch.UpsertNodes), len(patch.UpsertConnections), len(bindings))
+	}
+	var scriptNode, videoNode productionCanvasNode
+	if err := json.Unmarshal(patch.UpsertNodes[0], &scriptNode); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(patch.UpsertNodes[1], &videoNode); err != nil {
+		t.Fatal(err)
+	}
+	if scriptNode.Type != "script" || videoNode.Type != "video" || videoNode.Metadata.Content != "/api/resources/resource-video/file" {
+		t.Fatalf("video-only nodes: script=%#v video=%#v", scriptNode, videoNode)
+	}
+	if videoNode.Metadata.Seconds != "5" {
+		t.Fatalf("video-only node seconds = %q, want 5", videoNode.Metadata.Seconds)
+	}
+	if videoNode.Metadata.ChannelID != "seedance-channel" || videoNode.Metadata.Model != "doubao-seedance-2-0-mini-260615" ||
+		videoNode.Metadata.Size != "9:16" || videoNode.Metadata.VQuality != "720p" || videoNode.Metadata.GenerateAudio != "false" ||
+		videoNode.Metadata.VideoEditOperation != "text_to_video" || videoNode.Metadata.VideoGenerationMode != "text" || videoNode.Metadata.Count != 1 {
+		t.Fatalf("video-only node generation facts = %#v", videoNode.Metadata)
+	}
+	if !bytes.Contains(patch.UpsertNodes[1], []byte(`"seconds":"5"`)) {
+		t.Fatalf("video-only node omitted the web duration contract: %s", patch.UpsertNodes[1])
+	}
+	if scriptNode.Metadata.Storyboard == nil || len(scriptNode.Metadata.Storyboard.Rows) != 1 ||
+		scriptNode.Metadata.Storyboard.Rows[0].ImageNodeID != "" || scriptNode.Metadata.Storyboard.Rows[0].VideoNodeID != videoNode.ID {
+		t.Fatalf("video-only storyboard row = %#v", scriptNode.Metadata.Storyboard)
+	}
+	if bytes.Contains(patch.UpsertNodes[0], []byte(`"imageNodeId"`)) {
+		t.Fatalf("video-only script node serialized an image binding: %s", patch.UpsertNodes[0])
+	}
+	if !bytes.Contains(patch.UpsertNodes[0], []byte(`"deliverables":["video_clip"]`)) {
+		t.Fatalf("video-only script node omitted the explicit deliverable contract: %s", patch.UpsertNodes[0])
+	}
+	var connection productionCanvasConnection
+	if err := json.Unmarshal(patch.UpsertConnections[0], &connection); err != nil {
+		t.Fatal(err)
+	}
+	if connection.FromNodeID != scriptNode.ID || connection.ToNodeID != videoNode.ID || connection.FromHandleID != "row:shot-1" {
+		t.Fatalf("video-only connection = %#v", connection)
 	}
 }
 
@@ -85,13 +173,13 @@ func TestProductionCanvasCommitProjectsReferenceNodesAndBindings(t *testing.T) {
 		ID: "plan-version-reference", PlanKey: "watch-film", Version: 1, Title: "雨夜怀表", TargetDurationMS: 6_000,
 		Script:         "顾棠在雨夜钟表店为怀表上弦。",
 		ReferencesJSON: `[{"referenceKey":"character-gu-tang","role":"character","title":"顾棠角色定妆","imagePrompt":"黑色齐下巴短发，右侧银色发夹，深青色风衣"}]`,
-		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":6000,"scriptText":"顾棠拿起怀表","imagePrompt":"雨夜钟表店中景","videoPrompt":"缓慢推进","referenceKeys":["character-gu-tang"],"dependencies":[]}]`,
+		ShotsJSON:      `[{"shotKey":"shot-1","order":1,"durationMs":6000,"scriptText":"顾棠拿起怀表","deliverables":["storyboard_image","video_clip"],"imagePrompt":"雨夜钟表店中景","videoPrompt":"缓慢推进","referenceKeys":["character-gu-tang"],"dependencies":[]}]`,
 	}
 	artifacts := []model.AgentProductionArtifact{
 		{ID: "artifact-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded},
-		{ID: "artifact-reference", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ReferenceKey: "character-gu-tang", Kind: model.AgentProductionArtifactReferenceImage, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-reference"},
-		{ID: "artifact-image", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactStoryboardImage, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-image"},
-		{ID: "artifact-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactSucceeded, ResourceID: "resource-video"},
+		{ID: "artifact-reference", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ReferenceKey: "character-gu-tang", Kind: model.AgentProductionArtifactReferenceImage, Status: model.AgentProductionArtifactSucceeded, Attempt: 1, ResourceID: "resource-reference"},
+		{ID: "artifact-image", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactStoryboardImage, Status: model.AgentProductionArtifactSucceeded, Attempt: 1, ResourceID: "resource-image"},
+		{ID: "artifact-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: 1, ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactSucceeded, Attempt: 1, ResourceID: "resource-video"},
 	}
 	resources := map[string]model.Resource{
 		"resource-reference": {ID: "resource-reference", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", ObjectKey: "production/character.png", CreatedAt: now, UpdatedAt: now},
@@ -99,7 +187,7 @@ func TestProductionCanvasCommitProjectsReferenceNodesAndBindings(t *testing.T) {
 		"resource-video":     {ID: "resource-video", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", ObjectKey: "production/shot-1.mp4", DurationMs: 6_000, CreatedAt: now, UpdatedAt: now},
 	}
 
-	patch, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources)
+	patch, bindings, err := buildProductionCanvasPatch(plan, artifacts, resources, productionCanvasTestRenderArguments(artifacts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +211,27 @@ func TestProductionCanvasCommitProjectsReferenceNodesAndBindings(t *testing.T) {
 	}
 }
 
+func productionCanvasTestRenderArguments(artifacts []model.AgentProductionArtifact) map[string]agentruntime.ProductionRenderArguments {
+	result := make(map[string]agentruntime.ProductionRenderArguments)
+	for _, artifact := range artifacts {
+		if artifact.Kind == model.AgentProductionArtifactScript {
+			continue
+		}
+		arguments := agentruntime.ProductionRenderArguments{
+			PlanKey: artifact.PlanKey, PlanVersion: artifact.PlanVersion, ArtifactID: artifact.ID, Attempt: artifact.Attempt - 1,
+			GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "test-channel", Model: "test-model"},
+		}
+		if artifact.Kind == model.AgentProductionArtifactVideoClip {
+			arguments.VideoInputMode = agentruntime.ProductionVideoInputTextToVideo
+			arguments.VideoConfig = &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "16:9", Quality: "720p"}
+		} else {
+			arguments.ImageConfig = &agentruntime.ImageRenderConfig{Size: "1:1", Count: 1}
+		}
+		result[artifact.ID] = arguments
+	}
+	return result
+}
+
 func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) {
 	t.Run("commit and replay", func(t *testing.T) {
 		svc, db, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
@@ -136,7 +245,7 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 		}
 		if progress.State.Status != agentruntime.RunRunning || progress.State.PendingToolCall != nil ||
 			progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded {
-			t.Fatalf("canvas commit result = %#v", progress.State.LastToolResult)
+			t.Fatalf("canvas commit state = %#v", progress.State)
 		}
 		if _, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{ToolCallID: "commit-production", ActionVersion: 1}); err != nil {
 			t.Fatal(err)
@@ -179,7 +288,7 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 			t.Fatal(err)
 		}
 		if progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "canvas_revision_conflict" {
-			t.Fatalf("stale canvas commit result = %#v", progress.State.LastToolResult)
+			t.Fatalf("stale canvas commit state = %#v", progress.State)
 		}
 		var conflictFacts struct {
 			CurrentRevision string `json:"currentRevision"`
@@ -207,17 +316,146 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 			}
 		}
 	})
+
+	t.Run("incomplete artifact ledger returns exact repair facts", func(t *testing.T) {
+		svc, db, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
+		var receivedArtifactID string
+		for _, artifact := range artifacts {
+			if artifact.Kind == model.AgentProductionArtifactVideoClip {
+				receivedArtifactID = artifact.ID
+				break
+			}
+		}
+		if receivedArtifactID == "" {
+			t.Fatal("video artifact was not created")
+		}
+		setDecision(productionCanvasCommitDecisionWithArtifactIDs(t, "commit-incomplete", plan, []string{receivedArtifactID}, 7))
+		if err := svc.ProcessNextTask(); err != nil {
+			t.Fatal(err)
+		}
+		progress, err := svc.ResumeAgentRuntime(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "production_canvas_invalid" {
+			t.Fatalf("incomplete canvas commit state = %#v", progress.State)
+		}
+		var facts struct {
+			Reason              string   `json:"reason"`
+			ExpectedArtifactIDs []string `json:"expectedArtifactIds"`
+			ReceivedArtifactIDs []string `json:"receivedArtifactIds"`
+		}
+		if err := json.Unmarshal(progress.State.LastToolResult.Output, &facts); err != nil {
+			t.Fatal(err)
+		}
+		if facts.Reason != "production canvas artifacts do not match the plan" || len(facts.ExpectedArtifactIDs) != len(artifacts) || len(facts.ReceivedArtifactIDs) != 1 || facts.ReceivedArtifactIDs[0] != receivedArtifactID {
+			t.Fatalf("incomplete canvas repair facts = %#v", facts)
+		}
+		for _, artifact := range artifacts {
+			if !slices.Contains(facts.ExpectedArtifactIDs, artifact.ID) {
+				t.Fatalf("expected artifact ledger omitted %s: %#v", artifact.ID, facts.ExpectedArtifactIDs)
+			}
+		}
+		var canvas model.CanvasProject
+		if err := db.First(&canvas, "id = ?", scope.CanvasID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if canvas.Revision != 7 {
+			t.Fatalf("incomplete commit changed canvas revision to %d", canvas.Revision)
+		}
+	})
+}
+
+func TestAgentRuntimePromptCarriesAccumulatedDeliveryVerificationAfterCanvasCommit(t *testing.T) {
+	svc, _, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
+	delivery := agentruntime.ExpectedDelivery{
+		Kind: agentruntime.DeliveryMixed, TargetCanvasID: scope.CanvasID,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo, agentruntime.ArtifactCanvasRevision},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactFinalMessage},
+			{Fact: agentruntime.DeliveryFactCanvasRevision},
+			{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactVideo},
+		},
+	}
+	arguments, err := json.Marshal(agentProductionCanvasCommitArguments{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version, BaseRevision: 7,
+		ArtifactIDs: productionArtifactIDs(artifacts),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := json.Marshal(agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+		ToolCallID: "commit-delivery-evidence", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+		Arguments: arguments, ExpectedDelivery: delivery,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setDecision(string(decision))
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.ModelTask == nil {
+		t.Fatal("canvas commit did not schedule the final Agent model step")
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, progress.ModelTask.Prompt)
+	if context.DeliveryEvidence == nil || context.DeliveryEvidence.CanvasID != scope.CanvasID || context.DeliveryEvidence.CanvasRevision != 8 {
+		t.Fatalf("delivery evidence = %#v", context.DeliveryEvidence)
+	}
+	if context.DeliveryVerification == nil || context.DeliveryVerification.Status != agentruntime.VerificationRepairable ||
+		len(context.DeliveryVerification.MissingCriteria) != 1 || context.DeliveryVerification.MissingCriteria[0].Fact != agentruntime.DeliveryFactFinalMessage {
+		t.Fatalf("delivery verification = %#v", context.DeliveryVerification)
+	}
+}
+
+func TestAgentRuntimePromptProvidesCanonicalCanvasCommitArtifactIDs(t *testing.T) {
+	svc, _, scope, _, artifacts, _ := prepareProductionCanvasCommitTest(t)
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := svc.agentRuntimeModelPrompt(scope, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context struct {
+		ProductionPlan *struct {
+			CommitArtifactIDs []string `json:"commitArtifactIds"`
+		} `json:"productionPlan"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix)), &context); err != nil {
+		t.Fatal(err)
+	}
+	if context.ProductionPlan == nil {
+		t.Fatal("production plan is missing from the model prompt")
+	}
+	want := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		want = append(want, artifact.ID)
+	}
+	slices.Sort(want)
+	if !slices.Equal(context.ProductionPlan.CommitArtifactIDs, want) {
+		t.Fatalf("commit artifact ids = %#v, want %#v", context.ProductionPlan.CommitArtifactIDs, want)
+	}
+}
+
+func productionArtifactIDs(artifacts []model.AgentProductionArtifact) []string {
+	ids := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		ids = append(ids, artifact.ID)
+	}
+	return ids
 }
 
 func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentruntime.Scope, model.AgentProductionPlanVersion, []model.AgentProductionArtifact, func(string)) {
 	t.Helper()
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-canvas-commit", decision, 0, 0, 0)
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
@@ -226,7 +464,7 @@ func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentr
 	createAgentRuntimeCanvas(t, db)
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
-		Scope: scope, ClientRequestID: "production-canvas-" + strings.ReplaceAll(t.Name(), "/", "-"),
+		Scope: scope, ClientRequestID: "production-canvas-" + newID(),
 		UserMessage: "把生产计划提交到画布", MaxSteps: 6,
 		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
 	})
@@ -240,7 +478,7 @@ func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentr
 		Scope: scope, RunID: started.Run.ID, PlanKey: "plan-canvas-commit", BaseVersion: 0,
 		Draft: agentruntime.ProductionPlanDraft{
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
-			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水", ImagePrompt: "鲜橙特写", VideoPrompt: "慢镜水花", Dependencies: []string{}}},
+			Shots: []agentruntime.ShotPlanDraft{{ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水", Deliverables: agentRuntimeDualProductionDeliverables(), ImagePrompt: "鲜橙特写", VideoPrompt: "慢镜水花", Dependencies: []string{}}},
 		},
 		Now: time.Now().UTC(),
 	})
@@ -280,6 +518,38 @@ func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentr
 	if err != nil {
 		t.Fatal(err)
 	}
+	for artifactID, arguments := range productionCanvasTestRenderArguments(artifacts) {
+		var artifact model.AgentProductionArtifact
+		for _, candidate := range artifacts {
+			if candidate.ID == artifactID {
+				artifact = candidate
+				break
+			}
+		}
+		arguments.Attempt = 0
+		arguments.FrozenRenderQuote = agentruntime.FrozenRenderQuote{
+			AmountMicrocredits: 1_000_000, PerTaskAmountMicrocredits: 1_000_000,
+			PriceVersion: 1, BillingMode: "flat", Quantity: 1, QuoteFingerprint: "test-quote-" + artifactID,
+		}
+		inputJSON, marshalErr := json.Marshal(arguments)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		outputJSON, marshalErr := json.Marshal(agentProductionRenderResult{
+			ArtifactID: artifact.ID, ArtifactKind: artifact.Kind, ArtifactStatus: model.AgentProductionArtifactSucceeded,
+			Attempt: artifact.Attempt, TaskID: artifact.TaskID, BillingOrderID: artifact.BillingOrderID, ResourceID: artifact.ResourceID,
+		})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if err := db.Create(&model.AgentToolCall{
+			ID: newID(), RunID: started.Run.ID, ToolCallID: "render-" + artifactID, ActionVersion: 1,
+			ToolName: string(agentruntime.ToolProductionRender), Status: agentruntime.ToolCallSucceeded,
+			InputJSON: string(inputJSON), OutputJSON: string(outputJSON), CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	return svc, db, scope, record.Plan, artifacts, func(value string) { decision = value }
 }
 
@@ -289,6 +559,11 @@ func productionCanvasCommitDecision(t *testing.T, toolCallID string, plan model.
 	for _, artifact := range artifacts {
 		artifactIDs = append(artifactIDs, artifact.ID)
 	}
+	return productionCanvasCommitDecisionWithArtifactIDs(t, toolCallID, plan, artifactIDs, baseRevision)
+}
+
+func productionCanvasCommitDecisionWithArtifactIDs(t *testing.T, toolCallID string, plan model.AgentProductionPlanVersion, artifactIDs []string, baseRevision int64) string {
+	t.Helper()
 	arguments, err := json.Marshal(agentProductionCanvasCommitArguments{PlanKey: plan.PlanKey, PlanVersion: plan.Version, BaseRevision: baseRevision, ArtifactIDs: artifactIDs})
 	if err != nil {
 		t.Fatal(err)

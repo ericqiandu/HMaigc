@@ -214,6 +214,7 @@ export type ModelPricing = {
     expectedInputTokens: number;
     expectedOutputTokens: number;
     expectedCachedTokens: number;
+    maxOutputTokens: number;
     perRequestMicros: number;
     perMediaMicros: number;
     perVideoSecondMicros: number;
@@ -221,6 +222,8 @@ export type ModelPricing = {
         id: string;
         modelPricingId: string;
         specification: string;
+        usageMetric: string;
+        includedQuantity: number;
         supplierCostMicros: number;
         createdAt: string;
         updatedAt: string;
@@ -230,7 +233,12 @@ export type ModelPricing = {
 };
 
 export type ModelPricingInput = Omit<ModelPricing, "id" | "tiers" | "createdAt" | "updatedAt"> & {
-    tiers: Array<{ specification: string; supplierCostMicros: number }>;
+    tiers: Array<{
+        specification: string;
+        usageMetric?: string;
+        includedQuantity?: number;
+        supplierCostMicros: number;
+    }>;
 };
 
 export type ModelPricingOperationsSetting = {

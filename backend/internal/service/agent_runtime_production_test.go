@@ -13,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 func TestProductionPlanArgumentsRejectUnknownFields(t *testing.T) {
@@ -88,7 +90,7 @@ func TestAgentRuntimeSkillLoadExposesFrozenInstructionsOnNextStep(t *testing.T) 
 }
 
 func TestProductionPlanToolPersistsPlanAndArtifactsWithoutMediaBilling(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"plan-orange-ad","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"","baseVersion":0,"draft":{"title":"10秒橙子广告","targetDurationMs":10000,"script":"鲜橙唤醒清晨。","shots":[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]},{"shotKey":"shot-2","order":2,"durationMs":5000,"scriptText":"果汁收尾","imagePrompt":"果汁英雄镜头","videoPrompt":"镜头推进","dependencies":["shot-1"]}]}}}}`
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"plan-orange-ad","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"","baseVersion":0,"draft":{"title":"10秒橙子广告","targetDurationMs":10000,"script":"鲜橙唤醒清晨。","shots":[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]},{"shotKey":"shot-2","order":2,"durationMs":5000,"scriptText":"果汁收尾","deliverables":["storyboard_image","video_clip"],"imagePrompt":"果汁英雄镜头","videoPrompt":"镜头推进","dependencies":["shot-1"]}]}}}}`
 	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
@@ -187,16 +189,101 @@ func TestProductionRenderCapabilitiesRejectUnsupportedQualityBeforeApproval(t *t
 	}
 }
 
+func TestProductionRenderCapabilitiesRejectUnsupportedVideoAspectRatioBeforeApproval(t *testing.T) {
+	artifact := model.AgentProductionArtifact{Kind: model.AgentProductionArtifactVideoClip}
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: "video-channel", Model: "video-model", Capability: "video",
+		ProviderCapabilities: &PublicProviderCapabilities{
+			ModelKey: "video-model", Capability: "video", Ratios: []string{"16:9", "9:16"},
+			Resolutions: []string{"720p"}, DurationMin: 4, DurationMax: 15, SupportsGeneratedAudio: false,
+		},
+	}
+	request := agentProductionRenderRequest{
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "1:1", Quality: "720p"},
+	}
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err == nil || !strings.Contains(err.Error(), "aspect ratio") {
+		t.Fatalf("unsupported aspect ratio error = %v", err)
+	}
+	request.VideoConfig.AspectRatio = "9:16"
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err != nil {
+		t.Fatalf("capability-valid video config rejected: %v", err)
+	}
+}
+
+func TestProductionRenderCapabilitiesRejectGeneratedAudioOutsidePublishedResolution(t *testing.T) {
+	artifact := model.AgentProductionArtifact{Kind: model.AgentProductionArtifactVideoClip}
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: "kuaizi-kling", Model: kuaiziKlingModel, Capability: "video",
+		ProviderCapabilities: &PublicProviderCapabilities{
+			ModelKey: kuaiziKlingModel, Capability: "video", Ratios: []string{"16:9"},
+			Resolutions: []string{"std", "pro", "4k"}, DurationMin: 3, DurationMax: 15,
+			SupportsGeneratedAudio: true, GeneratedAudioResolutions: []string{"std", "pro"},
+		},
+	}
+	request := agentProductionRenderRequest{
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "16:9", Quality: "4k", GenerateAudio: true},
+	}
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err == nil || !strings.Contains(err.Error(), "generated audio") {
+		t.Fatalf("unsupported generated-audio resolution error = %v", err)
+	}
+	request.VideoConfig.Quality = "pro"
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err != nil {
+		t.Fatalf("published generated-audio resolution rejected: %v", err)
+	}
+}
+
+func TestProductionRenderRejectsLegacyPlanWithoutDeliverables(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
+	plan := model.AgentProductionPlanVersion{
+		ID: "legacy-plan-version", PlanKey: "legacy-plan",
+		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, CreatedByRunID: scope.RunID, Version: 1,
+		Status: model.AgentProductionPlanActive, Title: "旧纯视频计划", TargetDurationMS: 5_000,
+		Script: "抽象光影。", ReferencesJSON: `[]`,
+		ShotsJSON:            `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"光带聚合","imagePrompt":"旧分镜提示词","videoPrompt":"镜头推进","dependencies":[]}]`,
+		ExpectedDeliveryJSON: `{"scripts":1,"referenceImages":0,"storyboardImages":1,"videoClips":1}`,
+		CreatedAt:            now, UpdatedAt: now,
+	}
+	artifact := model.AgentProductionArtifact{
+		ID: "legacy-video-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+		ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactPlanned,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	for _, value := range []any{&plan, &artifact} {
+		if err := db.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := svc.freezeAgentProductionRenderArguments(scope, nil, json.RawMessage(`{
+		"planKey":"legacy-plan",
+		"planVersion":1,
+		"artifactId":"legacy-video-artifact",
+		"generationModel":{"channelId":"video-channel","model":"video-model"},
+		"videoConfig":{"durationSeconds":5,"aspectRatio":"16:9","quality":"720p","generateAudio":false}
+	}`))
+	code, _, ok := agentProductionRenderFailureDetails(err)
+	if !ok || code != "production_plan_invalid" || !strings.Contains(err.Error(), "deliverables") {
+		t.Fatalf("legacy production plan freeze error = %v code=%q", err, code)
+	}
+}
+
 func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
 	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
 	plan := model.AgentProductionPlanVersion{
 		ID: "retry-unresolved-plan-version", PlanKey: "retry-unresolved-plan",
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
 		CanvasID: scope.CanvasID, CreatedByRunID: scope.RunID, Version: 1,
 		Status: model.AgentProductionPlanActive, Title: "待核账重试", TargetDurationMS: 5_000,
-		Script: "鲜橙入水。", ShotsJSON: `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙入水","imagePrompt":"鲜橙特写","videoPrompt":"水花慢镜头","dependencies":[]}]`,
+		Script: "鲜橙入水。", ShotsJSON: `[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙入水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙特写","videoPrompt":"水花慢镜头","dependencies":[]}]`,
 		ExpectedDeliveryJSON: `{}`, CreatedAt: now, UpdatedAt: now,
 	}
 	task := model.Task{
@@ -266,7 +353,7 @@ func TestProductionRenderLegacyApprovedRetryDoesNotReuseUnresolvedTask(t *testin
 	arguments := agentruntime.ProductionRenderArguments{
 		ArtifactID: artifact.ID, Attempt: 1,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "video-model"},
-		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 10, Quality: "720p"},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 10, AspectRatio: "16:9", Quality: "720p"},
 	}
 
 	_, _, err := svc.ensureProductionArtifactTask(scope, &call, arguments, artifact)
@@ -389,6 +476,7 @@ func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T)
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
 	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
 	plan := model.AgentProductionPlanVersion{
 		ID: "committed-storyboard-plan-version", PlanKey: "committed-storyboard-plan",
 		TenantKind: scope.TenantKind, TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID,
@@ -435,6 +523,127 @@ func TestProductionStoryboardResourceAcceptsCommittedReadyArtifact(t *testing.T)
 	if resolved.ID != resource.ID {
 		t.Fatalf("resolved storyboard resource = %s", resolved.ID)
 	}
+	inputMode, frozenID, err := svc.freezeProductionVideoInputResource(scope, agentProductionRenderRequest{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version,
+	}, video, agentRuntimeCallableModelFact{ProviderCapabilities: &PublicProviderCapabilities{SupportsTextToVideo: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputMode != "storyboard" || frozenID != resource.ID {
+		t.Fatalf("frozen video input = mode %q resource %q, want storyboard / %q", inputMode, frozenID, resource.ID)
+	}
+	input, taskType, err := svc.productionRenderTaskInput(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: plan.PlanKey, PlanVersion: plan.Version,
+		VideoInputMode: inputMode, VideoInputResourceID: frozenID,
+		VideoConfig: &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "16:9", Quality: "720p"},
+	}, video, "镜头缓慢推进")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskType != "canvas_video" || len(input.ReferenceImages) != 1 || input.ReferenceImages[0].ID != resource.ID {
+		t.Fatalf("storyboard video task input = %#v, taskType=%s", input, taskType)
+	}
+}
+
+func TestProductionRenderBuildsTextToVideoTaskWithoutStoryboardResource(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	now := time.Now().UTC()
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
+	record, err := svc.repo.AppendAgentProductionPlanVersion(repository.AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "text-to-video-plan", BaseVersion: 0,
+		Draft: agentruntime.ProductionPlanDraft{
+			Title: "五秒文生视频", TargetDurationMS: 5_000, Script: "城市天台镜头。",
+			Shots: []agentruntime.ShotPlanDraft{{
+				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "人物站在城市天台",
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "城市天台人物定帧", VideoPrompt: "微风吹动衣角，镜头缓慢推进", Dependencies: []string{},
+			}},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var video model.AgentProductionArtifact
+	for _, artifact := range record.Artifacts {
+		if artifact.Kind == model.AgentProductionArtifactVideoClip {
+			video = artifact
+			break
+		}
+	}
+	if video.ID == "" {
+		t.Fatal("video artifact was not created")
+	}
+	request := agentProductionRenderRequest{PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version}
+	inputMode, frozenID, err := svc.freezeProductionVideoInputResource(scope, request, video, agentRuntimeCallableModelFact{
+		ProviderCapabilities: &PublicProviderCapabilities{SupportsTextToVideo: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputMode != "text_to_video" || frozenID != "" {
+		t.Fatalf("text-to-video frozen input = mode %q resource %q", inputMode, frozenID)
+	}
+	_, _, err = svc.freezeProductionVideoInputResource(scope, request, video, agentRuntimeCallableModelFact{
+		ProviderCapabilities: &PublicProviderCapabilities{SupportsTextToVideo: false},
+	})
+	if code, ok := agentProductionRenderFailureCode(err); !ok || code != "production_prerequisite_missing" {
+		t.Fatalf("missing non-text-to-video prerequisite error = %v, code=%q", err, code)
+	}
+
+	input, taskType, err := svc.productionRenderTaskInput(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version,
+		GenerationModel:      agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "doubao-seedance-2-0-260128"},
+		VideoInputMode:       agentruntime.ProductionVideoInputTextToVideo,
+		VideoInputResourceID: frozenID,
+		VideoConfig:          &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "9:16", Quality: "720p", GenerateAudio: false},
+	}, video, "微风吹动衣角，镜头缓慢推进")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskType != "canvas_video" || input.Mode != "video" || input.Config.Size != "9:16" || len(input.ReferenceImages) != 0 || input.Prompt != "微风吹动衣角，镜头缓慢推进" {
+		t.Fatalf("text-to-video task input = %#v, taskType=%s", input, taskType)
+	}
+	legacyFrozen, err := json.Marshal(agentruntime.ProductionRenderArguments{
+		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, ArtifactID: video.ID,
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "video-channel", Model: "doubao-seedance-2-0-260128"},
+		VideoConfig:     &agentruntime.VideoRenderConfig{DurationSeconds: 5, Quality: "720p"},
+		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
+			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "legacy-video-quote",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeFrozenProductionRenderArguments(legacyFrozen); !errors.Is(err, errAgentRuntimeProductionRenderInput) {
+		t.Fatalf("legacy frozen video arguments error = %v, want explicit invalid input", err)
+	}
+}
+
+func createAgentRuntimeScopedRunFacts(t *testing.T, db *gorm.DB, scope agentruntime.Scope, now time.Time) {
+	t.Helper()
+	thread := model.AgentThread{
+		ID: scope.ThreadID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		CreatedByUserID: scope.ActorUserID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, Status: agentruntime.ThreadActive, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&thread).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := model.AgentRun{
+		ID: scope.RunID, ThreadID: scope.ThreadID, ActorUserID: scope.ActorUserID,
+		ClientRequestID: "scoped-production-fixture", Status: agentruntime.RunRunning,
+		LastEventSequence: 2, StateVersion: 1, MaxSteps: 6,
+		ModelRecordID: "runtime-agent-model", ModelKey: "gpt-5.5",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		CreatedAt:         now, UpdatedAt: now,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestProductionGenerationFailureOutputIncludesTaskReason(t *testing.T) {
@@ -477,7 +686,8 @@ func TestReconcileSucceededProductionArtifactMaterializesRemoteResultExactlyOnce
 			Title: "恢复付费产物", TargetDurationMS: 1_000, Script: "画面。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "画面",
-				ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "画面", VideoPrompt: "动作", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -585,11 +795,7 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 			writer.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
@@ -612,7 +818,8 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
-				ImagePrompt: "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -682,7 +889,7 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rejected.State.Status != agentruntime.RunRunning || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+	if rejected.State.Status != agentruntime.RunCancelled || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("rejected production render state = %#v", rejected.State)
 	}
 	artifacts, err = svc.repo.AgentProductionArtifactsForVersion(scope, record.Plan.PlanKey, record.Plan.Version)
@@ -703,16 +910,19 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 	if mediaTasks != 0 || mediaOrders != 0 {
 		t.Fatalf("rejected approval created commercial facts: tasks=%d orders=%d", mediaTasks, mediaOrders)
 	}
+	var modelTasks int64
+	if err := db.Model(&model.Task{}).Where("user_id = ? AND type = ?", scope.ActorUserID, agentRuntimeModelTaskType).Count(&modelTasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if modelTasks != 1 {
+		t.Fatalf("rejected cost approval created another model task: %d", modelTasks)
+	}
 }
 
 func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing.T) {
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
@@ -735,7 +945,8 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
-				ImagePrompt: "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -828,11 +1039,7 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource(t *testing.T) {
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
 	}))
 	defer server.Close()
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
@@ -860,7 +1067,8 @@ func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource
 			Title: "橙子广告", TargetDurationMS: 5_000, Script: "鲜橙落水。",
 			Shots: []agentruntime.ShotPlanDraft{{
 				ShotKey: "shot-1", Order: 1, DurationMS: 5_000, ScriptText: "鲜橙落水",
-				ImagePrompt: "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
+				Deliverables: agentRuntimeDualProductionDeliverables(),
+				ImagePrompt:  "鲜橙产品特写", VideoPrompt: "慢镜头水花", Dependencies: []string{},
 			}},
 		},
 		Now: time.Now().UTC(),
@@ -960,5 +1168,12 @@ func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource
 		if artifact.ID == imageArtifact.ID && (artifact.Status != model.AgentProductionArtifactSucceeded || artifact.ResourceID != resource.ID || artifact.Attempt != 1) {
 			t.Fatalf("completed production artifact = %#v", artifact)
 		}
+	}
+}
+
+func agentRuntimeDualProductionDeliverables() []agentruntime.ProductionShotDeliverable {
+	return []agentruntime.ProductionShotDeliverable{
+		agentruntime.ProductionShotDeliverableStoryboardImage,
+		agentruntime.ProductionShotDeliverableVideoClip,
 	}
 }

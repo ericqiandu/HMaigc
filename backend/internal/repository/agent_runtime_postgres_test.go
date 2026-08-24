@@ -2,7 +2,6 @@ package repository
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -20,7 +19,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts(t *testing.T) {
+func TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {
 		t.Fatal(err)
@@ -69,37 +68,15 @@ func TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts(t *t
 		t.Fatal(err)
 	}
 
-	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
-		t.Fatalf("PostgreSQL hard cutover failed: %v", err)
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "external facts") {
+		t.Fatalf("PostgreSQL hard cutover accepted a run with commercial facts: %v", err)
 	}
 	var stored model.AgentRun
 	if err := db.First(&stored, "id = ?", run.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != agentruntime.RunFailed || stored.StateVersion != 2 || stored.LastEventSequence != 2 || stored.CompletedAt == nil {
-		t.Fatalf("PostgreSQL retired run = %#v", stored)
-	}
-	var event model.AgentRunEvent
-	if err := db.First(&event, "run_id = ? AND sequence = ?", run.ID, 2).Error; err != nil {
-		t.Fatal(err)
-	}
-	var terminal struct {
-		StateVersion int                    `json:"stateVersion"`
-		Status       agentruntime.RunStatus `json:"status"`
-		FailureCode  string                 `json:"failureCode"`
-	}
-	if err := json.Unmarshal([]byte(event.PayloadJSON), &terminal); err != nil {
-		t.Fatal(err)
-	}
-	if event.Kind != agentruntime.EventRunFailed || terminal.FailureCode != "tool_schema_retired" {
-		t.Fatalf("PostgreSQL retirement event=%#v state=%#v", event, terminal)
-	}
-	var checkpoint model.AgentCheckpoint
-	if err := db.First(&checkpoint, "run_id = ? AND sequence = ?", run.ID, 2).Error; err != nil {
-		t.Fatal(err)
-	}
-	if checkpoint.StateVersion != terminal.StateVersion || checkpoint.StateJSON != event.PayloadJSON {
-		t.Fatalf("PostgreSQL terminal facts disagree: checkpoint=%#v event=%#v", checkpoint, event)
+	if stored.Status != agentruntime.RunQueued || stored.StateVersion != run.StateVersion || stored.LastEventSequence != run.LastEventSequence || stored.CompletedAt != nil {
+		t.Fatalf("PostgreSQL hard cutover changed a run with commercial facts: %#v", stored)
 	}
 	var storedTask model.Task
 	if err := db.First(&storedTask, "id = ?", legacyTask.ID).Error; err != nil {
@@ -110,7 +87,7 @@ func TestPostgresAgentRuntimeUpgradeRetiresLegacyQueuedRunWithTerminalFacts(t *t
 		t.Fatal(err)
 	}
 	if storedTask.Status != legacyTask.Status || storedOrder.Status != legacyOrder.Status || storedOrder.AmountMicrocredits != legacyOrder.AmountMicrocredits {
-		t.Fatalf("PostgreSQL migration changed commercial facts: task=%#v order=%#v", storedTask, storedOrder)
+		t.Fatalf("PostgreSQL rejected migration changed commercial facts: task=%#v order=%#v", storedTask, storedOrder)
 	}
 }
 
@@ -412,7 +389,7 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
 		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +470,7 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	if _, err := firstRepo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
 		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +613,7 @@ func TestPostgresAgentRuntimeInitializationCASAcrossConnections(t *testing.T) {
 	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).Count(&checkpointCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if eventCount != 1 || checkpointCount != 1 {
+	if eventCount != 2 || checkpointCount != 1 {
 		t.Fatalf("PostgreSQL initialization facts: events=%d checkpoints=%d", eventCount, checkpointCount)
 	}
 	input.ModelKey = "different-model"

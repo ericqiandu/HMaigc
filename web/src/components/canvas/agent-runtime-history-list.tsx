@@ -39,12 +39,14 @@ export function AgentRuntimeHistoryList({ items, selectedThreadId, loading, erro
             {!loading && !error && items.length === 0 ? <span className="canvas-agent-runtime-history-state">当前画布还没有历史对话</span> : null}
             <div className="canvas-agent-runtime-history-items">
                 {items.map((item) => {
-                    const title = item.latestRun?.state.userMessage ?? "尚未开始";
+                    const latestTurn = item.turns.at(-1);
+                    const firstUserMessage = latestTurn?.items.find((timelineItem) => timelineItem.kind === "user_message");
+                    const title = typeof firstUserMessage?.content.message === "string" && firstUserMessage.content.message.trim() ? firstUserMessage.content.message : "尚未开始";
                     return (
                         <button key={item.thread.id} className="canvas-agent-runtime-history-item" type="button" aria-current={selectedThreadId === item.thread.id ? "true" : undefined} onClick={() => onSelect(item)}>
                             <span className="canvas-agent-runtime-history-item-main">
                                 <span className="canvas-agent-runtime-history-item-title">{title}</span>
-                                <span className="canvas-agent-runtime-history-item-status">{item.latestRun ? agentRuntimeStatusLabel(item.latestRun.state.status) : "尚未运行"}</span>
+                                <span className="canvas-agent-runtime-history-item-status">{latestTurn ? agentRuntimeStatusLabel(latestTurn.run.status) : "尚未运行"}</span>
                             </span>
                             <time className="canvas-agent-runtime-history-item-time" dateTime={item.activityAt}>
                                 {activityFormatter.format(new Date(item.activityAt))}

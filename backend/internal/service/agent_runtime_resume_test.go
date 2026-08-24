@@ -170,11 +170,7 @@ func newAgentRuntimeDecisionServer(t *testing.T, decision string, expected ...ag
 	calls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
-		writer.Header().Set("Content-Type", "application/json")
-		response := agentRuntimeChatResponse{Choices: []agentRuntimeChatChoice{{Message: agentRuntimeChatMessage{Content: decision}}}}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-decision", decision, 0, 0, 0)
 	}))
 	return server, calls
 }

@@ -12,8 +12,9 @@ import {
     type NamedSource,
 } from "./support/site-header-contract-parser";
 
-const homeHeader = await Bun.file(new URL("../src/pages/home/updream/updream-header.tsx", import.meta.url)).text();
+const homePage = await Bun.file(new URL("../src/pages/home/updream/updream-home-page.tsx", import.meta.url)).text();
 const workspaceHeader = await Bun.file(new URL("../src/components/layout/workspace-top-bar.tsx", import.meta.url)).text();
+const legacyHomeHeader = Bun.file(new URL("../src/pages/home/updream/updream-header.tsx", import.meta.url));
 const sharedBrand = Bun.file(new URL("../src/components/layout/site-brand-link.tsx", import.meta.url));
 const sharedBrandStyles = Bun.file(new URL("../src/components/layout/site-brand-link.css", import.meta.url));
 const sharedAccount = Bun.file(new URL("../src/components/layout/site-account-actions.tsx", import.meta.url));
@@ -37,9 +38,10 @@ const membershipSvgOwners = findMembershipSvgSignatures(productionTsxSources);
 describe("site header unification", () => {
     test("home and workspace share one brand owner", async () => {
         expect(await sharedBrand.exists()).toBe(true);
-        expect(homeHeader).toContain("<SiteBrandLink />");
+        expect(homePage).toContain("<WorkspaceTopBar />");
         expect(workspaceHeader).toContain("<SiteBrandLink />");
-        expect(homeHeader).not.toContain("siteLogoURL(");
+        expect(await legacyHomeHeader.exists()).toBe(false);
+        expect(homePage).not.toContain("SiteBrandLink");
         expect(workspaceHeader).not.toContain("siteLogoURL(");
     });
 
@@ -53,11 +55,26 @@ describe("site header unification", () => {
 
     test("homepage account actions have a shared owner", async () => {
         expect(await sharedAccount.exists()).toBe(true);
-        expect(homeHeader).toContain("<SiteAccountActions />");
+        expect(homePage).toContain("<WorkspaceTopBar />");
+        expect(homePage).not.toContain("SiteAccountActions");
         expect(await homeAccount.exists()).toBe(false);
         const source = await sharedAccount.text();
         expect(source).toContain('import "./site-account-actions.css";');
         expect(source).toContain("useMembershipAction");
+    });
+
+    test("homepage uses the shared floating navigation without route-specific geometry", async () => {
+        const styles = await homeStyles.text();
+        expect(homePage).toContain("<WorkspaceFloatingNavigation />");
+        expect(styles).not.toContain(".updream-home-page .workspace-floating-navigation");
+        expect(styles).not.toContain(".updream-home-page .workspace-floating-navigation-link");
+        expect(styles).not.toContain(".updream-home-page .workspace-floating-navigation-label");
+    });
+
+    test("homepage keeps its scroll surface behavior after retiring the legacy header stylesheet", async () => {
+        const styles = await homeStyles.text();
+        expect(styles).toMatch(/\.updream-home-page\s*\{[^}]*scrollbar-width:\s*none/);
+        expect(styles).toContain(".updream-home-page::-webkit-scrollbar");
     });
 
     test("membership SVG structure has exactly one recursive production owner", () => {

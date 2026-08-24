@@ -28,10 +28,10 @@ export function findImageModelCapabilities(config: AiConfig, selectedModel = con
 export function normalizeImageConfigForModel(config: AiConfig, selectedModel = config.model || config.imageModel): AiConfig {
     const capabilities = resolveImageModelCapabilities(config, selectedModel);
     const ratio = imageCanvasAspectLabel(config.size, capabilities.ratios);
-    const resolution = imageCanvasResolutionLabel(config.size, capabilities.resolutions);
+    const resolution = imageCanvasResolutionLabel(config.size, capabilities.resolutions, capabilities.resolutionPixels);
     const quality = normalizedOption(config.quality, capabilities.qualities);
     const count = normalizedCount(config.count, capabilities.outputCounts);
-    const size = imageSizeValue(ratio, resolution);
+    const size = imageSizeValue(ratio, resolution, capabilities.resolutionPixels);
     return {
         ...config,
         model: selectedModel,
@@ -58,7 +58,7 @@ export function imageCanvasSettingsSummary(config: AiConfig, showCount: boolean)
     const parts: string[] = [];
     if (capabilities.ratios.length) parts.push(imageCanvasAspectLabel(config.size, capabilities.ratios));
     if (capabilities.qualities.length) parts.push(imageCanvasQualityLabel(normalizedOption(config.quality, capabilities.qualities)));
-    if (capabilities.resolutions.length) parts.push(imageCanvasResolutionLabel(config.size, capabilities.resolutions));
+    if (capabilities.resolutions.length) parts.push(imageCanvasResolutionLabel(config.size, capabilities.resolutions, capabilities.resolutionPixels));
     if (showCount && capabilities.outputCounts.length > 1) parts.push(`${normalizedCount(config.count, capabilities.outputCounts)}张`);
     return parts.join(" · ") || "无可调参数";
 }
@@ -70,15 +70,15 @@ export function imageCanvasQualityLabel(value: string) {
     return value;
 }
 
-export function imageCanvasResolutionLabel(size: string | undefined, resolutions: readonly string[]) {
+export function imageCanvasResolutionLabel(size: string | undefined, resolutions: readonly string[], resolutionPixels: Readonly<Record<string, number>> = {}) {
     if (!resolutions.length) return "";
     const dimensions = parseDimensions(size);
     if (!dimensions) return resolutions[0];
     const targetPixels = dimensions.width * dimensions.height;
     const targetRatio = `${dimensions.width}:${dimensions.height}`;
     return resolutions.reduce((closest, candidate) => {
-        const candidatePixels = dimensionsPixelsForResolution(targetRatio, candidate);
-        const closestPixels = dimensionsPixelsForResolution(targetRatio, closest);
+        const candidatePixels = dimensionsPixelsForResolution(targetRatio, candidate, resolutionPixels);
+        const closestPixels = dimensionsPixelsForResolution(targetRatio, closest, resolutionPixels);
         if (!candidatePixels) return closest;
         if (!closestPixels) return candidate;
         return Math.abs(candidatePixels - targetPixels) < Math.abs(closestPixels - targetPixels) ? candidate : closest;
@@ -95,9 +95,16 @@ export function imageCanvasAspectLabel(size: string | undefined, ratios: readonl
     return ratios.reduce((closest, candidate) => (ratioDistance(candidate, target) < ratioDistance(closest, target) ? candidate : closest));
 }
 
-export function buildImageDimensions(ratio: string, resolution: string) {
+export function buildImageDimensions(ratio: string, resolution: string, resolutionPixels: Readonly<Record<string, number>> = {}) {
     const parsedRatio = parseRatio(ratio);
     const normalizedResolution = resolution.toUpperCase();
+    const targetPixels = resolutionPixels[normalizedResolution] ?? resolutionPixels[resolution];
+    if (parsedRatio && Number.isFinite(targetPixels) && targetPixels > 0) {
+        const aspectRatio = parsedRatio.width / parsedRatio.height;
+        const width = alignDimension(Math.sqrt(targetPixels * aspectRatio));
+        const height = alignDimension(Math.sqrt(targetPixels / aspectRatio));
+        return `${width}x${height}`;
+    }
     const configuredLongestEdge = IMAGE_RESOLUTION_LONG_EDGE[normalizedResolution];
     if (!parsedRatio || !configuredLongestEdge) throw new Error(`图片参数契约包含不支持的尺寸组合：${ratio} / ${resolution}`);
     const square = parsedRatio.width === parsedRatio.height;
@@ -115,8 +122,8 @@ export function buildImageDimensions(ratio: string, resolution: string) {
     return `${width}x${height}`;
 }
 
-export function imageSizeValue(ratio: string, resolution: string) {
-    if (ratio && resolution) return buildImageDimensions(ratio, resolution);
+export function imageSizeValue(ratio: string, resolution: string, resolutionPixels: Readonly<Record<string, number>> = {}) {
+    if (ratio && resolution) return buildImageDimensions(ratio, resolution, resolutionPixels);
     return ratio || resolution;
 }
 
@@ -149,9 +156,9 @@ function ratioDistance(ratio: string, target: number) {
     return parsed ? Math.abs(parsed.width / parsed.height - target) : Number.POSITIVE_INFINITY;
 }
 
-function dimensionsPixelsForResolution(ratio: string, resolution: string) {
+function dimensionsPixelsForResolution(ratio: string, resolution: string, resolutionPixels: Readonly<Record<string, number>>) {
     try {
-        const dimensions = parseDimensions(buildImageDimensions(ratio, resolution));
+        const dimensions = parseDimensions(buildImageDimensions(ratio, resolution, resolutionPixels));
         return dimensions ? dimensions.width * dimensions.height : 0;
     } catch {
         return 0;

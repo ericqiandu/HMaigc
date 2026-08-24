@@ -25,7 +25,8 @@ import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } fr
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
-import { imagePricingSpecifications, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
+import { buildInputImageUsagePricing, readInputImageUsagePricing } from "./media-input-usage-pricing";
+import { imagePricingSpecifications, normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
 type PricingFormValues = {
@@ -39,11 +40,15 @@ type PricingFormValues = {
     expectedInputTokens?: number;
     expectedOutputTokens?: number;
     expectedCachedTokens?: number;
+    maxOutputTokens?: number;
     perRequest?: number;
     perMedia?: number;
     perVideoSecond?: number;
     tierCosts?: Record<string, number>;
     tierCredits?: Record<string, number>;
+    inputImageIncludedQuantity?: number;
+    inputImageSupplierUnitCost?: number;
+    inputImageUserUnitCredits?: number;
 };
 type SettingsFormValues = { currency: string; creditRevenue: number; targetMarginPercent: number };
 type PricingTierInput = { specification: PricingSpecification; supplierCost: number; userCredits?: number };
@@ -110,6 +115,8 @@ export default function ModelPricingPage() {
     const openPricing = (model: CommercialModel) => {
         const pricing = model.pricing;
         const contract = pricingContractForModel(model, pricing);
+        const inputImageUsage = readInputImageUsagePricing(pricing?.tiers || [], model.priceTiers);
+        if (inputImageUsage.state === "incomplete") message.warning("参考图附加价只保存了一侧事实，请补全成本和积分后重新保存");
         setEditing(model);
         pricingForm.setFieldsValue({
             currency: pricing?.currency || setting.currency,
@@ -122,11 +129,15 @@ export default function ModelPricingPage() {
             expectedInputTokens: optionalCount(pricing?.expectedInputTokens),
             expectedOutputTokens: optionalCount(pricing?.expectedOutputTokens),
             expectedCachedTokens: optionalCount(pricing?.expectedCachedTokens),
+            maxOutputTokens: optionalCount(pricing?.maxOutputTokens),
             perRequest: optionalMoney(pricing?.perRequestMicros),
             perMedia: optionalMoney(pricing?.perMediaMicros),
             perVideoSecond: optionalMoney(pricing?.perVideoSecondMicros),
-            tierCosts: Object.fromEntries(pricing?.tiers.map((tier) => [tier.specification, fromMicro(tier.supplierCostMicros)]) || []),
-            tierCredits: Object.fromEntries(model.priceTiers.map((tier) => [pricingTierKey(tier.resolution, tier.inputVariant), fromMicro(tier.unitPriceMicrocredits)])),
+            tierCosts: Object.fromEntries(pricing?.tiers.filter((tier) => !tier.usageMetric).map((tier) => [tier.specification, fromMicro(tier.supplierCostMicros)]) || []),
+            tierCredits: Object.fromEntries(model.priceTiers.filter((tier) => !tier.usageMetric).map((tier) => [pricingTierKey(tier.resolution, tier.inputVariant), fromMicro(tier.unitPriceMicrocredits)])),
+            inputImageIncludedQuantity: inputImageUsage.includedQuantity,
+            inputImageSupplierUnitCost: optionalMoney(inputImageUsage.supplierUnitCostMicros),
+            inputImageUserUnitCredits: optionalMoney(inputImageUsage.userUnitPriceMicrocredits),
         });
         setPricingDirty(contract.billingMode !== model.billingMode || contract.priceStrategy !== model.priceStrategy);
     };
@@ -219,6 +230,17 @@ export default function ModelPricingPage() {
             message.error("视频模型至少需要配置一个基础分辨率或超分规格");
             return;
         }
+        let inputImageUsagePricing;
+        try {
+            inputImageUsagePricing = buildInputImageUsagePricing({
+                includedQuantity: values.inputImageIncludedQuantity,
+                supplierUnitCostMicros: toOptionalMicro(values.inputImageSupplierUnitCost),
+                userUnitPriceMicrocredits: toOptionalMicro(values.inputImageUserUnitCredits),
+            });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考图附加价配置无效");
+            return;
+        }
         const pricingInput: ModelPricingInput = {
             channelId: editing.channelId,
             model: editing.modelKey,
@@ -230,13 +252,17 @@ export default function ModelPricingPage() {
             expectedInputTokens: values.expectedInputTokens || 0,
             expectedOutputTokens: values.expectedOutputTokens || 0,
             expectedCachedTokens: values.expectedCachedTokens || 0,
+            maxOutputTokens: values.maxOutputTokens || 0,
             perRequestMicros: toMicro(values.perRequest),
             perMediaMicros: toMicro(values.perMedia),
             perVideoSecondMicros: toMicro(values.perVideoSecond),
-            tiers: tierInputs.map(({ specification, supplierCost }) => ({
-                specification: specification.key,
-                supplierCostMicros: toMicro(supplierCost),
-            })),
+            tiers: [
+                ...tierInputs.map(({ specification, supplierCost }) => ({
+                    specification: specification.key,
+                    supplierCostMicros: toMicro(supplierCost),
+                })),
+                ...(inputImageUsagePricing ? [inputImageUsagePricing.supplierTier] : []),
+            ],
         };
         const tokenPricing = values.billingMode === "token_usage" && values.priceStrategy === "token";
         const modelInput = {
@@ -251,13 +277,16 @@ export default function ModelPricingPage() {
             billingMode: values.billingMode,
             priceStrategy: values.priceStrategy,
             unitPriceMicrocredits: values.priceStrategy === "flat" ? toMicro(values.unitCredits) : 0,
-            priceTiers: baseSaleTierInputs.map(({ specification, userCredits }) => ({
-                resolution: specification.resolution || specification.key,
-                inputVariant: specification.inputVariant || "standard",
-                unitPriceMicrocredits: toMicro(userCredits as number),
-            })),
+            priceTiers: [
+                ...baseSaleTierInputs.map(({ specification, userCredits }) => ({
+                    resolution: specification.resolution || specification.key,
+                    inputVariant: specification.inputVariant || ("standard" as const),
+                    unitPriceMicrocredits: toMicro(userCredits as number),
+                })),
+                ...(inputImageUsagePricing ? [inputImageUsagePricing.userTier] : []),
+            ],
             priceConfigured: tokenPricing
-                ? pricingInput.inputPerMillionMicros > 0 && pricingInput.outputPerMillionMicros > 0 && pricingInput.expectedOutputTokens > 0
+                ? pricingInput.inputPerMillionMicros > 0 && pricingInput.outputPerMillionMicros > 0 && pricingInput.maxOutputTokens > 0
                 : values.priceStrategy === "flat"
                   ? Boolean(values.unitCredits && values.unitCredits > 0)
                   : baseSaleTierInputs.length > 0,
@@ -589,6 +618,7 @@ function PricingDrawer({
                         <SupplierOnlyPricingFields modelKey={model?.modelKey || ""} strategy={strategy} />
                     </>
                 )}
+                {capability === "image" && billingMode === "fixed_request" ? <InputImageUsagePricingFields /> : null}
             </Form>
         </Drawer>
     );
@@ -611,6 +641,10 @@ function FlatPricingFields({ capability, strategy }: { capability?: ChannelModel
                         <CountField name="expectedInputTokens" label="平均输入 Token" />
                         <CountField name="expectedOutputTokens" label="平均输出 Token" />
                         <CountField name="expectedCachedTokens" label="平均缓存 Token" />
+                    </div>
+                    <p className="model-pricing-section-description mb-3 text-xs leading-5 text-foreground/48">最大输出 Token 是发送给上游模型的硬限制，必须按模型真实能力单独配置，不参与平均成本估算。</p>
+                    <div className="model-pricing-token-limit-grid grid grid-cols-1 sm:grid-cols-2">
+                        <CountField name="maxOutputTokens" label="最大输出 Token" />
                     </div>
                 </>
             ) : null}
@@ -704,6 +738,20 @@ function CountField({ name, label }: { name: keyof PricingFormValues; label: str
     );
 }
 
+function InputImageUsagePricingFields() {
+    return (
+        <section className="model-pricing-input-image-usage mt-6">
+            <h3 className="model-pricing-section-title mb-1 text-sm font-semibold">参考图附加价</h3>
+            <p className="model-pricing-section-description mb-4 text-xs leading-5 text-foreground/48">可选配置。免费数量以内只收基础生成价；超出部分按每张分别核算供应商成本与用户积分。</p>
+            <div className="model-pricing-input-image-usage-grid grid grid-cols-1 gap-x-4 sm:grid-cols-3">
+                <CountField name="inputImageIncludedQuantity" label="免费参考图数量" />
+                <MoneyField name="inputImageSupplierUnitCost" label="供应商成本 / 超出每张" />
+                <MoneyField name="inputImageUserUnitCredits" label="用户积分 / 超出每张" />
+            </div>
+        </section>
+    );
+}
+
 function CommercialStatusTag({ status }: { status: "configured" | "warning" | "incomplete" }) {
     if (status === "configured")
         return (
@@ -722,6 +770,9 @@ function CommercialStatusTag({ status }: { status: "configured" | "warning" | "i
 
 function toMicro(value?: number) {
     return Math.round((value || 0) * 1_000_000);
+}
+function toOptionalMicro(value?: number) {
+    return value === undefined ? undefined : toMicro(value);
 }
 function fromMicro(value: number) {
     return value / 1_000_000;
@@ -742,7 +793,10 @@ function capabilityLabel(value: ChannelModel["capability"]) {
 
 function commercialStatus(model: CommercialModel, setting: ModelPricingOperationsSetting): "configured" | "warning" | "incomplete" {
     if (model.priceStrategy === "token") return model.priceConfigured && comparableCost(model) !== null ? (setting.targetMarginBasisPoints > 0 ? "warning" : "configured") : "incomplete";
-    const margins = model.priceStrategy === "flat" ? [marginPercent(model, setting)] : model.priceTiers.map((tier) => marginPercent(model, setting, pricingTierKey(tier.resolution, tier.inputVariant)));
+    const baseTiers = model.priceTiers.filter((tier) => !tier.usageMetric);
+    const margins = model.priceStrategy === "flat" ? [marginPercent(model, setting)] : baseTiers.map((tier) => marginPercent(model, setting, pricingTierKey(tier.resolution, tier.inputVariant)));
+    const usageMargin = inputImageUsageMarginPercent(model, setting);
+    if (usageMargin !== undefined) margins.push(usageMargin);
     if (margins.length === 0 || margins.some((margin) => margin === null)) return "incomplete";
     return margins.some((margin) => Number(margin) * 10_000 < setting.targetMarginBasisPoints) ? "warning" : "configured";
 }
@@ -751,10 +805,19 @@ function marginPercent(model: CommercialModel, setting: ModelPricingOperationsSe
     if (!setting.configured || !model.priceConfigured || !model.pricing) return null;
     const cost = comparableCost(model, resolution);
     if (model.priceStrategy === "token") return cost === null ? null : 0;
-    const credits = model.priceStrategy !== "flat" ? model.priceTiers.find((tier) => pricingTierKey(tier.resolution, tier.inputVariant) === resolution)?.unitPriceMicrocredits : model.unitPriceMicrocredits;
+    const credits = model.priceStrategy !== "flat" ? model.priceTiers.find((tier) => !tier.usageMetric && pricingTierKey(tier.resolution, tier.inputVariant) === resolution)?.unitPriceMicrocredits : model.unitPriceMicrocredits;
     if (cost === null || !credits || credits <= 0) return null;
     const revenue = (credits * setting.creditRevenueMicros) / 1_000_000;
     return revenue > 0 ? (revenue - cost) / revenue : null;
+}
+
+function inputImageUsageMarginPercent(model: CommercialModel, setting: ModelPricingOperationsSetting): number | null | undefined {
+    const supplierTier = model.pricing?.tiers.find((tier) => tier.usageMetric === "input_image");
+    const userTier = model.priceTiers.find((tier) => tier.usageMetric === "input_image");
+    if (!supplierTier && !userTier) return undefined;
+    if (!setting.configured || !supplierTier || !userTier || supplierTier.includedQuantity !== userTier.includedQuantity || supplierTier.supplierCostMicros <= 0 || userTier.unitPriceMicrocredits <= 0) return null;
+    const revenue = (userTier.unitPriceMicrocredits * setting.creditRevenueMicros) / 1_000_000;
+    return revenue > 0 ? (revenue - supplierTier.supplierCostMicros) / revenue : null;
 }
 
 function comparableCost(model: CommercialModel, resolution?: string) {
@@ -778,23 +841,39 @@ function formatMargin(model: CommercialModel, setting: ModelPricingOperationsSet
         if (specifications.length === 0) return <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
         const values = specifications.map((specification) => marginPercent(model, setting, specification.key));
         if (values.some((value) => value === null)) return <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
-        return <span className="model-pricing-margin text-xs tabular-nums">{values.map((value, index) => `${specifications[index].label} ${(Number(value) * 100).toFixed(1)}%`).join(" · ")}</span>;
+        const usageMargin = inputImageUsageMarginPercent(model, setting);
+        if (usageMargin === null) return <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>;
+        const labels = values.map((value, index) => `${specifications[index].label} ${(Number(value) * 100).toFixed(1)}%`);
+        if (usageMargin !== undefined) labels.push(`参考图 ${(usageMargin * 100).toFixed(1)}%`);
+        return <span className="model-pricing-margin text-xs tabular-nums">{labels.join(" · ")}</span>;
     }
     const value = marginPercent(model, setting);
-    return value === null ? <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span> : <span className="model-pricing-margin tabular-nums">{(value * 100).toFixed(1)}%</span>;
+    const usageMargin = inputImageUsageMarginPercent(model, setting);
+    return value === null || usageMargin === null ? (
+        <span className="model-pricing-unavailable text-xs text-foreground/40">无法核算</span>
+    ) : (
+        <span className="model-pricing-margin tabular-nums">{[(value * 100).toFixed(1) + "%", usageMargin === undefined ? "" : `参考图 ${(usageMargin * 100).toFixed(1)}%`].filter(Boolean).join(" · ")}</span>
+    );
 }
 
 function formatCost(model: CommercialModel) {
     const pricing = model.pricing;
     if (!pricing) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
-    if ((model.priceStrategy !== "flat" && model.priceStrategy !== "token") || pricing.tiers.length > 0)
-        return <span className="model-pricing-cost text-xs">{pricing.tiers.map((tier) => `${tierLabel(tier.specification)} ${money(tierCost(pricing, tier.specification), pricing.currency)}`).join(" · ")}</span>;
+    const baseTiers = pricing.tiers.filter((tier) => !tier.usageMetric);
+    const usageTier = pricing.tiers.find((tier) => tier.usageMetric === "input_image");
+    if (model.priceStrategy !== "flat" && model.priceStrategy !== "token") {
+        const labels = baseTiers.map((tier) => `${tierLabel(tier.specification)} ${money(fromMicro(tier.supplierCostMicros), pricing.currency)}`);
+        if (usageTier) labels.push(`参考图超 ${usageTier.includedQuantity} 张 ${money(fromMicro(usageTier.supplierCostMicros), pricing.currency)} / 张`);
+        return <span className="model-pricing-cost text-xs">{labels.join(" · ")}</span>;
+    }
     const value = comparableCost(model);
     return value === null ? (
         <span className="model-pricing-unavailable text-xs text-foreground/40">缺少可比成本</span>
     ) : (
         <span className="model-pricing-cost text-xs">
-            {money(fromMicro(value), pricing.currency)} / {model.billingMode === "per_second" ? "秒" : "次"}
+            {[`${money(fromMicro(value), pricing.currency)} / ${model.billingMode === "per_second" ? "秒" : "次"}`, usageTier ? `参考图超 ${usageTier.includedQuantity} 张 ${money(fromMicro(usageTier.supplierCostMicros), pricing.currency)} / 张` : ""]
+                .filter(Boolean)
+                .join(" · ")}
         </span>
     );
 }
@@ -802,11 +881,18 @@ function formatCost(model: CommercialModel) {
 function formatCustomerPrice(model: CommercialModel) {
     if (!model.priceConfigured) return <span className="model-pricing-unavailable text-xs text-foreground/40">未配置</span>;
     if (model.priceStrategy === "token") return <span className="model-pricing-price text-xs">按实际上游 Token 用量</span>;
-    if (model.priceStrategy !== "flat")
-        return <span className="model-pricing-price text-xs">{model.priceTiers.map((tier) => `${tierLabel(pricingTierKey(tier.resolution, tier.inputVariant))} ${fromMicro(tier.unitPriceMicrocredits)} 积分`).join(" · ")}</span>;
+    const baseTiers = model.priceTiers.filter((tier) => !tier.usageMetric);
+    const usageTier = model.priceTiers.find((tier) => tier.usageMetric === "input_image");
+    if (model.priceStrategy !== "flat") {
+        const labels = baseTiers.map((tier) => `${tierLabel(pricingTierKey(tier.resolution, tier.inputVariant))} ${fromMicro(tier.unitPriceMicrocredits)} 积分`);
+        if (usageTier) labels.push(`参考图超 ${usageTier.includedQuantity} 张 ${fromMicro(usageTier.unitPriceMicrocredits)} 积分 / 张`);
+        return <span className="model-pricing-price text-xs">{labels.join(" · ")}</span>;
+    }
     return (
         <span className="model-pricing-price text-xs">
-            {fromMicro(model.unitPriceMicrocredits)} 积分 / {model.billingMode === "per_second" ? "秒" : "次"}
+            {[`${fromMicro(model.unitPriceMicrocredits)} 积分 / ${model.billingMode === "per_second" ? "秒" : "次"}`, usageTier ? `参考图超 ${usageTier.includedQuantity} 张 ${fromMicro(usageTier.unitPriceMicrocredits)} 积分 / 张` : ""]
+                .filter(Boolean)
+                .join(" · ")}
         </span>
     );
 }
@@ -827,11 +913,11 @@ function tierLabel(value: string) {
     };
     if (value.includes("::")) {
         const [resolution, variant] = value.split("::");
-        return `${resolution}·${variant === "reference_video" ? "参考视频" : "普通生成"}`;
+        return `${resolution}·${variant === "reference_video" ? "参考视频" : variant === "standard_audio" ? "普通生成（有声）" : "普通生成（无声）"}`;
     }
     return labels[value] || value;
 }
 
 function pricingTierKey(resolution: string, inputVariant?: string) {
-    return `${resolution}::${inputVariant || "standard"}`;
+    return normalizedPricingTierKey(resolution, inputVariant);
 }

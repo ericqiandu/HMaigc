@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -29,23 +28,35 @@ type productionCanvasNode struct {
 }
 
 type productionCanvasNodeMetadata struct {
-	Content         string                      `json:"content,omitempty"`
-	ComposerContent string                      `json:"composerContent,omitempty"`
-	Prompt          string                      `json:"prompt,omitempty"`
-	Status          string                      `json:"status"`
-	ErrorDetails    string                      `json:"errorDetails,omitempty"`
-	GenerationMode  string                      `json:"generationMode,omitempty"`
-	StorageKey      string                      `json:"storageKey,omitempty"`
-	MimeType        string                      `json:"mimeType,omitempty"`
-	DurationMS      int64                       `json:"durationMs,omitempty"`
-	WorkflowKind    string                      `json:"workflowKind"`
-	WorkflowTitle   string                      `json:"workflowTitle"`
-	ShotIndex       int                         `json:"shotIndex,omitempty"`
-	TaskID          string                      `json:"taskId,omitempty"`
-	TaskStatus      string                      `json:"taskStatus,omitempty"`
-	TaskProgress    int                         `json:"taskProgress,omitempty"`
-	TaskStage       string                      `json:"taskStage,omitempty"`
-	Storyboard      *productionCanvasStoryboard `json:"storyboard,omitempty"`
+	Content               string                      `json:"content,omitempty"`
+	ComposerContent       string                      `json:"composerContent,omitempty"`
+	Prompt                string                      `json:"prompt,omitempty"`
+	Status                string                      `json:"status"`
+	ErrorDetails          string                      `json:"errorDetails,omitempty"`
+	GenerationMode        string                      `json:"generationMode,omitempty"`
+	ChannelID             string                      `json:"channelId,omitempty"`
+	Model                 string                      `json:"model,omitempty"`
+	Size                  string                      `json:"size,omitempty"`
+	Quality               string                      `json:"quality,omitempty"`
+	Count                 int                         `json:"count,omitempty"`
+	TransparentBackground string                      `json:"transparentBackground,omitempty"`
+	VQuality              string                      `json:"vquality,omitempty"`
+	GenerateAudio         string                      `json:"generateAudio,omitempty"`
+	VideoEditOperation    string                      `json:"videoEditOperation,omitempty"`
+	VideoGenerationMode   string                      `json:"videoGenerationMode,omitempty"`
+	VideoStartFrameNodeID string                      `json:"videoStartFrameNodeId,omitempty"`
+	StorageKey            string                      `json:"storageKey,omitempty"`
+	MimeType              string                      `json:"mimeType,omitempty"`
+	DurationMS            int64                       `json:"durationMs,omitempty"`
+	Seconds               string                      `json:"seconds,omitempty"`
+	WorkflowKind          string                      `json:"workflowKind"`
+	WorkflowTitle         string                      `json:"workflowTitle"`
+	ShotIndex             int                         `json:"shotIndex,omitempty"`
+	TaskID                string                      `json:"taskId,omitempty"`
+	TaskStatus            string                      `json:"taskStatus,omitempty"`
+	TaskProgress          int                         `json:"taskProgress,omitempty"`
+	TaskStage             string                      `json:"taskStage,omitempty"`
+	Storyboard            *productionCanvasStoryboard `json:"storyboard,omitempty"`
 }
 
 type productionCanvasStoryboard struct {
@@ -55,26 +66,27 @@ type productionCanvasStoryboard struct {
 }
 
 type productionCanvasStoryboardRow struct {
-	ID                    string   `json:"id"`
-	ShotNumber            int      `json:"shotNumber"`
-	DurationSeconds       float64  `json:"durationSeconds"`
-	PlotDescription       string   `json:"plotDescription"`
-	Dialogue              string   `json:"dialogue"`
-	Characters            []string `json:"characters"`
-	ShotSize              string   `json:"shotSize"`
-	Emotion               string   `json:"emotion"`
-	LightingAndAtmosphere string   `json:"lightingAndAtmosphere"`
-	AudioEffects          string   `json:"audioEffects"`
-	Camera                string   `json:"camera"`
-	Motion                string   `json:"motion"`
-	TimeBeats             string   `json:"timeBeats"`
-	ImageGenerationPrompt string   `json:"imageGenerationPrompt"`
-	VideoMotionPrompt     string   `json:"videoMotionPrompt"`
-	NegativePrompt        string   `json:"negativePrompt"`
-	ReferenceNodeIDs      []string `json:"referenceNodeIds"`
-	ImageNodeID           string   `json:"imageNodeId"`
-	VideoNodeID           string   `json:"videoNodeId"`
-	Status                string   `json:"status"`
+	ID                    string                                   `json:"id"`
+	ShotNumber            int                                      `json:"shotNumber"`
+	DurationSeconds       float64                                  `json:"durationSeconds"`
+	Deliverables          []agentruntime.ProductionShotDeliverable `json:"deliverables"`
+	PlotDescription       string                                   `json:"plotDescription"`
+	Dialogue              string                                   `json:"dialogue"`
+	Characters            []string                                 `json:"characters"`
+	ShotSize              string                                   `json:"shotSize"`
+	Emotion               string                                   `json:"emotion"`
+	LightingAndAtmosphere string                                   `json:"lightingAndAtmosphere"`
+	AudioEffects          string                                   `json:"audioEffects"`
+	Camera                string                                   `json:"camera"`
+	Motion                string                                   `json:"motion"`
+	TimeBeats             string                                   `json:"timeBeats"`
+	ImageGenerationPrompt string                                   `json:"imageGenerationPrompt"`
+	VideoMotionPrompt     string                                   `json:"videoMotionPrompt"`
+	NegativePrompt        string                                   `json:"negativePrompt"`
+	ReferenceNodeIDs      []string                                 `json:"referenceNodeIds"`
+	ImageNodeID           string                                   `json:"imageNodeId,omitempty"`
+	VideoNodeID           string                                   `json:"videoNodeId,omitempty"`
+	Status                string                                   `json:"status"`
 }
 
 type productionCanvasConnection struct {
@@ -88,15 +100,14 @@ func buildProductionCanvasPatch(
 	plan model.AgentProductionPlanVersion,
 	artifacts []model.AgentProductionArtifact,
 	resources map[string]model.Resource,
+	renderArguments map[string]agentruntime.ProductionRenderArguments,
 ) (CanvasMutationPatch, []productionCanvasBinding, error) {
-	var references []agentruntime.ReferenceAssetDraft
-	if err := json.Unmarshal([]byte(plan.ReferencesJSON), &references); err != nil {
-		return CanvasMutationPatch{}, nil, fmt.Errorf("decode production references: %w", err)
+	draft, err := decodeStoredAgentProductionPlan(plan)
+	if err != nil {
+		return CanvasMutationPatch{}, nil, err
 	}
-	var shots []agentruntime.ShotPlanDraft
-	if err := json.Unmarshal([]byte(plan.ShotsJSON), &shots); err != nil {
-		return CanvasMutationPatch{}, nil, fmt.Errorf("decode production shots: %w", err)
-	}
+	references := draft.References
+	shots := draft.Shots
 	if strings.TrimSpace(plan.PlanKey) == "" || plan.Version < 1 || len(shots) == 0 {
 		return CanvasMutationPatch{}, nil, errors.New("production canvas plan is invalid")
 	}
@@ -125,12 +136,20 @@ func buildProductionCanvasPatch(
 		orderedArtifacts = append(orderedArtifacts, artifact)
 	}
 	for _, shot := range shots {
-		image, imageExists := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
-		video, videoExists := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
-		if !imageExists || !videoExists {
-			return CanvasMutationPatch{}, nil, errors.New("production canvas shot artifacts are incomplete")
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			image, exists := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
+			if !exists {
+				return CanvasMutationPatch{}, nil, errors.New("production canvas storyboard artifact is missing")
+			}
+			orderedArtifacts = append(orderedArtifacts, image)
 		}
-		orderedArtifacts = append(orderedArtifacts, image, video)
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			video, exists := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+			if !exists {
+				return CanvasMutationPatch{}, nil, errors.New("production canvas video artifact is missing")
+			}
+			orderedArtifacts = append(orderedArtifacts, video)
+		}
 	}
 	if len(orderedArtifacts) != len(artifacts) {
 		return CanvasMutationPatch{}, nil, errors.New("production canvas artifacts contain unsupported roles")
@@ -151,8 +170,6 @@ func buildProductionCanvasPatch(
 
 	rows := make([]productionCanvasStoryboardRow, 0, len(shots))
 	for _, shot := range shots {
-		image := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
-		video := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
 		shotReferenceNodeIDs := make([]string, 0, len(shot.ReferenceKeys))
 		for _, referenceKey := range shot.ReferenceKeys {
 			nodeID, referenceExists := referenceNodeByKey[referenceKey]
@@ -161,12 +178,23 @@ func buildProductionCanvasPatch(
 			}
 			shotReferenceNodeIDs = append(shotReferenceNodeIDs, nodeID)
 		}
+		imageNodeID := ""
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			image := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
+			imageNodeID = nodeByArtifact[image.ID]
+		}
+		videoNodeID := ""
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			video := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+			videoNodeID = nodeByArtifact[video.ID]
+		}
 		rows = append(rows, productionCanvasStoryboardRow{
 			ID: shot.ShotKey, ShotNumber: shot.Order, DurationSeconds: float64(shot.DurationMS) / 1000,
+			Deliverables:    append([]agentruntime.ProductionShotDeliverable(nil), shot.Deliverables...),
 			PlotDescription: shot.ScriptText, Characters: []string{}, ShotSize: "", Emotion: "", LightingAndAtmosphere: "",
 			AudioEffects: "", Camera: "", Motion: "", TimeBeats: "",
 			ImageGenerationPrompt: shot.ImagePrompt, VideoMotionPrompt: shot.VideoPrompt, NegativePrompt: "",
-			ReferenceNodeIDs: shotReferenceNodeIDs, ImageNodeID: nodeByArtifact[image.ID], VideoNodeID: nodeByArtifact[video.ID], Status: "success",
+			ReferenceNodeIDs: shotReferenceNodeIDs, ImageNodeID: imageNodeID, VideoNodeID: videoNodeID, Status: "success",
 		})
 	}
 	scriptNode := productionCanvasNode{
@@ -184,7 +212,7 @@ func buildProductionCanvasPatch(
 	connections := make([]productionCanvasConnection, 0, len(references)+len(shots)*2)
 	for index, reference := range references {
 		artifact := artifactsByRole[productionArtifactRole(reference.ReferenceKey, "", model.AgentProductionArtifactReferenceImage)]
-		referenceNode, err := productionReferenceCanvasNode(plan, reference, artifact, resources, 500, float64(index)*280)
+		referenceNode, err := productionReferenceCanvasNode(plan, reference, artifact, resources, renderArguments, 500, float64(index)*280)
 		if err != nil {
 			return CanvasMutationPatch{}, nil, err
 		}
@@ -194,30 +222,51 @@ func buildProductionCanvasPatch(
 		})
 	}
 	for _, shot := range shots {
-		imageArtifact := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
-		videoArtifact := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
-		imageNode, err := productionMediaCanvasNode(plan, shot, imageArtifact, resources, 1000, float64(shot.Order-1)*300)
-		if err != nil {
-			return CanvasMutationPatch{}, nil, err
-		}
-		videoNode, err := productionMediaCanvasNode(plan, shot, videoArtifact, resources, 1440, float64(shot.Order-1)*300)
-		if err != nil {
-			return CanvasMutationPatch{}, nil, err
-		}
-		nodes = append(nodes, imageNode, videoNode)
-		connections = append(connections,
-			productionCanvasConnection{
-				ID: productionCanvasConnectionID(plan, scriptNode.ID, imageNode.ID), FromNodeID: scriptNode.ID, ToNodeID: imageNode.ID, FromHandleID: "row:" + shot.ShotKey,
-			},
-			productionCanvasConnection{
-				ID: productionCanvasConnectionID(plan, imageNode.ID, videoNode.ID), FromNodeID: imageNode.ID, ToNodeID: videoNode.ID,
-			},
-		)
-		for _, referenceKey := range shot.ReferenceKeys {
+		var imageNode *productionCanvasNode
+		if shot.Delivers(agentruntime.ProductionShotDeliverableStoryboardImage) {
+			imageArtifact := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactStoryboardImage)]
+			projected, err := productionMediaCanvasNode(plan, shot, imageArtifact, resources, renderArguments, 1000, float64(shot.Order-1)*300)
+			if err != nil {
+				return CanvasMutationPatch{}, nil, err
+			}
+			imageNode = &projected
+			nodes = append(nodes, projected)
 			connections = append(connections, productionCanvasConnection{
-				ID:         productionCanvasConnectionID(plan, referenceNodeByKey[referenceKey], imageNode.ID),
-				FromNodeID: referenceNodeByKey[referenceKey], ToNodeID: imageNode.ID,
+				ID: productionCanvasConnectionID(plan, scriptNode.ID, projected.ID), FromNodeID: scriptNode.ID, ToNodeID: projected.ID, FromHandleID: "row:" + shot.ShotKey,
 			})
+			for _, referenceKey := range shot.ReferenceKeys {
+				connections = append(connections, productionCanvasConnection{
+					ID:         productionCanvasConnectionID(plan, referenceNodeByKey[referenceKey], projected.ID),
+					FromNodeID: referenceNodeByKey[referenceKey], ToNodeID: projected.ID,
+				})
+			}
+		}
+		if shot.Delivers(agentruntime.ProductionShotDeliverableVideoClip) {
+			videoArtifact := artifactsByRole[productionArtifactRole("", shot.ShotKey, model.AgentProductionArtifactVideoClip)]
+			videoX := 1000.0
+			if imageNode != nil {
+				videoX = 1440
+			}
+			videoNode, err := productionMediaCanvasNode(plan, shot, videoArtifact, resources, renderArguments, videoX, float64(shot.Order-1)*300)
+			if err != nil {
+				return CanvasMutationPatch{}, nil, err
+			}
+			if videoNode.Metadata.VideoGenerationMode == "image" {
+				if imageNode == nil {
+					return CanvasMutationPatch{}, nil, errors.New("production canvas video start frame node is missing")
+				}
+				videoNode.Metadata.VideoStartFrameNodeID = imageNode.ID
+			}
+			nodes = append(nodes, videoNode)
+			connection := productionCanvasConnection{
+				ID: productionCanvasConnectionID(plan, scriptNode.ID, videoNode.ID), FromNodeID: scriptNode.ID, ToNodeID: videoNode.ID, FromHandleID: "row:" + shot.ShotKey,
+			}
+			if imageNode != nil {
+				connection = productionCanvasConnection{
+					ID: productionCanvasConnectionID(plan, imageNode.ID, videoNode.ID), FromNodeID: imageNode.ID, ToNodeID: videoNode.ID,
+				}
+			}
+			connections = append(connections, connection)
 		}
 	}
 	patch := CanvasMutationPatch{UpsertNodes: make([]json.RawMessage, 0, len(nodes)), UpsertConnections: make([]json.RawMessage, 0, len(connections))}
@@ -251,12 +300,19 @@ func productionReferenceCanvasNode(
 	reference agentruntime.ReferenceAssetDraft,
 	artifact model.AgentProductionArtifact,
 	resources map[string]model.Resource,
+	renderArguments map[string]agentruntime.ProductionRenderArguments,
 	x float64,
 	y float64,
 ) (productionCanvasNode, error) {
+	render, err := productionCanvasRenderArguments(artifact, renderArguments)
+	if err != nil {
+		return productionCanvasNode{}, err
+	}
 	metadata := productionCanvasNodeMetadata{
 		Prompt: reference.ImagePrompt, ComposerContent: reference.ImagePrompt, Status: productionArtifactCanvasStatus(artifact.Status),
 		GenerationMode: "image", WorkflowKind: "reference", WorkflowTitle: reference.Title,
+		ChannelID: render.GenerationModel.ChannelID, Model: render.GenerationModel.Model,
+		Size: render.ImageConfig.Size, Quality: render.ImageConfig.Quality, Count: render.ImageConfig.Count,
 		TaskID: artifact.TaskID, TaskStatus: string(artifact.Status), TaskProgress: productionArtifactProgress(artifact.Status),
 		TaskStage: productionArtifactStage(artifact.Status), ErrorDetails: artifact.LastErrorCode,
 	}
@@ -276,19 +332,47 @@ func productionReferenceCanvasNode(
 	}, nil
 }
 
-func productionMediaCanvasNode(plan model.AgentProductionPlanVersion, shot agentruntime.ShotPlanDraft, artifact model.AgentProductionArtifact, resources map[string]model.Resource, x float64, y float64) (productionCanvasNode, error) {
+func productionMediaCanvasNode(plan model.AgentProductionPlanVersion, shot agentruntime.ShotPlanDraft, artifact model.AgentProductionArtifact, resources map[string]model.Resource, renderArguments map[string]agentruntime.ProductionRenderArguments, x float64, y float64) (productionCanvasNode, error) {
+	render, err := productionCanvasRenderArguments(artifact, renderArguments)
+	if err != nil {
+		return productionCanvasNode{}, err
+	}
 	nodeType := "image"
 	titleSuffix := "分镜图"
 	prompt := shot.ImagePrompt
 	width, height := 340.0, 240.0
+	seconds := ""
 	if artifact.Kind == model.AgentProductionArtifactVideoClip {
 		nodeType, titleSuffix, prompt, width, height = "video", "视频", shot.VideoPrompt, 420, 236
+		seconds = strconv.FormatFloat(float64(shot.DurationMS)/1000, 'f', -1, 64)
 	}
 	metadata := productionCanvasNodeMetadata{
 		Prompt: prompt, ComposerContent: prompt, Status: productionArtifactCanvasStatus(artifact.Status),
 		GenerationMode: nodeType, WorkflowKind: "shot", WorkflowTitle: "镜头 " + strconv.Itoa(shot.Order) + " " + titleSuffix,
+		ChannelID: render.GenerationModel.ChannelID, Model: render.GenerationModel.Model,
+		Seconds:   seconds,
 		ShotIndex: shot.Order, TaskID: artifact.TaskID, TaskStatus: string(artifact.Status),
 		TaskProgress: productionArtifactProgress(artifact.Status), TaskStage: productionArtifactStage(artifact.Status), ErrorDetails: artifact.LastErrorCode,
+	}
+	if render.ImageConfig != nil {
+		metadata.Size = render.ImageConfig.Size
+		metadata.Quality = render.ImageConfig.Quality
+		metadata.Count = render.ImageConfig.Count
+		metadata.TransparentBackground = strconv.FormatBool(render.ImageConfig.TransparentBackground)
+	}
+	if render.VideoConfig != nil {
+		metadata.Size = render.VideoConfig.AspectRatio
+		metadata.Seconds = strconv.Itoa(render.VideoConfig.DurationSeconds)
+		metadata.VQuality = render.VideoConfig.Quality
+		metadata.GenerateAudio = strconv.FormatBool(render.VideoConfig.GenerateAudio)
+		metadata.Count = 1
+		if render.VideoInputMode == agentruntime.ProductionVideoInputTextToVideo {
+			metadata.VideoEditOperation = "text_to_video"
+			metadata.VideoGenerationMode = "text"
+		} else {
+			metadata.VideoEditOperation = "image_to_video"
+			metadata.VideoGenerationMode = "image"
+		}
 	}
 	if artifact.ResourceID != "" {
 		resource, exists := resources[artifact.ResourceID]
@@ -305,6 +389,23 @@ func productionMediaCanvasNode(plan model.AgentProductionPlanVersion, shot agent
 		ID: productionCanvasNodeID(plan, artifact), Type: nodeType, Title: "镜头 " + strconv.Itoa(shot.Order) + " · " + titleSuffix,
 		Position: agentCanvasPosition{X: x, Y: y}, Width: width, Height: height, Metadata: metadata,
 	}, nil
+}
+
+func productionCanvasRenderArguments(artifact model.AgentProductionArtifact, renderArguments map[string]agentruntime.ProductionRenderArguments) (agentruntime.ProductionRenderArguments, error) {
+	arguments, exists := renderArguments[artifact.ID]
+	if !exists || arguments.PlanKey != artifact.PlanKey || arguments.PlanVersion != artifact.PlanVersion || arguments.ArtifactID != artifact.ID || arguments.Attempt+1 != artifact.Attempt ||
+		strings.TrimSpace(arguments.GenerationModel.ChannelID) == "" || strings.TrimSpace(arguments.GenerationModel.Model) == "" ||
+		(arguments.ImageConfig == nil) == (arguments.VideoConfig == nil) {
+		return agentruntime.ProductionRenderArguments{}, errors.New("production canvas render facts are missing or invalid")
+	}
+	if artifact.Kind == model.AgentProductionArtifactVideoClip {
+		if arguments.VideoConfig == nil || strings.TrimSpace(arguments.VideoConfig.AspectRatio) == "" || !arguments.VideoInputMode.Valid() {
+			return agentruntime.ProductionRenderArguments{}, errors.New("production canvas video render facts are invalid")
+		}
+	} else if arguments.ImageConfig == nil {
+		return agentruntime.ProductionRenderArguments{}, errors.New("production canvas image render facts are invalid")
+	}
+	return arguments, nil
 }
 
 func productionArtifactRole(referenceKey string, shotKey string, kind model.AgentProductionArtifactKind) string {
