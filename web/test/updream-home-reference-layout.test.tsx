@@ -14,18 +14,24 @@ import type { CanvasAgentSkillSelection } from "@/types/canvas";
 
 let root: Root | null = null;
 let idleCallback: IdleRequestCallback | null = null;
+let stabilityDelayCallback: (() => void) | null = null;
 
 const originalMatchMedia = window.matchMedia;
 const originalRequestIdleCallback = window.requestIdleCallback;
 const originalCancelIdleCallback = window.cancelIdleCallback;
+const originalSetTimeout = window.setTimeout;
+const originalClearTimeout = window.clearTimeout;
 
 afterEach(async () => {
     if (root) await act(async () => root?.unmount());
     root = null;
     idleCallback = null;
+    stabilityDelayCallback = null;
     window.matchMedia = originalMatchMedia;
     window.requestIdleCallback = originalRequestIdleCallback;
     window.cancelIdleCallback = originalCancelIdleCallback;
+    window.setTimeout = originalSetTimeout;
+    window.clearTimeout = originalClearTimeout;
     document.body.replaceChildren();
 });
 
@@ -46,10 +52,19 @@ function configureDeferredMedia(reducedMotion = false) {
         return 1;
     };
     window.cancelIdleCallback = () => undefined;
+    window.setTimeout = ((handler: TimerHandler) => {
+        if (typeof handler !== "function") throw new Error("媒体稳定窗口必须使用函数回调");
+        stabilityDelayCallback = () => handler();
+        return 2;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = () => undefined;
 }
 
 async function releaseDeferredMedia() {
     await act(async () => window.dispatchEvent(new Event("load")));
+    const delayCallback = stabilityDelayCallback;
+    if (!delayCallback) throw new Error("背景媒体未安排稳定窗口");
+    await act(async () => delayCallback());
     const callback = idleCallback;
     if (!callback) throw new Error("背景媒体未在 window.load 后安排空闲加载");
     await act(async () => callback({ didTimeout: false, timeRemaining: () => 50 }));
