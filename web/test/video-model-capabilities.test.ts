@@ -359,6 +359,24 @@ describe("Seedance 2.0 分辨率能力", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
     });
 
+    test("Mini 未单列有声分辨率时为全部已发布分辨率生成有声定价规格", () => {
+        const config = seedanceConfig("doubao-seedance-2-0-mini-260615");
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.inputVariants = ["standard", "standard_audio", "reference_video"];
+
+        const specifications = specificationsForModel({ modelKey: "doubao-seedance-2-0-mini-260615", priceStrategy: "video_resolution", providerCapabilities });
+
+        expect(specifications.map((item) => item.key)).toEqual([
+            "480p::standard",
+            "480p::standard_audio",
+            "480p::reference_video",
+            "720p::standard",
+            "720p::standard_audio",
+            "720p::reference_video",
+        ]);
+    });
+
     test("Pro 开放 480P、720P、1080P 与 4K", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p", "4k"]);
     });

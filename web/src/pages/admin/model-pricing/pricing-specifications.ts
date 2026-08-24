@@ -55,7 +55,9 @@ export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "p
             capabilities.inputVariants
                 .filter((inputVariant) => {
                     if (inputVariant === "standard") return true;
-                    if (inputVariant === "standard_audio") return capabilities.generatedAudioResolutions.includes(resolution);
+                    if (inputVariant === "standard_audio") {
+                        return capabilities.generatedAudioResolutions.length === 0 || capabilities.generatedAudioResolutions.includes(resolution);
+                    }
                     return capabilities.referenceVideoResolutions.includes(resolution);
                 })
                 .map((inputVariant) => ({

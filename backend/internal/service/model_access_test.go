@@ -137,8 +137,10 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 		PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
 		PriceTiers: []model.ChannelModelPriceTier{
 			{Resolution: "480P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "480P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
 			{Resolution: "480P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
 			{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "720P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
 			{Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
 		},
 	}
@@ -153,6 +155,9 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	}
 	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
 		t.Fatalf("provider capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.InputVariants, ",") != "standard,standard_audio,reference_video" {
+		t.Fatalf("provider pricing variants = %#v", capabilities.InputVariants)
 	}
 	encoded, err := json.Marshal(capabilities)
 	if err != nil {

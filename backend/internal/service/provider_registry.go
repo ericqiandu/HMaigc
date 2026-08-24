@@ -221,7 +221,7 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 
 func providerPricingVariantsForResolution(spec ProviderModelSpec, resolution string) []string {
 	variants := []string{"standard"}
-	if providerResolutionSupported(resolution, spec.GeneratedAudioResolutions) {
+	if providerGeneratedAudioSupported(spec.SupportsGeneratedAudio, spec.GeneratedAudioResolutions, resolution) {
 		variants = append(variants, "standard_audio")
 	}
 	if providerResolutionSupported(resolution, spec.ReferenceVideoResolutions) {
