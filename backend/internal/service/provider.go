@@ -151,7 +151,12 @@ func withProviderAnalytics(ctx context.Context, service *Service, task model.Tas
 		metadata.Model = firstNonEmpty(input.Config.Model, metadata.Model)
 		metadata.VideoSeconds, _ = strconv.Atoi(input.Config.VideoSeconds)
 		metadata.InputCharacterCount = utf8.RuneCountInString(input.Prompt)
-		metadata.PricingSpecification = normalizeVideoPricingResolution(BillingUsage{Resolution: input.Config.VQuality})
+		if normalizeCapability(input.Mode) == "image" {
+			variant, _ := imagePricingVariantForModel(metadata.Model, input.Config.Quality)
+			metadata.PricingSpecification = imagePricingSpecification(imagePricingResolutionFromConfig(map[string]any{"size": input.Config.Size}), variant)
+		} else {
+			metadata.PricingSpecification = normalizeVideoPricingResolution(BillingUsage{Resolution: input.Config.VQuality})
+		}
 		metadata.InputImageCount = len(input.ReferenceImages)
 		metadata.InputVideoCount = len(input.ReferenceVideos)
 		metadata.InputVideoDurationComplete = true

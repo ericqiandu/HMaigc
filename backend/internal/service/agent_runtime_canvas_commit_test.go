@@ -225,7 +225,7 @@ func productionCanvasTestRenderArguments(artifacts []model.AgentProductionArtifa
 			arguments.VideoInputMode = agentruntime.ProductionVideoInputTextToVideo
 			arguments.VideoConfig = &agentruntime.VideoRenderConfig{DurationSeconds: 5, AspectRatio: "16:9", Quality: "720p"}
 		} else {
-			arguments.ImageConfig = &agentruntime.ImageRenderConfig{Size: "1:1", Count: 1}
+			arguments.ImageConfig = &agentruntime.ImageRenderConfig{Size: "1:1", Resolution: "1K", Count: 1}
 		}
 		result[artifact.ID] = arguments
 	}

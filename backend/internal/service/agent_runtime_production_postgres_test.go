@@ -67,7 +67,7 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 	quote, err := primary.QuoteTaskBilling(scope.ActorUserID, TaskBillingQuoteRequest{
 		ProjectID: scope.CanvasID, Type: "canvas_image", Operation: "production_render", BatchCount: 1,
 		Input: TaskBillingQuoteInput{Mode: "image", Config: TaskBillingQuoteConfig{
-			ChannelID: "postgres-image-channel", Model: "kz_gpt_image2", Size: "1:1", Quality: "medium",
+			ChannelID: "postgres-image-channel", Model: "kz_gpt_image2", Size: "1024x1024", Quality: "medium",
 		}},
 	})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 	arguments := agentruntime.ProductionRenderArguments{
 		PlanKey: plan.PlanKey, PlanVersion: plan.Version, ArtifactID: artifact.ID, Attempt: 0,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "postgres-image-channel", Model: "kz_gpt_image2"},
-		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Quality: "medium", Count: 1},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1024x1024", Resolution: "1K", Quality: "medium", Count: 1},
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: quote.AmountMicrocredits, PerTaskAmountMicrocredits: quote.PerTaskAmountMicrocredits,
 			PriceVersion: quote.PriceVersion, BillingMode: quote.BillingMode, PricingResolution: quote.PricingResolution,
@@ -158,8 +158,9 @@ func seedPostgresProductionRenderFixture(t *testing.T, svc *Service, db *gorm.DB
 	channelModel := model.ChannelModel{
 		ID: "postgres-image-model", ChannelID: channel.ID, ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
 		ProviderCredentialID: credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "image",
-		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true,
-		CreatedAt: now, UpdatedAt: now,
+		BillingMode: "fixed_request", PriceStrategy: "image_resolution", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true,
+		PriceTiers: gptImage2TestPriceTiers("postgres-image-model", 250),
+		CreatedAt:  now, UpdatedAt: now,
 	}
 	canvas := model.CanvasProject{ID: "runtime-canvas", UserID: "runtime-user", Title: "Agent Canvas", Revision: 1, PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now}
 	credits := model.CreditAccount{UserID: "runtime-user", AvailableMicrocredits: 1_000, CreatedAt: now, UpdatedAt: now}

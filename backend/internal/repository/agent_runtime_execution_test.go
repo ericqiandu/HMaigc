@@ -355,7 +355,7 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	rawArguments, err := json.Marshal(agentruntime.ProductionRenderArguments{
 		PlanKey: plan.Plan.PlanKey, PlanVersion: plan.Plan.Version, ArtifactID: artifact.ID, Attempt: artifact.Attempt,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "image-channel", Model: "image-model"},
-		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Quality: "medium", Count: 1},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Resolution: "1K", Quality: "medium", Count: 1},
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: 100, PerTaskAmountMicrocredits: 100, PriceVersion: 1,
 			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "approval-quote",
@@ -466,7 +466,7 @@ func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t 
 	rawArguments, err := json.Marshal(agentruntime.ProductionRenderArguments{
 		PlanKey: plan.Plan.PlanKey, PlanVersion: plan.Plan.Version, ArtifactID: artifact.ID, Attempt: 1,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "image-channel", Model: "image-model"},
-		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Quality: "medium", Count: 1},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Resolution: "1K", Quality: "medium", Count: 1},
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: 100, PerTaskAmountMicrocredits: 100, PriceVersion: 1,
 			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "refunded-retry-quote",

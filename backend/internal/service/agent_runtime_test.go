@@ -63,9 +63,10 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			!strings.Contains(body.Messages[0].Content, `{"fact":"artifact","artifact":"image"}`) ||
 			!strings.Contains(body.Messages[0].Content, "production.render") ||
 			!strings.Contains(body.Messages[0].Content, `"artifactId":"<reference_image 或 storyboard_image artifactId>"`) ||
-			!strings.Contains(body.Messages[0].Content, `"imageConfig":{"size":"9:16","count":1}`) ||
+			!strings.Contains(body.Messages[0].Content, `"imageConfig":{"size":"9:16","resolution":"1K","count":1}`) ||
 			strings.Contains(body.Messages[0].Content, `"quality":"high"`) ||
 			!strings.Contains(body.Messages[0].Content, "qualities 为空时必须省略 quality") ||
+			!strings.Contains(body.Messages[0].Content, "resolution 必须精确取自 resolutions") ||
 			!strings.Contains(body.Messages[0].Content, "参数值必须来自所选 callableModels 的 providerCapabilities") ||
 			!strings.Contains(body.Messages[0].Content, `"artifactId":"<video_clip artifactId>"`) ||
 			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"aspectRatio":"9:16","quality":"720p","generateAudio":true}`) ||
@@ -1021,10 +1022,25 @@ func createAgentRuntimeImageModel(t *testing.T, db *gorm.DB, fixture agentRuntim
 	channelModel := model.ChannelModel{
 		ID: "runtime-image-model", ChannelID: channel.ID, ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
 		ProviderCredentialID: fixture.credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "image",
-		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true,
-		CreatedAt: now, UpdatedAt: now,
+		BillingMode: "fixed_request", PriceStrategy: "image_resolution", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true,
+		PriceTiers: gptImage2TestPriceTiers("runtime-image-model", 250),
+		CreatedAt:  now, UpdatedAt: now,
 	}
 	if err := db.Create(&channelModel).Error; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func gptImage2TestPriceTiers(channelModelID string, unitPriceMicrocredits int64) []model.ChannelModelPriceTier {
+	tiers := make([]model.ChannelModelPriceTier, 0, 9)
+	for _, resolution := range []string{"1K", "2K", "4K"} {
+		for _, quality := range []string{"low", "medium", "high"} {
+			tiers = append(tiers, model.ChannelModelPriceTier{
+				ID:             channelModelID + "-" + strings.ToLower(resolution) + "-" + quality,
+				ChannelModelID: channelModelID, Resolution: resolution, InputVariant: quality,
+				UnitPriceMicrocredits: unitPriceMicrocredits, PriceVersion: 1,
+			})
+		}
+	}
+	return tiers
 }

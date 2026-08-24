@@ -13,6 +13,7 @@ const (
 
 type ImageRenderConfig struct {
 	Size                  string `json:"size"`
+	Resolution            string `json:"resolution"`
 	Quality               string `json:"quality,omitempty"`
 	Count                 int    `json:"count"`
 	TransparentBackground bool   `json:"transparentBackground,omitempty"`

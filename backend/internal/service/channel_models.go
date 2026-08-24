@@ -465,7 +465,7 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	configured := make(map[string]bool, len(baseRequests))
 	variants := []string{"standard"}
 	var managedSpec *ProviderModelSpec
-	if _, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey); managed && spec.Capability == "video" {
+	if _, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey); managed && (spec.Capability == "video" || (spec.Capability == "image" && len(spec.Qualities) > 0)) {
 		managedSpec = &spec
 		variants = providerPricingInputVariants(spec)
 		allowed = make(map[string]bool, len(spec.Resolutions))
@@ -489,7 +489,7 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 			inputVariant = "standard"
 		}
 		if !allowedVariants[inputVariant] {
-			return nil, BadAuthRequest("价格输入类型无效：" + inputVariant)
+			return nil, BadAuthRequest("价格变体无效：" + inputVariant)
 		}
 		key := channelModelPriceTierKey(resolution, inputVariant)
 		if configured[key] {

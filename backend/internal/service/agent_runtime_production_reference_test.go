@@ -31,7 +31,7 @@ func TestProductionStoryboardTaskInputUsesSucceededReferenceAssets(t *testing.T)
 		Shots: []agentruntime.ShotPlanDraft{{
 			ShotKey: "shot-1", Order: 1, DurationMS: 6_000, ScriptText: "顾棠拿起怀表。",
 			Deliverables: agentRuntimeDualProductionDeliverables(),
-			ImagePrompt: "顾棠拿起月牙怀表", VideoPrompt: "镜头推进",
+			ImagePrompt:  "顾棠拿起月牙怀表", VideoPrompt: "镜头推进",
 			ReferenceKeys: []string{"hero", "watch"}, Dependencies: []string{},
 		}},
 	}
@@ -65,7 +65,7 @@ func TestProductionStoryboardTaskInputUsesSucceededReferenceAssets(t *testing.T)
 	}
 	input, taskType, err := svc.productionRenderTaskInput(scope, agentruntime.ProductionRenderArguments{
 		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version,
-		ImageConfig: &agentruntime.ImageRenderConfig{Size: "9:16", Count: 1},
+		ImageConfig: &agentruntime.ImageRenderConfig{Size: "9:16", Resolution: "1K", Count: 1},
 	}, storyboard, "顾棠拿起月牙怀表")
 	if err != nil {
 		t.Fatal(err)

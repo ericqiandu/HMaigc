@@ -117,6 +117,36 @@ func TestKuaiziKlingPricingReadinessDoesNotRequireForbidden4KReferenceTier(t *te
 	}
 }
 
+func TestGPTImage2PricingReadinessRequiresAllQualityResolutionVariants(t *testing.T) {
+	item := modelpkg.ChannelModel{
+		ModelKey: kuaiziGPTImage2Model, Capability: "image", PriceStrategy: "image_resolution", PriceConfigured: true,
+	}
+	for _, resolution := range []string{"1K", "2K", "4K"} {
+		for _, quality := range []string{"low", "medium", "high"} {
+			item.PriceTiers = append(item.PriceTiers, modelpkg.ChannelModelPriceTier{
+				Resolution: resolution, InputVariant: quality, UnitPriceMicrocredits: 1,
+			})
+		}
+	}
+	if !channelModelPricingReady(item) {
+		t.Fatal("GPT Image 2 complete resolution/quality matrix was rejected")
+	}
+	item.PriceTiers = item.PriceTiers[:8]
+	if channelModelPricingReady(item) {
+		t.Fatal("GPT Image 2 incomplete resolution/quality matrix was accepted")
+	}
+}
+
+func TestSeedreamFlatPricingReadinessDoesNotRequireResolutionTiers(t *testing.T) {
+	item := modelpkg.ChannelModel{
+		ModelKey:   seedreamProviderModel("seedream5.0lite", "Seedream 5.0 Lite", "", 14).ModelKey,
+		Capability: "image", PriceStrategy: "flat", PriceConfigured: true, UnitPriceMicrocredits: 1,
+	}
+	if !channelModelPricingReady(item) {
+		t.Fatal("Seedream flat pricing was incorrectly forced into the GPT Image 2 quality matrix")
+	}
+}
+
 func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
 	if err != nil {

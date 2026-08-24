@@ -178,7 +178,7 @@ func TestProductionRenderCapabilitiesRejectUnsupportedQualityBeforeApproval(t *t
 	}
 	request := agentProductionRenderRequest{
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
-		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "16:9", Quality: "high", Count: 1},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "16:9", Resolution: "1K", Quality: "high", Count: 1},
 	}
 	if err := validateProductionRenderCapabilities(request, artifact, callable); err == nil || !strings.Contains(err.Error(), "quality") {
 		t.Fatalf("unsupported quality error = %v", err)
@@ -186,6 +186,28 @@ func TestProductionRenderCapabilitiesRejectUnsupportedQualityBeforeApproval(t *t
 	request.ImageConfig.Quality = ""
 	if err := validateProductionRenderCapabilities(request, artifact, callable); err != nil {
 		t.Fatalf("capability-valid image config rejected: %v", err)
+	}
+}
+
+func TestProductionRenderCapabilitiesRequirePublishedImageResolutionBeforeApproval(t *testing.T) {
+	artifact := model.AgentProductionArtifact{Kind: model.AgentProductionArtifactStoryboardImage}
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: "image-channel", Model: kuaiziGPTImage2Model, Capability: "image",
+		ProviderCapabilities: &PublicProviderCapabilities{
+			ModelKey: kuaiziGPTImage2Model, Capability: "image", Ratios: []string{"16:9"},
+			Resolutions: []string{"1K", "2K", "4K"}, Qualities: []string{"low", "medium", "high"}, OutputCounts: []int{1},
+		},
+	}
+	request := agentProductionRenderRequest{
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "16:9", Quality: "high", Count: 1},
+	}
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err == nil || !strings.Contains(err.Error(), "resolution") {
+		t.Fatalf("missing resolution error = %v", err)
+	}
+	request.ImageConfig.Resolution = "4K"
+	if err := validateProductionRenderCapabilities(request, artifact, callable); err != nil {
+		t.Fatalf("capability-valid Image 2 config rejected: %v", err)
 	}
 }
 
@@ -314,7 +336,7 @@ func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *
 		"planVersion":1,
 		"artifactId":"retry-unresolved-artifact",
 		"generationModel":{"channelId":"image-channel","model":"image-model"},
-		"imageConfig":{"size":"1:1","quality":"medium","count":1}
+		"imageConfig":{"size":"1:1","resolution":"1K","quality":"medium","count":1}
 	}`))
 	code, class, ok := agentProductionRenderFailureDetails(err)
 	if !ok || code != "production_previous_billing_unresolved" {
@@ -837,7 +859,7 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 	if imageArtifact.ID == "" {
 		t.Fatal("storyboard image artifact was not created")
 	}
-	decision = `{"kind":"tool_call","toolCall":{"toolCallId":"render-shot-1","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"` + record.Plan.PlanKey + `","planVersion":1,"artifactId":"` + imageArtifact.ID + `","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","quality":"medium","count":1}}}}`
+	decision = `{"kind":"tool_call","toolCall":{"toolCallId":"render-shot-1","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"` + record.Plan.PlanKey + `","planVersion":1,"artifactId":"` + imageArtifact.ID + `","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","resolution":"1K","quality":"medium","count":1}}}}`
 	decision = agentRuntimeToolDecisionWithDelivery(t, decision, agentRuntimeTestImageDelivery())
 
 	if err := svc.ProcessNextTask(); err != nil {
@@ -962,7 +984,7 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 		}
 	}
 	decision = agentRuntimeToolDecisionWithDelivery(t,
-		`{"kind":"tool_call","toolCall":{"toolCallId":"render-repair","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","quality":"ultra","count":1}}}}`,
+		`{"kind":"tool_call","toolCall":{"toolCallId":"render-repair","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","resolution":"1K","quality":"ultra","count":1}}}}`,
 		agentRuntimeTestImageDelivery(),
 	)
 	if err := svc.ProcessNextTask(); err != nil {
@@ -1014,7 +1036,7 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 	}
 
 	decision = agentRuntimeToolDecisionWithDelivery(t,
-		`{"kind":"tool_call","toolCall":{"toolCallId":"render-repair-2","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","quality":"ultra","count":1}}}}`,
+		`{"kind":"tool_call","toolCall":{"toolCallId":"render-repair-2","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","resolution":"1K","quality":"ultra","count":1}}}}`,
 		agentRuntimeTestImageDelivery(),
 	)
 	if err := svc.ProcessNextTask(); err != nil {
@@ -1084,7 +1106,7 @@ func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource
 		}
 	}
 	decision = agentRuntimeToolDecisionWithDelivery(t,
-		`{"kind":"tool_call","toolCall":{"toolCallId":"render-recover","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","quality":"medium","count":1}}}}`,
+		`{"kind":"tool_call","toolCall":{"toolCallId":"render-recover","toolName":"production.render","actionVersion":1,"arguments":{"planKey":"`+record.Plan.PlanKey+`","planVersion":1,"artifactId":"`+imageArtifact.ID+`","generationModel":{"channelId":"runtime-image-channel","model":"kz_gpt_image2"},"imageConfig":{"size":"1:1","resolution":"1K","quality":"medium","count":1}}}}`,
 		agentRuntimeTestImageDelivery(),
 	)
 	if err := svc.ProcessNextTask(); err != nil {

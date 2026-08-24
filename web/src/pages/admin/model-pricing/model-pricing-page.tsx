@@ -26,7 +26,7 @@ import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
 import { buildInputImageUsagePricing, readInputImageUsagePricing } from "./media-input-usage-pricing";
-import { imagePricingSpecifications, normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
+import { normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
 type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
 type PricingFormValues = {
@@ -220,8 +220,9 @@ export default function ModelPricingPage() {
             if (supplierCost !== undefined) result.push({ specification, supplierCost, userCredits });
             return result;
         }, []);
-        if (values.priceStrategy === "image_resolution" && tierInputs.length !== imagePricingSpecifications.length) {
-            message.error("图片模型必须完整配置 1K、2K、4K 定价");
+        const requiredBaseSpecifications = specifications.filter((specification) => specification.group === "base");
+        if (values.priceStrategy === "image_resolution" && tierInputs.filter(({ specification }) => specification.group === "base").length !== requiredBaseSpecifications.length) {
+            message.error(`图片模型必须完整配置 ${requiredBaseSpecifications.map((specification) => specification.label).join("、")} 定价`);
             return;
         }
         const baseTierInputs = tierInputs.filter(({ specification }) => specification.group === "base");
@@ -913,7 +914,8 @@ function tierLabel(value: string) {
     };
     if (value.includes("::")) {
         const [resolution, variant] = value.split("::");
-        return `${resolution}·${variant === "reference_video" ? "参考视频" : variant === "standard_audio" ? "普通生成（有声）" : "普通生成（无声）"}`;
+        const variantLabel = variant === "reference_video" ? "参考视频" : variant === "standard_audio" ? "普通生成（有声）" : variant === "low" ? "低画质" : variant === "medium" ? "标准画质" : variant === "high" ? "高画质" : "普通生成（无声）";
+        return `${resolution}·${variantLabel}`;
     }
     return labels[value] || value;
 }

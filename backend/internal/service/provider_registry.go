@@ -220,6 +220,15 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 }
 
 func providerPricingVariantsForResolution(spec ProviderModelSpec, resolution string) []string {
+	if spec.Capability == "image" && len(spec.Qualities) > 0 {
+		variants := make([]string, 0, len(spec.Qualities))
+		for _, quality := range spec.Qualities {
+			if normalized := strings.ToLower(strings.TrimSpace(quality)); normalized != "" {
+				variants = append(variants, normalized)
+			}
+		}
+		return variants
+	}
 	variants := []string{"standard"}
 	if providerGeneratedAudioSupported(spec.SupportsGeneratedAudio, spec.GeneratedAudioResolutions, resolution) {
 		variants = append(variants, "standard_audio")

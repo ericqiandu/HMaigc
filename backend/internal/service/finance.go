@@ -477,16 +477,25 @@ func (s *Service) newBillingOrder(userID string, billingScope billingAccountScop
 		if pricingResolution == "" {
 			return nil, BadAuthRequest("图片分辨率无效，无法匹配积分价格")
 		}
+		pricingInputVariant := strings.ToLower(strings.TrimSpace(usage.InputVariant))
+		if pricingInputVariant == "" {
+			return nil, BadAuthRequest("图片画质无效，无法匹配积分价格")
+		}
 		for _, tier := range item.PriceTiers {
-			if tier.Resolution == pricingResolution {
+			tierVariant := strings.ToLower(strings.TrimSpace(tier.InputVariant))
+			if tierVariant == "" {
+				tierVariant = "standard"
+			}
+			if tier.Resolution == pricingResolution && tierVariant == pricingInputVariant {
 				unitPrice = tier.UnitPriceMicrocredits
 				priceTierID = tier.ID
 				break
 			}
 		}
 		if priceTierID == "" || unitPrice <= 0 {
-			return nil, BadAuthRequest("当前模型未配置该分辨率的积分价格")
+			return nil, BadAuthRequest("当前模型未配置该分辨率/画质规格 " + pricingResolution + " / " + pricingInputVariant + " 的积分价格")
 		}
+		usage.InputVariant = pricingInputVariant
 	case "video_resolution":
 		if capability != "video" {
 			return nil, BadAuthRequest("视频分辨率价格仅适用于视频模型")
@@ -635,6 +644,7 @@ func billingUsage(capability string, modelKey string, config map[string]any, inp
 	if capability == "image" {
 		usage.Quantity = positiveInteger(config["count"])
 		usage.Resolution = imagePricingResolutionFromConfig(config)
+		usage.InputVariant, _ = imagePricingVariantForModel(modelKey, strings.TrimSpace(fmt.Sprint(config["quality"])))
 		if len(input) > 0 {
 			usage.InputImageCount = mediaInputCollectionLength(input[0]["referenceImages"])
 		}
@@ -693,7 +703,7 @@ func imagePricingResolutionFromConfig(config map[string]any) string {
 			}
 		}
 	}
-	return normalizeImagePricingResolution(strings.TrimSpace(fmt.Sprint(config["quality"])))
+	return ""
 }
 
 func positiveInteger(value any) int64 {
@@ -706,15 +716,38 @@ func positiveInteger(value any) int64 {
 
 func normalizeImagePricingResolution(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "low", "1k":
+	case "1k":
 		return "1K"
-	case "medium", "2k":
+	case "2k":
 		return "2K"
-	case "high", "4k":
+	case "4k":
 		return "4K"
 	default:
 		return ""
 	}
+}
+
+func imagePricingVariantForModel(modelKey string, quality string) (string, bool) {
+	_, spec, managed := kuaiziProviderFamilyForModel(modelKey)
+	if !managed || spec.Capability != "image" || len(spec.Qualities) == 0 {
+		return "standard", true
+	}
+	quality = strings.ToLower(strings.TrimSpace(quality))
+	for _, candidate := range spec.Qualities {
+		if strings.EqualFold(strings.TrimSpace(candidate), quality) {
+			return strings.ToLower(strings.TrimSpace(candidate)), true
+		}
+	}
+	return "", false
+}
+
+func imagePricingSpecification(resolution string, quality string) string {
+	resolution = normalizeImagePricingResolution(resolution)
+	quality = strings.ToLower(strings.TrimSpace(quality))
+	if resolution == "" || quality == "" {
+		return ""
+	}
+	return resolution + "::" + quality
 }
 
 func normalizeVideoPricingResolution(usage BillingUsage) string {

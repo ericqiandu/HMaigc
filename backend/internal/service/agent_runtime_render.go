@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
@@ -103,6 +104,12 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	}
 	if err := validateProductionRenderCapabilities(request, *artifact, callable); err != nil {
 		return nil, err
+	}
+	if request.ImageConfig != nil {
+		request.ImageConfig.Size, err = productionImageRenderSize(request.ImageConfig.Size, request.ImageConfig.Resolution, callable.ProviderCapabilities)
+		if err != nil {
+			return nil, newAgentProductionRenderInputError("generation_parameter_unsupported", err.Error())
+		}
 	}
 	videoInputMode, videoInputResourceID, err := s.freezeProductionVideoInputResource(scope, request, *artifact, callable)
 	if err != nil {
@@ -232,8 +239,11 @@ func validateProductionRenderCapabilities(request agentProductionRenderRequest, 
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "image size is not published by provider capabilities")
 		}
 		quality := strings.TrimSpace(request.ImageConfig.Quality)
-		if quality != "" && !strings.EqualFold(quality, "auto") && !containsString(capabilities.Qualities, quality) {
+		if (len(capabilities.Qualities) == 0 && quality != "") || (len(capabilities.Qualities) > 0 && !containsString(capabilities.Qualities, quality)) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "image quality is not published by provider capabilities")
+		}
+		if !containsString(capabilities.Resolutions, request.ImageConfig.Resolution) {
+			return newAgentProductionRenderInputError("generation_parameter_unsupported", "image resolution is not published by provider capabilities")
 		}
 		if !containsInt(capabilities.OutputCounts, request.ImageConfig.Count) {
 			return newAgentProductionRenderInputError("generation_parameter_unsupported", "image count is not published by provider capabilities")
@@ -282,8 +292,9 @@ func decodeAgentProductionRenderRequest(raw json.RawMessage) (agentProductionRen
 	}
 	if request.ImageConfig != nil {
 		request.ImageConfig.Size = strings.TrimSpace(request.ImageConfig.Size)
+		request.ImageConfig.Resolution = strings.TrimSpace(request.ImageConfig.Resolution)
 		request.ImageConfig.Quality = strings.TrimSpace(request.ImageConfig.Quality)
-		if request.ImageConfig.Size == "" || request.ImageConfig.Count != 1 {
+		if request.ImageConfig.Size == "" || request.ImageConfig.Resolution == "" || request.ImageConfig.Count != 1 {
 			return agentProductionRenderRequest{}, newAgentProductionRenderInputError("generation_parameter_unsupported", "image config is invalid")
 		}
 	}
@@ -295,6 +306,59 @@ func decodeAgentProductionRenderRequest(raw json.RawMessage) (agentProductionRen
 		}
 	}
 	return request, nil
+}
+
+func productionImageRenderSize(ratio string, resolution string, capabilities *PublicProviderCapabilities) (string, error) {
+	if capabilities == nil {
+		return "", errors.New("image provider capabilities are unavailable")
+	}
+	parts := strings.Split(strings.TrimSpace(ratio), ":")
+	if len(parts) != 2 {
+		return "", errors.New("image aspect ratio is invalid")
+	}
+	ratioWidth, widthErr := strconv.ParseFloat(parts[0], 64)
+	ratioHeight, heightErr := strconv.ParseFloat(parts[1], 64)
+	if widthErr != nil || heightErr != nil || ratioWidth <= 0 || ratioHeight <= 0 {
+		return "", errors.New("image aspect ratio is invalid")
+	}
+	normalizedResolution := strings.ToUpper(strings.TrimSpace(resolution))
+	targetPixels := capabilities.ResolutionPixels[normalizedResolution]
+	var width, height float64
+	if targetPixels > 0 {
+		aspectRatio := ratioWidth / ratioHeight
+		width = math.Sqrt(float64(targetPixels) * aspectRatio)
+		height = math.Sqrt(float64(targetPixels) / aspectRatio)
+	} else {
+		longestEdge := map[string]float64{"1K": 1824, "2K": 2048, "4K": 3840}[normalizedResolution]
+		if longestEdge == 0 {
+			return "", errors.New("image resolution is invalid")
+		}
+		if normalizedResolution == "1K" && ratioWidth == ratioHeight {
+			longestEdge = 1024
+		}
+		shortestEdge := longestEdge * math.Min(ratioWidth, ratioHeight) / math.Max(ratioWidth, ratioHeight)
+		if ratioWidth >= ratioHeight {
+			width, height = longestEdge, shortestEdge
+		} else {
+			width, height = shortestEdge, longestEdge
+		}
+	}
+	width, height = alignProductionImageDimension(width), alignProductionImageDimension(height)
+	const maxPixels = 8_294_400
+	if width*height > maxPixels {
+		scale := math.Sqrt(maxPixels / (width * height))
+		width = floorProductionImageDimension(width * scale)
+		height = floorProductionImageDimension(height * scale)
+	}
+	return strconv.Itoa(int(width)) + "x" + strconv.Itoa(int(height)), nil
+}
+
+func alignProductionImageDimension(value float64) float64 {
+	return math.Max(64, math.Round(value/16)*16)
+}
+
+func floorProductionImageDimension(value float64) float64 {
+	return math.Max(64, math.Floor(value/16)*16)
 }
 
 func productionRenderQuoteRequest(canvasID string, request agentProductionRenderRequest, artifact model.AgentProductionArtifact) (TaskBillingQuoteRequest, error) {

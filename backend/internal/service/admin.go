@@ -815,7 +815,7 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 		return false
 	}
 	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if !managed || spec.Capability != "video" {
+	if !managed || (spec.Capability != "video" && (spec.Capability != "image" || len(spec.Qualities) == 0)) {
 		return true
 	}
 	configured := make(map[string]bool, len(item.PriceTiers))

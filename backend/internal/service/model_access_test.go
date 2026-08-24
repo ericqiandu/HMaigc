@@ -180,11 +180,7 @@ func TestPublicChannelPublishesImageParameterCapabilities(t *testing.T) {
 		ID: "gpt-image2", ChannelID: channel.ID, ProviderCredentialID: "image-credential", ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", BillingMode: "fixed_request",
 		PriceStrategy: "image_resolution", PriceConfigured: true, Enabled: true,
-		PriceTiers: []model.ChannelModelPriceTier{
-			{Resolution: "1K", UnitPriceMicrocredits: 1},
-			{Resolution: "2K", UnitPriceMicrocredits: 1},
-			{Resolution: "4K", UnitPriceMicrocredits: 1},
-		},
+		PriceTiers: gptImage2TestPriceTiers("gpt-image2", 1),
 	}
 
 	catalog := publicChannel(channel, false, []model.ChannelModel{item}, false)

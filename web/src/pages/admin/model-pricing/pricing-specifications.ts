@@ -5,7 +5,7 @@ export type PricingSpecification = {
     label: string;
     group: "base" | "supplier-only";
     resolution?: string;
-    inputVariant?: "standard" | "standard_audio" | "reference_video";
+    inputVariant?: "standard" | "standard_audio" | "reference_video" | "low" | "medium" | "high";
     unit?: "秒" | "张" | "万字符";
     note?: string;
 };
@@ -50,6 +50,17 @@ export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "p
     const base = specificationsForStrategy(model.priceStrategy);
     const modelKey = model.modelKey.trim().toLowerCase();
     const capabilities = model.providerCapabilities;
+    if (model.priceStrategy === "image_resolution" && capabilities && capabilities.qualities.length > 0) {
+        return capabilities.resolutions.flatMap((resolution) =>
+            capabilities.qualities.map((quality) => ({
+                key: `${resolution}::${quality}`,
+                label: `${resolution} · ${quality === "low" ? "低画质" : quality === "medium" ? "标准画质" : "高画质"}`,
+                group: "base" as const,
+                resolution,
+                inputVariant: quality,
+            })),
+        );
+    }
     if (model.priceStrategy === "video_resolution" && capabilities && capabilities.inputVariants.length > 0) {
         return capabilities.resolutions.flatMap((resolution) =>
             capabilities.inputVariants
