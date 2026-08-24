@@ -248,7 +248,7 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsIncompatibleActiveRunWithoutMut
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
 	if err == nil || !strings.Contains(err.Error(), "run_id=run-old-active") ||
-		!strings.Contains(err.Error(), "required="+strconv.Itoa(agentruntime.CurrentToolSchemaVersion)) {
+		!strings.Contains(err.Error(), agentRuntimeRetirementInvalidCode) {
 		t.Fatalf("incompatible active run error = %v", err)
 	}
 	var stored model.AgentRun
