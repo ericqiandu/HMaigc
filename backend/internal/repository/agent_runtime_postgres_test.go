@@ -20,7 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalToolHistory(t *testing.T) {
+func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalHistory(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {
 		t.Fatal(err)
@@ -102,12 +102,47 @@ func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalToolHistory(t *t
 	if err := db.Create(&plan).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.AgentProductionArtifact{
-		ID: "postgres-paused-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
-		Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactAwaitingApproval,
-		CreatedAt: now, UpdatedAt: now,
-	}).Error; err != nil {
+	artifacts := []model.AgentProductionArtifact{
+		{
+			ID: "postgres-paused-script", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+			Kind: model.AgentProductionArtifactScript, Status: model.AgentProductionArtifactSucceeded,
+			CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+		},
+		{
+			ID: "postgres-paused-committed-image", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+			Kind: model.AgentProductionArtifactStoryboardImage, Status: model.AgentProductionArtifactCommitted,
+			ResourceID: "postgres-paused-resource", CanvasNodeID: "postgres-paused-node",
+			CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+		},
+		{
+			ID: "postgres-paused-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+			Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactAwaitingApproval,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := db.Create(&artifacts).Error; err != nil {
 		t.Fatal(err)
+	}
+	audit, err := database.AuditAgentRuntimeUpgrade(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.CandidateRuns != 1 || audit.RetirableRuns != 1 || len(audit.Blockers) != 0 {
+		t.Fatalf("PostgreSQL paused retirement audit = %#v", audit)
+	}
+	var auditRun model.AgentRun
+	if err := db.First(&auditRun, "id = ?", run.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditRun.Status != agentruntime.RunWaitingApproval || auditRun.StateVersion != run.StateVersion || auditRun.LastEventSequence != run.LastEventSequence {
+		t.Fatalf("PostgreSQL audit mutated run = %#v", auditRun)
+	}
+	var auditPendingArtifact model.AgentProductionArtifact
+	if err := db.First(&auditPendingArtifact, "id = ?", "postgres-paused-artifact").Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditPendingArtifact.Status != model.AgentProductionArtifactAwaitingApproval || auditPendingArtifact.LastErrorCode != "" {
+		t.Fatalf("PostgreSQL audit mutated pending artifact = %#v", auditPendingArtifact)
 	}
 
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
@@ -133,6 +168,25 @@ func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalToolHistory(t *t
 	}
 	if failedCurrent.Status != agentruntime.ToolCallFailed || failedCurrent.ErrorCode != "runtime_contract_retired" {
 		t.Fatalf("PostgreSQL current tool call was not retired = %#v", failedCurrent)
+	}
+	var failedPendingArtifact model.AgentProductionArtifact
+	if err := db.First(&failedPendingArtifact, "id = ?", "postgres-paused-artifact").Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedPendingArtifact.Status != model.AgentProductionArtifactFailed || failedPendingArtifact.LastErrorCode != "runtime_contract_retired" {
+		t.Fatalf("PostgreSQL current pending artifact was not retired = %#v", failedPendingArtifact)
+	}
+	for artifactID, wantStatus := range map[string]model.AgentProductionArtifactStatus{
+		"postgres-paused-script":          model.AgentProductionArtifactSucceeded,
+		"postgres-paused-committed-image": model.AgentProductionArtifactCommitted,
+	} {
+		var preserved model.AgentProductionArtifact
+		if err := db.First(&preserved, "id = ?", artifactID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if preserved.Status != wantStatus {
+			t.Fatalf("PostgreSQL terminal artifact was mutated = %#v", preserved)
+		}
 	}
 }
 
@@ -184,8 +238,48 @@ func TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts(t *t
 	if err := db.Create(&legacyOrder).Error; err != nil {
 		t.Fatal(err)
 	}
+	active := model.AgentRun{
+		ID: "postgres-running-blocker", ThreadID: "postgres-running-thread", ActorUserID: "postgres-running-user",
+		ClientRequestID: "postgres-running-request", Status: agentruntime.RunRunning,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1, RuntimeVersion: 1, PolicyVersion: 1,
+		CreatedAt: now.Add(time.Second), UpdatedAt: now,
+	}
+	if err := db.Create(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	audit, err := database.AuditAgentRuntimeUpgrade(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.CandidateRuns != 2 || audit.RetirableRuns != 0 || len(audit.Blockers) != 3 {
+		t.Fatalf("PostgreSQL full upgrade audit = %#v", audit)
+	}
+	for _, expected := range []struct {
+		runID    string
+		category string
+	}{
+		{runID: run.ID, category: "external_billing"},
+		{runID: run.ID, category: "external_model_task"},
+		{runID: active.ID, category: "non_retirable_active_status"},
+	} {
+		found := false
+		for _, blocker := range audit.Blockers {
+			if blocker.RunID == expected.runID && blocker.Category == expected.category {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("PostgreSQL audit missing run=%s category=%s: %#v", expected.runID, expected.category, audit)
+		}
+	}
 
-	if err := database.EnsureAgentRuntimeIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "external facts") {
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err == nil ||
+		!strings.Contains(err.Error(), `"runId":"`+run.ID+`"`) ||
+		!strings.Contains(err.Error(), `"runId":"`+active.ID+`"`) ||
+		!strings.Contains(err.Error(), `"category":"external_billing"`) ||
+		!strings.Contains(err.Error(), `"category":"external_model_task"`) ||
+		!strings.Contains(err.Error(), `"category":"non_retirable_active_status"`) {
 		t.Fatalf("PostgreSQL hard cutover accepted a run with commercial facts: %v", err)
 	}
 	var stored model.AgentRun
@@ -194,6 +288,13 @@ func TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts(t *t
 	}
 	if stored.Status != agentruntime.RunQueued || stored.StateVersion != run.StateVersion || stored.LastEventSequence != run.LastEventSequence || stored.CompletedAt != nil {
 		t.Fatalf("PostgreSQL hard cutover changed a run with commercial facts: %#v", stored)
+	}
+	var storedActive model.AgentRun
+	if err := db.First(&storedActive, "id = ?", active.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedActive.Status != active.Status || storedActive.CompletedAt != nil {
+		t.Fatalf("PostgreSQL hard cutover changed a non-retirable active run: %#v", storedActive)
 	}
 	var storedTask model.Task
 	if err := db.First(&storedTask, "id = ?", legacyTask.ID).Error; err != nil {

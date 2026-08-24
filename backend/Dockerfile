@@ -21,6 +21,7 @@ COPY backend ./
 RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go build -trimpath \
         -ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${APP_VERSION} -X infinite-canvas/backend/internal/buildinfo.Commit=${APP_COMMIT}" \
         -o /out/hmaigc-backend ./cmd/server \
+    && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hmaigc-agent-runtime-retirement-audit ./cmd/agent-runtime-retirement-audit \
     && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hmaigc-migrate-sqlite-postgres ./cmd/migrate-sqlite-postgres
 
 FROM alpine:3.22
@@ -40,6 +41,7 @@ ENV CANVAS_BACKEND_DATA_DIR=/data
 RUN mkdir -p /data && chown -R app:app /data
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY --from=backend-build /out/hmaigc-backend /usr/local/bin/hmaigc-backend
+COPY --from=backend-build /out/hmaigc-agent-runtime-retirement-audit /usr/local/bin/hmaigc-agent-runtime-retirement-audit
 COPY --from=backend-build /out/hmaigc-migrate-sqlite-postgres /usr/local/bin/hmaigc-migrate-sqlite-postgres
 
 USER app

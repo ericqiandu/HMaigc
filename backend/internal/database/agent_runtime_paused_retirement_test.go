@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,218 @@ func TestRetireIncompatiblePausedAgentRuns_PreservesHistoricalTerminalToolCalls(
 	}
 }
 
+func TestRetireIncompatiblePausedAgentRuns_PreservesHistoricalTerminalArtifacts(t *testing.T) {
+	tests := []struct {
+		name          string
+		kind          model.AgentProductionArtifactKind
+		status        model.AgentProductionArtifactStatus
+		resourceID    string
+		canvasNodeID  string
+		lastErrorCode string
+	}{
+		{name: "succeeded script", kind: model.AgentProductionArtifactScript, status: model.AgentProductionArtifactSucceeded},
+		{name: "failed media", kind: model.AgentProductionArtifactVideoClip, status: model.AgentProductionArtifactFailed, lastErrorCode: "historical_failure"},
+		{name: "committed media", kind: model.AgentProductionArtifactStoryboardImage, status: model.AgentProductionArtifactCommitted, resourceID: "resource-history", canvasNodeID: "node-history"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := openAgentRuntimeSchemaSQLite(t)
+			if err := MigrateBaseSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, time.August, 24, 11, 50, 0, 0, time.UTC)
+			fixture := createIncompatiblePausedRunFixture(t, db, "run-paused-artifact-"+string(test.status), agentruntime.RunWaitingApproval, now, true)
+			historical := model.AgentProductionArtifact{
+				ID: "artifact-history-" + fixture.runID, PlanKey: "plan-" + fixture.runID,
+				PlanVersionID: fixture.planVersionID, PlanVersion: 1, Kind: test.kind, Status: test.status,
+				ResourceID: test.resourceID, CanvasNodeID: test.canvasNodeID, LastErrorCode: test.lastErrorCode,
+				CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+			}
+			if err := db.Create(&historical).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			if err := retireIncompatiblePausedAgentRuns(db, now.Add(time.Minute)); err != nil {
+				t.Fatalf("historical terminal artifact must not block paused-run retirement: %v", err)
+			}
+
+			var preserved model.AgentProductionArtifact
+			if err := db.First(&preserved, "id = ?", historical.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if preserved.Status != historical.Status || preserved.ResourceID != historical.ResourceID || preserved.CanvasNodeID != historical.CanvasNodeID || preserved.LastErrorCode != historical.LastErrorCode {
+				t.Fatalf("historical terminal artifact was mutated = %#v", preserved)
+			}
+		})
+	}
+}
+
+func TestAuditIncompatiblePausedAgentRuns_ReportsAllBlockers(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 24, 18, 0, 0, 0, time.UTC)
+	first := createIncompatiblePausedRunFixture(t, db, "run-audit-first", agentruntime.RunWaitingApproval, now, true)
+	second := createIncompatiblePausedRunFixture(t, db, "run-audit-second", agentruntime.RunWaitingApproval, now.Add(time.Second), true)
+
+	var firstCheckpoint model.AgentCheckpoint
+	if err := db.Where("run_id = ?", first.runID).Take(&firstCheckpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	var firstState agentruntime.RuntimeState
+	if err := json.Unmarshal([]byte(firstCheckpoint.StateJSON), &firstState); err != nil {
+		t.Fatal(err)
+	}
+	firstState.PendingToolStarted = true
+	firstState.UserMessage = "audit-user-content-must-not-leak"
+	firstStateJSON, err := json.Marshal(firstState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).Where("id = ?", firstCheckpoint.ID).Update("state_json", string(firstStateJSON)).Error; err != nil {
+		t.Fatal(err)
+	}
+	startedAt := now.Add(2 * time.Second)
+	if err := db.Model(&model.AgentToolCall{}).Where("run_id = ?", first.runID).Updates(struct {
+		Status    agentruntime.ToolCallStatus `gorm:"column:status"`
+		StartedAt time.Time                   `gorm:"column:started_at"`
+		InputJSON string                      `gorm:"column:input_json"`
+	}{
+		Status: agentruntime.ToolCallRunning, StartedAt: startedAt,
+		InputJSON: `{"secret":"audit-tool-input-must-not-leak"}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	firstRun := mustPausedRun(t, db, first.runID)
+	if err := db.Create(&model.Task{
+		ID: "task-audit-first", UserID: firstRun.ActorUserID, Audience: model.TaskAudienceInternal,
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusRunning,
+		Operation: legacyAgentModelTaskOperationPrefix + first.runID, ProviderRequestID: "provider-secret-must-not-leak",
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.BillingOrder{
+		ID: "billing-audit-first", UserID: firstRun.ActorUserID,
+		IdempotencyKey: "agent-runtime:" + first.runID + ":2", Status: model.BillingStatusReserved,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_version_id = ?", first.planVersionID).
+		Update("status", model.AgentProductionArtifactQueued).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", second.runID).Updates(struct {
+		RuntimeVersion int `gorm:"column:runtime_version"`
+		PolicyVersion  int `gorm:"column:policy_version"`
+	}{
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion + 1,
+		PolicyVersion:  agentruntime.CurrentPolicyVersion + 1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", second.runID).
+		Update("state_json", `{"userMessage":"checkpoint-secret-must-not-leak"`).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondRun := mustPausedRun(t, db, second.runID)
+	if err := db.Create(&model.BillingOrder{
+		ID: "billing-audit-second", UserID: secondRun.ActorUserID,
+		IdempotencyKey: "proxy-token:agent-runtime:" + second.runID + ":2", Status: model.BillingStatusUncertain,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_version_id = ?", second.planVersionID).
+		Update("status", model.AgentProductionArtifactRunning).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := auditIncompatiblePausedAgentRuns(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.CandidateRuns != 2 || audit.RetirableRuns != 0 {
+		t.Fatalf("audit counts = %#v", audit)
+	}
+	got := make([]string, 0, len(audit.Blockers))
+	for _, blocker := range audit.Blockers {
+		got = append(got, blocker.RunID+"/"+blocker.Category+"/"+blocker.FactStatus)
+	}
+	want := []string{
+		"run-audit-first/active_or_unknown_artifact/queued",
+		"run-audit-first/active_provider_task/running",
+		"run-audit-first/pending_tool_started/",
+		"run-audit-first/started_tool_call/running",
+		"run-audit-first/unresolved_billing/reserved",
+		"run-audit-second/active_or_unknown_artifact/running",
+		"run-audit-second/checkpoint_decode_invalid/",
+		"run-audit-second/future_contract/",
+		"run-audit-second/unresolved_billing/uncertain",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("audit blockers = %#v, want %#v", got, want)
+	}
+	encoded, err := json.Marshal(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"audit-user-content-must-not-leak", "audit-tool-input-must-not-leak", "provider-secret-must-not-leak", "checkpoint-secret-must-not-leak"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("audit leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestAuditIncompatiblePausedAgentRuns_IsReadOnly(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 24, 18, 30, 0, 0, time.UTC)
+	createIncompatiblePausedRunFixture(t, db, "run-audit-read-only", agentruntime.RunWaitingApproval, now, true)
+	before := pausedRetirementFactsSnapshot(t, db)
+
+	audit, err := auditIncompatiblePausedAgentRuns(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.CandidateRuns != 1 || audit.RetirableRuns != 1 || len(audit.Blockers) != 0 {
+		t.Fatalf("read-only audit = %#v", audit)
+	}
+	after := pausedRetirementFactsSnapshot(t, db)
+	if before != after {
+		t.Fatalf("audit mutated facts\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestRetireIncompatiblePausedAgentRuns_DoesNotWriteWhenAuditHasBlockers(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 24, 19, 0, 0, 0, time.UTC)
+	createIncompatiblePausedRunFixture(t, db, "run-audit-safe", agentruntime.RunWaitingInput, now, false)
+	risky := createIncompatiblePausedRunFixture(t, db, "run-audit-risky", agentruntime.RunWaitingApproval, now.Add(time.Second), true)
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_version_id = ?", risky.planVersionID).
+		Update("status", model.AgentProductionArtifactRunning).Error; err != nil {
+		t.Fatal(err)
+	}
+	before := pausedRetirementFactsSnapshot(t, db)
+
+	err := retireIncompatiblePausedAgentRuns(db, now.Add(time.Minute))
+	if err == nil || !strings.Contains(err.Error(), "run-audit-risky") || !strings.Contains(err.Error(), "active_or_unknown_artifact") {
+		t.Fatalf("retirement audit rejection = %v", err)
+	}
+	after := pausedRetirementFactsSnapshot(t, db)
+	if before != after {
+		t.Fatalf("blocked retirement mutated facts\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
 func TestEnsureAgentRuntimeIntegritySchemaRetiresIncompatiblePausedRun(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {
@@ -216,6 +429,16 @@ func TestRetireIncompatiblePausedAgentRuns_RejectsRiskFacts(t *testing.T) {
 				t.Helper()
 				if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_version_id = ?", fixture.planVersionID).
 					Update("status", model.AgentProductionArtifactQueued).Error; err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unknown production artifact status",
+			mutate: func(t *testing.T, db *gorm.DB, fixture pausedRunFixture, _ time.Time) {
+				t.Helper()
+				if err := db.Model(&model.AgentProductionArtifact{}).Where("plan_version_id = ?", fixture.planVersionID).
+					Update("status", "future_supplier_state").Error; err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -331,6 +554,53 @@ func assertPausedRunUnchanged(t *testing.T, db *gorm.DB, fixture pausedRunFixtur
 	if eventCount != 1 {
 		t.Fatalf("paused run event count = %d", eventCount)
 	}
+}
+
+func mustPausedRun(t *testing.T, db *gorm.DB, runID string) model.AgentRun {
+	t.Helper()
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+func pausedRetirementFactsSnapshot(t *testing.T, db *gorm.DB) string {
+	t.Helper()
+	snapshot := struct {
+		Runs        []model.AgentRun                   `json:"runs"`
+		Events      []model.AgentRunEvent              `json:"events"`
+		Checkpoints []model.AgentCheckpoint            `json:"checkpoints"`
+		Timeline    []model.AgentTimelineItem          `json:"timeline"`
+		ToolCalls   []model.AgentToolCall              `json:"toolCalls"`
+		Plans       []model.AgentProductionPlanVersion `json:"plans"`
+		Artifacts   []model.AgentProductionArtifact    `json:"artifacts"`
+		Tasks       []model.Task                       `json:"tasks"`
+		Billing     []model.BillingOrder               `json:"billing"`
+	}{}
+	for _, query := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "runs", run: func() error { return db.Order("id").Find(&snapshot.Runs).Error }},
+		{name: "events", run: func() error { return db.Order("id").Find(&snapshot.Events).Error }},
+		{name: "checkpoints", run: func() error { return db.Order("id").Find(&snapshot.Checkpoints).Error }},
+		{name: "timeline", run: func() error { return db.Order("id").Find(&snapshot.Timeline).Error }},
+		{name: "tool calls", run: func() error { return db.Order("id").Find(&snapshot.ToolCalls).Error }},
+		{name: "plans", run: func() error { return db.Order("id").Find(&snapshot.Plans).Error }},
+		{name: "artifacts", run: func() error { return db.Order("id").Find(&snapshot.Artifacts).Error }},
+		{name: "tasks", run: func() error { return db.Order("id").Find(&snapshot.Tasks).Error }},
+		{name: "billing", run: func() error { return db.Order("id").Find(&snapshot.Billing).Error }},
+	} {
+		if err := query.run(); err != nil {
+			t.Fatalf("snapshot %s: %v", query.name, err)
+		}
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 type pausedRunFixture struct {

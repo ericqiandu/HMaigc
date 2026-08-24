@@ -67,9 +67,18 @@ upgrade_release() {
     verify_running_release "$current" ||
         fail "当前运行版本与发布状态不一致或健康检查失败，拒绝自动升级"
     pull_release "$target"
+    if ! audit_target_agent_runtime_upgrade "$target" online; then
+        fail "目标版本 Agent Runtime 在线只读预检失败；当前版本保持运行，未进入停写或备份"
+    fi
     docker pull "$BACKUP_HELPER_IMAGE" >/dev/null
 
     stop_application
+    if ! audit_target_agent_runtime_upgrade "$target" quiesced; then
+        if start_release "$current"; then
+            fail "目标版本 Agent Runtime 停写后只读预检失败；已恢复当前版本，未创建备份或启动目标版本"
+        fi
+        fail "目标版本 Agent Runtime 停写后只读预检失败，且当前版本恢复启动失败，请立即人工检查"
+    fi
     if ! backup_path="$(create_backup "$current")"; then
         start_release "$current" || fail "备份失败且当前版本恢复启动失败，请立即人工检查"
         fail "升级前备份失败，已恢复当前版本，未执行升级"
