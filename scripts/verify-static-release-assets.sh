@@ -7,6 +7,8 @@ readonly RELEASE_URL="${2:?用法：verify-static-release-assets.sh <dist-dir> <
 readonly INDEX_FILE="$DIST_DIR/index.html"
 readonly EXPECTED_RELEASE_PREFIX="https://static.hm.kunagent.com/hmaigc/web/releases/"
 readonly PRODUCTION_ORIGIN="https://hm.kunagent.com"
+readonly COMPRESSION_MIN_BYTES=1024
+readonly COMPRESSION_MAX_BYTES=10485760
 readonly RESPONSE_ROOT="$(mktemp -d)"
 
 trap 'rm -rf -- "$RESPONSE_ROOT"' EXIT
@@ -41,6 +43,7 @@ verify_delivery_headers() {
     local asset_url="$1"
     local header_file="$2"
     local http_version="$3"
+    local asset_size="$4"
     local content_type content_encoding cache_control cache_directives cors_origin cors_methods
 
     case "$http_version" in
@@ -73,8 +76,14 @@ verify_delivery_headers() {
     content_encoding="$(read_header content-encoding "$header_file")"
     case "${content_encoding,,}" in
         br|gzip) ;;
+        ""|identity)
+            if (( asset_size >= COMPRESSION_MIN_BYTES && asset_size <= COMPRESSION_MAX_BYTES )); then
+                printf '入口资源缺少 Brotli/gzip 压缩：%s（Content-Encoding: %s）\n' "$asset_url" "$content_encoding" >&2
+                return 1
+            fi
+            ;;
         *)
-            printf '入口资源缺少 Brotli/gzip 压缩：%s（Content-Encoding: %s）\n' "$asset_url" "$content_encoding" >&2
+            printf '入口资源 Content-Encoding 无效：%s（Content-Encoding: %s）\n' "$asset_url" "$content_encoding" >&2
             return 1
             ;;
     esac
@@ -117,6 +126,7 @@ while IFS= read -r asset_url; do
         printf '入口引用的资源不在本地构建产物中：%s\n' "$asset_path" >&2
         exit 1
     }
+    asset_size="$(wc -c <"$DIST_DIR/$asset_path")"
 
     header_file="$RESPONSE_ROOT/entry-$entry_asset_count.headers"
     if ! delivery_result="$(curl \
@@ -141,7 +151,7 @@ while IFS= read -r asset_url; do
         printf '入口资源发生重定向，必须由中国大陆 CDN 原地址直接交付：%s（最终地址 %s）\n' "$asset_url" "$effective_url" >&2
         exit 1
     }
-    verify_delivery_headers "$asset_url" "$header_file" "$http_version"
+    verify_delivery_headers "$asset_url" "$header_file" "$http_version" "$asset_size"
 done < <(
     grep -Eo '(src|href)="[^"]+\.(js|css)(\?[^"]*)?"' "$INDEX_FILE" |
         sed -E 's/^[^=]+="([^"]+)"$/\1/'
