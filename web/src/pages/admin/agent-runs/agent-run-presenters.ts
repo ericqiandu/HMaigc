@@ -104,6 +104,14 @@ export function describeAgentRunControl(run: AdminAgentRun): AgentRunControlPres
                 danger: true,
             };
         case "cancel_request_required":
+            if (run.providerRequestState !== "submitted") {
+                return {
+                    title: "终止 Agent 运行并取消关联任务",
+                    description: "关联任务尚未提交给供应商。终止后会取消任务、停止 Agent 继续推进，并退回尚未消费的预留积分。",
+                    canInterrupt: true,
+                    danger: true,
+                };
+            }
             return {
                 title: "终止运行并请求取消供应商任务",
                 description: "供应商请求已经提交。终止后会停止 Agent 继续推进，同时请求取消关联任务；已提交的供应商任务可能继续执行，账务将进入核对。",

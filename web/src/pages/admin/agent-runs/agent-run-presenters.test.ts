@@ -65,6 +65,23 @@ describe("Agent 运行事实 presenter", () => {
         });
     });
 
+    test("关联任务尚未提交供应商时不误报供应商影响", () => {
+        assert.deepEqual(
+            describeAgentRunControl({
+                ...baseRun,
+                linkedModelTaskStatus: "queued",
+                billingState: "reserved",
+                providerRequestState: "not_submitted",
+            }),
+            {
+                title: "终止 Agent 运行并取消关联任务",
+                description: "关联任务尚未提交给供应商。终止后会取消任务、停止 Agent 继续推进，并退回尚未消费的预留积分。",
+                canInterrupt: true,
+                danger: true,
+            },
+        );
+    });
+
     test("未决账务和已结束运行不可终止", () => {
         assert.deepEqual(
             describeAgentRunControl({

@@ -4,6 +4,7 @@ import {
     AudioLines,
     BarChart3,
     BellRing,
+    Bot,
     ChevronDown,
     Coins,
     CreditCard,
@@ -95,6 +96,7 @@ export const ADMIN_NAVIGATION_GROUPS: AdminNavigationGroup[] = [
         label: "安全与运维",
         items: [
             { path: "/admin/settings/runtime-policy", label: "运行策略", description: "并发、频控、配额、队列与超时", icon: Settings2 },
+            { path: "/admin/agent-runs", label: "Agent 任务", description: "跨用户查看运行事实并审计化终止卡住的任务", icon: Bot },
             { path: "/admin/logs", label: "请求日志", description: "上游调用、耗时、状态与费用明细", icon: FileClock },
             { path: "/admin/operations", label: "运维升级", description: "版本检查、备份、升级、回滚与操作审计", icon: ServerCog },
         ],
