@@ -117,7 +117,7 @@ func retireIncompatiblePausedAgentRun(db *gorm.DB, run model.AgentRun, now time.
 	if current.PendingToolStarted {
 		return fmt.Errorf("%s: pending tool already started: run_id=%s", agentRuntimeRetirementInvalidCode, run.ID)
 	}
-	if err := validatePausedRunRetirementFacts(db, run); err != nil {
+	if err := validatePausedRunRetirementFacts(db, run, current); err != nil {
 		return err
 	}
 
@@ -223,10 +223,34 @@ func rejectFuturePausedAgentRuntimeContracts(db *gorm.DB) error {
 	)
 }
 
-func validatePausedRunRetirementFacts(db *gorm.DB, run model.AgentRun) error {
+func validatePausedRunRetirementFacts(db *gorm.DB, run model.AgentRun, current agentruntime.RuntimeState) error {
+	terminalToolStatuses := []agentruntime.ToolCallStatus{agentruntime.ToolCallSucceeded, agentruntime.ToolCallFailed}
+	if current.PendingToolCall != nil {
+		var terminalPendingToolCalls int64
+		if err := db.Model(&model.AgentToolCall{}).
+			Where(
+				"run_id = ? AND tool_call_id = ? AND action_version = ? AND status IN ?",
+				run.ID,
+				current.PendingToolCall.ToolCallID,
+				current.PendingToolCall.ActionVersion,
+				terminalToolStatuses,
+			).
+			Count(&terminalPendingToolCalls).Error; err != nil {
+			return err
+		}
+		if terminalPendingToolCalls != 0 {
+			return fmt.Errorf("%s: pending tool already terminal: run_id=%s count=%d", agentRuntimeRetirementInvalidCode, run.ID, terminalPendingToolCalls)
+		}
+	}
+
 	var startedToolCalls int64
 	if err := db.Model(&model.AgentToolCall{}).
-		Where("run_id = ? AND (started_at IS NOT NULL OR status = ?)", run.ID, agentruntime.ToolCallRunning).
+		Where(
+			"run_id = ? AND (status = ? OR (started_at IS NOT NULL AND status NOT IN ?))",
+			run.ID,
+			agentruntime.ToolCallRunning,
+			terminalToolStatuses,
+		).
 		Count(&startedToolCalls).Error; err != nil {
 		return err
 	}

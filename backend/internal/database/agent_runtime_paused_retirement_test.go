@@ -72,6 +72,59 @@ func TestRetireIncompatiblePausedAgentRuns(t *testing.T) {
 	}
 }
 
+func TestRetireIncompatiblePausedAgentRuns_PreservesHistoricalTerminalToolCalls(t *testing.T) {
+	for _, terminalStatus := range []agentruntime.ToolCallStatus{agentruntime.ToolCallSucceeded, agentruntime.ToolCallFailed} {
+		t.Run(string(terminalStatus), func(t *testing.T) {
+			db := openAgentRuntimeSchemaSQLite(t)
+			if err := MigrateBaseSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, time.August, 24, 11, 40, 0, 0, time.UTC)
+			fixture := createIncompatiblePausedRunFixture(t, db, "run-paused-history-"+string(terminalStatus), agentruntime.RunWaitingApproval, now, true)
+			historicalStartedAt := now.Add(-time.Minute)
+			historicalErrorCode := ""
+			if terminalStatus == agentruntime.ToolCallFailed {
+				historicalErrorCode = "historical_failure"
+			}
+			historical := model.AgentToolCall{
+				ID: "tool-record-history-" + fixture.runID, RunID: fixture.runID, ToolCallID: "tool-history-" + fixture.runID,
+				ActionVersion: 1, ToolName: string(agentruntime.ToolSkillLoad), Status: terminalStatus,
+				IdempotencyKey: fixture.runID + ":tool:history", InputJSON: `{}`, OutputJSON: `{"loaded":true}`,
+				ErrorCode: historicalErrorCode, StartedAt: &historicalStartedAt, CreatedAt: historicalStartedAt, UpdatedAt: historicalStartedAt,
+			}
+			if err := db.Create(&historical).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			if err := retireIncompatiblePausedAgentRuns(db, now.Add(time.Minute)); err != nil {
+				t.Fatalf("historical terminal tool call must not block paused-run retirement: %v", err)
+			}
+
+			var retiredRun model.AgentRun
+			if err := db.First(&retiredRun, "id = ?", fixture.runID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if retiredRun.Status != agentruntime.RunCancelled {
+				t.Fatalf("retired run status = %s", retiredRun.Status)
+			}
+			var preserved model.AgentToolCall
+			if err := db.First(&preserved, "id = ?", historical.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if preserved.Status != terminalStatus || preserved.StartedAt == nil || !preserved.StartedAt.Equal(historicalStartedAt) || preserved.OutputJSON != historical.OutputJSON || preserved.ErrorCode != historicalErrorCode {
+				t.Fatalf("historical terminal tool call was mutated = %#v", preserved)
+			}
+			var pending model.AgentToolCall
+			if err := db.First(&pending, "id = ?", "tool-record-"+fixture.runID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if pending.Status != agentruntime.ToolCallFailed || pending.ErrorCode != retiredAgentRuntimeContractFailureCode {
+				t.Fatalf("current pending tool call was not retired = %#v", pending)
+			}
+		})
+	}
+}
+
 func TestEnsureAgentRuntimeIntegritySchemaRetiresIncompatiblePausedRun(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {
@@ -106,6 +159,16 @@ func TestRetireIncompatiblePausedAgentRuns_RejectsRiskFacts(t *testing.T) {
 						Status    agentruntime.ToolCallStatus `gorm:"column:status"`
 						StartedAt time.Time                   `gorm:"column:started_at"`
 					}{Status: agentruntime.ToolCallRunning, StartedAt: now}).Error; err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "pending tool already terminal",
+			mutate: func(t *testing.T, db *gorm.DB, fixture pausedRunFixture, _ time.Time) {
+				t.Helper()
+				if err := db.Model(&model.AgentToolCall{}).Where("run_id = ?", fixture.runID).
+					Update("status", agentruntime.ToolCallSucceeded).Error; err != nil {
 					t.Fatal(err)
 				}
 			},

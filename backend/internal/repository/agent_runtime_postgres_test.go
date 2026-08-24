@@ -2,6 +2,7 @@ package repository
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -18,6 +19,122 @@ import (
 	postgresdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalToolHistory(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 24, 15, 0, 0, 0, time.UTC)
+	thread := model.AgentThread{
+		ID: "postgres-paused-history-thread", TenantKind: agentruntime.TenantPersonal, TenantID: "postgres-paused-history-user",
+		CreatedByUserID: "postgres-paused-history-user", DomainProjectID: "postgres-paused-history-project",
+		CanvasID: "postgres-paused-history-canvas", Status: agentruntime.ThreadActive, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&thread).Error; err != nil {
+		t.Fatal(err)
+	}
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		RequiredArtifacts:  []agentruntime.ArtifactKind{agentruntime.ArtifactText},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	state := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 2, MaxSteps: 24, Status: agentruntime.RunWaitingApproval,
+		UserMessage: "创建 5 秒测试视频", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+		ExpectedDelivery: &delivery,
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "postgres-paused-current-tool", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
+			Arguments: json.RawMessage(`{"planKey":"postgres-paused-plan","baseVersion":1}`), ExpectedDelivery: delivery,
+		},
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := model.AgentRun{
+		ID: "postgres-paused-history-run", ThreadID: thread.ID, ActorUserID: thread.CreatedByUserID,
+		ClientRequestID: "postgres-paused-history-request", Status: state.Status, LastEventSequence: 7,
+		StateVersion: state.StateVersion, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
+		ModelRecordID: "postgres-paused-model-record", ModelKey: "postgres-paused-model",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion - 1,
+		PolicyVersion: agentruntime.CurrentPolicyVersion - 1, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRunEvent{ID: "postgres-paused-event", RunID: run.ID, Sequence: 7, Kind: agentruntime.EventRunStatusChanged, PayloadJSON: string(stateJSON), CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentCheckpoint{ID: "postgres-paused-checkpoint", RunID: run.ID, Sequence: 7, StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentTimelineItem{
+		ID: "postgres-paused-timeline", TenantKind: thread.TenantKind, TenantID: thread.TenantID, ThreadID: thread.ID,
+		RunID: run.ID, Kind: model.AgentTimelineItemStatusKind, Status: model.AgentTimelineItemInProgress,
+		Ordinal: 1, SourceEventSequence: 7, ContentJSON: `{"label":"准备中"}`, StartedAt: now, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	current := model.AgentToolCall{
+		ID: "postgres-paused-current-record", RunID: run.ID, ToolCallID: state.PendingToolCall.ToolCallID,
+		ActionVersion: 1, ToolName: string(state.PendingToolCall.ToolName), Status: agentruntime.ToolCallWaitingApproval,
+		ApprovalRequired: true, IdempotencyKey: run.ID + ":tool:current", InputJSON: string(state.PendingToolCall.Arguments),
+		OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+	}
+	historicalStartedAt := now.Add(-time.Minute)
+	historical := model.AgentToolCall{
+		ID: "postgres-paused-history-record", RunID: run.ID, ToolCallID: "postgres-paused-history-tool",
+		ActionVersion: 1, ToolName: string(agentruntime.ToolSkillLoad), Status: agentruntime.ToolCallSucceeded,
+		IdempotencyKey: run.ID + ":tool:history", InputJSON: `{}`, OutputJSON: `{"loaded":true}`,
+		StartedAt: &historicalStartedAt, CreatedAt: historicalStartedAt, UpdatedAt: historicalStartedAt,
+	}
+	if err := db.Create(&[]model.AgentToolCall{current, historical}).Error; err != nil {
+		t.Fatal(err)
+	}
+	plan := model.AgentProductionPlanVersion{
+		ID: "postgres-paused-plan-version", PlanKey: "postgres-paused-plan", TenantKind: thread.TenantKind,
+		TenantID: thread.TenantID, DomainProjectID: thread.DomainProjectID, CanvasID: thread.CanvasID,
+		CreatedByRunID: run.ID, Version: 1, Status: model.AgentProductionPlanActive, Title: "测试计划",
+		TargetDurationMS: 5000, Script: "测试脚本", ReferencesJSON: `[]`, ShotsJSON: `[]`, ExpectedDeliveryJSON: `{}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentProductionArtifact{
+		ID: "postgres-paused-artifact", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+		Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactAwaitingApproval,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("PostgreSQL upgrade rejected terminal tool history: %v", err)
+	}
+	var retired model.AgentRun
+	if err := db.First(&retired, "id = ?", run.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if retired.Status != agentruntime.RunCancelled {
+		t.Fatalf("PostgreSQL paused run status = %s", retired.Status)
+	}
+	var preserved model.AgentToolCall
+	if err := db.First(&preserved, "id = ?", historical.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if preserved.Status != historical.Status || preserved.StartedAt == nil || !preserved.StartedAt.Equal(historicalStartedAt) || preserved.OutputJSON != historical.OutputJSON {
+		t.Fatalf("PostgreSQL historical tool call was mutated = %#v", preserved)
+	}
+	var failedCurrent model.AgentToolCall
+	if err := db.First(&failedCurrent, "id = ?", current.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedCurrent.Status != agentruntime.ToolCallFailed || failedCurrent.ErrorCode != "runtime_contract_retired" {
+		t.Fatalf("PostgreSQL current tool call was not retired = %#v", failedCurrent)
+	}
+}
 
 func TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
