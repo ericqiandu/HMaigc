@@ -206,6 +206,9 @@ func adminAgentRunHasUnresolvedBilling(db *gorm.DB, runID string, targets []admi
 	taskIDs := make([]string, 0, len(targets))
 	billingOrderIDs := make([]string, 0, len(targets))
 	for _, target := range targets {
+		if strings.TrimSpace(target.BillingOrderID) == "" {
+			return true, nil
+		}
 		taskIDs = append(taskIDs, target.TaskID)
 		if target.BillingOrderID != "" {
 			billingOrderIDs = append(billingOrderIDs, target.BillingOrderID)

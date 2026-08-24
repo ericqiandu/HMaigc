@@ -130,11 +130,19 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 	providerTask := model.Task{
 		ID: "task-provider", UserID: "control-user", Audience: model.TaskAudienceInternal,
 		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusRunning,
-		Operation: "agent_model:run-provider", ProviderRequestID: "provider-secret-request",
+		Operation: "agent_model:run-provider", BillingOrderID: "billing-provider", ProviderRequestID: "provider-secret-request",
 		Prompt: "sensitive user prompt", ResultJSON: `{"reasoning":"sensitive model body"}`,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&providerTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	providerBilling := model.BillingOrder{
+		ID: "billing-provider", TaskID: providerTask.ID, UserID: "control-user",
+		IdempotencyKey: "agent-runtime:run-provider:1", Status: model.BillingStatusRunning,
+		ProviderRequestID: "provider-secret-billing-request", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&providerBilling).Error; err != nil {
 		t.Fatal(err)
 	}
 	billingOrder := model.BillingOrder{
@@ -156,10 +164,18 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 	mediaTask := model.Task{
 		ID: "task-media", UserID: "control-user", Audience: model.TaskAudienceInternal,
 		Type: "canvas_video", Capability: "video", Status: model.TaskStatusRunning,
-		ProviderRequestID: "provider-secret-media-request", Prompt: "sensitive media prompt",
+		BillingOrderID: "billing-media", ProviderRequestID: "provider-secret-media-request", Prompt: "sensitive media prompt",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&mediaTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	mediaBilling := model.BillingOrder{
+		ID: "billing-media", TaskID: mediaTask.ID, UserID: "control-user",
+		IdempotencyKey: "media-run-provider", Status: model.BillingStatusRunning,
+		ProviderRequestID: "provider-secret-media-billing-request", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&mediaBilling).Error; err != nil {
 		t.Fatal(err)
 	}
 	mediaPlan := model.AgentProductionPlanVersion{
@@ -175,7 +191,7 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 	mediaArtifact := model.AgentProductionArtifact{
 		ID: "artifact-media", PlanKey: mediaPlan.PlanKey, PlanVersionID: mediaPlan.ID, PlanVersion: 1,
 		Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactRunning,
-		TaskID: mediaTask.ID, CreatedAt: now, UpdatedAt: now,
+		TaskID: mediaTask.ID, BillingOrderID: mediaBilling.ID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&mediaArtifact).Error; err != nil {
 		t.Fatal(err)
@@ -232,7 +248,7 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 		t.Fatal(err)
 	}
 	serialized := string(encoded)
-	for _, secret := range []string{"sensitive user prompt", "sensitive model body", "sensitive provider billing body", "sensitive render prompt", "provider-secret-request", "sensitive media prompt", "sensitive media title", "sensitive media script", "provider-secret-media-request"} {
+	for _, secret := range []string{"sensitive user prompt", "sensitive model body", "sensitive provider billing body", "sensitive render prompt", "provider-secret-request", "provider-secret-billing-request", "sensitive media prompt", "sensitive media title", "sensitive media script", "provider-secret-media-request", "provider-secret-media-billing-request"} {
 		if strings.Contains(serialized, secret) {
 			t.Fatalf("admin run summary leaked %q: %s", secret, serialized)
 		}
@@ -264,6 +280,33 @@ func TestAdminAgentRunBlocksActiveTaskWithMissingBillingOrder(t *testing.T) {
 	}
 	if record.ControlDisposition != AdminAgentRunBlockedByUnresolvedBilling || record.ControlBlockedReason != "billing_unresolved" {
 		t.Fatalf("missing linked billing facts = %#v", record)
+	}
+}
+
+func TestAdminAgentRunBlocksActiveTaskWithoutBillingReference(t *testing.T) {
+	repo, db := openAdminAgentRunRepositorySQLite(t)
+	now := time.Date(2026, time.August, 24, 15, 35, 0, 0, time.UTC)
+	createAdminAgentRunUser(t, db, "empty-billing-user", "empty-billing@example.com", "空账单用户")
+	createAdminAgentRunRecord(t, db, adminAgentRunFixture{
+		runID: "run-empty-linked-billing", userID: "empty-billing-user",
+		projectID: "project-empty-linked-billing", canvasID: "canvas-empty-linked-billing",
+		status: agentruntime.RunQueued, updatedAt: now,
+	})
+	task := model.Task{
+		ID: "task-empty-linked-billing", UserID: "empty-billing-user", Audience: model.TaskAudienceInternal,
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusQueued,
+		Operation: "agent_model:run-empty-linked-billing", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := repo.AdminAgentRun("run-empty-linked-billing", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ControlDisposition != AdminAgentRunBlockedByUnresolvedBilling || record.ControlBlockedReason != "billing_unresolved" {
+		t.Fatalf("empty linked billing facts = %#v", record)
 	}
 }
 

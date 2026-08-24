@@ -253,6 +253,9 @@ func (r *Repository) hydrateAdminAgentRunModelTaskFacts(
 			continue
 		}
 		record.LinkedModelTaskStatus = preferredAdminAgentRunTaskStatus(record.LinkedModelTaskStatus, fact.Status)
+		if adminAgentRunTaskStatusActive(string(fact.Status)) && strings.TrimSpace(fact.BillingOrderID) == "" {
+			record.hasBlockingBilling = true
+		}
 		trackAdminAgentRunActiveTaskFact(fact, activeTaskIDs, activeBillingOrderIDs)
 		if strings.TrimSpace(fact.ProviderRequestID) != "" {
 			record.ProviderRequestState = "submitted"
@@ -285,6 +288,9 @@ func (r *Repository) hydrateAdminAgentRunMediaTaskFacts(
 			continue
 		}
 		record.LinkedMediaTaskStatus = preferredAdminAgentRunTaskStatus(record.LinkedMediaTaskStatus, fact.Status)
+		if adminAgentRunTaskStatusActive(string(fact.Status)) && strings.TrimSpace(fact.BillingOrderID) == "" {
+			record.hasBlockingBilling = true
+		}
 		trackAdminAgentRunActiveTaskFact(fact, activeTaskIDs, activeBillingOrderIDs)
 		if strings.TrimSpace(fact.ProviderRequestID) != "" {
 			record.ProviderRequestState = "submitted"

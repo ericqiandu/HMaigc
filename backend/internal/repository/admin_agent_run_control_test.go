@@ -246,6 +246,29 @@ func TestInterruptAdminAgentRunMapsMissingLinkedBillingToStableFailure(t *testin
 	assertAdminInterruptFactCounts(t, db, fixture.scope.RunID, 0, 1)
 }
 
+func TestInterruptAdminAgentRunBlocksActiveTaskWithoutBillingReference(t *testing.T) {
+	repo, db := openAdminAgentRunRepositorySQLite(t)
+	now := time.Date(2026, time.August, 24, 17, 10, 0, 0, time.UTC)
+	fixture := createAdminInterruptFixture(t, db, "run-admin-empty-billing", agentruntime.RunQueued, now)
+	task := model.Task{
+		ID: "task-admin-empty-billing", UserID: fixture.scope.ActorUserID, Audience: model.TaskAudienceInternal,
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusQueued,
+		Operation: "agent_model:" + fixture.scope.RunID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := repo.InterruptAdminAgentRun(AdminAgentRunInterruptCommand{
+		RunID: fixture.scope.RunID, ExpectedStateVersion: fixture.state.StateVersion,
+		ActorUserID: "admin-operator", Reason: "账单引用缺失时不得终止", Now: now.Add(time.Minute),
+	})
+	if !errors.Is(err, ErrAdminAgentRunBillingUnresolved) {
+		t.Fatalf("empty linked billing error = %v", err)
+	}
+	assertAdminInterruptFactCounts(t, db, fixture.scope.RunID, 0, 1)
+}
+
 func TestInterruptAdminAgentRunConcurrentCASCommitsOneTerminalTransition(t *testing.T) {
 	repo, db := openAdminAgentRunRepositorySQLite(t)
 	now := time.Date(2026, time.August, 24, 17, 15, 0, 0, time.UTC)
