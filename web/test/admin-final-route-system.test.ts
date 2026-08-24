@@ -73,6 +73,7 @@ describe("admin final route system", () => {
             "/admin/settings/email",
             "/admin/settings/storage",
             "/admin/settings/runtime-policy",
+            "/admin/agent-runs",
             "/admin/logs",
             "/admin/operations",
         ]);

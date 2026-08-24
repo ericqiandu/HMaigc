@@ -2152,6 +2152,133 @@
     width: 144px;
 }
 
+.admin-workspace .agent-runs-user-filter,
+.admin-workspace .agent-runs-scope-filter {
+    width: min(100%, 260px);
+}
+
+.admin-workspace .agent-runs-status-filter,
+.admin-workspace .agent-runs-activity-filter {
+    width: 164px;
+}
+
+.admin-workspace .agent-runs-scope-cell,
+.admin-workspace .agent-runs-status-cell,
+.admin-workspace .agent-runs-activity-cell,
+.admin-workspace .agent-runs-fact-cell {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+}
+
+.admin-workspace .agent-runs-user-name,
+.admin-workspace .agent-runs-status-tag {
+    justify-self: start;
+}
+
+.admin-workspace .agent-runs-user-name {
+    overflow: hidden;
+    color: var(--workspace-ui-text);
+    font-size: 13px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-workspace .agent-runs-scope-value,
+.admin-workspace .agent-runs-step-value,
+.admin-workspace .agent-runs-inactive-value,
+.admin-workspace .agent-runs-task-value,
+.admin-workspace .agent-runs-billing-value,
+.admin-workspace .agent-runs-updated-at {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.admin-workspace .agent-runs-activity-value {
+    color: var(--workspace-ui-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.admin-workspace .agent-runs-activity-value.is-possibly_stalled {
+    color: var(--workspace-ui-warning);
+}
+
+.admin-workspace .agent-runs-interrupt-button.ant-btn {
+    min-width: 32px;
+    min-height: 32px;
+}
+
+.agent-run-interrupt-content,
+.agent-run-interrupt-facts,
+.agent-run-interrupt-field {
+    display: grid;
+    gap: 10px;
+}
+
+.agent-run-interrupt-content {
+    gap: 18px;
+}
+
+.agent-run-interrupt-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0;
+}
+
+.agent-run-interrupt-fact {
+    min-width: 0;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--workspace-ui-divider);
+}
+
+.agent-run-interrupt-fact-label,
+.agent-run-interrupt-fact-value {
+    margin: 0;
+}
+
+.agent-run-interrupt-fact-label,
+.agent-run-interrupt-hint {
+    color: var(--workspace-ui-text-tertiary);
+    font-size: 12px;
+}
+
+.agent-run-interrupt-fact-value,
+.agent-run-interrupt-label {
+    color: var(--workspace-ui-text);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.agent-run-interrupt-hint {
+    margin: 0;
+}
+
+.agent-run-interrupt-code {
+    color: var(--workspace-ui-warning);
+}
+
+.agent-run-interrupt-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--workspace-ui-danger);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.agent-run-interrupt-error-icon {
+    flex: 0 0 auto;
+    margin-top: 1px;
+}
+
+.agent-run-interrupt-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
 @media (max-width: 767px) {
     .admin-workspace .admin-announcements-search {
         width: 100%;
@@ -2161,5 +2288,16 @@
     .admin-workspace .admin-announcements-status-filter {
         flex: 1 1 144px;
         width: auto;
+    }
+
+    .admin-workspace .agent-runs-user-filter,
+    .admin-workspace .agent-runs-scope-filter,
+    .admin-workspace .agent-runs-status-filter,
+    .admin-workspace .agent-runs-activity-filter {
+        width: 100%;
+    }
+
+    .agent-run-interrupt-facts {
+        grid-template-columns: 1fr;
     }
 }

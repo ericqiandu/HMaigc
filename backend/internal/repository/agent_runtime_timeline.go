@@ -185,11 +185,43 @@ func persistAgentTimelineEvent(
 	if now.IsZero() || nextOrdinal == nil || *nextOrdinal < 1 || sequence < 1 {
 		return errors.Join(ErrAgentTimelineConflict, errors.New("agent timeline event boundary is invalid"))
 	}
+	if kind == agentruntime.EventRunInterrupted && previous.PendingClarification == nil && previous.PendingToolCall == nil {
+		mutation, found, err := activeAgentTimelineInterruptMutation(db, scope, sequence)
+		if err != nil {
+			return err
+		}
+		if found {
+			return persistAgentTimelineMutation(db, scope, mutation, nextOrdinal, now)
+		}
+	}
 	mutation, err := agentTimelineMutationForEvent(scope.RunID, previous, state, kind, sequence)
 	if err != nil || mutation == nil {
 		return err
 	}
 	return persistAgentTimelineMutation(db, scope, *mutation, nextOrdinal, now)
+}
+
+func activeAgentTimelineInterruptMutation(db *gorm.DB, scope agentruntime.Scope, sequence int64) (TimelineMutation, bool, error) {
+	var items []model.AgentTimelineItem
+	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("run_id = ? AND status = ?", scope.RunID, model.AgentTimelineItemInProgress).
+		Order("ordinal DESC").
+		Limit(2).
+		Find(&items).Error; err != nil {
+		return TimelineMutation{}, false, err
+	}
+	if len(items) > 1 {
+		return TimelineMutation{}, false, errors.Join(ErrAgentTimelineConflict, errors.New("agent interrupt has multiple active timeline items"))
+	}
+	if len(items) == 0 {
+		return TimelineMutation{}, false, nil
+	}
+	item := items[0]
+	fromStatus := model.AgentTimelineItemInProgress
+	return TimelineMutation{
+		ItemID: item.ID, Kind: item.Kind, FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemInterrupted,
+		SourceEventSequence: sequence, ContentJSON: json.RawMessage(item.ContentJSON),
+	}, true, nil
 }
 
 func persistAgentTimelineMutation(

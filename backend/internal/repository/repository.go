@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -16,7 +17,8 @@ var ErrDailyUploadLimitExceeded = errors.New("daily upload limit exceeded")
 var ErrCanvasProjectConflict = errors.New("canvas project conflict")
 
 type Repository struct {
-	db *gorm.DB
+	db                       *gorm.DB
+	adminAgentRunInterruptMu sync.Mutex
 }
 
 type UserStorageUsage struct {

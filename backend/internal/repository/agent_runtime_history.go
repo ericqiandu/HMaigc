@@ -382,6 +382,31 @@ func rebuildTerminalAgentTimeline(scope agentruntime.Scope, run model.AgentRun, 
 					ItemID: agentFactID("timeline", run.ID, run.ClientRequestID), Kind: model.AgentTimelineItemUserMessage,
 					ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence, ContentJSON: content,
 				}
+			} else if event.Kind == agentruntime.EventRunInterrupted && transitionPrevious.PendingClarification == nil && transitionPrevious.PendingToolCall == nil {
+				var activeIndex = -1
+				for index := range items {
+					if items[index].Status != model.AgentTimelineItemInProgress {
+						continue
+					}
+					if activeIndex >= 0 {
+						return nil, errors.New("terminal agent interrupt has multiple active timeline items")
+					}
+					activeIndex = index
+				}
+				if activeIndex >= 0 {
+					fromStatus := model.AgentTimelineItemInProgress
+					active := items[activeIndex]
+					mutation = &TimelineMutation{
+						ItemID: active.ID, Kind: active.Kind, FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemInterrupted,
+						SourceEventSequence: event.Sequence, ContentJSON: json.RawMessage(active.ContentJSON),
+					}
+				} else {
+					var err error
+					mutation, err = agentTimelineMutationForEvent(run.ID, transitionPrevious, state, event.Kind, event.Sequence)
+					if err != nil {
+						return nil, err
+					}
+				}
 			} else {
 				var err error
 				mutation, err = agentTimelineMutationForEvent(run.ID, transitionPrevious, state, event.Kind, event.Sequence)

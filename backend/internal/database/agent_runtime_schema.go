@@ -109,6 +109,9 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 		if err := retireIncompatibleQueuedAgentRuns(tx); err != nil {
 			return err
 		}
+		if err := retireIncompatiblePausedAgentRuns(tx, time.Now().UTC()); err != nil {
+			return err
+		}
 		if err := rejectIncompatibleActiveAgentRuns(tx); err != nil {
 			return err
 		}
