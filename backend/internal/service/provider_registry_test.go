@@ -222,7 +222,7 @@ func TestProviderRegistryPublishesSeedance20And25CompatibleCapabilities(t *testi
 	if model.DurationMin != 4 || model.DurationMax != 30 || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || model.WatermarkCapability != modelpkg.WatermarkCapabilityControlled || !model.SupportsAudioOnly || !model.RequiresAdaptiveFrames {
 		t.Fatalf("seedance 2.5 duration/features = %#v", model)
 	}
-	if strings.Join(model.Resolutions, ",") != "480p,720p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
+	if strings.Join(model.Resolutions, ",") != "480p,720p,1080p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
 		t.Fatalf("seedance 2.5 media constraints = %#v", model)
 	}
 	if len(model.Tools) != 0 {
@@ -249,7 +249,6 @@ func TestKuaiziCompatibleInputEnforcesPerModelCapabilities(t *testing.T) {
 		{name: "2.0 rejects 30 seconds", model: "doubao-seedance-2-0-fast-260128", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "30"}}, want: "4–15"},
 		{name: "2.0 audio needs visual media", model: "doubao-seedance-2-0-260128", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{URL: "https://cdn.example.com/a.mp3", DurationMs: 2_000}}}, want: "必须同时连接"},
 		{name: "2.5 audio needs text", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Config: providerConfig{Size: "adaptive", VQuality: "720p", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{URL: "https://cdn.example.com/a.mp3", DurationMs: 2_000}}}, want: "必须同时提供提示词"},
-		{name: "2.5 rejects 1080p", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "1080p", VideoSeconds: "5"}}, want: "不支持分辨率"},
 		{name: "2.5 frame requires adaptive", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "5"}, ReferenceImages: []providerMedia{{ID: "first", URL: "https://cdn.example.com/a.png"}}, Metadata: map[string]interface{}{"videoStartFrameNodeId": "first"}}, want: "只支持自适应"},
 		{name: "2.0 rejects video duration total over 15 seconds", model: "doubao-seedance-2-0-260128", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "5"}, ReferenceVideos: []providerMedia{{DurationMs: 8_000}, {DurationMs: 8_000}}}, want: "参考视频总时长不能超过 15 秒"},
 		{name: "2.5 rejects audio duration total over 30 seconds", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Prompt: "跟随节奏生成", Config: providerConfig{Size: "adaptive", VQuality: "720p", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{DurationMs: 16_000}, {DurationMs: 15_000}}}, want: "参考音频总时长不能超过 30 秒"},
@@ -263,6 +262,12 @@ func TestKuaiziCompatibleInputEnforcesPerModelCapabilities(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+
+	resolutionInput := canvasGenerationInput{Config: providerConfig{Model: "doubao-seedance-2-5-260628", Size: "16:9", VQuality: "1080p", VideoSeconds: "5"}}
+	resolutionSpec, _ := kuaiziSeedanceModelSpec(resolutionInput.Config.Model)
+	if _, resolution, _, err := validateKuaiziCompatibleVideoInput(resolutionInput, resolutionSpec); err != nil || resolution != "1080p" {
+		t.Fatalf("2.5 1080p input = resolution %q, error %v", resolution, err)
 	}
 
 	input := canvasGenerationInput{Prompt: "让参考音频驱动画面", Config: providerConfig{Model: "doubao-seedance-2-5-260628", Size: "adaptive", VQuality: "720p", VideoSeconds: "30"}, ReferenceAudios: []providerMedia{{URL: "https://cdn.example.com/a.mp3", DurationMs: 2_000}}}

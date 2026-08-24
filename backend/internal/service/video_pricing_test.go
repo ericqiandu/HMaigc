@@ -77,11 +77,14 @@ func TestBuildSeedancePriceTiersRequiresEveryPublishedInputVariant(t *testing.T)
 		{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1_510_000},
 		{Resolution: "720P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1_510_000},
 		{Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1_630_000},
+		{Resolution: "1080P", InputVariant: "standard", UnitPriceMicrocredits: 3_740_000},
+		{Resolution: "1080P", InputVariant: "standard_audio", UnitPriceMicrocredits: 3_740_000},
+		{Resolution: "1080P", InputVariant: "reference_video", UnitPriceMicrocredits: 4_000_000},
 	}
 	if _, err := buildChannelModelPriceTiers(item, requests); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildChannelModelPriceTiers(item, requests[:5]); err == nil {
+	if _, err := buildChannelModelPriceTiers(item, requests[:8]); err == nil {
 		t.Fatal("incomplete Seedance input-variant price matrix was accepted")
 	}
 }

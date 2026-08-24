@@ -60,10 +60,10 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         displayName: is25 ? "Seedance 2.5" : isPro ? "Seedance 2.0 Pro" : model.includes("fast") ? "Seedance 2.0 Fast" : "Seedance 2.0 Mini",
         upstreamMode: model,
         capability: "video",
-        resolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        resolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
         resolutionPixels: {},
         inputVariants: ["standard", "reference_video"] as Array<"standard" | "reference_video">,
-        referenceVideoResolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        referenceVideoResolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
         generatedAudioResolutions: [],
         ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
         qualities: [],
@@ -395,14 +395,14 @@ describe("Seedance 2.0 分辨率能力", () => {
         expect(normalized.videoSeconds).toBe("7");
     });
 
-    test("Seedance 2.5 只开放 480P/720P、最长 30 秒且关闭兼容接口不支持的超分", () => {
+    test("Seedance 2.5 开放 480P/720P/1080P、最长 30 秒且关闭独立超分", () => {
         const config = seedanceConfig("doubao-seedance-2-5-260628", { videoSeconds: "30", vquality: "1080p", videoSuperResolutionEnabled: "true" });
         const capabilities = resolveVideoModelCapabilities(config);
-        expect(capabilities.resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
+        expect(capabilities.resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
         expect(capabilities.customDurationRange).toEqual({ min: 4, max: 30 });
         expect(capabilities.supportsSuperResolution).toBe(false);
         const normalized = normalizeVideoConfigForModel(config, "first_last_frame");
-        expect(normalized).toMatchObject({ videoSeconds: "30", vquality: "720p", size: "adaptive", videoSuperResolutionEnabled: "false" });
+        expect(normalized).toMatchObject({ videoSeconds: "30", vquality: "1080p", size: "adaptive", videoSuperResolutionEnabled: "false" });
     });
 
     test("只有 2.5 首尾帧强制自适应比例，2.0 保留兼容接口支持的画幅", () => {
