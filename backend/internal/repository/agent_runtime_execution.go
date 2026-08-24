@@ -242,8 +242,15 @@ func (r *Repository) CommitAgentRuntimeTransition(scope agentruntime.Scope, prev
 		return ErrAgentPayloadTooLarge
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		return r.commitAgentRuntimeTransitionTx(tx, scope, previous, transition, string(stateJSON), now)
+		return r.commitAgentRuntimeTransitionTx(tx, scope, previous, transition, string(stateJSON), nil, now)
 	})
+}
+
+type agentRuntimeInterruptAudit struct {
+	Source         string                 `json:"source"`
+	ActorUserID    string                 `json:"actorUserId"`
+	Reason         string                 `json:"reason"`
+	OriginalStatus agentruntime.RunStatus `json:"originalStatus"`
 }
 
 func (r *Repository) commitAgentRuntimeTransitionTx(
@@ -252,6 +259,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	previous agentruntime.RuntimeState,
 	transition agentruntime.RuntimeTransition,
 	stateJSON string,
+	interruptAudit *agentRuntimeInterruptAudit,
 	now time.Time,
 ) error {
 	state := transition.State
@@ -300,7 +308,11 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	firstSequence := facts.LastEventSequence - int64(len(transition.EventKinds)) + 1
 	for index, kind := range transition.EventKinds {
 		sequence := firstSequence + int64(index)
-		event := model.AgentRunEvent{ID: agentFactID("event", scope.RunID, strconv.FormatInt(sequence, 10)), RunID: scope.RunID, Sequence: sequence, Kind: kind, PayloadJSON: string(stateJSON), CreatedAt: now}
+		eventPayload, err := agentRuntimeTransitionEventPayload(stateJSON, kind, interruptAudit)
+		if err != nil {
+			return err
+		}
+		event := model.AgentRunEvent{ID: agentFactID("event", scope.RunID, strconv.FormatInt(sequence, 10)), RunID: scope.RunID, Sequence: sequence, Kind: kind, PayloadJSON: eventPayload, CreatedAt: now}
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
@@ -310,6 +322,29 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	}
 	checkpoint := model.AgentCheckpoint{ID: agentFactID("checkpoint", scope.RunID, strconv.FormatInt(facts.LastEventSequence, 10)), RunID: scope.RunID, Sequence: facts.LastEventSequence, StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now}
 	return tx.Create(&checkpoint).Error
+}
+
+func agentRuntimeTransitionEventPayload(stateJSON string, kind agentruntime.EventKind, interruptAudit *agentRuntimeInterruptAudit) (string, error) {
+	if interruptAudit == nil || kind != agentruntime.EventRunInterrupted {
+		return stateJSON, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stateJSON), &payload); err != nil {
+		return "", err
+	}
+	auditJSON, err := json.Marshal(interruptAudit)
+	if err != nil {
+		return "", err
+	}
+	payload["interruptAudit"] = auditJSON
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) > agentEventPayloadLimit {
+		return "", ErrAgentPayloadTooLarge
+	}
+	return string(encoded), nil
 }
 
 func (r *Repository) AppendAgentSteer(
@@ -366,7 +401,7 @@ func (r *Repository) AppendAgentSteer(
 		if len(stateJSON) > agentEventPayloadLimit {
 			return ErrAgentPayloadTooLarge
 		}
-		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), now); err != nil {
+		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), nil, now); err != nil {
 			return err
 		}
 		state = transition.State
@@ -409,7 +444,7 @@ func (r *Repository) InterruptAgentRun(
 		if len(stateJSON) > agentEventPayloadLimit {
 			return ErrAgentPayloadTooLarge
 		}
-		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), now); err != nil {
+		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), nil, now); err != nil {
 			if errors.Is(err, ErrAgentRuntimeStepConflict) {
 				return agentruntime.ErrInterruptConflict
 			}

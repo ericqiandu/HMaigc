@@ -130,7 +130,8 @@ func TestAgentMessageStreamRejectsLateFactsAfterRunInterrupt(t *testing.T) {
 	if err := db.First(&item, "id = ?", itemID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if item.ContentJSON != `{"message":"第一段"}` || item.SourceEventSequence != 3 {
+	if item.Status != model.AgentTimelineItemInterrupted || item.CompletedAt == nil ||
+		item.ContentJSON != `{"message":"第一段"}` || item.SourceEventSequence != 4 {
 		t.Fatalf("message projection changed after interruption = %#v", item)
 	}
 	records, err := repo.AgentTimelineEventsAfter(scope, 4, 10)

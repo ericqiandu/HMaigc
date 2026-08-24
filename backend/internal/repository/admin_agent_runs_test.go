@@ -239,6 +239,34 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 	}
 }
 
+func TestAdminAgentRunBlocksActiveTaskWithMissingBillingOrder(t *testing.T) {
+	repo, db := openAdminAgentRunRepositorySQLite(t)
+	now := time.Date(2026, time.August, 24, 15, 30, 0, 0, time.UTC)
+	createAdminAgentRunUser(t, db, "billing-link-user", "billing-link@example.com", "账务关联用户")
+	createAdminAgentRunRecord(t, db, adminAgentRunFixture{
+		runID: "run-missing-linked-billing", userID: "billing-link-user",
+		projectID: "project-missing-linked-billing", canvasID: "canvas-missing-linked-billing",
+		status: agentruntime.RunQueued, updatedAt: now,
+	})
+	task := model.Task{
+		ID: "task-missing-linked-billing", UserID: "billing-link-user", Audience: model.TaskAudienceInternal,
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusQueued,
+		Operation: "agent_model:run-missing-linked-billing", BillingOrderID: "missing-billing-order",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := repo.AdminAgentRun("run-missing-linked-billing", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ControlDisposition != AdminAgentRunBlockedByUnresolvedBilling || record.ControlBlockedReason != "billing_unresolved" {
+		t.Fatalf("missing linked billing facts = %#v", record)
+	}
+}
+
 type adminAgentRunFixture struct {
 	runID     string
 	userID    string

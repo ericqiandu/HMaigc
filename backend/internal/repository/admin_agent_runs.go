@@ -68,6 +68,7 @@ type AdminAgentRunRecord struct {
 	ControlDisposition     AdminAgentRunControlDisposition     `json:"controlDisposition" gorm:"-"`
 	ControlBlockedReason   string                              `json:"controlBlockedReason" gorm:"-"`
 	ConfirmationPhrase     string                              `json:"confirmationPhrase,omitempty" gorm:"-"`
+	hasBlockingBilling     bool
 }
 
 type AdminAgentRunPage struct {
@@ -143,19 +144,32 @@ type adminAgentRunToolFact struct {
 }
 
 type adminAgentRunTaskFact struct {
+	TaskID            string           `gorm:"column:task_id"`
 	RunID             string           `gorm:"column:run_id"`
 	Status            model.TaskStatus `gorm:"column:status"`
+	BillingOrderID    string           `gorm:"column:billing_order_id"`
 	ProviderRequestID string           `gorm:"column:provider_request_id"`
 }
 
 type adminAgentRunDirectBillingFact struct {
+	BillingOrderID string              `gorm:"column:billing_order_id"`
+	TaskID         string              `gorm:"column:task_id"`
 	IdempotencyKey string              `gorm:"column:idempotency_key"`
 	Status         model.BillingStatus `gorm:"column:status"`
 }
 
 type adminAgentRunBillingFact struct {
-	RunID  string              `gorm:"column:run_id"`
-	Status model.BillingStatus `gorm:"column:status"`
+	RunID          string              `gorm:"column:run_id"`
+	BillingOrderID string              `gorm:"column:billing_order_id"`
+	TaskID         string              `gorm:"column:task_id"`
+	Status         model.BillingStatus `gorm:"column:status"`
+}
+
+type adminAgentRunLinkedTaskBillingFact struct {
+	BillingOrderID string              `gorm:"column:billing_order_id"`
+	TaskID         string              `gorm:"column:task_id"`
+	UserID         string              `gorm:"column:user_id"`
+	Status         model.BillingStatus `gorm:"column:status"`
 }
 
 func (r *Repository) hydrateAdminAgentRunFacts(records []AdminAgentRunRecord) error {
@@ -177,13 +191,15 @@ func (r *Repository) hydrateAdminAgentRunFacts(records []AdminAgentRunRecord) er
 	if err := r.hydrateAdminAgentRunToolFacts(runIDs, recordByRunID); err != nil {
 		return err
 	}
-	if err := r.hydrateAdminAgentRunModelTaskFacts(runIDs, recordByRunID); err != nil {
+	activeTaskIDs := make(map[string]map[string]struct{}, len(records))
+	activeBillingOrderIDs := make(map[string]map[string]struct{}, len(records))
+	if err := r.hydrateAdminAgentRunModelTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
-	if err := r.hydrateAdminAgentRunMediaTaskFacts(runIDs, recordByRunID); err != nil {
+	if err := r.hydrateAdminAgentRunMediaTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
-	if err := r.hydrateAdminAgentRunBillingFacts(runIDs, recordByRunID); err != nil {
+	if err := r.hydrateAdminAgentRunBillingFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
 	for index := range records {
@@ -213,14 +229,19 @@ func (r *Repository) hydrateAdminAgentRunToolFacts(runIDs []string, records map[
 	return nil
 }
 
-func (r *Repository) hydrateAdminAgentRunModelTaskFacts(runIDs []string, records map[string]*AdminAgentRunRecord) error {
+func (r *Repository) hydrateAdminAgentRunModelTaskFacts(
+	runIDs []string,
+	records map[string]*AdminAgentRunRecord,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) error {
 	operations := make([]string, 0, len(runIDs))
 	for _, runID := range runIDs {
 		operations = append(operations, "agent_model:"+runID)
 	}
 	var facts []adminAgentRunTaskFact
 	if err := r.db.Model(&model.Task{}).
-		Select("SUBSTR(operation, 13) AS run_id, status, provider_request_id").
+		Select("id AS task_id, SUBSTR(operation, 13) AS run_id, status, billing_order_id, provider_request_id").
 		Where("operation IN ?", operations).
 		Order("updated_at DESC, id DESC").
 		Scan(&facts).Error; err != nil {
@@ -232,6 +253,7 @@ func (r *Repository) hydrateAdminAgentRunModelTaskFacts(runIDs []string, records
 			continue
 		}
 		record.LinkedModelTaskStatus = preferredAdminAgentRunTaskStatus(record.LinkedModelTaskStatus, fact.Status)
+		trackAdminAgentRunActiveTaskFact(fact, activeTaskIDs, activeBillingOrderIDs)
 		if strings.TrimSpace(fact.ProviderRequestID) != "" {
 			record.ProviderRequestState = "submitted"
 		} else if record.ProviderRequestState == "none" {
@@ -241,10 +263,15 @@ func (r *Repository) hydrateAdminAgentRunModelTaskFacts(runIDs []string, records
 	return nil
 }
 
-func (r *Repository) hydrateAdminAgentRunMediaTaskFacts(runIDs []string, records map[string]*AdminAgentRunRecord) error {
+func (r *Repository) hydrateAdminAgentRunMediaTaskFacts(
+	runIDs []string,
+	records map[string]*AdminAgentRunRecord,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) error {
 	var facts []adminAgentRunTaskFact
 	if err := r.db.Table("tasks AS tasks").
-		Select("plans.created_by_run_id AS run_id, tasks.status AS status, tasks.provider_request_id AS provider_request_id").
+		Select("tasks.id AS task_id, plans.created_by_run_id AS run_id, tasks.status AS status, tasks.billing_order_id AS billing_order_id, tasks.provider_request_id AS provider_request_id").
 		Joins("JOIN agent_production_artifacts AS artifacts ON artifacts.task_id = tasks.id").
 		Joins("JOIN agent_production_plan_versions AS plans ON plans.id = artifacts.plan_version_id").
 		Where("plans.created_by_run_id IN ?", runIDs).
@@ -258,6 +285,7 @@ func (r *Repository) hydrateAdminAgentRunMediaTaskFacts(runIDs []string, records
 			continue
 		}
 		record.LinkedMediaTaskStatus = preferredAdminAgentRunTaskStatus(record.LinkedMediaTaskStatus, fact.Status)
+		trackAdminAgentRunActiveTaskFact(fact, activeTaskIDs, activeBillingOrderIDs)
 		if strings.TrimSpace(fact.ProviderRequestID) != "" {
 			record.ProviderRequestState = "submitted"
 		} else if record.ProviderRequestState == "none" {
@@ -267,8 +295,13 @@ func (r *Repository) hydrateAdminAgentRunMediaTaskFacts(runIDs []string, records
 	return nil
 }
 
-func (r *Repository) hydrateAdminAgentRunBillingFacts(runIDs []string, records map[string]*AdminAgentRunRecord) error {
-	directQuery := r.db.Model(&model.BillingOrder{}).Select("idempotency_key, status")
+func (r *Repository) hydrateAdminAgentRunBillingFacts(
+	runIDs []string,
+	records map[string]*AdminAgentRunRecord,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) error {
+	directQuery := r.db.Model(&model.BillingOrder{}).Select("id AS billing_order_id, task_id, idempotency_key, status")
 	for index, runID := range runIDs {
 		condition := "idempotency_key LIKE ? OR idempotency_key LIKE ?"
 		directPattern := "agent-runtime:" + runID + ":%"
@@ -286,7 +319,11 @@ func (r *Repository) hydrateAdminAgentRunBillingFacts(runIDs []string, records m
 	for _, fact := range directFacts {
 		for _, runID := range runIDs {
 			if adminAgentRunBillingKeyMatches(fact.IdempotencyKey, runID) {
-				records[runID].BillingState = preferredAdminAgentRunBillingStatus(records[runID].BillingState, fact.Status)
+				record := records[runID]
+				record.BillingState = preferredAdminAgentRunBillingStatus(record.BillingState, fact.Status)
+				if adminAgentRunBillingStatusUnresolved(fact.Status) && !adminAgentRunBillingLinkedToActiveTask(runID, fact.BillingOrderID, fact.TaskID, activeTaskIDs, activeBillingOrderIDs) {
+					record.hasBlockingBilling = true
+				}
 				break
 			}
 		}
@@ -294,7 +331,7 @@ func (r *Repository) hydrateAdminAgentRunBillingFacts(runIDs []string, records m
 
 	var artifactFacts []adminAgentRunBillingFact
 	if err := r.db.Table("billing_orders AS billing").
-		Select("plans.created_by_run_id AS run_id, billing.status AS status").
+		Select("plans.created_by_run_id AS run_id, billing.id AS billing_order_id, billing.task_id AS task_id, billing.status AS status").
 		Joins("JOIN agent_production_artifacts AS artifacts ON artifacts.billing_order_id = billing.id").
 		Joins("JOIN agent_production_plan_versions AS plans ON plans.id = artifacts.plan_version_id").
 		Where("plans.created_by_run_id IN ?", runIDs).
@@ -305,9 +342,104 @@ func (r *Repository) hydrateAdminAgentRunBillingFacts(runIDs []string, records m
 	for _, fact := range artifactFacts {
 		if record := records[fact.RunID]; record != nil {
 			record.BillingState = preferredAdminAgentRunBillingStatus(record.BillingState, fact.Status)
+			if adminAgentRunBillingStatusUnresolved(fact.Status) && !adminAgentRunBillingLinkedToActiveTask(fact.RunID, fact.BillingOrderID, fact.TaskID, activeTaskIDs, activeBillingOrderIDs) {
+				record.hasBlockingBilling = true
+			}
+		}
+	}
+	return r.hydrateAdminAgentRunLinkedTaskBillingFacts(records, activeTaskIDs, activeBillingOrderIDs)
+}
+
+func (r *Repository) hydrateAdminAgentRunLinkedTaskBillingFacts(
+	records map[string]*AdminAgentRunRecord,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) error {
+	runIDsByOrderID := make(map[string][]string)
+	orderIDs := make([]string, 0)
+	for runID, billingOrderIDs := range activeBillingOrderIDs {
+		for billingOrderID := range billingOrderIDs {
+			if _, exists := runIDsByOrderID[billingOrderID]; !exists {
+				orderIDs = append(orderIDs, billingOrderID)
+			}
+			runIDsByOrderID[billingOrderID] = append(runIDsByOrderID[billingOrderID], runID)
+		}
+	}
+	if len(orderIDs) == 0 {
+		return nil
+	}
+	var facts []adminAgentRunLinkedTaskBillingFact
+	if err := r.db.Model(&model.BillingOrder{}).
+		Select("id AS billing_order_id, task_id, user_id, status").
+		Where("id IN ?", orderIDs).
+		Scan(&facts).Error; err != nil {
+		return err
+	}
+	found := make(map[string]struct{}, len(facts))
+	for _, fact := range facts {
+		found[fact.BillingOrderID] = struct{}{}
+		for _, runID := range runIDsByOrderID[fact.BillingOrderID] {
+			record := records[runID]
+			if record == nil {
+				continue
+			}
+			record.BillingState = preferredAdminAgentRunBillingStatus(record.BillingState, fact.Status)
+			_, taskLinked := activeTaskIDs[runID][fact.TaskID]
+			if fact.UserID != record.ActorUserID || !taskLinked {
+				record.hasBlockingBilling = true
+			}
+		}
+	}
+	for billingOrderID, runIDs := range runIDsByOrderID {
+		if _, exists := found[billingOrderID]; exists {
+			continue
+		}
+		for _, runID := range runIDs {
+			if record := records[runID]; record != nil {
+				record.hasBlockingBilling = true
+			}
 		}
 	}
 	return nil
+}
+
+func trackAdminAgentRunActiveTaskFact(
+	fact adminAgentRunTaskFact,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) {
+	if !adminAgentRunTaskStatusActive(string(fact.Status)) {
+		return
+	}
+	if activeTaskIDs[fact.RunID] == nil {
+		activeTaskIDs[fact.RunID] = make(map[string]struct{})
+	}
+	activeTaskIDs[fact.RunID][fact.TaskID] = struct{}{}
+	if fact.BillingOrderID == "" {
+		return
+	}
+	if activeBillingOrderIDs[fact.RunID] == nil {
+		activeBillingOrderIDs[fact.RunID] = make(map[string]struct{})
+	}
+	activeBillingOrderIDs[fact.RunID][fact.BillingOrderID] = struct{}{}
+}
+
+func adminAgentRunBillingLinkedToActiveTask(
+	runID string,
+	billingOrderID string,
+	taskID string,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) bool {
+	if _, exists := activeBillingOrderIDs[runID][billingOrderID]; billingOrderID != "" && exists {
+		return true
+	}
+	_, exists := activeTaskIDs[runID][taskID]
+	return taskID != "" && exists
+}
+
+func adminAgentRunBillingStatusUnresolved(status model.BillingStatus) bool {
+	return status == model.BillingStatusReserved || status == model.BillingStatusRunning || status == model.BillingStatusUncertain
 }
 
 func preferredAdminAgentRunTaskStatus(current string, candidate model.TaskStatus) string {
@@ -367,7 +499,7 @@ func finalizeAdminAgentRunControlFacts(record *AdminAgentRunRecord) {
 		record.ControlDisposition = AdminAgentRunAlreadyTerminal
 		return
 	}
-	if record.BillingState == string(model.BillingStatusReserved) || record.BillingState == string(model.BillingStatusRunning) || record.BillingState == string(model.BillingStatusUncertain) {
+	if record.hasBlockingBilling {
 		record.ControlDisposition = AdminAgentRunBlockedByUnresolvedBilling
 		record.ControlBlockedReason = "billing_unresolved"
 		return
