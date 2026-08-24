@@ -254,8 +254,10 @@ export function videoModelMetadataPatch(config: AiConfig, model: string, generat
     const capabilities = resolveVideoModelCapabilities(nextConfig);
     const effectiveMode = generationMode && capabilities.supportedGenerationModes.includes(generationMode) ? generationMode : "text";
     const normalized = normalizeVideoConfigForModel(nextConfig, effectiveMode);
+    const requestConfig = resolveModelRequestConfig(config, model);
     return {
-        model,
+        channelId: requestConfig.channelId,
+        model: requestConfig.model,
         videoGenerationMode: effectiveMode,
         size: normalized.size,
         seconds: normalized.videoSeconds,

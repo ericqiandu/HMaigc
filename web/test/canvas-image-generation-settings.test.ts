@@ -154,7 +154,7 @@ describe("图片模型能力驱动参数", () => {
             { model: "images::kz_gpt_image2", size: "2048x1024", quality: "high", count: "4", transparentBackground: "true" },
         );
         const patch = imageModelMetadataPatch(next, "images::ratio-only");
-        expect(patch).toEqual({ model: "images::ratio-only", size: "1:1", quality: "", count: 1, transparentBackground: "false" });
+        expect(patch).toEqual({ channelId: "images", model: "ratio-only", size: "1:1", quality: "", count: 1, transparentBackground: "false" });
     });
 
     test("生成前只保留模型声明的参数", () => {

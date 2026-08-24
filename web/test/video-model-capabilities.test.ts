@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode, videoResolutionsForMode } from "../src/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch, videoRatiosForMode, videoResolutionsForMode } from "../src/lib/video-model-capabilities";
 import { VideoSettingsPanel, validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
@@ -338,6 +338,13 @@ describe("画布视频设置", () => {
 });
 
 describe("Seedance 2.0 分辨率能力", () => {
+    test("Agent 视频节点切换模型时原子替换渠道与原始模型名", () => {
+        const model = "doubao-seedance-2-0-mini-260615";
+        const patch = videoModelMetadataPatch(seedanceConfig(model), `seedance::${model}`, "text");
+
+        expect(patch).toMatchObject({ channelId: "seedance", model });
+    });
+
     test("Fast、Pro 与 Mini 都支持 1、2、4 条并行任务", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).outputCounts).toEqual([1, 2, 4]);
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128")).outputCounts).toEqual([1, 2, 4]);
