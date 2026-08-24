@@ -15,6 +15,7 @@ import type { UploadedImage } from "@/services/image-storage";
 import type { CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
 import { remoteCanvasCreationRequired } from "@/lib/canvas/canvas-persistence-policy";
+import { isRemoteCanvasDeletedError, mergeCanvasProjects } from "@/lib/canvas/canvas-sync-state";
 
 let activeRemoteUserId = "";
 let remoteSessionRevision = 0;
@@ -49,7 +50,7 @@ export async function syncRemoteUserData(userId?: string | null) {
             fetchNewerRemoteItems(localAssets, remoteAssets.assets, async (id) => (await getRemoteAsset(id)).asset),
         ]);
         if (!ownsRemoteSession(session)) return;
-        const mergedProjects = mergeById(localProjects, changedProjects);
+        const mergedProjects = mergeCanvasProjects(localProjects, changedProjects, remoteCanvas.deletions);
         const mergedAssets = mergeById(localAssets, await hydrateAssets(changedAssets));
         if (!ownsRemoteSession(session)) return;
         useCanvasStore.getState().replaceProjects(mergedProjects);
@@ -293,7 +294,16 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
         // SQLite 和接口频控都要求写入保持有界；逐项提交还能准确记录已完成版本。
         for (const project of projects) {
             if (!ownsRemoteSession(session)) return;
-            await createRemoteCanvasProject(project);
+            try {
+                await createRemoteCanvasProject(project);
+            } catch (error) {
+                if (!isRemoteCanvasDeletedError(error)) throw error;
+                remoteProjectVersions.delete(project.id);
+                useCanvasStore.getState().finishProjectDeletions([project.id]);
+                await flushCanvasStorePersistence();
+                console.info("已按云端删除事实清理陈旧本地画布", { canvasId: project.id });
+                continue;
+            }
             if (!ownsRemoteSession(session)) return;
             remoteProjectVersions.set(project.id, project.updatedAt);
         }

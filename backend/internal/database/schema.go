@@ -90,6 +90,7 @@ func Models() []any {
 		&model.CanvasProject{},
 		&model.CanvasCollaborator{},
 		&model.CanvasChange{},
+		&model.CanvasProjectDeletion{},
 		&model.AgentThread{},
 		&model.AgentRun{},
 		&model.AgentTimelineItem{},

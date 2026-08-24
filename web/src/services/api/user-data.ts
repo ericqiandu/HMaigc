@@ -21,6 +21,11 @@ export type RemoteUserDataSummary = {
     updatedAt: string;
 };
 
+export type RemoteCanvasDeletion = {
+    id: string;
+    deletedAt: string;
+};
+
 export class UserDataRequestError extends Error {
     constructor(
         message: string,
@@ -61,7 +66,7 @@ export function deleteRemoteAsset(id: string) {
 }
 
 export function listRemoteCanvasProjects() {
-    return request<{ projects: RemoteUserDataSummary[] }>(api.get("/canvas-projects"));
+    return request<{ projects: RemoteUserDataSummary[]; deletions: RemoteCanvasDeletion[] }>(api.get("/canvas-projects"));
 }
 
 export function getRemoteCanvasProject(id: string) {

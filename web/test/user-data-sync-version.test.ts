@@ -24,7 +24,7 @@ mock.module("@/services/api/user-data", () => ({
         throw new Error("测试未配置远端画布");
     },
     listRemoteAssets: () => listRemoteAssetsImpl(),
-    listRemoteCanvasProjects: async () => ({ projects: [] }),
+    listRemoteCanvasProjects: async () => ({ projects: [], deletions: [] }),
     upsertRemoteAsset: async (asset: { id: string }) => {
         upsertedAssetIds.push(asset.id);
         return { asset };

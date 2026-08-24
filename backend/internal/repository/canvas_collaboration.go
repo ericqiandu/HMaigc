@@ -57,6 +57,45 @@ func (r *Repository) CanvasProject(id string) (*model.CanvasProject, error) {
 	return &project, nil
 }
 
+func (r *Repository) CanvasProjectDeletion(canvasID string) (*model.CanvasProjectDeletion, error) {
+	var deletion model.CanvasProjectDeletion
+	if err := r.db.First(&deletion, "canvas_id = ?", canvasID).Error; err != nil {
+		return nil, err
+	}
+	return &deletion, nil
+}
+
+func (r *Repository) CanvasProjectDeletionsForActor(userID string) ([]model.CanvasProjectDeletion, error) {
+	var deletions []model.CanvasProjectDeletion
+	err := r.canvasProjectDeletionsForActorQuery(userID).
+		Order("canvas_project_deletions.deleted_at DESC").
+		Find(&deletions).Error
+	return deletions, err
+}
+
+func (r *Repository) CanvasProjectDeletionForActor(userID string, canvasID string) (*model.CanvasProjectDeletion, error) {
+	var deletion model.CanvasProjectDeletion
+	if err := r.canvasProjectDeletionsForActorQuery(userID).
+		Where("canvas_project_deletions.canvas_id = ?", canvasID).
+		First(&deletion).Error; err != nil {
+		return nil, err
+	}
+	return &deletion, nil
+}
+
+func (r *Repository) canvasProjectDeletionsForActorQuery(userID string) *gorm.DB {
+	return r.db.Model(&model.CanvasProjectDeletion{}).Where(`
+		(canvas_project_deletions.team_id = '' AND canvas_project_deletions.user_id = ?)
+		OR (canvas_project_deletions.team_id <> '' AND EXISTS (
+			SELECT 1
+			FROM team_members
+			WHERE team_members.team_id = canvas_project_deletions.team_id
+			  AND team_members.user_id = ?
+			  AND team_members.status = ?
+		))
+	`, userID, userID, model.TeamMemberStatusActive)
+}
+
 func (r *Repository) CanvasProjectSummariesForActor(userID string) ([]CanvasProjectSummaryRecord, error) {
 	var records []CanvasProjectSummaryRecord
 	now := time.Now()
@@ -325,23 +364,42 @@ func authorizeCanvasWrite(tx *gorm.DB, canvas *model.CanvasProject, actorUserID 
 	return nil
 }
 
-func (r *Repository) DeleteCanvasProjectWithCollaboration(canvasID string) error {
+func (r *Repository) DeleteCanvasProjectWithCollaboration(project *model.CanvasProject, deletedByUserID string, deletedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("canvas_id = ?", canvasID).Delete(&model.CanvasChange{}).Error; err != nil {
+		deletion := model.CanvasProjectDeletion{
+			CanvasID:        project.ID,
+			UserID:          project.UserID,
+			TeamID:          project.TeamID,
+			DeletedByUserID: deletedByUserID,
+			DeletedAt:       deletedAt,
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "canvas_id"}},
+			DoNothing: true,
+		}).Create(&deletion).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("canvas_id = ?", canvasID).Delete(&model.CanvasCollaborator{}).Error; err != nil {
+		if err := tx.Where("canvas_id = ?", project.ID).Delete(&model.CanvasChange{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("project_id = ?", canvasID).Delete(&model.CanvasShare{}).Error; err != nil {
+		if err := tx.Where("canvas_id = ?", project.ID).Delete(&model.CanvasCollaborator{}).Error; err != nil {
 			return err
 		}
-		result := tx.Delete(&model.CanvasProject{}, "id = ?", canvasID)
+		if err := tx.Where("project_id = ?", project.ID).Delete(&model.CanvasShare{}).Error; err != nil {
+			return err
+		}
+		result := tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ? AND team_id = ?", project.ID, project.UserID, project.TeamID)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
+			var existing model.CanvasProjectDeletion
+			if err := tx.First(&existing, "canvas_id = ?", project.ID).Error; err != nil {
+				return err
+			}
+			if existing.UserID != project.UserID || existing.TeamID != project.TeamID {
+				return errors.New("canvas deletion scope mismatch")
+			}
 		}
 		return nil
 	})

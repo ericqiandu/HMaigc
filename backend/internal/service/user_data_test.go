@@ -154,7 +154,7 @@ func TestDeleteUserCanvasProjectRollsBackShareWhenProjectDeleteFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.CanvasProject{}, &model.CanvasShare{}, &model.CanvasChange{}, &model.CanvasCollaborator{}); err != nil {
+	if err := db.AutoMigrate(&model.CanvasProject{}, &model.CanvasProjectDeletion{}, &model.CanvasShare{}, &model.CanvasChange{}, &model.CanvasCollaborator{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -180,6 +180,186 @@ func TestDeleteUserCanvasProjectRollsBackShareWhenProjectDeleteFails(t *testing.
 	if err := db.First(&model.CanvasShare{}, "id = ?", share.ID).Error; err != nil {
 		t.Fatalf("canvas share must remain after rollback: %v", err)
 	}
+	var deletionCount int64
+	if err := db.Model(&model.CanvasProjectDeletion{}).Where("canvas_id = ?", project.ID).Count(&deletionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if deletionCount != 0 {
+		t.Fatalf("canvas deletion tombstones after rollback = %d, want 0", deletionCount)
+	}
+}
+
+func TestDeleteUserCanvasProjectRecordsDeletionTombstone(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	now := time.Now().UTC().Add(-time.Minute)
+	project := &model.CanvasProject{
+		ID: "canvas-delete-tombstone", UserID: "runtime-user", Title: "待删除画布",
+		PayloadJSON: `{"id":"canvas-delete-tombstone","title":"待删除画布","nodes":[]}`,
+		CreatedAt:   now, UpdatedAt: now,
+	}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.DeleteUserCanvasProject("runtime-user", project.ID); err != nil {
+		t.Fatalf("DeleteUserCanvasProject() error = %v", err)
+	}
+	deletion, err := svc.repo.CanvasProjectDeletion(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deletion.CanvasID != project.ID || deletion.UserID != "runtime-user" || deletion.TeamID != "" || deletion.DeletedByUserID != "runtime-user" {
+		t.Fatalf("canvas deletion = %#v", deletion)
+	}
+	if !deletion.DeletedAt.After(now) {
+		t.Fatalf("deletedAt = %s, want after %s", deletion.DeletedAt, now)
+	}
+	if _, err := svc.repo.CanvasProject(project.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("deleted canvas lookup error = %v, want record not found", err)
+	}
+}
+
+func TestCanvasProjectDeletionsForActorRespectsPersonalAndTeamScope(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	now := time.Now().UTC()
+	team := &model.Team{ID: "team-deletion-scope", OwnerUserID: "team-owner", Name: "删除测试团队", Status: model.TeamStatusActive, CreatedAt: now, UpdatedAt: now}
+	members := []model.TeamMember{
+		{ID: "team-deletion-owner", TeamID: team.ID, UserID: "team-owner", Role: model.TeamMemberRoleOwner, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now},
+		{ID: "team-deletion-member", TeamID: team.ID, UserID: "team-member", Role: model.TeamMemberRoleMember, Status: model.TeamMemberStatusActive, CreatedAt: now, UpdatedAt: now},
+		{ID: "team-deletion-removed", TeamID: team.ID, UserID: "removed-member", Role: model.TeamMemberRoleMember, Status: model.TeamMemberStatusRemoved, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(team).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&members).Error; err != nil {
+		t.Fatal(err)
+	}
+	deletions := []model.CanvasProjectDeletion{
+		{CanvasID: "personal-deletion", UserID: "runtime-user", DeletedByUserID: "runtime-user", DeletedAt: now.Add(-time.Minute)},
+		{CanvasID: "team-deletion", UserID: "team-owner", TeamID: team.ID, DeletedByUserID: "team-owner", DeletedAt: now},
+	}
+	if err := db.Create(&deletions).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	personal, err := svc.repo.CanvasProjectDeletionsForActor("runtime-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(personal) != 1 || personal[0].CanvasID != "personal-deletion" {
+		t.Fatalf("personal deletions = %#v", personal)
+	}
+	teamMember, err := svc.repo.CanvasProjectDeletionsForActor("team-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teamMember) != 1 || teamMember[0].CanvasID != "team-deletion" {
+		t.Fatalf("team member deletions = %#v", teamMember)
+	}
+	for _, actorID := range []string{"unrelated-user", "removed-member"} {
+		visible, err := svc.repo.CanvasProjectDeletionsForActor(actorID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(visible) != 0 {
+			t.Fatalf("deletions visible to %s = %#v, want none", actorID, visible)
+		}
+	}
+}
+
+func TestCreateUserCanvasProjectReturnsGoneAfterDeletion(t *testing.T) {
+	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	raw := canvasSyncTestProjectJSON(t, "canvas-deleted-create", "不能复活的画布")
+	if _, err := svc.CreateUserCanvasProject("runtime-user", raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteUserCanvasProject("runtime-user", "canvas-deleted-create"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.CreateUserCanvasProject("runtime-user", raw)
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != http.StatusGone {
+		t.Fatalf("create deleted canvas error = %v, want HTTP 410", err)
+	}
+	if _, err := svc.repo.CanvasProject("canvas-deleted-create"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("deleted canvas was recreated: %v", err)
+	}
+}
+
+func TestDeleteUserCanvasProjectIsIdempotentForDeletionScope(t *testing.T) {
+	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	raw := canvasSyncTestProjectJSON(t, "canvas-delete-idempotent", "幂等删除画布")
+	if _, err := svc.CreateUserCanvasProject("runtime-user", raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteUserCanvasProject("runtime-user", "canvas-delete-idempotent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteUserCanvasProject("runtime-user", "canvas-delete-idempotent"); err != nil {
+		t.Fatalf("repeated owner delete error = %v", err)
+	}
+
+	err := svc.DeleteUserCanvasProject("unrelated-user", "canvas-delete-idempotent")
+	var authErr *AuthError
+	if !errors.As(err, &authErr) || authErr.Status != http.StatusNotFound {
+		t.Fatalf("unrelated repeated delete error = %v, want HTTP 404", err)
+	}
+}
+
+func TestDeleteCanvasProjectWithCollaborationAcceptsStaleConcurrentDelete(t *testing.T) {
+	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	raw := canvasSyncTestProjectJSON(t, "canvas-delete-concurrent", "并发幂等删除画布")
+	if _, err := svc.CreateUserCanvasProject("runtime-user", raw); err != nil {
+		t.Fatal(err)
+	}
+	project, err := svc.repo.CanvasProject("canvas-delete-concurrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedAt := time.Now().UTC()
+	if err := svc.repo.DeleteCanvasProjectWithCollaboration(project, "runtime-user", deletedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.repo.DeleteCanvasProjectWithCollaboration(project, "runtime-user", deletedAt.Add(time.Second)); err != nil {
+		t.Fatalf("stale concurrent delete error = %v, want idempotent success", err)
+	}
+}
+
+func TestUserCanvasProjectDeletionSummariesReturnsServerFacts(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	deletedAt := time.Date(2026, time.August, 25, 3, 4, 5, 0, time.UTC)
+	deletion := model.CanvasProjectDeletion{
+		CanvasID: "canvas-deletion-summary", UserID: "runtime-user",
+		DeletedByUserID: "runtime-user", DeletedAt: deletedAt,
+	}
+	if err := db.Create(&deletion).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := svc.UserCanvasProjectDeletions("runtime-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].ID != deletion.CanvasID || !summaries[0].DeletedAt.Equal(deletedAt) {
+		t.Fatalf("deletion summaries = %#v", summaries)
+	}
+}
+
+func canvasSyncTestProjectJSON(t *testing.T, id string, title string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"id": id, "title": title,
+		"createdAt": "2026-08-25T00:00:00Z", "updatedAt": "2026-08-25T00:00:00Z",
+		"nodes": []any{}, "connections": []any{}, "chatSessions": []any{}, "activeChatId": nil,
+		"backgroundMode": "lines", "showImageInfo": false,
+		"viewport": map[string]any{"x": 0, "y": 0, "k": 1}, "directorScenes": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestDeleteUserAssetDeletesExclusiveOSSObject(t *testing.T) {

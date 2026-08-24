@@ -45,6 +45,15 @@ func TestModelsRegistersAgentRuntimeFacts(t *testing.T) {
 	}
 }
 
+func TestModelsRegistersCanvasProjectDeletion(t *testing.T) {
+	for _, value := range Models() {
+		if _, ok := value.(*model.CanvasProjectDeletion); ok {
+			return
+		}
+	}
+	t.Fatal("CanvasProjectDeletion is not registered in database.Models()")
+}
+
 func TestTaskAudienceMigrationBackfillsCustomerAndInternalTasks(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
