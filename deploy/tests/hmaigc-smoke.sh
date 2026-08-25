@@ -109,6 +109,7 @@ if [[ "$*" == *"static.example.invalid"* ]]; then
         exit 67
     }
     [[ "${FAKE_CDN_ENTRY_FAILURE:-false}" != "true" ]] || exit 28
+    [[ "${HMAIGC_VERSION:-}" != "${FAKE_CDN_ENTRY_FAILURE_VERSION:-never}" ]] || exit 28
     exit 0
 fi
 if [[ "$*" == *"/api/health"* ]]; then
@@ -262,6 +263,18 @@ if env "${TEST_ENV[@]}" FAKE_MISSING_WEB_ASSET=true "$DEPLOY_COMMAND" verify; th
     printf 'verification unexpectedly accepted a release with a missing web entry asset\n' >&2
     exit 1
 fi
+
+env "${TEST_ENV[@]}" \
+    FAKE_EXTERNAL_WEB_ASSETS=true \
+    FAKE_CDN_ENTRY_FAILURE_VERSION=v1.0.16 \
+    "$DEPLOY_COMMAND" upgrade v1.0.16
+assert_state CURRENT_VERSION v1.0.16
+
+env "${TEST_ENV[@]}" \
+    FAKE_EXTERNAL_WEB_ASSETS=true \
+    FAKE_CDN_ENTRY_FAILURE=true \
+    "$DEPLOY_COMMAND" upgrade v1.0.17
+assert_state CURRENT_VERSION v1.0.17
 
 run_deploy status
 printf 'hmaigc deploy smoke test passed\n'

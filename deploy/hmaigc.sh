@@ -96,7 +96,7 @@ upgrade_release() {
         write_release_state "$current" "" ""
         fail "升级失败，已自动恢复到 $current；请检查 $LOG_DIR 与容器日志"
     fi
-    fail "升级和自动恢复均失败，服务保持停止状态，恢复点位于：$backup_path"
+    fail "升级和自动恢复均未通过验收，当前服务状态未知；恢复点位于：$backup_path，请立即检查容器状态与日志"
 }
 
 rollback_release() {
@@ -175,7 +175,7 @@ verify_release() {
     local current
     current="$(state_value CURRENT_VERSION)"
     verify_backend_release "$current"
-    verify_web_release "$current"
+    verify_web_release "$current" public
     log "版本与健康检查通过：$current"
 }
 

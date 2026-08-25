@@ -243,7 +243,12 @@ verify_remote_web_entry_asset() {
 
 verify_web_release() {
     local expected="$1"
+    local asset_scope="$2"
     local response actual entry_html entry_asset entry_asset_count
+    case "$asset_scope" in
+        local | public) ;;
+        *) fail "未知 Web 资源验收范围：$asset_scope" ;;
+    esac
     response="$(compose exec -T web wget -qO- http://127.0.0.1:3000/api/health)" || return 1
     actual="$(printf '%s' "$response" | health_version)"
     [[ "$actual" == "$expected" ]] || {
@@ -262,16 +267,20 @@ verify_web_release() {
         entry_asset_count=$((entry_asset_count + 1))
         case "$entry_asset" in
             https://* | http://*)
-                verify_remote_web_entry_asset "$entry_asset" || {
-                    log "Web 入口资源不可访问：$entry_asset"
-                    return 1
-                }
+                if [[ "$asset_scope" == "public" ]]; then
+                    verify_remote_web_entry_asset "$entry_asset" || {
+                        log "Web 入口资源不可访问：$entry_asset"
+                        return 1
+                    }
+                fi
                 ;;
             //*)
-                verify_remote_web_entry_asset "https:${entry_asset}" || {
-                    log "Web 入口资源不可访问：https:${entry_asset}"
-                    return 1
-                }
+                if [[ "$asset_scope" == "public" ]]; then
+                    verify_remote_web_entry_asset "https:${entry_asset}" || {
+                        log "Web 入口资源不可访问：https:${entry_asset}"
+                        return 1
+                    }
+                fi
                 ;;
             /*)
                 compose exec -T web wget -qO- "http://127.0.0.1:3000${entry_asset}" >/dev/null || {
@@ -300,7 +309,7 @@ verify_running_release() {
     export HMAIGC_VERSION="$expected"
     log "核对当前运行版本：$expected"
     verify_backend_release "$expected" || return 1
-    verify_web_release "$expected"
+    verify_web_release "$expected" local
 }
 
 start_release() {
@@ -327,7 +336,7 @@ start_release() {
         compose logs --no-color --tail=200 web || true
         return 1
     fi
-    if ! verify_web_release "$version"; then
+    if ! verify_web_release "$version" local; then
         log "Web 版本验收失败，记录容器状态与最近日志"
         compose ps web || true
         compose logs --no-color --tail=200 web || true
