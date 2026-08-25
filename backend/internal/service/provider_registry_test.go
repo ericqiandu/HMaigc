@@ -245,6 +245,10 @@ func TestProviderRegistryPublishesSeedance20And25CompatibleCapabilities(t *testi
 	if len(descriptor.Models) != 4 {
 		t.Fatalf("seedance models = %#v", descriptor.Models)
 	}
+	fast := descriptor.Models[0]
+	if fast.ModelKey != "doubao-seedance-2-0-fast-260128" || strings.Join(fast.Resolutions, ",") != "480p,720p" {
+		t.Fatalf("seedance 2.0 Fast resolutions = %#v", fast.Resolutions)
+	}
 	model := descriptor.Models[3]
 	if model.ModelKey != "doubao-seedance-2-5-260628" || model.DisplayName != "Seedance 2.5" || model.UpstreamMode != model.ModelKey || model.Capability != "video" {
 		t.Fatalf("seedance 2.5 identity = %#v", model)

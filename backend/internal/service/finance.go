@@ -747,6 +747,9 @@ func imagePricingSpecification(resolution string, quality string) string {
 	if resolution == "" || quality == "" {
 		return ""
 	}
+	if quality == "standard" {
+		return resolution
+	}
 	return resolution + "::" + quality
 }
 

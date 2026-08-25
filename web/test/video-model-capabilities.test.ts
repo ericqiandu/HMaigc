@@ -60,10 +60,10 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         displayName: is25 ? "Seedance 2.5" : isPro ? "Seedance 2.0 Pro" : model.includes("fast") ? "Seedance 2.0 Fast" : "Seedance 2.0 Mini",
         upstreamMode: model,
         capability: "video",
-        resolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        resolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p"],
         resolutionPixels: {},
         inputVariants: ["standard", "reference_video"] as Array<"standard" | "reference_video">,
-        referenceVideoResolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        referenceVideoResolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p"],
         generatedAudioResolutions: [],
         ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
         qualities: [],
@@ -351,8 +351,8 @@ describe("Seedance 2.0 分辨率能力", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).outputCounts).toEqual([1, 2, 4]);
     });
 
-    test("Fast 开放 480P、720P 与 1080P", () => {
-        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
+    test("Fast 只开放供应商支持的 480P 与 720P", () => {
+        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
     });
 
     test("Mini 只开放供应商支持的 480P 与 720P", () => {

@@ -95,3 +95,9 @@ func TestEstimateCallCostUsesExactImageResolutionQualityTier(t *testing.T) {
 		t.Fatalf("exact Image 2 tier cost = %#v", log)
 	}
 }
+
+func TestImagePricingSpecificationPreservesStandardResolutionTierIdentity(t *testing.T) {
+	if got := imagePricingSpecification("1K", "standard"); got != "1K" {
+		t.Fatalf("standard image pricing specification = %q, want 1K", got)
+	}
+}
