@@ -22,15 +22,19 @@ verify_backup() {
 }
 
 prune_backups_if_configured() {
+	local protected_path="${1:-}"
     local retention="${HMAIGC_BACKUP_RETENTION:-$(env_value HMAIGC_BACKUP_RETENTION)}"
     retention="${retention:-0}"
     [[ "$retention" =~ ^[0-9]+$ ]] || fail "HMAIGC_BACKUP_RETENTION 必须是非负整数"
     ((retention > 0)) || return 0
 
     local index=0 backup_path
-    while IFS= read -r backup_path; do
-        index=$((index + 1))
-        if ((index > retention)); then
+	while IFS= read -r backup_path; do
+		index=$((index + 1))
+		if [[ -n "$protected_path" && "$backup_path" == "$protected_path" ]]; then
+			continue
+		fi
+		if ((index > retention)); then
             log "按已配置保留策略删除旧备份：$backup_path"
             rm -rf -- "$backup_path"
         fi
@@ -38,7 +42,8 @@ prune_backups_if_configured() {
 }
 
 create_backup() {
-    local version="$1"
+	local version="$1"
+	local protected_path="${2:-}"
     local stamp backup_path temporary temporary_relative
     validate_release_version "$version"
     stamp="$(date -u +'%Y%m%d-%H%M%S')-$$"
@@ -74,7 +79,7 @@ create_backup() {
     )
     verify_backup "$temporary"
     mv "$temporary" "$backup_path"
-    prune_backups_if_configured
+	prune_backups_if_configured "$protected_path"
     printf '%s\n' "$backup_path"
 }
 

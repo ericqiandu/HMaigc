@@ -6,8 +6,8 @@
 
 ```bash
 CANVAS_DATA_PATH=/absolute/path/to/local-data docker compose config -q
-docker compose --env-file .env.production -f docker-compose.production.yml config -q
-docker compose --env-file .env.production -f deploy/docker-compose.ops.yml config -q
+docker compose --env-file deploy/tests/fixtures/production.env -f docker-compose.production.yml config -q
+docker compose --env-file deploy/tests/fixtures/ops.env -f deploy/docker-compose.ops.yml config -q
 cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./...
 cd .. && bash scripts/tests/run-payment-integration.sh --all
 cd web && bun install --frozen-lockfile && bun test && bun run build
@@ -16,13 +16,16 @@ cd .. && bash scripts/tests/verify-payment-checkout-nginx.test.sh
 STATIC_RELEASE_URL='https://static.hm.kunagent.com/hmaigc/web/releases/vX.Y.Z'
 bash scripts/verify-static-release-assets.sh web/dist "$STATIC_RELEASE_URL"
 bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
+bash deploy/tests/hmaigc-stage-smoke.sh
+bash deploy/tests/hmaigc-bootstrap-smoke.sh
+bash deploy/tests/ops-runner-fault-injection.sh
 ```
 
 必须确认：
 
-- `.env.production` 未被 Git 跟踪且权限为 `600`，`POSTGRES_PASSWORD` 为独立随机强密码。
-- `HMAIGC_VERSION` 是与根目录 `VERSION` 一致的不可变 `vX.Y.Z` 标签，禁止使用 `latest`。
-- `HMAIGC_OPS_VERSION` 是独立控制器的不可变标签，`HMAIGC_OPS_STATE_VOLUME` 已纳入加密备份。
+- 一次性引导后，`ops-state/config/production.env` 与 `control.env` 是唯一配置真源，权限均为 `600`；宿主机版本目录中的 `.env.production` 只作人工证据。
+- Backend、Web、备份 helper 与控制器都使用本机解析并持久化的 `repository@sha256:<64-hex>`，禁止 `latest`、空摘要或仅标签引用。
+- `HMAIGC_OPS_STATE_VOLUME` 已纳入加密备份，且没有活动 operation 时才允许演练控制器迁移。
 - 后端容器没有 Docker socket；只有独立控制器容器可以访问 Docker Engine。
 - `CANVAS_ENVIRONMENT=production` 已显式配置；缺失值、未知值或其他环境值都会阻止后端启动。
 - `CANVAS_CORS_ORIGINS` 只包含实际 HTTPS 站点 Origin。
@@ -36,12 +39,13 @@ bun scripts/verify-spa-routes.mjs http://127.0.0.1:3000
 ## 2. 启动与健康检查
 
 ```bash
-TARGET_VERSION='vX.Y.Z'
-bash deploy/hmaigc-ops.sh install "$TARGET_VERSION"
+bash deploy/hmaigc-ops.sh status
 bash deploy/hmaigc-ops.sh verify
 ```
 
-必须把 `vX.Y.Z` 替换为已经完成发布提交、镜像工作流和摘要核验的实际标签。`CHANGELOG.md` 中仍位于“未发布”的功能没有可部署标签，禁止把当前 `VERSION` 或本地提交状态推测为已经发布。
+旧控制平面必须先按 `deploy/README.md` 的“一次性引导”完成硬切换；该动作需单独审批，不得由后台升级按钮自动执行。日常 `status/upgrade/backup/rollback/verify/cancel/recover` 只从命名 `ops-state` 读取规范配置，与命令所在宿主机版本目录无关。`CHANGELOG.md` 中仍位于“未发布”的功能没有可部署标签，禁止把当前 `VERSION` 或本地提交状态推测为已经发布。
+
+若后台显示 `recovery_required`，先保留 operation Journal、Runner 容器、lease、checkpoint、result 与 Docker inspect 证据。Docker 客户端报错不等于 Runner 未启动：控制器只有在重新检查到相同 operation、generation、digest 且运行中的唯一容器时才会继续附着；容器已停止或 Docker 状态无法确认时不会伪造失败或自动启动第二个 Runner。此时必须按后台展示的真实恢复动作处理；`require_operator` 不允许绕过证据直接恢复，也不得手工删除 `ops-state` 事实。
 
 `/api/health` 会实时检查 PostgreSQL、Redis 和持久化支付公开 URL 配置，并返回镜像编译时注入的版本和提交。支付运行时校验在 worker 和 HTTP listener 之前执行；生产环境出现 HTTP 收银台/回调地址、非法公开 Origin 或损坏的持久化支付 JSON 时会直接阻止启动，运行中配置异常则使 readiness 返回 `503`。部署工具必须确认实际运行版本与目标标签一致。`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录，并以有界超时验证真正启动 SPA 的入口脚本与样式；单个 CDN 请求超时会明确失败，不得长期占用运维任务。任一检查失败时禁止继续发布流量。
 
@@ -75,7 +79,7 @@ bash deploy/hmaigc-ops.sh backup
 
 恢复必须先在隔离项目中验证，禁止直接覆盖生产数据库。
 
-1. 复制 `.env.production` 为 `.env.restore`，把 `HMAIGC_VERSION` 改为本次准备发布的目标标签，并修改业务/运维 Compose 项目名、三个业务卷名、`HMAIGC_OPS_STATE_VOLUME`、HTTP 端口和数据库密码。将 `HMAIGC_HOST_ENV_FILE` 设为 `../.env.restore`，确保隔离控制器读取隔离配置。目标业务标签和 `HMAIGC_OPS_VERSION` 都必须已存在于镜像仓库且摘要已核验；不得沿用生产 ops-state、使用 `latest` 或让隔离控制器读取 `.env.production`。
+1. 从已批准的生产配置与终态控制器数据库副本准备隔离源文件；为业务/运维 Compose、三个业务卷、`HMAIGC_OPS_STATE_VOLUME`、HTTP 端口和数据库密码设置唯一值。所有镜像都必须使用已核验摘要；不得沿用生产 ops-state、使用 `latest`，或让隔离控制器读取生产规范配置。
 2. 使用独立项目名启动 PostgreSQL 与 Redis：
 
 ```bash
@@ -92,24 +96,21 @@ set -Eeuo pipefail
 umask 077
 
 TARGET_VERSION='vX.Y.Z'
+CONTROLLER_VERSION='vX.Y.Z'
 RESTORE_LOG_DIR="/var/tmp/hmaigc-restore-logs-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -m 700 "$RESTORE_LOG_DIR"
 
 sed -i "s/^HMAIGC_VERSION=.*/HMAIGC_VERSION=${TARGET_VERSION}/" .env.restore
 grep -Fx "HMAIGC_VERSION=${TARGET_VERSION}" .env.restore
 grep -Fx 'HMAIGC_OPS_STATE_VOLUME=hmaigc-restore-ops-state' .env.restore
-grep -Fx 'HMAIGC_HOST_ENV_FILE=../.env.restore' .env.restore
 
-if ! docker compose -p hmaigc-restore-ops --env-file .env.restore \
-  -f deploy/docker-compose.ops.yml up -d ops-controller --wait; then
-  docker compose -p hmaigc-restore-ops --env-file .env.restore \
-    -f deploy/docker-compose.ops.yml ps --all \
-    > "$RESTORE_LOG_DIR/ops-ps.txt" 2>&1 || true
-  docker compose -p hmaigc-restore-ops --env-file .env.restore \
-    -f deploy/docker-compose.ops.yml logs --no-color --no-log-prefix ops-controller \
-    > "$RESTORE_LOG_DIR/ops-controller.log" 2>&1 || true
-  exit 1
-fi
+bash deploy/hmaigc-bootstrap.sh \
+  --source-env /absolute/isolated/.env.restore \
+  --source-db /absolute/isolated/controller.db \
+  --state-volume hmaigc-restore-ops-state \
+  --controller-image 'example.invalid/hmaigc-ops-controller@sha256:<64-hex>' \
+  --controller-version "$CONTROLLER_VERSION" \
+  --protocol-version 1
 
 if ! docker compose -p hmaigc-restore --env-file .env.restore \
   -f docker-compose.production.yml up -d backend --wait; then
@@ -138,7 +139,7 @@ if ! docker compose -p hmaigc-restore --env-file .env.restore \
 fi
 ```
 
-把 `vX.Y.Z` 替换为目标发布标签；命令中的三个 `grep` 值也必须与 `.env.restore` 实际设置完全一致。隔离 ops-state 只为隔离后端提供独立 socket/共享密钥，不得接入生产 ops-state，也不得在演练中提交发布任务。若 ops-controller/backend 非零退出或 backend 未达到 healthy，立即保存对应 Compose 项目的 `ps` 与完整日志，不得启动 Web 或改用旧镜像继续验收。`/var/tmp` 证据目录只允许交给授权运维人员，问题关闭后按本机留存策略处理，不得提交 Git。随后验证管理员登录、会员、钱包、模型目录、任务与资源文件。
+把 `vX.Y.Z`、源文件路径和三个摘要替换为隔离演练的真实值。隔离 ops-state 只为隔离后端提供独立 socket/共享密钥，不得接入生产 ops-state，也不得在演练中提交生产发布任务。若 bootstrap、ops-controller 或 backend 非零退出，立即保存对应容器 inspect、Compose `ps`、Runner checkpoint/result 与完整日志，不得启动 Web 或改用旧镜像继续验收。`/var/tmp` 证据目录只允许交给授权运维人员，问题关闭后按本机留存策略处理，不得提交 Git。随后验证管理员登录、会员、钱包、模型目录、任务与资源文件。
 6. 核对表数量、核心业务记录数量和文件校验值后，恢复演练才算完成。
 
 隔离后端必须使用目标版本镜像启动并等待健康检查；这个启动动作仍是支付完整性等写迁移的唯一真实预检，不存在通用的“只看不改”伪 dry-run。目标镜像自带的 Agent Runtime 命令只读审计旧活跃 Run 的升级兼容性，不执行 schema migration，也不能证明支付迁移或目标后端必然启动成功。迁移非零退出时保留目标容器日志、隔离 PostgreSQL 与恢复归档，核对冲突事实后重新创建隔离恢复点演练。若恢复验证失败，不得转而覆盖生产环境尝试。
@@ -158,7 +159,13 @@ TARGET_VERSION='vX.Y.Z'
 bash deploy/hmaigc-ops.sh upgrade "$TARGET_VERSION"
 ```
 
-工具先拉取新镜像，并在当前服务在线时运行目标镜像的全活跃 Run 只读升级审计；失败时当前版本保持在线且不创建新备份。首次通过后停止 Web 与后端写入，再对静止数据库运行同一审计；失败时恢复当前版本，不创建新备份或启动目标后端。两次审计均通过后才创建 PostgreSQL 与 `backend-data` 同一恢复点，并启动目标后端执行正式原子迁移、依赖检查和版本校验；全部通过后才启动 Web。目标启动或本机验活失败会在 Web 重新开放前自动恢复上一版本的数据与镜像。切换路径不以部署主机访问公网 CDN 的结果判定版本健康；不可变静态资源在标签发布时已逐文件验收，生产人员需要检查当前公网入口时单独运行 `bash deploy/hmaigc-ops.sh verify`，该命令失败不会停止或回滚正在运行的健康服务。
+稳定控制器先原子写入不可变请求与签名 launch 命令，再按目标摘要启动 detached Runner。Runner 在每个阶段先写 intent，完成后写 fact、checkpoint 和心跳，再进入下一阶段。它先拉取并固定所有目标镜像摘要，在当前服务在线时执行只读审计；通过后进入维护窗口、执行静止审计、创建并校验同一恢复点、启动目标后端迁移、本机验活、提交发布事实，最后交接控制器。目标启动或本机验活失败会依据 checkpoint 在 Web 开放前恢复上一版本；恢复证据不足会进入 `recovery_required`，绝不猜测完成。
+
+运行中可在后台停止，也可执行 `bash deploy/hmaigc-ops.sh cancel '<operation-id>'`。停止命令只在安全点生效，不得用 `docker kill` 代替。若任务进入 `recovery_required`，先核对服务版本、Runner 容器、lease、checkpoint、恢复点校验和与日志，再由后台或 `bash deploy/hmaigc-ops.sh recover '<operation-id>'` 启动更高 generation 的唯一恢复 Runner。重复请求保持幂等，旧 generation 不能继续修改生产。
+
+一次性 bootstrap 若因主机或进程中断未写完，必须使用原始参数原样重试。控制器只会在 `in-progress` 来源事实一致且已落盘文件校验通过时续跑；不得手工删除、替换或拼接 ops-state 中的 bootstrap、Journal 和配置文件。
+
+切换路径不以部署主机访问公网 CDN 的结果判定版本健康；不可变静态资源在标签发布时已逐文件验收。独立 `verify` 在有界总时限内逐个检查 `CANVAS_CORS_ORIGINS` 的生产 `/canvas/` SPA 入口和当前版本全部 CDN 清单资源，但其 `not_run/succeeded/failed` 与业务升级结果分开记录，失败不会停止或回滚健康业务。候选控制器失败但旧控制器恢复成功时，业务升级仍为成功，并明确记录 `controller_handoff_failed` 警告。
 
 人工主动回滚：
 
@@ -166,7 +173,7 @@ bash deploy/hmaigc-ops.sh upgrade "$TARGET_VERSION"
 bash deploy/hmaigc-ops.sh rollback
 ```
 
-回滚会覆盖升级恢复点之后产生的数据；命令执行前会先为当前版本生成安全恢复点。禁止只回滚代码而保留不兼容的数据状态。
+回滚会覆盖升级恢复点之后产生的数据。控制器在接受请求时会校验并固定上一版本恢复点；Runner 进入维护窗口后先为当前版本生成并校验安全恢复点，备份清理必须保护固定的回滚源，然后恢复上一版本数据、启动旧镜像并提交发布事实。任一破坏性步骤失败或结果未知时，必须依据持久 checkpoint 恢复当前版本安全恢复点，或显式进入 `recovery_required`；禁止只回滚代码而保留不兼容的数据状态。
 
 ## 6. 禁止操作
 
@@ -176,3 +183,5 @@ bash deploy/hmaigc-ops.sh rollback
 - 禁止在没有备份恢复证据时执行数据库迁移或版本升级。
 - 禁止把 PostgreSQL、Redis 或后端服务直接暴露到公网。
 - 禁止把 Docker socket 挂载到业务后端，或绕过独立控制器直接从后台进程执行部署脚本。
+- 禁止手工删除 Runner、lease、checkpoint、result 或 operation 目录来“解除卡住”；必须使用停止/恢复契约。
+- 禁止在宿主机版本目录中修改 `.env.production` 作为日常升级路径，或启动第二个并行控制平面。

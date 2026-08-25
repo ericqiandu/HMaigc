@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,27 @@ func TestRollbackReadinessRequiresVerifiedBackupInsideRoot(t *testing.T) {
 	}
 }
 
+func TestRollbackReadinessRejectsBackupWithoutVolumeIdentity(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	backupPath := filepath.Join(root, "20260731-000000--v1.0.10")
+	createVerifiedBackup(t, backupPath, "v1.0.10")
+	manifestPath := filepath.Join(backupPath, "manifest.env")
+	manifest := []byte("VERSION=v1.0.10\nCREATED_AT=" + time.Now().UTC().Format(time.RFC3339) + "\n")
+	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rewriteBackupChecksums(t, backupPath)
+
+	ready, status := inspectRollbackReadiness(root, ReleaseState{
+		PreviousVersion: "v1.0.10", RollbackBackup: backupPath,
+	})
+	if ready || !strings.Contains(status, "卷标识") {
+		t.Fatalf("expected missing volume identity rejection, got ready=%v status=%q", ready, status)
+	}
+}
+
 func createVerifiedBackup(t *testing.T, path string, version string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o700); err != nil {
@@ -46,12 +68,29 @@ func createVerifiedBackup(t *testing.T, path string, version string) {
 	files := map[string][]byte{
 		"postgres.dump":    []byte("postgres"),
 		"backend-data.tgz": []byte("backend"),
-		"manifest.env":     []byte("VERSION=" + version + "\nCREATED_AT=" + time.Now().UTC().Format(time.RFC3339) + "\n"),
+		"manifest.env": []byte("VERSION=" + version + "\nCREATED_AT=" + time.Now().UTC().Format(time.RFC3339) +
+			"\nPOSTGRES_VOLUME=hmaigc-postgres\nBACKEND_VOLUME=hmaigc-backend\n"),
 	}
 	checksums := ""
 	for _, name := range []string{"postgres.dump", "backend-data.tgz", "manifest.env"} {
 		content := files[name]
 		if err := os.WriteFile(filepath.Join(path, name), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(content)
+		checksums += hex.EncodeToString(hash[:]) + "  " + name + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(path, "SHA256SUMS"), []byte(checksums), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rewriteBackupChecksums(t *testing.T, path string) {
+	t.Helper()
+	checksums := ""
+	for _, name := range []string{"postgres.dump", "backend-data.tgz", "manifest.env"} {
+		content, err := os.ReadFile(filepath.Join(path, name))
+		if err != nil {
 			t.Fatal(err)
 		}
 		hash := sha256.Sum256(content)

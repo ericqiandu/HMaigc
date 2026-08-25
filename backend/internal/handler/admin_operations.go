@@ -98,4 +98,48 @@ func RegisterAdminOperationsRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, result)
 	})
+	r.POST("/admin/operations/:id/cancel", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		input, bound := bindAdminControlOperation(c)
+		if !bound {
+			return
+		}
+		result, err := svc.CancelAdminOperation(c.Request.Context(), user, c.Param("id"), input)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+	r.POST("/admin/operations/:id/recover", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		input, bound := bindAdminControlOperation(c)
+		if !bound {
+			return
+		}
+		result, err := svc.RecoverAdminOperation(c.Request.Context(), user, c.Param("id"), input)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+}
+
+func bindAdminControlOperation(c *gin.Context) (service.AdminControlOperationRequest, bool) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10)
+	var input service.AdminControlOperationRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return input, false
+	}
+	return input, true
 }

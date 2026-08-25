@@ -8,47 +8,67 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/opsprotocol"
+	"infinite-canvas/backend/internal/opsstate"
 )
 
 type Config struct {
-	StateFile string
-	BackupDir string
+	StateFile         string
+	BackupDir         string
+	StateVolume       string
+	ControllerVersion string
+	ControllerDigest  string
+	HeartbeatTTL      time.Duration
+	ReportError       func(error)
 }
 
 type Controller struct {
 	store         *Store
-	executor      Executor
+	journal       *opsstate.Journal
+	manager       RunnerManager
+	projector     *Projector
+	commandSecret []byte
 	releaseSource ReleaseSource
 	config        Config
 	wake          chan struct{}
 	startMu       sync.Mutex
 }
 
-func New(store *Store, executor Executor, releaseSource ReleaseSource, config Config) (*Controller, error) {
+func New(store *Store, journal *opsstate.Journal, manager RunnerManager, commandSecret []byte, releaseSource ReleaseSource, config Config) (*Controller, error) {
 	if store == nil {
 		return nil, errors.New("运维控制器存储不能为空")
 	}
-	if executor == nil {
-		return nil, errors.New("运维控制器执行器不能为空")
+	if journal == nil || manager == nil {
+		return nil, errors.New("运维 Journal 或 Runner 管理器不能为空")
+	}
+	if len(commandSecret) < 32 {
+		return nil, errors.New("运维命令签名密钥长度不足")
 	}
 	if releaseSource == nil {
 		return nil, errors.New("运维控制器版本源不能为空")
 	}
-	if strings.TrimSpace(config.StateFile) == "" || strings.TrimSpace(config.BackupDir) == "" {
-		return nil, errors.New("运维控制器状态路径未配置")
+	if strings.TrimSpace(config.StateFile) == "" || strings.TrimSpace(config.BackupDir) == "" ||
+		strings.TrimSpace(config.StateVolume) == "" || strings.TrimSpace(config.ControllerVersion) == "" ||
+		!isImmutableImageDigest(config.ControllerDigest) {
+		return nil, errors.New("运维控制器状态、卷、版本或不可变镜像摘要未完整配置")
 	}
-	if err := store.FailInterruptedOperations(time.Now()); err != nil {
-		return nil, err
+	if config.ReportError == nil {
+		return nil, errors.New("运维控制器错误报告器未配置")
+	}
+	if config.HeartbeatTTL <= 0 {
+		config.HeartbeatTTL = 30 * time.Second
 	}
 	return &Controller{
-		store: store, executor: executor, releaseSource: releaseSource,
-		config: config, wake: make(chan struct{}, 1),
+		store: store, journal: journal, manager: manager,
+		projector: NewProjector(store, journal, commandSecret), commandSecret: append([]byte(nil), commandSecret...),
+		releaseSource: releaseSource,
+		config:        config, wake: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -56,8 +76,11 @@ func (c *Controller) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if err := c.executeNext(ctx); err != nil {
-			// 任务级错误已持久化；下一轮继续检查队列。
+		if err := c.Reconcile(ctx); err != nil {
+			c.config.ReportError(fmt.Errorf("运维事实对账失败: %w", err))
+		}
+		if err := c.dispatchQueued(ctx); err != nil {
+			c.config.ReportError(fmt.Errorf("运维 Runner 调度失败: %w", err))
 		}
 		select {
 		case <-ctx.Done():
@@ -79,6 +102,46 @@ func (c *Controller) StartOperation(input opsprotocol.StartOperationRequest) (*o
 	}
 	c.startMu.Lock()
 	defer c.startMu.Unlock()
+	existing, err := c.store.OperationByIdempotencyKey(normalized.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	operationID := operationIDForIdempotency(normalized.IdempotencyKey)
+	if existing != nil {
+		request, readErr := c.journal.ReadRequest(operationID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if request.RequestHash != requestHash {
+			return nil, ErrIdempotencyConflict
+		}
+		return existing, nil
+	}
+	persisted, readErr := c.journal.ReadRequest(operationID)
+	if readErr == nil {
+		if persisted.RequestHash != requestHash {
+			return nil, ErrIdempotencyConflict
+		}
+		active, activeErr := c.store.ActiveOperation()
+		if activeErr != nil {
+			return nil, activeErr
+		}
+		if active != nil && active.IdempotencyKey != normalized.IdempotencyKey {
+			return nil, ErrOperationActive
+		}
+		operation, _, importErr := c.store.ImportRequest(persisted)
+		return operation, importErr
+	}
+	if !errors.Is(readErr, os.ErrNotExist) {
+		return nil, readErr
+	}
+	journalActive, err := c.hasOtherActiveJournalRequest(operationID)
+	if err != nil {
+		return nil, err
+	}
+	if journalActive {
+		return nil, ErrOperationActive
+	}
 	active, err := c.store.ActiveOperation()
 	if err != nil {
 		return nil, err
@@ -90,28 +153,60 @@ func (c *Controller) StartOperation(input opsprotocol.StartOperationRequest) (*o
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
-	record := operationRecord{
-		ID: newOperationID(), Action: string(normalized.Action), TargetVersion: normalized.TargetVersion,
-		CurrentVersionAtStart: state.CurrentVersion, Status: string(opsprotocol.OperationQueued),
-		Phase: "等待控制器调度", ActorUserID: normalized.ActorUserID,
-		ActorDisplayName: normalized.ActorDisplayName, IdempotencyKey: normalized.IdempotencyKey,
-		RequestHash: requestHash, CreatedAt: now, UpdatedAt: now,
+	expectedVersion, rollbackBackup, err := c.expectedVersionFor(normalized, state)
+	if err != nil {
+		return nil, err
 	}
-	operation, created, err := c.store.CreateOrGetOperation(record)
+	now := time.Now().UTC()
+	runnerSource := opsprotocol.RunnerSourceCurrent
+	if normalized.Action == opsprotocol.ActionInstall || normalized.Action == opsprotocol.ActionUpgrade {
+		runnerSource = opsprotocol.RunnerSourceTarget
+	}
+	request := opsprotocol.OperationRequestFile{
+		OperationID: operationID, Request: normalized, RequestHash: requestHash,
+		CurrentVersion: state.CurrentVersion, PreviousVersion: state.PreviousVersion,
+		ExpectedVersion: expectedVersion, RollbackBackup: rollbackBackup,
+		RunnerSource: runnerSource, ControllerVersionAtStart: c.config.ControllerVersion,
+		CreatedAt: now,
+	}
+	if err := c.journal.CreateRequest(request); err != nil {
+		return nil, err
+	}
+	operation, created, err := c.store.ImportRequest(request)
 	if err != nil {
 		return nil, err
 	}
 	if created {
-		if err := c.store.AppendLog(operation.ID, "system", "管理员请求已验签并进入独立部署队列", now); err != nil {
-			return nil, err
-		}
 		select {
 		case c.wake <- struct{}{}:
 		default:
 		}
 	}
 	return operation, nil
+}
+
+func (c *Controller) expectedVersionFor(request opsprotocol.StartOperationRequest, state ReleaseState) (string, string, error) {
+	var expected string
+	var rollbackBackup string
+	switch request.Action {
+	case opsprotocol.ActionUpgrade:
+		expected = request.TargetVersion
+	case opsprotocol.ActionRollback:
+		ready, status := inspectRollbackReadiness(c.config.BackupDir, state)
+		if !ready {
+			return "", "", invalidRequest("无法回滚：" + status)
+		}
+		expected = state.PreviousVersion
+		rollbackBackup = state.RollbackBackup
+	case opsprotocol.ActionBackup, opsprotocol.ActionVerify:
+		expected = state.CurrentVersion
+	default:
+		return "", "", invalidRequest("不支持的运维动作")
+	}
+	if err := opsprotocol.ValidateReleaseVersion(expected); err != nil {
+		return "", "", invalidRequest("无法确定运维期望版本：" + err.Error())
+	}
+	return expected, rollbackBackup, nil
 }
 
 func (c *Controller) Overview(ctx context.Context) (*opsprotocol.Overview, error) {
@@ -124,6 +219,10 @@ func (c *Controller) Overview(ctx context.Context) (*opsprotocol.Overview, error
 		return nil, err
 	}
 	latest, err := c.store.LatestOperation()
+	if err != nil {
+		return nil, err
+	}
+	publicVerification, err := c.store.LatestPublicVerification()
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +240,9 @@ func (c *Controller) Overview(ctx context.Context) (*opsprotocol.Overview, error
 		Release:    c.releaseSource.Check(ctx, state.CurrentVersion), ActiveOperation: active,
 		LatestOperation: latest, LatestBackup: latestBackup,
 		RollbackReady: rollbackReady, RollbackStatus: rollbackStatus,
-		PreviousVersion: state.PreviousVersion, UpdatedAt: time.Now(),
+		PreviousVersion:    state.PreviousVersion,
+		PublicVerification: publicVerification,
+		UpdatedAt:          time.Now(),
 	}, nil
 }
 
@@ -164,53 +265,129 @@ func (c *Controller) Backups(limit int) ([]opsprotocol.Backup, error) {
 	return ScanBackups(c.config.BackupDir, normalizeLimit(limit, 20, 100))
 }
 
-func (c *Controller) executeNext(ctx context.Context) error {
-	operation, err := c.store.ClaimNextOperation(time.Now())
-	if err != nil || operation == nil {
+func (c *Controller) dispatchQueued(ctx context.Context) error {
+	c.startMu.Lock()
+	defer c.startMu.Unlock()
+	active, err := c.store.ActiveOperation()
+	if err != nil || active == nil {
 		return err
 	}
-	phase := operationPhase(operation.Action)
-	now := time.Now()
-	if err := c.store.UpdatePhase(operation.ID, phase, now); err != nil {
-		return c.failClaimedOperation(operation.ID, nil, "控制器无法更新任务阶段: "+err.Error())
+	if active.Status != opsprotocol.OperationQueued {
+		return nil
 	}
-	_ = c.store.AppendLog(operation.ID, "system", phase, now)
-	var logMu sync.Mutex
-	var logErrors []error
-	result, executionErr := c.executor.Execute(ctx, operation.Action, operation.TargetVersion, func(stream string, message string) {
-		message = strings.TrimSpace(message)
-		if message == "" {
-			return
+	operation := *active
+	request, err := c.journal.ReadRequest(operation.ID)
+	if err != nil {
+		return err
+	}
+	resolved, command, err := c.resolveLaunch(ctx, request)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if err := c.store.MarkRunnerStarted(operation.ID, resolved, command.Generation, now); err != nil {
+		return err
+	}
+	launch := RunnerLaunch{
+		OperationID: operation.ID, Generation: command.Generation,
+		ImageDigest: command.RunnerDigest, StateVolume: c.config.StateVolume,
+	}
+	if err := c.manager.Start(ctx, launch); err != nil {
+		message := "启动独立 Runner 失败: " + err.Error()
+		if errors.Is(err, ErrRunnerStartOutcomeUnknown) {
+			startedOperation, readErr := c.store.Operation(operation.ID)
+			if readErr != nil {
+				return errors.Join(err, readErr)
+			}
+			if recoveryErr := c.requireRecovery(startedOperation, message); recoveryErr != nil {
+				return errors.Join(err, recoveryErr)
+			}
+			return err
 		}
-		if err := c.store.AppendLog(operation.ID, stream, message, time.Now()); err != nil {
-			// 日志持久化失败必须让最终状态显式失败，不能静默继续。
-			logMu.Lock()
-			logErrors = append(logErrors, fmt.Errorf("持久化实时日志失败: %w", err))
-			logMu.Unlock()
+		completedAt := time.Now().UTC()
+		serviceState := opsprotocol.ServiceUnknown
+		if request.CurrentVersion != "" {
+			serviceState = opsprotocol.ServiceCurrentOnline
 		}
-	})
-	if len(logErrors) > 0 {
-		executionErr = errors.Join(append([]error{executionErr}, logErrors...)...)
+		if persistErr := c.journal.WriteResult(operation.ID, opsprotocol.OperationResult{
+			OperationID: operation.ID, Generation: command.Generation,
+			Status: opsprotocol.OperationFailed, ResultVersion: request.CurrentVersion,
+			ControllerVersion: request.ControllerVersionAtStart, ServiceState: serviceState,
+			ControllerHandoff: opsprotocol.ControllerHandoffUnchanged,
+			ErrorCode:         opsprotocol.ErrorRunnerStartFailed, Error: message, CompletedAt: completedAt,
+		}); persistErr != nil {
+			return errors.Join(err, persistErr)
+		}
+		if persistErr := c.store.MarkRunnerStartFailed(operation.ID, message, completedAt); persistErr != nil {
+			return errors.Join(err, persistErr)
+		}
+		return err
 	}
-	exitCode := result.ExitCode
-	state, stateErr := ReadReleaseState(c.config.StateFile)
-	if stateErr != nil {
-		executionErr = errors.Join(executionErr, fmt.Errorf("读取执行后发布状态失败: %w", stateErr))
-	}
-	if executionErr != nil {
-		message := executionErr.Error()
-		_ = c.store.AppendLog(operation.ID, "system", "任务失败："+message, time.Now())
-		return c.store.CompleteOperation(operation.ID, opsprotocol.OperationFailed, "执行失败", state.CurrentVersion, &exitCode, message, time.Now())
-	}
-	if err := c.store.AppendLog(operation.ID, "system", "任务已完成并通过部署脚本验收", time.Now()); err != nil {
-		return c.failClaimedOperation(operation.ID, &exitCode, "任务完成但审计日志持久化失败: "+err.Error())
-	}
-	return c.store.CompleteOperation(operation.ID, opsprotocol.OperationSucceeded, "已完成", state.CurrentVersion, &exitCode, "", time.Now())
+	return nil
 }
 
-func (c *Controller) failClaimedOperation(id string, exitCode *int, message string) error {
-	_ = c.store.AppendLog(id, "system", message, time.Now())
-	return c.store.CompleteOperation(id, opsprotocol.OperationFailed, "控制器失败", "", exitCode, message, time.Now())
+func (c *Controller) hasOtherActiveJournalRequest(operationID string) (bool, error) {
+	requests, err := c.journal.ListRequests()
+	if err != nil {
+		return false, err
+	}
+	for _, request := range requests {
+		if request.OperationID == operationID {
+			continue
+		}
+		result, readErr := c.journal.ReadResult(request.OperationID)
+		if readErr == nil {
+			if opsprotocol.IsTerminalStatus(result.Status) {
+				continue
+			}
+			return true, nil
+		}
+		if errors.Is(readErr, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, readErr
+	}
+	return false, nil
+}
+
+func (c *Controller) resolveLaunch(ctx context.Context, request opsprotocol.OperationRequestFile) (ResolvedRunner, opsprotocol.RunnerLaunchCommand, error) {
+	existing, err := c.journal.ReadLaunchCommand(c.commandSecret, request.OperationID)
+	if err == nil {
+		return ResolvedRunner{Version: runnerVersionForRequest(request), Digest: existing.RunnerDigest}, existing, nil
+	}
+	generation := uint64(1)
+	if errors.Is(err, opsstate.ErrCommandExpired) {
+		stale, readErr := c.journal.ReadLaunchCommandForReconciliation(c.commandSecret, request.OperationID)
+		if readErr != nil {
+			return ResolvedRunner{}, opsprotocol.RunnerLaunchCommand{}, readErr
+		}
+		generation = stale.Generation + 1
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ResolvedRunner{}, opsprotocol.RunnerLaunchCommand{}, err
+	}
+	resolved, err := c.manager.Resolve(ctx, request)
+	if err != nil {
+		return ResolvedRunner{}, opsprotocol.RunnerLaunchCommand{}, err
+	}
+	token, err := newFencingToken()
+	if err != nil {
+		return ResolvedRunner{}, opsprotocol.RunnerLaunchCommand{}, err
+	}
+	command := opsprotocol.RunnerLaunchCommand{
+		OperationID: request.OperationID, Generation: generation, FencingToken: token,
+		RunnerDigest: resolved.Digest, IssuedAt: time.Now().UTC(),
+	}
+	if err := c.journal.WriteLaunchCommand(c.commandSecret, command); err != nil {
+		return ResolvedRunner{}, opsprotocol.RunnerLaunchCommand{}, err
+	}
+	return resolved, command, nil
+}
+
+func runnerVersionForRequest(request opsprotocol.OperationRequestFile) string {
+	if request.RunnerSource == opsprotocol.RunnerSourceTarget {
+		return request.ExpectedVersion
+	}
+	return request.ControllerVersionAtStart
 }
 
 func normalizeOperationRequest(input opsprotocol.StartOperationRequest) (opsprotocol.StartOperationRequest, error) {
@@ -231,7 +408,7 @@ func normalizeOperationRequest(input opsprotocol.StartOperationRequest) (opsprot
 	expectedConfirmation := ""
 	switch input.Action {
 	case opsprotocol.ActionInstall:
-		expectedConfirmation = "INSTALL " + input.TargetVersion
+		return input, invalidRequest("首次部署必须使用一次性 bootstrap，不能进入升级任务队列")
 	case opsprotocol.ActionUpgrade:
 		expectedConfirmation = "UPGRADE " + input.TargetVersion
 	case opsprotocol.ActionRollback:
@@ -243,7 +420,7 @@ func normalizeOperationRequest(input opsprotocol.StartOperationRequest) (opsprot
 	default:
 		return input, invalidRequest("不支持的运维动作")
 	}
-	if input.Action == opsprotocol.ActionInstall || input.Action == opsprotocol.ActionUpgrade {
+	if input.Action == opsprotocol.ActionUpgrade {
 		if err := opsprotocol.ValidateReleaseVersion(input.TargetVersion); err != nil {
 			return input, invalidRequest(err.Error())
 		}
@@ -279,23 +456,6 @@ func validIdempotencyKey(value string) bool {
 	return true
 }
 
-func operationPhase(action opsprotocol.Action) string {
-	switch action {
-	case opsprotocol.ActionInstall:
-		return "执行首次安装与验活"
-	case opsprotocol.ActionUpgrade:
-		return "备份当前版本并执行升级"
-	case opsprotocol.ActionRollback:
-		return "创建安全备份并执行回滚"
-	case opsprotocol.ActionBackup:
-		return "停止写入并创建一致性备份"
-	case opsprotocol.ActionVerify:
-		return "校验版本、依赖与公网入口"
-	default:
-		return "执行运维任务"
-	}
-}
-
 func normalizeLimit(value int, fallback int, maximum int) int {
 	if value <= 0 {
 		return fallback
@@ -306,10 +466,15 @@ func normalizeLimit(value int, fallback int, maximum int) int {
 	return value
 }
 
-func newOperationID() string {
-	var buffer [16]byte
+func operationIDForIdempotency(idempotencyKey string) string {
+	sum := sha256.Sum256([]byte(idempotencyKey))
+	return hex.EncodeToString(sum[:16])
+}
+
+func newFencingToken() (string, error) {
+	var buffer [32]byte
 	if _, err := rand.Read(buffer[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		return "", err
 	}
-	return hex.EncodeToString(buffer[:])
+	return hex.EncodeToString(buffer[:]), nil
 }

@@ -16,6 +16,11 @@ type AdminStartOperationRequest struct {
 	Confirmation   string             `json:"confirmation"`
 }
 
+type AdminControlOperationRequest struct {
+	IdempotencyKey string `json:"idempotencyKey"`
+	Confirmation   string `json:"confirmation"`
+}
+
 func (s *Service) AdminOperationsOverview(ctx context.Context, actor *model.User) (*opsprotocol.Overview, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
@@ -102,10 +107,7 @@ func (s *Service) StartAdminOperation(ctx context.Context, actor *model.User, in
 	if err != nil {
 		return nil, err
 	}
-	displayName := strings.TrimSpace(actor.DisplayName)
-	if displayName == "" {
-		displayName = strings.TrimSpace(actor.Username)
-	}
+	displayName := adminOperationDisplayName(actor)
 	result, err := client.StartOperation(ctx, opsprotocol.StartOperationRequest{
 		Action: input.Action, TargetVersion: strings.TrimSpace(input.TargetVersion),
 		ActorUserID: actor.ID, ActorDisplayName: displayName,
@@ -115,6 +117,50 @@ func (s *Service) StartAdminOperation(ctx context.Context, actor *model.User, in
 		return nil, mapOperationsClientError(err)
 	}
 	return result, nil
+}
+
+func (s *Service) CancelAdminOperation(ctx context.Context, actor *model.User, id string, input AdminControlOperationRequest) (*opsprotocol.Operation, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	client, err := s.requireOperationsClient()
+	if err != nil {
+		return nil, err
+	}
+	result, err := client.CancelOperation(ctx, strings.TrimSpace(id), opsprotocol.CancelOperationRequest{
+		ActorUserID: actor.ID, ActorDisplayName: adminOperationDisplayName(actor),
+		IdempotencyKey: strings.TrimSpace(input.IdempotencyKey), Confirmation: strings.TrimSpace(input.Confirmation),
+	})
+	if err != nil {
+		return nil, mapOperationsClientError(err)
+	}
+	return result, nil
+}
+
+func (s *Service) RecoverAdminOperation(ctx context.Context, actor *model.User, id string, input AdminControlOperationRequest) (*opsprotocol.Operation, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	client, err := s.requireOperationsClient()
+	if err != nil {
+		return nil, err
+	}
+	result, err := client.RecoverOperation(ctx, strings.TrimSpace(id), opsprotocol.RecoverOperationRequest{
+		ActorUserID: actor.ID, ActorDisplayName: adminOperationDisplayName(actor),
+		IdempotencyKey: strings.TrimSpace(input.IdempotencyKey), Confirmation: strings.TrimSpace(input.Confirmation),
+	})
+	if err != nil {
+		return nil, mapOperationsClientError(err)
+	}
+	return result, nil
+}
+
+func adminOperationDisplayName(actor *model.User) string {
+	displayName := strings.TrimSpace(actor.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(actor.Username)
+	}
+	return displayName
 }
 
 func (s *Service) requireOperationsClient() (opsprotocol.Client, error) {

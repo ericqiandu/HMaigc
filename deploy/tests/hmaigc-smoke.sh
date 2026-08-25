@@ -14,7 +14,16 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
 arguments=" $* "
 case "$arguments" in
-    *" info "* | *" compose version "* | *" compose "*" config -q "* | *" compose "*" pull "* | *" compose "*" up "* | *" compose "*" stop "* | *" volume inspect "* | *" pull alpine:"*)
+    *" pull ghcr.io/example/hmaigc-backend:v"* | *" pull ghcr.io/example/hmaigc-web:v"*)
+        exit 0
+        ;;
+    *" image inspect ghcr.io/example/hmaigc-backend:v"*)
+        printf 'ghcr.io/example/hmaigc-backend@sha256:%064d\n' 1
+        ;;
+    *" image inspect ghcr.io/example/hmaigc-web:v"*)
+        printf 'ghcr.io/example/hmaigc-web@sha256:%064d\n' 2
+        ;;
+    *" info "* | *" compose version "* | *" compose "*" config -q "* | *" compose "*" pull "* | *" compose "*" up "* | *" compose "*" stop "* | *" volume inspect "* | *" pull alpine@sha256:"*)
         exit 0
         ;;
     *" compose "*" exec -T backend wget "*)
@@ -133,6 +142,9 @@ chmod +x "$TEST_ROOT/bin/flock"
 cat >"$TEST_ROOT/.env.production" <<EOF
 HMAIGC_IMAGE_REGISTRY=ghcr.io/example
 HMAIGC_VERSION=v1.0.10
+HMAIGC_BACKEND_IMAGE=ghcr.io/example/hmaigc-backend@sha256:$(printf '%064d' 1)
+HMAIGC_WEB_IMAGE=ghcr.io/example/hmaigc-web@sha256:$(printf '%064d' 2)
+BACKUP_HELPER_IMAGE=alpine@sha256:$(printf '%064d' 6)
 HMAIGC_COMPOSE_PROJECT_NAME=hmaigc-test
 HMAIGC_BACKEND_DATA_VOLUME=hmaigc-test-backend
 HMAIGC_POSTGRES_DATA_VOLUME=hmaigc-test-postgres

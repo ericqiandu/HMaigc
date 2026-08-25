@@ -1,27 +1,37 @@
 # HMaigc 独立运维控制器与一键发布
 
-本目录只服务单机 Linux + Docker Compose 生产环境。发布单位是 GitHub Container Registry 中的不可变 `vX.Y.Z` 镜像标签，不在生产服务器现场编译源码，也不使用 `latest` 作为可回滚版本。
+本目录只服务单机 Linux + Docker Compose 生产环境。管理员选择已经发布的 `vX.Y.Z`，控制器在本机拉取后把 Backend、Web、备份 helper、Runner 与候选控制器解析为不可变镜像摘要并持久化；生产切换不在服务器现场编译源码，也不以标签或 `latest` 作为执行事实。
 
-正式部署由两个独立 Compose 项目组成：
+正式部署由两个独立 Compose 项目和一个按任务启动的一次性 Runner 组成：
 
-- `hmaigc-ops`：独立运维控制器。它独占 Docker socket、发布锁、备份、发布状态和运维审计数据库。
+- `hmaigc-ops`：稳定控制器，只负责鉴权、排队、签名命令、状态投影和恢复协调。
 - `hmaigc`：Web、业务后端、PostgreSQL 与 Redis。业务后端没有 Docker socket，只能通过只读挂载的 Unix socket 和共享密钥向控制器提交已验签请求。
+- `hmaigc-ops-runner-*`：按目标版本镜像摘要启动的 detached Runner。它持有阶段 checkpoint、租约、心跳和最终结果；浏览器、业务后端或控制器重启都不会令这些事实丢失。
 
 控制器在业务后端停止、升级或启动失败时仍然运行，因此不能把控制器并入业务 Compose，也不能让业务后端直接执行 Docker 命令或重启自身。
 
-## 首次准备
+## 一次性引导
 
-1. 安装 Docker Engine 与 Docker Compose 插件。
-2. 发布人员创建与根目录 `VERSION` 完全一致的不可变 `vX.Y.Z` 标签并等待镜像工作流通过；服务器运维人员只选择已经存在且摘要核验通过的标签，不在生产机创建或推送标签。
-3. 私有 GHCR 包需先执行一次 `docker login ghcr.io`。
-4. 在服务器仓库根目录执行：
+旧控制平面必须只迁移一次。该操作会把配置真源切换到 `ops-state/config`，属于高风险生产变更：先在同构隔离环境演练，并在生产执行前重新确认源配置、源控制器数据库、目标控制器摘要和维护窗口。
+
+1. 安装 Docker Engine 与 Docker Compose 插件，登录私有 GHCR。
+2. 在旧后台确认没有 `queued`、`running`、`cancelling` 或 `recovering` 运维任务；停止旧 `ops-controller`，但不得停止业务服务、删除旧目录或删除卷。
+3. 解析已发布控制器镜像的不可变 digest，禁止使用标签或 `latest`。
+4. 从包含本版本脚本的可信目录执行：
 
 ```bash
-cp .env.production.example .env.production
-chmod 600 .env.production
+bash deploy/hmaigc-bootstrap.sh \
+  --source-env /absolute/legacy/.env.production \
+  --source-db /absolute/legacy/controller.db \
+  --state-volume hmaigc-ops-state \
+  --controller-image 'ghcr.io/owner/hmaigc-ops-controller@sha256:<64-hex>' \
+  --controller-version 'vX.Y.Z' \
+  --protocol-version 1
 ```
 
-填写真实镜像仓库、业务版本、控制器版本、数据库密码、`CANVAS_ENVIRONMENT=production`、HTTPS Origin 和本机监听端口。`HMAIGC_BACKEND_GID` 必须保持与发布镜像中的固定值 `101` 一致。控制器启动时会把只读挂载的生产配置复制到独立运维卷并收紧为 `600`，避免 Docker Desktop 与不同宿主机的 bind mount 权限语义影响发布校验。业务卷和 `HMAIGC_OPS_STATE_VOLUME` 启用后不得随意改变，否则控制器会失去发布状态、审计日志或生产恢复点。后端会在启动 worker/listener 前校验持久化支付公开 URL；checkout base 必须是无 path 的 HTTPS Origin，渠道 notify URL 可保留 webhook path。生产环境中的 HTTP 收银台、HTTP 支付回调、非法 Origin 或损坏 JSON 都会显式阻止启动。
+引导会拒绝非终态历史任务，先创建并校验源数据库备份，再原子写入权限为 `0600` 的 `config/production.env` 与 `config/control.env`，导入终态审计事实并启动稳定控制器。相同输入可安全重试；不同输入会显式冲突。引导失败不会删除或改写旧目录。引导成功后，宿主机版本目录只作为人工证据保留，不再是日常配置或控制器真源。
+
+规范配置必须包含摘要固定的 `HMAIGC_BACKEND_IMAGE`、`HMAIGC_WEB_IMAGE`、`BACKUP_HELPER_IMAGE` 和 `HMAIGC_OPS_IMAGE`。控制器 Compose 只挂载 Docker socket 与命名 `ops-state` 卷，不挂载宿主机版本目录或 `.env.production`。业务卷和 `HMAIGC_OPS_STATE_VOLUME` 启用后不得随意改变。
 
 私有 GitHub 仓库若要在后台检查最新 Release，填写只读的 `HMAIGC_RELEASES_API_TOKEN`。不配置时版本检查会明确显示“未配置”，不会假装已经是最新版本。
 
@@ -38,28 +48,31 @@ stock Nginx upstream error 格式无法移除 incoming Referer，所以示例仅
 ```bash
 TARGET_VERSION='vX.Y.Z'
 
-# 首次安装
-bash deploy/hmaigc-ops.sh install "$TARGET_VERSION"
-
 # 状态与环境验收
 bash deploy/hmaigc-ops.sh status
 bash deploy/hmaigc-ops.sh verify
 
-# 命令行升级、备份和回滚（后台页面也通过同一控制器队列执行）
+# 命令行升级、备份和回滚（后台页面通过同一控制器队列执行）
 bash deploy/hmaigc-ops.sh upgrade "$TARGET_VERSION"
 bash deploy/hmaigc-ops.sh backup
 bash deploy/hmaigc-ops.sh rollback
+
+# 浏览器不可用时的安全停止与恢复
+bash deploy/hmaigc-ops.sh cancel '<operation-id>'
+bash deploy/hmaigc-ops.sh recover '<operation-id>'
 ```
 
-必须把 `vX.Y.Z` 替换为已经发布且镜像摘要可核对的实际标签；仍在 `CHANGELOG.md`“未发布”小节中的功能没有可用于生产安装的版本号。
+首次部署或旧控制平面迁移只能使用上一节的一次性 `hmaigc-bootstrap.sh`，不能提交 `install` 运维任务。必须把 `vX.Y.Z` 替换为已经发布且镜像摘要可核对的实际标签；仍在 `CHANGELOG.md`“未发布”小节中的功能没有可用于生产升级的版本号。
 
-`deploy/hmaigc.sh` 是控制器镜像内部的执行器，不是生产人员的正式入口。`hmaigc-ops.sh` 会先启动独立控制器，再由 `hmaigc-opsctl` 创建任务、持续读取独立审计库中的日志，并等待明确成功或失败。
+bootstrap 会在写入任何目标事实前保存同源 `in-progress` 标记；进程中断后，使用完全相同的源数据库、源环境、控制器摘要和协议参数重试时，会逐项校验已写文件并继续。来源、摘要或已有内容不一致时必须显式失败，不会覆盖未知状态。
+
+`deploy/hmaigc-stage.sh` 是 Runner 调用的确定性阶段适配器，`deploy/hmaigc.sh` 是旧编排器；两者都不是生产人员的正式入口。`hmaigc-ops.sh` 只从 `ops-state/config/control.env` 读取规范配置，启动对应摘要的稳定控制器，再由 `hmaigc-opsctl` 创建任务、持续读取持久日志并等待明确终态。它不依赖当前 shell 所在的版本目录。
 
 升级执行器会使用目标后端镜像对现有数据库执行两次只读 Agent Runtime 升级审计：第一次在当前 Web/后端仍在线时运行，失败则零停机、零新备份；第一次通过后停止 Web/后端，再在静止数据库运行同一审计，失败则恢复当前版本且不创建新备份、不启动目标后端。报告一次列出全部不兼容 `queued/running/waiting_input/waiting_approval/waiting_tool` Run 的脱敏 blocker。只有两次审计均通过，才创建升级恢复点并启动目标版本；正式启动迁移仍是最终原子门禁。
 
-升级失败会在 Web 重新开放前自动恢复升级前的数据与版本。目标版本与自动恢复版本的切换验收只依据本机容器健康、精确版本、SPA 根节点和本机入口资源，避免部署主机到 CDN 的瞬时网络抖动把健康版本误判失败。不可变公网 JS/CSS 已由标签发布门禁逐文件校验；独立 `verify` 命令仍会严格探测当前入口的公网 CDN 资源，并在不可访问时显式失败，但不会为此停止或回滚健康服务。回滚前也会先为当前版本创建安全恢复点；若目标旧版本验收失败，会恢复到回滚前状态。
+升级失败会在 Web 重新开放前自动恢复升级前的数据与版本。目标版本与自动恢复版本的切换验收只依据本机容器健康、精确版本、SPA 根节点和本机入口资源，避免部署主机到 CDN 的瞬时网络抖动把健康版本误判失败。不可变公网 JS/CSS 已由标签发布门禁逐文件校验；独立 `verify` 命令会在统一的 120 秒上限内严格探测 `CANVAS_CORS_ORIGINS` 中每个生产 HTTPS Origin 的 `/canvas/` SPA 根节点，并按当前版本清单并发校验全部公网 CDN 资源。任一入口或资源不可访问都会显式失败，但不会停止或回滚健康服务。回滚请求会把已校验的上一版本恢复点固定到不可变请求中；进入维护窗口后先为当前版本创建并校验安全恢复点，且备份保留策略不得删除固定的回滚源。随后才恢复上一版本数据并启动旧版本。任一恢复、启动、验活或提交步骤失败，系统都会用当前版本安全恢复点还原回滚前状态。
 
-后台 `/admin/operations` 提供版本检查、升级、回滚、实时日志、备份状态和审计记录。每次调用都由业务后端重新校验管理员身份；首次安装不会开放给后台页面，只允许服务器命令行引导。
+后台 `/admin/operations` 提供版本检查、升级、回滚、实时日志、阶段、心跳、服务状态、停止、恢复、备份状态和审计记录。停止请求先持久化签名命令，只会在安全点生效；界面显示“已收到停止请求，正在到达安全点”时不得强杀容器。同一任务的停止或恢复重试复用稳定控制命令身份，容器启动故障修复后可以重放同一已验签恢复命令。若 `docker run` 已返回错误但控制器无法确认容器是否创建，任务必须进入 `recovery_required`；只有检查到相同 operation、generation 与 digest 的运行中 Runner 才可继续附着，停止容器或检查失败都不得伪造终态。`recovery_required` 会阻止新的升级、回滚、备份和 verify：若持久事实已经确定安全恢复动作，后台允许确认后启动更高 generation 的唯一恢复 Runner；若恢复动作为 `require_operator`，界面只展示证据且不提供不可执行的恢复按钮。每次调用都由业务后端重新校验管理员身份；首次引导不开放给后台页面。
 
 ## 静态资源 OSS/CDN 发布
 
@@ -118,21 +131,17 @@ curl --http2 --compressed -I \
 4. 失败资源保持本地引用并记录原因，可由管理员重试；
 5. 原数据卷文件不会自动删除，升级与回滚备份仍包含它们。
 
-## 控制器自身升级
+## 控制器交接
 
-控制器不能通过自身任务队列替换自己。发布新的控制器版本时：
+业务升级由 detached Runner 执行，因此控制器可以在操作中安全重建。Runner 先验证目标控制器镜像、协议、只读状态和 socket，再原子切换 `config/control.env`。新控制器必须重新附着同一 operation/generation；验证失败时 Runner 会恢复旧 `control.env` 和旧控制器，业务目标版本保持在线，任务以 `succeeded + controller_handoff_failed` 警告结束。
 
-1. 先确认当前没有 `queued` 或 `running` 运维任务。
-2. 修改 `.env.production` 中 `HMAIGC_OPS_VERSION` 为新的不可变标签。
-3. 执行 `bash deploy/hmaigc-ops.sh status`，外层 Compose 会拉取并重建控制器。
-4. 在后台确认控制器版本、历史审计与备份列表仍完整。
-
-控制器启动时若发现上次任务处于运行中，会把它显式标记为“控制器重启中断”，要求管理员核对实际服务状态，不会自动猜测成功或继续执行。
+禁止在宿主机手改版本目录中的 `.env.production` 来升级控制器。若新旧控制器都无法确认，任务进入 `recovery_required`，应保留 Runner、lease、checkpoint、容器 inspect 和日志证据，再从后台或灾难 CLI 执行恢复；不得启动第二条升级链。
 
 ## 数据与审计
 
-- 发布状态、锁、脚本日志、控制器 SQLite 审计库和备份统一保存在独立 `ops-state` 命名卷。
+- 规范配置、不可变请求、签名命令、Runner lease/heartbeat/checkpoint/result、事件、控制器 SQLite 投影、发布状态和备份统一保存在独立 `ops-state` 命名卷。
 - 控制器日志按游标持久化；业务后端升级重启后，后台页面可以从上次游标继续读取。
+- 每个事实先落盘再发布；SQLite 是可重建投影，不是 Runner 执行真源。
 - 每个恢复点包含 PostgreSQL custom dump、`backend-data` 压缩包、版本清单和 SHA-256 校验文件。
 - `ops-state` 必须纳入主机磁盘加密与异地备份。当前恢复点本身不做应用层加密。
 - 默认不自动删除任何备份。只有在 `.env.production` 显式设置正整数 `HMAIGC_BACKUP_RETENTION` 后，工具才会删除超出数量的最旧恢复点。

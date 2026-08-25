@@ -17,7 +17,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go 
         -ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${APP_VERSION} -X infinite-canvas/backend/internal/buildinfo.Commit=${APP_COMMIT}" \
         -o /out/hmaigc-ops-controller ./cmd/ops-controller \
     && CGO_ENABLED=1 GOOS=linux go build -trimpath \
-        -o /out/hmaigc-opsctl ./cmd/opsctl
+        -o /out/hmaigc-opsctl ./cmd/opsctl \
+    && CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -o /out/hmaigc-ops-runner ./cmd/ops-runner
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -o /out/hmaigc-ops-bootstrap ./cmd/ops-bootstrap
 
 FROM alpine:3.22
 
@@ -29,6 +33,7 @@ RUN apk add --no-cache \
         docker-cli \
         docker-cli-compose \
         grep \
+        jq \
         sed \
         tar \
         util-linux \
@@ -38,9 +43,11 @@ RUN apk add --no-cache \
 WORKDIR /opt/hmaigc
 COPY docker-compose.production.yml /opt/hmaigc/docker-compose.production.yml
 COPY deploy /opt/hmaigc/deploy
-RUN chmod 0755 /opt/hmaigc/deploy/ops-entrypoint.sh
+RUN chmod 0755 /opt/hmaigc/deploy/ops-entrypoint.sh /opt/hmaigc/deploy/hmaigc-stage.sh
 COPY --from=ops-build /out/hmaigc-ops-controller /usr/local/bin/hmaigc-ops-controller
 COPY --from=ops-build /out/hmaigc-opsctl /usr/local/bin/hmaigc-opsctl
+COPY --from=ops-build /out/hmaigc-ops-runner /usr/local/bin/hmaigc-ops-runner
+COPY --from=ops-build /out/hmaigc-ops-bootstrap /usr/local/bin/hmaigc-ops-bootstrap
 
 ENV HMAIGC_OPS_STATE_DIR=/var/lib/hmaigc-ops
 ENV HMAIGC_OPS_SOCKET=/var/lib/hmaigc-ops/controller.sock
@@ -48,8 +55,9 @@ ENV HMAIGC_OPS_SHARED_SECRET_FILE=/var/lib/hmaigc-ops/shared-secret
 ENV HMAIGC_RELEASE_STATE_FILE=/var/lib/hmaigc-ops/release/release.env
 ENV HMAIGC_STATE_DIR=/var/lib/hmaigc-ops/release
 ENV HMAIGC_BACKUP_DIR=/var/lib/hmaigc-ops/backups
-ENV HMAIGC_DEPLOY_SCRIPT=/opt/hmaigc/deploy/hmaigc.sh
-ENV HMAIGC_ENV_FILE=/var/lib/hmaigc-ops/deployment.env
+ENV HMAIGC_STAGE_SCRIPT=/opt/hmaigc/deploy/hmaigc-stage.sh
+ENV HMAIGC_ENV_FILE=/var/lib/hmaigc-ops/config/production.env
+ENV HMAIGC_CONTROL_ENV_FILE=/var/lib/hmaigc-ops/config/control.env
 
 VOLUME ["/var/lib/hmaigc-ops"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD hmaigc-opsctl status >/dev/null || exit 1

@@ -1,7 +1,32 @@
 import axios from "axios";
 
 export type OperationsAction = "upgrade" | "rollback" | "backup" | "verify";
-export type OperationsStatus = "queued" | "running" | "succeeded" | "failed";
+export type OperationsStatus = "queued" | "running" | "cancelling" | "recovering" | "succeeded" | "failed" | "cancelled" | "recovery_required";
+export type OperationsStage =
+    | "accepted"
+    | "runner_preparing"
+    | "online_preflight"
+    | "public_verifying"
+    | "quiescing"
+    | "quiesced_audit"
+    | "backing_up"
+    | "starting_target"
+    | "verifying_target"
+    | "restoring_current"
+    | "restoring_backup"
+    | "restoring_rollback_backup"
+    | "committing_release"
+    | "controller_handoff"
+    | "completed";
+export type OperationsServiceState = "current_online" | "maintenance" | "target_online" | "current_restored" | "unknown";
+export type OperationsRecoveryAction = "none" | "retry_preflight" | "restore_current" | "restore_backup" | "commit_target" | "continue_controller_handoff" | "require_operator";
+export type OperationsControllerHandoff = "unchanged" | "updated" | "restored_previous";
+
+export type OperationsWarning = {
+    code: string;
+    message: string;
+    facts?: unknown;
+};
 
 export type OperationsRecord = {
     id: string;
@@ -10,7 +35,21 @@ export type OperationsRecord = {
     currentVersionAtStart?: string;
     resultVersion?: string;
     status: OperationsStatus;
+    stage: OperationsStage;
     phase: string;
+    runnerVersion?: string;
+    runnerDigest?: string;
+    runnerGeneration?: number;
+    heartbeatAt?: string;
+    serviceState: OperationsServiceState;
+    checkpointSequence?: number;
+    cancelRequestedAt?: string;
+    recoveryAction?: OperationsRecoveryAction;
+    controllerVersionAtStart?: string;
+    resultControllerVersion?: string;
+    controllerHandoff?: OperationsControllerHandoff;
+    warnings?: OperationsWarning[];
+    errorCode?: string;
     error?: string;
     exitCode?: number;
     actorUserId: string;
@@ -40,6 +79,14 @@ export type OperationsBackup = {
     validationError?: string;
 };
 
+export type PublicVerification = {
+    status: "not_run" | "succeeded" | "failed";
+    operationId: string;
+    checkedAt: string | null;
+    errorCode: string;
+    error: string;
+};
+
 export type OperationsOverview = {
     controller: {
         status: string;
@@ -60,6 +107,7 @@ export type OperationsOverview = {
     rollbackReady: boolean;
     rollbackStatus: string;
     previousVersion?: string;
+    publicVerification: PublicVerification;
     updatedAt: string;
 };
 
@@ -100,20 +148,21 @@ export function getOperation(id: string) {
 }
 
 export function listOperationLogs(id: string, after = 0, limit = 500) {
-    return request<{ items: OperationsLog[]; nextCursor: number }>(
-        api.get(`/admin/operations/${encodeURIComponent(id)}/logs`, { params: { after, limit } }),
-    );
+    return request<{ items: OperationsLog[]; nextCursor: number }>(api.get(`/admin/operations/${encodeURIComponent(id)}/logs`, { params: { after, limit } }));
 }
 
 export function listOperationBackups(limit = 50) {
     return request<OperationsBackup[]>(api.get("/admin/operations/backups", { params: { limit } }));
 }
 
-export function startOperation(input: {
-    action: OperationsAction;
-    targetVersion?: string;
-    confirmation: string;
-    idempotencyKey: string;
-}) {
+export function startOperation(input: { action: OperationsAction; targetVersion?: string; confirmation: string; idempotencyKey: string }) {
     return request<OperationsRecord>(api.post("/admin/operations", input));
+}
+
+export function cancelOperation(id: string, input: { confirmation: string; idempotencyKey: string }) {
+    return request<OperationsRecord>(api.post(`/admin/operations/${encodeURIComponent(id)}/cancel`, input));
+}
+
+export function recoverOperation(id: string, input: { confirmation: string; idempotencyKey: string }) {
+    return request<OperationsRecord>(api.post(`/admin/operations/${encodeURIComponent(id)}/recover`, input));
 }

@@ -3,7 +3,7 @@ import type { ColumnsType } from "antd/es/table";
 import { CheckCircle2, CircleAlert, LoaderCircle } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { OperationsBackup, OperationsOverview, OperationsRecord, OperationsStatus } from "@/services/api/operations";
+import type { OperationsBackup, OperationsOverview, OperationsRecord, OperationsStatus, PublicVerification } from "@/services/api/operations";
 
 export const actionLabels: Record<OperationsRecord["action"], string> = {
     install: "首次安装",
@@ -16,8 +16,12 @@ export const actionLabels: Record<OperationsRecord["action"], string> = {
 const statusLabels: Record<OperationsStatus, string> = {
     queued: "排队中",
     running: "执行中",
+    cancelling: "停止中",
+    recovering: "恢复中",
     succeeded: "成功",
     failed: "失败",
+    cancelled: "已停止",
+    recovery_required: "需要恢复",
 };
 
 export function createOperationColumns(onSelect: (id: string) => void): ColumnsType<OperationsRecord> {
@@ -104,7 +108,7 @@ export const backupColumns: ColumnsType<OperationsBackup> = [
     },
 ];
 
-export function OverviewMetric({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: string; detail: string; tone: "success" | "warning" | "neutral" }) {
+export function OverviewMetric({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: string; detail: string; tone: "success" | "warning" | "error" | "neutral" }) {
     return (
         <article className={`operations-metric is-${tone}`}>
             <div className="operations-metric-heading flex items-center gap-2">
@@ -139,19 +143,30 @@ export function OperationActionButton({ icon, title, description, disabled, disa
 
 export function OperationStatusTag({ status }: { status: OperationsStatus }) {
     const icon =
-        status === "running" || status === "queued" ? (
+        status === "running" || status === "queued" || status === "cancelling" || status === "recovering" ? (
             <LoaderCircle className="operations-status-icon size-3 animate-spin motion-reduce:animate-none" />
         ) : status === "succeeded" ? (
             <CheckCircle2 className="operations-status-icon size-3" />
         ) : (
             <CircleAlert className="operations-status-icon size-3" />
         );
-    const color = status === "succeeded" ? "success" : status === "failed" ? "error" : "processing";
+    const color = status === "succeeded" ? "success" : status === "failed" || status === "cancelled" || status === "recovery_required" ? "error" : "processing";
     return (
         <Tag className="operations-status-tag inline-flex items-center gap-1" icon={icon} color={color} variant="filled">
             {statusLabels[status]}
         </Tag>
     );
+}
+
+export function presentPublicVerification(verification: PublicVerification): { label: string; tone: "neutral" | "success" | "error"; detail: string } {
+    if (verification.status === "not_run") {
+        return { label: "未执行", tone: "neutral", detail: "公网与 CDN 校验尚未执行" };
+    }
+    if (verification.status === "succeeded") {
+        return { label: "成功", tone: "success", detail: verification.checkedAt ? `完成于 ${formatTime(verification.checkedAt)}` : "公网与 CDN 校验通过" };
+    }
+    const detail = verification.error || verification.errorCode || "公网与 CDN 校验失败";
+    return { label: "失败", tone: "error", detail };
 }
 
 export function releaseCheckDetail(overview: OperationsOverview | null) {

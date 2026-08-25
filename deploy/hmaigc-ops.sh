@@ -2,25 +2,39 @@
 
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="${HMAIGC_ENV_FILE:-$ROOT_DIR/.env.production}"
-COMPOSE_FILE="$SCRIPT_DIR/docker-compose.ops.yml"
-export HMAIGC_HOST_ENV_FILE="$ENV_FILE"
+readonly CONFIG_READER_IMAGE="alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+STATE_VOLUME="${HMAIGC_OPS_STATE_VOLUME:-hmaigc-ops-state}"
 
 fail() {
     printf '错误：%s\n' "$*" >&2
     exit 1
 }
 
-[[ -f "$ENV_FILE" ]] || fail "生产配置不存在：$ENV_FILE"
-[[ -f "$COMPOSE_FILE" ]] || fail "运维控制器 Compose 不存在：$COMPOSE_FILE"
+require_immutable_image() {
+    [[ "$1" =~ ^.+@sha256:[0-9a-f]{64}$ ]] || fail "控制器镜像不是不可变摘要：${1:-未配置}"
+}
+
 command -v docker >/dev/null 2>&1 || fail "缺少 docker"
 docker info >/dev/null 2>&1 || fail "Docker Engine 不可用"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose 插件不可用"
+docker volume inspect "$STATE_VOLUME" >/dev/null 2>&1 || fail "ops-state 卷不存在：$STATE_VOLUME"
 
-COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
-"${COMPOSE[@]}" config -q
-"${COMPOSE[@]}" pull ops-controller
-"${COMPOSE[@]}" up -d ops-controller --wait
-"${COMPOSE[@]}" exec -T ops-controller hmaigc-opsctl "$@"
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf -- "$temporary_directory"' EXIT
+control_env="$temporary_directory/control.env"
+compose_file="$temporary_directory/docker-compose.ops.yml"
+docker run --rm --read-only --volume "$STATE_VOLUME:/state:ro" \
+    --entrypoint sh "$CONFIG_READER_IMAGE" -c 'cat /state/config/control.env' >"$control_env"
+chmod 600 "$control_env"
+ops_image="$(awk -F= '$1 == "HMAIGC_OPS_IMAGE" { sub(/^[^=]*=/, ""); print; exit }' "$control_env")"
+require_immutable_image "$ops_image"
+docker run --rm --read-only --entrypoint sh "$ops_image" \
+    -c 'cat /opt/hmaigc/deploy/docker-compose.ops.yml' >"$compose_file"
+
+project_name="$(awk -F= '$1 == "HMAIGC_OPS_COMPOSE_PROJECT_NAME" { sub(/^[^=]*=/, ""); print; exit }' "$control_env")"
+project_name="${project_name:-hmaigc-ops}"
+compose=(docker compose --project-name "$project_name" --env-file "$control_env" -f "$compose_file")
+"${compose[@]}" config -q
+"${compose[@]}" pull ops-controller
+"${compose[@]}" up -d ops-controller --wait
+"${compose[@]}" exec -T ops-controller hmaigc-opsctl "$@"

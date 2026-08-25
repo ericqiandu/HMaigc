@@ -5,10 +5,12 @@ set -Eeuo pipefail
 readonly DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly DEFAULT_ENV_FILE="$DEPLOY_ROOT/.env.production"
 readonly DEFAULT_COMPOSE_FILE="$DEPLOY_ROOT/docker-compose.production.yml"
-readonly BACKUP_HELPER_IMAGE="alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+BACKUP_HELPER_IMAGE=""
 
 # shellcheck source=deploy/lib/web-assets.sh
 source "$DEPLOY_ROOT/deploy/lib/web-assets.sh"
+# shellcheck source=deploy/lib/images.sh
+source "$DEPLOY_ROOT/deploy/lib/images.sh"
 
 ENV_FILE="${HMAIGC_ENV_FILE:-$DEFAULT_ENV_FILE}"
 COMPOSE_FILE="${HMAIGC_COMPOSE_FILE:-$DEFAULT_COMPOSE_FILE}"
@@ -86,6 +88,9 @@ configure_deploy_runtime() {
     validate_release_version "$version"
     export HMAIGC_VERSION="$version"
     export HMAIGC_IMAGE_REGISTRY="${HMAIGC_IMAGE_REGISTRY:-$(env_value HMAIGC_IMAGE_REGISTRY)}"
+    export HMAIGC_BACKEND_IMAGE="${HMAIGC_BACKEND_IMAGE:-$(env_value HMAIGC_BACKEND_IMAGE)}"
+    export HMAIGC_WEB_IMAGE="${HMAIGC_WEB_IMAGE:-$(env_value HMAIGC_WEB_IMAGE)}"
+    export BACKUP_HELPER_IMAGE="${BACKUP_HELPER_IMAGE:-$(env_value BACKUP_HELPER_IMAGE)}"
     export HMAIGC_COMPOSE_PROJECT_NAME="${HMAIGC_COMPOSE_PROJECT_NAME:-$(env_value HMAIGC_COMPOSE_PROJECT_NAME)}"
     export HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-$(env_value HMAIGC_BACKEND_DATA_VOLUME)}"
     export HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-$(env_value HMAIGC_POSTGRES_DATA_VOLUME)}"
@@ -94,6 +99,9 @@ configure_deploy_runtime() {
 
     : "${HMAIGC_IMAGE_REGISTRY:?生产配置必须填写 HMAIGC_IMAGE_REGISTRY}"
     : "${HMAIGC_OPS_STATE_VOLUME:?生产配置必须填写 HMAIGC_OPS_STATE_VOLUME}"
+    require_immutable_image "$HMAIGC_BACKEND_IMAGE"
+    require_immutable_image "$HMAIGC_WEB_IMAGE"
+    require_immutable_image "$BACKUP_HELPER_IMAGE"
     HMAIGC_COMPOSE_PROJECT_NAME="${HMAIGC_COMPOSE_PROJECT_NAME:-hmaigc}"
     HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-hmaigc-backend-data}"
     HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-hmaigc-postgres-data}"
@@ -111,7 +119,7 @@ configure_deploy_runtime() {
     require_path_inside_ops_state "$STATE_DIR"
     require_path_inside_ops_state "$BACKUP_DIR"
     STATE_FILE="$STATE_DIR/release.env"
-    LOCK_FILE="$STATE_DIR/deploy.lock"
+    LOCK_FILE="$OPS_STATE_DIR/deploy.lock"
     LOG_DIR="$STATE_DIR/logs"
     mkdir -p "$STATE_DIR" "$BACKUP_DIR" "$LOG_DIR"
     chmod 700 "$STATE_DIR" "$BACKUP_DIR" "$LOG_DIR"
@@ -174,10 +182,33 @@ start_operation_log() {
 
 pull_release() {
     local version="$1"
-    validate_release_version "$version"
+    resolve_release_images "$version"
     export HMAIGC_VERSION="$version"
-    log "拉取发布镜像：$version"
-    compose pull backend web
+    use_release_images "$RESOLVED_BACKEND_IMAGE" "$RESOLVED_WEB_IMAGE"
+    log "已固定发布镜像摘要：$version"
+}
+
+write_production_release_config() {
+    local version="$1"
+    local backend_image="$2"
+    local web_image="$3"
+    local temporary="$ENV_FILE.tmp.$$"
+    validate_release_version "$version"
+    use_release_images "$backend_image" "$web_image"
+    awk -v version="$version" -v backend="$backend_image" -v web="$web_image" '
+        BEGIN { seen_version = 0; seen_backend = 0; seen_web = 0 }
+        /^HMAIGC_VERSION=/ { print "HMAIGC_VERSION=" version; seen_version = 1; next }
+        /^HMAIGC_BACKEND_IMAGE=/ { print "HMAIGC_BACKEND_IMAGE=" backend; seen_backend = 1; next }
+        /^HMAIGC_WEB_IMAGE=/ { print "HMAIGC_WEB_IMAGE=" web; seen_web = 1; next }
+        { print }
+        END {
+            if (!seen_version) print "HMAIGC_VERSION=" version
+            if (!seen_backend) print "HMAIGC_BACKEND_IMAGE=" backend
+            if (!seen_web) print "HMAIGC_WEB_IMAGE=" web
+        }
+    ' "$ENV_FILE" >"$temporary"
+    chmod 600 "$temporary"
+    mv -f "$temporary" "$ENV_FILE"
 }
 
 audit_target_agent_runtime_upgrade() {

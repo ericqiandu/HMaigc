@@ -397,6 +397,11 @@
         color: var(--workspace-ui-warning);
     }
 
+    .operations-metric.is-error .operations-metric-icon {
+        background: color-mix(in srgb, var(--workspace-ui-error) 12%, var(--workspace-ui-surface));
+        color: var(--workspace-ui-error);
+    }
+
     .operations-metric-label {
         color: var(--workspace-ui-text-tertiary);
         font-size: 12px;
@@ -428,17 +433,24 @@
         background: var(--workspace-ui-divider);
     }
 
-    .operations-active-operation {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        gap: 12px;
-        align-items: center;
+    .operations-active-panel {
         border-bottom: 1px solid var(--workspace-ui-divider);
         background: color-mix(in srgb, var(--workspace-ui-accent) 7%, var(--workspace-ui-surface));
         padding: 14px 20px;
     }
 
-    .operations-active-operation-icon {
+    .operations-active-panel.is-recovery_required {
+        background: color-mix(in srgb, var(--workspace-ui-warning) 8%, var(--workspace-ui-surface));
+    }
+
+    .operations-active-panel-heading {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .operations-active-panel-icon {
         display: grid;
         width: 32px;
         height: 32px;
@@ -448,20 +460,25 @@
         color: var(--workspace-ui-accent);
     }
 
-    .operations-active-operation-copy {
+    .operations-active-panel.is-recovery_required .operations-active-panel-icon {
+        background: color-mix(in srgb, var(--workspace-ui-warning) 14%, var(--workspace-ui-surface));
+        color: var(--workspace-ui-warning);
+    }
+
+    .operations-active-panel-copy {
         display: grid;
         min-width: 0;
         gap: 2px;
     }
 
-    .operations-active-operation-title {
+    .operations-active-panel-title {
         color: var(--workspace-ui-text);
         font-size: 13px;
         font-weight: 600;
         line-height: 19px;
     }
 
-    .operations-active-operation-description {
+    .operations-active-panel-description {
         overflow: hidden;
         color: var(--workspace-ui-text-tertiary);
         font-size: 11px;
@@ -470,26 +487,66 @@
         white-space: nowrap;
     }
 
-    .operations-active-operation-link {
+    .operations-active-panel-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .operations-active-panel-actions .ant-btn {
         min-height: 32px;
-        border: 0;
         border-radius: var(--workspace-ui-radius-control);
-        background: transparent;
-        padding: 0 10px;
-        color: var(--workspace-ui-accent);
         font-size: 12px;
         font-weight: 600;
-        cursor: pointer;
     }
 
-    .operations-active-operation-link:hover,
-    .operations-active-operation-link:focus-visible {
-        background: color-mix(in srgb, var(--workspace-ui-accent) 10%, transparent);
+    .operations-active-panel-facts {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin: 14px 0 0;
+        background: var(--workspace-ui-divider);
+        gap: 1px;
     }
 
-    .operations-active-operation-link:focus-visible {
-        outline: 2px solid var(--workspace-ui-accent);
-        outline-offset: 2px;
+    .operations-active-panel-fact {
+        display: grid;
+        min-width: 0;
+        gap: 2px;
+        background: var(--workspace-ui-surface);
+        padding: 10px 12px;
+    }
+
+    .operations-active-panel-fact-label {
+        color: var(--workspace-ui-text-tertiary);
+        font-size: 11px;
+        line-height: 16px;
+    }
+
+    .operations-active-panel-fact-value {
+        overflow: hidden;
+        margin: 0;
+        color: var(--workspace-ui-text);
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 18px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .operations-active-panel-safe-stop {
+        margin: 12px 0 0;
+        color: var(--workspace-ui-text-secondary);
+        font-size: 12px;
+        line-height: 18px;
+    }
+
+    .operations-active-panel-recovery-alert,
+    .operations-active-panel-warning {
+        margin-top: 12px;
+    }
+
+    .operations-active-panel .ant-alert {
+        border-radius: var(--workspace-ui-radius-control);
     }
 
     .operations-action-disabled-wrapper {
@@ -1745,16 +1802,26 @@
             padding: 14px 16px;
         }
 
-        .operations-active-operation {
-            grid-template-columns: auto minmax(0, 1fr);
+        .operations-active-panel {
             padding: 14px 16px;
         }
 
-        .operations-active-operation-link {
-            grid-column: 2;
-            width: max-content;
+        .operations-active-panel-heading {
+            grid-template-columns: auto minmax(0, 1fr);
+        }
+
+        .operations-active-panel-actions {
+            grid-column: 1 / -1;
+            flex-wrap: wrap;
+            padding-left: 44px;
+        }
+
+        .operations-active-panel-actions .ant-btn {
             min-height: 44px;
-            margin-left: -10px;
+        }
+
+        .operations-active-panel-facts {
+            grid-template-columns: 1fr 1fr;
         }
 
         .operations-log-viewport {

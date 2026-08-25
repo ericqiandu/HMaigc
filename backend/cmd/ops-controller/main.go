@@ -17,11 +17,30 @@ import (
 	"syscall"
 	"time"
 
+	"infinite-canvas/backend/internal/buildinfo"
+	"infinite-canvas/backend/internal/opsbootstrap"
+	"infinite-canvas/backend/internal/opsconfig"
 	"infinite-canvas/backend/internal/opscontroller"
+	"infinite-canvas/backend/internal/opsprotocol"
+	"infinite-canvas/backend/internal/opsstate"
 )
 
 func main() {
 	stateDir := env("HMAIGC_OPS_STATE_DIR", "/var/lib/hmaigc-ops")
+	productionConfig := env("HMAIGC_ENV_FILE", filepath.Join(stateDir, "config", "production.env"))
+	controlConfig := env("HMAIGC_CONTROL_ENV_FILE", filepath.Join(stateDir, "config", "control.env"))
+	if err := validateControllerConfiguration(productionConfig, controlConfig); err != nil {
+		log.Fatal(err)
+	}
+	if err := opsbootstrap.ValidateStateReadOnly(stateDir); err != nil {
+		log.Fatal(err)
+	}
+	if len(os.Args) == 2 && os.Args[1] == "validate" {
+		return
+	}
+	if len(os.Args) != 1 {
+		log.Fatal("usage: hmaigc-ops-controller [validate]")
+	}
 	backendGID, err := strconv.Atoi(env("HMAIGC_BACKEND_GID", "101"))
 	if err != nil || backendGID < 1 {
 		log.Fatal("HMAIGC_BACKEND_GID 必须是正整数")
@@ -55,24 +74,37 @@ func main() {
 			log.Printf("close controller store: %v", err)
 		}
 	}()
-	scriptPath := env("HMAIGC_DEPLOY_SCRIPT", "/opt/hmaigc/deploy/hmaigc.sh")
-	envFile := env("HMAIGC_ENV_FILE", "/opt/hmaigc/.env.production")
-	if err := validateReadableFile(scriptPath); err != nil {
+	journal, err := opsstate.NewJournal(stateDir)
+	if err != nil {
 		log.Fatal(err)
 	}
-	if err := validateReadableFile(envFile); err != nil {
+	manager := opscontroller.DockerRunnerManager{
+		Registry:              env("HMAIGC_IMAGE_REGISTRY", ""),
+		ControllerContainerID: env("HOSTNAME", ""),
+	}
+	currentRunner, err := manager.Resolve(context.Background(), opsprotocol.OperationRequestFile{
+		RunnerSource:             opsprotocol.RunnerSourceCurrent,
+		ControllerVersionAtStart: buildinfo.Version,
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
 	controller, err := opscontroller.New(
 		store,
-		opscontroller.ScriptExecutor{ScriptPath: scriptPath, EnvFile: envFile},
+		journal,
+		manager,
+		secret,
 		opscontroller.GitHubReleaseSource{
 			URL:   env("HMAIGC_RELEASES_API_URL", ""),
 			Token: strings.TrimSpace(os.Getenv("HMAIGC_RELEASES_API_TOKEN")),
 		},
 		opscontroller.Config{
-			StateFile: env("HMAIGC_RELEASE_STATE_FILE", filepath.Join(stateDir, "release", "release.env")),
-			BackupDir: env("HMAIGC_BACKUP_DIR", filepath.Join(stateDir, "backups")),
+			StateFile:         env("HMAIGC_RELEASE_STATE_FILE", filepath.Join(stateDir, "release", "release.env")),
+			BackupDir:         env("HMAIGC_BACKUP_DIR", filepath.Join(stateDir, "backups")),
+			StateVolume:       env("HMAIGC_OPS_STATE_VOLUME", "hmaigc-ops-state"),
+			ControllerVersion: buildinfo.Version, ControllerDigest: currentRunner.Digest,
+			HeartbeatTTL: 30 * time.Second,
+			ReportError:  func(reportErr error) { log.Printf("ops controller: %v", reportErr) },
 		},
 	)
 	if err != nil {
@@ -128,6 +160,10 @@ func main() {
 			log.Printf("ops controller shutdown: %v", err)
 		}
 	}
+}
+
+func validateControllerConfiguration(productionPath, controlPath string) error {
+	return opsconfig.ValidateFiles(productionPath, controlPath)
 }
 
 func listenUnix(path string) (net.Listener, error) {
@@ -192,22 +228,11 @@ func parseSocketMode(value string) (os.FileMode, error) {
 	}
 	mode := os.FileMode(parsed)
 	switch mode {
-	case 0o600, 0o660, 0o666:
+	case 0o600, 0o660:
 		return mode, nil
 	default:
-		return 0, errors.New("HMAIGC_OPS_SOCKET_MODE 仅允许 0600、0660 或 0666")
+		return 0, errors.New("HMAIGC_OPS_SOCKET_MODE 仅允许 0600 或 0660")
 	}
-}
-
-func validateReadableFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("不是普通文件: %s", path)
-	}
-	return nil
 }
 
 func env(key string, fallback string) string {

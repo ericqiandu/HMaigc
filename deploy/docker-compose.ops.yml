@@ -2,7 +2,7 @@ name: ${HMAIGC_OPS_COMPOSE_PROJECT_NAME:-hmaigc-ops}
 
 services:
   ops-controller:
-    image: ${HMAIGC_IMAGE_REGISTRY:?必须配置镜像仓库}/hmaigc-ops-controller:${HMAIGC_OPS_VERSION:?必须配置控制器版本}
+    image: ${HMAIGC_OPS_IMAGE:?必须配置控制器镜像不可变摘要}
     pull_policy: missing
     environment:
       HMAIGC_BACKEND_GID: ${HMAIGC_BACKEND_GID:-101}
@@ -11,18 +11,18 @@ services:
       HMAIGC_OPS_SOCKET: /var/lib/hmaigc-ops/controller.sock
       HMAIGC_OPS_SOCKET_MODE: "0660"
       HMAIGC_OPS_SHARED_SECRET_FILE: /var/lib/hmaigc-ops/shared-secret
-      HMAIGC_OPS_SOURCE_ENV_FILE: /run/hmaigc-config/.env.production
+      HMAIGC_IMAGE_REGISTRY: ${HMAIGC_IMAGE_REGISTRY:?必须配置镜像仓库}
+      HMAIGC_ENV_FILE: /var/lib/hmaigc-ops/config/production.env
+      HMAIGC_CONTROL_ENV_FILE: /var/lib/hmaigc-ops/config/control.env
+      HMAIGC_OPS_PROTOCOL_VERSION: ${HMAIGC_OPS_PROTOCOL_VERSION:?必须配置控制协议版本}
       HMAIGC_RELEASE_STATE_FILE: /var/lib/hmaigc-ops/release/release.env
       HMAIGC_STATE_DIR: /var/lib/hmaigc-ops/release
       HMAIGC_BACKUP_DIR: /var/lib/hmaigc-ops/backups
-      HMAIGC_DEPLOY_SCRIPT: /opt/hmaigc/deploy/hmaigc.sh
-      HMAIGC_ENV_FILE: /var/lib/hmaigc-ops/deployment.env
       HMAIGC_RELEASES_API_URL: ${HMAIGC_RELEASES_API_URL:-}
       HMAIGC_RELEASES_API_TOKEN: ${HMAIGC_RELEASES_API_TOKEN:-}
       CANVAS_ENVIRONMENT: ${CANVAS_ENVIRONMENT:?必须明确配置 production}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${HMAIGC_HOST_ENV_FILE:-../.env.production}:/run/hmaigc-config/.env.production:ro
       - ops-state:/var/lib/hmaigc-ops
     read_only: true
     tmpfs:

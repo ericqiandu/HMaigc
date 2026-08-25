@@ -1,6 +1,7 @@
 package opscontroller
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"time"
@@ -12,23 +13,37 @@ import (
 )
 
 type operationRecord struct {
-	ID                    string `gorm:"primaryKey;size:36"`
-	Action                string `gorm:"index;size:24"`
-	TargetVersion         string `gorm:"size:80"`
-	CurrentVersionAtStart string `gorm:"size:80"`
-	ResultVersion         string `gorm:"size:80"`
-	Status                string `gorm:"index;size:24"`
-	Phase                 string `gorm:"size:160"`
-	Error                 string `gorm:"type:text"`
-	ExitCode              *int
-	ActorUserID           string    `gorm:"index;size:36"`
-	ActorDisplayName      string    `gorm:"size:160"`
-	IdempotencyKey        string    `gorm:"uniqueIndex;size:128"`
-	RequestHash           string    `gorm:"size:64"`
-	CreatedAt             time.Time `gorm:"index"`
-	StartedAt             *time.Time
-	CompletedAt           *time.Time
-	UpdatedAt             time.Time
+	ID                       string `gorm:"primaryKey;size:36"`
+	Action                   string `gorm:"index;size:24"`
+	TargetVersion            string `gorm:"size:80"`
+	CurrentVersionAtStart    string `gorm:"size:80"`
+	ResultVersion            string `gorm:"size:80"`
+	Status                   string `gorm:"index;size:24"`
+	Stage                    string `gorm:"size:48"`
+	Phase                    string `gorm:"size:160"`
+	RunnerVersion            string `gorm:"size:80"`
+	RunnerDigest             string `gorm:"size:256"`
+	RunnerGeneration         uint64
+	HeartbeatAt              *time.Time
+	ServiceState             string `gorm:"size:32"`
+	CheckpointSequence       uint64
+	CancelRequestedAt        *time.Time
+	RecoveryAction           string `gorm:"size:64"`
+	ControllerVersionAtStart string `gorm:"size:80"`
+	ResultControllerVersion  string `gorm:"size:80"`
+	ControllerHandoff        string `gorm:"size:48"`
+	WarningsJSON             string `gorm:"type:text"`
+	ErrorCode                string `gorm:"size:64"`
+	Error                    string `gorm:"type:text"`
+	ExitCode                 *int
+	ActorUserID              string    `gorm:"index;size:36"`
+	ActorDisplayName         string    `gorm:"size:160"`
+	IdempotencyKey           string    `gorm:"uniqueIndex;size:128"`
+	RequestHash              string    `gorm:"size:64"`
+	CreatedAt                time.Time `gorm:"index"`
+	StartedAt                *time.Time
+	CompletedAt              *time.Time
+	UpdatedAt                time.Time
 }
 
 type operationLogRecord struct {
@@ -37,6 +52,12 @@ type operationLogRecord struct {
 	Stream      string    `gorm:"size:16"`
 	Message     string    `gorm:"type:text"`
 	CreatedAt   time.Time `gorm:"index"`
+}
+
+type operationEventProjectionRecord struct {
+	OperationID   string `gorm:"primaryKey;size:64"`
+	Generation    uint64 `gorm:"primaryKey"`
+	EventSequence uint64 `gorm:"primaryKey"`
 }
 
 type Store struct {
@@ -55,7 +76,7 @@ func OpenStore(path string) (*Store, error) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
-	if err := db.AutoMigrate(&operationRecord{}, &operationLogRecord{}); err != nil {
+	if err := db.AutoMigrate(&operationRecord{}, &operationLogRecord{}, &operationEventProjectionRecord{}); err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
@@ -102,80 +123,268 @@ func (s *Store) CreateOrGetOperation(record operationRecord) (*opsprotocol.Opera
 	if err != nil {
 		return nil, false, err
 	}
-	operation := operationFromRecord(result)
+	operation, err := operationFromRecord(result)
+	if err != nil {
+		return nil, false, err
+	}
 	return &operation, created, nil
 }
 
-func (s *Store) ClaimNextOperation(now time.Time) (*opsprotocol.Operation, error) {
-	var claimed operationRecord
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		var record operationRecord
-		result := tx.Where("status = ?", opsprotocol.OperationQueued).Order("created_at asc").Limit(1).Find(&record)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return nil
-		}
-		updated := tx.Model(&operationRecord{}).
-			Where("id = ? AND status = ?", record.ID, opsprotocol.OperationQueued).
-			Updates(map[string]interface{}{
-				"status":     opsprotocol.OperationRunning,
-				"phase":      "控制器已接管任务",
-				"started_at": now,
-				"updated_at": now,
-			})
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
-			return nil
-		}
-		record.Status = string(opsprotocol.OperationRunning)
-		record.Phase = "控制器已接管任务"
-		record.StartedAt = &now
-		record.UpdatedAt = now
-		claimed = record
-		return nil
-	})
+func (s *Store) ImportRequest(request opsprotocol.OperationRequestFile) (*opsprotocol.Operation, bool, error) {
+	serviceState := opsprotocol.ServiceUnknown
+	if request.CurrentVersion != "" {
+		serviceState = opsprotocol.ServiceCurrentOnline
+	}
+	record := operationRecord{
+		ID: request.OperationID, Action: string(request.Request.Action),
+		TargetVersion: operationTargetVersion(request), CurrentVersionAtStart: request.CurrentVersion,
+		Status: string(opsprotocol.OperationQueued), Stage: string(opsprotocol.StageAccepted),
+		Phase: "等待控制器调度", ServiceState: string(serviceState),
+		ControllerVersionAtStart: request.ControllerVersionAtStart,
+		ActorUserID:              request.Request.ActorUserID, ActorDisplayName: request.Request.ActorDisplayName,
+		IdempotencyKey: request.Request.IdempotencyKey, RequestHash: request.RequestHash,
+		CreatedAt: request.CreatedAt, UpdatedAt: request.CreatedAt,
+	}
+	return s.CreateOrGetOperation(record)
+}
+
+func operationTargetVersion(request opsprotocol.OperationRequestFile) string {
+	switch request.Request.Action {
+	case opsprotocol.ActionInstall, opsprotocol.ActionUpgrade, opsprotocol.ActionRollback:
+		return request.ExpectedVersion
+	default:
+		return ""
+	}
+}
+
+func (s *Store) OperationByIdempotencyKey(key string) (*opsprotocol.Operation, error) {
+	var record operationRecord
+	result := s.db.Where("idempotency_key = ?", key).Limit(1).Find(&record)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+	operation, err := operationFromRecord(record)
 	if err != nil {
 		return nil, err
 	}
-	if claimed.ID == "" {
-		return nil, nil
-	}
-	operation := operationFromRecord(claimed)
 	return &operation, nil
 }
 
-func (s *Store) UpdatePhase(id string, phase string, now time.Time) error {
-	return s.db.Model(&operationRecord{}).
-		Where("id = ? AND status = ?", id, opsprotocol.OperationRunning).
-		Updates(map[string]interface{}{"phase": phase, "updated_at": now}).Error
+func (s *Store) QueuedOperations(limit int) ([]opsprotocol.Operation, error) {
+	var records []operationRecord
+	if err := s.db.Where("status = ?", opsprotocol.OperationQueued).
+		Order("created_at asc").Limit(limit).Find(&records).Error; err != nil {
+		return nil, err
+	}
+	operations := make([]opsprotocol.Operation, 0, len(records))
+	for _, record := range records {
+		operation, err := operationFromRecord(record)
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, operation)
+	}
+	return operations, nil
 }
 
-func (s *Store) CompleteOperation(id string, status opsprotocol.OperationStatus, phase string, resultVersion string, exitCode *int, errorMessage string, now time.Time) error {
-	if status != opsprotocol.OperationSucceeded && status != opsprotocol.OperationFailed {
-		return errors.New("完成状态无效")
-	}
+func (s *Store) MarkRunnerStarted(id string, runner ResolvedRunner, generation uint64, now time.Time) error {
 	result := s.db.Model(&operationRecord{}).
-		Where("id = ? AND status = ?", id, opsprotocol.OperationRunning).
+		Where("id = ? AND status = ? AND stage = ?", id, opsprotocol.OperationQueued, opsprotocol.StageAccepted).
 		Updates(map[string]interface{}{
-			"status":         status,
-			"phase":          phase,
-			"result_version": resultVersion,
-			"exit_code":      exitCode,
-			"error":          errorMessage,
-			"completed_at":   now,
-			"updated_at":     now,
+			"status": opsprotocol.OperationRunning, "stage": opsprotocol.StageRunnerPreparing,
+			"phase": "独立 Runner 已调度", "runner_version": runner.Version,
+			"runner_digest": runner.Digest, "runner_generation": generation,
+			"started_at": now, "updated_at": now,
 		})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errors.New("运维任务状态已变化，拒绝覆盖")
+		return errors.New("运维任务状态已变化，拒绝重复调度 Runner")
 	}
 	return nil
+}
+
+func (s *Store) MarkRunnerStartFailed(id string, message string, now time.Time) error {
+	result := s.db.Model(&operationRecord{}).
+		Where("id = ? AND status = ? AND stage = ?", id, opsprotocol.OperationRunning, opsprotocol.StageRunnerPreparing).
+		Updates(map[string]interface{}{
+			"status": opsprotocol.OperationFailed, "phase": "Runner 启动失败",
+			"error_code": opsprotocol.ErrorRunnerStartFailed, "error": message,
+			"completed_at": now, "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("运维任务状态已变化，拒绝覆盖 Runner 启动失败事实")
+	}
+	return nil
+}
+
+func (s *Store) MarkCancelling(id string, expectedStatus opsprotocol.OperationStatus, now time.Time) error {
+	if err := opsprotocol.ValidateStatusTransition(expectedStatus, opsprotocol.OperationCancelling); err != nil {
+		return err
+	}
+	result := s.db.Model(&operationRecord{}).
+		Where("id = ? AND status = ?", id, expectedStatus).
+		Updates(map[string]interface{}{
+			"status": opsprotocol.OperationCancelling, "phase": "已收到停止请求，等待安全点",
+			"cancel_requested_at": now, "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("运维任务状态已变化，拒绝覆盖停止事实")
+	}
+	return nil
+}
+
+func (s *Store) MarkRecovering(id string, stage opsprotocol.OperationStage, runner ResolvedRunner, generation uint64, now time.Time) error {
+	result := s.db.Model(&operationRecord{}).
+		Where("id = ? AND status = ?", id, opsprotocol.OperationRecoveryRequired).
+		Updates(map[string]interface{}{
+			"status": opsprotocol.OperationRecovering, "stage": stage,
+			"phase":          "已验证旧 Runner 停止，正在安全恢复",
+			"runner_version": runner.Version, "runner_digest": runner.Digest,
+			"runner_generation": generation, "error_code": "", "error": "", "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("运维任务状态已变化，拒绝重复启动恢复 Runner")
+	}
+	return nil
+}
+
+func (s *Store) MarkRecoveryLaunchFailed(
+	id string,
+	generation uint64,
+	recoveryAction opsprotocol.RecoveryAction,
+	message string,
+	now time.Time,
+) error {
+	result := s.db.Model(&operationRecord{}).
+		Where("id = ? AND status = ? AND runner_generation = ?", id, opsprotocol.OperationRecovering, generation).
+		Updates(map[string]interface{}{
+			"status": opsprotocol.OperationRecoveryRequired, "phase": "恢复 Runner 启动失败",
+			"error_code": opsprotocol.ErrorRunnerStartFailed, "error": message,
+			"recovery_action": recoveryAction, "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("运维任务状态已变化，拒绝覆盖恢复启动失败事实")
+	}
+	return nil
+}
+
+type operationProjection struct {
+	Status                  opsprotocol.OperationStatus
+	Stage                   opsprotocol.OperationStage
+	Phase                   string
+	RunnerDigest            string
+	RunnerVersion           string
+	RunnerGeneration        uint64
+	StartedAt               *time.Time
+	HeartbeatAt             *time.Time
+	ServiceState            opsprotocol.ServiceState
+	CheckpointSequence      uint64
+	CancelRequestedAt       *time.Time
+	RecoveryAction          opsprotocol.RecoveryAction
+	ResultVersion           string
+	ResultControllerVersion string
+	ControllerHandoff       opsprotocol.ControllerHandoff
+	Warnings                []opsprotocol.OperationWarning
+	ErrorCode               opsprotocol.OperationErrorCode
+	Error                   string
+	ExitCode                *int
+	CompletedAt             *time.Time
+	UpdatedAt               time.Time
+}
+
+func (s *Store) ProjectOperation(id string, expectedStatus opsprotocol.OperationStatus, expectedStage opsprotocol.OperationStage, projection operationProjection) error {
+	warnings, err := json.Marshal(projection.Warnings)
+	if err != nil {
+		return err
+	}
+	result := s.db.Model(&operationRecord{}).
+		Where("id = ? AND status = ? AND stage = ?", id, expectedStatus, expectedStage).
+		Updates(map[string]interface{}{
+			"status": projection.Status, "stage": projection.Stage, "phase": projection.Phase,
+			"runner_version": projection.RunnerVersion, "runner_digest": projection.RunnerDigest,
+			"runner_generation": projection.RunnerGeneration, "started_at": projection.StartedAt,
+			"heartbeat_at": projection.HeartbeatAt, "service_state": projection.ServiceState,
+			"checkpoint_sequence": projection.CheckpointSequence, "recovery_action": projection.RecoveryAction,
+			"cancel_requested_at":       projection.CancelRequestedAt,
+			"result_version":            projection.ResultVersion,
+			"result_controller_version": projection.ResultControllerVersion,
+			"controller_handoff":        projection.ControllerHandoff, "warnings_json": string(warnings),
+			"error_code": projection.ErrorCode, "error": projection.Error,
+			"exit_code": projection.ExitCode, "completed_at": projection.CompletedAt,
+			"updated_at": projection.UpdatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("运维任务状态或阶段已变化，拒绝覆盖投影")
+	}
+	return nil
+}
+
+func (s *Store) MarkRecoveryRequired(
+	id string,
+	expectedStatus opsprotocol.OperationStatus,
+	expectedStage opsprotocol.OperationStage,
+	recoveryAction opsprotocol.RecoveryAction,
+	message string,
+	now time.Time,
+) error {
+	phase := phaseForRecoveryAction(recoveryAction)
+	result := s.db.Model(&operationRecord{}).
+		Where("id = ? AND status = ? AND stage = ?", id, expectedStatus, expectedStage).
+		Updates(map[string]interface{}{
+			"status": opsprotocol.OperationRecoveryRequired, "phase": phase,
+			"error_code": opsprotocol.ErrorStateConflict, "error": message,
+			"recovery_action": recoveryAction, "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("运维任务状态或阶段已变化，拒绝覆盖恢复事实")
+	}
+	return nil
+}
+
+func (s *Store) AppendProjectedEvent(event opsprotocol.OperationEvent) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		marker := operationEventProjectionRecord{
+			OperationID: event.OperationID, Generation: event.Generation, EventSequence: event.Sequence,
+		}
+		result := tx.Create(&marker)
+		if result.Error != nil {
+			var existing operationEventProjectionRecord
+			if lookupErr := tx.First(&existing,
+				"operation_id = ? AND generation = ? AND event_sequence = ?",
+				event.OperationID, event.Generation, event.Sequence,
+			).Error; lookupErr == nil {
+				return nil
+			}
+			return result.Error
+		}
+		return tx.Create(&operationLogRecord{
+			OperationID: event.OperationID, Stream: event.Stream,
+			Message: event.Message, CreatedAt: event.CreatedAt,
+		}).Error
+	})
 }
 
 func (s *Store) AppendLog(operationID string, stream string, message string, now time.Time) error {
@@ -192,7 +401,10 @@ func (s *Store) Operation(id string) (*opsprotocol.Operation, error) {
 	if err := s.db.First(&record, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
-	operation := operationFromRecord(record)
+	operation, err := operationFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
 	return &operation, nil
 }
 
@@ -207,7 +419,11 @@ func (s *Store) Operations(limit int) (*opsprotocol.OperationPage, error) {
 	}
 	items := make([]opsprotocol.Operation, 0, len(records))
 	for _, record := range records {
-		items = append(items, operationFromRecord(record))
+		operation, err := operationFromRecord(record)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, operation)
 	}
 	return &opsprotocol.OperationPage{Items: items, Total: total}, nil
 }
@@ -232,7 +448,10 @@ func (s *Store) OperationLogs(operationID string, after uint64, limit int) (*ops
 
 func (s *Store) ActiveOperation() (*opsprotocol.Operation, error) {
 	var record operationRecord
-	result := s.db.Where("status IN ?", []opsprotocol.OperationStatus{opsprotocol.OperationQueued, opsprotocol.OperationRunning}).
+	result := s.db.Where("status IN ?", []opsprotocol.OperationStatus{
+		opsprotocol.OperationQueued, opsprotocol.OperationRunning, opsprotocol.OperationCancelling,
+		opsprotocol.OperationRecovering, opsprotocol.OperationRecoveryRequired,
+	}).
 		Order("created_at asc").Limit(1).Find(&record)
 	if result.Error != nil {
 		return nil, result.Error
@@ -240,7 +459,10 @@ func (s *Store) ActiveOperation() (*opsprotocol.Operation, error) {
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
-	operation := operationFromRecord(record)
+	operation, err := operationFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
 	return &operation, nil
 }
 
@@ -253,40 +475,59 @@ func (s *Store) LatestOperation() (*opsprotocol.Operation, error) {
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
-	operation := operationFromRecord(record)
+	operation, err := operationFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
 	return &operation, nil
 }
 
-func (s *Store) FailInterruptedOperations(now time.Time) error {
-	var records []operationRecord
-	if err := s.db.Where("status = ?", opsprotocol.OperationRunning).Find(&records).Error; err != nil {
-		return err
+func (s *Store) LatestPublicVerification() (opsprotocol.PublicVerification, error) {
+	var record operationRecord
+	result := s.db.Where("action = ? AND status IN ?", opsprotocol.ActionVerify, []opsprotocol.OperationStatus{
+		opsprotocol.OperationSucceeded,
+		opsprotocol.OperationFailed,
+	}).Order("completed_at desc, created_at desc").Limit(1).Find(&record)
+	if result.Error != nil {
+		return opsprotocol.PublicVerification{}, result.Error
 	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		for _, record := range records {
-			message := "运维控制器在任务执行期间重启，任务结果未知，请人工核对服务状态后再操作"
-			if err := tx.Model(&operationRecord{}).Where("id = ? AND status = ?", record.ID, opsprotocol.OperationRunning).
-				Updates(map[string]interface{}{
-					"status": opsprotocol.OperationFailed, "phase": "控制器重启中断",
-					"error": message, "completed_at": now, "updated_at": now,
-				}).Error; err != nil {
-				return err
-			}
-			if err := tx.Create(&operationLogRecord{OperationID: record.ID, Stream: "system", Message: message, CreatedAt: now}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	if result.RowsAffected == 0 {
+		return opsprotocol.PublicVerification{Status: opsprotocol.PublicVerificationNotRun}, nil
+	}
+	if record.CompletedAt == nil {
+		return opsprotocol.PublicVerification{}, errors.New("已完成的公网校验缺少完成时间")
+	}
+	status := opsprotocol.PublicVerificationFailed
+	if opsprotocol.OperationStatus(record.Status) == opsprotocol.OperationSucceeded {
+		status = opsprotocol.PublicVerificationSucceeded
+	}
+	return opsprotocol.PublicVerification{
+		Status: status, OperationID: record.ID, CheckedAt: record.CompletedAt,
+		ErrorCode: opsprotocol.OperationErrorCode(record.ErrorCode), Error: record.Error,
+	}, nil
 }
 
-func operationFromRecord(record operationRecord) opsprotocol.Operation {
+func operationFromRecord(record operationRecord) (opsprotocol.Operation, error) {
+	warnings := make([]opsprotocol.OperationWarning, 0)
+	if record.WarningsJSON != "" {
+		if err := json.Unmarshal([]byte(record.WarningsJSON), &warnings); err != nil {
+			return opsprotocol.Operation{}, errors.New("运维任务告警投影损坏")
+		}
+	}
 	return opsprotocol.Operation{
 		ID: record.ID, Action: opsprotocol.Action(record.Action), TargetVersion: record.TargetVersion,
 		CurrentVersionAtStart: record.CurrentVersionAtStart, ResultVersion: record.ResultVersion,
-		Status: opsprotocol.OperationStatus(record.Status), Phase: record.Phase, Error: record.Error,
+		Status: opsprotocol.OperationStatus(record.Status), Stage: opsprotocol.OperationStage(record.Stage),
+		Phase: record.Phase, RunnerVersion: record.RunnerVersion, RunnerDigest: record.RunnerDigest,
+		RunnerGeneration: record.RunnerGeneration, HeartbeatAt: record.HeartbeatAt,
+		ServiceState: opsprotocol.ServiceState(record.ServiceState), CheckpointSequence: record.CheckpointSequence,
+		CancelRequestedAt: record.CancelRequestedAt, RecoveryAction: opsprotocol.RecoveryAction(record.RecoveryAction),
+		ControllerVersionAtStart: record.ControllerVersionAtStart,
+		ResultControllerVersion:  record.ResultControllerVersion,
+		ControllerHandoff:        opsprotocol.ControllerHandoff(record.ControllerHandoff),
+		Warnings:                 warnings, ErrorCode: opsprotocol.OperationErrorCode(record.ErrorCode), Error: record.Error,
 		ExitCode: record.ExitCode, ActorUserID: record.ActorUserID, ActorDisplayName: record.ActorDisplayName,
 		IdempotencyKey: record.IdempotencyKey, CreatedAt: record.CreatedAt, StartedAt: record.StartedAt,
 		CompletedAt: record.CompletedAt, UpdatedAt: record.UpdatedAt,
-	}
+	}, nil
 }

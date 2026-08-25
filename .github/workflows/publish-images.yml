@@ -109,6 +109,19 @@ jobs:
           --tag hmaigc-ops-controller:ci
           .
 
+      - name: Verify durable operations binaries
+        run: |
+          docker run --rm --entrypoint hmaigc-ops-runner hmaigc-ops-controller:ci --help
+          docker run --rm --entrypoint hmaigc-ops-bootstrap hmaigc-ops-controller:ci --help
+
+      - name: Test durable stage and bootstrap contracts
+        run: |
+          bash deploy/tests/hmaigc-stage-smoke.sh
+          bash deploy/tests/hmaigc-bootstrap-smoke.sh
+
+      - name: Test durable operation fault matrix
+        run: bash deploy/tests/ops-runner-fault-injection.sh
+
       - name: Test install upgrade and rollback orchestration
         run: bash deploy/tests/hmaigc-smoke.sh
 
