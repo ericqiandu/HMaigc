@@ -40,7 +40,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - Web 在启动 Agent run 前先将当前画布未提交变更收敛到权威 revision；首次权限预检只建立远程基线与权限事实，不覆盖 WebSocket 建连前的本地编辑。SSE 只消费协议版本 `2` 的 `AgentUIEvent`，并在收到携带成功 `canvas.commit` 工具结果的 `item.completed` 时读取 `committedRevision`，再通过已鉴权的协作查询获取画布事实；查询 revision 低于已确认提交或低于当前本地基线时显式失败或忽略过期响应，禁止旧快照回退已展示的 Agent 交付。
 - 每个新工具动作必须使用未出现过的 `toolCallId + actionVersion`；模型误复用历史身份时，Runtime 记录显式 `tool_identity_reused` 修复事实并继续同一执行链，不会再次写入冲突记录。同一工具以语义相同的 JSON 参数连续返回相同错误码与相同结构化失败证据时，首次错误允许 Agent 根据事实修正，第二次直接以该错误终结 run；错误原因已经变化时继续留给 Agent 修正，禁止误判为死循环。最后一个模型步骤不得再开启新工具调用；历史运行若已进入该状态，拒绝或完成工具后会保存结果并以 `step_budget_exhausted` 明确终结。图片生成公共契约要求 `size` 精确取自本轮冻结模型的比例候选、`resolution` 精确取自分辨率候选、`count` 精确取自数量候选；`quality` 仅在动态 `providerCapabilities.qualities` 发布非空候选时必填且只能取其中之一，候选为空则必须省略。Runtime 在报价前把比例与分辨率冻结为供应商实际像素尺寸，禁止默认画质、默认分辨率或其他未知字段绕开正式任务和计费契约。
 - 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；用户显式选择图片或视频模型时，本次 run 的对应能力目录只保留该模型，未选择的能力仍使用完整可调用目录。模型作出工具决策后，渲染准备严格使用该模型步骤 prompt 中冻结的可调用目录，不会在审批前重新读取已漂移的在线目录。Skill 目录由 HMaigc 自有数据库和随版本发布的 `SKILL.md` 建立，不再依赖外部社区网络接口；目录列表只返回元数据，完整指令只在查看详情或服务端冻结 run 时读取。每个已发布版本以目录、版本号和 SHA-256 校验值形成不可变事实，启动时发现同版本正文漂移会显式拒绝发布；升级迁移会从历史 checkpoint 与 event 已冻结的指令一次性计算并写入校验值，迁移后仍由同一严格契约读取，不保留旧分支。模型和 Skill 配置随 run checkpoint 冻结，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。已选 Skill 的完整执行说明必须先通过 `skill.load` 按冻结版本按需加载，未加载时模型只看到目录元数据；Runtime 会冻结已加载目录并在最终答复前拒绝遗漏选定 Skill 的交付。存在活动生产计划时，每轮同时注入当前 Agent thread 在同一租户、项目与画布作用域内最新的活动 `productionPlan` 与完整 Artifact Ledger，因此后续 run 能继续上一 run 的计划和已付费资产；不同 thread 之间严格隔离。工具准备或执行失败都会先持久化失败的 ToolCall/ToolResult，再把结构化原因回灌同一执行链；不能因 `LastToolResult` 覆盖而遗失计划事实或重复规划。
-- 每次 run 同时冻结 `runtimeVersion`、`policyVersion` 与工具 schema 版本。工具 schema v3 保留四个高层工具，但把参考资产提升为正式计划与 Artifact Ledger 契约；v2 中尚未执行且检查点、模型 Task/Billing 事实完整的排队 run 可按既有事务退役为 `tool_schema_retired`。已经运行、等待输入/审批/工具、商业事实不一致、含工具事实或来自未来版本的非终态 run 不自动接管并会阻止启动；终态历史 run 继续保留审计证据。版本字段引入前已终结、工具 schema v1 且 Run/最终 Checkpoint 完整一致的历史记录，会通过一次性审计迁移明确标记为首代 Runtime/Policy 契约；混合零值、活动状态或事实不完整记录拒绝迁移，事件、Checkpoint、Task 与账单事实不改写。
+- 每次 run 同时冻结 `runtimeVersion`、`policyVersion` 与工具 schema 版本。工具 schema v3 保留四个高层工具，但把参考资产提升为正式计划与 Artifact Ledger 契约；v2 中尚未执行且检查点、模型 Task/Billing 事实完整的排队 run 可按既有事务退役为 `tool_schema_retired`。旧契约 `waiting_input` / `waiting_approval` run 仅在当前 pending tool 未启动、无活动供应商任务、无未决账务且不存在 `queued` / `running` 生产 Artifact 时事务化退休；当前 `planned` / `awaiting_approval` Artifact 会收口为失败，同一 run 中早已 `succeeded` / `failed` / `committed` 的历史 Artifact 与早已 `succeeded` / `failed` 的历史工具调用均保留原始事实，不构成活动执行。已经运行、等待工具、商业事实不一致或来自未来版本的非终态 run 不自动接管并会阻止启动；终态历史 run 继续保留审计证据。版本字段引入前已终结、工具 schema v1 且 Run/最终 Checkpoint 完整一致的历史记录，会通过一次性审计迁移明确标记为首代 Runtime/Policy 契约；混合零值、活动状态或事实不完整记录拒绝迁移，事件、Checkpoint、Task 与账单事实不改写。
 - Agent 模型调用统一声明 Chat Completions 的 `response_format=json_object`，使 DeepSeek 与 GPT 共用同一结构化决策契约；模型仍必须通过 Runtime 的严格单 JSON 校验。决策结构无效时，Runtime 记录受控的 `model_decision_invalid` 事实并在同一有界 run 内回灌下一模型步骤自修，绝不提取文本、伪造默认决策或切换模型；达到步骤上限仍显式失败。
 - 参考图片只接受当前账号已就绪的图片 Resource；服务端冻结资源 ID、显示名称、MIME 与尺寸，拒绝浏览器 Blob URL、跨账号资源和失效资源。执行模式是必填运行事实，幂等重放若更换模型、Skill、附件或模式会显式冲突，禁止静默采用新配置。
 - 正式传输入口为 `GET /api/agent/threads?canvasId=...&limit=...`、`POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、`POST /api/agent/runs/:runId/steer`、`POST /api/agent/runs/:runId/interrupt`、`POST /api/agent/runs/:runId/clarifications/:requestId/responses` 和工具审批。追加指令严格接收 `clientRequestId/message/expectedStateVersion`，停止严格接收 `expectedStateVersion`，所有请求的未知字段与尾随 JSON 都直接拒绝。全部工具结果仍只由服务端执行器写入，浏览器不提交选区或工具结果事实。历史查询按当前用户、租户与画布返回最近 20 个 Thread，在校验每个 Run 最新 Checkpoint 与 Run 状态一致后，为每个 Thread 返回按创建时间排列的完整 Turn 与 Item；缺 Item 的旧终态 Run 只能从不可变事件日志构造只读投影，旧活动 Run 缺投影时显式失败。旧终态 Checkpoint 缺少当前传输必需的结构化询问或 Composer 集合字段时，传输层只读投影会补为空集合；仅当执行模式本身缺失时才明确返回 `executionMode: historical`，已有模型、Skill 与 guided/automatic 事实原样保留，也不回写 Checkpoint。SSE 只把已持久化领域事件纯投影为协议版本 `2` 的 `AgentUIEvent`，以持久 sequence 断线补发；工具、审批和澄清等会持续更新同一 Item 的生命周期事件，补发时必须根据不可变事件 payload 与上一版本 Checkpoint 重建该事件发生时的 Item 快照，再与当前材料化 Item 的身份、作用域和序号单调性核验，禁止用 Item 最新状态覆盖历史事件。未来游标、未知事件、Item 作用域冲突、非法 payload 或投影失败均返回稳定协议错误，不保留旧 RuntimeState 事件形态。
@@ -125,6 +125,8 @@ bash deploy/hmaigc-ops.sh rollback
 
 业务后端不持有 Docker socket，也不会重启自己；后台运维升级中心和服务器命令行都把任务提交给独立控制器。完整契约见 [独立控制器与一键发布说明](deploy/README.md) 与 [生产运行手册](PRODUCTION.md)。
 
+升级执行器拉取目标后端镜像后，会在当前服务仍在线与停止 Web/后端写入后各运行一次目标镜像自带的只读 Agent Runtime 升级审计。审计一次返回全部不兼容活跃 Run 及其 checkpoint、event、ToolCall、Task、Billing 与 Plan/Artifact blocker；首次失败不停止当前服务、不创建新备份，第二次失败会恢复当前版本且不启动目标后端。两次均通过后才允许创建升级恢复点、执行正式原子迁移并启动目标版本；只读审计不等于迁移成功，也不替代隔离恢复演练。
+
 ## 上线门禁
 
 - 在受控网络注册首个管理员后，保持公开注册关闭。
@@ -141,7 +143,7 @@ bash deploy/hmaigc-ops.sh rollback
 - PostgreSQL 是生产业务数据真源，Redis 只承担队列和实时广播。
 - `backend-data` 保存上传文件及服务端密钥材料；数据库备份不能替代文件备份。
 - 发布镜像由 GitHub Actions 构建并以不可变版本标签推送；生产服务器禁止现场构建或使用 `latest` 升级。
-- 升级前同时备份 PostgreSQL 与 `backend-data`，新后端完成迁移和版本验活后才允许启动 Web。
+- 升级前先在隔离副本完成恢复演练并保留既有安全恢复点；正式升级中的目标镜像双阶段只读审计通过后，执行器才为 PostgreSQL 与 `backend-data` 创建同一升级恢复点。新后端完成原子迁移和版本验活后才允许启动 Web。
 - 禁止把 `.env`、数据库、日志、备份、上传文件或真实密钥提交到仓库。
 - 页面路由名称不得复用于 `web/public` 静态目录；画布人脸模型统一位于 `/runtime-assets/canvas-models/`，避免静态目录抢占 `/canvas` 页面路由。
 

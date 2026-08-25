@@ -177,12 +177,13 @@ v1.0.53 必须包含一次性、事务化、幂等的 `retire-incompatible-pause
 - 契约版本低于当前版本；高于当前版本的运行一律拒绝。
 - 状态为 `waiting_input` 或 `waiting_approval`。
 - 最新 Run 与 checkpoint 的状态、stateVersion、stepNumber、maxSteps、lastEventSequence 完全一致。
-- pending tool 尚未开始；不存在 running/waiting_tool 事实。
+- 当前 pending tool 尚未开始；不存在 running/waiting_tool 事实。此前已终结为 `succeeded` 或 `failed` 的历史 tool call 即使保留 `startedAt` 也不属于活动执行，迁移必须保留其状态、输出和审计时间。
 - 不存在已提交的供应商请求。
 - 不存在活动媒体 Task、未决 BillingOrder 或已开始的扣费事实。
-- 关联 production Artifact 仅允许 `planned` 或 `awaiting_approval`，不存在 queued/running/ready 资产冲突。
+- 当前尚未执行的 production Artifact 仅允许 `planned` 或 `awaiting_approval`；`queued` / `running` 表示仍有活动执行风险并阻止退休。
+- 已经 `succeeded` / `failed` / `committed` 的历史 Artifact（包括创建计划时立即成功的脚本 Artifact）必须原样保留，不构成活动执行，也不得阻止当前等待项退休。
 
-任何条件不满足时，迁移不得部分处理该运行，并让启动错误列出 Run ID、状态、契约版本和阻塞事实类别。
+任何条件不满足时，迁移不得部分处理该运行。审计必须先遍历全部候选 Run 和全部可独立查询的阻塞类别，再一次性返回按 `createdAt/runId/category` 稳定排序的完整摘要；摘要只允许包含 Run ID、状态、契约版本、事实类别、状态值和数量，不得包含 prompt、tool input/output、供应商原始响应、用户正文或密钥。单条 Run 的 checkpoint 已损坏时，仍须继续审计该 Run 可独立确认的 ToolCall、Task、BillingOrder 与 Artifact 事实；只有依赖有效 checkpoint 的检查可以标记为不可判定。
 
 ### 6.3 退休写入
 
@@ -193,13 +194,26 @@ v1.0.53 必须包含一次性、事务化、幂等的 `retire-incompatible-pause
 - 将活动 timeline Item 标记为 interrupted。
 - 将等待审批的 tool call 标记为 failed、对应 timeline Item 标记为 interrupted、等待中的 Artifact 标记为 failed，并统一使用稳定原因 `runtime_contract_retired`。
 - 写入 `source=upgrade_migration` 与旧/新契约版本摘要。
-- 设置 completedAt，但不改写历史事件、计划、资源或 prompt。
+- 设置 completedAt，但不改写历史事件、已终结 tool call、计划、资源或 prompt。
 
 迁移批次必须全有或全无；一条候选记录无效时回滚整个批次。重复启动只验证已经完成的迁移，不重复追加事件。
 
-### 6.4 升级和回滚
+### 6.4 只读预检与迁移复用
 
-Ops Controller 仍按既有顺序先创建 PostgreSQL 与后端数据恢复点，再启动新后端。迁移失败或新后端未通过健康检查时，部署脚本恢复升级前数据库和资源卷，因此不会留下半迁移状态。
+退休逻辑必须拆成同一套“只读审计/计划”和“事务写入”两阶段，并覆盖全部契约不兼容的活跃状态（`queued`、`running`、`waiting_input`、`waiting_approval`、`waiting_tool`）：
+
+- 只读阶段读取全部候选 Run、最新 checkpoint、ToolCall、Task、BillingOrder 与 Artifact，构造确定性的退休计划或完整 blocker 集合，不写任何业务事实。
+- `queued` 与暂停态 Run 只有在完整事实审计通过后才计为可退休；`running`、`waiting_tool`、未来版本和未知契约必须在同一份报告中列为不可自动退休 blocker。
+- 写入阶段只接受已通过全活跃运行审计的退休计划，并在同一数据库事务内执行 CAS、event、checkpoint、timeline、tool call 与 Artifact 收口；不得重新实现第二套风险判断。
+- 目标后端镜像必须携带独立的只读审计命令。该命令直接连接现有数据库，只调用共享审计入口，不执行 `MigrateSchema`、AutoMigrate、状态转换、Task 取消、账务变更或供应商请求。
+- 审计命令成功时输出候选数、可退休数与零 blocker；存在 blocker 时输出完整、脱敏、稳定排序的 JSON 摘要并返回非零退出码；数据库查询失败与业务 blocker 使用不同错误类别。
+- 审计和正式迁移必须覆盖相同的 active status、future/unknown contract、event history、checkpoint、pending/started ToolCall、活动 Task、未决 BillingOrder、Plan/Artifact 状态以及终态 payload 可构造性规则。测试必须证明二者不会漂移。
+
+### 6.5 升级和回滚
+
+升级脚本拉取目标镜像后，必须先在当前服务仍在线时运行一次目标镜像的只读审计；失败时保持当前版本在线并直接返回完整 blocker，不进入停写或备份。首次审计通过后停止 Web/后端写入，再对静止数据库运行第二次同一审计以关闭并发窗口；第二次失败时立即恢复当前版本，不启动目标版本。两次审计均通过后，才创建 PostgreSQL 与后端数据恢复点并启动新后端。
+
+正式迁移仍是最终原子门禁。迁移失败或新后端未通过健康检查时，部署脚本恢复升级前数据库和资源卷，因此不会留下半迁移状态。只读预检不是迁移成功的伪状态，也不得代替恢复点与启动健康检查。
 
 迁移日志只记录数量、Run ID、旧状态、契约版本和结果，不记录用户 prompt。升级成功后，管理员可通过新页面处理未来的非终态运行，不再依赖一次性迁移。
 
@@ -264,10 +278,12 @@ Ops Controller 仍按既有顺序先创建 PostgreSQL 与后端数据恢复点�
 7. 未批准媒体生成被终止时不创建 Task/BillingOrder；等待 Artifact 收口且无费用。
 8. 已提交供应商的媒体 Task 只记录真实取消请求；迟到成功资产仍被保留。
 9. 预留、usage 不确定、已结算和退款中的 BillingOrder 分别遵循现有账务契约。
-10. v1.0.50 形状的 waiting_approval/waiting_input 无副作用 fixture 能被原子退休并允许新 schema 启动。
-11. 旧 running、waiting_tool、存在供应商请求、媒体 Task、BillingOrder 或非法 checkpoint 时升级明确失败且不部分退休。
-12. 迁移重复执行不增加 event/checkpoint；批次中一条非法记录会回滚全部退休。
-13. Web 正确展示加载、旧数据刷新、空数据、失败、409 冲突和取消请求待核对状态。
+10. v1.0.50 形状的 waiting_approval/waiting_input 无副作用 fixture 能被原子退休并允许新 schema 启动；历史 succeeded/failed tool call 与 succeeded/failed/committed Artifact 保持原事实且不阻断当前等待项退休。
+11. 两条 Run 同时含多种风险事实时，只读审计一次返回每条 Run 的全部可确认 blocker；checkpoint 损坏不应吞掉同 Run 可独立查询的 Task/BillingOrder/Artifact blocker，输出不含用户正文或供应商原始数据。
+12. 只读审计前后数据库事实计数与内容完全不变；部署脚本在在线预检失败时不停止服务，在静止预检失败时恢复当前版本且不启动目标版本。
+13. 正式迁移与只读审计共享同一规则；旧 running、waiting_tool、存在供应商请求、媒体 Task、BillingOrder 或非法 checkpoint 时升级明确失败且不部分退休。
+14. 迁移重复执行不增加 event/checkpoint；批次中一条非法记录会回滚全部退休。
+15. Web 正确展示加载、旧数据刷新、空数据、失败、409 冲突和取消请求待核对状态。
 
 最终门禁：focused Go/Web tests、`go test ./...`、受影响 repository/service 包 race、Go build、Web tests/typecheck/build、`git diff --check`，以及隔离 PostgreSQL 中从 v1.0.50 fixture 升级到目标版本的真实回归。完成后再执行一次本地 Docker 升级、健康检查和管理员页面浏览器流程。
 

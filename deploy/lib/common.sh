@@ -180,6 +180,22 @@ pull_release() {
     compose pull backend web
 }
 
+audit_target_agent_runtime_upgrade() {
+    local version="$1"
+    local phase="$2"
+    validate_release_version "$version"
+    case "$phase" in
+        online | quiesced) ;;
+        *) fail "未知 Agent Runtime 升级审计阶段：$phase" ;;
+    esac
+    export HMAIGC_VERSION="$version"
+    log "运行目标版本 Agent Runtime 全活跃运行只读升级审计：version=$version phase=$phase"
+    compose run --rm --no-deps \
+        -e "HMAIGC_AGENT_RUNTIME_AUDIT_PHASE=$phase" \
+        --entrypoint hmaigc-agent-runtime-retirement-audit \
+        backend
+}
+
 start_infrastructure() {
     log "启动 PostgreSQL 与 Redis"
     compose up -d postgres redis --wait

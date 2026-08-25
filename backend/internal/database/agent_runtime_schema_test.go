@@ -247,8 +247,9 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsIncompatibleActiveRunWithoutMut
 	}
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "run_id=run-old-active") ||
-		!strings.Contains(err.Error(), agentRuntimeRetirementInvalidCode) {
+	if err == nil || !strings.Contains(err.Error(), `"runId":"run-old-active"`) ||
+		!strings.Contains(err.Error(), agentRuntimeRetirementInvalidCode) ||
+		!strings.Contains(err.Error(), `"category":"checkpoint_missing"`) {
 		t.Fatalf("incompatible active run error = %v", err)
 	}
 	var stored model.AgentRun
@@ -272,10 +273,9 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsRuntimeAndPolicyVersionMismatch
 		name           string
 		runtimeVersion int
 		policyVersion  int
-		wantFact       string
 	}{
-		{name: "runtime", runtimeVersion: agentruntime.CurrentRuntimeVersion - 1, policyVersion: agentruntime.CurrentPolicyVersion, wantFact: "runtime_version="},
-		{name: "policy", runtimeVersion: agentruntime.CurrentRuntimeVersion, policyVersion: agentruntime.CurrentPolicyVersion - 1, wantFact: "policy_version="},
+		{name: "runtime", runtimeVersion: agentruntime.CurrentRuntimeVersion - 1, policyVersion: agentruntime.CurrentPolicyVersion},
+		{name: "policy", runtimeVersion: agentruntime.CurrentRuntimeVersion, policyVersion: agentruntime.CurrentPolicyVersion - 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db := openAgentRuntimeSchemaSQLite(t)
@@ -293,7 +293,8 @@ func TestEnsureAgentRuntimeIntegritySchemaRejectsRuntimeAndPolicyVersionMismatch
 				t.Fatal(err)
 			}
 			err := EnsureAgentRuntimeIntegritySchema(db)
-			if err == nil || !strings.Contains(err.Error(), "run_id="+run.ID) || !strings.Contains(err.Error(), testCase.wantFact) {
+			if err == nil || !strings.Contains(err.Error(), `"runId":"`+run.ID+`"`) ||
+				!strings.Contains(err.Error(), `"category":"`+agentRuntimeUpgradeBlockerNonRetirableStatus+`"`) {
 				t.Fatalf("version mismatch error = %v", err)
 			}
 		})
@@ -457,8 +458,9 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireQueuedRunFromNewerToolSch
 	}
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "run_id=run-newer-queued") ||
-		!strings.Contains(err.Error(), "tool_schema_version="+strconv.Itoa(agentruntime.CurrentToolSchemaVersion+1)) {
+	if err == nil || !strings.Contains(err.Error(), `"runId":"run-newer-queued"`) ||
+		!strings.Contains(err.Error(), `"toolSchemaVersion":`+strconv.Itoa(agentruntime.CurrentToolSchemaVersion+1)) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerFutureContract+`"`) {
 		t.Fatalf("newer tool schema rejection = %v", err)
 	}
 	var stored model.AgentRun
@@ -493,8 +495,9 @@ func TestEnsureAgentRuntimeIntegritySchemaReportsEveryRiskyIncompatibleRun(t *te
 	}
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "incompatible_active_runs=2") ||
-		!strings.Contains(err.Error(), "run-old-running") || !strings.Contains(err.Error(), "run-old-waiting-tool") {
+	if err == nil || !strings.Contains(err.Error(), `"candidateRuns":2`) ||
+		!strings.Contains(err.Error(), "run-old-running") || !strings.Contains(err.Error(), "run-old-waiting-tool") ||
+		strings.Count(err.Error(), `"category":"`+agentRuntimeUpgradeBlockerNonRetirableStatus+`"`) != 2 {
 		t.Fatalf("incompatible run summary = %v", err)
 	}
 }
@@ -551,7 +554,8 @@ func TestEnsureAgentRuntimeIntegritySchemaRollsBackEveryRetirementWhenOneRunIsIn
 	}
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "run_id=run-old-invalid") {
+	if err == nil || !strings.Contains(err.Error(), `"runId":"run-old-invalid"`) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerCheckpointInvalid+`"`) {
 		t.Fatalf("invalid legacy run error = %v", err)
 	}
 	for _, runID := range []string{"run-old-valid", "run-old-invalid"} {
@@ -612,7 +616,8 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireQueuedRunThatAlreadyAdvan
 	}
 
 	err = EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "run_id="+runID) {
+	if err == nil || !strings.Contains(err.Error(), `"runId":"`+runID+`"`) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerNotPristine+`"`) {
 		t.Fatalf("advanced queued run error = %v", err)
 	}
 	var stored model.AgentRun
@@ -653,7 +658,9 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunWithActiveModelB
 	}
 
 	err := EnsureAgentRuntimeIntegritySchema(db)
-	if err == nil || !strings.Contains(err.Error(), "run_id="+runID) || !strings.Contains(err.Error(), "external facts") {
+	if err == nil || !strings.Contains(err.Error(), `"runId":"`+runID+`"`) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerExternalModelTask+`"`) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerExternalBilling+`"`) {
 		t.Fatalf("active legacy model task error = %v", err)
 	}
 	var storedRun model.AgentRun
@@ -701,7 +708,9 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunAfterModelBillin
 		t.Fatal(err)
 	}
 
-	if err := EnsureAgentRuntimeIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "external facts") {
+	if err := EnsureAgentRuntimeIntegritySchema(db); err == nil ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerExternalModelTask+`"`) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerExternalBilling+`"`) {
 		t.Fatalf("terminal legacy model facts must block automatic retirement: %v", err)
 	}
 	var storedRun model.AgentRun
@@ -752,7 +761,9 @@ func TestEnsureAgentRuntimeIntegritySchemaDoesNotRetireLegacyRunAfterTokenBillin
 		t.Fatal(err)
 	}
 
-	if err := EnsureAgentRuntimeIntegritySchema(db); err == nil || !strings.Contains(err.Error(), "external facts") {
+	if err := EnsureAgentRuntimeIntegritySchema(db); err == nil ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerExternalModelTask+`"`) ||
+		!strings.Contains(err.Error(), `"category":"`+queuedRunBlockerExternalBilling+`"`) {
 		t.Fatalf("refunded legacy token billing must block automatic retirement: %v", err)
 	}
 	var storedRun model.AgentRun
