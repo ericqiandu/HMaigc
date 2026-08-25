@@ -451,7 +451,7 @@ const server = http.createServer(async (request, response) => {
             return;
         }
         if (request.method === "GET" && url.pathname === "/api/canvas-projects") {
-            sendJSON(response, 200, envelope({ projects: [] }));
+            sendJSON(response, 200, envelope({ projects: [], deletions: [] }));
             return;
         }
         if (request.method === "GET" && url.pathname === "/api/membership/storefront") {

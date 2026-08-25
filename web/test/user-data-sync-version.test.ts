@@ -15,7 +15,18 @@ let getRemoteAssetImpl = async () => {
     throw new Error("相同版本不应读取素材详情");
 };
 
+class MockUserDataRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "UserDataRequestError";
+    }
+}
+
 mock.module("@/services/api/user-data", () => ({
+    UserDataRequestError: MockUserDataRequestError,
     createRemoteCanvasProject: async () => undefined,
     deleteRemoteAsset: async () => undefined,
     deleteRemoteCanvasProject: async () => undefined,
@@ -42,11 +53,7 @@ afterEach(async () => {
 });
 
 test("同一时刻的不同 RFC3339 精度不触发素材重复写回", async () => {
-    const [{ syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
-        import("../src/services/user-data-sync"),
-        import("../src/stores/use-asset-store"),
-        import("../src/stores/canvas/use-canvas-store"),
-    ]);
+    const [{ syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([import("../src/services/user-data-sync"), import("../src/stores/use-asset-store"), import("../src/stores/canvas/use-canvas-store")]);
     useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
     useAssetStore.setState({
         assets: [
@@ -91,11 +98,7 @@ test("已退出的旧会话不会把迟到的远端素材写入当前用户状�
             data: { content: "旧用户内容" },
         },
     });
-    const [{ resetRemoteUserDataSync, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
-        import("../src/services/user-data-sync"),
-        import("../src/stores/use-asset-store"),
-        import("../src/stores/canvas/use-canvas-store"),
-    ]);
+    const [{ resetRemoteUserDataSync, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([import("../src/services/user-data-sync"), import("../src/stores/use-asset-store"), import("../src/stores/canvas/use-canvas-store")]);
     useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
     useAssetStore.setState({ assets: [] });
 
