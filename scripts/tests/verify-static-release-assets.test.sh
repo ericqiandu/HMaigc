@@ -9,7 +9,10 @@ mkdir -p "$TEST_ROOT/direct-oss-dist/assets"
 
 cat >"$TEST_ROOT/dist/index.html" <<'EOF'
 <html>
-  <head><link rel="stylesheet" href="https://static.hm.kunagent.com/hmaigc/web/releases/v1.0.14/assets/app.css"></head>
+  <head>
+    <link rel="modulepreload" href="https://static.hm.kunagent.com/hmaigc/web/releases/v1.0.14/assets/lazy.js">
+    <link rel="stylesheet" href="https://static.hm.kunagent.com/hmaigc/web/releases/v1.0.14/assets/app.css">
+  </head>
   <body><div id="root"></div><script type="module" src="https://static.hm.kunagent.com/hmaigc/web/releases/v1.0.14/assets/app.js"></script></body>
 </html>
 EOF
@@ -28,6 +31,20 @@ cat >"$TEST_ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+arguments=" $* "
+[[ "$arguments" == *" --connect-timeout 5 "* ]] || {
+    printf 'CDN entry verification has no bounded connect timeout: %s\n' "$*" >&2
+    exit 64
+}
+[[ "$arguments" == *" --max-time 15 "* ]] || {
+    printf 'CDN entry verification has no bounded transfer timeout: %s\n' "$*" >&2
+    exit 65
+}
+[[ "$arguments" != *" --retry-all-errors "* ]] || {
+    printf 'CDN entry verification retries permanent errors: %s\n' "$*" >&2
+    exit 66
+}
+
 headers_file=""
 url=""
 write_out=""
@@ -44,10 +61,10 @@ while (($# > 0)); do
         --output|-o|--header|-H)
             shift 2
             ;;
-        --fail|--silent|--show-error|--location|--retry-all-errors)
+        --fail|--silent|--show-error|--location)
             shift
             ;;
-        --retry|--retry-delay)
+        --retry|--retry-delay|--retry-max-time|--connect-timeout|--max-time)
             shift 2
             ;;
         *)

@@ -43,7 +43,7 @@ bash deploy/hmaigc-ops.sh verify
 
 必须把 `vX.Y.Z` 替换为已经完成发布提交、镜像工作流和摘要核验的实际标签。`CHANGELOG.md` 中仍位于“未发布”的功能没有可部署标签，禁止把当前 `VERSION` 或本地提交状态推测为已经发布。
 
-`/api/health` 会实时检查 PostgreSQL、Redis 和持久化支付公开 URL 配置，并返回镜像编译时注入的版本和提交。支付运行时校验在 worker 和 HTTP listener 之前执行；生产环境出现 HTTP 收银台/回调地址、非法公开 Origin 或损坏的持久化支付 JSON 时会直接阻止启动，运行中配置异常则使 readiness 返回 `503`。部署工具必须确认实际运行版本与目标标签一致。`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录。任一检查失败时禁止继续发布流量。
+`/api/health` 会实时检查 PostgreSQL、Redis 和持久化支付公开 URL 配置，并返回镜像编译时注入的版本和提交。支付运行时校验在 worker 和 HTTP listener 之前执行；生产环境出现 HTTP 收银台/回调地址、非法公开 Origin 或损坏的持久化支付 JSON 时会直接阻止启动，运行中配置异常则使 readiness 返回 `503`。部署工具必须确认实际运行版本与目标标签一致。`/canvas/` 检查用于确认 Nginx 没有把 SPA 页面路由误判成静态目录，并以有界超时验证真正启动 SPA 的入口脚本与样式；单个 CDN 请求超时会明确失败，不得长期占用运维任务。任一检查失败时禁止继续发布流量。
 
 外层 Nginx 必须按 `deploy/nginx/hmaigc.conf.example` 配置证书并将 80 端口永久重定向到 HTTPS 443。`/pay/` 和 `/api/payments/checkout/` 是 bearer capability 精确前缀：两层 Nginx 均关闭这两个位置的 access/error log，并强制 `private, no-store`、`no-cache` 和 `no-referrer`；inner Nginx 既有的 `/api/public/canvas-shares/` bearer 前缀继续保持 error-log 隔离。该局部可观测性由后端不含敏感值的结构化错误日志和 `/api/health` 替代。
 

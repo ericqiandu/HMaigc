@@ -7,6 +7,9 @@ readonly DEFAULT_ENV_FILE="$DEPLOY_ROOT/.env.production"
 readonly DEFAULT_COMPOSE_FILE="$DEPLOY_ROOT/docker-compose.production.yml"
 readonly BACKUP_HELPER_IMAGE="alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
 
+# shellcheck source=deploy/lib/web-assets.sh
+source "$DEPLOY_ROOT/deploy/lib/web-assets.sh"
+
 ENV_FILE="${HMAIGC_ENV_FILE:-$DEFAULT_ENV_FILE}"
 COMPOSE_FILE="${HMAIGC_COMPOSE_FILE:-$DEFAULT_COMPOSE_FILE}"
 
@@ -206,6 +209,22 @@ verify_backend_release() {
     }
 }
 
+verify_remote_web_entry_asset() {
+    local entry_asset="$1"
+    log "核对 Web 启动资源：$entry_asset"
+    curl \
+        --fail \
+        --silent \
+        --show-error \
+        --location \
+        --connect-timeout 5 \
+        --max-time 15 \
+        --retry 2 \
+        --retry-delay 1 \
+        --retry-max-time 35 \
+        "$entry_asset" >/dev/null
+}
+
 verify_web_release() {
     local expected="$1"
     local response actual entry_html entry_asset entry_asset_count
@@ -227,13 +246,13 @@ verify_web_release() {
         entry_asset_count=$((entry_asset_count + 1))
         case "$entry_asset" in
             https://* | http://*)
-                curl --fail --silent --show-error --location --retry 3 --retry-all-errors "$entry_asset" >/dev/null || {
+                verify_remote_web_entry_asset "$entry_asset" || {
                     log "Web 入口资源不可访问：$entry_asset"
                     return 1
                 }
                 ;;
             //*)
-                curl --fail --silent --show-error --location --retry 3 --retry-all-errors "https:${entry_asset}" >/dev/null || {
+                verify_remote_web_entry_asset "https:${entry_asset}" || {
                     log "Web 入口资源不可访问：https:${entry_asset}"
                     return 1
                 }
@@ -252,9 +271,7 @@ verify_web_release() {
                 ;;
         esac
     done < <(
-        printf '%s' "$entry_html" |
-            grep -Eo '(src|href)="[^"]+\.(js|css)(\?[^"]*)?"' |
-            sed -E 's/^[^=]+="([^"]+)"$/\1/'
+        printf '%s' "$entry_html" | extract_web_bootstrap_assets
     )
     (( entry_asset_count > 0 )) || {
         log "Web SPA 入口未声明任何 JS/CSS 资源"

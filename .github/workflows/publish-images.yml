@@ -212,9 +212,12 @@ jobs:
             --silent \
             --show-error \
             --location \
+            --connect-timeout 5 \
+            --max-time 15 \
             --retry 8 \
             --retry-all-errors \
             --retry-delay 5 \
+            --retry-max-time 120 \
             "$STATIC_RELEASE_URL" \
             --output /tmp/static-manifest.json
           grep -F "\"release\": \"${GITHUB_REF_NAME}\"" /tmp/static-manifest.json >/dev/null

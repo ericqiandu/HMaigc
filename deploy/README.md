@@ -83,7 +83,7 @@ bash deploy/hmaigc-ops.sh rollback
 - CDN CORS 精确允许正式业务主域 `https://hm.kunagent.com` 的 GET/HEAD/OPTIONS，禁止通配 Origin 和写方法；品牌跳转域不承载正式应用，不加入静态模块 CORS；
 - `index.html` 不上传 OSS，继续由版本化 Web 镜像提供且不得配置长期缓存；
 - 发布器逐文件 PUT 后执行 HEAD 大小和 ETag 校验，最后才写 `manifest.json`；清单经 CDN 无法读取时镜像发布被阻止；
-- 发布门禁逐个读取入口 JS/CSS，要求 HTTP/2 或 HTTP/3、正确 MIME、压缩、365 天不可变缓存与正式 Origin CORS；任一项缺失都阻止镜像发布；
+- 发布门禁读取真正启动 SPA 的入口脚本与样式，要求 HTTP/2 或 HTTP/3、正确 MIME、压缩、365 天不可变缓存与正式 Origin CORS；构建发布器仍逐文件校验全部产物。公网读取使用有界连接、传输和总重试时间，任一入口失败都会明确阻止镜像发布，不会因单个 CDN 请求无限挂起；
 - 旧版本目录不自动删除，因此镜像回滚可继续读取同版本静态资源。
 
 阿里云控制台一次性配置顺序：
