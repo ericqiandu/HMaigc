@@ -117,6 +117,7 @@ export default function ModelPricingPage() {
         const contract = pricingContractForModel(model, pricing);
         const inputImageUsage = readInputImageUsagePricing(pricing?.tiers || [], model.priceTiers);
         if (inputImageUsage.state === "incomplete") message.warning("参考图附加价只保存了一侧事实，请补全成本和积分后重新保存");
+        pricingForm.resetFields();
         setEditing(model);
         pricingForm.setFieldsValue({
             currency: pricing?.currency || setting.currency,
