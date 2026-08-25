@@ -1,11 +1,7 @@
 import { UserDataRequestError, type RemoteCanvasDeletion } from "@/services/api/user-data";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
-export function mergeCanvasProjects(
-    local: CanvasProject[],
-    remote: CanvasProject[],
-    deletions: RemoteCanvasDeletion[],
-) {
+export function mergeCanvasProjects(local: CanvasProject[], remote: CanvasProject[], deletions: RemoteCanvasDeletion[]) {
     const deletedIds = new Set(deletions.map((deletion) => deletion.id));
     const items = new Map<string, CanvasProject>();
     remote.forEach((item) => {

@@ -277,9 +277,7 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
         const currentProjects = canvasState.projects;
         const currentAssets = useAssetStore.getState().assets;
         const pendingDeletionIds = new Set(canvasState.pendingDeletionIds);
-        const dirtyProjects = currentProjects.filter((item) =>
-            !pendingDeletionIds.has(item.id) && remoteCanvasCreationRequired(remoteProjectVersions, item.id),
-        );
+        const dirtyProjects = currentProjects.filter((item) => !pendingDeletionIds.has(item.id) && remoteCanvasCreationRequired(remoteProjectVersions, item.id));
         const dirtyAssets = currentAssets.filter((item) => remoteAssetWriteRequired(remoteAssetVersions.get(item.id), item.updatedAt));
         const deletedAssetIds = missingIds(remoteAssetVersions, currentAssets);
         if (!dirtyProjects.length && !dirtyAssets.length && !deletedAssetIds.length) return;
