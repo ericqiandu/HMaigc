@@ -1,5 +1,6 @@
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
+import { canvasMediaPlaybackUrl } from "@/lib/canvas-media-playback";
 import type { PlatformSkill } from "@/services/api/skills";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -119,7 +120,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 kind,
                 label,
                 title: node.title || label,
-                previewUrl: node.metadata?.workflowKind === "character" ? node.metadata.characterCoverUrl : node.metadata?.content,
+                previewUrl: resourcePreviewUrl(node, kind),
                 storageKey: node.metadata?.storageKey,
                 text:
                     node.metadata?.workflowKind === "character"
@@ -134,6 +135,12 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
             },
         ];
     });
+}
+
+function resourcePreviewUrl(node: CanvasNodeData, kind: CanvasResourceKind) {
+    if (kind === "character") return node.metadata?.characterCoverUrl;
+    if (kind === "image" || kind === "video" || kind === "audio") return canvasMediaPlaybackUrl(node);
+    return node.metadata?.content;
 }
 
 function labelForKind(kind: CanvasResourceKind, index: number) {
