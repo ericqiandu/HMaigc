@@ -3,7 +3,7 @@ import { Box, ChevronDown, FileText, Images, Image as ImageIcon, PanelsTopLeft }
 import { Popover, Tooltip } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { resolveVideoGenerationMode, videoModeMetadataPatch, type VideoReferenceCounts } from "@/lib/canvas/canvas-video-generation-mode";
+import { resolveVideoGenerationMode, videoGenerationModeConflictReason, videoModeMetadataPatch, type VideoReferenceCounts } from "@/lib/canvas/canvas-video-generation-mode";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeMetadata, CanvasVideoGenerationMode } from "@/types/canvas";
 
@@ -34,6 +34,8 @@ export function CanvasVideoGenerationModePicker({ metadata, frameOptions, refere
 
     const disabledReason = (value: CanvasVideoGenerationMode) => {
         if (supportedModes && !supportedModes.includes(value)) return "当前模型不支持此生成模式";
+        const conflictReason = videoGenerationModeConflictReason({ ...metadata, videoGenerationMode: value }, referenceCounts);
+        if (conflictReason) return conflictReason;
         if (value === "image" && frameOptions.length < 1) return "请先连接一张图片";
         if (value === "first_last_frame" && frameOptions.length < 2) return "请先连接两张图片";
         if (value === "image_reference" && referenceCounts.image < 1) return "请先添加图片参考";

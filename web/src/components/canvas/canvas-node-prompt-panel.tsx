@@ -8,7 +8,7 @@ import { useCanvasTaskBillingQuote } from "@/hooks/use-canvas-task-billing-quote
 import type { TaskBillingQuote } from "@/services/api/task-center";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
-import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
+import { resolveVideoGenerationMode, videoGenerationModeConflictReason } from "@/lib/canvas/canvas-video-generation-mode";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -103,6 +103,7 @@ export function CanvasNodePromptPanel({
         }),
         [mentionReferences],
     );
+    const videoModeConflictReason = isVideoMode ? videoGenerationModeConflictReason(node.metadata, activeVideoReferenceCounts) : undefined;
     const activeVideoImageNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)), [mentionReferences]);
     const activeVideoReferenceNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && (item.kind === "image" || item.kind === "video" || item.kind === "audio")).map((item) => item.nodeId)), [mentionReferences]);
     const availableVideoReferences = useMemo(
@@ -129,7 +130,7 @@ export function CanvasNodePromptPanel({
     const referenceShelfHeight = referenceShelfRows * 42;
     const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 106 : 82) : isImageMode || isAudioMode ? 76 : 58;
     const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
-    const isSubmitDisabled = !isRunning && (!prompt.trim() || ((isImageMode || isVideoMode) && quoteState.status !== "ready"));
+    const isSubmitDisabled = !isRunning && (!prompt.trim() || Boolean(videoModeConflictReason) || ((isImageMode || isVideoMode) && quoteState.status !== "ready"));
     const canExpandPrompt = mode === "image" || mode === "video" || mode === "audio";
     const updatePromptContentHeight = useCallback((height: number) => {
         setPromptContentHeight((current) => (Math.abs(current - height) < 1 ? current : height));
@@ -198,7 +199,7 @@ export function CanvasNodePromptPanel({
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning || ((isImageMode || isVideoMode) && quoteState.status !== "ready")) return false;
+        if (!text || isRunning || videoModeConflictReason || ((isImageMode || isVideoMode) && quoteState.status !== "ready")) return false;
         onGenerate(node.id, mode, text, quoteState.status === "ready" ? quoteState.quote : undefined);
         return true;
     };

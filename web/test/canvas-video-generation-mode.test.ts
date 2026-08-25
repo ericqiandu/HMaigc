@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { selectVideoGenerationContext, shouldRestoreStoredVideoReferenceImages, videoModeMetadataPatch } from "../src/lib/canvas/canvas-video-generation-mode";
+import { selectVideoGenerationContext, shouldRestoreStoredVideoReferenceImages, videoGenerationModeConflictReason, videoModeMetadataPatch } from "../src/lib/canvas/canvas-video-generation-mode";
 
 const image = (id: string) => ({ id, name: `${id}.png`, type: "image/png", dataUrl: `https://cdn.example.com/${id}.png` });
 const video = { id: "video-1", name: "reference.mp4", type: "video/mp4", url: "https://cdn.example.com/reference.mp4" };
@@ -21,10 +21,23 @@ const context = {
 
 describe("video generation mode contract", () => {
     test("text mode strips every media reference", () => {
-        const selected = selectVideoGenerationContext({ videoGenerationMode: "text" }, context);
+        const selected = selectVideoGenerationContext(
+            { videoGenerationMode: "text" },
+            { ...context, referenceImages: [], imageCount: 0 },
+        );
         expect(selected.referenceImages).toHaveLength(0);
         expect(selected.referenceVideos).toHaveLength(0);
         expect(selected.referenceAudios).toHaveLength(0);
+    });
+
+    test("text mode rejects a connected image instead of silently discarding it", () => {
+        expect(() => selectVideoGenerationContext({ videoGenerationMode: "text" }, context)).toThrow("已连接图片，断开后可使用文生视频");
+    });
+
+    test("submission conflict exists only while text mode has a connected image", () => {
+        expect(videoGenerationModeConflictReason({ videoGenerationMode: "text" }, { image: 1, video: 0, audio: 0 })).toBe("已连接图片，断开后可使用文生视频");
+        expect(videoGenerationModeConflictReason({ videoGenerationMode: "text" }, { image: 0, video: 0, audio: 0 })).toBeUndefined();
+        expect(videoGenerationModeConflictReason({ videoGenerationMode: "image_reference" }, { image: 1, video: 0, audio: 0 })).toBeUndefined();
     });
 
     test("first and last frame mode preserves only the ordered frame images", () => {
