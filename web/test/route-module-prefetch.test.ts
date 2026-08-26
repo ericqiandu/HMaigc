@@ -1,12 +1,17 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 
 import {
     createRouteModulePrefetcher,
     routeModuleKeyForPathname,
-    scheduleRouteModulePrefetches,
     type RouteModuleKey,
     type RouteModuleLoaders,
 } from "../src/lib/route-module-prefetch";
+
+const workspaceNavigationSource = readFileSync(
+    new URL("../src/components/layout/workspace-floating-navigation.tsx", import.meta.url),
+    "utf8",
+);
 
 function controlledLoaders(load: (key: RouteModuleKey) => Promise<unknown>): RouteModuleLoaders {
     return {
@@ -64,41 +69,11 @@ describe("route module prefetch", () => {
         expect(attempts).toBe(2);
     });
 
-    test("warms common routes one at a time during idle periods and supports cleanup", async () => {
-        const callbacks = new Map<number, () => void>();
-        const cancelledHandles: number[] = [];
-        const prefetched: string[] = [];
-        let nextHandle = 1;
-        const cleanup = scheduleRouteModulePrefetches({
-            paths: ["/projects", "/canvas", "/projects"],
-            prefetch: async (pathname) => {
-                prefetched.push(pathname);
-            },
-            scheduler: {
-                schedule: (callback) => {
-                    const handle = nextHandle++;
-                    callbacks.set(handle, callback);
-                    return handle;
-                },
-                cancel: (handle) => {
-                    cancelledHandles.push(handle);
-                    callbacks.delete(handle);
-                },
-            },
-            onError: () => undefined,
-        });
-
-        expect([...callbacks.keys()]).toEqual([1]);
-        callbacks.get(1)?.();
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(prefetched).toEqual(["/projects"]);
-        expect([...callbacks.keys()]).toEqual([1, 2]);
-
-        cleanup();
-        expect(cancelledHandles).toEqual([2]);
-        callbacks.get(2)?.();
-        await Promise.resolve();
-        expect(prefetched).toEqual(["/projects"]);
+    test("prefetches navigation modules only from explicit pointer or keyboard intent", () => {
+        expect(workspaceNavigationSource).not.toContain("scheduleRouteModulePrefetches");
+        expect(workspaceNavigationSource).not.toContain("useEffect(");
+        expect(workspaceNavigationSource).toContain('onPointerEnter={() => requestRouteModulePrefetch("/")}');
+        expect(workspaceNavigationSource).toContain("onPointerDown={() => requestRouteModulePrefetch(`/${tool.slug}`)}");
+        expect(workspaceNavigationSource).toContain("onFocus={() => requestRouteModulePrefetch(`/${tool.slug}`)}");
     });
 });

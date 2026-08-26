@@ -1,25 +1,14 @@
-import { useEffect } from "react";
 import { Home } from "lucide-react";
 import { NavLink } from "react-router";
 
 import { navigationTools } from "@/constant/navigation-tools";
-import { prefetchRouteModule, scheduleRouteModulePrefetches, type RoutePrefetchScheduler } from "@/lib/route-module-prefetch";
+import { prefetchRouteModule } from "@/lib/route-module-prefetch";
 import { cn } from "@/lib/utils";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function WorkspaceFloatingNavigation() {
     const hydrated = useUserStore((state) => state.hydrated);
     const user = useUserStore((state) => state.user);
-
-    useEffect(() => {
-        if (!hydrated || !user) return;
-        return scheduleRouteModulePrefetches({
-            paths: navigationTools.map((tool) => `/${tool.slug}`),
-            prefetch: prefetchRouteModule,
-            scheduler: browserIdleScheduler,
-            onError: reportRouteModulePrefetchFailure,
-        });
-    }, [hydrated, user]);
 
     if (!hydrated || !user) return null;
 
@@ -67,20 +56,6 @@ export function WorkspaceFloatingNavigation() {
 function requestRouteModulePrefetch(pathname: string) {
     void prefetchRouteModule(pathname).catch((error: unknown) => reportRouteModulePrefetchFailure(pathname, error));
 }
-
-const browserIdleScheduler: RoutePrefetchScheduler = {
-    schedule: (callback) => {
-        if (window.requestIdleCallback) return window.requestIdleCallback(callback, { timeout: 1_500 });
-        return window.setTimeout(callback, 1_500);
-    },
-    cancel: (handle) => {
-        if (window.cancelIdleCallback) {
-            window.cancelIdleCallback(handle);
-            return;
-        }
-        window.clearTimeout(handle);
-    },
-};
 
 function reportRouteModulePrefetchFailure(pathname: string, error: unknown) {
     console.warn("路由模块预取失败", { pathname, error });
