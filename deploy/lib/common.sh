@@ -266,9 +266,9 @@ verify_backend_release() {
     }
 }
 
-verify_web_release() {
+verify_web_runtime() {
     local expected="$1"
-    local response actual entry_html entry_asset entry_asset_count
+    local response actual entry_html
     response="$(compose exec -T web wget -qO- http://127.0.0.1:3000/api/health)" || return 1
     actual="$(printf '%s' "$response" | health_version)"
     [[ "$actual" == "$expected" ]] || {
@@ -280,6 +280,11 @@ verify_web_release() {
         log "Web SPA 入口缺少根节点"
         return 1
     }
+}
+
+verify_web_asset_contract() {
+    local entry_html entry_asset entry_asset_count
+    entry_html="$(compose exec -T web wget -qO- http://127.0.0.1:3000/canvas/)" || return 1
 
     entry_asset_count=0
     while IFS= read -r entry_asset; do
@@ -312,6 +317,12 @@ verify_web_release() {
     }
 }
 
+verify_web_release() {
+    local expected="$1"
+    verify_web_runtime "$expected" || return 1
+    verify_web_asset_contract
+}
+
 verify_running_release() {
     local expected="$1"
     export HMAIGC_VERSION="$expected"
@@ -320,7 +331,15 @@ verify_running_release() {
     verify_web_release "$expected"
 }
 
-start_release() {
+verify_running_runtime() {
+    local expected="$1"
+    export HMAIGC_VERSION="$expected"
+    log "核对当前运行版本：$expected"
+    verify_backend_release "$expected" || return 1
+    verify_web_runtime "$expected"
+}
+
+start_runtime() {
     local version="$1"
     export HMAIGC_VERSION="$version"
     start_infrastructure
@@ -344,8 +363,19 @@ start_release() {
         compose logs --no-color --tail=200 web || true
         return 1
     fi
-    if ! verify_web_release "$version"; then
-        log "Web 版本验收失败，记录容器状态与最近日志"
+    if ! verify_web_runtime "$version"; then
+        log "Web 运行时验活失败，记录容器状态与最近日志"
+        compose ps web || true
+        compose logs --no-color --tail=200 web || true
+        return 1
+    fi
+}
+
+start_release() {
+    local version="$1"
+    start_runtime "$version" || return 1
+    if ! verify_web_asset_contract; then
+        log "Web 发布契约验收失败，记录容器状态与最近日志"
         compose ps web || true
         compose logs --no-color --tail=200 web || true
         return 1

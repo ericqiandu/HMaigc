@@ -50,7 +50,7 @@ case "$arguments" in
         fi
         ;;
     *" compose "*" exec -T web wget "*"canvas/"*)
-        if [[ "${FAKE_EXTERNAL_WEB_ASSETS:-false}" == "true" ]]; then
+        if [[ "${FAKE_EXTERNAL_WEB_ASSETS:-false}" == "true" || "${HMAIGC_VERSION:-}" == "${FAKE_EXTERNAL_WEB_ASSETS_VERSION:-never}" ]]; then
             printf '<html><head><link rel="modulepreload" href="https://static.example.invalid/releases/v1.0.10/assets/lazy.js"><link rel="stylesheet" href="https://static.example.invalid/releases/v1.0.10/assets/app.css"></head><body><div id="root"></div><script type="module" src="https://static.example.invalid/releases/v1.0.10/assets/app.js"></script></body></html>'
         else
             printf '<html><head><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"></div><script type="module" src="/assets/app.js"></script></body></html>'
@@ -233,7 +233,7 @@ assert_env HMAIGC_BACKEND_IMAGE "ghcr.io/example/hmaigc-backend@sha256:$(printf 
 assert_env HMAIGC_WEB_IMAGE "ghcr.io/example/hmaigc-web@sha256:$(printf '%064d' 109)"
 
 reset_docker_log
-run_deploy upgrade v1.0.11
+env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS_VERSION=v1.0.10 "$DEPLOY_COMMAND" upgrade v1.0.11
 assert_state CURRENT_VERSION v1.0.11
 assert_state PREVIOUS_VERSION v1.0.10
 assert_state CURRENT_BACKEND_IMAGE "ghcr.io/example/hmaigc-backend@sha256:$(printf '%064d' 11)"
@@ -284,10 +284,23 @@ grep -Fq ' stop web backend' "$TEST_ROOT/docker.log"
 assert_log_absent 'pg_dump'
 assert_log_before 'HMAIGC_AGENT_RUNTIME_AUDIT_PHASE=quiesced' ' up -d backend --wait'
 
-if env "${TEST_ENV[@]}" FAKE_FAIL_VERSION=v1.0.12 "$DEPLOY_COMMAND" upgrade v1.0.12; then
+set +e
+failed_upgrade_output="$(
+    env "${TEST_ENV[@]}" \
+        FAKE_FAIL_VERSION=v1.0.12 \
+        FAKE_EXTERNAL_WEB_ASSETS_VERSION=v1.0.10 \
+        "$DEPLOY_COMMAND" upgrade v1.0.12 2>&1
+)"
+failed_upgrade_exit=$?
+set -e
+(( failed_upgrade_exit != 0 )) || {
     printf 'upgrade to intentionally broken version unexpectedly succeeded\n' >&2
     exit 1
-fi
+}
+[[ "$failed_upgrade_output" == *"升级失败，已自动恢复到 v1.0.10"* ]] || {
+    printf 'failed upgrade did not restore the legacy current release\n%s\n' "$failed_upgrade_output" >&2
+    exit 1
+}
 assert_state CURRENT_VERSION v1.0.10
 assert_state PREVIOUS_VERSION v1.0.11
 assert_state PREVIOUS_BACKEND_IMAGE "ghcr.io/example/hmaigc-backend@sha256:$(printf '%064d' 11)"
@@ -295,6 +308,12 @@ assert_state PREVIOUS_WEB_IMAGE "ghcr.io/example/hmaigc-web@sha256:$(printf '%06
 assert_last_backend_start_images \
     "ghcr.io/example/hmaigc-backend@sha256:$(printf '%064d' 10)" \
     "ghcr.io/example/hmaigc-web@sha256:$(printf '%064d' 110)"
+
+if env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS_VERSION=v1.0.17 "$DEPLOY_COMMAND" upgrade v1.0.17; then
+    printf 'upgrade unexpectedly accepted external program assets in the target release\n' >&2
+    exit 1
+fi
+assert_state CURRENT_VERSION v1.0.10
 
 active_rollback_backup="$(awk -F= '$1 == "ROLLBACK_BACKUP" { sub(/^[^=]*=/, ""); print; exit }' "$TEST_ROOT/state/release.env")"
 if env "${TEST_ENV[@]}" HMAIGC_BACKUP_RETENTION=1 FAKE_FAIL_VERSION=v1.0.18 "$DEPLOY_COMMAND" upgrade v1.0.18; then

@@ -91,7 +91,7 @@ upgrade_release() {
     original_previous_backend_image="$(state_value PREVIOUS_BACKEND_IMAGE)"
     original_previous_web_image="$(state_value PREVIOUS_WEB_IMAGE)"
     [[ "$target" != "$current" ]] || fail "目标版本与当前版本相同：$target"
-    verify_running_release "$current" ||
+    verify_running_runtime "$current" ||
         fail "当前运行版本与发布状态不一致或健康检查失败，拒绝自动升级"
     pull_release "$target"
     target_backend_image="$RESOLVED_BACKEND_IMAGE"
@@ -105,7 +105,7 @@ upgrade_release() {
     if ! audit_target_agent_runtime_upgrade "$target" quiesced; then
         export HMAIGC_VERSION="$current"
         use_release_images "$current_backend_image" "$current_web_image"
-        if start_release "$current"; then
+        if start_runtime "$current"; then
             fail "目标版本 Agent Runtime 停写后只读预检失败；已恢复当前版本，未创建备份或启动目标版本"
         fi
         fail "目标版本 Agent Runtime 停写后只读预检失败，且当前版本恢复启动失败，请立即人工检查"
@@ -113,7 +113,7 @@ upgrade_release() {
     if ! backup_path="$(create_backup "$current" "$original_rollback_backup")"; then
         export HMAIGC_VERSION="$current"
         use_release_images "$current_backend_image" "$current_web_image"
-        start_release "$current" || fail "备份失败且当前版本恢复启动失败，请立即人工检查"
+        start_runtime "$current" || fail "备份失败且当前版本恢复启动失败，请立即人工检查"
         fail "升级前备份失败，已恢复当前版本，未执行升级"
     fi
 
@@ -131,7 +131,7 @@ upgrade_release() {
     export HMAIGC_VERSION="$current"
     use_release_images "$current_backend_image" "$current_web_image"
     restore_backup "$backup_path" "$current"
-    if start_release "$current"; then
+    if start_runtime "$current"; then
         write_release_state \
             "$current" "$original_previous" "$original_rollback_backup" \
             "$current_backend_image" "$current_web_image" \
@@ -165,7 +165,7 @@ rollback_release() {
     validate_release_version "$previous"
     require_immutable_image "$previous_backend_image"
     require_immutable_image "$previous_web_image"
-    verify_running_release "$current" ||
+    verify_running_runtime "$current" ||
         fail "当前运行版本与发布状态不一致或健康检查失败，拒绝自动回滚"
     export HMAIGC_VERSION="$previous"
     use_release_images "$previous_backend_image" "$previous_web_image"
@@ -177,12 +177,12 @@ rollback_release() {
     if ! safety_backup="$(create_backup "$current" "$rollback_backup")"; then
         export HMAIGC_VERSION="$current"
         use_release_images "$current_backend_image" "$current_web_image"
-        start_release "$current" || fail "回滚前安全备份失败且当前版本恢复启动失败"
+        start_runtime "$current" || fail "回滚前安全备份失败且当前版本恢复启动失败"
         fail "回滚前安全备份失败，已恢复当前版本"
     fi
 
     restore_backup "$rollback_backup" "$previous"
-    if start_release "$previous"; then
+    if start_runtime "$previous"; then
         write_release_state \
             "$previous" "$current" "$safety_backup" \
             "$previous_backend_image" "$previous_web_image" \
@@ -196,7 +196,7 @@ rollback_release() {
     export HMAIGC_VERSION="$current"
     use_release_images "$current_backend_image" "$current_web_image"
     restore_backup "$safety_backup" "$current"
-    if start_release "$current"; then
+    if start_runtime "$current"; then
         write_release_state \
             "$current" "$previous" "$rollback_backup" \
             "$current_backend_image" "$current_web_image" \
@@ -219,15 +219,15 @@ backup_release() {
     local current backup_path rollback_backup
     current="$(state_value CURRENT_VERSION)"
     rollback_backup="$(state_value ROLLBACK_BACKUP)"
-    verify_running_release "$current" ||
+    verify_running_runtime "$current" ||
         fail "当前运行版本与发布状态不一致或健康检查失败，拒绝自动备份"
     docker pull "$BACKUP_HELPER_IMAGE" >/dev/null
     stop_application
     if ! backup_path="$(create_backup "$current" "$rollback_backup")"; then
-        start_release "$current" || fail "备份失败且当前版本恢复启动失败"
+        start_runtime "$current" || fail "备份失败且当前版本恢复启动失败"
         fail "备份失败，已恢复当前版本"
     fi
-    start_release "$current" || fail "备份成功，但当前版本恢复启动失败：$backup_path"
+    start_runtime "$current" || fail "备份成功，但当前版本恢复启动失败：$backup_path"
     prune_backups_if_configured "$rollback_backup"
     log "备份完成：$backup_path"
 }
