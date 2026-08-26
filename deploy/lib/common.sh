@@ -266,30 +266,9 @@ verify_backend_release() {
     }
 }
 
-verify_remote_web_entry_asset() {
-    local entry_asset="$1"
-    log "核对 Web 启动资源：$entry_asset"
-    curl \
-        --fail \
-        --silent \
-        --show-error \
-        --location \
-        --connect-timeout 5 \
-        --max-time 15 \
-        --retry 2 \
-        --retry-delay 1 \
-        --retry-max-time 35 \
-        "$entry_asset" >/dev/null
-}
-
 verify_web_release() {
     local expected="$1"
-    local asset_scope="$2"
     local response actual entry_html entry_asset entry_asset_count
-    case "$asset_scope" in
-        local | public) ;;
-        *) fail "未知 Web 资源验收范围：$asset_scope" ;;
-    esac
     response="$(compose exec -T web wget -qO- http://127.0.0.1:3000/api/health)" || return 1
     actual="$(printf '%s' "$response" | health_version)"
     [[ "$actual" == "$expected" ]] || {
@@ -307,21 +286,9 @@ verify_web_release() {
         [[ -n "$entry_asset" ]] || continue
         entry_asset_count=$((entry_asset_count + 1))
         case "$entry_asset" in
-            https://* | http://*)
-                if [[ "$asset_scope" == "public" ]]; then
-                    verify_remote_web_entry_asset "$entry_asset" || {
-                        log "Web 入口资源不可访问：$entry_asset"
-                        return 1
-                    }
-                fi
-                ;;
-            //*)
-                if [[ "$asset_scope" == "public" ]]; then
-                    verify_remote_web_entry_asset "https:${entry_asset}" || {
-                        log "Web 入口资源不可访问：https:${entry_asset}"
-                        return 1
-                    }
-                fi
+            https://* | http://* | //*)
+                log "Web 入口包含禁止的外部程序资源：$entry_asset"
+                return 1
                 ;;
             /*)
                 compose exec -T web wget -qO- "http://127.0.0.1:3000${entry_asset}" >/dev/null || {
@@ -350,7 +317,7 @@ verify_running_release() {
     export HMAIGC_VERSION="$expected"
     log "核对当前运行版本：$expected"
     verify_backend_release "$expected" || return 1
-    verify_web_release "$expected" local
+    verify_web_release "$expected"
 }
 
 start_release() {
@@ -377,7 +344,7 @@ start_release() {
         compose logs --no-color --tail=200 web || true
         return 1
     fi
-    if ! verify_web_release "$version" local; then
+    if ! verify_web_release "$version"; then
         log "Web 版本验收失败，记录容器状态与最近日志"
         compose ps web || true
         compose logs --no-color --tail=200 web || true

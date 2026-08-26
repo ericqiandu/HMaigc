@@ -12,6 +12,13 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 仓库只保留上述两条运行路径，不再维护旧镜像部署、重复 Compose 或上游一键安装脚本。
 画布助手已硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent、Codex 插件连接或浏览器内模型循环。服务端负责冻结模型、决策循环、高层工具协调、通用交付验收和可恢复检查点；Web 只提交用户目标与真实选区事实、展示持久化事件并处理审批。
 
+### Web 交付与页面切换
+
+- Web 程序的 HTML、哈希 JS/CSS、字体和程序图片随不可变 Web 镜像同源交付，不经过 OSS/CDN 发布链；CSP 同样只允许同源程序资源。这样发布、回滚和浏览器取包使用同一个版本事实，不再受 CDN 回源抖动、预热遗漏或跨域连接影响。
+- 用户上传与模型生成的图片、视频和音频继续保存在后端配置的对象存储中。程序包与用户媒体是两条独立生命周期：程序发布不会迁移、覆盖或删除用户媒体。
+- 匿名首访只恢复鉴权外壳；画布、资产和模型配置工作区仅在登录、已登录刷新或退出边界按需加载。常用工作台路由在登录后按浏览器空闲时段逐个预取，并在鼠标按下、悬停或键盘聚焦时提升为意图预取，失败显式记录且不会阻断当前页面。
+- React Query 的共享新鲜度窗口负责页面复用；项目工作台不再在每次挂载时无条件重复请求。全局入口不预载首页专属大图，避免访问画布、后台或项目时争抢首屏带宽。
+
 ### 首页到 Agent 的创作链路
 
 - 首页创作框先上传参考图片并创建真实画布项目，把提示词、账号级资源 ID、系统动态模型选择、平台第一方公开 Skill 目录与显式执行模式写入项目内的 `pendingAgentLaunch`；提示词和临时 Blob URL 均不进入 URL 或持久事实。
@@ -90,42 +97,13 @@ MiniMax 同步语音当前支持 MP3、WAV、FLAC，语速范围为 0.5–2.0。
 
 ## 生产部署
 
-生产服务器必须安装 Docker Engine 与 Docker Compose。先从私有仓库取得代码，然后创建生产配置：
+生产服务器必须安装 Docker Engine 与 Docker Compose。正式生产只有“受保护 Git 标签 → GitHub Actions → 严格 SSH 主机校验 → 版本化 bundle → `deploy/hmaigc.sh`”这一条发布写路径；服务器不执行 `git pull`、不现场编译，也不运行独立运维控制器。
 
-```bash
-cp .env.production.example .env.production
-chmod 600 .env.production
-openssl rand -hex 32
-```
+业务配置保存在部署根目录的 `shared/production.env`，动态版本和回滚事实保存在独立部署状态目录。GitHub `production` Environment 必须配置审批、专用部署用户、SSH 私钥、预置 `known_hosts` 行、端口和绝对部署根目录。Backend/Web 镜像只接受 `repository@sha256:<digest>`，不使用 `latest` 或其他可变标签。
 
-把生成结果写入 `.env.production` 的 `POSTGRES_PASSWORD`，并至少配置：
+发布由正式标签自动触发；Actions 完成测试、同源 Web 发布包、镜像构建和摘要解析后，把经过 SHA-256 校验的 bundle 上传到服务器，并由脱离 SSH 会话的主机 release runner 执行。日常升级不在管理后台或服务器命令行创建第二条任务；手工命令只用于基于已验证 bundle 的受控应急。生产入口应由 Caddy、Nginx 或云负载均衡器提供 HTTPS，后端、PostgreSQL 和 Redis 不得直接暴露公网。
 
-- `HMAIGC_IMAGE_REGISTRY`：例如 `ghcr.io/ericqiandu`。
-- `HMAIGC_VERSION`：与 Git 标签一致的不可变版本，例如 `v1.0.14`。
-- `HMAIGC_OPS_VERSION`：独立运维控制器的不可变版本。
-- `HMAIGC_RELEASES_API_URL`：用于后台检查最新 GitHub Release。
-- `CANVAS_CORS_ORIGINS`：实际 HTTPS 站点 Origin。
-- `CANVAS_HTTP_HOST`：有反向代理时保持 `127.0.0.1`。
-- `CANVAS_HTTP_PORT`：反向代理连接的本机端口。
-
-首次安装：
-
-```bash
-bash deploy/hmaigc-ops.sh install v1.0.14
-```
-
-生产环境应由 Caddy、Nginx 或云负载均衡器提供 HTTPS。不要直接把后端、PostgreSQL 或 Redis 暴露到公网。
-
-后续升级与回滚：
-
-```bash
-bash deploy/hmaigc-ops.sh upgrade v1.0.14
-bash deploy/hmaigc-ops.sh rollback
-```
-
-业务后端不持有 Docker socket，也不会重启自己；后台运维升级中心和服务器命令行都把任务提交给独立控制器。完整契约见 [独立控制器与一键发布说明](deploy/README.md) 与 [生产运行手册](PRODUCTION.md)。
-
-升级执行器拉取目标后端镜像后，会在当前服务仍在线与停止 Web/后端写入后各运行一次目标镜像自带的只读 Agent Runtime 升级审计。审计一次返回全部不兼容活跃 Run 及其 checkpoint、event、ToolCall、Task、Billing 与 Plan/Artifact blocker；首次失败不停止当前服务、不创建新备份，第二次失败会恢复当前版本且不启动目标后端。两次均通过后才允许创建升级恢复点、执行正式原子迁移并启动目标版本；只读审计不等于迁移成功，也不替代隔离恢复演练。
+业务后端不持有 Docker socket，也不能重启自己。主机事务脚本在在线态与停写态分别运行目标后端镜像自带的只读 Agent Runtime 升级审计；审计失败不会带病迁移。审计、同一恢复点备份和目标版本验活全部通过后才原子提交新版本状态，失败则按升级前镜像摘要与已校验恢复点恢复。完整安装、首次硬切、发布与应急契约见 [源码驱动生产发布说明](deploy/README.md) 与 [生产运行手册](PRODUCTION.md)。
 
 ## 上线门禁
 

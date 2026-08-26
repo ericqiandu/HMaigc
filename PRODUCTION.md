@@ -31,7 +31,7 @@ bun run build
 - `docker-compose.production.yml` 不包含 ops socket、shared-secret 或 `ops-state` 挂载。
 - `production.env` 权限为 `0600`，生产环境和 CORS Origin 均显式配置。
 - Backend/Web 为精确摘要，PostgreSQL、Redis 和 Backend 没有直接暴露公网。
-- 静态资源清单、CDN URL 和缓存策略通过验证。
+- Web 镜像内同源启动资源、HTML 重新验证策略和哈希资源长期缓存通过验证。
 - 支付、模型渠道、邮件和 OSS 密钥只存在于受保护的服务器配置或 Secrets 中。
 - 当前没有跨越供应商、计费、资产写入或数据库迁移边界的运行任务。
 
@@ -41,7 +41,7 @@ bun run build
 
 1. 合并已验证的单一职责提交。
 2. 创建并推送与 `VERSION` 一致的受保护标签。
-3. 在 Actions 中观察质量门禁、静态资源、镜像发布和 `deploy-production`。
+3. 在 Actions 中观察质量门禁、同源 Web 发布包、镜像发布和 `deploy-production`。
 4. production 审批人核对提交、目标版本和回滚点后批准。
 5. 流水线传输并校验版本化 bundle，再由主机 release runner 脱离 SSH 执行 `deploy/hmaigc.sh upgrade <tag>`。
 6. 成功后 runner 原子更新 `shared/deploy-state/current-release` 并输出 `status`。
@@ -76,7 +76,7 @@ bash deploy/hmaigc.sh status
 bash deploy/hmaigc.sh verify
 ```
 
-`verify` 必须有界完成并明确报告版本、依赖、生产入口和当前版本入口静态资源。公网校验失败不会伪造本机服务失败，但会使环境验收失败，必须处理后重跑。
+`verify` 必须有界完成并明确报告版本、依赖、当前 Web 容器入口和当前版本同源启动资源。生产域名验收由发布流水线的外部回归负责，不能用本机成功替代公网成功事实。
 
 ## 5. 同一恢复点备份
 
@@ -136,5 +136,5 @@ bash deploy/hmaigc.sh rollback
 - SSH 禁止口令登录和 `StrictHostKeyChecking=no`。
 - 部署用户、目录、Docker 权限遵循最小权限。
 - 不在 Actions 输出私钥、生产环境文件、支付 bearer、供应商密钥或用户媒体 URL。
-- 支付回调、OAuth、CORS、HTTPS 与 CDN 配置变更必须在发布前单独验收。
+- 支付回调、OAuth、CORS、HTTPS 与用户媒体 CDN 配置变更必须在发布前单独验收。
 - 任何失败必须保留明确错误和证据，不得以默认值、静默跳过或前端成功状态掩盖。

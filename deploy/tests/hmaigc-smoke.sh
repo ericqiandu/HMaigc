@@ -109,27 +109,6 @@ chmod +x "$TEST_ROOT/bin/docker"
 cat >"$TEST_ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ "$*" == *"static.example.invalid"* ]]; then
-    [[ "$*" == *"--connect-timeout 5"* ]] || {
-        printf 'remote entry asset request has no bounded connect timeout: %s\n' "$*" >&2
-        exit 64
-    }
-    [[ "$*" == *"--max-time 15"* ]] || {
-        printf 'remote entry asset request has no bounded transfer timeout: %s\n' "$*" >&2
-        exit 65
-    }
-    [[ "$*" != *"--retry-all-errors"* ]] || {
-        printf 'remote entry asset request retries permanent errors: %s\n' "$*" >&2
-        exit 66
-    }
-    [[ "$*" != *"lazy.js"* ]] || {
-        printf 'deployment verification fetched a non-entry preload: %s\n' "$*" >&2
-        exit 67
-    }
-    [[ "${FAKE_CDN_ENTRY_FAILURE:-false}" != "true" ]] || exit 28
-    [[ "${HMAIGC_VERSION:-}" != "${FAKE_CDN_ENTRY_FAILURE_VERSION:-never}" ]] || exit 28
-    exit 0
-fi
 if [[ "$*" == *"/api/health"* ]]; then
     if [[ "${HMAIGC_VERSION:-}" == "${FAKE_FAIL_VERSION:-never}" ]]; then
         printf '{"code":0,"data":{"status":"ok","version":"broken","commit":"test"},"msg":"ok"}'
@@ -343,10 +322,8 @@ assert_state CURRENT_VERSION v1.0.10
 
 run_deploy verify
 
-env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS=true "$DEPLOY_COMMAND" verify
-
-if env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS=true FAKE_CDN_ENTRY_FAILURE=true "$DEPLOY_COMMAND" verify; then
-    printf 'verification unexpectedly accepted an unreachable external entry asset\n' >&2
+if env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS=true "$DEPLOY_COMMAND" verify; then
+    printf 'verification unexpectedly accepted an external program asset\n' >&2
     exit 1
 fi
 
@@ -354,18 +331,6 @@ if env "${TEST_ENV[@]}" FAKE_MISSING_WEB_ASSET=true "$DEPLOY_COMMAND" verify; th
     printf 'verification unexpectedly accepted a release with a missing web entry asset\n' >&2
     exit 1
 fi
-
-env "${TEST_ENV[@]}" \
-    FAKE_EXTERNAL_WEB_ASSETS=true \
-    FAKE_CDN_ENTRY_FAILURE_VERSION=v1.0.16 \
-    "$DEPLOY_COMMAND" upgrade v1.0.16
-assert_state CURRENT_VERSION v1.0.16
-
-env "${TEST_ENV[@]}" \
-    FAKE_EXTERNAL_WEB_ASSETS=true \
-    FAKE_CDN_ENTRY_FAILURE=true \
-    "$DEPLOY_COMMAND" upgrade v1.0.17
-assert_state CURRENT_VERSION v1.0.17
 
 run_deploy status
 printf 'hmaigc deploy smoke test passed\n'

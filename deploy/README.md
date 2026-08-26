@@ -1,6 +1,6 @@
 # HMaigc 源码驱动生产发布
 
-本目录服务单机 Linux + Docker Compose 生产环境。生产发布只有一条写路径：受保护的 Git 标签触发 GitHub Actions，流水线完成质量门禁、静态资源发布和 Backend/Web 不可变镜像构建后，通过严格校验主机密钥的 SSH 把版本化部署包传到生产服务器，并执行仓库内的 `deploy/hmaigc.sh`。
+本目录服务单机 Linux + Docker Compose 生产环境。生产发布只有一条写路径：受保护的 Git 标签触发 GitHub Actions，流水线完成质量门禁、同源 Web 发布包和 Backend/Web 不可变镜像构建后，通过严格校验主机密钥的 SSH 把版本化部署包传到生产服务器，并执行仓库内的 `deploy/hmaigc.sh`。
 
 服务器不执行 `git pull`、不现场编译源码，也不运行独立运维控制器。后台不再提供升级、回滚、停止或恢复入口；主机 release runner 会让升级脱离 SSH 会话继续运行，Actions 只跟随同一版本的持久日志和结果。
 
@@ -93,7 +93,7 @@ UPDATED_AT=2026-01-01T00:00:00Z
 
 1. 完成代码审查、测试和版本说明。
 2. 更新 `VERSION` 与 `CHANGELOG.md`，创建并推送受保护标签。
-3. GitHub Actions 自动完成质量门禁、静态资源、镜像和生产部署。
+3. GitHub Actions 自动完成质量门禁、同源 Web 发布包、镜像和生产部署。
 4. `production` Environment 要求审批时，由审批人核对目标标签、提交、变更和回滚点后批准。
 5. 流水线成功后核对 `/api/health`、`/canvas/`、核心业务请求与恢复点。
 
@@ -120,7 +120,7 @@ bash deploy/hmaigc.sh rollback
 
 ## 失败边界
 
-- 质量门禁、静态资源或镜像发布失败：不会建立生产 SSH 会话。
+- 质量门禁、Web 发布包或镜像构建失败：不会建立生产 SSH 会话。
 - SSH、host key、目录或 bundle 校验失败：不会执行部署脚本。
 - 当前版本验活失败：拒绝升级。
 - 在线审计失败：零停写、零备份。
@@ -128,6 +128,8 @@ bash deploy/hmaigc.sh rollback
 - 目标版本验活失败：自动恢复升级前数据和不可变镜像摘要。
 - 自动恢复失败：保留明确失败、日志、状态和备份；禁止伪报成功。
 
-## 静态资源与 CDN
+## Web 程序资源与用户媒体
 
-正式标签把 Web 构建产物发布到 `HMAIGC_STATIC_ASSET_BASE_URL/releases/vX.Y.Z`。每个对象由清单和 SHA-256 校验，CDN 对不可变版本目录使用一年缓存；回滚保留旧目录，不覆盖或清理历史对象。用户媒体 Bucket 必须与公开静态资源 Bucket 分离。
+正式标签只构建一次根路径 Web `dist`，经工作流校验后直接复制进不可变 Web 镜像。HTML、JS、CSS、字体和程序图片由同一 Web Origin 返回；哈希资源使用长期不可变缓存，HTML 使用重新验证缓存。生产 CSP 不允许 JS、CSS、字体或 Worker 从外部静态域名执行，发布不再依赖 OSS 上传、CDN 预热或 CDN 清单遍历。
+
+用户上传及模型生成的图片、视频、音频仍由后端对象存储契约管理。用户媒体可以继续使用独立 OSS Bucket/CDN 域名和签名访问，但不得与 Web 程序资源发布路径混用；本次切换不迁移、不复制也不删除任何用户媒体对象。

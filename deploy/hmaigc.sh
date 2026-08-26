@@ -243,7 +243,7 @@ verify_release() {
     local current
     current="$(state_value CURRENT_VERSION)"
     verify_backend_release "$current"
-    verify_web_release "$current" public
+    verify_web_release "$current"
     log "版本与健康检查通过：$current"
 }
 

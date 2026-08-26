@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-# 标签发布镜像只接收已上传 OSS/CDN 且验证通过的唯一前端构建产物。
-# 禁止在此镜像内再次构建，以确保 index.html 与远端内容哈希资源严格一致。
+# 标签发布镜像只接收 CI 已验证的唯一前端构建产物。
+# 禁止在镜像内再次构建，确保 index.html 与同源内容哈希资源严格一致。
 FROM nginx:1.27-alpine
 
 COPY release-web-dist /usr/share/nginx/html

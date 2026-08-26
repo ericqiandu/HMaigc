@@ -31,7 +31,7 @@ const BUDGETS = [
     },
 ];
 const CLOSURE_BUDGETS = [
-    { sources: ["index.html"], label: "应用入口依赖闭包", maxRawBytes: 1000 * KIB, maxGzipBytes: 340 * KIB },
+    { sources: ["index.html"], label: "应用入口依赖闭包", maxRawBytes: 760 * KIB, maxGzipBytes: 265 * KIB },
     { sources: ["index.html", "src/pages/home/index.tsx"], label: "首页依赖闭包", maxRawBytes: 1960 * KIB, maxGzipBytes: 660 * KIB },
     { sources: ["index.html", "src/pages/projects/index.tsx"], label: "项目页依赖闭包", maxRawBytes: 1280 * KIB, maxGzipBytes: 440 * KIB },
     { sources: ["index.html", "src/pages/skills/index.tsx"], label: "技能页依赖闭包", maxRawBytes: 1220 * KIB, maxGzipBytes: 420 * KIB },
