@@ -374,10 +374,12 @@ jobs:
             "$DEPLOY_HOST" "$DEPLOY_USER" "$DEPLOY_PORT" "$DEPLOY_ROOT" >>"$GITHUB_ENV"
 
       - name: Build immutable deployment bundle
+        id: production-bundle
         shell: bash
         run: |
           set -Eeuo pipefail
           BUNDLE_ROOT="$RUNNER_TEMP/hmaigc-${GITHUB_REF_NAME}"
+          BUNDLE_ARCHIVE="$RUNNER_TEMP/production-release-bundle.tgz"
           install -d -m 755 "$BUNDLE_ROOT/deploy"
           cp docker-compose.production.yml "$BUNDLE_ROOT/docker-compose.production.yml"
           cp deploy/hmaigc.sh "$BUNDLE_ROOT/deploy/hmaigc.sh"
@@ -389,12 +391,23 @@ jobs:
               | sort -z \
               | xargs -0 sha256sum >bundle.sha256
           )
-          tar -C "$BUNDLE_ROOT" -czf "$RUNNER_TEMP/hmaigc-deploy.tgz" .
+          tar -C "$BUNDLE_ROOT" -czf "$BUNDLE_ARCHIVE" .
+          test -s "$BUNDLE_ARCHIVE"
+          BUNDLE_SHA256="$(sha256sum "$BUNDLE_ARCHIVE" | awk '{print $1}')"
+          printf 'archive=%s\nsha256=%s\n' \
+            "$BUNDLE_ARCHIVE" "$BUNDLE_SHA256" >>"$GITHUB_OUTPUT"
 
       - name: Transfer and execute tagged deployment
         shell: bash
+        env:
+          BUNDLE_ARCHIVE: ${{ steps.production-bundle.outputs.archive }}
+          BUNDLE_SHA256: ${{ steps.production-bundle.outputs.sha256 }}
         run: |
           set -Eeuo pipefail
+          : "${BUNDLE_ARCHIVE:?deployment bundle output is missing}"
+          : "${BUNDLE_SHA256:?deployment bundle checksum output is missing}"
+          test -s "$BUNDLE_ARCHIVE"
+          printf '%s  %s\n' "$BUNDLE_SHA256" "$BUNDLE_ARCHIVE" | sha256sum -c -
           SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
           SSH_OPTIONS=(
             -i "$HOME/.ssh/hmaigc-production"
@@ -410,8 +423,8 @@ jobs:
 
           ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
             "install -d -m 755 '$DEPLOY_ROOT/releases' '$DEPLOY_ROOT/staging' '$DEPLOY_ROOT/shared' '$STAGING_DIR'"
-          tar -C "$RUNNER_TEMP" -xOf hmaigc-deploy.tgz ./bundle.sha256 >/dev/null
-          cat "$RUNNER_TEMP/hmaigc-deploy.tgz" \
+          tar -xOf "$BUNDLE_ARCHIVE" ./bundle.sha256 >/dev/null
+          cat "$BUNDLE_ARCHIVE" \
             | ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "tar -xzf - -C '$STAGING_DIR'"
           ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "bash -se" <<REMOTE_VERIFY
           set -Eeuo pipefail
