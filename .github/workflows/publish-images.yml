@@ -84,21 +84,7 @@ jobs:
         run: bun run verify:membership-checkout-browser
 
       - name: Validate production Compose
-        env:
-          HMAIGC_IMAGE_REGISTRY: ghcr.io/example
-          HMAIGC_VERSION: v0.0.0-ci
-          HMAIGC_OPS_VERSION: v0.0.0-ci
-          POSTGRES_PASSWORD: ci-only-password
-          CANVAS_DATABASE_DRIVER: sqlite
-          DATABASE_URL: ""
-          REDIS_URL: ""
-          CANVAS_DATA_PATH: ./.local/ci-data
-          CANVAS_ENVIRONMENT: production
-          CANVAS_CORS_ORIGINS: https://ci.example.invalid
-        run: |
-          docker compose -f docker-compose.yml config -q
-          docker compose -f docker-compose.production.yml config -q
-          docker compose -f deploy/docker-compose.ops.yml config -q
+        run: bash scripts/validate-production-compose.sh
 
       - name: Build operations controller image
         run: >-
