@@ -191,3 +191,25 @@ func ensurePrivateDirectory(path string) error {
 	}
 	return nil
 }
+
+// Journal 根目录同时承载业务后端只读访问的控制 socket 和共享密钥；
+// 这里只验证目录边界，不能覆盖控制器为共享组设置的权限。
+func ensureJournalRootDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("create operations state root: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect operations state root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("operations state root is not a real directory: %s", path)
+	}
+	if info.Mode().Perm() == 0o750 {
+		return nil
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return fmt.Errorf("set operations state root permissions: %w", err)
+	}
+	return nil
+}

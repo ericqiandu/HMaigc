@@ -59,6 +59,51 @@ func TestJournalPersistsImmutableRequestAndEvents(t *testing.T) {
 	}
 }
 
+func TestNewJournalPreservesSharedRootPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix directory permission bits")
+	}
+
+	root := filepath.Join(t.TempDir(), "ops-state")
+	if err := os.Mkdir(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewJournal(root); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o750 {
+		t.Fatalf("shared root mode=%o, want 750", info.Mode().Perm())
+	}
+}
+
+func TestNewJournalHardensUnsafeRootPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix directory permission bits")
+	}
+
+	root := filepath.Join(t.TempDir(), "ops-state")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewJournal(root); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("unsafe root mode=%o, want 700", info.Mode().Perm())
+	}
+}
+
 func TestJournalRejectsRequestWithoutExpectedVersion(t *testing.T) {
 	t.Parallel()
 

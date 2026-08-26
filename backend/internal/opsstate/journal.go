@@ -26,7 +26,7 @@ func NewJournal(root string) (*Journal, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ensurePrivateDirectory(layout.root); err != nil {
+	if err := ensureJournalRootDirectory(layout.root); err != nil {
 		return nil, err
 	}
 	return &Journal{layout: layout}, nil
