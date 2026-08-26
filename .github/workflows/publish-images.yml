@@ -86,30 +86,13 @@ jobs:
       - name: Validate production Compose
         run: bash scripts/validate-production-compose.sh
 
-      - name: Build operations controller image
-        run: >-
-          docker build
-          --file backend/Dockerfile.ops
-          --build-arg APP_VERSION=v0.0.0-ci
-          --build-arg APP_COMMIT=${{ github.sha }}
-          --tag hmaigc-ops-controller:ci
-          .
-
-      - name: Verify durable operations binaries
-        run: |
-          docker run --rm --entrypoint hmaigc-ops-runner hmaigc-ops-controller:ci --help
-          docker run --rm --entrypoint hmaigc-ops-bootstrap hmaigc-ops-controller:ci --help
-
-      - name: Test durable stage and bootstrap contracts
-        run: |
-          bash deploy/tests/hmaigc-stage-smoke.sh
-          bash deploy/tests/hmaigc-bootstrap-smoke.sh
-
-      - name: Test durable operation fault matrix
-        run: bash deploy/tests/ops-runner-fault-injection.sh
-
       - name: Test install upgrade and rollback orchestration
-        run: bash deploy/tests/hmaigc-smoke.sh
+        run: |
+          bash deploy/tests/hmaigc-smoke.sh
+          bash deploy/tests/hmaigc-release-runner-smoke.sh
+
+      - name: Verify source deployment workflow contract
+        run: bash scripts/tests/validate-source-deploy-workflow.test.sh
 
       - name: Verify release tag matches application version
         if: startsWith(github.ref, 'refs/tags/')
@@ -253,8 +236,6 @@ jobs:
             dockerfile: Dockerfile
           - image: hmaigc-backend
             dockerfile: backend/Dockerfile
-          - image: hmaigc-ops-controller
-            dockerfile: backend/Dockerfile.ops
 
     steps:
       - name: Checkout repository
@@ -292,7 +273,7 @@ jobs:
           path: release-web-dist
 
       - name: Build and push Go service image
-        if: matrix.image == 'hmaigc-backend' || matrix.image == 'hmaigc-ops-controller'
+        if: matrix.image == 'hmaigc-backend'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -333,9 +314,125 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  deploy-production:
+    name: Deploy tagged source to production
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: hmaigc-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Validate production deployment configuration
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.HMAIGC_PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.HMAIGC_PRODUCTION_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.HMAIGC_PRODUCTION_SSH_KEY }}
+          DEPLOY_SSH_HOST_KEY: ${{ secrets.HMAIGC_PRODUCTION_SSH_HOST_KEY }}
+          DEPLOY_PORT: ${{ vars.HMAIGC_PRODUCTION_PORT }}
+          DEPLOY_ROOT: ${{ vars.HMAIGC_PRODUCTION_DEPLOY_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "production tag must be a shell-safe semantic version" >&2
+            exit 1
+          }
+          : "${DEPLOY_HOST:?missing HMAIGC_PRODUCTION_HOST secret}"
+          : "${DEPLOY_USER:?missing HMAIGC_PRODUCTION_USER secret}"
+          : "${DEPLOY_SSH_KEY:?missing HMAIGC_PRODUCTION_SSH_KEY secret}"
+          : "${DEPLOY_SSH_HOST_KEY:?missing HMAIGC_PRODUCTION_SSH_HOST_KEY secret}"
+          : "${DEPLOY_ROOT:?missing HMAIGC_PRODUCTION_DEPLOY_ROOT variable}"
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          [[ "$DEPLOY_HOST" =~ ^[0-9A-Za-z.:-]+$ ]] || { echo "invalid production host" >&2; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][0-9A-Za-z_-]*$ ]] || { echo "invalid production user" >&2; exit 1; }
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && ((DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535)) || {
+            echo "invalid production SSH port" >&2
+            exit 1
+          }
+          [[ "$DEPLOY_ROOT" =~ ^/[0-9A-Za-z._/-]+$ ]] \
+            && [[ "$DEPLOY_ROOT" != "/" ]] \
+            && [[ "$DEPLOY_ROOT" != *".."* ]] \
+            && [[ "$DEPLOY_ROOT" != *"//"* ]] || {
+            echo "production deploy root must be a dedicated absolute path" >&2
+            exit 1
+          }
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$HOME/.ssh/hmaigc-production"
+          printf '%s\n' "$DEPLOY_SSH_HOST_KEY" >"$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/hmaigc-production" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/hmaigc-production" >/dev/null
+          ssh-keygen -l -f "$HOME/.ssh/known_hosts" >/dev/null
+          printf 'DEPLOY_HOST=%s\nDEPLOY_USER=%s\nDEPLOY_PORT=%s\nDEPLOY_ROOT=%s\n' \
+            "$DEPLOY_HOST" "$DEPLOY_USER" "$DEPLOY_PORT" "$DEPLOY_ROOT" >>"$GITHUB_ENV"
+
+      - name: Build immutable deployment bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          BUNDLE_ROOT="$RUNNER_TEMP/hmaigc-${GITHUB_REF_NAME}"
+          install -d -m 755 "$BUNDLE_ROOT/deploy"
+          cp docker-compose.production.yml "$BUNDLE_ROOT/docker-compose.production.yml"
+          cp deploy/hmaigc.sh "$BUNDLE_ROOT/deploy/hmaigc.sh"
+          cp deploy/hmaigc-release-runner.sh "$BUNDLE_ROOT/deploy/hmaigc-release-runner.sh"
+          cp -R deploy/lib "$BUNDLE_ROOT/deploy/lib"
+          (
+            cd "$BUNDLE_ROOT"
+            find docker-compose.production.yml deploy -type f -print0 \
+              | sort -z \
+              | xargs -0 sha256sum >bundle.sha256
+          )
+          tar -C "$BUNDLE_ROOT" -czf "$RUNNER_TEMP/hmaigc-deploy.tgz" .
+
+      - name: Transfer and execute tagged deployment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          SSH_OPTIONS=(
+            -i "$HOME/.ssh/hmaigc-production"
+            -p "$DEPLOY_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ConnectTimeout=15
+          )
+          RELEASE_DIR="$DEPLOY_ROOT/releases/$GITHUB_REF_NAME"
+          STAGING_DIR="$DEPLOY_ROOT/staging/$GITHUB_REF_NAME-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+          ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+            "install -d -m 755 '$DEPLOY_ROOT/releases' '$DEPLOY_ROOT/staging' '$DEPLOY_ROOT/shared' '$STAGING_DIR'"
+          tar -C "$RUNNER_TEMP" -xOf hmaigc-deploy.tgz ./bundle.sha256 >/dev/null
+          cat "$RUNNER_TEMP/hmaigc-deploy.tgz" \
+            | ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "tar -xzf - -C '$STAGING_DIR'"
+          ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "bash -se" <<REMOTE_VERIFY
+          set -Eeuo pipefail
+          cd '$STAGING_DIR'
+          sha256sum -c bundle.sha256
+          if [[ -e '$RELEASE_DIR' ]]; then
+            cmp -s bundle.sha256 '$RELEASE_DIR/bundle.sha256' || {
+              echo 'existing release bundle does not match this tag' >&2
+              exit 1
+            }
+            rm -rf -- '$STAGING_DIR'
+          else
+            mv -- '$STAGING_DIR' '$RELEASE_DIR'
+          fi
+          REMOTE_VERIFY
+          ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+            "bash '$RELEASE_DIR/deploy/hmaigc-release-runner.sh' '$GITHUB_REF_NAME' '$DEPLOY_ROOT'"
+
   release:
     name: Publish GitHub release notes
-    needs: publish
+    needs: deploy-production
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

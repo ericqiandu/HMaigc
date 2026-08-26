@@ -22,19 +22,19 @@ verify_backup() {
 }
 
 prune_backups_if_configured() {
-	local protected_path="${1:-}"
+    local protected_path="${1:-}"
     local retention="${HMAIGC_BACKUP_RETENTION:-$(env_value HMAIGC_BACKUP_RETENTION)}"
     retention="${retention:-0}"
     [[ "$retention" =~ ^[0-9]+$ ]] || fail "HMAIGC_BACKUP_RETENTION 必须是非负整数"
     ((retention > 0)) || return 0
 
     local index=0 backup_path
-	while IFS= read -r backup_path; do
-		index=$((index + 1))
-		if [[ -n "$protected_path" && "$backup_path" == "$protected_path" ]]; then
-			continue
-		fi
-		if ((index > retention)); then
+    while IFS= read -r backup_path; do
+        index=$((index + 1))
+        if [[ -n "$protected_path" && "$backup_path" == "$protected_path" ]]; then
+            continue
+        fi
+        if ((index > retention)); then
             log "按已配置保留策略删除旧备份：$backup_path"
             rm -rf -- "$backup_path"
         fi
@@ -42,14 +42,14 @@ prune_backups_if_configured() {
 }
 
 create_backup() {
-	local version="$1"
-	local protected_path="${2:-}"
+    local version="$1"
+    local protected_path="${2:-}"
     local stamp backup_path temporary temporary_relative
     validate_release_version "$version"
     stamp="$(date -u +'%Y%m%d-%H%M%S')-$$"
     backup_path="$BACKUP_DIR/${stamp}--${version}"
     temporary="${backup_path}.tmp"
-    temporary_relative="$(ops_volume_relative_path "$temporary")"
+    temporary_relative="$(backup_directory_relative_path "$temporary")"
     mkdir -p "$temporary"
     chmod 700 "$temporary"
 
@@ -62,10 +62,10 @@ create_backup() {
     log "创建后端资源卷恢复点"
     docker run --rm \
         --mount "type=volume,src=$HMAIGC_BACKEND_DATA_VOLUME,dst=/source,readonly" \
-        --mount "type=volume,src=$HMAIGC_OPS_STATE_VOLUME,dst=/ops" \
+        --mount "type=bind,src=$BACKUP_DIR,dst=/backups" \
         --env "BACKUP_RELATIVE=$temporary_relative" \
         "$BACKUP_HELPER_IMAGE" \
-        sh -ceu 'tar -czf "/ops/$BACKUP_RELATIVE/backend-data.tgz" -C /source .'
+        sh -ceu 'tar -czf "/backups/$BACKUP_RELATIVE/backend-data.tgz" -C /source .'
 
     {
         printf 'VERSION=%s\n' "$version"
@@ -79,7 +79,7 @@ create_backup() {
     )
     verify_backup "$temporary"
     mv "$temporary" "$backup_path"
-	prune_backups_if_configured "$protected_path"
+    prune_backups_if_configured "$protected_path"
     printf '%s\n' "$backup_path"
 }
 
@@ -93,7 +93,7 @@ restore_backup() {
         fail "备份版本不匹配：期望 $expected_version，备份属于 ${backup_version:-未知版本}"
     backup_postgres_volume="$(backup_manifest_value "$backup_path" POSTGRES_VOLUME)"
     backup_backend_volume="$(backup_manifest_value "$backup_path" BACKEND_VOLUME)"
-    backup_relative="$(ops_volume_relative_path "$backup_path")"
+    backup_relative="$(backup_directory_relative_path "$backup_path")"
     [[ "$backup_postgres_volume" == "$HMAIGC_POSTGRES_DATA_VOLUME" ]] ||
         fail "PostgreSQL 卷不匹配：当前 $HMAIGC_POSTGRES_DATA_VOLUME，备份属于 $backup_postgres_volume"
     [[ "$backup_backend_volume" == "$HMAIGC_BACKEND_DATA_VOLUME" ]] ||
@@ -114,11 +114,11 @@ restore_backup() {
     log "恢复后端资源卷：$backup_path"
     docker run --rm \
         --mount "type=volume,src=$HMAIGC_BACKEND_DATA_VOLUME,dst=/target" \
-        --mount "type=volume,src=$HMAIGC_OPS_STATE_VOLUME,dst=/ops,readonly" \
+        --mount "type=bind,src=$BACKUP_DIR,dst=/backups,readonly" \
         --env "BACKUP_RELATIVE=$backup_relative" \
         "$BACKUP_HELPER_IMAGE" \
         sh -ceu '
             find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-            tar -xzf "/ops/$BACKUP_RELATIVE/backend-data.tgz" -C /target
+            tar -xzf "/backups/$BACKUP_RELATIVE/backend-data.tgz" -C /target
         '
 }

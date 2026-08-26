@@ -57,7 +57,7 @@ func TestAdminOperationControlRequiresAdmin(t *testing.T) {
 	}
 }
 
-func TestAdminOperationControlInjectsAuthenticatedActor(t *testing.T) {
+func TestAdminOperationWritesAreOwnedBySourceDeploymentPipeline(t *testing.T) {
 	t.Parallel()
 	client := &operationsClientStub{}
 	svc := &Service{}
@@ -67,19 +67,54 @@ func TestAdminOperationControlInjectsAuthenticatedActor(t *testing.T) {
 		Role: model.UserRoleAdmin, Status: model.UserStatusActive,
 	}
 
-	_, err := svc.CancelAdminOperation(context.Background(), admin, "op-1", AdminControlOperationRequest{
-		IdempotencyKey: "cancel-service-0002", Confirmation: "STOP op-1",
-	})
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "start",
+			call: func() error {
+				_, err := svc.StartAdminOperation(context.Background(), admin, AdminStartOperationRequest{Action: opsprotocol.ActionUpgrade})
+				return err
+			},
+		},
+		{
+			name: "cancel",
+			call: func() error {
+				_, err := svc.CancelAdminOperation(context.Background(), admin, "op-1", AdminControlOperationRequest{})
+				return err
+			},
+		},
+		{
+			name: "recover",
+			call: func() error {
+				_, err := svc.RecoverAdminOperation(context.Background(), admin, "op-1", AdminControlOperationRequest{})
+				return err
+			},
+		},
 	}
-	if client.cancel.ActorUserID != admin.ID || client.cancel.ActorDisplayName != admin.DisplayName {
-		t.Fatalf("authenticated actor was not propagated: %+v", client.cancel)
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call()
+			var authError *AuthError
+			if !errors.As(err, &authError) || authError.Status != 403 {
+				t.Fatalf("expected source deployment rejection, got %v", err)
+			}
+			if authError.Message != "生产发布由 GitHub Actions 源码流水线管理，后台不再执行运维写操作" {
+				t.Fatalf("unexpected rejection message: %s", authError.Message)
+			}
+		})
+	}
+
+	if client.writeCalls != 0 {
+		t.Fatalf("operations client received %d write calls", client.writeCalls)
 	}
 }
 
 type operationsClientStub struct {
-	cancel opsprotocol.CancelOperationRequest
+	writeCalls int
 }
 
 func (s *operationsClientStub) Overview(context.Context) (*opsprotocol.Overview, error) {
@@ -103,14 +138,16 @@ func (s *operationsClientStub) Backups(context.Context, int) ([]opsprotocol.Back
 }
 
 func (s *operationsClientStub) StartOperation(context.Context, opsprotocol.StartOperationRequest) (*opsprotocol.Operation, error) {
+	s.writeCalls++
 	return &opsprotocol.Operation{}, nil
 }
 
-func (s *operationsClientStub) CancelOperation(_ context.Context, _ string, input opsprotocol.CancelOperationRequest) (*opsprotocol.Operation, error) {
-	s.cancel = input
+func (s *operationsClientStub) CancelOperation(context.Context, string, opsprotocol.CancelOperationRequest) (*opsprotocol.Operation, error) {
+	s.writeCalls++
 	return &opsprotocol.Operation{}, nil
 }
 
 func (s *operationsClientStub) RecoverOperation(context.Context, string, opsprotocol.RecoverOperationRequest) (*opsprotocol.Operation, error) {
+	s.writeCalls++
 	return &opsprotocol.Operation{}, nil
 }

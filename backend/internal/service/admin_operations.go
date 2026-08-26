@@ -21,6 +21,8 @@ type AdminControlOperationRequest struct {
 	Confirmation   string `json:"confirmation"`
 }
 
+const sourceDeploymentWriteMessage = "生产发布由 GitHub Actions 源码流水线管理，后台不再执行运维写操作"
+
 func (s *Service) AdminOperationsOverview(ctx context.Context, actor *model.User) (*opsprotocol.Overview, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
@@ -100,67 +102,21 @@ func (s *Service) StartAdminOperation(ctx context.Context, actor *model.User, in
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	if input.Action == opsprotocol.ActionInstall {
-		return nil, Forbidden("首次安装只能通过服务器命令行引导，后台不能执行安装")
-	}
-	client, err := s.requireOperationsClient()
-	if err != nil {
-		return nil, err
-	}
-	displayName := adminOperationDisplayName(actor)
-	result, err := client.StartOperation(ctx, opsprotocol.StartOperationRequest{
-		Action: input.Action, TargetVersion: strings.TrimSpace(input.TargetVersion),
-		ActorUserID: actor.ID, ActorDisplayName: displayName,
-		IdempotencyKey: strings.TrimSpace(input.IdempotencyKey), Confirmation: strings.TrimSpace(input.Confirmation),
-	})
-	if err != nil {
-		return nil, mapOperationsClientError(err)
-	}
-	return result, nil
+	return nil, Forbidden(sourceDeploymentWriteMessage)
 }
 
 func (s *Service) CancelAdminOperation(ctx context.Context, actor *model.User, id string, input AdminControlOperationRequest) (*opsprotocol.Operation, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	client, err := s.requireOperationsClient()
-	if err != nil {
-		return nil, err
-	}
-	result, err := client.CancelOperation(ctx, strings.TrimSpace(id), opsprotocol.CancelOperationRequest{
-		ActorUserID: actor.ID, ActorDisplayName: adminOperationDisplayName(actor),
-		IdempotencyKey: strings.TrimSpace(input.IdempotencyKey), Confirmation: strings.TrimSpace(input.Confirmation),
-	})
-	if err != nil {
-		return nil, mapOperationsClientError(err)
-	}
-	return result, nil
+	return nil, Forbidden(sourceDeploymentWriteMessage)
 }
 
 func (s *Service) RecoverAdminOperation(ctx context.Context, actor *model.User, id string, input AdminControlOperationRequest) (*opsprotocol.Operation, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	client, err := s.requireOperationsClient()
-	if err != nil {
-		return nil, err
-	}
-	result, err := client.RecoverOperation(ctx, strings.TrimSpace(id), opsprotocol.RecoverOperationRequest{
-		ActorUserID: actor.ID, ActorDisplayName: adminOperationDisplayName(actor),
-		IdempotencyKey: strings.TrimSpace(input.IdempotencyKey), Confirmation: strings.TrimSpace(input.Confirmation),
-	})
-	if err != nil {
-		return nil, mapOperationsClientError(err)
-	}
-	return result, nil
-}
-
-func adminOperationDisplayName(actor *model.User) string {
-	displayName := strings.TrimSpace(actor.DisplayName)
-	if displayName == "" {
-		displayName = strings.TrimSpace(actor.Username)
-	}
-	return displayName
+	return nil, Forbidden(sourceDeploymentWriteMessage)
 }
 
 func (s *Service) requireOperationsClient() (opsprotocol.Client, error) {

@@ -32,7 +32,6 @@ const MembershipAdminPage = lazy(() => import("@/pages/admin/membership/membersh
 const CreditStoreAdminPage = lazy(() => import("@/pages/admin/credit-store/credit-store-page"));
 const ModelPricingPage = lazy(() => import("@/pages/admin/model-pricing/model-pricing-page"));
 const SuperResolutionPricingPage = lazy(() => import("@/pages/admin/super-resolution-pricing/super-resolution-pricing-page"));
-const OperationsPage = lazy(() => import("@/pages/admin/operations/operations-page"));
 const AgentRunsPage = lazy(() => import("@/pages/admin/agent-runs/agent-runs-page"));
 const RedemptionCodesPage = lazy(() => import("@/pages/admin/redemption-codes/redemption-codes-page"));
 const ReferralProgramPage = lazy(() => import("@/pages/admin/referrals/referral-program-page"));
@@ -137,7 +136,6 @@ export const router = createBrowserRouter([
                     { path: "logs", element: deferredRoute(<LogsPage />) },
                     { path: "membership", element: deferredRoute(<MembershipAdminPage />) },
                     { path: "credit-store", element: deferredRoute(<CreditStoreAdminPage />) },
-                    { path: "operations", element: deferredRoute(<OperationsPage />) },
                     { path: "agent-runs", element: deferredRoute(<AgentRunsPage />) },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },
                     { path: "settings/concurrency", element: <Navigate to="/admin/settings/runtime-policy" replace /> },

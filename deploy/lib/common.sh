@@ -53,24 +53,27 @@ resolve_from_root() {
     esac
 }
 
-require_path_inside_ops_state() {
+require_path_inside_deploy_state() {
     local path="$1"
     local normalized_root normalized_path
-    normalized_root="$(realpath -m "$OPS_STATE_DIR")"
+    normalized_root="$(realpath -m "$DEPLOY_STATE_DIR")"
     normalized_path="$(realpath -m "$path")"
     case "$normalized_path" in
         "$normalized_root" | "$normalized_root"/*) ;;
-        *) fail "部署状态路径必须位于独立 ops-state 卷内：$normalized_path" ;;
+        *) fail "部署状态路径必须位于持久部署目录内：$normalized_path" ;;
     esac
 }
 
-ops_volume_relative_path() {
+backup_directory_relative_path() {
     local path="$1"
     local normalized_root normalized_path
-    normalized_root="$(realpath -m "$OPS_STATE_DIR")"
+    normalized_root="$(realpath -m "$BACKUP_DIR")"
     normalized_path="$(realpath -m "$path")"
-    require_path_inside_ops_state "$normalized_path"
-    [[ "$normalized_path" != "$normalized_root" ]] || fail "不能把 ops-state 卷根目录作为备份路径"
+    case "$normalized_path" in
+        "$normalized_root" | "$normalized_root"/*) ;;
+        *) fail "恢复点必须位于备份目录内：$normalized_path" ;;
+    esac
+    [[ "$normalized_path" != "$normalized_root" ]] || fail "不能把备份根目录作为单个恢复点"
     printf '%s\n' "${normalized_path#"$normalized_root"/}"
 }
 
@@ -95,10 +98,8 @@ configure_deploy_runtime() {
     export HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-$(env_value HMAIGC_BACKEND_DATA_VOLUME)}"
     export HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-$(env_value HMAIGC_POSTGRES_DATA_VOLUME)}"
     export HMAIGC_REDIS_DATA_VOLUME="${HMAIGC_REDIS_DATA_VOLUME:-$(env_value HMAIGC_REDIS_DATA_VOLUME)}"
-    export HMAIGC_OPS_STATE_VOLUME="${HMAIGC_OPS_STATE_VOLUME:-$(env_value HMAIGC_OPS_STATE_VOLUME)}"
 
     : "${HMAIGC_IMAGE_REGISTRY:?生产配置必须填写 HMAIGC_IMAGE_REGISTRY}"
-    : "${HMAIGC_OPS_STATE_VOLUME:?生产配置必须填写 HMAIGC_OPS_STATE_VOLUME}"
     require_immutable_image "$HMAIGC_BACKEND_IMAGE"
     require_immutable_image "$HMAIGC_WEB_IMAGE"
     require_immutable_image "$BACKUP_HELPER_IMAGE"
@@ -108,21 +109,34 @@ configure_deploy_runtime() {
     HMAIGC_REDIS_DATA_VOLUME="${HMAIGC_REDIS_DATA_VOLUME:-hmaigc-redis-data}"
     export HMAIGC_COMPOSE_PROJECT_NAME HMAIGC_BACKEND_DATA_VOLUME HMAIGC_POSTGRES_DATA_VOLUME HMAIGC_REDIS_DATA_VOLUME
 
-    local configured_ops_state configured_state configured_backups
-    configured_ops_state="${HMAIGC_OPS_STATE_DIR:-$(env_value HMAIGC_OPS_STATE_DIR)}"
+    local configured_deploy_state configured_state configured_backups
+    configured_deploy_state="${HMAIGC_DEPLOY_STATE_DIR:-$(env_value HMAIGC_DEPLOY_STATE_DIR)}"
     configured_state="${HMAIGC_STATE_DIR:-$(env_value HMAIGC_STATE_DIR)}"
     configured_backups="${HMAIGC_BACKUP_DIR:-$(env_value HMAIGC_BACKUP_DIR)}"
-    OPS_STATE_DIR="$(resolve_from_root "${configured_ops_state:-/var/lib/hmaigc-ops}")"
-    STATE_DIR="$(resolve_from_root "${configured_state:-$OPS_STATE_DIR/release}")"
-    BACKUP_DIR="$(resolve_from_root "${configured_backups:-$OPS_STATE_DIR/backups}")"
-    export OPS_STATE_DIR HMAIGC_OPS_STATE_DIR="$OPS_STATE_DIR"
-    require_path_inside_ops_state "$STATE_DIR"
-    require_path_inside_ops_state "$BACKUP_DIR"
+    DEPLOY_STATE_DIR="$(resolve_from_root "${configured_deploy_state:-/var/lib/hmaigc-deploy}")"
+    STATE_DIR="$(resolve_from_root "${configured_state:-$DEPLOY_STATE_DIR/state}")"
+    BACKUP_DIR="$(resolve_from_root "${configured_backups:-$DEPLOY_STATE_DIR/backups}")"
+    export DEPLOY_STATE_DIR HMAIGC_DEPLOY_STATE_DIR="$DEPLOY_STATE_DIR"
+    export HMAIGC_STATE_DIR="$STATE_DIR" HMAIGC_BACKUP_DIR="$BACKUP_DIR"
+    require_path_inside_deploy_state "$STATE_DIR"
+    require_path_inside_deploy_state "$BACKUP_DIR"
     STATE_FILE="$STATE_DIR/release.env"
-    LOCK_FILE="$OPS_STATE_DIR/deploy.lock"
+    LOCK_FILE="$DEPLOY_STATE_DIR/deploy.lock"
     LOG_DIR="$STATE_DIR/logs"
     mkdir -p "$STATE_DIR" "$BACKUP_DIR" "$LOG_DIR"
     chmod 700 "$STATE_DIR" "$BACKUP_DIR" "$LOG_DIR"
+
+    if [[ -f "$STATE_FILE" ]]; then
+        local installed_version installed_backend_image installed_web_image
+        installed_version="$(state_value CURRENT_VERSION)"
+        installed_backend_image="$(state_value CURRENT_BACKEND_IMAGE)"
+        installed_web_image="$(state_value CURRENT_WEB_IMAGE)"
+        validate_release_version "$installed_version"
+        require_immutable_image "$installed_backend_image"
+        require_immutable_image "$installed_web_image"
+        export HMAIGC_VERSION="$installed_version"
+        use_release_images "$installed_backend_image" "$installed_web_image"
+    fi
 
     COMPOSE=(docker compose --project-name "$HMAIGC_COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 }
@@ -146,10 +160,29 @@ write_release_state() {
     local current="$1"
     local previous="$2"
     local rollback_backup="$3"
+    local current_backend_image="$4"
+    local current_web_image="$5"
+    local previous_backend_image="$6"
+    local previous_web_image="$7"
     local temporary="$STATE_FILE.tmp"
+    validate_release_version "$current"
+    require_immutable_image "$current_backend_image"
+    require_immutable_image "$current_web_image"
+    if [[ -n "$previous" ]]; then
+        validate_release_version "$previous"
+        [[ -n "$rollback_backup" ]] || fail "上一版本存在时必须记录对应恢复点"
+        require_immutable_image "$previous_backend_image"
+        require_immutable_image "$previous_web_image"
+    elif [[ -n "$rollback_backup" || -n "$previous_backend_image" || -n "$previous_web_image" ]]; then
+        fail "没有上一版本时不得记录孤立的恢复点或镜像摘要"
+    fi
     {
         printf 'CURRENT_VERSION=%s\n' "$current"
+        printf 'CURRENT_BACKEND_IMAGE=%s\n' "$current_backend_image"
+        printf 'CURRENT_WEB_IMAGE=%s\n' "$current_web_image"
         printf 'PREVIOUS_VERSION=%s\n' "$previous"
+        printf 'PREVIOUS_BACKEND_IMAGE=%s\n' "$previous_backend_image"
+        printf 'PREVIOUS_WEB_IMAGE=%s\n' "$previous_web_image"
         printf 'ROLLBACK_BACKUP=%s\n' "$rollback_backup"
         printf 'UPDATED_AT=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
     } >"$temporary"
@@ -186,29 +219,6 @@ pull_release() {
     export HMAIGC_VERSION="$version"
     use_release_images "$RESOLVED_BACKEND_IMAGE" "$RESOLVED_WEB_IMAGE"
     log "已固定发布镜像摘要：$version"
-}
-
-write_production_release_config() {
-    local version="$1"
-    local backend_image="$2"
-    local web_image="$3"
-    local temporary="$ENV_FILE.tmp.$$"
-    validate_release_version "$version"
-    use_release_images "$backend_image" "$web_image"
-    awk -v version="$version" -v backend="$backend_image" -v web="$web_image" '
-        BEGIN { seen_version = 0; seen_backend = 0; seen_web = 0 }
-        /^HMAIGC_VERSION=/ { print "HMAIGC_VERSION=" version; seen_version = 1; next }
-        /^HMAIGC_BACKEND_IMAGE=/ { print "HMAIGC_BACKEND_IMAGE=" backend; seen_backend = 1; next }
-        /^HMAIGC_WEB_IMAGE=/ { print "HMAIGC_WEB_IMAGE=" web; seen_web = 1; next }
-        { print }
-        END {
-            if (!seen_version) print "HMAIGC_VERSION=" version
-            if (!seen_backend) print "HMAIGC_BACKEND_IMAGE=" backend
-            if (!seen_web) print "HMAIGC_WEB_IMAGE=" web
-        }
-    ' "$ENV_FILE" >"$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$ENV_FILE"
 }
 
 audit_target_agent_runtime_upgrade() {
