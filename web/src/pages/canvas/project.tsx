@@ -11,6 +11,7 @@ import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { agentCanvasCommittedRevision } from "@/lib/canvas/canvas-agent-runtime-event";
+import { prepareAgentCanvasRun } from "@/lib/canvas/canvas-collaboration-preflight";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
 import { resizeViewportAroundCenter } from "@/lib/canvas/canvas-agent-dock";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
@@ -40,6 +41,7 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { getProject } from "@/services/api/projects";
+import { ensureRemoteCanvasProjectReady } from "@/services/user-data-sync";
 import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasCollaborationPresenceButton, CanvasRemotePresenceLayer } from "@/components/canvas/canvas-collaboration-presence";
@@ -319,12 +321,30 @@ function InfiniteCanvasPage() {
         cleanupCanvasFiles,
     });
     const agentLaunchRequest = currentProject?.pendingAgentLaunch;
+    const [remoteReadyLaunchId, setRemoteReadyLaunchId] = useState<string | null>(null);
+    const agentLaunchRemoteReady = !agentLaunchRequest || remoteReadyLaunchId === agentLaunchRequest.id;
 
     useEffect(() => {
         if (!projectLoaded) return;
         if (!agentLaunchRequest) return;
         openAgent();
     }, [agentLaunchRequest, openAgent, projectLoaded]);
+
+    useEffect(() => {
+        if (!projectLoaded || !agentLaunchRequest) return;
+        let cancelled = false;
+        void ensureRemoteCanvasProjectReady(projectId).then(
+            () => {
+                if (!cancelled) setRemoteReadyLaunchId(agentLaunchRequest.id);
+            },
+            (error: unknown) => {
+                if (!cancelled) message.error(error instanceof Error ? `新画布云端初始化失败：${error.message}` : "新画布云端初始化失败");
+            },
+        );
+        return () => {
+            cancelled = true;
+        };
+    }, [agentLaunchRequest, message, projectId, projectLoaded]);
 
     const handleAgentLaunchHandled = useCallback(
         (launchRequestId: string) => {
@@ -427,7 +447,7 @@ function InfiniteCanvasPage() {
 
     const collaboration = useCanvasCollaboration({
         projectId,
-        projectLoaded,
+        projectLoaded: projectLoaded && agentLaunchRemoteReady,
         project: currentProject,
         nodes,
         connections,
@@ -442,8 +462,8 @@ function InfiniteCanvasPage() {
     const canEditCanvas = collaboration.access?.canEdit ?? (currentProject?.teamId ? Boolean(currentProject.canEdit) : true);
     const canManageCanvas = collaboration.access?.canManage ?? (currentProject?.teamId ? Boolean(currentProject.canManage) : true);
     const prepareAgentRun = useCallback(async () => {
-        await collaboration.flushPendingChanges();
-    }, [collaboration.flushPendingChanges]);
+        await prepareAgentCanvasRun(() => ensureRemoteCanvasProjectReady(projectId), collaboration.flushPendingChanges);
+    }, [collaboration.flushPendingChanges, projectId]);
     const handleAgentToolResult = useCallback(
         (event: AgentRuntimeEvent) => {
             const revision = agentCanvasCommittedRevision(event, projectId);
@@ -1981,7 +2001,7 @@ function InfiniteCanvasPage() {
                         onResizeStart={startAssistantResize}
                         onResizeKeyDown={resizeAssistantByKeyboard}
                         onCollapse={closeAgent}
-                        agentLaunchRequest={agentLaunchRequest}
+                        agentLaunchRequest={agentLaunchRemoteReady ? agentLaunchRequest : undefined}
                         onAgentLaunchHandled={handleAgentLaunchHandled}
                         onBeforeRun={prepareAgentRun}
                         onRuntimeEvent={handleAgentToolResult}

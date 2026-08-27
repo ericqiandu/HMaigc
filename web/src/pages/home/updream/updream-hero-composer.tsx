@@ -8,6 +8,7 @@ import { AgentChatComposer } from "@/components/canvas/canvas-agent-chat-ui";
 import { CanvasAgentComposerControls } from "@/components/canvas/canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "@/components/canvas/canvas-agent-selection-summary";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { handoffCanvasAgentLaunch } from "@/lib/canvas/canvas-agent-launch";
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection, type CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
 import { toCanvasAgentSkillSelection } from "@/lib/canvas/canvas-agent-composer-context";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
@@ -48,9 +49,7 @@ export function UpdreamHeroSkillShortcuts({ skills, selectedSkills, disabled = f
                         title={skill.description}
                         aria-pressed={selected}
                         disabled={disabled}
-                        onClick={() =>
-                            onChange(selected ? selectedSkills.filter((item) => item.dir !== skill.dir) : [...selectedSkills, toCanvasAgentSkillSelection(skill)])
-                        }
+                        onClick={() => onChange(selected ? selectedSkills.filter((item) => item.dir !== skill.dir) : [...selectedSkills, toCanvasAgentSkillSelection(skill)])}
                     >
                         <Sparkles className="updream-hero-skill-shortcut-icon" aria-hidden="true" />
                         <span className="updream-hero-skill-shortcut-label">{skill.name}</span>
@@ -145,15 +144,16 @@ export function UpdreamHeroComposer({ skills = [] }: { skills?: PlatformSkill[] 
                 const source = draft.attachments[index];
                 return { id: source.id, name: image.name, url: image.url, resourceId };
             });
-            const { id, syncError } = await createAgentCanvasProjectWithRemoteSync({
+            const creation = createAgentCanvasProjectWithRemoteSync({
                 draft: { ...draft, prompt, attachments: persistedAttachments },
                 referenceImages,
             });
-            if (syncError) {
-                const reason = syncError instanceof Error ? syncError.message : "未知错误";
-                message.warning(`项目已在本地创建，云端同步暂未完成：${reason}`);
-            }
-            navigate(`/canvas/${id}`);
+            // 目标画布的就绪门禁统一展示远端失败，首页只负责立即完成路由交接。
+            handoffCanvasAgentLaunch(
+                creation,
+                (id) => navigate(`/canvas/${id}`),
+                () => undefined,
+            );
         } catch (error) {
             message.error(error instanceof Error ? error.message : "项目创建失败");
             setSubmitting(false);
@@ -204,12 +204,7 @@ export function UpdreamHeroComposer({ skills = [] }: { skills?: PlatformSkill[] 
                     />
                 }
             />
-            <UpdreamHeroSkillShortcuts
-                skills={skills}
-                selectedSkills={draft.skillSelections}
-                disabled={submitting}
-                onChange={(skillSelections) => setDraft((current) => ({ ...current, skillSelections }))}
-            />
+            <UpdreamHeroSkillShortcuts skills={skills} selectedSkills={draft.skillSelections} disabled={submitting} onChange={(skillSelections) => setDraft((current) => ({ ...current, skillSelections }))} />
         </div>
     );
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { agentCanvasCommittedRevision } from "../src/lib/canvas/canvas-agent-runtime-event";
-import { requireCanvasCollaborationRevision, requireEditableCanvasCollaboration } from "../src/lib/canvas/canvas-collaboration-preflight";
+import { prepareAgentCanvasRun, requireCanvasCollaborationRevision, requireEditableCanvasCollaboration } from "../src/lib/canvas/canvas-collaboration-preflight";
 import type { AgentRuntimeEvent } from "../src/services/api/agent-runtime";
 import type { CanvasCollaborationState } from "../src/services/api/canvas-collaboration";
 
@@ -48,10 +48,12 @@ test("Agent 启动前权限已加载但远程基线缺失时仍重建基线", as
 test("Agent 启动前已确认只读且已有基线时显式拒绝", async () => {
     let loadCount = 0;
 
-    await expect(requireEditableCanvasCollaboration(collaborationState(false).access, true, async () => {
-        loadCount += 1;
-        return collaborationState(true);
-    })).rejects.toThrow("当前用户没有画布编辑权限");
+    await expect(
+        requireEditableCanvasCollaboration(collaborationState(false).access, true, async () => {
+            loadCount += 1;
+            return collaborationState(true);
+        }),
+    ).rejects.toThrow("当前用户没有画布编辑权限");
     expect(loadCount).toBe(0);
 });
 
@@ -61,6 +63,29 @@ test("Agent 提交后协作查询未达到已确认版本时显式失败", () =>
 
     expect(() => requireCanvasCollaborationRevision(staleState, 8)).toThrow("仅返回版本 7");
     expect(requireCanvasCollaborationRevision(staleState, 7)).toBe(staleState);
+});
+
+test("首页新画布必须先完成定向远端创建，再建立 Agent 的 revision/CAS 基线", async () => {
+    const calls: string[] = [];
+    let releaseRemoteCreation: (() => void) | undefined;
+    const remoteCreation = new Promise<void>((resolve) => {
+        releaseRemoteCreation = resolve;
+    });
+    const preparation = prepareAgentCanvasRun(
+        async () => {
+            calls.push("remote-canvas");
+            await remoteCreation;
+        },
+        async () => {
+            calls.push("collaboration-baseline");
+        },
+    );
+
+    await Promise.resolve();
+    expect(calls).toEqual(["remote-canvas"]);
+    releaseRemoteCreation?.();
+    await preparation;
+    expect(calls).toEqual(["remote-canvas", "collaboration-baseline"]);
 });
 
 function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {

@@ -3,6 +3,7 @@ import "./setup-happy-dom";
 import { afterEach, expect, mock, test } from "bun:test";
 
 const upsertedAssetIds: string[] = [];
+const createdCanvasIds: string[] = [];
 const remoteAssetSummary = {
     id: "asset-1",
     kind: "text",
@@ -13,6 +14,9 @@ const remoteAssetSummary = {
 let listRemoteAssetsImpl = async () => ({ assets: [remoteAssetSummary] });
 let getRemoteAssetImpl = async () => {
     throw new Error("相同版本不应读取素材详情");
+};
+let createRemoteCanvasProjectImpl = async (project: { id: string }) => {
+    createdCanvasIds.push(project.id);
 };
 
 class MockUserDataRequestError extends Error {
@@ -27,7 +31,7 @@ class MockUserDataRequestError extends Error {
 
 mock.module("@/services/api/user-data", () => ({
     UserDataRequestError: MockUserDataRequestError,
-    createRemoteCanvasProject: async () => undefined,
+    createRemoteCanvasProject: (project: { id: string }) => createRemoteCanvasProjectImpl(project),
     deleteRemoteAsset: async () => undefined,
     deleteRemoteCanvasProject: async () => undefined,
     getRemoteAsset: () => getRemoteAssetImpl(),
@@ -46,6 +50,10 @@ afterEach(async () => {
     const { resetRemoteUserDataSync } = await import("../src/services/user-data-sync");
     resetRemoteUserDataSync();
     upsertedAssetIds.length = 0;
+    createdCanvasIds.length = 0;
+    createRemoteCanvasProjectImpl = async (project: { id: string }) => {
+        createdCanvasIds.push(project.id);
+    };
     listRemoteAssetsImpl = async () => ({ assets: [remoteAssetSummary] });
     getRemoteAssetImpl = async () => {
         throw new Error("相同版本不应读取素材详情");
@@ -155,4 +163,119 @@ test("旧会话退出后不会继续提交尚未开始的远端素材写入", as
     await staleWrite;
 
     expect(upsertedAssetIds).toEqual([]);
+});
+
+test("首页 Agent 创建立即返回本地画布，并只等待该画布的定向远端创建", async () => {
+    let releaseRemoteCreate: (() => void) | undefined;
+    const remoteCreateGate = new Promise<void>((resolve) => {
+        releaseRemoteCreate = resolve;
+    });
+    createRemoteCanvasProjectImpl = async (project) => {
+        createdCanvasIds.push(project.id);
+        await remoteCreateGate;
+    };
+    const [{ createAgentCanvasProjectWithRemoteSync, ensureRemoteCanvasProjectReady, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+    const unrelatedCanvasId = useCanvasStore.getState().createProject("尚未同步的历史画布");
+
+    const creation = createAgentCanvasProjectWithRemoteSync({
+        draft: {
+            prompt: "创建一个五秒产品短片",
+            attachments: [],
+            generationModels: { image: "", video: "" },
+            skillSelections: [],
+            executionMode: "automatic",
+        },
+        referenceImages: [],
+    });
+
+    expect(creation).not.toBeInstanceOf(Promise);
+    expect(creation.id).not.toBe(unrelatedCanvasId);
+    expect(useCanvasStore.getState().openProject(creation.id)?.pendingAgentLaunch?.prompt).toBe("创建一个五秒产品短片");
+
+    const readiness = ensureRemoteCanvasProjectReady(creation.id);
+    let ready = false;
+    void readiness.then(() => {
+        ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+
+    releaseRemoteCreate?.();
+    await Promise.all([creation.remoteReady, readiness]);
+
+    expect(createdCanvasIds).toEqual([creation.id]);
+});
+
+test("全量同步已在运行时，立即保存仍等待新画布的定向远端创建", async () => {
+    let releaseFullSync: (() => void) | undefined;
+    let releaseTargetedCreate: (() => void) | undefined;
+    let markFullSyncStarted: (() => void) | undefined;
+    let markTargetedCreateStarted: (() => void) | undefined;
+    const fullSyncGate = new Promise<void>((resolve) => {
+        releaseFullSync = resolve;
+    });
+    const targetedCreateGate = new Promise<void>((resolve) => {
+        releaseTargetedCreate = resolve;
+    });
+    const fullSyncStarted = new Promise<void>((resolve) => {
+        markFullSyncStarted = resolve;
+    });
+    const targetedCreateStarted = new Promise<void>((resolve) => {
+        markTargetedCreateStarted = resolve;
+    });
+    const [{ createAgentCanvasProjectWithRemoteSync, saveRemoteUserDataNow, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+    const unrelatedCanvasId = useCanvasStore.getState().createProject("尚未同步的历史画布");
+    createRemoteCanvasProjectImpl = async (project) => {
+        createdCanvasIds.push(project.id);
+        if (project.id === unrelatedCanvasId) {
+            markFullSyncStarted?.();
+            await fullSyncGate;
+            return;
+        }
+        markTargetedCreateStarted?.();
+        await targetedCreateGate;
+    };
+
+    const activeFullSync = saveRemoteUserDataNow();
+    await fullSyncStarted;
+    const creation = createAgentCanvasProjectWithRemoteSync({
+        draft: {
+            prompt: "创建新画布",
+            attachments: [],
+            generationModels: { image: "", video: "" },
+            skillSelections: [],
+            executionMode: "automatic",
+        },
+        referenceImages: [],
+    });
+    await targetedCreateStarted;
+    let flushCompleted = false;
+    const flush = saveRemoteUserDataNow().then(() => {
+        flushCompleted = true;
+    });
+
+    releaseFullSync?.();
+    await activeFullSync;
+    await Promise.resolve();
+    expect(flushCompleted).toBe(false);
+
+    releaseTargetedCreate?.();
+    await Promise.all([creation.remoteReady, flush]);
+    expect(createdCanvasIds).toContain(creation.id);
 });
