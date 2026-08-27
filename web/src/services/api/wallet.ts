@@ -217,6 +217,10 @@ export function getWallet(page = 1, limit = 30, type = "all") {
     return request<WalletSummary>(api.get("/wallet", { params: { type, page, limit } }));
 }
 
+export function getWalletBalance() {
+    return request<{ account: CreditAccount }>(api.get("/wallet/balance"));
+}
+
 export function redeemCredits(code: string) {
     return request<{ account: CreditAccount }>(api.post("/wallet/redeem", { code }));
 }

@@ -34,6 +34,10 @@ type WalletSummary struct {
 	Policy  PublicCreditPolicy        `json:"policy"`
 }
 
+type WalletBalance struct {
+	Account model.CreditAccount `json:"account"`
+}
+
 type RedeemBatchPage struct {
 	Batches []model.RedeemBatch `json:"batches"`
 	Total   int64               `json:"total"`
@@ -116,6 +120,17 @@ func (s *Service) Wallet(user *model.User, entryType string, page int, limit int
 		return nil, err
 	}
 	return &WalletSummary{Account: *account, Entries: entries, Total: total, Page: page, Limit: limit, Policy: policy}, nil
+}
+
+func (s *Service) WalletBalance(user *model.User) (*WalletBalance, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	account, err := s.repo.CreditAccount(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &WalletBalance{Account: *account}, nil
 }
 
 func (s *Service) RedeemCredits(user *model.User, code string, redeemedIP string) (*model.CreditAccount, error) {
