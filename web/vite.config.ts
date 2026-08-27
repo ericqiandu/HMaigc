@@ -34,5 +34,25 @@ export default defineConfig({
     build: {
         manifest: true,
         chunkSizeWarningLimit: 900,
+        rolldownOptions: {
+            output: {
+                codeSplitting: {
+                    groups: [
+                        {
+                            name: "icons",
+                            test: /node_modules[\\/]lucide-react[\\/]/,
+                            priority: 30,
+                            includeDependenciesRecursively: false,
+                        },
+                        {
+                            name: "react-core",
+                            test: /node_modules[\\/](?:react|react-dom|react-router|scheduler)[\\/]/,
+                            priority: 20,
+                            includeDependenciesRecursively: false,
+                        },
+                    ],
+                },
+            },
+        },
     },
 });

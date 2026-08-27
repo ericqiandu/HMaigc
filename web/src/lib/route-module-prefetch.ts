@@ -2,18 +2,6 @@ export type RouteModuleKey = "home" | "projects" | "projectDetail" | "canvas" | 
 
 export type RouteModuleLoaders = Record<RouteModuleKey, () => Promise<unknown>>;
 
-export type RoutePrefetchScheduler = {
-    schedule: (callback: () => void) => number;
-    cancel: (handle: number) => void;
-};
-
-export type RouteModulePrefetchSchedule = {
-    paths: readonly string[];
-    prefetch: (pathname: string) => Promise<void>;
-    scheduler: RoutePrefetchScheduler;
-    onError: (pathname: string, error: unknown) => void;
-};
-
 export const loadHomePage = () => import("@/pages/home");
 export const loadProjectsPage = () => import("@/pages/projects");
 export const loadProjectDetailPage = () => import("@/pages/projects/detail");
@@ -79,31 +67,6 @@ export function createRouteModulePrefetcher(loaders: RouteModuleLoaders) {
             if (requests.get(key) === request) requests.delete(key);
         });
         return request;
-    };
-}
-
-export function scheduleRouteModulePrefetches({ paths, prefetch, scheduler, onError }: RouteModulePrefetchSchedule) {
-    const pendingPaths = [...new Set(paths)];
-    let cancelled = false;
-    let pendingHandle: number | null = null;
-
-    const scheduleNext = () => {
-        if (cancelled || pendingPaths.length === 0) return;
-        pendingHandle = scheduler.schedule(() => {
-            pendingHandle = null;
-            if (cancelled) return;
-            const pathname = pendingPaths.shift();
-            if (!pathname) return;
-            void prefetch(pathname)
-                .catch((error: unknown) => onError(pathname, error))
-                .finally(scheduleNext);
-        });
-    };
-
-    scheduleNext();
-    return () => {
-        cancelled = true;
-        if (pendingHandle !== null) scheduler.cancel(pendingHandle);
     };
 }
 

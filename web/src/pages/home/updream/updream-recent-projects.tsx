@@ -3,7 +3,8 @@ import { ArrowRight, Clapperboard, Plus } from "lucide-react";
 import { Link } from "react-router";
 
 import { projectSummaryStage } from "@/lib/project-workbench";
-import { listProjects, type ProjectSummary } from "@/services/api/projects";
+import { projectsQueryOptions } from "@/queries/projects-query";
+import type { ProjectSummary } from "@/services/api/projects";
 import { useUserStore } from "@/stores/use-user-store";
 
 import "@/pages/home/updream/updream-recent-projects.css";
@@ -14,8 +15,7 @@ export function UpdreamRecentProjects() {
     const hydrated = useUserStore((state) => state.hydrated);
     const user = useUserStore((state) => state.user);
     const projectsQuery = useQuery({
-        queryKey: ["projects"],
-        queryFn: listProjects,
+        ...projectsQueryOptions,
         enabled: hydrated && Boolean(user),
     });
 

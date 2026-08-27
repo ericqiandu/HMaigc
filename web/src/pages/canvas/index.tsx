@@ -16,8 +16,8 @@ import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { projectsQueryOptions } from "@/queries/projects-query";
 import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
-import { listProjects } from "@/services/api/projects";
 import "@/styles/canvas-chrome.css";
 import "@/styles/canvas-overlays.css";
 
@@ -39,7 +39,7 @@ export default function CanvasPage() {
     const updateProject = useCanvasStore((state) => state.updateProject);
     const [associationOpen, setAssociationOpen] = useState(false);
     const [associationProjectId, setAssociationProjectId] = useState("");
-    const projectQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
+    const projectQuery = useQuery(projectsQueryOptions);
 
     const enterProject = (id: string) => {
         navigate(`/canvas/${id}`);

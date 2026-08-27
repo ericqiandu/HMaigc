@@ -1,25 +1,54 @@
 import { useEffect } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Home } from "lucide-react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 
 import { navigationTools } from "@/constant/navigation-tools";
-import { prefetchRouteModule, scheduleRouteModulePrefetches, type RoutePrefetchScheduler } from "@/lib/route-module-prefetch";
 import { cn } from "@/lib/utils";
+import {
+    backgroundWorkspaceRouteForPathname,
+    canBackgroundPrefetch,
+    prefetchWorkspaceRoute,
+    scheduleWorkspaceRoutePrefetch,
+    type WorkspaceRoutePrefetchScheduler,
+} from "@/lib/workspace-route-prefetch";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function WorkspaceFloatingNavigation() {
     const hydrated = useUserStore((state) => state.hydrated);
     const user = useUserStore((state) => state.user);
+    const { pathname } = useLocation();
+    const queryClient = useQueryClient();
 
     useEffect(() => {
         if (!hydrated || !user) return;
-        return scheduleRouteModulePrefetches({
-            paths: navigationTools.map((tool) => `/${tool.slug}`),
-            prefetch: prefetchRouteModule,
-            scheduler: browserIdleScheduler,
-            onError: reportRouteModulePrefetchFailure,
-        });
-    }, [hydrated, user]);
+        const backgroundPathname = backgroundWorkspaceRouteForPathname(pathname);
+        if (!backgroundPathname) return;
+
+        let disposed = false;
+        let cancelScheduledPrefetch: (() => void) | undefined;
+        const schedulePrefetch = () => {
+            if (disposed || !canBackgroundPrefetch(readBackgroundPrefetchContext())) return;
+            cancelScheduledPrefetch = scheduleWorkspaceRoutePrefetch({
+                pathname: backgroundPathname,
+                prefetch: async (targetPathname) => {
+                    if (!canBackgroundPrefetch(readBackgroundPrefetchContext())) return;
+                    await prefetchWorkspaceRoute(targetPathname, queryClient);
+                },
+                scheduler: browserIdleScheduler,
+                onError: reportWorkspaceRoutePrefetchFailure,
+            });
+        };
+
+        if (document.readyState === "complete") schedulePrefetch();
+        else window.addEventListener("load", schedulePrefetch, { once: true });
+
+        return () => {
+            disposed = true;
+            window.removeEventListener("load", schedulePrefetch);
+            cancelScheduledPrefetch?.();
+        };
+    }, [hydrated, pathname, queryClient, user]);
 
     if (!hydrated || !user) return null;
 
@@ -28,9 +57,9 @@ export function WorkspaceFloatingNavigation() {
             <NavLink
                 to="/"
                 end
-                onPointerEnter={() => requestRouteModulePrefetch("/")}
-                onPointerDown={() => requestRouteModulePrefetch("/")}
-                onFocus={() => requestRouteModulePrefetch("/")}
+                onPointerEnter={() => requestWorkspaceRoutePrefetch("/", queryClient)}
+                onPointerDown={() => requestWorkspaceRoutePrefetch("/", queryClient)}
+                onFocus={() => requestWorkspaceRoutePrefetch("/", queryClient)}
                 className={({ isActive }) => cn("workspace-floating-navigation-link", isActive && "is-active")}
                 aria-label="首页"
                 title="首页"
@@ -46,9 +75,9 @@ export function WorkspaceFloatingNavigation() {
                     <NavLink
                         key={tool.slug}
                         to={`/${tool.slug}`}
-                        onPointerEnter={() => requestRouteModulePrefetch(`/${tool.slug}`)}
-                        onPointerDown={() => requestRouteModulePrefetch(`/${tool.slug}`)}
-                        onFocus={() => requestRouteModulePrefetch(`/${tool.slug}`)}
+                        onPointerEnter={() => requestWorkspaceRoutePrefetch(`/${tool.slug}`, queryClient)}
+                        onPointerDown={() => requestWorkspaceRoutePrefetch(`/${tool.slug}`, queryClient)}
+                        onFocus={() => requestWorkspaceRoutePrefetch(`/${tool.slug}`, queryClient)}
                         className={({ isActive }) => cn("workspace-floating-navigation-link", isActive && "is-active")}
                         aria-label={tool.label}
                         title={tool.label}
@@ -64,14 +93,14 @@ export function WorkspaceFloatingNavigation() {
     );
 }
 
-function requestRouteModulePrefetch(pathname: string) {
-    void prefetchRouteModule(pathname).catch((error: unknown) => reportRouteModulePrefetchFailure(pathname, error));
+function requestWorkspaceRoutePrefetch(pathname: string, queryClient: QueryClient) {
+    void prefetchWorkspaceRoute(pathname, queryClient).catch((error: unknown) => reportWorkspaceRoutePrefetchFailure(pathname, error));
 }
 
-const browserIdleScheduler: RoutePrefetchScheduler = {
+const browserIdleScheduler: WorkspaceRoutePrefetchScheduler = {
     schedule: (callback) => {
-        if (window.requestIdleCallback) return window.requestIdleCallback(callback, { timeout: 1_500 });
-        return window.setTimeout(callback, 1_500);
+        if (window.requestIdleCallback) return window.requestIdleCallback(callback);
+        return window.setTimeout(callback, 4_000);
     },
     cancel: (handle) => {
         if (window.cancelIdleCallback) {
@@ -82,6 +111,22 @@ const browserIdleScheduler: RoutePrefetchScheduler = {
     },
 };
 
-function reportRouteModulePrefetchFailure(pathname: string, error: unknown) {
-    console.warn("路由模块预取失败", { pathname, error });
+type NavigatorWithConnection = Navigator & {
+    connection?: {
+        saveData?: boolean;
+        effectiveType?: string;
+    };
+};
+
+function readBackgroundPrefetchContext() {
+    const connection = (navigator as NavigatorWithConnection).connection;
+    return {
+        visibilityState: document.visibilityState,
+        saveData: connection?.saveData === true,
+        effectiveType: connection?.effectiveType,
+    };
+}
+
+function reportWorkspaceRoutePrefetchFailure(pathname: string, error: unknown) {
+    console.warn("工作区路由预取失败", { pathname, error });
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createRouteModulePrefetcher, routeModuleKeyForPathname, scheduleRouteModulePrefetches, type RouteModuleKey, type RouteModuleLoaders } from "../src/lib/route-module-prefetch";
+import { createRouteModulePrefetcher, routeModuleKeyForPathname, type RouteModuleKey, type RouteModuleLoaders } from "../src/lib/route-module-prefetch";
 
 function controlledLoaders(load: (key: RouteModuleKey) => Promise<unknown>): RouteModuleLoaders {
     return {
@@ -56,43 +56,5 @@ describe("route module prefetch", () => {
         await expect(prefetch("/canvas")).rejects.toThrow("route chunk unavailable");
         await expect(prefetch("/canvas")).resolves.toBeUndefined();
         expect(attempts).toBe(2);
-    });
-
-    test("warms common routes one at a time during idle periods and supports cleanup", async () => {
-        const callbacks = new Map<number, () => void>();
-        const cancelledHandles: number[] = [];
-        const prefetched: string[] = [];
-        let nextHandle = 1;
-        const cleanup = scheduleRouteModulePrefetches({
-            paths: ["/projects", "/canvas", "/projects"],
-            prefetch: async (pathname) => {
-                prefetched.push(pathname);
-            },
-            scheduler: {
-                schedule: (callback) => {
-                    const handle = nextHandle++;
-                    callbacks.set(handle, callback);
-                    return handle;
-                },
-                cancel: (handle) => {
-                    cancelledHandles.push(handle);
-                    callbacks.delete(handle);
-                },
-            },
-            onError: () => undefined,
-        });
-
-        expect([...callbacks.keys()]).toEqual([1]);
-        callbacks.get(1)?.();
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(prefetched).toEqual(["/projects"]);
-        expect([...callbacks.keys()]).toEqual([1, 2]);
-
-        cleanup();
-        expect(cancelledHandles).toEqual([2]);
-        callbacks.get(2)?.();
-        await Promise.resolve();
-        expect(prefetched).toEqual(["/projects"]);
     });
 });
