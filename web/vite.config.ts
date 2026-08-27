@@ -7,6 +7,13 @@ import { defineConfig } from "vite";
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
 
+export const criticalUiCodeSplittingGroup = {
+    name: "app-ui-core",
+    test: /node_modules[\\/]antd[\\/]es[\\/](?:app|config-provider)(?:[\\/]|$)/,
+    priority: 10,
+    includeDependenciesRecursively: true,
+};
+
 export default defineConfig({
     base: "/",
     plugins: [react()],
@@ -50,6 +57,7 @@ export default defineConfig({
                             priority: 20,
                             includeDependenciesRecursively: false,
                         },
+                        criticalUiCodeSplittingGroup,
                     ],
                 },
             },
