@@ -1,54 +1,16 @@
-import { useEffect } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Home } from "lucide-react";
-import { NavLink, useLocation } from "react-router";
+import { NavLink } from "react-router";
 
 import { navigationTools } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
-import {
-    backgroundWorkspaceRouteForPathname,
-    canBackgroundPrefetch,
-    prefetchWorkspaceRoute,
-    scheduleWorkspaceRoutePrefetch,
-    type WorkspaceRoutePrefetchScheduler,
-} from "@/lib/workspace-route-prefetch";
+import { prefetchWorkspaceRoute } from "@/lib/workspace-route-prefetch";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function WorkspaceFloatingNavigation() {
     const hydrated = useUserStore((state) => state.hydrated);
     const user = useUserStore((state) => state.user);
-    const { pathname } = useLocation();
     const queryClient = useQueryClient();
-
-    useEffect(() => {
-        if (!hydrated || !user) return;
-        const backgroundPathname = backgroundWorkspaceRouteForPathname(pathname);
-        if (!backgroundPathname) return;
-
-        let disposed = false;
-        let cancelScheduledPrefetch: (() => void) | undefined;
-        const schedulePrefetch = () => {
-            if (disposed || !canBackgroundPrefetch(readBackgroundPrefetchContext())) return;
-            cancelScheduledPrefetch = scheduleWorkspaceRoutePrefetch({
-                pathname: backgroundPathname,
-                prefetch: async (targetPathname) => {
-                    if (!canBackgroundPrefetch(readBackgroundPrefetchContext())) return;
-                    await prefetchWorkspaceRoute(targetPathname, queryClient);
-                },
-                scheduler: browserIdleScheduler,
-                onError: reportWorkspaceRoutePrefetchFailure,
-            });
-        };
-
-        if (document.readyState === "complete") schedulePrefetch();
-        else window.addEventListener("load", schedulePrefetch, { once: true });
-
-        return () => {
-            disposed = true;
-            window.removeEventListener("load", schedulePrefetch);
-            cancelScheduledPrefetch?.();
-        };
-    }, [hydrated, pathname, queryClient, user]);
 
     if (!hydrated || !user) return null;
 
@@ -95,36 +57,6 @@ export function WorkspaceFloatingNavigation() {
 
 function requestWorkspaceRoutePrefetch(pathname: string, queryClient: QueryClient) {
     void prefetchWorkspaceRoute(pathname, queryClient).catch((error: unknown) => reportWorkspaceRoutePrefetchFailure(pathname, error));
-}
-
-const browserIdleScheduler: WorkspaceRoutePrefetchScheduler = {
-    schedule: (callback) => {
-        if (window.requestIdleCallback) return window.requestIdleCallback(callback);
-        return window.setTimeout(callback, 4_000);
-    },
-    cancel: (handle) => {
-        if (window.cancelIdleCallback) {
-            window.cancelIdleCallback(handle);
-            return;
-        }
-        window.clearTimeout(handle);
-    },
-};
-
-type NavigatorWithConnection = Navigator & {
-    connection?: {
-        saveData?: boolean;
-        effectiveType?: string;
-    };
-};
-
-function readBackgroundPrefetchContext() {
-    const connection = (navigator as NavigatorWithConnection).connection;
-    return {
-        visibilityState: document.visibilityState,
-        saveData: connection?.saveData === true,
-        effectiveType: connection?.effectiveType,
-    };
 }
 
 function reportWorkspaceRoutePrefetchFailure(pathname: string, error: unknown) {
