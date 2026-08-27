@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# 生产验活只探测真正启动 SPA 的同源脚本与样式。其余哈希构建资产已封装在同一个不可变 Web 镜像中，
-# 若在每次升级时再次串行遍历，会无意义地放大部署耗时。
+# 生产验活只提取真正启动 SPA 的脚本与样式。完整 CDN 清单已由 Actions 有界验证，部署主机只检查
+# HTML 是否精确绑定目标版本 URL；升级事务不得再次联网遍历 CDN，以免网络抖动放大发布耗时。
 extract_web_bootstrap_assets() {
     grep -Eo '<script[^>]*>|<link[^>]*>' |
         awk '

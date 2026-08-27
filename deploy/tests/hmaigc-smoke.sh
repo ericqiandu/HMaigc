@@ -50,10 +50,11 @@ case "$arguments" in
         fi
         ;;
     *" compose "*" exec -T web wget "*"canvas/"*)
-        if [[ "${FAKE_EXTERNAL_WEB_ASSETS:-false}" == "true" || "${HMAIGC_VERSION:-}" == "${FAKE_EXTERNAL_WEB_ASSETS_VERSION:-never}" ]]; then
-            printf '<html><head><link rel="modulepreload" href="https://static.example.invalid/releases/v1.0.10/assets/lazy.js"><link rel="stylesheet" href="https://static.example.invalid/releases/v1.0.10/assets/app.css"></head><body><div id="root"></div><script type="module" src="https://static.example.invalid/releases/v1.0.10/assets/app.js"></script></body></html>'
-        else
+        if [[ "${HMAIGC_VERSION:-}" == "${FAKE_SAME_ORIGIN_WEB_ASSETS_VERSION:-never}" ]]; then
             printf '<html><head><link rel="stylesheet" href="/assets/app.css"></head><body><div id="root"></div><script type="module" src="/assets/app.js"></script></body></html>'
+        else
+            asset_version="${FAKE_CDN_WEB_ASSETS_VERSION:-${HMAIGC_VERSION:-}}"
+            printf '<html><head><link rel="modulepreload" href="https://static.hm.kunagent.com/hmaigc/web/releases/%s/assets/lazy.js"><link rel="stylesheet" href="https://static.hm.kunagent.com/hmaigc/web/releases/%s/assets/app.css"></head><body><div id="root"></div><script type="module" src="https://static.hm.kunagent.com/hmaigc/web/releases/%s/assets/app.js"></script></body></html>' "$asset_version" "$asset_version" "$asset_version"
         fi
         ;;
     *" compose "*" exec -T web wget "*"/assets/app.js"*)
@@ -233,7 +234,7 @@ assert_env HMAIGC_BACKEND_IMAGE "ghcr.io/example/hmaigc-backend@sha256:$(printf 
 assert_env HMAIGC_WEB_IMAGE "ghcr.io/example/hmaigc-web@sha256:$(printf '%064d' 109)"
 
 reset_docker_log
-env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS_VERSION=v1.0.10 "$DEPLOY_COMMAND" upgrade v1.0.11
+env "${TEST_ENV[@]}" FAKE_SAME_ORIGIN_WEB_ASSETS_VERSION=v1.0.10 "$DEPLOY_COMMAND" upgrade v1.0.11
 assert_state CURRENT_VERSION v1.0.11
 assert_state PREVIOUS_VERSION v1.0.10
 assert_state CURRENT_BACKEND_IMAGE "ghcr.io/example/hmaigc-backend@sha256:$(printf '%064d' 11)"
@@ -251,6 +252,7 @@ assert_log_before 'pg_dump' ' up -d backend --wait'
 grep -Fq -- "--mount type=bind,src=$TEST_ROOT/backups,dst=/backups" "$TEST_ROOT/docker.log"
 assert_log_absent "--mount type=bind,src=$TEST_ROOT,dst=/ops"
 assert_log_absent '--mount type=volume,src=hmaigc-test-ops,dst=/ops'
+assert_log_absent 'https://static.hm.kunagent.com/'
 
 upgrade_rollback_backup="$(awk -F= '$1 == "ROLLBACK_BACKUP" { sub(/^[^=]*=/, ""); print; exit }' "$TEST_ROOT/state/release.env")"
 env "${TEST_ENV[@]}" HMAIGC_BACKUP_RETENTION=1 "$DEPLOY_COMMAND" rollback
@@ -288,7 +290,7 @@ set +e
 failed_upgrade_output="$(
     env "${TEST_ENV[@]}" \
         FAKE_FAIL_VERSION=v1.0.12 \
-        FAKE_EXTERNAL_WEB_ASSETS_VERSION=v1.0.10 \
+        FAKE_SAME_ORIGIN_WEB_ASSETS_VERSION=v1.0.10 \
         "$DEPLOY_COMMAND" upgrade v1.0.12 2>&1
 )"
 failed_upgrade_exit=$?
@@ -309,8 +311,8 @@ assert_last_backend_start_images \
     "ghcr.io/example/hmaigc-backend@sha256:$(printf '%064d' 10)" \
     "ghcr.io/example/hmaigc-web@sha256:$(printf '%064d' 110)"
 
-if env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS_VERSION=v1.0.17 "$DEPLOY_COMMAND" upgrade v1.0.17; then
-    printf 'upgrade unexpectedly accepted external program assets in the target release\n' >&2
+if env "${TEST_ENV[@]}" FAKE_CDN_WEB_ASSETS_VERSION=v1.0.99 "$DEPLOY_COMMAND" upgrade v1.0.17; then
+    printf 'upgrade unexpectedly accepted a mismatched CDN version in the target release\n' >&2
     exit 1
 fi
 assert_state CURRENT_VERSION v1.0.10
@@ -341,13 +343,13 @@ assert_state CURRENT_VERSION v1.0.10
 
 run_deploy verify
 
-if env "${TEST_ENV[@]}" FAKE_EXTERNAL_WEB_ASSETS=true "$DEPLOY_COMMAND" verify; then
-    printf 'verification unexpectedly accepted an external program asset\n' >&2
+if env "${TEST_ENV[@]}" FAKE_SAME_ORIGIN_WEB_ASSETS_VERSION=v1.0.10 "$DEPLOY_COMMAND" verify; then
+    printf 'verification unexpectedly accepted same-origin target program assets\n' >&2
     exit 1
 fi
 
-if env "${TEST_ENV[@]}" FAKE_MISSING_WEB_ASSET=true "$DEPLOY_COMMAND" verify; then
-    printf 'verification unexpectedly accepted a release with a missing web entry asset\n' >&2
+if env "${TEST_ENV[@]}" FAKE_CDN_WEB_ASSETS_VERSION=v1.0.99 "$DEPLOY_COMMAND" verify; then
+    printf 'verification unexpectedly accepted a mismatched CDN version\n' >&2
     exit 1
 fi
 

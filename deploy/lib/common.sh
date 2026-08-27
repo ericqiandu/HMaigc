@@ -283,7 +283,10 @@ verify_web_runtime() {
 }
 
 verify_web_asset_contract() {
-    local entry_html entry_asset entry_asset_count
+    local expected="$1"
+    local entry_html entry_asset entry_asset_count release_prefix
+    validate_release_version "$expected"
+    release_prefix="https://static.hm.kunagent.com/hmaigc/web/releases/${expected}/"
     entry_html="$(compose exec -T web wget -qO- http://127.0.0.1:3000/canvas/)" || return 1
 
     entry_asset_count=0
@@ -291,21 +294,11 @@ verify_web_asset_contract() {
         [[ -n "$entry_asset" ]] || continue
         entry_asset_count=$((entry_asset_count + 1))
         case "$entry_asset" in
-            https://* | http://* | //*)
-                log "Web 入口包含禁止的外部程序资源：$entry_asset"
-                return 1
-                ;;
-            /*)
-                compose exec -T web wget -qO- "http://127.0.0.1:3000${entry_asset}" >/dev/null || {
-                    log "Web 入口资源不可访问：$entry_asset"
-                    return 1
-                }
+            "${release_prefix}"assets/*.js | "${release_prefix}"assets/*.css)
                 ;;
             *)
-                compose exec -T web wget -qO- "http://127.0.0.1:3000/${entry_asset}" >/dev/null || {
-                    log "Web 入口资源不可访问：$entry_asset"
-                    return 1
-                }
+                log "Web 入口资源不符合目标版本 CDN 契约：期望前缀 ${release_prefix}，实际 ${entry_asset}"
+                return 1
                 ;;
         esac
     done < <(
@@ -320,7 +313,7 @@ verify_web_asset_contract() {
 verify_web_release() {
     local expected="$1"
     verify_web_runtime "$expected" || return 1
-    verify_web_asset_contract
+    verify_web_asset_contract "$expected"
 }
 
 verify_running_release() {
@@ -374,7 +367,7 @@ start_runtime() {
 start_release() {
     local version="$1"
     start_runtime "$version" || return 1
-    if ! verify_web_asset_contract; then
+    if ! verify_web_asset_contract "$version"; then
         log "Web 发布契约验收失败，记录容器状态与最近日志"
         compose ps web || true
         compose logs --no-color --tail=200 web || true

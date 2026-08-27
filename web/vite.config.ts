@@ -6,6 +6,16 @@ import { defineConfig } from "vite";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
+const staticAssetBaseURL = (process.env.VITE_STATIC_ASSET_BASE_URL ?? "").trim();
+
+function validateStaticAssetBaseURL(value: string): string {
+    if (!value) return "/";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+        throw new Error("VITE_STATIC_ASSET_BASE_URL 必须是无凭据、查询或片段的 HTTPS URL");
+    }
+    return `${url.toString().replace(/\/+$/, "")}/`;
+}
 
 export const criticalUiCodeSplittingGroup = {
     name: "app-ui-core",
@@ -15,7 +25,7 @@ export const criticalUiCodeSplittingGroup = {
 };
 
 export default defineConfig({
-    base: "/",
+    base: validateStaticAssetBaseURL(staticAssetBaseURL),
     plugins: [react()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),

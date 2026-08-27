@@ -31,7 +31,7 @@ bun run build
 - `docker-compose.production.yml` 不包含 ops socket、shared-secret 或 `ops-state` 挂载。
 - `production.env` 权限为 `0600`，生产环境和 CORS Origin 均显式配置。
 - Backend/Web 为精确摘要，PostgreSQL、Redis 和 Backend 没有直接暴露公网。
-- Web 镜像内同源启动资源、HTML 重新验证策略和哈希资源长期缓存通过验证。
+- HTML 重新验证、当前版本 CDN 启动资源 URL、完整静态清单、压缩/CORS 和哈希资源长期缓存通过验证；Web 镜像必须封装流水线发布到 CDN 的同一份 `dist`。
 - 支付、模型渠道、邮件和 OSS 密钥只存在于受保护的服务器配置或 Secrets 中。
 - 当前没有跨越供应商、计费、资产写入或数据库迁移边界的运行任务。
 
@@ -41,14 +41,14 @@ bun run build
 
 1. 合并已验证的单一职责提交。
 2. 创建并推送与 `VERSION` 一致的受保护标签。
-3. 在 Actions 中观察质量门禁、同源 Web 发布包、镜像发布和 `deploy-production`。
+3. 在 Actions 中观察质量门禁、版本化 Web 程序资源上传与 CDN 验证、镜像发布和 `deploy-production`。
 4. production 审批人核对提交、目标版本和回滚点后批准。
 5. 流水线传输并校验版本化 bundle，再由主机 release runner 脱离 SSH 执行 `deploy/hmaigc.sh upgrade <tag>`。
 6. 成功后 runner 原子更新 `shared/deploy-state/current-release` 并输出 `status`。
 
 流水线失败就是发布失败。禁止绕过失败步骤、改成服务器 `git pull`、用可变标签启动，或从后台再创建并行部署任务。
 
-升级前的当前版本检查只证明版本、健康接口和 SPA 根入口仍与发布状态一致。目标版本新增的同源程序资源契约只在目标启动后验收；迁移前旧版本仍引用外部程序资源时，不得因此阻断升级，也不得在目标失败后阻断旧版本自动恢复。
+升级前的当前版本检查只证明版本、健康接口和 SPA 根入口仍与发布状态一致。目标版本的程序资源 URL 契约只在目标启动后验收：启动 JS/CSS 必须精确引用 `https://static.hm.kunagent.com/hmaigc/web/releases/<目标版本>/assets/`。迁移前旧版本不满足该契约时不得阻断升级，目标失败后也不得用目标策略阻断旧版本自动恢复。
 
 ## 3. 发布证据
 
@@ -78,7 +78,7 @@ bash deploy/hmaigc.sh status
 bash deploy/hmaigc.sh verify
 ```
 
-`verify` 是当前版本的严格发布契约检查，必须有界完成并明确报告版本、依赖、当前 Web 容器入口和当前版本同源启动资源。升级、回滚和备份的前置检查只验证运行事实，不复用 `verify` 去约束待替换或待恢复的旧版本。生产域名验收由发布流水线的外部回归负责，不能用本机成功替代公网成功事实。
+`verify` 是当前版本的严格发布契约检查，必须有界完成并明确报告版本、依赖、当前 Web 容器入口和当前版本 CDN 启动资源 URL。部署主机只校验 HTML 中的版本绑定，不在升级事务里联网遍历或下载 CDN 对象；完整对象存在性、压缩、缓存和跨域验收由发布流水线在建立生产 SSH 会话前负责。升级、回滚和备份的前置检查只验证运行事实，不复用 `verify` 去约束待替换或待恢复的旧版本。
 
 ## 5. 同一恢复点备份
 
