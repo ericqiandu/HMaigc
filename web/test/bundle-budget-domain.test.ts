@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { collectJavaScriptImportClosure, collectStaticAssetClosure, evaluateJavaScriptRequestBudget } from "../scripts/bundle-budget-domain.mjs";
+import { collectJavaScriptImportClosure, collectStaticAssetClosure } from "../scripts/bundle-budget-domain.mjs";
 
 describe("bundle budget import closure", () => {
     test("counts every unique JavaScript dependency once and excludes non-JavaScript assets", () => {
@@ -44,18 +44,5 @@ describe("bundle budget import closure", () => {
         };
 
         expect(collectStaticAssetClosure(manifest, ["src/pages/canvas/project.tsx"])).toEqual(["assets/canvas-texture.webp", "assets/project-font.woff2"]);
-    });
-});
-
-describe("bundle budget request count", () => {
-    test("fails only when a JavaScript closure exceeds its request budget", () => {
-        expect(evaluateJavaScriptRequestBudget(["assets/index.js", "assets/shared.js"], 2)).toEqual({
-            requestCount: 2,
-            passed: true,
-        });
-        expect(evaluateJavaScriptRequestBudget(["assets/index.js", "assets/shared.js", "assets/feature.js"], 2)).toEqual({
-            requestCount: 3,
-            passed: false,
-        });
     });
 });

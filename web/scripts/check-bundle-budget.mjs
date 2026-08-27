@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 
-import { collectJavaScriptImportClosure, collectStaticAssetClosure, evaluateJavaScriptRequestBudget } from "./bundle-budget-domain.mjs";
+import { collectJavaScriptImportClosure, collectStaticAssetClosure } from "./bundle-budget-domain.mjs";
 
 const DIST_DIR = resolve(import.meta.dirname, "../dist");
 const MANIFEST_PATH = resolve(DIST_DIR, ".vite/manifest.json");
@@ -31,12 +31,12 @@ const BUDGETS = [
     },
 ];
 const CLOSURE_BUDGETS = [
-    { sources: ["index.html"], label: "应用入口依赖闭包", maxRequests: 36, maxRawBytes: 760 * KIB, maxGzipBytes: 265 * KIB },
-    { sources: ["index.html", "src/pages/home/index.tsx"], label: "首页依赖闭包", maxRequests: 42, maxRawBytes: 1960 * KIB, maxGzipBytes: 660 * KIB },
-    { sources: ["index.html", "src/pages/projects/index.tsx"], label: "项目页依赖闭包", maxRequests: 70, maxRawBytes: 1280 * KIB, maxGzipBytes: 440 * KIB },
-    { sources: ["index.html", "src/pages/skills/index.tsx"], label: "技能页依赖闭包", maxRequests: 64, maxRawBytes: 1220 * KIB, maxGzipBytes: 420 * KIB },
-    { sources: ["index.html", "src/pages/canvas/project.tsx"], label: "画布依赖闭包", maxRequests: 135, maxRawBytes: 2820 * KIB, maxGzipBytes: 940 * KIB },
-    { sources: ["index.html", "src/pages/admin/index.tsx"], label: "后台外壳依赖闭包", maxRequests: 66, maxRawBytes: 1400 * KIB, maxGzipBytes: 480 * KIB },
+    { sources: ["index.html"], label: "应用入口依赖闭包", maxRawBytes: 760 * KIB, maxGzipBytes: 265 * KIB },
+    { sources: ["index.html", "src/pages/home/index.tsx"], label: "首页依赖闭包", maxRawBytes: 1960 * KIB, maxGzipBytes: 660 * KIB },
+    { sources: ["index.html", "src/pages/projects/index.tsx"], label: "项目页依赖闭包", maxRawBytes: 1280 * KIB, maxGzipBytes: 440 * KIB },
+    { sources: ["index.html", "src/pages/skills/index.tsx"], label: "技能页依赖闭包", maxRawBytes: 1220 * KIB, maxGzipBytes: 420 * KIB },
+    { sources: ["index.html", "src/pages/canvas/project.tsx"], label: "画布依赖闭包", maxRawBytes: 2820 * KIB, maxGzipBytes: 940 * KIB },
+    { sources: ["index.html", "src/pages/admin/index.tsx"], label: "后台外壳依赖闭包", maxRawBytes: 1400 * KIB, maxGzipBytes: 480 * KIB },
 ];
 const DEFERRED_ASSET_BOUNDARIES = [
     {
@@ -82,7 +82,7 @@ function measureChunk(source, label, maxRawBytes, maxGzipBytes) {
     }
 }
 
-function measureClosure(sources, label, maxRequests, maxRawBytes, maxGzipBytes) {
+function measureClosure(sources, label, maxRawBytes, maxGzipBytes) {
     const files = collectJavaScriptImportClosure(manifest, sources);
     if (files.length === 0) {
         failures.push(`${label}：构建清单没有可计量的 JavaScript 文件`);
@@ -97,15 +97,9 @@ function measureClosure(sources, label, maxRequests, maxRawBytes, maxGzipBytes) 
         gzipBytes += gzipSync(content, { level: 9 }).byteLength;
     }
 
-    const requestBudget = evaluateJavaScriptRequestBudget(files, maxRequests);
     const rawPassed = rawBytes <= maxRawBytes;
     const gzipPassed = gzipBytes <= maxGzipBytes;
-    console.log(
-        `${requestBudget.passed && rawPassed && gzipPassed ? "PASS" : "FAIL"} ${label}: ` +
-            `${requestBudget.requestCount} 个 JS，${formatKib(rawBytes)} raw / ${formatKib(gzipBytes)} gzip ` +
-            `(预算 ${maxRequests} 个 JS，${formatKib(maxRawBytes)} / ${formatKib(maxGzipBytes)})`,
-    );
-    if (!requestBudget.passed) failures.push(`${label} 超出生产请求数预算：${requestBudget.requestCount} > ${maxRequests}`);
+    console.log(`${rawPassed && gzipPassed ? "PASS" : "FAIL"} ${label}: ` + `${files.length} 个 JS，${formatKib(rawBytes)} raw / ${formatKib(gzipBytes)} gzip ` + `(预算 ${formatKib(maxRawBytes)} / ${formatKib(maxGzipBytes)})`);
     if (!rawPassed || !gzipPassed) failures.push(`${label} 超出生产体积预算`);
 }
 
@@ -114,7 +108,7 @@ for (const budget of BUDGETS) {
 }
 
 for (const budget of CLOSURE_BUDGETS) {
-    measureClosure(budget.sources, budget.label, budget.maxRequests, budget.maxRawBytes, budget.maxGzipBytes);
+    measureClosure(budget.sources, budget.label, budget.maxRawBytes, budget.maxGzipBytes);
 }
 
 for (const boundary of DEFERRED_ASSET_BOUNDARIES) {

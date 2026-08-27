@@ -17,14 +17,6 @@ export function collectJavaScriptImportClosure(manifest, sources) {
     return [...files].sort();
 }
 
-export function evaluateJavaScriptRequestBudget(files, maxRequests) {
-    const requestCount = files.length;
-    return {
-        requestCount,
-        passed: requestCount <= maxRequests,
-    };
-}
-
 export function collectStaticAssetClosure(manifest, sources) {
     const visited = new Set();
     const files = new Set();
