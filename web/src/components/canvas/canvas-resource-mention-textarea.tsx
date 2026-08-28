@@ -5,7 +5,7 @@ import { FileText, Image as ImageIcon, Music2, Sparkles, UserRound, Video } from
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { canvasResourceMentionQueryAt, canvasResourceMentionToken, insertCanvasResourceMention, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { parseAudioPauseToken, replaceTextRange, type TextRange } from "@/lib/audio-pause";
 import { CanvasNodeType } from "@/types/canvas";
 
@@ -42,6 +42,7 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
 };
 
 export type CanvasResourceMentionTextareaHandle = {
+    insertReference: (reference: CanvasResourceReference) => TextRange;
     replaceSelection: (text: string) => TextRange;
     replaceRange: (range: TextRange, text: string) => TextRange;
 };
@@ -56,6 +57,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const editorRef = useRef<HTMLDivElement | null>(null);
     const composingRef = useRef(false);
     const pendingSelectionRef = useRef<number | null>(null);
+    const lastSelectionRef = useRef<TextRange | null>(null);
     const lastRenderedValueRef = useRef("");
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
@@ -120,27 +122,35 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     };
 
     const updateValue = (next: string, selectionStart?: number) => {
-        if (typeof selectionStart === "number") pendingSelectionRef.current = selectionStart;
+        if (typeof selectionStart === "number") {
+            pendingSelectionRef.current = selectionStart;
+            lastSelectionRef.current = { start: selectionStart, end: selectionStart };
+        }
         onChange(next);
         if (typeof selectionStart === "number") focusEditor(selectionStart);
+    };
+
+    const rememberSelection = (selection: TextRange | null, currentValue = value) => {
+        if (selection) lastSelectionRef.current = normalizedSelection(currentValue, selection);
     };
 
     const currentValueAndSelection = () => {
         if (useRichEditor) {
             const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
+            const liveSelection = getEditableSelection(editorRef.current);
+            rememberSelection(liveSelection, currentValue);
             return {
                 value: currentValue,
-                selection: getEditableSelection(editorRef.current) ?? { start: currentValue.length, end: currentValue.length },
+                selection: liveSelection ?? normalizedSelection(currentValue, lastSelectionRef.current ?? { start: currentValue.length, end: currentValue.length }),
             };
         }
         const textarea = textareaRef.current;
         const currentValue = textarea?.value ?? value;
+        const liveSelection = textarea ? { start: textarea.selectionStart, end: textarea.selectionEnd } : null;
+        rememberSelection(liveSelection, currentValue);
         return {
             value: currentValue,
-            selection: {
-                start: textarea?.selectionStart ?? currentValue.length,
-                end: textarea?.selectionEnd ?? currentValue.length,
-            },
+            selection: liveSelection ?? normalizedSelection(currentValue, lastSelectionRef.current ?? { start: currentValue.length, end: currentValue.length }),
         };
     };
 
@@ -153,6 +163,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     useImperativeHandle(
         editorHandleRef,
         () => ({
+            insertReference: (reference) => {
+                const current = currentValueAndSelection();
+                const result = insertCanvasResourceMention(current.value, current.selection, reference);
+                updateValue(result.value, result.range.end);
+                return result.range;
+            },
             replaceSelection: (text) => {
                 const current = currentValueAndSelection();
                 return replaceRange(current.selection, text);
@@ -167,13 +183,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     };
 
     const syncMention = (nextValue: string, cursor: number) => {
-        const prefix = nextValue.slice(0, cursor);
-        const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
-        if (!match || !references.some((item) => item.active)) {
+        const query = canvasResourceMentionQueryAt(nextValue, cursor);
+        if (!query || !references.some((item) => item.active)) {
             closeMention();
             return;
         }
-        const nextMention = { start: cursor - match[2].length - 1, query: match[2] };
+        const nextMention = query;
         const isSameMention = mention?.start === nextMention.start && mention.query === nextMention.query;
         if (!isSameMention) {
             setMention(nextMention);
@@ -183,19 +198,16 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const insertReference = (reference: CanvasResourceReference) => {
         if (!mention) return;
-        const selection = useRichEditor ? getEditableSelection(editorRef.current) : null;
-        const end = selection?.end ?? textareaRef.current?.selectionStart ?? value.length;
-        const insertText = `${canvasResourceMentionToken(reference)} `;
-        const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
+        const current = currentValueAndSelection();
+        const result = insertCanvasResourceMention(current.value, { start: mention.start, end: current.selection.end }, reference);
         closeMention();
-        updateValue(next, mention.start + insertText.length);
+        updateValue(result.value, result.range.end);
     };
 
     const replaceEditableSelection = (insertText: string) => {
-        const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
-        const selection = getEditableSelection(editorRef.current) || { start: currentValue.length, end: currentValue.length };
-        const next = `${currentValue.slice(0, selection.start)}${insertText}${currentValue.slice(selection.end)}`;
-        const cursor = selection.start + insertText.length;
+        const current = currentValueAndSelection();
+        const next = `${current.value.slice(0, current.selection.start)}${insertText}${current.value.slice(current.selection.end)}`;
+        const cursor = current.selection.start + insertText.length;
         updateValue(next, cursor);
         syncMention(next, cursor);
     };
@@ -205,7 +217,9 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         const editor = editorRef.current;
         if (!editor) return;
         const next = serializeEditableValue(editor);
-        const cursor = getEditableSelection(editor)?.start ?? next.length;
+        const selection = getEditableSelection(editor);
+        rememberSelection(selection, next);
+        const cursor = selection?.start ?? next.length;
         pendingSelectionRef.current = cursor;
         lastRenderedValueRef.current = next;
         onChange(next);
@@ -216,8 +230,17 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const syncEditableMentionFromSelection = () => {
         const editor = editorRef.current;
         if (!editor) return;
-        const cursor = getEditableSelection(editor)?.start;
-        if (typeof cursor === "number") syncMention(serializeEditableValue(editor), cursor);
+        const currentValue = serializeEditableValue(editor);
+        const selection = getEditableSelection(editor);
+        rememberSelection(selection, currentValue);
+        const cursor = selection?.start;
+        if (typeof cursor === "number") syncMention(currentValue, cursor);
+    };
+
+    const rememberTextareaSelection = (textarea: HTMLTextAreaElement) => {
+        const selection = { start: textarea.selectionStart, end: textarea.selectionEnd };
+        rememberSelection(selection, textarea.value);
+        syncMention(textarea.value, selection.end);
     };
 
     const mergedStyle = {
@@ -305,14 +328,21 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                         syncEditableMentionFromSelection();
                         props.onPointerUp?.(event as unknown as React.PointerEvent<HTMLTextAreaElement>);
                     }}
-                    onSelect={(event) => props.onSelect?.(event as unknown as React.SyntheticEvent<HTMLTextAreaElement>)}
+                    onSelect={(event) => {
+                        syncEditableMentionFromSelection();
+                        props.onSelect?.(event as unknown as React.SyntheticEvent<HTMLTextAreaElement>);
+                    }}
                     onWheel={(event) => {
                         event.stopPropagation();
                         props.onWheel?.(event as unknown as React.WheelEvent<HTMLTextAreaElement>);
                     }}
                     onScroll={(event) => props.onScroll?.(event as unknown as React.UIEvent<HTMLTextAreaElement>)}
-                    onFocus={(event) => props.onFocus?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>)}
+                    onFocus={(event) => {
+                        syncEditableMentionFromSelection();
+                        props.onFocus?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>);
+                    }}
                     onBlur={(event) => {
+                        syncEditableMentionFromSelection();
                         window.setTimeout(closeMention, 120);
                         props.onBlur?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>);
                     }}
@@ -337,6 +367,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 style={mergedStyle}
                 onChange={(event) => {
                     const next = event.target.value;
+                    rememberSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }, next);
                     onChange(next);
                     syncMention(next, event.target.selectionStart);
                     reportContentSize(event.currentTarget);
@@ -371,6 +402,22 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     }
                     onKeyDown?.(event);
                 }}
+                onKeyUp={(event) => {
+                    rememberTextareaSelection(event.currentTarget);
+                    props.onKeyUp?.(event);
+                }}
+                onPointerUp={(event) => {
+                    rememberTextareaSelection(event.currentTarget);
+                    props.onPointerUp?.(event);
+                }}
+                onSelect={(event) => {
+                    rememberTextareaSelection(event.currentTarget);
+                    props.onSelect?.(event);
+                }}
+                onFocus={(event) => {
+                    rememberTextareaSelection(event.currentTarget);
+                    props.onFocus?.(event);
+                }}
                 onWheel={(event) => {
                     event.stopPropagation();
                     const textarea = event.currentTarget;
@@ -383,6 +430,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     props.onWheel?.(event);
                 }}
                 onBlur={(event) => {
+                    rememberTextareaSelection(event.currentTarget);
                     window.setTimeout(closeMention, 120);
                     props.onBlur?.(event);
                 }}
@@ -391,6 +439,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         </div>
     );
 });
+
+function normalizedSelection(value: string, selection: TextRange): TextRange {
+    const start = Math.max(0, Math.min(value.length, selection.start));
+    const end = Math.max(start, Math.min(value.length, selection.end));
+    return { start, end };
+}
 
 function createInlineMentionChip(reference: CanvasResourceReference, token: string) {
     const chip = document.createElement("span");
