@@ -123,4 +123,3 @@ go test ./internal/service -run 'Test(CanvasMutation|ProductionCanvasCommit)' -c
 4. 运行 Web 全量测试、typecheck/build、Go 全量测试/build、受影响 race、`git diff --check`。
 5. 有条件使用本地浏览器完成真实回归：`@` 搜索/选择、非法连线、拖动、上传、刷新与媒体播放。
 6. 一次独立 review → 一次集中修复 → 一次定向复审；同步 `CHANGELOG.md` 与 `docs/content/docs/pending-test.mdx`。
-
