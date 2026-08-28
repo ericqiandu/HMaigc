@@ -189,6 +189,48 @@ type AgentAssetBindingRevision struct {
 
 const AgentAssetBindingRevisionConfirmed = "confirmed"
 
+// AgentCharacterIdentityVersion is an append-only identity pointer. Character
+// Bible content and media URLs remain owned by ArtifactRevision and Resource.
+type AgentCharacterIdentityVersion struct {
+	ID                       string                                   `json:"id" gorm:"primaryKey;size:80"`
+	TenantKind               agentruntime.TenantKind                  `json:"tenantKind" gorm:"size:16;not null"`
+	TenantID                 string                                   `json:"tenantId" gorm:"size:80;not null"`
+	ActorUserID              string                                   `json:"actorUserId" gorm:"size:80;not null"`
+	DomainProjectID          string                                   `json:"domainProjectId" gorm:"size:80;not null;default:''"`
+	CanvasID                 string                                   `json:"canvasId" gorm:"size:80;not null"`
+	ThreadID                 string                                   `json:"threadId" gorm:"size:80;not null"`
+	RunID                    string                                   `json:"runId" gorm:"size:80;not null"`
+	CharacterKey             string                                   `json:"characterKey" gorm:"size:120;not null"`
+	Version                  int64                                    `json:"version" gorm:"not null"`
+	CharacterBibleRevisionID string                                   `json:"characterBibleRevisionId" gorm:"size:80;not null;index"`
+	ResourceID               string                                   `json:"resourceId" gorm:"size:80;not null;index"`
+	DependencyHash           string                                   `json:"dependencyHash" gorm:"size:64;not null"`
+	LifecycleStatus          agentruntime.ProductionEvidenceLifecycle `json:"lifecycleStatus" gorm:"size:32;not null;index"`
+	CreatedAt                time.Time                                `json:"createdAt"`
+}
+
+// AgentShotBindingRevision pins one shot/character occurrence to exact
+// identity, Artifact revision and Resource facts without duplicating content.
+type AgentShotBindingRevision struct {
+	ID                     string                                   `json:"id" gorm:"primaryKey;size:80"`
+	TenantKind             agentruntime.TenantKind                  `json:"tenantKind" gorm:"size:16;not null"`
+	TenantID               string                                   `json:"tenantId" gorm:"size:80;not null"`
+	ActorUserID            string                                   `json:"actorUserId" gorm:"size:80;not null"`
+	DomainProjectID        string                                   `json:"domainProjectId" gorm:"size:80;not null;default:''"`
+	CanvasID               string                                   `json:"canvasId" gorm:"size:80;not null"`
+	ThreadID               string                                   `json:"threadId" gorm:"size:80;not null"`
+	RunID                  string                                   `json:"runId" gorm:"size:80;not null"`
+	ShotKey                string                                   `json:"shotKey" gorm:"size:120;not null"`
+	CharacterKey           string                                   `json:"characterKey" gorm:"size:120;not null"`
+	Revision               int64                                    `json:"revision" gorm:"not null"`
+	ShotArtifactRevisionID string                                   `json:"shotArtifactRevisionId" gorm:"size:80;not null;index"`
+	IdentityVersionID      string                                   `json:"identityVersionId" gorm:"size:80;not null;index"`
+	ResourceID             string                                   `json:"resourceId" gorm:"size:80;not null;index"`
+	DependencyHash         string                                   `json:"dependencyHash" gorm:"size:64;not null"`
+	LifecycleStatus        agentruntime.ProductionEvidenceLifecycle `json:"lifecycleStatus" gorm:"size:32;not null;index"`
+	CreatedAt              time.Time                                `json:"createdAt"`
+}
+
 type AgentAssetPublicationStatus string
 
 const (

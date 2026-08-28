@@ -18,36 +18,46 @@ import (
 var ErrAgentRunRecoveryFactsInvalid = errors.New("agent run recovery frozen facts are invalid")
 
 func (s *Service) RecoverAgentRunTree(scope agentruntime.Scope) error {
+	_, err := s.RecoverAgentRunTreeProgress(scope)
+	return err
+}
+
+// RecoverAgentRunTreeProgress validates the same immutable recovery facts and
+// exposes their read-only structural projection. It never advances a stage or
+// chooses the Main Agent's semantic next action.
+func (s *Service) RecoverAgentRunTreeProgress(
+	scope agentruntime.Scope,
+) (*agentruntime.ProductionNextActionProjection, error) {
 	if err := scope.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	run, err := s.repo.AgentRunForScope(scope)
 	if err != nil {
-		return recoveryFactsError("load run identity", err)
+		return nil, recoveryFactsError("load run identity", err)
 	}
 	if run.RuntimeVersion != agentruntime.ProductionRuntimeVersion {
-		return nil
+		return nil, nil
 	}
 	snapshot, err := s.repo.AgentRunTreeRecoverySnapshot(scope)
 	if err != nil {
-		return recoveryFactsError("load run tree snapshot", err)
+		return nil, recoveryFactsError("load run tree snapshot", err)
 	}
 	if err := validateAgentRunRecoverySnapshot(snapshot); err != nil {
-		return recoveryFactsError("validate persisted run tree", err)
+		return nil, recoveryFactsError("validate persisted run tree", err)
 	}
 	if err := s.validateFrozenSkillSelections(snapshot.State.Configuration.Skills); err != nil {
-		return recoveryFactsError("validate run skills", err)
+		return nil, recoveryFactsError("validate run skills", err)
 	}
 	for _, specialist := range snapshot.Specialists {
 		request, decodeErr := specialistRequestFromRecoveryFacts(specialist)
 		if decodeErr != nil {
-			return recoveryFactsError("decode specialist "+specialist.ID, decodeErr)
+			return nil, recoveryFactsError("decode specialist "+specialist.ID, decodeErr)
 		}
 		if err := s.validateFrozenSkillSelections(request.LoadedSkills); err != nil {
-			return recoveryFactsError("validate specialist "+specialist.ID+" skills", err)
+			return nil, recoveryFactsError("validate specialist "+specialist.ID+" skills", err)
 		}
 	}
-	return nil
+	return snapshot.Production.Progress, nil
 }
 
 func validateAgentRunRecoverySnapshot(snapshot *repository.AgentRunTreeRecoverySnapshot) error {
@@ -66,13 +76,18 @@ func validateAgentRunRecoverySnapshot(snapshot *repository.AgentRunTreeRecoveryS
 		return err
 	}
 	if snapshot.Production.Graph == nil {
-		if len(snapshot.Specialists) != 0 {
+		if len(snapshot.Specialists) != 0 || snapshot.Production.Progress != nil {
 			return errors.New("specialists exist without a production graph")
 		}
 		return nil
 	}
 	if snapshot.Production.Draft == nil || len(snapshot.Production.Stages) != len(snapshot.Production.Draft.Stages) {
 		return errors.New("production graph facts conflict")
+	}
+	progress := snapshot.Production.Progress
+	if progress == nil || progress.GraphVersionID != snapshot.Production.Graph.ID ||
+		progress.GraphVersion != snapshot.Production.Graph.Version {
+		return errors.New("production progress facts conflict")
 	}
 	stageByID := make(map[string]agentruntime.ProductionStageDraft, len(snapshot.Production.Stages))
 	for index, stage := range snapshot.Production.Stages {

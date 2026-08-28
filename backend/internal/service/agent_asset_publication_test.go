@@ -229,8 +229,8 @@ func TestPublishAssetRequiresInternalTaskAudience(t *testing.T) {
 	_, err := fixture.service.ReviewProductionStage(
 		context.Background(), specialistRuntimeScope(), fixture.parentRun, fixture.stageID, assetPublicationReviewCommand(fixture),
 	)
-	if !errors.Is(err, ErrAssetPublicationBillingMissing) {
-		t.Fatalf("ReviewProductionStage() error = %v, want %v", err, ErrAssetPublicationBillingMissing)
+	if !errors.Is(err, repository.ErrProductionRuntimeSnapshotInvalid) {
+		t.Fatalf("ReviewProductionStage() error = %v, want %v", err, repository.ErrProductionRuntimeSnapshotInvalid)
 	}
 	assertTableCount(t, fixture.db, "assets", 0)
 	assertTableCount(t, fixture.db, "agent_asset_publications", 0)

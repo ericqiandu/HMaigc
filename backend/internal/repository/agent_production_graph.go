@@ -36,10 +36,13 @@ type ProductionArtifactHeadSnapshot struct {
 }
 
 type ProductionRuntimeSnapshot struct {
-	Graph     *model.AgentProductionGraphVersion
-	Draft     *agentruntime.ProductionGraphDraft
-	Stages    []model.AgentProductionStage
-	Artifacts []ProductionArtifactHeadSnapshot
+	Graph                     *model.AgentProductionGraphVersion
+	Draft                     *agentruntime.ProductionGraphDraft
+	Stages                    []model.AgentProductionStage
+	Artifacts                 []ProductionArtifactHeadSnapshot
+	CharacterIdentityVersions []model.AgentCharacterIdentityVersion
+	ShotBindingRevisions      []model.AgentShotBindingRevision
+	Progress                  *agentruntime.ProductionNextActionProjection
 }
 
 type encodedProductionStageDraft struct {
@@ -192,8 +195,10 @@ func (r *Repository) ProductionRuntimeSnapshotForScope(scope agentruntime.Scope)
 
 func productionRuntimeSnapshotTx(tx *gorm.DB, scope agentruntime.Scope) (*ProductionRuntimeSnapshot, error) {
 	snapshot := &ProductionRuntimeSnapshot{
-		Stages:    []model.AgentProductionStage{},
-		Artifacts: []ProductionArtifactHeadSnapshot{},
+		Stages:                    []model.AgentProductionStage{},
+		Artifacts:                 []ProductionArtifactHeadSnapshot{},
+		CharacterIdentityVersions: []model.AgentCharacterIdentityVersion{},
+		ShotBindingRevisions:      []model.AgentShotBindingRevision{},
 	}
 	if err := func() error {
 		var graphKeys []string
@@ -210,12 +215,18 @@ func productionRuntimeSnapshotTx(tx *gorm.DB, scope agentruntime.Scope) (*Produc
 			return err
 		}
 		snapshot.Artifacts = artifacts
+		identities, bindings, err := productionIdentityFacts(tx, scope)
+		if err != nil {
+			return err
+		}
+		snapshot.CharacterIdentityVersions = identities
+		snapshot.ShotBindingRevisions = bindings
 		if len(graphKeys) == 0 {
 			var stageCount int64
 			if err := productionStageScopeQuery(tx.Model(&model.AgentProductionStage{}), scope).Count(&stageCount).Error; err != nil {
 				return err
 			}
-			if stageCount != 0 || len(artifacts) != 0 {
+			if stageCount != 0 || len(artifacts) != 0 || len(identities) != 0 || len(bindings) != 0 {
 				return ErrProductionRuntimeSnapshotInvalid
 			}
 			return nil
@@ -264,6 +275,11 @@ func productionRuntimeSnapshotTx(tx *gorm.DB, scope agentruntime.Scope) (*Produc
 		snapshot.Graph = &graph
 		snapshot.Draft = &draft
 		snapshot.Stages = orderedStages
+		progress, err := productionProgressProjection(tx, scope, graph, draft, orderedStages, artifacts)
+		if err != nil {
+			return err
+		}
+		snapshot.Progress = progress
 		return nil
 	}(); err != nil {
 		return nil, err
@@ -321,6 +337,387 @@ func productionArtifactHeadSnapshots(tx *gorm.DB, scope agentruntime.Scope) ([]P
 		result = append(result, ProductionArtifactHeadSnapshot{Artifact: artifact, Revision: revision})
 	}
 	return result, nil
+}
+
+func productionIdentityFacts(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+) ([]model.AgentCharacterIdentityVersion, []model.AgentShotBindingRevision, error) {
+	identities := []model.AgentCharacterIdentityVersion{}
+	if err := productionCharacterIdentityScopeQuery(tx, scope).
+		Order("character_key ASC, version ASC").Find(&identities).Error; err != nil {
+		return nil, nil, err
+	}
+	bindings := []model.AgentShotBindingRevision{}
+	if err := productionShotBindingScopeQuery(tx, scope).
+		Order("shot_key ASC, character_key ASC, revision ASC").Find(&bindings).Error; err != nil {
+		return nil, nil, err
+	}
+	if len(identities) == 0 && len(bindings) == 0 {
+		return identities, bindings, nil
+	}
+
+	revisionIDs := make([]string, 0, len(identities)+len(bindings))
+	resourceIDs := make([]string, 0, len(identities)+len(bindings))
+	identityByID := make(map[string]model.AgentCharacterIdentityVersion, len(identities))
+	for _, identity := range identities {
+		if err := agentruntime.ValidateCharacterIdentityVersion(agentruntime.CharacterIdentityVersion{
+			CharacterKey: identity.CharacterKey, Version: identity.Version,
+			CharacterBibleRevisionID: identity.CharacterBibleRevisionID, ResourceID: identity.ResourceID,
+			DependencyHash: identity.DependencyHash, LifecycleStatus: identity.LifecycleStatus,
+		}); err != nil {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		identityByID[identity.ID] = identity
+		revisionIDs = append(revisionIDs, identity.CharacterBibleRevisionID)
+		resourceIDs = append(resourceIDs, identity.ResourceID)
+	}
+	for _, binding := range bindings {
+		if err := agentruntime.ValidateShotBindingRevision(agentruntime.ShotBindingRevision{
+			ShotKey: binding.ShotKey, CharacterKey: binding.CharacterKey, Revision: binding.Revision,
+			ShotArtifactRevisionID: binding.ShotArtifactRevisionID, IdentityVersionID: binding.IdentityVersionID,
+			ResourceID: binding.ResourceID, DependencyHash: binding.DependencyHash, LifecycleStatus: binding.LifecycleStatus,
+		}); err != nil {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		identity, found := identityByID[binding.IdentityVersionID]
+		if !found || identity.CharacterKey != binding.CharacterKey {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		revisionIDs = append(revisionIDs, binding.ShotArtifactRevisionID)
+		resourceIDs = append(resourceIDs, binding.ResourceID)
+	}
+
+	revisions, err := productionRevisionsByID(tx, scope, uniqueStrings(revisionIDs))
+	if err != nil {
+		return nil, nil, err
+	}
+	resources, err := productionResourcesByID(tx, scope, uniqueStrings(resourceIDs))
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, identity := range identities {
+		revision, found := revisions[identity.CharacterBibleRevisionID]
+		if !found || revision.ResourceID != identity.ResourceID {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		if _, found := resources[identity.ResourceID]; !found {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+	}
+	for _, binding := range bindings {
+		revision, found := revisions[binding.ShotArtifactRevisionID]
+		if !found || revision.ResourceID != binding.ResourceID {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		if _, found := resources[binding.ResourceID]; !found {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+	}
+	return identities, bindings, nil
+}
+
+func productionProgressProjection(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+	graph model.AgentProductionGraphVersion,
+	draft agentruntime.ProductionGraphDraft,
+	stages []model.AgentProductionStage,
+	artifacts []ProductionArtifactHeadSnapshot,
+) (*agentruntime.ProductionNextActionProjection, error) {
+	stageIDs := make([]string, 0, len(stages))
+	stageByID := make(map[string]model.AgentProductionStage, len(stages))
+	for _, stage := range stages {
+		stageIDs = append(stageIDs, stage.ID)
+		stageByID[stage.ID] = stage
+	}
+	var specialists []model.AgentSpecialistRun
+	if err := agentSpecialistScopeQuery(tx, scope).Where("stage_id IN ?", stageIDs).
+		Order("stage_id ASC, attempt ASC, created_at ASC, id ASC").Find(&specialists).Error; err != nil {
+		return nil, err
+	}
+	latestSpecialistByStage := make(map[string]model.AgentSpecialistRun, len(stages))
+	specialistStageByID := make(map[string]string, len(specialists))
+	for _, specialist := range specialists {
+		if _, found := stageByID[specialist.StageID]; !found {
+			return nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		specialistStageByID[specialist.ID] = specialist.StageID
+		latestSpecialistByStage[specialist.StageID] = specialist
+	}
+
+	taskIDs := make([]string, 0, len(latestSpecialistByStage))
+	billingIDs := make([]string, 0, len(latestSpecialistByStage))
+	for _, specialist := range latestSpecialistByStage {
+		if specialist.TaskID != "" {
+			taskIDs = append(taskIDs, specialist.TaskID)
+		}
+		if specialist.BillingOrderID != "" {
+			billingIDs = append(billingIDs, specialist.BillingOrderID)
+		}
+	}
+	tasks, err := productionTasksByID(tx, scope, uniqueStrings(taskIDs))
+	if err != nil {
+		return nil, err
+	}
+	billings, err := productionBillingsByID(tx, scope, uniqueStrings(billingIDs))
+	if err != nil {
+		return nil, err
+	}
+
+	resourceIDs := make([]string, 0, len(artifacts))
+	revisionIDs := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		revisionIDs = append(revisionIDs, artifact.Revision.ID)
+		if artifact.Revision.ResourceID != "" {
+			resourceIDs = append(resourceIDs, artifact.Revision.ResourceID)
+		}
+	}
+	resources, err := productionResourcesByID(tx, scope, uniqueStrings(resourceIDs))
+	if err != nil {
+		return nil, err
+	}
+	publications, err := productionPublicationsByRevision(tx, scope, uniqueStrings(revisionIDs))
+	if err != nil {
+		return nil, err
+	}
+
+	draftByKey := make(map[string]agentruntime.ProductionStageDraft, len(draft.Stages))
+	for _, stageDraft := range draft.Stages {
+		draftByKey[stageDraft.StageKey] = stageDraft
+	}
+	progressStages := make([]agentruntime.ProductionProgressStageFacts, 0, len(stages))
+	for _, stage := range stages {
+		stageDraft, found := draftByKey[stage.StageKey]
+		if !found {
+			return nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		stageFacts := agentruntime.ProductionProgressStageFacts{
+			StageKey: stage.StageKey, Status: stage.Status,
+			DependsOnStageKeys: append([]string(nil), stageDraft.DependsOnStageKeys...),
+			ReviewRevisionID:   stage.ReviewRevisionID, ExpectedDelivery: stageDraft.ExpectedDelivery,
+			Tasks: []agentruntime.ProductionTaskEvidence{}, Billings: []agentruntime.ProductionBillingEvidence{},
+			DeliveryEvidence: agentruntime.DeliveryEvidence{CanvasID: stageDraft.ExpectedDelivery.TargetCanvasID, Artifacts: []agentruntime.DeliveryArtifact{}},
+			StaleRevisionIDs: []string{},
+		}
+		if specialist, found := latestSpecialistByStage[stage.ID]; found {
+			if specialist.Status == model.AgentSpecialistRunSucceeded {
+				stageFacts.DeliveryEvidence.FinalMessage = specialist.ResultSummary
+			}
+			if specialist.TaskID != "" {
+				task, found := tasks[specialist.TaskID]
+				if !found || task.BillingOrderID != specialist.BillingOrderID {
+					return nil, ErrProductionRuntimeSnapshotInvalid
+				}
+				stageFacts.Tasks = append(stageFacts.Tasks, agentruntime.ProductionTaskEvidence{
+					TaskID: task.ID, Status: string(task.Status), BillingOrderID: task.BillingOrderID,
+				})
+			}
+			if specialist.BillingOrderID != "" {
+				billing, found := billings[specialist.BillingOrderID]
+				if !found || billing.TaskID != specialist.TaskID {
+					return nil, ErrProductionRuntimeSnapshotInvalid
+				}
+				stageFacts.Billings = append(stageFacts.Billings, agentruntime.ProductionBillingEvidence{
+					BillingOrderID: billing.ID, Status: string(billing.Status),
+				})
+			}
+		}
+		for _, artifact := range artifacts {
+			if specialistStageByID[artifact.Revision.CreatedBySpecialistID] != stage.ID {
+				continue
+			}
+			if artifact.Revision.LifecycleStatus == model.AgentArtifactRevisionStale {
+				stageFacts.StaleRevisionIDs = append(stageFacts.StaleRevisionIDs, artifact.Revision.ID)
+				continue
+			}
+			kind := agentruntime.ArtifactKind(artifact.Revision.Kind)
+			resource, hasResource := resources[artifact.Revision.ResourceID]
+			if !kind.Valid() && hasResource {
+				kind = agentruntime.ArtifactKind(resource.Kind)
+			}
+			if !kind.Valid() && artifact.Revision.ResourceID == "" {
+				kind = agentruntime.ArtifactText
+			}
+			if !kind.Valid() {
+				continue
+			}
+			deliveryArtifact := agentruntime.DeliveryArtifact{
+				Kind: kind, ArtifactID: artifact.Artifact.ID, RevisionID: artifact.Revision.ID,
+				ResourceID: artifact.Revision.ResourceID,
+				Approved: stage.ReviewRevisionID == artifact.Revision.ID &&
+					(stage.Status == agentruntime.StageApproved || stage.Status == agentruntime.StageCompleted),
+			}
+			if hasResource {
+				deliveryArtifact.URL = resource.PublicURL
+				deliveryArtifact.ResourceReady = resource.Status == model.ResourceStatusReady
+			} else if artifact.Revision.ResourceID != "" {
+				return nil, ErrProductionRuntimeSnapshotInvalid
+			}
+			if publication, found := publications[artifact.Revision.ID]; found {
+				deliveryArtifact.PublicationID = publication.ID
+			}
+			stageFacts.DeliveryEvidence.Artifacts = append(stageFacts.DeliveryEvidence.Artifacts, deliveryArtifact)
+		}
+		if stageDraft.ExpectedDelivery.TargetCanvasID != "" {
+			if stageDraft.ExpectedDelivery.TargetCanvasID != scope.CanvasID {
+				return nil, ErrProductionRuntimeSnapshotInvalid
+			}
+			if err := tx.Model(&model.CanvasChange{}).Where("canvas_id = ?", scope.CanvasID).
+				Select("COALESCE(MAX(revision), 0)").Scan(&stageFacts.DeliveryEvidence.CanvasRevision).Error; err != nil {
+				return nil, err
+			}
+		}
+		progressStages = append(progressStages, stageFacts)
+	}
+	projection, err := agentruntime.BuildProductionProgress(agentruntime.ProductionProgressFacts{
+		GraphVersionID: graph.ID, GraphVersion: graph.Version, Stages: progressStages, ComputedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return nil, ErrProductionRuntimeSnapshotInvalid
+	}
+	return &projection, nil
+}
+
+func productionRevisionsByID(tx *gorm.DB, scope agentruntime.Scope, ids []string) (map[string]model.AgentArtifactRevision, error) {
+	result := make(map[string]model.AgentArtifactRevision, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var revisions []model.AgentArtifactRevision
+	if err := productionArtifactRevisionScopeQuery(tx, scope).Omit("payload_json").Where("id IN ?", ids).Find(&revisions).Error; err != nil {
+		return nil, err
+	}
+	if len(revisions) != len(ids) {
+		return nil, ErrProductionRuntimeSnapshotInvalid
+	}
+	for _, revision := range revisions {
+		result[revision.ID] = revision
+	}
+	return result, nil
+}
+
+func productionResourcesByID(tx *gorm.DB, scope agentruntime.Scope, ids []string) (map[string]model.Resource, error) {
+	result := make(map[string]model.Resource, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	query := tx.Model(&model.Resource{}).Where("id IN ?", ids)
+	if scope.TenantKind == agentruntime.TenantTeam {
+		query = query.Where("team_id = ?", scope.TenantID)
+	} else {
+		query = query.Where("user_id = ? AND (team_id = '' OR team_id IS NULL)", scope.ActorUserID)
+	}
+	var resources []model.Resource
+	if err := query.Find(&resources).Error; err != nil {
+		return nil, err
+	}
+	if len(resources) != len(ids) {
+		return nil, ErrProductionRuntimeSnapshotInvalid
+	}
+	for _, resource := range resources {
+		result[resource.ID] = resource
+	}
+	return result, nil
+}
+
+func productionTasksByID(tx *gorm.DB, scope agentruntime.Scope, ids []string) (map[string]model.Task, error) {
+	result := make(map[string]model.Task, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var tasks []model.Task
+	if err := tx.Model(&model.Task{}).Where(
+		"id IN ? AND user_id = ? AND project_id = ? AND audience = ?", ids, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal,
+	).Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	if len(tasks) != len(ids) {
+		return nil, ErrProductionRuntimeSnapshotInvalid
+	}
+	for _, task := range tasks {
+		result[task.ID] = task
+	}
+	return result, nil
+}
+
+func productionBillingsByID(tx *gorm.DB, scope agentruntime.Scope, ids []string) (map[string]model.BillingOrder, error) {
+	result := make(map[string]model.BillingOrder, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	query := tx.Model(&model.BillingOrder{}).Where("id IN ? AND user_id = ?", ids, scope.ActorUserID)
+	if scope.TenantKind == agentruntime.TenantTeam {
+		query = query.Where("team_id = ?", scope.TenantID)
+	} else {
+		query = query.Where("team_id = '' OR team_id IS NULL")
+	}
+	var billings []model.BillingOrder
+	if err := query.Find(&billings).Error; err != nil {
+		return nil, err
+	}
+	if len(billings) != len(ids) {
+		return nil, ErrProductionRuntimeSnapshotInvalid
+	}
+	for _, billing := range billings {
+		result[billing.ID] = billing
+	}
+	return result, nil
+}
+
+func productionPublicationsByRevision(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+	revisionIDs []string,
+) (map[string]model.AgentAssetPublication, error) {
+	result := make(map[string]model.AgentAssetPublication, len(revisionIDs))
+	if len(revisionIDs) == 0 {
+		return result, nil
+	}
+	var publications []model.AgentAssetPublication
+	if err := tx.Model(&model.AgentAssetPublication{}).Where(
+		`tenant_kind = ? AND tenant_id = ? AND actor_user_id = ? AND domain_project_id = ?
+			AND canvas_id = ? AND thread_id = ? AND run_id = ? AND artifact_revision_id IN ? AND status = ?`,
+		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID, scope.ThreadID, scope.RunID,
+		revisionIDs, model.AgentAssetPublicationSucceeded,
+	).Order("id ASC").Find(&publications).Error; err != nil {
+		return nil, err
+	}
+	for _, publication := range publications {
+		if _, found := result[publication.ArtifactRevisionID]; !found {
+			result[publication.ArtifactRevisionID] = publication
+		}
+	}
+	return result, nil
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, found := seen[value]; found {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func productionCharacterIdentityScopeQuery(query *gorm.DB, scope agentruntime.Scope) *gorm.DB {
+	return query.Model(&model.AgentCharacterIdentityVersion{}).Where(
+		`tenant_kind = ? AND tenant_id = ? AND actor_user_id = ? AND domain_project_id = ?
+			AND canvas_id = ? AND thread_id = ? AND run_id = ?`,
+		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID, scope.ThreadID, scope.RunID,
+	)
+}
+
+func productionShotBindingScopeQuery(query *gorm.DB, scope agentruntime.Scope) *gorm.DB {
+	return query.Model(&model.AgentShotBindingRevision{}).Where(
+		`tenant_kind = ? AND tenant_id = ? AND actor_user_id = ? AND domain_project_id = ?
+			AND canvas_id = ? AND thread_id = ? AND run_id = ?`,
+		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID, scope.ThreadID, scope.RunID,
+	)
 }
 
 func productionStageSnapshotMatches(stage model.AgentProductionStage, graphVersionID string, expected agentruntime.ProductionStageDraft) bool {

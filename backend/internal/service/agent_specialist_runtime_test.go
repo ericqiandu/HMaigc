@@ -238,6 +238,16 @@ func newSpecialistRuntimeFixture(t *testing.T, endpointURL string, request agent
 		if len(request.InputRevisions) != 1 {
 			t.Fatalf("visual specialist input revisions = %#v, want exactly one", request.InputRevisions)
 		}
+		sourceResource := model.Resource{
+			ID: "resource-specialist-source", UserID: specialistRuntimeScope().ActorUserID,
+			Kind: "image", Status: model.ResourceStatusReady,
+			Provider: "oss", ObjectKey: "users/runtime-user/image/specialist-source.png",
+			PublicURL: "https://assets.example.com/specialist-source.png", MimeType: "image/png",
+			Size: 4096, Width: 1024, Height: 1024, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(&sourceResource).Error; err != nil {
+			t.Fatal(err)
+		}
 		source, err := svc.repo.AppendArtifactRevision(specialistRuntimeScope(), request.InputRevisions[0].ArtifactID, 0, agentruntime.ArtifactDraft{
 			ArtifactKey: "specialist-source", Kind: "source_image", SchemaVersion: 1,
 			Payload: json.RawMessage(`{"caption":"雨夜街道中的人物参考图"}`), ResourceID: "resource-specialist-source",

@@ -342,6 +342,25 @@ func TestRecoverAgentRunTreeAcceptsExactPublishedSkillVersion(t *testing.T) {
 	}
 }
 
+func TestRecoverAgentRunTreeProgressExposesStructuralStageAction(t *testing.T) {
+	fixture := newAgentProductionRecoveryFixture(t)
+	projection, err := fixture.service.RecoverAgentRunTreeProgress(fixture.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection == nil || projection.CurrentStageKey != "visual-analysis" ||
+		len(projection.EligibleActions) != 1 || projection.EligibleActions[0].Action != agentruntime.ProductionActionExecuteStage {
+		t.Fatalf("recovered progress = %#v", projection)
+	}
+	var stage model.AgentProductionStage
+	if err := fixture.db.First(&stage, "id = ?", fixture.request.StageID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stage.Status != agentruntime.StagePlanned || stage.Version != 1 {
+		t.Fatalf("recovery mutated stage = %#v", stage)
+	}
+}
+
 type agentProductionRecoveryFixture struct {
 	service   *Service
 	db        *gorm.DB
