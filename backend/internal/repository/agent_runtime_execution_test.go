@@ -33,7 +33,7 @@ func TestCommitRejectedAgentToolDecisionPersistsOneFailedCallAndCheckpoint(t *te
 		t.Fatal(err)
 	}
 	call := agentruntime.ToolCallDecision{
-		ToolCallID: "render-invalid", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
+		ToolCallID: "render-invalid", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
 		Arguments: json.RawMessage(`{"artifactId":"artifact-video"}`), ExpectedDelivery: repositoryTestImageDelivery(),
 	}
 	transition, err := agentruntime.RejectToolDecision(current, agentruntime.ToolDecisionFailure{
@@ -219,7 +219,7 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 		t.Fatal(err)
 	}
 	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-		ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasCommit,
+		ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasProject,
 		ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 	}}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
@@ -265,8 +265,8 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 	if len(timelineItems) != 1 || timelineItems[0].Status != model.AgentTimelineItemCompleted ||
 		timelineItems[0].SourceEventSequence != 5 || !strings.Contains(timelineItems[0].ContentJSON, `"succeeded":true`) ||
-		!strings.Contains(timelineItems[0].ContentJSON, `"toolName":"canvas.commit"`) ||
-		!strings.Contains(timelineItems[0].ContentJSON, `"output":{"canvasId":"canvas-1","committedRevision":8}`) {
+		!strings.Contains(timelineItems[0].ContentJSON, `"toolName":"canvas.project"`) ||
+		strings.Contains(timelineItems[0].ContentJSON, `"output"`) {
 		t.Fatalf("completed tool timeline lifecycle = %#v", timelineItems)
 	}
 	var activeTimelineCount int64
@@ -299,7 +299,7 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
+			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasProject, ActionVersion: 1,
 			Arguments: []byte(`{"baseRevision":7,"patch":{"deleteNodeIds":["obsolete"]}}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})
@@ -334,7 +334,8 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	}
 }
 
-func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testing.T) {
+func TestLegacyV3CommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 approval persistence is covered by media.generate service and repository tests")
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
 	createAgentRunForTest(t, repo, scope)
@@ -421,7 +422,8 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	}
 }
 
-func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t *testing.T) {
+func TestLegacyV3CommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 media recovery preserves commercial facts in agent production recovery tests")
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
@@ -749,8 +751,8 @@ func TestInterruptAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 		{
 			name: "tool awaiting approval",
 			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-				ToolCallID: "call-interrupt", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
-				Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+				ToolCallID: "call-interrupt", ToolName: agentruntime.ToolCanvasProject, ActionVersion: 1,
+				Arguments: []byte(`{"artifactRevisions":[{"artifactId":"artifact-1","revisionId":"revision-1"}],"baseRevision":7,"expectedDelivery":{"kind":"canvas_change","completionCriteria":[{"fact":"canvas_revision"}]}}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 			}},
 			kind: model.AgentTimelineItemToolCall,
 		},
@@ -820,8 +822,8 @@ func TestTerminateAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 		{
 			name: "tool",
 			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-				ToolCallID: "call-terminate", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
-				Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+				ToolCallID: "call-terminate", ToolName: agentruntime.ToolCanvasProject, ActionVersion: 1,
+				Arguments: []byte(`{"artifactRevisions":[{"artifactId":"artifact-1","revisionId":"revision-1"}],"baseRevision":7,"expectedDelivery":{"kind":"canvas_change","completionCriteria":[{"fact":"canvas_revision"}]}}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 			}},
 			kind: model.AgentTimelineItemToolCall,
 		},

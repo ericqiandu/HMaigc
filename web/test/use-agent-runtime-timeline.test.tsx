@@ -48,7 +48,7 @@ test("服务端 turns/items 是恢复真源且重复或乱序事件不会重复�
     expect(runtime?.turns[0]?.items[0]?.content.message).toBe("生成短片");
     const delta = uiItemEvent(3, "item.delta", { delta: "第一句", userVisible: true });
     const snapshot: AgentRuntimeEvent = {
-        protocolVersion: 2,
+        protocolVersion: 3,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 4,
@@ -390,7 +390,7 @@ function timelineItem(id: string, kind: "user_message" | "artifact", content: Re
 }
 
 function uiItemEvent(sequence: number, kind: "item.delta", payload: Record<string, unknown>): AgentRuntimeEvent {
-    return { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence, kind, itemId: "item-message-1", itemKind: "agent_message", payload, createdAt: "2026-08-18T00:00:02Z" };
+    return { protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence, kind, itemId: "item-message-1", itemKind: "agent_message", payload, createdAt: "2026-08-18T00:00:02Z" };
 }
 
 async function settle() {

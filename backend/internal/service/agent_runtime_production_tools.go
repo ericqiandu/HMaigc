@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -17,6 +18,9 @@ var (
 )
 
 type SpecialistDelegateArguments struct {
+	ProductionGraph      agentruntime.ProductionGraphDraft  `json:"productionGraph"`
+	ExpectedGraphVersion int64                              `json:"expectedGraphVersion"`
+	StageKey             string                             `json:"stageKey"`
 	SpecialistKey        agentruntime.SpecialistKey         `json:"specialistKey"`
 	Objective            string                             `json:"objective"`
 	InputRevisions       []agentruntime.ArtifactRevisionRef `json:"inputRevisions"`
@@ -120,11 +124,45 @@ func decodeCanvasProjectArguments(payload []byte) (CanvasProjectArguments, error
 	return arguments, nil
 }
 
+func freezeAgentCanvasProjectDecisionArguments(
+	canvasID string,
+	call *agentruntime.ToolCallDecision,
+) (json.RawMessage, error) {
+	if call == nil || call.ToolName != agentruntime.ToolCanvasProject || call.ActionVersion < 1 ||
+		strings.TrimSpace(canvasID) != canvasID || canvasID == "" {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	arguments, err := decodeCanvasProjectArguments(call.Arguments)
+	if err != nil || !arguments.ExpectedDelivery.Equal(call.ExpectedDelivery) ||
+		arguments.ExpectedDelivery.TargetCanvasID != canvasID {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	sort.Slice(arguments.ArtifactRevisions, func(left int, right int) bool {
+		if arguments.ArtifactRevisions[left].ArtifactID != arguments.ArtifactRevisions[right].ArtifactID {
+			return arguments.ArtifactRevisions[left].ArtifactID < arguments.ArtifactRevisions[right].ArtifactID
+		}
+		return arguments.ArtifactRevisions[left].RevisionID < arguments.ArtifactRevisions[right].RevisionID
+	})
+	for index := 1; index < len(arguments.ArtifactRevisions); index++ {
+		if arguments.ArtifactRevisions[index-1].ArtifactID == arguments.ArtifactRevisions[index].ArtifactID {
+			return nil, ErrAgentRuntimeToolArgumentsInvalid
+		}
+	}
+	frozen, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, err
+	}
+	return frozen, nil
+}
+
 func freezeSpecialistDelegateArguments(
 	configuration agentruntime.RunConfiguration,
 	loadedSkillDirs []string,
 	payload []byte,
 ) (SpecialistDelegateArguments, []agentruntime.SkillSelection, error) {
+	if !agentRuntimeJSONHasFields(payload, "productionGraph", "expectedGraphVersion", "stageKey") {
+		return SpecialistDelegateArguments{}, nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	var arguments SpecialistDelegateArguments
@@ -141,9 +179,30 @@ func freezeSpecialistDelegateArguments(
 	if arguments.ToolAllowlist == nil {
 		arguments.ToolAllowlist = []agentruntime.AgentToolName{}
 	}
+	arguments.ProductionGraph = canonicalSpecialistProductionGraph(arguments.ProductionGraph)
 	if len(arguments.SkillDirs) == 0 || len(arguments.SkillDirs) > 8 ||
+		arguments.ExpectedGraphVersion < 0 || !validAgentRuntimeContractName(arguments.StageKey) ||
 		strings.TrimSpace(arguments.Objective) != arguments.Objective || arguments.Objective == "" ||
 		strings.TrimSpace(arguments.ExpectedOutputSchema) != arguments.ExpectedOutputSchema || arguments.ExpectedOutputSchema == "" {
+		return SpecialistDelegateArguments{}, nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	if err := agentruntime.ValidateProductionGraph(arguments.ProductionGraph); err != nil {
+		return SpecialistDelegateArguments{}, nil, errors.Join(ErrAgentRuntimeToolArgumentsInvalid, err)
+	}
+	var selectedStage *agentruntime.ProductionStageDraft
+	for index := range arguments.ProductionGraph.Stages {
+		stage := &arguments.ProductionGraph.Stages[index]
+		if stage.ReviewPolicy != agentruntime.ReviewRequired {
+			return SpecialistDelegateArguments{}, nil, ErrAgentRuntimeToolArgumentsInvalid
+		}
+		if stage.StageKey == arguments.StageKey {
+			selectedStage = stage
+		}
+	}
+	if selectedStage == nil || selectedStage.SpecialistKey != arguments.SpecialistKey ||
+		selectedStage.CostPolicy != agentruntime.CostNone ||
+		!reflect.DeepEqual(selectedStage.InputRevisions, arguments.InputRevisions) ||
+		!reflect.DeepEqual(selectedStage.ExpectedDelivery, arguments.ExpectedDelivery) {
 		return SpecialistDelegateArguments{}, nil, ErrAgentRuntimeToolArgumentsInvalid
 	}
 	if !sort.StringsAreSorted(arguments.SkillDirs) || !strictUniqueStrings(arguments.SkillDirs) {
@@ -205,6 +264,53 @@ func freezeSpecialistDelegateArguments(
 	return arguments, frozenSkills, nil
 }
 
+func freezeAgentSpecialistDelegateDecisionArguments(
+	configuration agentruntime.RunConfiguration,
+	loadedSkillDirs []string,
+	call *agentruntime.ToolCallDecision,
+) ([]byte, error) {
+	if call == nil || call.ToolName != agentruntime.ToolSpecialistDelegate || call.ActionVersion < 1 {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	arguments, _, err := freezeSpecialistDelegateArguments(configuration, loadedSkillDirs, call.Arguments)
+	if err != nil || !arguments.ExpectedDelivery.Equal(call.ExpectedDelivery) {
+		return nil, errors.Join(ErrAgentRuntimeToolArgumentsInvalid, err)
+	}
+	frozen, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, err
+	}
+	return frozen, nil
+}
+
+func canonicalSpecialistProductionGraph(draft agentruntime.ProductionGraphDraft) agentruntime.ProductionGraphDraft {
+	if draft.Stages == nil {
+		draft.Stages = []agentruntime.ProductionStageDraft{}
+	}
+	for index := range draft.Stages {
+		if draft.Stages[index].DependsOnStageKeys == nil {
+			draft.Stages[index].DependsOnStageKeys = []string{}
+		}
+		if draft.Stages[index].InputRevisions == nil {
+			draft.Stages[index].InputRevisions = []agentruntime.ArtifactRevisionRef{}
+		}
+	}
+	return draft
+}
+
+func agentRuntimeJSONHasFields(payload []byte, fields ...string) bool {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(payload, &object) != nil {
+		return false
+	}
+	for _, field := range fields {
+		if _, found := object[field]; !found {
+			return false
+		}
+	}
+	return true
+}
+
 func strictUniqueStrings(values []string) bool {
 	previous := ""
 	for _, value := range values {
@@ -246,8 +352,8 @@ func validAgentRuntimeContractName(value string) bool {
 
 func cloneAgentRuntimeSkillSelection(skill agentruntime.SkillSelection) agentruntime.SkillSelection {
 	cloned := skill
-	cloned.CapabilityManifest.Specialists = append([]agentruntime.SpecialistKey(nil), skill.CapabilityManifest.Specialists...)
-	cloned.CapabilityManifest.Tools = append([]agentruntime.AgentToolName(nil), skill.CapabilityManifest.Tools...)
-	cloned.CapabilityManifest.ArtifactSchemas = append([]string(nil), skill.CapabilityManifest.ArtifactSchemas...)
+	cloned.CapabilityManifest.Specialists = append(make([]agentruntime.SpecialistKey, 0, len(skill.CapabilityManifest.Specialists)), skill.CapabilityManifest.Specialists...)
+	cloned.CapabilityManifest.Tools = append(make([]agentruntime.AgentToolName, 0, len(skill.CapabilityManifest.Tools)), skill.CapabilityManifest.Tools...)
+	cloned.CapabilityManifest.ArtifactSchemas = append(make([]string, 0, len(skill.CapabilityManifest.ArtifactSchemas)), skill.CapabilityManifest.ArtifactSchemas...)
 	return cloned
 }

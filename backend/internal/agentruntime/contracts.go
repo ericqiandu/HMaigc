@@ -42,20 +42,22 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
-	// Current* remains the only contract accepted by the published user
-	// runtime until the final v3 hard cutover. Advancing it earlier would make
-	// the legacy retirement audit reject or retire live v2 runs while the v3
-	// execution chain is still incomplete.
-	CurrentRuntimeVersion    = 2
-	CurrentPolicyVersion     = 2
-	CurrentToolSchemaVersion = 3
-
 	ProductionRuntimeVersion         = 3
 	ProductionPolicyVersion          = 3
 	ProductionToolSchemaVersion      = 4
 	CurrentProductionSchemaVersion   = 1
 	ProductionAgentUIProtocolVersion = 3
-	FailureRuntimeSchemaRetired      = "runtime_schema_retired"
+	LegacyRuntimeVersion             = 2
+	LegacyPolicyVersion              = 2
+	LegacyToolSchemaVersion          = 3
+
+	// Current* is a hard cut to the governed production runtime. New runs and
+	// their UI event stream must never re-enter the retired v2 contract.
+	CurrentRuntimeVersion    = ProductionRuntimeVersion
+	CurrentPolicyVersion     = ProductionPolicyVersion
+	CurrentToolSchemaVersion = ProductionToolSchemaVersion
+
+	FailureRuntimeSchemaRetired = "runtime_schema_retired"
 
 	RunQueued          RunStatus = "queued"
 	RunRunning         RunStatus = "running"

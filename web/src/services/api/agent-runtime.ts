@@ -1,5 +1,6 @@
 import { localForageStorage } from "@/lib/localforage-storage";
 import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
+import { parseAgentProductionTimelineContent } from "./agent-production";
 import { array, exactObject, flag, integer, object, text } from "./strict-contract";
 
 export type {
@@ -26,9 +27,9 @@ export type AgentRuntimeEventKind =
     | "approval.requested"
     | "approval.resolved"
     | "state.snapshot";
-export type AgentToolName = "skill.load" | "production.plan" | "production.render" | "canvas.commit";
+export type AgentToolName = "skill.load" | "specialist.delegate" | "vision.analyze" | "media.generate" | "canvas.project";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
-export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact";
+export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact" | "artifact_revision" | "resource" | "publication";
 
 export type AgentExpectedDelivery = {
     kind: "answer" | "canvas_change" | "generated_asset" | "mixed";
@@ -95,7 +96,7 @@ export type AgentRunEventPayload = {
     failureCode?: string;
     item?: { kind: AgentTimelineItemKind; status: AgentTimelineItemStatus; content: AgentTimelineItemContent };
 };
-type AgentUIEventBase = { protocolVersion: 2; threadId: string; runId: string; sequence: number; createdAt: string };
+type AgentUIEventBase = { protocolVersion: 3; threadId: string; runId: string; sequence: number; createdAt: string };
 export type AgentRuntimeEvent =
     | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
     | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
@@ -178,8 +179,8 @@ const eventKinds = new Set<AgentRuntimeEventKind>([
 const runEventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "state.snapshot"]);
 const timelineItemKinds = new Set<AgentTimelineItemKind>(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"]);
 const timelineItemStatuses = new Set<AgentTimelineItemStatus>(["in_progress", "completed", "failed", "declined", "interrupted"]);
-const toolNames = new Set<AgentToolName>(["skill.load", "production.plan", "production.render", "canvas.commit"]);
-const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact"]);
+const toolNames = new Set<AgentToolName>(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project"]);
+const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact", "artifact_revision", "resource", "publication"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const baseURL = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").replace(/\/+$/, "");
@@ -236,11 +237,11 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
     const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "itemKind", "payload", "createdAt"]);
-    if (source.protocolVersion !== 2) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
+    if (source.protocolVersion !== 3) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
     const base = {
-        protocolVersion: 2 as const,
+        protocolVersion: 3 as const,
         threadId: text(source.threadId, "event.threadId"),
         runId: text(source.runId, "event.runId"),
         sequence: integer(source.sequence, "event.sequence"),
@@ -258,13 +259,14 @@ export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
         if (itemId !== undefined) event.itemId = itemId;
         return event;
     }
-    const payload = object(source.payload, "event.payload");
-    rejectTransientMediaLocator(payload, "event.payload");
+    const itemId = text(source.itemId, "event.itemId");
+    const itemKind = timelineItemKind(source.itemKind, "event.itemKind");
+    const payload = parseTimelineContent(source.payload, "event.payload", itemKind);
     return {
         ...base,
         kind: kind as "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved",
-        itemId: text(source.itemId, "event.itemId"),
-        itemKind: timelineItemKind(source.itemKind, "event.itemKind"),
+        itemId,
+        itemKind,
         payload,
     };
 }
@@ -376,7 +378,18 @@ function parseRunEventPayload(value: unknown): AgentRunEventPayload {
 }
 
 function parseTimelineContent(value: unknown, label: string, kind: AgentTimelineItemKind): AgentTimelineItemContent {
-    const content = kind === "artifact" ? exactObject(value, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"]) : object(value, label);
+    const source = object(value, label);
+    let content: AgentTimelineItemContent;
+    if (source.contentType !== undefined) {
+        const production = parseAgentProductionTimelineContent(source);
+        const expectedKind = production.contentType === "stage_review_resolution" ? "approval" : "artifact";
+        if (kind !== expectedKind) throw new Error(`${label} 的 Agent 生产内容与 item kind 不一致`);
+        content = production;
+    } else {
+        content = kind === "artifact"
+            ? exactObject(source, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"])
+            : source;
+    }
     rejectTransientMediaLocator(content, label);
     return content;
 }

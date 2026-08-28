@@ -195,6 +195,7 @@ func (s *Service) reviewProductionStage(
 	storedParent, err := s.validateProductionStageReviewParentRun(
 		scope,
 		parentRun,
+		stageID,
 		command.Decision == agentruntime.StageReviewStop,
 		allowTerminalPublicationReplay,
 	)
@@ -300,6 +301,11 @@ func (s *Service) reviewProductionStage(
 		result.Publication = publication
 	}
 	if revisionRequest == nil {
+		if command.Decision == agentruntime.StageReviewApprove && storedParent.Status == agentruntime.RunWaitingTool {
+			if err := s.resumeParentAfterSpecialistApproval(scope, result.Stage); err != nil {
+				return StageReviewResult{}, err
+			}
+		}
 		return result, nil
 	}
 	completion, err := s.RunSpecialist(ctx, scope, *storedParent, *revisionRequest)
@@ -322,6 +328,7 @@ func (s *Service) reviewProductionStage(
 func (s *Service) validateProductionStageReviewParentRun(
 	scope agentruntime.Scope,
 	parentRun model.AgentRun,
+	stageID string,
 	allowCancelled bool,
 	allowTerminalPublicationReplay bool,
 ) (*model.AgentRun, error) {
@@ -332,12 +339,43 @@ func (s *Service) validateProductionStageReviewParentRun(
 	statusAllowed := storedParent.Status == agentruntime.RunRunning ||
 		allowCancelled && storedParent.Status == agentruntime.RunCancelled ||
 		allowTerminalPublicationReplay && agentRuntimeRunTerminal(storedParent.Status)
+	if storedParent.Status == agentruntime.RunWaitingTool {
+		checkpoint, loadErr := s.repo.LoadAgentCheckpoint(scope)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		_, _, _, delegateErr := s.activeSpecialistDelegateForStage(scope, checkpoint, stageID)
+		statusAllowed = delegateErr == nil
+	}
 	if storedParent.ID != parentRun.ID || storedParent.ModelRecordID != parentRun.ModelRecordID || storedParent.ModelKey != parentRun.ModelKey ||
 		storedParent.RuntimeVersion != agentruntime.ProductionRuntimeVersion || storedParent.PolicyVersion != agentruntime.ProductionPolicyVersion ||
 		storedParent.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion || !statusAllowed {
 		return nil, agentruntime.ErrSpecialistModelInheritance
 	}
 	return storedParent, nil
+}
+
+func (s *Service) resumeParentAfterSpecialistApproval(scope agentruntime.Scope, approvedStage model.AgentProductionStage) error {
+	checkpoint, err := s.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		return err
+	}
+	if checkpoint.Status != agentruntime.RunWaitingTool {
+		return nil
+	}
+	call, snapshot, storedStage, err := s.activeSpecialistDelegateForStage(scope, checkpoint, approvedStage.ID)
+	if err != nil {
+		return err
+	}
+	if storedStage.Version != approvedStage.Version || storedStage.Status != approvedStage.Status ||
+		storedStage.ReviewRevisionID != approvedStage.ReviewRevisionID {
+		return repository.ErrProductionStageReviewConflict
+	}
+	if _, err := s.resolveApprovedSpecialistDelegate(scope, checkpoint, call, snapshot, storedStage); err != nil {
+		return err
+	}
+	_, err = s.advanceAgentRun(scope, agentWakeApprovalDecided)
+	return err
 }
 
 func revisionSpecialistRequest(prior model.AgentSpecialistRun, command agentruntime.StageReviewCommand) (agentruntime.SpecialistRequest, error) {

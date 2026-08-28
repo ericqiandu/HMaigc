@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type PointerEventHandler, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type PointerEventHandler, type SetStateAction } from "react";
 import { Bot, CircleAlert, History, PanelRightClose, Plus, ShieldCheck, XCircle } from "lucide-react";
 import { App, Button, Tooltip } from "antd";
 import { motion } from "motion/react";
@@ -10,7 +10,8 @@ import { deriveCanvasAgentSelectionDefaults } from "@/lib/canvas/canvas-agent-co
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection } from "@/lib/canvas/canvas-agent-draft";
 import { uploadImage } from "@/services/image-storage";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
-import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState } from "@/services/api/agent-runtime";
+import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState, AgentThreadHistoryTurn } from "@/services/api/agent-runtime";
+import type { AgentProductionClient } from "@/services/api/agent-production";
 import type { PlatformSkill } from "@/services/api/skills";
 import { decodeChannelModel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -25,6 +26,8 @@ import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationS
 import { AgentApprovalSummary } from "./agent-approval-summary";
 import { agentRuntimeUsesLiveSubscription, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
+
+const AgentProductionTimeline = lazy(() => import("./agent-production-card").then((module) => ({ default: module.AgentProductionTimeline })));
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 240;
 
@@ -45,6 +48,7 @@ type CanvasAssistantPanelProps = {
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     runtimeClient?: AgentRuntimeClient;
     runtimeStorage?: AgentRuntimeHandleStorage;
+    productionClient?: AgentProductionClient;
 };
 
 export function CanvasAssistantPanel({
@@ -64,6 +68,7 @@ export function CanvasAssistantPanel({
     onRuntimeEvent,
     runtimeClient,
     runtimeStorage,
+    productionClient,
 }: CanvasAssistantPanelProps) {
     const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -262,7 +267,20 @@ export function CanvasAssistantPanel({
                     ) : !runtime.view ? (
                         <AgentEmptyState restored={runtime.restored} muted={theme.node.muted} onSuggestion={setPrompt} />
                     ) : (
-                        <AgentRunContent key={runtime.view.run.id} state={runtime.view.state} conversation={runtime.conversation} meaningfulEvents={runtime.meaningfulEvents} connection={runtime.connection} muted={theme.node.muted} config={effectiveConfig} />
+                        <AgentRunContent
+                            key={runtime.view.run.id}
+                            runId={runtime.view.run.id}
+                            state={runtime.view.state}
+                            conversation={runtime.conversation}
+                            meaningfulEvents={runtime.meaningfulEvents}
+                            events={runtime.events}
+                            turns={runtime.turns}
+                            connection={runtime.connection}
+                            muted={theme.node.muted}
+                            config={effectiveConfig}
+                            productionClient={productionClient}
+                            onProductionRefresh={runtime.refreshCurrentRun}
+                        />
                     )}
                     {!historyOpen && runtime.view?.state.clarificationHistory.length ? <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} /> : null}
                     {!historyOpen && runtime.view?.state.status === "waiting_input" ? <AgentClarificationStatus /> : null}
@@ -385,7 +403,31 @@ function AgentEmptyState({ restored, muted, onSuggestion }: { restored: boolean;
     );
 }
 
-function AgentRunContent({ state, conversation, meaningfulEvents, connection, muted, config }: { state: AgentRuntimeState; conversation: AgentConversationState; meaningfulEvents: AgentRuntimeEvent[]; connection: string; muted: string; config: AiConfig }) {
+function AgentRunContent({
+    runId,
+    state,
+    conversation,
+    meaningfulEvents,
+    events,
+    turns,
+    connection,
+    muted,
+    config,
+    productionClient,
+    onProductionRefresh,
+}: {
+    runId: string;
+    state: AgentRuntimeState;
+    conversation: AgentConversationState;
+    meaningfulEvents: AgentRuntimeEvent[];
+    events: AgentRuntimeEvent[];
+    turns: AgentThreadHistoryTurn[];
+    connection: string;
+    muted: string;
+    config: AiConfig;
+    productionClient?: AgentProductionClient;
+    onProductionRefresh: () => Promise<void>;
+}) {
     const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
     const hasVisibleReply = conversation.items.some((item) => item.text.length > 0) || Boolean(state.finalMessage?.trim());
     const submittedModels: CanvasAgentGenerationModels = {
@@ -423,6 +465,9 @@ function AgentRunContent({ state, conversation, meaningfulEvents, connection, mu
                     Agent 流式回复与最终事实冲突，请重新读取本轮运行。
                 </div>
             ) : null}
+            <Suspense fallback={<div className="agent-production-card-loading" role="status">正在加载阶段产物</div>}>
+                <AgentProductionTimeline runId={runId} turns={turns} events={events} client={productionClient} onRefresh={onProductionRefresh} />
+            </Suspense>
             {state.lastToolResult ? <ToolResult state={state} muted={muted} /> : null}
             {state.finalMessage && !conversation.items.some((item) => (state.finalMessage ?? "").startsWith(item.text)) ? (
                 <article className="canvas-agent-runtime-final" aria-label="Agent 回复">

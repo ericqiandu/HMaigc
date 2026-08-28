@@ -171,6 +171,9 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     assetId?: string;
+    artifactId?: string;
+    artifactRevisionId?: string;
+    projectionId?: string;
     teamResourceId?: string;
     teamResourceTeamId?: string;
     assetTags?: string[];

@@ -163,6 +163,18 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         }
     }, [canvasId, client]);
 
+    const refreshCurrentRun = useCallback(async () => {
+        if (!view) throw new Error("当前没有可刷新的 Agent 运行");
+        const expectedRunID = view.run.id;
+        const expectedThreadID = view.run.threadId;
+        const next = await client.getRun(expectedRunID);
+        if (next.run.id !== expectedRunID || next.run.threadId !== expectedThreadID || threadIdRef.current !== expectedThreadID) {
+            throw new Error("Agent 阶段审核后的运行归属与当前会话不一致");
+        }
+        adoptView(next);
+        await reloadThreads();
+    }, [adoptView, client, reloadThreads, view]);
+
     const scheduleThreadReload = useCallback(() => {
         if (historyReloadTimerRef.current) clearTimeout(historyReloadTimerRef.current);
         historyReloadTimerRef.current = setTimeout(() => {
@@ -530,6 +542,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             newThread,
             selectThread,
             reloadThreads,
+            refreshCurrentRun,
         }),
         [
             busy,
@@ -543,6 +556,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             pendingConfiguration,
             pendingUserMessage,
             reloadThreads,
+            refreshCurrentRun,
             restored,
             selectThread,
             sendOrSteer,

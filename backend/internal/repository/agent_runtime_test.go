@@ -21,12 +21,13 @@ import (
 
 func repositoryAgentScope() agentruntime.Scope {
 	return agentruntime.Scope{
-		TenantKind:  agentruntime.TenantPersonal,
-		TenantID:    "agent-user-1",
-		ActorUserID: "agent-user-1",
-		CanvasID:    "agent-canvas-1",
-		ThreadID:    "agent-thread-1",
-		RunID:       "agent-run-1",
+		TenantKind:      agentruntime.TenantPersonal,
+		TenantID:        "agent-user-1",
+		ActorUserID:     "agent-user-1",
+		DomainProjectID: "agent-project-1",
+		CanvasID:        "agent-canvas-1",
+		ThreadID:        "agent-thread-1",
+		RunID:           "agent-run-1",
 		Access: agentruntime.AccessGrant{
 			Level:              agentruntime.AccessManager,
 			SubscriptionActive: true,
@@ -81,18 +82,17 @@ func TestRetireLegacyAgentRunsLeavesTerminalHistoryUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waiting, err := agentruntime.Advance(waitingState, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
-		Kind: agentruntime.DecisionToolCall,
-		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "legacy-approval", ToolName: agentruntime.ToolProductionRender,
-			ActionVersion: 1, Arguments: json.RawMessage(`{"artifactId":"legacy-video"}`),
-			ExpectedDelivery: repositoryTestImageDelivery(),
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
+	delivery := repositoryTestImageDelivery()
+	waitingState.StateVersion++
+	waitingState.StepNumber++
+	waitingState.Status = agentruntime.RunWaitingApproval
+	waitingState.ExpectedDelivery = &delivery
+	waitingState.PendingToolCall = &agentruntime.ToolCallDecision{
+		ToolCallID: "legacy-approval", ToolName: agentruntime.ToolProductionRender,
+		ActionVersion: 1, Arguments: json.RawMessage(`{"artifactId":"legacy-video"}`),
+		ExpectedDelivery: delivery,
 	}
-	stageLegacyApprovalBoundary(t, db, waitingScope.RunID, waiting.State, now.Add(2*time.Second))
+	stageLegacyApprovalBoundary(t, db, waitingScope.RunID, waitingState, now.Add(2*time.Second))
 	completedAt := now.Add(3 * time.Second)
 	if err := db.Model(&model.AgentRun{}).Where("id = ?", terminalScope.RunID).
 		Updates(agentRunTerminalTestUpdates{Status: agentruntime.RunSucceeded, CompletedAt: completedAt, UpdatedAt: completedAt}).Error; err != nil {
@@ -103,17 +103,17 @@ func TestRetireLegacyAgentRunsLeavesTerminalHistoryUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	audit, err := repo.AuditRetirableLegacyAgentRuns(2, 3)
+	audit, err := repo.AuditRetirableLegacyAgentRuns(agentruntime.LegacyRuntimeVersion, agentruntime.CurrentRuntimeVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(audit) != 1 || audit[0].RuntimeVersion != 2 || audit[0].Status != agentruntime.RunWaitingApproval ||
+	if len(audit) != 1 || audit[0].RuntimeVersion != agentruntime.LegacyRuntimeVersion || audit[0].Status != agentruntime.RunWaitingApproval ||
 		audit[0].Count != 1 || !audit[0].HasPendingApproval || !audit[0].HasPendingTool || audit[0].HasCheckpointIssue ||
 		audit[0].HasPendingTask || audit[0].HasActiveArtifact || audit[0].HasUnresolvedBilling {
 		t.Fatalf("legacy retirement audit = %#v", audit)
 	}
 
-	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(agentruntime.LegacyRuntimeVersion, agentruntime.CurrentRuntimeVersion, agentruntime.FailureRuntimeSchemaRetired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,8 +354,8 @@ func initializeLegacyRetirementRun(t *testing.T, repo *Repository, scope agentru
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "legacy-model-record", ModelKey: "deepseek-v4",
-		MaxSteps: 6, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
-		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		MaxSteps: 6, ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion,
 		UserMessage: "创建一个短片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -652,6 +652,9 @@ func openAgentRuntimeRepositorySQLite(t *testing.T) (*Repository, *gorm.DB) {
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
 	return New(db), db
 }
 
@@ -672,6 +675,9 @@ func openAgentRuntimeRepositorySQLiteFile(t *testing.T) (*Repository, *gorm.DB) 
 		t.Fatal(err)
 	}
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	return New(db), db

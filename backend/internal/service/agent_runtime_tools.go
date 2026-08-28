@@ -160,6 +160,8 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		if errors.Is(err, repository.ErrAgentProductionPlanVersionConflict) {
 			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_version_conflict", map[string]string{"reason": err.Error()})
 		}
+	case agentruntime.ToolSpecialistDelegate:
+		return s.coordinatePendingAgentSpecialistDelegate(scope, state, call)
 	case agentruntime.ToolProductionRender:
 		return s.coordinatePendingAgentProductionRender(scope, state, call, record)
 	case agentruntime.ToolVisionAnalyze:
@@ -168,6 +170,8 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		return s.coordinatePendingAgentMediaGeneration(scope, state, call, record)
 	case agentruntime.ToolCanvasCommit:
 		return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
+	case agentruntime.ToolCanvasProject:
+		return s.coordinatePendingAgentCanvasProjection(scope, state, call, record)
 	default:
 		return nil, errors.New("agent tool executor is not connected")
 	}

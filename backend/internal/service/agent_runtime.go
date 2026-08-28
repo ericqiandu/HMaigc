@@ -240,8 +240,10 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 		case !errors.Is(lookupErr, gorm.ErrRecordNotFound):
 			return nil, lookupErr
 		}
-		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender || decision.ToolCall.ToolName == agentruntime.ToolVisionAnalyze ||
-			decision.ToolCall.ToolName == agentruntime.ToolMediaGenerate {
+		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender || decision.ToolCall.ToolName == agentruntime.ToolSpecialistDelegate ||
+			decision.ToolCall.ToolName == agentruntime.ToolVisionAnalyze ||
+			decision.ToolCall.ToolName == agentruntime.ToolMediaGenerate ||
+			decision.ToolCall.ToolName == agentruntime.ToolCanvasProject {
 			if state.ExpectedDelivery != nil && !state.ExpectedDelivery.Equal(decision.ToolCall.ExpectedDelivery) {
 				transition, rejectErr := agentruntime.RejectModelDecision(state, agentruntime.ModelDecisionFeedback{
 					Code: "delivery_contract_changed", Reason: "expectedDelivery must exactly match the contract frozen by the first model decision",
@@ -277,6 +279,17 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 				if freezeErr != nil {
 					failureCode, failureClass, classified = agentProductionRenderFailureDetails(freezeErr)
 				}
+			case agentruntime.ToolSpecialistDelegate:
+				frozenArguments, freezeErr = freezeAgentSpecialistDelegateDecisionArguments(
+					state.Configuration,
+					state.LoadedSkillDirs,
+					decision.ToolCall,
+				)
+				if freezeErr != nil {
+					failureCode = "specialist_delegate_invalid"
+					failureClass = agentruntime.ToolFailureAgentRepairable
+					classified = true
+				}
 			case agentruntime.ToolVisionAnalyze:
 				frozenArguments, freezeErr = s.freezeAgentVisualAnalysisDecisionArguments(
 					scope,
@@ -296,6 +309,13 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 				)
 				if freezeErr != nil {
 					failureCode, failureClass, classified = agentMediaGenerationFailureDetails(freezeErr)
+				}
+			case agentruntime.ToolCanvasProject:
+				frozenArguments, freezeErr = freezeAgentCanvasProjectDecisionArguments(scope.CanvasID, decision.ToolCall)
+				if freezeErr != nil {
+					failureCode = "canvas_projection_invalid"
+					failureClass = agentruntime.ToolFailureAgentRepairable
+					classified = true
 				}
 			}
 			if freezeErr != nil {
@@ -609,9 +629,9 @@ func agentRuntimeBillingKey(runID string, step int) string {
 
 func agentRuntimeSystemPromptForToolSchema(toolSchemaVersion int) (string, error) {
 	switch toolSchemaVersion {
-	case agentruntime.CurrentToolSchemaVersion:
+	case agentruntime.LegacyToolSchemaVersion:
 		return agentRuntimeSystemPrompt, nil
-	case agentruntime.ProductionToolSchemaVersion:
+	case agentruntime.CurrentToolSchemaVersion:
 		return agentRuntimeProductionSystemPrompt, nil
 	default:
 		return "", errors.New("agent runtime tool schema version is invalid")
@@ -628,7 +648,7 @@ const agentRuntimeProductionSystemPrompt = `你是弘梦短剧创作主 Agent。
 deliveryEvidence 与 deliveryVerification 来自真实工具结果、审批决议、Resource、资产发布记录、画布 revision 和 Artifact Ledger。只有用户批准的精确 Artifact revision、同 revision 的 ready Resource、按需存在的成功 publication 以及真实 canvas revision 才构成最终交付；说明文本、specialist completed、候选 URL 或未审批候选都不是充分证据。只完成已经缺失的 criterion；尚缺真实资产或画布事实时禁止 final。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
 ProductionGraph 与阶段生命周期是当前生产编排真源。Artifact 摘要只引用精确 revision；不得根据 Prompt、连线、占位状态或旧 revision 猜测资产已经存在。阶段内容必须按 reviewPolicy 交用户审核；automatic 也不能跨阶段代替用户接受内容。所有付费视觉分析和媒体生成必须通过 Runtime 冻结模型、参数、输入 revision 与报价，并取得费用审批。
 skill.load arguments 只能是 {"dir":"已选 Skill 目录"}。选中的 Skill 必须先加载冻结版本说明后才能据此执行或 final。
-specialist.delegate arguments 精确结构为 {"specialistKey":"narrative|asset|storyboard|visual|media|assembly","objective":"...","inputRevisions":[{"artifactId":"...","revisionId":"..."}],"skillDirs":["..."],"toolAllowlist":["vision.analyze","media.generate","canvas.project"],"expectedOutputSchema":"...","expectedDelivery":{...}}。只能委派已注册 specialist、已加载并由 Capability Manifest 授权的 Skill 和工具；子专家必须继承本轮冻结模型，禁止替换模型或静默降级。视频、独立音频与最终合成的计划 schema 分别是 video_plan.v1、audio_plan.v1、assembly_plan.v1；每个计划必须引用精确上游 revision，并按阶段交给用户审核，未批准的计划或候选 revision 禁止进入下一阶段。
+specialist.delegate arguments 精确结构为 {"productionGraph":{"graphKey":"...","stages":[{"stageKey":"...","specialistKey":"narrative|asset|storyboard|visual|video_assembly|audio","dependsOnStageKeys":[],"inputRevisions":[],"expectedDelivery":{...},"reviewPolicy":"required","costPolicy":"none"}]},"expectedGraphVersion":0,"stageKey":"...","specialistKey":"narrative|asset|storyboard|visual|video_assembly|audio","objective":"...","inputRevisions":[],"skillDirs":["..."],"toolAllowlist":["vision.analyze","media.generate","canvas.project"],"expectedOutputSchema":"...","expectedDelivery":{...}}。productionGraph 必须是本轮完整、无环且所有阶段都要求用户审核的不可变图草案；expectedGraphVersion 必须等于当前 productionGraph.version，首次建图为 0；stageKey 必须精确指向本次委派阶段，且该阶段的 specialistKey、inputRevisions、expectedDelivery 与顶层字段逐项一致，本次委派阶段的 costPolicy 必须为 none。只能委派已注册 specialist、已加载并由 Capability Manifest 授权的 Skill 和工具；子专家必须继承本轮冻结模型，禁止替换模型或静默降级。视频、独立音频与最终合成的计划 schema 分别是 video_plan.v1、audio_plan.v1、assembly_plan.v1；每个计划必须引用精确上游 revision，并按阶段交给用户审核，未批准的计划或候选 revision 禁止进入下一阶段。
 vision.analyze arguments 精确结构为 {"inputRevisions":[{"artifactId":"...","revisionId":"..."}],"resourceIds":["..."],"expectedOutputSchema":"...","expectedDelivery":{...}}。resourceIds 必须来自真实且有权限的 Resource，结果必须写成新的结构化视觉证据 revision；不能用文本描述伪造图片证据。
 media.generate 的顶层 arguments 精确结构为 {"inputRevisions":[{"artifactId":"...","revisionId":"..."}],"generationModel":{"channelId":"...","model":"..."},"capability":"image|video|audio","parameters":{},"outputArtifactKey":"...","expectedOutputSchema":"media_candidate.v1","expectedDelivery":{...}}。generationModel 必须逐字取自本轮同 capability 的 callableModels；inputRevisions 只能引用真实且已就绪的精确 Artifact revision，空输入必须显式传 []。图片的字段为 "parameters":{"prompt":"...","aspectRatio":"...","resolution":"...","quality":"...","count":1,"transparentBackground":false}；quality 仅在 providerCapabilities.qualities 非空时必填，否则必须省略，transparentBackground 不需要时可省略。视频的字段为 "parameters":{"prompt":"...","aspectRatio":"...","resolution":"...","durationSeconds":5,"generateAudio":false}。音频的字段为 "parameters":{"prompt":"...","voice":"...","format":"...","speed":"...","volume":"...","pitch":"...","emotion":"...","languageBoost":"...","sampleRate":"...","bitrate":"...","channel":"...","instructions":"..."}，除 prompt 与 voice 外，没有事实依据的可选字段必须省略。主 Agent 必须依据用户意图与本轮冻结的 callableModels/providerCapabilities 决定 audioMode：native 只在视频模型明确 supportsGeneratedAudio=true 且用户接受原生声音时使用，并且不得再创建独立音频；independent 只在用户明确需要独立配音、音效或音轨时使用，必须产出 audio_plan.v1 并为 capability=audio 单独报价、审批和生成 Artifact；无需声音时使用 none。禁止默认音频模式、能力猜测或 native/independent 双重扣费。比例、分辨率、画质、数量、时长、同步音频与参考媒体数量必须严格符合所选模型的 providerCapabilities，禁止默认参数、未知字段和模型降级。Runtime 会在费用审批前冻结模型记录、参数、输入 revision/Resource/ETag、Skill 版本与报价；批准后只执行这些冻结事实。生成成功后的全部候选资产必须保留并逐项追加到 Artifact Ledger，禁止质检后删除、覆盖或回滚。
 canvas.project arguments 精确结构为 {"artifactRevisions":[{"artifactId":"...","revisionId":"..."}],"baseRevision":0,"expectedDelivery":{...}}。只能投影已存在的精确 Artifact revisions；revision 冲突必须返回真实冲突并重新读取事实，禁止盲重试。assembly_plan.v1 必须只消费用户已批准的精确视频 revision，以及 audioMode=independent 时已批准的精确音频 revision；native 或 none 禁止附带独立音频 revision。

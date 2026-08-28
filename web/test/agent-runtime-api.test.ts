@@ -10,7 +10,7 @@ const state = {
     clarificationHistory: [],
     pendingToolCall: {
         toolCallId: "tool-1",
-        toolName: "production.render",
+        toolName: "media.generate",
         actionVersion: 3,
         arguments: { baseRevision: 7, patch: { upsertNodes: [] } },
         expectedDelivery: { kind: "canvas_change", targetCanvasId: "canvas-1", completionCriteria: [{ fact: "canvas_revision", artifact: "canvas_revision" }] },
@@ -50,7 +50,7 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
     expect(parseAgentRuntimeView(view)).toEqual(view);
     expect(
         parseAgentRuntimeEvent({
-            protocolVersion: 2,
+            protocolVersion: 3,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 4,
@@ -60,10 +60,36 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             payload: { toolCallId: "tool-1", actionVersion: 3 },
             createdAt: "2026-08-15T00:00:01Z",
         }),
-    ).toEqual({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
+    ).toEqual({ protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
 });
 
-test.each(["skill.load", "production.plan", "production.render", "canvas.commit"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
+test("Agent UI v3 硬切并严格保留可恢复的产物审核事件", () => {
+    const event = {
+        protocolVersion: 3,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence: 9,
+        kind: "item.completed",
+        itemId: "artifact-review-1",
+        itemKind: "artifact",
+        payload: {
+            contentType: "artifact_review",
+            stageId: "stage-script",
+            stageVersion: 3,
+            artifactId: "artifact-script",
+            revisionId: "revision-script-1",
+            artifactSchema: "script_bundle.v1",
+            summary: "剧本初稿待确认",
+        },
+        createdAt: "2026-08-28T00:00:00Z",
+    } as const;
+
+    expect(parseAgentRuntimeEvent(event)).toEqual(event);
+    expect(() => parseAgentRuntimeEvent({ ...event, protocolVersion: 2 })).toThrow("协议版本");
+    expect(() => parseAgentRuntimeEvent({ ...event, payload: { ...event.payload, signedUrl: "https://example.test/transient" } })).toThrow("短期媒体地址");
+});
+
+test.each(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
     const productionState = {
         ...state,
         status: "waiting_tool",
@@ -177,7 +203,7 @@ test("未知运行状态与事件类型显式失败", () => {
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, status: "thinking" } })).toThrow("不受支持");
     expect(() =>
         parseAgentRuntimeEvent({
-            protocolVersion: 2,
+            protocolVersion: 3,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 5,
@@ -374,12 +400,12 @@ test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => 
     expect(parsed.state.pendingClarification?.answers[0]?.customText).toBe("都市夜景");
     expect(parsed.state.clarificationHistory[0]?.answers[0]?.customText).toBe("BMW X5");
     for (const kind of ["item.started", "item.delta", "item.completed"] as const) {
-        expect(parseAgentRuntimeEvent({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
+        expect(parseAgentRuntimeEvent({ protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
     }
 });
 
 test("UI 事件拒绝未知协议、缺失 itemId 与非法运行载荷", () => {
-    const base = { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
+    const base = { protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
     expect(() => parseAgentRuntimeEvent({ ...base, protocolVersion: 1, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("协议版本");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", payload: { delta: "a" } })).toThrow("itemId");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("itemKind");

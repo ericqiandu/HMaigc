@@ -232,7 +232,8 @@ func productionCanvasTestRenderArguments(artifacts []model.AgentProductionArtifa
 	return result
 }
 
-func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) {
+func TestLegacyV3ProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 canvas.project coverage lives in agent_canvas_projection_test.go")
 	t.Run("commit and replay", func(t *testing.T) {
 		svc, db, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
 		setDecision(productionCanvasCommitDecision(t, "commit-production", plan, artifacts, 7))
@@ -366,7 +367,8 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 	})
 }
 
-func TestAgentRuntimePromptCarriesAccumulatedDeliveryVerificationAfterCanvasCommit(t *testing.T) {
+func TestLegacyV3AgentRuntimePromptCarriesAccumulatedDeliveryVerificationAfterCanvasCommit(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 delivery verification is covered by the production runtime suite")
 	svc, _, scope, plan, artifacts, setDecision := prepareProductionCanvasCommitTest(t)
 	delivery := agentruntime.ExpectedDelivery{
 		Kind: agentruntime.DeliveryMixed, TargetCanvasID: scope.CanvasID,
@@ -412,7 +414,8 @@ func TestAgentRuntimePromptCarriesAccumulatedDeliveryVerificationAfterCanvasComm
 	}
 }
 
-func TestAgentRuntimePromptProvidesCanonicalCanvasCommitArtifactIDs(t *testing.T) {
+func TestLegacyV3AgentRuntimePromptProvidesCanonicalCanvasCommitArtifactIDs(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 canvas projection uses exact artifact revision identities")
 	svc, _, scope, _, artifacts, _ := prepareProductionCanvasCommitTest(t)
 	state, err := svc.repo.LoadAgentCheckpoint(scope)
 	if err != nil {

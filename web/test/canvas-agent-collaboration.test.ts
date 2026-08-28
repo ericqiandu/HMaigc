@@ -5,7 +5,7 @@ import { prepareAgentCanvasRun, requireCanvasCollaborationRevision, requireEdita
 import type { AgentRuntimeEvent } from "../src/services/api/agent-runtime";
 import type { CanvasCollaborationState } from "../src/services/api/canvas-collaboration";
 
-test("Agent canvas.commit 使用 committedRevision 触发当前画布刷新", () => {
+test("Agent canvas.project 使用 committedRevision 触发当前画布刷新", () => {
     const event = agentEvent({ canvasId: "canvas-1", committedRevision: 8 });
 
     expect(agentCanvasCommittedRevision(event, "canvas-1")).toBe(8);
@@ -90,7 +90,7 @@ test("首页新画布必须先完成定向远端创建，再建立 Agent 的 rev
 
 function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
     return {
-        protocolVersion: 2,
+        protocolVersion: 3,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,
@@ -99,7 +99,7 @@ function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
         itemKind: "tool_call",
         payload: {
             toolCallId: "canvas-commit-1",
-            toolName: "canvas.commit",
+            toolName: "canvas.project",
             actionVersion: 1,
             succeeded: true,
             output,

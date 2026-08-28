@@ -46,7 +46,17 @@ type agentProductionStageStopUpdates struct {
 	UpdatedAt     time.Time                          `gorm:"column:updated_at"`
 }
 
+type agentToolTreeCancelUpdates struct {
+	Status     agentruntime.ToolCallStatus `gorm:"column:status"`
+	OutputJSON string                      `gorm:"column:output_json"`
+	ErrorCode  string                      `gorm:"column:error_code"`
+	UpdatedAt  time.Time                   `gorm:"column:updated_at"`
+}
+
 func (r *Repository) cancelAgentRunTreeTx(tx *gorm.DB, scope agentruntime.Scope, now time.Time) error {
+	if err := cancelAgentToolCallsTx(tx, scope, now); err != nil {
+		return err
+	}
 	if err := cancelAgentSpecialistLifecyclesTx(tx, scope, now); err != nil {
 		return err
 	}
@@ -56,6 +66,20 @@ func (r *Repository) cancelAgentRunTreeTx(tx *gorm.DB, scope agentruntime.Scope,
 	}
 	_, _, err = disposeAdminAgentRunControlTargets(tx, targets, "父 Agent 运行已终止", now, true)
 	return err
+}
+
+func cancelAgentToolCallsTx(tx *gorm.DB, scope agentruntime.Scope, now time.Time) error {
+	return tx.Model(&model.AgentToolCall{}).
+		Where("run_id = ? AND status IN ?", scope.RunID, []agentruntime.ToolCallStatus{
+			agentruntime.ToolCallPending,
+			agentruntime.ToolCallWaitingApproval,
+			agentruntime.ToolCallRunning,
+		}).
+		Select("status", "output_json", "error_code", "updated_at").
+		Updates(agentToolTreeCancelUpdates{
+			Status: agentruntime.ToolCallFailed, OutputJSON: `{}`,
+			ErrorCode: agentRunTreeCancelledCode, UpdatedAt: now,
+		}).Error
 }
 
 func cancelAgentSpecialistLifecyclesTx(tx *gorm.DB, scope agentruntime.Scope, now time.Time) error {
@@ -235,7 +259,7 @@ func (r *Repository) AgentRunTreeRecoverySnapshot(scope agentruntime.Scope) (*Ag
 	return &snapshot, nil
 }
 
-func requireRunningProductionAgentRunTx(tx *gorm.DB, scope agentruntime.Scope) error {
+func requireActiveProductionAgentRunTx(tx *gorm.DB, scope agentruntime.Scope) error {
 	var run model.AgentRun
 	query := tx.Table("agent_runs").Select("agent_runs.*").
 		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
@@ -249,7 +273,8 @@ func requireRunningProductionAgentRunTx(tx *gorm.DB, scope agentruntime.Scope) e
 	if err := query.First(&run).Error; err != nil {
 		return err
 	}
-	if run.Status != agentruntime.RunRunning || run.RuntimeVersion != agentruntime.ProductionRuntimeVersion ||
+	if (run.Status != agentruntime.RunRunning && run.Status != agentruntime.RunWaitingTool) ||
+		run.RuntimeVersion != agentruntime.ProductionRuntimeVersion ||
 		run.PolicyVersion != agentruntime.ProductionPolicyVersion || run.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {
 		return ErrAgentSpecialistRunConflict
 	}

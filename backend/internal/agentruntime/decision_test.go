@@ -17,25 +17,25 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 		t.Fatalf("final decision = %#v", decision)
 	}
 
-	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"plan-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	decision, err = agentruntime.ParseModelDecision(toolJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Kind != agentruntime.DecisionToolCall || decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolProductionPlan {
+	if decision.Kind != agentruntime.DecisionToolCall || decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolSpecialistDelegate {
 		t.Fatalf("tool decision = %#v", decision)
 	}
 }
 
-func TestParseModelDecisionForToolSchemaSeparatesLegacyAndProductionTools(t *testing.T) {
+func TestParseModelDecisionForToolSchemaHardCutsCurrentTools(t *testing.T) {
 	legacy := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-legacy","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"plan-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	production := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v3","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 
-	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.CurrentToolSchemaVersion); err != nil {
-		t.Fatalf("legacy schema rejected legacy tool: %v", err)
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.CurrentToolSchemaVersion); err == nil {
+		t.Fatal("current schema accepted retired legacy tool")
 	}
-	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.CurrentToolSchemaVersion); err == nil {
-		t.Fatal("legacy schema accepted production tool")
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.CurrentToolSchemaVersion); err != nil {
+		t.Fatalf("current schema rejected production tool: %v", err)
 	}
 	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.ProductionToolSchemaVersion); err == nil {
 		t.Fatal("production schema accepted retired legacy tool")
@@ -49,6 +49,9 @@ func TestParseModelDecisionForToolSchemaSeparatesLegacyAndProductionTools(t *tes
 	}
 	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, 999); err == nil {
 		t.Fatal("unknown tool schema was accepted")
+	}
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.LegacyToolSchemaVersion); err == nil {
+		t.Fatal("retired schema remained executable after hard cut")
 	}
 }
 

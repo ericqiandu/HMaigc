@@ -44,41 +44,20 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 		}
 		encoded, _ := json.Marshal(body)
 		if body.Model != "gpt-5.5" || body.ResponseFormat.Type != "json_object" || len(body.Messages) != 2 ||
-			!strings.Contains(body.Messages[0].Content, "production.plan") ||
-			!strings.Contains(body.Messages[0].Content, `"planKey":"","baseVersion":0`) ||
-			!strings.Contains(body.Messages[0].Content, `"targetDurationMs":10000`) ||
-			!strings.Contains(body.Messages[0].Content, `"shotKey":"shot-1"`) ||
-			!strings.Contains(body.Messages[0].Content, `"deliverables":["video_clip"]`) ||
-			!strings.Contains(body.Messages[0].Content, `"deliverables":["storyboard_image","video_clip"]`) ||
-			!strings.Contains(body.Messages[0].Content, `"scriptText":"...","deliverables":["video_clip"],"videoPrompt":"..."`) ||
-			!strings.Contains(body.Messages[0].Content, `"referenceKey":"hero"`) ||
-			!strings.Contains(body.Messages[0].Content, `"referenceKeys":["hero"]`) ||
-			!strings.Contains(body.Messages[0].Content, `"imagePrompt":"..."`) ||
-			!strings.Contains(body.Messages[0].Content, `"videoPrompt":"..."`) ||
-			!strings.Contains(body.Messages[0].Content, "未声明 storyboard_image 时必须省略 imagePrompt") ||
-			!strings.Contains(body.Messages[0].Content, "referenceKeys 只允许用于包含 storyboard_image") ||
-			!strings.Contains(body.Messages[0].Content, "所有正式镜头 durationMs 必须大于 0 且总和等于 targetDurationMs") ||
-			!strings.Contains(body.Messages[0].Content, "禁止添加未声明字段") ||
-			!strings.Contains(body.Messages[0].Content, "fact 为 final_message 或 canvas_revision 时必须省略 artifact") ||
-			!strings.Contains(body.Messages[0].Content, `{"fact":"artifact","artifact":"image"}`) ||
-			!strings.Contains(body.Messages[0].Content, "production.render") ||
-			!strings.Contains(body.Messages[0].Content, `"artifactId":"<reference_image 或 storyboard_image artifactId>"`) ||
-			!strings.Contains(body.Messages[0].Content, `"imageConfig":{"size":"9:16","resolution":"1K","count":1}`) ||
-			strings.Contains(body.Messages[0].Content, `"quality":"high"`) ||
-			!strings.Contains(body.Messages[0].Content, "qualities 为空时必须省略 quality") ||
-			!strings.Contains(body.Messages[0].Content, "resolution 必须精确取自 resolutions") ||
-			!strings.Contains(body.Messages[0].Content, "参数值必须来自所选 callableModels 的 providerCapabilities") ||
-			!strings.Contains(body.Messages[0].Content, `"artifactId":"<video_clip artifactId>"`) ||
-			!strings.Contains(body.Messages[0].Content, `"videoConfig":{"durationSeconds":10,"aspectRatio":"9:16","quality":"720p","generateAudio":true}`) ||
-			!strings.Contains(body.Messages[0].Content, "supportsTextToVideo=true") ||
-			!strings.Contains(body.Messages[0].Content, "无同镜就绪分镜时直接按文生视频执行") ||
-			!strings.Contains(body.Messages[0].Content, "必须调用 production.render，让 Runtime 冻结报价并进入 waiting_approval") ||
-			!strings.Contains(body.Messages[0].Content, "禁止用 final 消息代替扣费确认") ||
-			!strings.Contains(body.Messages[0].Content, "禁止重复新建 production.plan") ||
-			!strings.Contains(body.Messages[0].Content, "canvas.commit") ||
+			!strings.Contains(body.Messages[0].Content, "specialist.delegate") ||
+			!strings.Contains(body.Messages[0].Content, `"productionGraph":{"graphKey":"..."`) ||
+			!strings.Contains(body.Messages[0].Content, `"expectedGraphVersion":0`) ||
+			!strings.Contains(body.Messages[0].Content, `"stageKey":"..."`) ||
+			!strings.Contains(body.Messages[0].Content, "vision.analyze") ||
+			!strings.Contains(body.Messages[0].Content, "media.generate") ||
+			!strings.Contains(body.Messages[0].Content, `"expectedOutputSchema":"media_candidate.v1"`) ||
+			!strings.Contains(body.Messages[0].Content, "canvas.project") ||
+			strings.Contains(body.Messages[0].Content, "production.plan") ||
+			strings.Contains(body.Messages[0].Content, "production.render") ||
+			strings.Contains(body.Messages[0].Content, "canvas.commit") ||
 			strings.Contains(body.Messages[0].Content, "generation.submit") ||
 			strings.Contains(body.Messages[0].Content, "canvas.apply_ops") ||
-			!strings.Contains(body.Messages[0].Content, "每次新的工具调用必须使用从未出现过的 toolCallId") ||
+			!strings.Contains(body.Messages[0].Content, "每个新工具调用必须使用新的 toolCallId，重试也不得复用") ||
 			strings.Contains(string(encoded), "runtime-secret-key") {
 			t.Errorf("model request = %s", encoded)
 		}
@@ -848,6 +827,9 @@ func newAgentRuntimeServiceFixture(t *testing.T, endpointURL string) (*Service, 
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.EnsureDefaultMembershipPlans(); err != nil {
 		t.Fatal(err)
 	}
@@ -893,8 +875,14 @@ func newAgentRuntimeServiceFixture(t *testing.T, endpointURL string) (*Service, 
 	if err := db.Create(&model.CreditAccount{UserID: "runtime-user", AvailableMicrocredits: 1_000}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&model.Project{
+		ID: "runtime-project", UserID: "runtime-user", Name: "Agent Project", Type: "short-drama",
+		Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Create(&model.CanvasProject{
-		ID: "runtime-canvas", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
+		ID: "runtime-canvas", ProjectID: "runtime-project", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
 		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -957,7 +945,7 @@ func writeAgentRuntimeChatStream(t *testing.T, writer http.ResponseWriter, reque
 func agentRuntimeServiceScope() agentruntime.Scope {
 	return agentruntime.Scope{
 		TenantKind: agentruntime.TenantPersonal, TenantID: "runtime-user", ActorUserID: "runtime-user",
-		CanvasID: "runtime-canvas", ThreadID: "runtime-thread", RunID: "runtime-run",
+		DomainProjectID: "runtime-project", CanvasID: "runtime-canvas", ThreadID: "runtime-thread", RunID: "runtime-run",
 		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
 	}
 }

@@ -37,8 +37,8 @@ func TestAuditAgentRuntimeUpgrade_ReportsEveryActiveRunAndIsReadOnly(t *testing.
 		run := model.AgentRun{
 			ID: "run-active-" + string(status), ThreadID: "thread-active-" + string(status),
 			ActorUserID: "user-active", ClientRequestID: "request-active-" + string(status),
-			Status: status, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
-			RuntimeVersion: 1, PolicyVersion: 1,
+			Status: status, ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+			RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion,
 			CreatedAt: now.Add(time.Duration(index+4) * time.Second), UpdatedAt: now,
 		}
 		if err := db.Create(&run).Error; err != nil {
@@ -111,7 +111,8 @@ func TestEnsureAgentRuntimeIntegritySchemaReportsFullAuditBeforeWriting(t *testi
 	active := model.AgentRun{
 		ID: "run-running-blocker", ThreadID: "thread-running-blocker", ActorUserID: "user-running",
 		ClientRequestID: "request-running-blocker", Status: agentruntime.RunRunning,
-		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1, RuntimeVersion: 1, PolicyVersion: 1,
+		ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion:    agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion,
 		CreatedAt: now.Add(2 * time.Second), UpdatedAt: now,
 	}
 	if err := db.Create(&active).Error; err != nil {

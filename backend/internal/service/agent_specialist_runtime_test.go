@@ -228,7 +228,7 @@ func newSpecialistRuntimeFixture(t *testing.T, endpointURL string, request agent
 		Name: "Specialist Runtime Project", Type: "short-drama", Status: model.ProjectStatusActive,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := db.Create(&project).Error; err != nil {
+	if err := db.Save(&project).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.CanvasProject{}).Where("id = ?", specialistRuntimeScope().CanvasID).Update("project_id", specialistRuntimeScope().DomainProjectID).Error; err != nil {

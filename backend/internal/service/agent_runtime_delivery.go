@@ -58,6 +58,15 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 				latestCanvasCommit = call
 				hasCanvasCommit = true
 			}
+		case agentruntime.ToolCanvasProject:
+			result, err := validateAgentCanvasProjectionDelivery(scope, call)
+			if err != nil {
+				return agentruntime.DeliveryEvidence{}, err
+			}
+			if result.CommittedRevision >= evidence.CanvasRevision {
+				evidence.CanvasID = result.CanvasID
+				evidence.CanvasRevision = result.CommittedRevision
+			}
 		case agentruntime.ToolProductionRender:
 			var result agentProductionRenderResult
 			if err := json.Unmarshal([]byte(call.OutputJSON), &result); err != nil || result.ArtifactID == "" || result.ArtifactStatus != model.AgentProductionArtifactSucceeded || result.ResourceID == "" {
@@ -150,6 +159,41 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 		}
 	}
 	return evidence, nil
+}
+
+func validateAgentCanvasProjectionDelivery(
+	scope agentruntime.Scope,
+	call model.AgentToolCall,
+) (agentCanvasProjectionResult, error) {
+	arguments, err := decodeCanvasProjectArguments(json.RawMessage(call.InputJSON))
+	if err != nil || arguments.ExpectedDelivery.Kind != agentruntime.DeliveryCanvasChange ||
+		arguments.ExpectedDelivery.TargetCanvasID != scope.CanvasID {
+		return agentCanvasProjectionResult{}, errors.New("agent canvas projection delivery input is invalid")
+	}
+	result, err := decodeAgentCanvasProjectionResult([]byte(call.OutputJSON))
+	if err != nil || result.CanvasID != scope.CanvasID || result.BaseRevision != arguments.BaseRevision ||
+		result.ClientMutationID != agentCanvasMutationID(call.IdempotencyKey) ||
+		len(result.Bindings) != len(arguments.ArtifactRevisions) {
+		return agentCanvasProjectionResult{}, errors.New("agent canvas projection delivery evidence is invalid")
+	}
+	revisions := make(map[string]string, len(arguments.ArtifactRevisions))
+	for _, reference := range arguments.ArtifactRevisions {
+		if reference.Validate() != nil {
+			return agentCanvasProjectionResult{}, errors.New("agent canvas projection delivery revision is invalid")
+		}
+		if _, duplicate := revisions[reference.ArtifactID]; duplicate {
+			return agentCanvasProjectionResult{}, errors.New("agent canvas projection delivery revision is duplicated")
+		}
+		revisions[reference.ArtifactID] = reference.RevisionID
+	}
+	for _, binding := range result.Bindings {
+		if revisions[binding.ArtifactID] != binding.RevisionID ||
+			binding.NodeID != agentCanvasProjectionNodeID(scope.CanvasID, binding.ArtifactID) ||
+			binding.ProjectionID != productionCanvasStableID("artifact-projection", scope.CanvasID, binding.ArtifactID) {
+			return agentCanvasProjectionResult{}, errors.New("agent canvas projection delivery binding is invalid")
+		}
+	}
+	return result, nil
 }
 
 func successfulPublicationIDsByRevision(publications []model.AgentAssetPublication) (map[string]string, error) {

@@ -87,7 +87,7 @@ func (r *Repository) CreateAgentSpecialistRun(input CreateAgentSpecialistRunInpu
 	}
 	var stored model.AgentSpecialistRun
 	err = r.db.Transaction(func(tx *gorm.DB) error {
-		if err := requireRunningProductionAgentRunTx(tx, input.Scope); err != nil {
+		if err := requireActiveProductionAgentRunTx(tx, input.Scope); err != nil {
 			return err
 		}
 		existingErr := agentSpecialistScopeQuery(tx, input.Scope).Where("id = ?", candidate.ID).First(&stored).Error
@@ -185,7 +185,7 @@ func (r *Repository) ReviewProductionStage(input ReviewProductionStageInput) (*R
 		if err != nil || replayed {
 			return err
 		}
-		if err := requireRunningProductionAgentRunTx(tx, input.Scope); err != nil {
+		if err := requireActiveProductionAgentRunTx(tx, input.Scope); err != nil {
 			return err
 		}
 		// The parent-run lock serializes duplicate review commands in production.
@@ -423,7 +423,7 @@ func (r *Repository) ClaimAgentSpecialistRun(scope agentruntime.Scope, specialis
 	var task model.Task
 	var stage model.AgentProductionStage
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := requireRunningProductionAgentRunTx(tx, scope); err != nil {
+		if err := requireActiveProductionAgentRunTx(tx, scope); err != nil {
 			return err
 		}
 		query := agentSpecialistScopeQuery(tx, scope).Where("id = ?", specialistRunID)
@@ -599,9 +599,10 @@ func (r *Repository) CompleteAgentSpecialistRun(input CompleteAgentSpecialistRun
 			UPDATE agent_runs
 			   SET specialist_input_tokens = specialist_input_tokens + ?, specialist_cached_tokens = specialist_cached_tokens + ?,
 			       specialist_output_tokens = specialist_output_tokens + ?, updated_at = ?
-			 WHERE id = ? AND thread_id = ? AND actor_user_id = ? AND status = ?`,
+			 WHERE id = ? AND thread_id = ? AND actor_user_id = ? AND status IN (?, ?)`,
 			input.InputTokens, input.CachedTokens, input.OutputTokens, input.Now,
-			input.Scope.RunID, input.Scope.ThreadID, input.Scope.ActorUserID, agentruntime.RunRunning)
+			input.Scope.RunID, input.Scope.ThreadID, input.Scope.ActorUserID,
+			agentruntime.RunRunning, agentruntime.RunWaitingTool)
 		if runUsage.Error != nil || runUsage.RowsAffected != 1 {
 			return ErrAgentSpecialistRunConflict
 		}

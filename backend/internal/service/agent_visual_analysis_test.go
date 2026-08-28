@@ -1140,7 +1140,7 @@ func TestCoordinatePendingAgentVisualAnalysisCreatesTaskAndResolvesPersistedEvid
 	createAgentRuntimeCanvas(t, db)
 	scope := agentVisualAnalysisTestScope()
 	now := time.Now().UTC()
-	if err := db.Create(&model.Project{
+	if err := db.Save(&model.Project{
 		ID: scope.DomainProjectID, UserID: scope.ActorUserID, Name: "Visual Runtime Project",
 		Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
@@ -1647,7 +1647,7 @@ func TestAgentRuntimeVisionAnalyzeFreezesPaidFactsBeforeApproval(t *testing.T) {
 	visionModel := createAgentRuntimeVisionModel(t, db, fixture)
 	scope := agentVisualAnalysisTestScope()
 	now := time.Now().UTC()
-	if err := db.Create(&model.Project{
+	if err := db.Save(&model.Project{
 		ID: scope.DomainProjectID, UserID: scope.ActorUserID, Name: "Visual Freeze Project",
 		Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {

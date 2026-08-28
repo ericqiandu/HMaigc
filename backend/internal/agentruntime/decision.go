@@ -34,19 +34,19 @@ func (name ToolName) Valid() bool {
 }
 
 func (name ToolName) Known() bool {
-	return name.ValidForToolSchema(CurrentToolSchemaVersion) || name.ValidForToolSchema(ProductionToolSchemaVersion)
+	return name.ValidForToolSchema(CurrentToolSchemaVersion) || name.ValidForToolSchema(LegacyToolSchemaVersion)
 }
 
 func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
 	switch toolSchemaVersion {
-	case CurrentToolSchemaVersion:
+	case LegacyToolSchemaVersion:
 		switch name {
 		case ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit:
 			return true
 		default:
 			return false
 		}
-	case ProductionToolSchemaVersion:
+	case CurrentToolSchemaVersion:
 		switch name {
 		case ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject:
 			return true

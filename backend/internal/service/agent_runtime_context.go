@@ -116,9 +116,9 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	var productionPlan *agentRuntimeProductionPlanFact
 	var production *agentRuntimeProductionContextFact
 	switch run.ToolSchemaVersion {
-	case agentruntime.CurrentToolSchemaVersion:
+	case agentruntime.LegacyToolSchemaVersion:
 		productionPlan, err = s.agentRuntimeProductionPlanFact(scope)
-	case agentruntime.ProductionToolSchemaVersion:
+	case agentruntime.CurrentToolSchemaVersion:
 		production, err = s.loadAgentRuntimeProductionContextFact(scope)
 	default:
 		return "", errors.New("agent runtime tool schema version is invalid")
@@ -364,11 +364,11 @@ func encodeAgentRuntimeModelPromptForToolSchema(
 	var currentStage *agentRuntimeProductionStageFact
 	var artifacts []agentRuntimeArtifactSummaryFact
 	switch toolSchemaVersion {
-	case agentruntime.CurrentToolSchemaVersion:
+	case agentruntime.LegacyToolSchemaVersion:
 		if production != nil {
 			return "", errors.New("legacy agent runtime context contains production graph facts")
 		}
-	case agentruntime.ProductionToolSchemaVersion:
+	case agentruntime.CurrentToolSchemaVersion:
 		if productionPlan != nil || production == nil {
 			return "", errors.New("production agent runtime context facts are invalid")
 		}

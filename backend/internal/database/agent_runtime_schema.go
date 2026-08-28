@@ -124,7 +124,7 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 const (
 	retiredAgentToolSchemaFailureCode            = "tool_schema_retired"
 	retiredAgentRuntimeContractFailureCode       = "runtime_contract_retired"
-	legacyAgentToolSchemaVersion                 = 2
+	legacyAgentToolSchemaVersion                 = agentruntime.LegacyToolSchemaVersion
 	agentRuntimeMigrationTargetToolSchemaVersion = 3
 	legacyAgentModelTaskOperationPrefix          = "agent_model:"
 	agentRuntimeMigrationEventPayloadLimit       = 256 * 1024

@@ -105,7 +105,7 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
     });
     await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
     const event: AgentRuntimeEvent = {
-        protocolVersion: 2,
+        protocolVersion: 3,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,
@@ -114,7 +114,7 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
         itemKind: "tool_call",
         payload: {
             toolCallId: "canvas-commit-1",
-            toolName: "canvas.commit",
+            toolName: "canvas.project",
             actionVersion: 1,
             succeeded: true,
             output: { canvasId: "canvas-1", committedRevision: 8 },
@@ -293,7 +293,7 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
         stateVersion: 3,
         pendingToolCall: {
             toolCallId: "render-1",
-            toolName: "production.render",
+            toolName: "media.generate",
             actionVersion: 2,
             arguments: {
                 planKey: "plan-1",
@@ -349,7 +349,7 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
     await settle();
     expect(calls).toEqual(["create-thread", "start:整理当前画布"]);
     expect(document.body.textContent).toContain("等待确认");
-    expect(document.body.textContent).toContain("production.render");
+    expect(document.body.textContent).toContain("media.generate");
     const approvalSummary = document.querySelector<HTMLElement>('[aria-label="冻结生成费用"]');
     expect(approvalSummary?.textContent).toContain("预计扣除");
     expect(approvalSummary?.textContent).toContain("1 积分");
@@ -460,7 +460,7 @@ test("真实回复增量到达前显示思考中并在首个增量后切换为�
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () =>
         handlers?.onEvent({
-            protocolVersion: 2,
+            protocolVersion: 3,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 2,
@@ -533,7 +533,7 @@ test("运行已终止时即使完成事件稍晚到达也不继续显示流式�
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () =>
         handlers?.onEvent({
-            protocolVersion: 2,
+            protocolVersion: 3,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 2,

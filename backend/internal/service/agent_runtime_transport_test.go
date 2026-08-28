@@ -11,6 +11,25 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestCurrentAgentContractsHardCutToProductionV3(t *testing.T) {
+	if agentruntime.CurrentRuntimeVersion != agentruntime.ProductionRuntimeVersion ||
+		agentruntime.CurrentPolicyVersion != agentruntime.ProductionPolicyVersion ||
+		agentruntime.CurrentToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {
+		t.Fatalf(
+			"current contracts = runtime %d, policy %d, tools %d; production = runtime %d, policy %d, tools %d",
+			agentruntime.CurrentRuntimeVersion,
+			agentruntime.CurrentPolicyVersion,
+			agentruntime.CurrentToolSchemaVersion,
+			agentruntime.ProductionRuntimeVersion,
+			agentruntime.ProductionPolicyVersion,
+			agentruntime.ProductionToolSchemaVersion,
+		)
+	}
+	if CurrentAgentUIProtocolVersion != agentruntime.ProductionAgentUIProtocolVersion {
+		t.Fatalf("current UI protocol = %d, want production protocol %d", CurrentAgentUIProtocolVersion, agentruntime.ProductionAgentUIProtocolVersion)
+	}
+}
+
 func TestProjectAgentEventProducesVersionedRunAndItemEvents(t *testing.T) {
 	now := time.Now().UTC()
 	statePayload, err := json.Marshal(agentruntime.RuntimeState{
@@ -215,6 +234,23 @@ func TestProjectAgentEventMapsPersistedStageReviewResolution(t *testing.T) {
 	if projected.Kind != AgentUIEventApprovalResolved || projected.ItemID != item.ID ||
 		projected.ItemKind != model.AgentTimelineItemApproval || string(projected.Payload) != string(payload) {
 		t.Fatalf("projected stage review resolution = %#v", projected)
+	}
+}
+
+func TestProjectAgentEventRejectsInvalidPersistedStageReviewResolution(t *testing.T) {
+	now := time.Now().UTC()
+	item := model.AgentTimelineItem{
+		ID: "item-stage-review-invalid", ThreadID: "thread-1", RunID: "run-1",
+		Kind: model.AgentTimelineItemApproval, Status: model.AgentTimelineItemCompleted,
+		Ordinal: 4, SourceEventSequence: 8,
+		ContentJSON: `{"contentType":"stage_review_resolution","stageId":"stage-script","stageVersion":3,"revisionId":"revision-script-1","decision":"approved","clientRequestId":"review-1","resultStageVersion":4,"resultStatus":"running","resultReviewRevisionId":"revision-script-1","resultUpdatedAt":"2026-08-28T00:00:00Z"}`,
+		StartedAt:   now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventApprovalDecided,
+		PayloadJSON: item.ContentJSON, CreatedAt: now,
+	}, &item, CurrentAgentUIProtocolVersion); err == nil {
+		t.Fatal("invalid stage review resolution was projected")
 	}
 }
 

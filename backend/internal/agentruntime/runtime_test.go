@@ -45,7 +45,7 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 		t.Fatalf("tool transition = %#v", waiting)
 	}
 
-	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1, Arguments: []byte(`{"baseRevision":3,"ops":[]}`), ExpectedDelivery: answer}}
+	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1, Arguments: []byte(`{"mediaKind":"image"}`), ExpectedDelivery: answer}}
 	waitingApproval, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: writeTool})
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestAdvanceForToolSchemaUsesFrozenProductionPolicy(t *testing.T) {
 		t.Fatalf("expected automatic L1 delegation to wait for tool execution, got %s", transition.State.Status)
 	}
 
-	if _, err := agentruntime.AdvanceForToolSchema(base, agentruntime.RuntimeInput{Decision: decision}, agentruntime.CurrentToolSchemaVersion); err == nil {
+	if _, err := agentruntime.AdvanceForToolSchema(base, agentruntime.RuntimeInput{Decision: decision}, agentruntime.LegacyToolSchemaVersion); err == nil {
 		t.Fatal("expected the legacy schema to reject the production-only tool")
 	}
 }
@@ -265,13 +265,13 @@ func TestApprovalMatrixDependsOnExecutionModeAndToolRisk(t *testing.T) {
 		wantStatus agentruntime.RunStatus
 	}{
 		{name: "guided read runs immediately", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolSkillLoad, wantStatus: agentruntime.RunWaitingTool},
-		{name: "guided plan requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolProductionPlan, wantStatus: agentruntime.RunWaitingApproval},
-		{name: "guided canvas write requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolCanvasCommit, wantStatus: agentruntime.RunWaitingApproval},
-		{name: "guided paid render requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolProductionRender, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "guided delegation requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolSpecialistDelegate, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "guided canvas write requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolCanvasProject, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "guided paid media requires approval", mode: agentruntime.ExecutionGuided, tool: agentruntime.ToolMediaGenerate, wantStatus: agentruntime.RunWaitingApproval},
 		{name: "automatic read runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolSkillLoad, wantStatus: agentruntime.RunWaitingTool},
-		{name: "automatic plan runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolProductionPlan, wantStatus: agentruntime.RunWaitingTool},
-		{name: "automatic canvas write runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolCanvasCommit, wantStatus: agentruntime.RunWaitingTool},
-		{name: "automatic paid render requires approval", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolProductionRender, wantStatus: agentruntime.RunWaitingApproval},
+		{name: "automatic delegation runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolSpecialistDelegate, wantStatus: agentruntime.RunWaitingTool},
+		{name: "automatic canvas write runs immediately", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolCanvasProject, wantStatus: agentruntime.RunWaitingTool},
+		{name: "automatic paid media requires approval", mode: agentruntime.ExecutionAutomatic, tool: agentruntime.ToolMediaGenerate, wantStatus: agentruntime.RunWaitingApproval},
 	}
 
 	for index, testCase := range testCases {
@@ -735,7 +735,7 @@ func TestAdvanceRuntimeRejectsNewToolCallOnFinalModelStep(t *testing.T) {
 		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
 	}
 	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-		ToolCallID: "last-step-generation", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
+		ToolCallID: "last-step-generation", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
 		Arguments: json.RawMessage(`{"type":"canvas_image"}`), ExpectedDelivery: answer,
 	}}
 	transition, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})

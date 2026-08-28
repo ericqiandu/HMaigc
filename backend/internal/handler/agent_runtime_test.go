@@ -84,7 +84,8 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "frozen-agent-model", ModelKey: "agent-model",
-		MaxSteps: 6, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取事件",
+		MaxSteps: 6, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "读取事件",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -124,7 +125,7 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 		t.Fatalf("events content type = %q", contentType)
 	}
 	if body := events.Body.String(); !strings.Contains(body, "id: 1\n") || !strings.Contains(body, "event: run.started\n") ||
-		!strings.Contains(body, `"protocolVersion":2`) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
+		!strings.Contains(body, `"protocolVersion":`+strconv.Itoa(agentruntime.ProductionAgentUIProtocolVersion)) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
 		!strings.Contains(body, `"runId":"`+scope.RunID+`"`) || !strings.Contains(body, `"sequence":1`) {
 		t.Fatalf("events body = %s", body)
 	}
@@ -156,7 +157,8 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
-		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "读取并更新画布",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "读取并更新画布",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -169,7 +171,7 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasCommit,
+			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasProject,
 			ActionVersion: 1, Arguments: json.RawMessage(`{"expectedRevision":12}`),
 			ExpectedDelivery: agentruntime.ExpectedDelivery{
 				Kind:               agentruntime.DeliveryAnswer,
@@ -490,7 +492,8 @@ func createWaitingClarificationHandlerRun(t *testing.T, svc *service.Service, re
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
-		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "生成汽车广告剧本",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成汽车广告剧本",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -534,7 +537,8 @@ func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repo
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "history-model-record", ModelKey: "history-model",
-		MaxSteps: 8, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: userMessage,
+		MaxSteps: 8, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: userMessage,
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)

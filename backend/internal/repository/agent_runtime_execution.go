@@ -297,16 +297,16 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 		}
 		return ErrAgentRuntimeStepConflict
 	}
-	if state.Status == agentruntime.RunCancelled && interruptAudit == nil && facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
-		if err := r.cancelAgentRunTreeTx(tx, scope, now); err != nil {
-			return err
-		}
-	}
 	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
 	if err := persistAgentToolTransition(tx, scope, previous, state, facts.ToolSchemaVersion, now); err != nil {
 		return err
+	}
+	if state.Status == agentruntime.RunCancelled && interruptAudit == nil && facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+		if err := r.cancelAgentRunTreeTx(tx, scope, now); err != nil {
+			return err
+		}
 	}
 	nextTimelineOrdinal, err := nextAgentTimelineOrdinal(tx, scope.RunID)
 	if err != nil {

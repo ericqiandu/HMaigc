@@ -10,7 +10,7 @@ import (
 func TestRejectToolDecisionReturnsRepairableFailureToSameRun(t *testing.T) {
 	current := repairableToolDecisionRuntimeState()
 	call := agentruntime.ToolCallDecision{
-		ToolCallID: "render-unsupported", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
+		ToolCallID: "render-unsupported", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
 		Arguments: json.RawMessage(`{"artifactId":"artifact-video"}`),
 		ExpectedDelivery: agentruntime.ExpectedDelivery{
 			Kind:               agentruntime.DeliveryAnswer,
@@ -44,7 +44,7 @@ func TestRejectToolDecisionReturnsRepairableFailureToSameRun(t *testing.T) {
 func TestRejectToolDecisionTerminatesExplicitInvariantFailure(t *testing.T) {
 	current := repairableToolDecisionRuntimeState()
 	call := agentruntime.ToolCallDecision{
-		ToolCallID: "render-conflict", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
+		ToolCallID: "render-conflict", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
 		Arguments: json.RawMessage(`{"artifactId":"artifact-video"}`),
 		ExpectedDelivery: agentruntime.ExpectedDelivery{
 			Kind:               agentruntime.DeliveryAnswer,

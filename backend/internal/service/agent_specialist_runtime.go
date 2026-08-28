@@ -59,7 +59,7 @@ func (s *Service) RunSpecialist(ctx context.Context, scope agentruntime.Scope, p
 	if err := agentruntime.ValidateSpecialistRequest(request, parentRun.ModelRecordID, parentRun.ModelKey); err != nil {
 		return SpecialistCompletion{}, err
 	}
-	storedParent, err := s.validateSpecialistParentRun(scope, parentRun)
+	storedParent, err := s.validateSpecialistParentRun(scope, parentRun, request)
 	if err != nil {
 		return SpecialistCompletion{}, err
 	}
@@ -154,17 +154,138 @@ func (s *Service) RunSpecialist(ctx context.Context, scope agentruntime.Scope, p
 	return SpecialistCompletion{Run: *completed, Revisions: revisions}, nil
 }
 
-func (s *Service) validateSpecialistParentRun(scope agentruntime.Scope, parentRun model.AgentRun) (*model.AgentRun, error) {
+func (s *Service) validateSpecialistParentRun(
+	scope agentruntime.Scope,
+	parentRun model.AgentRun,
+	request agentruntime.SpecialistRequest,
+) (*model.AgentRun, error) {
 	storedParent, err := s.repo.AgentRunForScope(scope)
 	if err != nil {
 		return nil, err
 	}
 	if storedParent.ID != parentRun.ID || storedParent.ModelRecordID != parentRun.ModelRecordID || storedParent.ModelKey != parentRun.ModelKey ||
 		storedParent.RuntimeVersion != agentruntime.ProductionRuntimeVersion || storedParent.PolicyVersion != agentruntime.ProductionPolicyVersion ||
-		storedParent.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion || storedParent.Status != agentruntime.RunRunning {
+		storedParent.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {
+		return nil, agentruntime.ErrSpecialistModelInheritance
+	}
+	if storedParent.Status == agentruntime.RunRunning {
+		return storedParent, nil
+	}
+	if storedParent.Status != agentruntime.RunWaitingTool {
+		return nil, agentruntime.ErrSpecialistModelInheritance
+	}
+	checkpoint, err := s.repo.LoadAgentCheckpoint(scope)
+	if err != nil || checkpoint.Status != agentruntime.RunWaitingTool || !checkpoint.PendingToolStarted ||
+		checkpoint.PendingToolCall == nil || checkpoint.PendingToolCall.ToolName != agentruntime.ToolSpecialistDelegate {
+		return nil, agentruntime.ErrSpecialistModelInheritance
+	}
+	arguments, skills, err := freezeSpecialistDelegateArguments(
+		checkpoint.Configuration,
+		checkpoint.LoadedSkillDirs,
+		checkpoint.PendingToolCall.Arguments,
+	)
+	if err != nil {
+		return nil, agentruntime.ErrSpecialistModelInheritance
+	}
+	snapshot, err := s.repo.ProductionRuntimeSnapshotForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	stage, _, err := delegatedProductionStage(*snapshot, arguments.StageKey)
+	if err != nil {
+		return nil, agentruntime.ErrSpecialistModelInheritance
+	}
+	if request.ParentSpecialistRunID == "" {
+		if requestDoesNotMatchDelegate(scope, *checkpoint.PendingToolCall, stage, arguments, skills, parentRun, request) {
+			return nil, agentruntime.ErrSpecialistModelInheritance
+		}
+	} else if !s.revisionRequestMatchesDelegate(scope, *checkpoint.PendingToolCall, stage, arguments, skills, parentRun, request) {
 		return nil, agentruntime.ErrSpecialistModelInheritance
 	}
 	return storedParent, nil
+}
+
+func requestDoesNotMatchDelegate(
+	scope agentruntime.Scope,
+	call agentruntime.ToolCallDecision,
+	stage model.AgentProductionStage,
+	arguments SpecialistDelegateArguments,
+	skills []agentruntime.SkillSelection,
+	parentRun model.AgentRun,
+	request agentruntime.SpecialistRequest,
+) bool {
+	return request.SpecialistRunID != specialistDelegateRunID(scope, call.ToolCallID, call.ActionVersion, stage.ID) ||
+		request.ParentSpecialistRunID != "" || request.StageID != stage.ID ||
+		request.SpecialistKey != arguments.SpecialistKey || request.SpecialistVersion != 1 ||
+		request.ParentModelRecordID != parentRun.ModelRecordID || request.ParentModelKey != parentRun.ModelKey ||
+		request.Objective != arguments.Objective || !reflect.DeepEqual(request.InputRevisions, arguments.InputRevisions) ||
+		!reflect.DeepEqual(request.LoadedSkills, skills) || !reflect.DeepEqual(request.ToolAllowlist, arguments.ToolAllowlist) ||
+		request.ExpectedOutputSchema != arguments.ExpectedOutputSchema || !request.ExpectedDelivery.Equal(arguments.ExpectedDelivery)
+}
+
+func (s *Service) revisionRequestMatchesDelegate(
+	scope agentruntime.Scope,
+	call agentruntime.ToolCallDecision,
+	stage model.AgentProductionStage,
+	arguments SpecialistDelegateArguments,
+	skills []agentruntime.SkillSelection,
+	parentRun model.AgentRun,
+	request agentruntime.SpecialistRequest,
+) bool {
+	if request.StageID != stage.ID || request.SpecialistKey != arguments.SpecialistKey || request.SpecialistVersion != 1 ||
+		request.ParentModelRecordID != parentRun.ModelRecordID || request.ParentModelKey != parentRun.ModelKey ||
+		!reflect.DeepEqual(request.InputRevisions, arguments.InputRevisions) || !reflect.DeepEqual(request.LoadedSkills, skills) ||
+		!reflect.DeepEqual(request.ToolAllowlist, arguments.ToolAllowlist) || request.ExpectedOutputSchema != arguments.ExpectedOutputSchema ||
+		!request.ExpectedDelivery.Equal(arguments.ExpectedDelivery) {
+		return false
+	}
+	stored, err := s.repo.AgentSpecialistRunForScope(scope, request.SpecialistRunID)
+	if err != nil || !storedSpecialistRunMatchesRequest(*stored, parentRun.ToolSchemaVersion, request) {
+		return false
+	}
+	ancestor := stored
+	for depth := 0; ancestor.ParentSpecialistRunID != ""; depth++ {
+		if depth >= 24 {
+			return false
+		}
+		ancestor, err = s.repo.AgentSpecialistRunForScope(scope, ancestor.ParentSpecialistRunID)
+		if err != nil || ancestor.StageID != stage.ID || ancestor.SpecialistKey != arguments.SpecialistKey ||
+			ancestor.SpecialistVersion != 1 || ancestor.ModelRecordID != parentRun.ModelRecordID || ancestor.ModelKey != parentRun.ModelKey ||
+			ancestor.Status != model.AgentSpecialistRunSucceeded {
+			return false
+		}
+	}
+	return ancestor.ID == specialistDelegateRunID(scope, call.ToolCallID, call.ActionVersion, stage.ID) &&
+		ancestor.Objective == arguments.Objective && storedSpecialistRunMatchesDelegateContract(*ancestor, arguments, skills)
+}
+
+func storedSpecialistRunMatchesRequest(stored model.AgentSpecialistRun, toolSchemaVersion int, request agentruntime.SpecialistRequest) bool {
+	inputs, inputErr := json.Marshal(request.InputRevisions)
+	skills, skillErr := json.Marshal(request.LoadedSkills)
+	tools, toolErr := json.Marshal(request.ToolAllowlist)
+	delivery, deliveryErr := json.Marshal(request.ExpectedDelivery)
+	return inputErr == nil && skillErr == nil && toolErr == nil && deliveryErr == nil &&
+		stored.ID == request.SpecialistRunID && stored.ParentSpecialistRunID == request.ParentSpecialistRunID &&
+		stored.StageID == request.StageID && stored.SpecialistKey == request.SpecialistKey && stored.SpecialistVersion == request.SpecialistVersion &&
+		stored.Objective == request.Objective && stored.ModelRecordID == request.ParentModelRecordID && stored.ModelKey == request.ParentModelKey &&
+		stored.ToolSchemaVersion == toolSchemaVersion && stored.InputRevisionsJSON == string(inputs) && stored.SkillVersionsJSON == string(skills) &&
+		stored.ToolAllowlistJSON == string(tools) && stored.ExpectedOutputSchema == request.ExpectedOutputSchema &&
+		stored.ExpectedDeliveryJSON == string(delivery)
+}
+
+func storedSpecialistRunMatchesDelegateContract(
+	stored model.AgentSpecialistRun,
+	arguments SpecialistDelegateArguments,
+	skills []agentruntime.SkillSelection,
+) bool {
+	inputs, inputErr := json.Marshal(arguments.InputRevisions)
+	loadedSkills, skillErr := json.Marshal(skills)
+	tools, toolErr := json.Marshal(arguments.ToolAllowlist)
+	delivery, deliveryErr := json.Marshal(arguments.ExpectedDelivery)
+	return inputErr == nil && skillErr == nil && toolErr == nil && deliveryErr == nil &&
+		stored.ParentSpecialistRunID == "" && stored.InputRevisionsJSON == string(inputs) && stored.SkillVersionsJSON == string(loadedSkills) &&
+		stored.ToolAllowlistJSON == string(tools) && stored.ExpectedOutputSchema == arguments.ExpectedOutputSchema &&
+		stored.ExpectedDeliveryJSON == string(delivery)
 }
 
 func (s *Service) ensureAgentSpecialistTask(scope agentruntime.Scope, parentRun model.AgentRun, request agentruntime.SpecialistRequest) (*model.Task, providerConfig, error) {
@@ -321,6 +442,13 @@ func canonicalSpecialistRequest(request agentruntime.SpecialistRequest) agentrun
 	}
 	if request.ToolAllowlist == nil {
 		request.ToolAllowlist = []agentruntime.AgentToolName{}
+	}
+	if request.LoadedSkills == nil {
+		request.LoadedSkills = []agentruntime.SkillSelection{}
+	} else {
+		for index := range request.LoadedSkills {
+			request.LoadedSkills[index] = cloneAgentRuntimeSkillSelection(request.LoadedSkills[index])
+		}
 	}
 	return request
 }

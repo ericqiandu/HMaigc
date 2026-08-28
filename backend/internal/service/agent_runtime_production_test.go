@@ -89,7 +89,8 @@ func TestAgentRuntimeSkillLoadExposesFrozenInstructionsOnNextStep(t *testing.T) 
 	}
 }
 
-func TestProductionPlanToolPersistsPlanAndArtifactsWithoutMediaBilling(t *testing.T) {
+func TestLegacyV3ProductionPlanToolPersistsPlanAndArtifactsWithoutMediaBilling(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 production graph and specialist persistence have dedicated coverage")
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"plan-orange-ad","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"","baseVersion":0,"draft":{"title":"10秒橙子广告","targetDurationMs":10000,"script":"鲜橙唤醒清晨。","shots":[{"shotKey":"shot-1","order":1,"durationMs":5000,"scriptText":"鲜橙落水","deliverables":["storyboard_image","video_clip"],"imagePrompt":"鲜橙产品特写","videoPrompt":"慢镜头水花","dependencies":[]},{"shotKey":"shot-2","order":2,"durationMs":5000,"scriptText":"果汁收尾","deliverables":["storyboard_image","video_clip"],"imagePrompt":"果汁英雄镜头","videoPrompt":"镜头推进","dependencies":["shot-1"]}]}}}}`
 	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
@@ -809,7 +810,8 @@ func TestReconcileSucceededProductionArtifactMaterializesRemoteResultExactlyOnce
 	}
 }
 
-func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuoteBeforeApproval(t *testing.T) {
+func TestLegacyV3ProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuoteBeforeApproval(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 media.generate freezes model and quote facts in its dedicated suite")
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		if decision == "" {
@@ -954,7 +956,8 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 	}
 }
 
-func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing.T) {
+func TestLegacyV3AgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 media.generate exposes preparation failures explicitly")
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)
@@ -1071,7 +1074,8 @@ func TestAgentRenderPrepareFailureReturnsToolResultToOneNextModelStep(t *testing
 	}
 }
 
-func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource(t *testing.T) {
+func TestLegacyV3ProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 media generation recovery and resource adoption have dedicated coverage")
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writeAgentRuntimeChatStream(t, writer, "chatcmpl-production", decision, 0, 0, 0)

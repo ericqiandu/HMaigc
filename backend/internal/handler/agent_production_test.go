@@ -47,6 +47,17 @@ func TestStageReviewRejectsStaleRevisionAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestStageReviewRecognizesExactSelectedCandidateApprovalContract(t *testing.T) {
+	facts := openAgentProductionHTTPFacts(t, "candidate-contract")
+	path := "/api/agent/runs/" + facts.runID + "/stages/" + facts.stage.ID + "/reviews"
+	body := `{"stageVersion":3,"revisionId":"` + facts.revision.ID + `","decision":"approved","selectedCandidateRevisionId":"candidate-revision","clientRequestId":"candidate-approval","comment":"","publicationIntent":{"publicationPurpose":"character-library","targetCategory":"character","targetBindingKey":"hero"}}`
+
+	response := facts.fixture.request(http.MethodPost, path, body, facts.fixture.userCookie, "")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"visual_candidate_selection_invalid"`) {
+		t.Fatalf("candidate contract status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestStageReviewRejectsCrossScopeRevisionEvenWhenStagePointerIsCorrupt(t *testing.T) {
 	owned := openAgentProductionHTTPFacts(t, "review-scope-owned")
 	other := createAgentProductionHTTPRun(t, owned.fixture, "review-scope-other", false)

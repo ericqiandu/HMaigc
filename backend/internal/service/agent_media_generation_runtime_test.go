@@ -245,7 +245,7 @@ func TestCoordinatePendingAgentMediaGenerationCreatesInternalTaskAndResolvesCand
 	scope := agentRuntimeServiceScope()
 	scope.DomainProjectID = "runtime-project"
 	now := time.Now().UTC()
-	if err := db.Create(&model.Project{
+	if err := db.Save(&model.Project{
 		ID: scope.DomainProjectID, UserID: scope.ActorUserID, Name: "Media Runtime Project",
 		Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {

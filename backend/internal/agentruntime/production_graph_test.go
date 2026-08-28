@@ -8,9 +8,9 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestProductionRuntimeContractIsStagedWithoutAdvancingPublishedRuns(t *testing.T) {
-	if agentruntime.CurrentRuntimeVersion != 2 || agentruntime.CurrentPolicyVersion != 2 || agentruntime.CurrentToolSchemaVersion != 3 {
-		t.Fatalf("published runtime changed before the v3 hard cutover: runtime=%d policy=%d tools=%d",
+func TestProductionRuntimeContractIsTheOnlyCurrentContract(t *testing.T) {
+	if agentruntime.CurrentRuntimeVersion != 3 || agentruntime.CurrentPolicyVersion != 3 || agentruntime.CurrentToolSchemaVersion != 4 {
+		t.Fatalf("current runtime did not hard cut to production: runtime=%d policy=%d tools=%d",
 			agentruntime.CurrentRuntimeVersion, agentruntime.CurrentPolicyVersion, agentruntime.CurrentToolSchemaVersion)
 	}
 	if agentruntime.ProductionRuntimeVersion != 3 || agentruntime.ProductionPolicyVersion != 3 || agentruntime.ProductionToolSchemaVersion != 4 ||
@@ -18,6 +18,10 @@ func TestProductionRuntimeContractIsStagedWithoutAdvancingPublishedRuns(t *testi
 		t.Fatalf("staged production contract mismatch: runtime=%d policy=%d tools=%d production=%d ui=%d",
 			agentruntime.ProductionRuntimeVersion, agentruntime.ProductionPolicyVersion, agentruntime.ProductionToolSchemaVersion,
 			agentruntime.CurrentProductionSchemaVersion, agentruntime.ProductionAgentUIProtocolVersion)
+	}
+	if agentruntime.LegacyRuntimeVersion != 2 || agentruntime.LegacyPolicyVersion != 2 || agentruntime.LegacyToolSchemaVersion != 3 {
+		t.Fatalf("legacy terminal history contract changed: runtime=%d policy=%d tools=%d",
+			agentruntime.LegacyRuntimeVersion, agentruntime.LegacyPolicyVersion, agentruntime.LegacyToolSchemaVersion)
 	}
 }
 

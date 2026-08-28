@@ -54,7 +54,7 @@ func agentRuntimeViewNeedsHistoricalConfiguration(view AgentRuntimeView) bool {
 		view.State.ClarificationHistory == nil
 }
 
-const CurrentAgentUIProtocolVersion = 2
+const CurrentAgentUIProtocolVersion = agentruntime.ProductionAgentUIProtocolVersion
 
 var ErrAgentEventProjectionFailed = errors.New("agent event projection failed")
 var ErrAgentStreamCursorInvalid = errors.New("agent stream cursor invalid")
@@ -218,6 +218,25 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 	}
 	projected.ItemID = item.ID
 	projected.ItemKind = item.Kind
+	if item.Kind == model.AgentTimelineItemApproval {
+		var envelope struct {
+			ContentType string `json:"contentType"`
+		}
+		if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent approval timeline facts are invalid"))
+		}
+		if envelope.ContentType == agentruntime.StageReviewContentType {
+			content, err := agentruntime.DecodeStageReviewResolutionContent([]byte(item.ContentJSON))
+			if err != nil || item.Status != model.AgentTimelineItemCompleted || projected.Kind != AgentUIEventApprovalResolved {
+				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent stage review resolution facts are invalid"))
+			}
+			projected.Payload, err = json.Marshal(content)
+			if err != nil {
+				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+			}
+			return projected, nil
+		}
+	}
 	if item.Kind != model.AgentTimelineItemArtifact {
 		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
 		return projected, nil
@@ -370,9 +389,10 @@ type AgentProductionStageView struct {
 }
 
 type AgentStageReviewView struct {
-	Stage               AgentProductionStageView `json:"stage"`
-	ArtifactRevisionIDs []string                 `json:"artifactRevisionIds"`
-	Publication         *AssetPublicationResult  `json:"publication,omitempty"`
+	Stage                       AgentProductionStageView `json:"stage"`
+	ArtifactRevisionIDs         []string                 `json:"artifactRevisionIds"`
+	SelectedCandidateRevisionID string                   `json:"selectedCandidateRevisionId,omitempty"`
+	Publication                 *AssetPublicationResult  `json:"publication,omitempty"`
 }
 
 type AgentArtifactRevisionView struct {
@@ -465,15 +485,32 @@ func (s *Service) ReviewScopedProductionStage(
 	if err != nil {
 		return nil, s.mapStageReviewError(err)
 	}
-	view := &AgentStageReviewView{
-		Stage: productionStageView(result.Stage), ArtifactRevisionIDs: []string{}, Publication: result.Publication,
+	return agentStageReviewView(result), nil
+}
+
+func (s *Service) ApproveScopedProductionStageCandidate(
+	ctx context.Context,
+	actor *model.User,
+	runID string,
+	stageID string,
+	command StageCandidateApprovalCommand,
+) (*AgentStageReviewView, error) {
+	scope, err := s.scopeForAgentRun(actor, runID)
+	if err != nil {
+		return nil, err
 	}
-	if result.Completion != nil {
-		for _, revision := range result.Completion.Revisions {
-			view.ArtifactRevisionIDs = append(view.ArtifactRevisionIDs, revision.ID)
-		}
+	if !scope.CanMutateCanvas() {
+		return nil, Forbidden("当前用户没有审核 Agent 阶段的画布权限")
 	}
-	return view, nil
+	parentRun, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.ApproveStageCandidate(ctx, scope, *parentRun, strings.TrimSpace(stageID), command)
+	if err != nil {
+		return nil, s.mapStageReviewError(err)
+	}
+	return agentStageReviewView(result), nil
 }
 
 func (s *Service) ReadScopedAgentArtifactRevision(
@@ -526,8 +563,31 @@ func productionStageView(stage model.AgentProductionStage) AgentProductionStageV
 	}
 }
 
+func agentStageReviewView(result StageReviewResult) *AgentStageReviewView {
+	view := &AgentStageReviewView{
+		Stage: productionStageView(result.Stage), ArtifactRevisionIDs: []string{}, Publication: result.Publication,
+	}
+	if result.Completion != nil {
+		for _, revision := range result.Completion.Revisions {
+			view.ArtifactRevisionIDs = append(view.ArtifactRevisionIDs, revision.ID)
+		}
+	}
+	if result.SelectedCandidate != nil {
+		view.SelectedCandidateRevisionID = result.SelectedCandidate.ID
+	}
+	return view
+}
+
 func (s *Service) mapStageReviewError(err error) error {
 	switch {
+	case errors.Is(err, ErrVisualCandidateSelectionInvalid):
+		return &AgentControlError{
+			Status: http.StatusBadRequest, ErrorCode: "visual_candidate_selection_invalid", Message: "候选产物选择事实无效",
+		}
+	case errors.Is(err, ErrVisualCandidateSelectionRequired):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "visual_candidate_selection_required", Message: "当前阶段必须选择一个经过审核的候选产物",
+		}
 	case errors.Is(err, ErrAssetPublicationInvalid):
 		return &AgentControlError{
 			Status: http.StatusBadRequest, ErrorCode: "asset_publication_invalid", Message: "资产入库参数无效",

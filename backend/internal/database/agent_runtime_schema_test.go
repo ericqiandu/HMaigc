@@ -337,8 +337,8 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresIncompatibleQueuedRunWithTermin
 	run := model.AgentRun{
 		ID: "run-old-queued", ThreadID: "thread-old-queued", ActorUserID: "user-old", ClientRequestID: "request-old-queued",
 		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
-		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
-		RuntimeVersion: 1, PolicyVersion: 1, CreatedAt: now, UpdatedAt: now,
+		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
 		t.Fatal(err)
@@ -416,7 +416,7 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresPristineQueuedRunWithOlderRunti
 		ID: "run-old-runtime-queued", ThreadID: "thread-old-runtime", ActorUserID: "user-old", ClientRequestID: "request-old-runtime",
 		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
 		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
-		RuntimeVersion: agentruntime.CurrentRuntimeVersion - 1, PolicyVersion: agentruntime.CurrentPolicyVersion - 1,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
@@ -903,8 +903,8 @@ func seedIncompatibleQueuedAgentRun(t *testing.T, db *gorm.DB, runID string, now
 	run := model.AgentRun{
 		ID: runID, ThreadID: "thread-" + runID, ActorUserID: "user-old", ClientRequestID: "request-" + runID,
 		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
-		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
-		RuntimeVersion: 1, PolicyVersion: 1, CreatedAt: now, UpdatedAt: now,
+		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
 		t.Fatal(err)

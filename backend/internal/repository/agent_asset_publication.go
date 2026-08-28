@@ -116,7 +116,7 @@ func (r *Repository) PublishAgentAsset(input PublishAgentAssetInput) (*Published
 			}
 		}
 		if !found {
-			if err := requireRunningProductionAgentRunTx(tx, input.Scope); err != nil {
+			if err := requireActiveProductionAgentRunTx(tx, input.Scope); err != nil {
 				return err
 			}
 		}

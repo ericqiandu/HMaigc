@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -49,6 +50,173 @@ func TestRejectCostApprovalCancelsMainAndSpecialists(t *testing.T) {
 	}
 	if mediaTaskCount != 0 {
 		t.Fatalf("media task count after rejection = %d, want 0", mediaTaskCount)
+	}
+}
+
+func TestStopSpecialistStageReviewCancelsWaitingDelegateTree(t *testing.T) {
+	fixture := newAgentProductionRecoveryFixture(t)
+	queuedSpecialist, err := fixture.service.repo.CreateAgentSpecialistRun(repository.CreateAgentSpecialistRunInput{
+		Scope: fixture.scope, Request: fixture.request,
+		ToolSchemaVersion: agentruntime.ProductionToolSchemaVersion, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fixture.service.repo.ProductionRuntimeSnapshotForScope(fixture.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Graph == nil || len(snapshot.Stages) != 1 {
+		t.Fatalf("production snapshot = %#v", snapshot)
+	}
+	checkpoint, err := fixture.service.repo.LoadAgentCheckpoint(fixture.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedSkill := fixture.request.LoadedSkills[0]
+	skillCall := agentruntime.ToolCallDecision{
+		ToolCallID: "load-skill-before-stop", ToolName: agentruntime.ToolSkillLoad, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"dir":"` + selectedSkill.Dir + `"}`), ExpectedDelivery: fixture.request.ExpectedDelivery,
+	}
+	skillWaiting, err := agentruntime.AdvanceForToolSchema(checkpoint, agentruntime.RuntimeInput{
+		Decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &skillCall},
+	}, agentruntime.ProductionToolSchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := fixture.service.repo.CommitAgentRuntimeTransition(fixture.scope, checkpoint, skillWaiting, now); err != nil {
+		t.Fatal(err)
+	}
+	skillStarted, err := agentruntime.BeginToolExecution(skillWaiting.State, agentruntime.ToolExecution{
+		ToolCallID: skillCall.ToolCallID, ActionVersion: skillCall.ActionVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.repo.CommitAgentRuntimeTransition(fixture.scope, skillWaiting.State, skillStarted, now.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	skillOutput, err := json.Marshal(struct {
+		Dir          string `json:"dir"`
+		Name         string `json:"name"`
+		Version      int    `json:"version"`
+		Instructions string `json:"instructions"`
+	}{
+		Dir: selectedSkill.Dir, Name: selectedSkill.Name,
+		Version: selectedSkill.Version, Instructions: selectedSkill.Instructions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillResolved, err := agentruntime.ResolveTool(skillStarted.State, agentruntime.ToolResolution{
+		ToolCallID: skillCall.ToolCallID, ActionVersion: skillCall.ActionVersion, Succeeded: true, Output: skillOutput,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.repo.CommitAgentRuntimeTransition(fixture.scope, skillStarted.State, skillResolved, now.Add(2*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	stage := snapshot.Stages[0]
+	graph := agentruntime.ProductionGraphDraft{
+		GraphKey: snapshot.Graph.GraphKey,
+		Stages: []agentruntime.ProductionStageDraft{{
+			StageKey: stage.StageKey, SpecialistKey: stage.SpecialistKey,
+			DependsOnStageKeys: []string{}, InputRevisions: fixture.request.InputRevisions,
+			ExpectedDelivery: fixture.request.ExpectedDelivery,
+			ReviewPolicy:     stage.ReviewPolicy, CostPolicy: stage.CostPolicy,
+		}},
+	}
+	arguments, err := json.Marshal(SpecialistDelegateArguments{
+		ProductionGraph: graph, ExpectedGraphVersion: 0, StageKey: stage.StageKey,
+		SpecialistKey: fixture.request.SpecialistKey, Objective: fixture.request.Objective,
+		InputRevisions: fixture.request.InputRevisions, SkillDirs: []string{selectedSkill.Dir},
+		ToolAllowlist: []agentruntime.AgentToolName{}, ExpectedOutputSchema: fixture.request.ExpectedOutputSchema,
+		ExpectedDelivery: fixture.request.ExpectedDelivery,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := agentruntime.ToolCallDecision{
+		ToolCallID: "delegate-before-stop", ToolName: agentruntime.ToolSpecialistDelegate, ActionVersion: 1,
+		Arguments: arguments, ExpectedDelivery: fixture.request.ExpectedDelivery,
+	}
+	waiting, err := agentruntime.AdvanceForToolSchema(skillResolved.State, agentruntime.RuntimeInput{
+		Decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &call},
+	}, agentruntime.ProductionToolSchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.repo.CommitAgentRuntimeTransition(fixture.scope, skillResolved.State, waiting, now.Add(3*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(waiting.State, agentruntime.ToolApproval{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.repo.CommitAgentRuntimeTransition(fixture.scope, waiting.State, approved, now.Add(4*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.repo.CommitAgentRuntimeTransition(fixture.scope, approved.State, started, now.Add(5*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	reviewRevisionID := fixture.request.InputRevisions[0].RevisionID
+	if err := fixture.db.Model(&model.AgentProductionStage{}).Where("id = ?", stage.ID).Updates(map[string]interface{}{
+		"status": agentruntime.StageAwaitingReview, "version": int64(3),
+		"review_revision_id": reviewRevisionID, "updated_at": now.Add(6 * time.Millisecond),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fixture.service.ReviewProductionStage(
+		context.Background(), fixture.scope, fixture.parentRun, stage.ID,
+		agentruntime.StageReviewCommand{
+			StageVersion: 3, RevisionID: reviewRevisionID, Decision: agentruntime.StageReviewStop,
+			ClientRequestID: "stop-waiting-specialist-delegate",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stage.Status != agentruntime.StageStopped {
+		t.Fatalf("stage status = %q, want %q", result.Stage.Status, agentruntime.StageStopped)
+	}
+	storedParent, err := fixture.service.repo.AgentRunForScope(fixture.scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedParent.Status != agentruntime.RunCancelled {
+		t.Fatalf("parent status = %q, want %q", storedParent.Status, agentruntime.RunCancelled)
+	}
+	storedSpecialist, err := fixture.service.repo.AgentSpecialistRunForScope(fixture.scope, queuedSpecialist.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedSpecialist.Status != model.AgentSpecialistRunCancelled {
+		t.Fatalf("specialist status = %q, want %q", storedSpecialist.Status, model.AgentSpecialistRunCancelled)
+	}
+	var tool model.AgentToolCall
+	if err := fixture.db.Where("run_id = ? AND tool_call_id = ?", fixture.scope.RunID, call.ToolCallID).First(&tool).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tool.Status != agentruntime.ToolCallFailed || tool.ErrorCode != "parent_run_cancelled" {
+		t.Fatalf("delegate tool = %#v, want failed parent_run_cancelled", tool)
+	}
+	var mediaTaskCount int64
+	if err := fixture.db.Model(&model.Task{}).Where("type IN ?", []string{"image", "video", "audio"}).Count(&mediaTaskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mediaTaskCount != 0 {
+		t.Fatalf("media task count = %d, want 0", mediaTaskCount)
 	}
 }
 

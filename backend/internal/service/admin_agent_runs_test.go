@@ -313,6 +313,9 @@ func openAdminAgentRunServiceSQLite(t *testing.T) (*Service, *gorm.DB) {
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
 	repo := repository.New(db)
 	return New(repo, t.TempDir()), db
 }

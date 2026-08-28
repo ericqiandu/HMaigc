@@ -412,7 +412,10 @@ func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
 			CompletionQuestionID: "duration", CompletionExpectedStateVersion: 3,
 		}},
 	}
-	prompt, err := encodeAgentRuntimeModelPrompt(agentRuntimeServiceScope(), state, 11, nil, nil, nil, nil)
+	prompt, err := encodeAgentRuntimeModelPromptForToolSchema(
+		agentRuntimeServiceScope(), state, 11, agentruntime.LegacyToolSchemaVersion,
+		nil, nil, nil, nil, nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

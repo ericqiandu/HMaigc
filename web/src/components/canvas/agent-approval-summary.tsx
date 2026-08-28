@@ -9,7 +9,7 @@ type RenderApprovalFacts = {
 };
 
 export function AgentApprovalSummary({ call, config }: { call: AgentToolCall; config: AiConfig }) {
-    if (call.toolName !== "production.render") return null;
+    if (call.toolName !== "media.generate") return null;
     const facts = renderApprovalFacts(call.arguments);
     if (facts.amountMicrocredits === undefined && !facts.model && !facts.videoDetails) return null;
     const modelName = facts.model ? modelDisplayName(config, encodeChannelModel(facts.model.channelId, facts.model.model)) : "";

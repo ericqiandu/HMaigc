@@ -32,8 +32,11 @@ func TestToolPolicyForSchemaFreezesProductionRiskAndAccess(t *testing.T) {
 	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolProductionPlan, agentruntime.ProductionToolSchemaVersion); ok {
 		t.Fatal("production schema exposed retired production.plan")
 	}
-	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolSpecialistDelegate, agentruntime.CurrentToolSchemaVersion); ok {
-		t.Fatal("legacy schema exposed specialist.delegate")
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolSpecialistDelegate, agentruntime.CurrentToolSchemaVersion); !ok {
+		t.Fatal("current schema did not expose specialist.delegate")
+	}
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolSpecialistDelegate, agentruntime.LegacyToolSchemaVersion); ok {
+		t.Fatal("legacy history schema exposed specialist.delegate")
 	}
 }
 
@@ -59,7 +62,7 @@ func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 		t.Fatalf("production tools = %#v, want %#v", productionNames, wantProduction)
 	}
 
-	legacy, ok := agentruntime.ToolPoliciesForSchema(agentruntime.CurrentToolSchemaVersion)
+	legacy, ok := agentruntime.ToolPoliciesForSchema(agentruntime.LegacyToolSchemaVersion)
 	if !ok {
 		t.Fatal("legacy tool schema is unavailable")
 	}
