@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { normalizeConnection } from "../src/lib/canvas/canvas-project-domain";
+import { normalizeConnection, validateDirectedCanvasConnection } from "../src/lib/canvas/canvas-project-domain";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 function node(id: string, type: CanvasNodeType): CanvasNodeData {
@@ -31,5 +31,22 @@ describe("canvas connection contract", () => {
         expect(normalizeConnection(image.id, video.id, nodes, "source")).toEqual({ fromNodeId: image.id, toNodeId: video.id });
         expect(normalizeConnection(video.id, image.id, nodes, "target")).toEqual({ fromNodeId: image.id, toNodeId: video.id });
         expect(normalizeConnection(video.id, audio.id, nodes, "target")).toEqual({ fromNodeId: audio.id, toNodeId: video.id });
+    });
+
+    test("returns a stable reason for invalid directed media output connections", () => {
+        expect(validateDirectedCanvasConnection(video.id, image.id, nodes)).toEqual({
+            ok: false,
+            code: "video_output_media_target",
+            message: "视频节点的输出不能连接图片或音频节点",
+        });
+        expect(validateDirectedCanvasConnection(video.id, audio.id, nodes)).toEqual({
+            ok: false,
+            code: "video_output_media_target",
+            message: "视频节点的输出不能连接图片或音频节点",
+        });
+        expect(validateDirectedCanvasConnection(image.id, video.id, nodes)).toEqual({
+            ok: true,
+            connection: { fromNodeId: image.id, toNodeId: video.id },
+        });
     });
 });

@@ -135,22 +135,39 @@ function storyboardHandleY(node: CanvasNodeData, handleId?: string, scrollTop = 
     return node.position.y + STORYBOARD_HEADER_HEIGHT + clamp(index * STORYBOARD_ROW_HEIGHT + STORYBOARD_ROW_HEIGHT / 2 - scrollTop, 4, tableHeight - 4);
 }
 
-export function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target") {
+export type CanvasConnectionValidation =
+    | { ok: true; connection: Pick<CanvasConnection, "fromNodeId" | "toNodeId"> }
+    | { ok: false; code: "missing_node" | "same_node" | "frame_node" | "config_to_config" | "video_output_media_target"; message: string };
+
+export function validateDirectedCanvasConnection(fromNodeId: string, toNodeId: string, nodes: CanvasNodeData[]): CanvasConnectionValidation {
+    const source = nodes.find((node) => node.id === fromNodeId);
+    const target = nodes.find((node) => node.id === toNodeId);
+    if (!source || !target) return { ok: false, code: "missing_node", message: "连线节点不存在" };
+    if (source.id === target.id) return { ok: false, code: "same_node", message: "节点不能连接自身" };
+    if (isFrameNode(source) || isFrameNode(target)) return { ok: false, code: "frame_node", message: "背板节点不能参与连线" };
+    if (source.type === CanvasNodeType.Config && target.type === CanvasNodeType.Config) return { ok: false, code: "config_to_config", message: "生成配置节点之间不能连接" };
+    if (source.type === CanvasNodeType.Video && (target.type === CanvasNodeType.Image || target.type === CanvasNodeType.Audio)) {
+        return { ok: false, code: "video_output_media_target", message: "视频节点的输出不能连接图片或音频节点" };
+    }
+    return { ok: true, connection: { fromNodeId, toNodeId } };
+}
+
+export function validateCanvasConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target"): CanvasConnectionValidation {
     const first = nodes.find((node) => node.id === firstNodeId);
     const second = nodes.find((node) => node.id === secondNodeId);
-    if (!first || !second || first.id === second.id) return null;
-    if (isFrameNode(first) || isFrameNode(second)) return null;
-    if (first.type === CanvasNodeType.Config && second.type === CanvasNodeType.Config) return null;
+    if (!first || !second) return { ok: false, code: "missing_node", message: "连线节点不存在" };
     let connection: Pick<CanvasConnection, "fromNodeId" | "toNodeId">;
     if (second.type === CanvasNodeType.Config) connection = { fromNodeId: first.id, toNodeId: second.id };
     else if (first.type === CanvasNodeType.Config && firstHandleType === "target") connection = { fromNodeId: second.id, toNodeId: first.id };
     else if (first.type === CanvasNodeType.Config) connection = { fromNodeId: first.id, toNodeId: second.id };
     else if (firstHandleType === "target") connection = { fromNodeId: second.id, toNodeId: first.id };
     else connection = { fromNodeId: first.id, toNodeId: second.id };
-    const source = connection.fromNodeId === first.id ? first : second;
-    const target = connection.toNodeId === first.id ? first : second;
-    if (source.type === CanvasNodeType.Video && (target.type === CanvasNodeType.Image || target.type === CanvasNodeType.Audio)) return null;
-    return connection;
+    return validateDirectedCanvasConnection(connection.fromNodeId, connection.toNodeId, nodes);
+}
+
+export function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target") {
+    const validation = validateCanvasConnection(firstNodeId, secondNodeId, nodes, firstHandleType);
+    return validation.ok ? validation.connection : null;
 }
 
 export function attachNodeToStoryboardRow(nodes: CanvasNodeData[], connection: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">) {

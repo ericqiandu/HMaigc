@@ -3,7 +3,7 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
-import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
+import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle, validateCanvasConnection, validateDirectedCanvasConnection } from "@/lib/canvas/canvas-project-domain";
 import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -83,11 +83,12 @@ export function useCanvasConnectionController({
 
     const connectNodes = useCallback((current: ConnectionHandle, targetNodeId: string, targetHandleId?: string): boolean => {
         if (current.nodeId === targetNodeId) return false;
-        const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
-        if (!connection) {
-            message.warning("无法连接");
+        const validation = validateCanvasConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
+        if (!validation.ok) {
+            message.warning(validation.message);
             return false;
         }
+        const connection = validation.connection;
         const { fromNodeId, toNodeId } = connection;
         const fromHandleId = fromNodeId === current.nodeId ? current.handleId : targetHandleId;
         const toHandleId = toNodeId === current.nodeId ? current.handleId : targetHandleId;
@@ -109,6 +110,11 @@ export function useCanvasConnectionController({
         (sourceNodeId: string, targetNodeId: string): boolean =>
             connectNodes({ nodeId: sourceNodeId, handleType: "source" }, targetNodeId),
         [connectNodes],
+    );
+
+    const canConnectExistingNodes = useCallback(
+        (sourceNodeId: string, targetNodeId: string) => validateDirectedCanvasConnection(sourceNodeId, targetNodeId, nodesRef.current).ok,
+        [nodesRef],
     );
 
     const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio, pending: PendingConnectionCreate) => {
@@ -247,6 +253,7 @@ export function useCanvasConnectionController({
         connectionTargetNodeId,
         connectingParams,
         connectExistingNodes,
+        canConnectExistingNodes,
         createConnectedNode,
         handleConnectStart,
         mouseWorld,

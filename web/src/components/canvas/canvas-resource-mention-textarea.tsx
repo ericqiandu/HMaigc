@@ -44,6 +44,7 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     highlightAudioPauseTokens?: boolean;
     onContentSizeChange?: (height: number) => void;
     editorHandleRef?: Ref<CanvasResourceMentionTextareaHandle>;
+    onReferenceSelect?: (reference: CanvasResourceReference) => boolean;
 };
 
 export type CanvasResourceMentionTextareaHandle = {
@@ -52,7 +53,7 @@ export type CanvasResourceMentionTextareaHandle = {
 };
 
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, highlightAudioPauseTokens = false, onContentSizeChange, editorHandleRef, ...props },
+    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, highlightAudioPauseTokens = false, onContentSizeChange, editorHandleRef, onReferenceSelect, ...props },
     forwardedRef,
 ) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -63,15 +64,19 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const pendingSelectionRef = useRef<number | null>(null);
     const lastSelectionRef = useRef<SelectionSnapshot | null>(null);
     const lastRenderedValueRef = useRef("");
+    const mentionRef = useRef<MentionState | null>(null);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
+    const candidatesForMention = useCallback((currentMention: MentionState) => {
+        const query = currentMention.query.trim().toLowerCase();
+        const sortedItems = [...references].sort((left, right) => Number(right.active) - Number(left.active));
+        if (!query) return sortedItems;
+        return sortedItems.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
+    }, [references]);
     const candidates = useMemo(() => {
         if (!mention) return [];
-        const query = mention.query.trim().toLowerCase();
-        const activeItems = references.filter((item) => item.active);
-        if (!query) return activeItems;
-        return activeItems.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
-    }, [mention, references]);
+        return candidatesForMention(mention);
+    }, [candidatesForMention, mention]);
     const activeReferences = useMemo(() => (highlightLabels ? references.filter((item) => item.active) : []), [highlightLabels, references]);
     const useRichEditor = Boolean(activeReferences.length || highlightAudioPauseTokens);
     const reportContentSize = useCallback((element: HTMLElement | null) => {
@@ -182,6 +187,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     );
 
     const closeMention = () => {
+        mentionRef.current = null;
         setMention(null);
         setActiveIndex(0);
     };
@@ -189,11 +195,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
         const match = /@([^\s@，。！？、,.!?;:()[\]{}【】（）]*)$/u.exec(prefix);
-        if (!match || !references.some((item) => item.active)) {
+        if (!match || !references.length) {
             closeMention();
             return;
         }
         const nextMention = { start: cursor - match[1].length - 1, query: match[1] };
+        mentionRef.current = nextMention;
         const isSameMention = mention?.start === nextMention.start && mention.query === nextMention.query;
         if (!isSameMention) {
             setMention(nextMention);
@@ -202,12 +209,17 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     };
 
     const insertReference = (reference: CanvasResourceReference) => {
-        if (!mention) return;
+        const currentMention = mentionRef.current;
+        if (!currentMention) return;
+        if (onReferenceSelect && !onReferenceSelect(reference)) {
+            closeMention();
+            return;
+        }
         const current = currentValueAndSelection();
         const insertText = `${canvasResourceMentionToken(reference)} `;
-        const next = `${current.value.slice(0, mention.start)}${insertText}${current.value.slice(current.selection.end)}`;
+        const next = `${current.value.slice(0, currentMention.start)}${insertText}${current.value.slice(current.selection.end)}`;
         closeMention();
-        updateValue(next, mention.start + insertText.length);
+        updateValue(next, currentMention.start + insertText.length);
     };
 
     const replaceEditableSelection = (insertText: string) => {
@@ -285,20 +297,26 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                         replaceEditableSelection(event.clipboardData.getData("text/plain"));
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-                        if (mention && candidates.length) {
+                        if (composingRef.current || event.nativeEvent.isComposing) {
+                            onKeyDown?.(event as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+                            return;
+                        }
+                        const currentMention = mentionRef.current;
+                        const currentCandidates = currentMention ? candidatesForMention(currentMention) : candidates;
+                        if (currentMention && currentCandidates.length) {
                             if (event.key === "ArrowDown") {
                                 event.preventDefault();
-                                setActiveIndex((index) => (index + 1) % candidates.length);
+                                setActiveIndex((index) => (index + 1) % currentCandidates.length);
                                 return;
                             }
                             if (event.key === "ArrowUp") {
                                 event.preventDefault();
-                                setActiveIndex((index) => (index - 1 + candidates.length) % candidates.length);
+                                setActiveIndex((index) => (index - 1 + currentCandidates.length) % currentCandidates.length);
                                 return;
                             }
                             if (event.key === "Enter" || event.key === "Tab") {
                                 event.preventDefault();
-                                insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
+                                insertReference(currentCandidates[Math.min(activeIndex, currentCandidates.length - 1)]);
                                 return;
                             }
                             if (event.key === "Escape") {
@@ -368,21 +386,36 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     syncMention(next, event.target.selectionStart);
                     reportContentSize(event.currentTarget);
                 }}
+                onCompositionStart={(event) => {
+                    composingRef.current = true;
+                    props.onCompositionStart?.(event);
+                }}
+                onCompositionEnd={(event) => {
+                    composingRef.current = false;
+                    syncMention(event.currentTarget.value, event.currentTarget.selectionStart);
+                    props.onCompositionEnd?.(event);
+                }}
                 onKeyDown={(event) => {
-                    if (mention && candidates.length) {
+                    if (composingRef.current || event.nativeEvent.isComposing) {
+                        onKeyDown?.(event);
+                        return;
+                    }
+                    const currentMention = mentionRef.current;
+                    const currentCandidates = currentMention ? candidatesForMention(currentMention) : candidates;
+                    if (currentMention && currentCandidates.length) {
                         if (event.key === "ArrowDown") {
                             event.preventDefault();
-                            setActiveIndex((index) => (index + 1) % candidates.length);
+                            setActiveIndex((index) => (index + 1) % currentCandidates.length);
                             return;
                         }
                         if (event.key === "ArrowUp") {
                             event.preventDefault();
-                            setActiveIndex((index) => (index - 1 + candidates.length) % candidates.length);
+                            setActiveIndex((index) => (index - 1 + currentCandidates.length) % currentCandidates.length);
                             return;
                         }
                         if (event.key === "Enter") {
                             event.preventDefault();
-                            insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
+                            insertReference(currentCandidates[Math.min(activeIndex, currentCandidates.length - 1)]);
                             return;
                         }
                         if (event.key === "Escape") {
@@ -457,13 +490,21 @@ function createInlinePreview(reference: CanvasResourceReference) {
         media.className = `size-[1.18em] shrink-0 rounded-[0.24em] ${reference.kind === "video" ? "bg-black object-cover" : reference.kind === "character" ? "bg-black/5 object-contain" : "object-cover"}`;
         media.setAttribute("src", reference.previewUrl);
         media.setAttribute("alt", "");
-        if (media instanceof HTMLVideoElement) {
-            media.muted = true;
-            media.preload = "metadata";
+        media.dataset.canvasResourcePreview = reference.kind;
+        if (media.tagName === "VIDEO") {
+            const video = media as HTMLVideoElement;
+            video.muted = true;
+            video.preload = "metadata";
         }
+        media.addEventListener("error", () => media.replaceWith(createInlinePreviewFallback(reference)));
         return media;
     }
+    return createInlinePreviewFallback(reference);
+}
+
+function createInlinePreviewFallback(reference: CanvasResourceReference) {
     const fallback = document.createElement("span");
+    fallback.dataset.canvasResourcePreviewFallback = reference.kind;
     fallback.className = "grid size-[1.18em] shrink-0 place-items-center rounded-[0.24em] bg-current/10";
     fallback.textContent = reference.kind === "audio" ? "♪" : reference.kind === "video" ? "▶" : reference.kind === "image" ? "□" : reference.kind === "skill" ? "✦" : "";
     return fallback;
@@ -528,9 +569,10 @@ function MentionMenu({ anchor, references, activeIndex, theme, onSelect }: { anc
 }
 
 function ReferencePreview({ reference }: { reference: CanvasResourceReference }) {
-    if (reference.kind === "image" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-9 rounded-md object-cover" />;
-    if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
-    if (reference.kind === "character" && reference.previewUrl) return <img src={reference.previewUrl} alt="" className="size-9 rounded-md bg-black/5 object-contain" />;
+    const [previewFailed, setPreviewFailed] = useState(false);
+    if (!previewFailed && reference.kind === "image" && reference.previewUrl) return <img data-canvas-resource-preview="image" src={reference.previewUrl} alt="" className="size-9 rounded-md object-cover" onError={() => setPreviewFailed(true)} />;
+    if (!previewFailed && reference.kind === "video" && reference.previewUrl) return <video data-canvas-resource-preview="video" src={reference.previewUrl} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" onError={() => setPreviewFailed(true)} />;
+    if (!previewFailed && reference.kind === "character" && reference.previewUrl) return <img data-canvas-resource-preview="character" src={reference.previewUrl} alt="" className="size-9 rounded-md bg-black/5 object-contain" onError={() => setPreviewFailed(true)} />;
     if (reference.kind === "skill") {
         return (
             <span className="grid size-9 shrink-0 place-items-center rounded-md bg-cyan-500/12 text-cyan-600 dark:text-cyan-200">
@@ -540,7 +582,7 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     }
     const Icon = reference.kind === "character" ? UserRound : reference.kind === "audio" ? Music2 : reference.kind === "video" ? Video : reference.kind === "image" ? ImageIcon : FileText;
     return (
-        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-black/10">
+        <span data-canvas-resource-preview-fallback={reference.kind} className="grid size-9 shrink-0 place-items-center rounded-md bg-black/10">
             <Icon className="size-4" />
         </span>
     );

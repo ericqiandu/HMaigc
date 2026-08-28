@@ -350,3 +350,42 @@ func TestCanvasCollaborationRejectsDanglingConnectionAndExpiredSubscriptionWrite
 	})
 	requireAuthStatus(t, err, http.StatusPaymentRequired)
 }
+
+func TestCanvasMutationRejectsNewVideoOutputMediaConnections(t *testing.T) {
+	payload := `{"id":"canvas-contract","title":"连接契约","nodes":[{"id":"video","type":"video"},{"id":"image","type":"image"},{"id":"audio","type":"audio"}],"connections":[]}`
+
+	for _, testCase := range []struct {
+		name   string
+		target string
+	}{
+		{name: "image", target: "image"},
+		{name: "audio", target: "audio"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, _, err := applyCanvasMutationPatch(payload, "连接契约", CanvasMutationPatch{
+				UpsertConnections: []json.RawMessage{json.RawMessage(`{"id":"edge-new","fromNodeId":"video","toNodeId":"` + testCase.target + `"}`)},
+			})
+			requireAuthStatus(t, err, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestCanvasMutationAcceptsMediaInputsToVideo(t *testing.T) {
+	payload := `{"id":"canvas-contract","title":"连接契约","nodes":[{"id":"video","type":"video"},{"id":"image","type":"image"},{"id":"audio","type":"audio"}],"connections":[]}`
+	for _, source := range []string{"image", "audio"} {
+		if _, _, err := applyCanvasMutationPatch(payload, "连接契约", CanvasMutationPatch{
+			UpsertConnections: []json.RawMessage{json.RawMessage(`{"id":"edge-` + source + `","fromNodeId":"` + source + `","toNodeId":"video"}`)},
+		}); err != nil {
+			t.Fatalf("%s input rejected: %v", source, err)
+		}
+	}
+}
+
+func TestCanvasMutationAllowsUnrelatedPatchWithLegacyInvalidConnection(t *testing.T) {
+	payload := `{"id":"canvas-contract","title":"连接契约","nodes":[{"id":"video","type":"video"},{"id":"image","type":"image"}],"connections":[{"id":"legacy-edge","fromNodeId":"video","toNodeId":"image"}]}`
+	if _, _, err := applyCanvasMutationPatch(payload, "连接契约", CanvasMutationPatch{
+		UpsertNodes: []json.RawMessage{json.RawMessage(`{"id":"text","type":"text"}`)},
+	}); err != nil {
+		t.Fatalf("unrelated patch rejected because of legacy edge: %v", err)
+	}
+}

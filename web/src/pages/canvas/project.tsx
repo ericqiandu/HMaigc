@@ -674,7 +674,7 @@ function InfiniteCanvasPage() {
         [createNode],
     );
 
-    const { cancelPendingConnectionCreate, closeConnectionCreateMenu, connectionTargetNodeId, connectingParams, connectExistingNodes, createConnectedNode, handleConnectStart, mouseWorld, pendingConnectionCreate, setConnecting } =
+    const { cancelPendingConnectionCreate, canConnectExistingNodes, closeConnectionCreateMenu, connectionTargetNodeId, connectingParams, connectExistingNodes, createConnectedNode, handleConnectStart, mouseWorld, pendingConnectionCreate, setConnecting } =
         useCanvasConnectionController({
             nodesRef,
             connectionsRef,
@@ -1200,6 +1200,7 @@ function InfiniteCanvasPage() {
                     availableReferences={canvasResourceReferences}
                     mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
                     onReferenceConnect={connectExistingNodes}
+                    canReferenceConnect={canConnectExistingNodes}
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
@@ -1212,7 +1213,7 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [canvasResourceReferences, configInputsById, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, stopNodeGeneration, workspaceMode],
+        [canConnectExistingNodes, canvasResourceReferences, configInputsById, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, stopNodeGeneration, workspaceMode],
     );
 
     const renderCanvasNodeContent = useCallback(
