@@ -15,6 +15,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -670,19 +671,22 @@ func (s *Service) materializeAgentMediaCandidates(
 	scope agentruntime.Scope,
 	task model.Task,
 	arguments agentMediaGenerationArguments,
-) ([]model.AgentArtifactRevision, error) {
-	if scope.Validate() != nil || task.Status != model.TaskStatusSucceeded || task.UserID != scope.ActorUserID || task.ProjectID != scope.CanvasID {
-		return nil, errAgentMediaResultInvalid
+	call *agentruntime.ToolCallDecision,
+) ([]model.AgentArtifactRevision, repository.MediaAttemptWriteDisposition, error) {
+	if scope.Validate() != nil || call == nil || call.ToolName != agentruntime.ToolMediaGenerate ||
+		task.Status != model.TaskStatusSucceeded || task.UserID != scope.ActorUserID || task.ProjectID != scope.CanvasID ||
+		task.ID != arguments.Commercial.TaskID {
+		return nil, "", errAgentMediaResultInvalid
 	}
 	resources, err := agentruntime.DecodeMediaTaskResultResources([]byte(task.ResultJSON))
 	if err != nil {
-		return nil, errAgentMediaResultInvalid
+		return nil, "", errAgentMediaResultInvalid
 	}
-	revisions := make([]model.AgentArtifactRevision, 0, len(resources))
+	inputs := make([]repository.MediaCandidateAttemptInput, 0, len(resources))
 	for index, result := range resources {
 		resource, loadErr := s.productionResourceForScope(scope, result.ResourceID)
 		if loadErr != nil || !agentMediaResourceReady(resource) || resource.Kind != string(result.Kind) {
-			return nil, errors.Join(errAgentMediaResultInvalid, loadErr)
+			return nil, "", errors.Join(errAgentMediaResultInvalid, loadErr)
 		}
 		artifactID := fmt.Sprintf("%s-%02d", arguments.OutputArtifactID, index+1)
 		artifactKey := fmt.Sprintf("%s-candidate-%02d", arguments.OutputArtifactKey, index+1)
@@ -694,15 +698,28 @@ func (s *Service) materializeAgentMediaCandidates(
 			SkillVersions:           cloneAgentRuntimeSkillSelections(arguments.SkillVersions),
 		})
 		if draftErr != nil {
-			return nil, draftErr
+			return nil, "", draftErr
 		}
-		revision, appendErr := s.repo.AppendMediaCandidateRevision(scope, artifactID, draft)
-		if appendErr != nil {
-			return nil, appendErr
-		}
-		revisions = append(revisions, *revision)
+		inputs = append(inputs, repository.MediaCandidateAttemptInput{ArtifactID: artifactID, Draft: draft})
 	}
-	return revisions, nil
+	results, err := s.repo.AppendMediaCandidateRevisionsForAttempt(scope, inputs, repository.MediaAttemptCompletionFence{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		ExpectedTaskID: task.ID, ExpectedAttempt: arguments.Commercial.Attempt,
+		ExpectedArtifactRevisionID: arguments.Commercial.ArtifactRevisionID,
+		ApprovalFingerprint:        arguments.Commercial.ApprovalFingerprint,
+	}, time.Now().UTC())
+	if err != nil {
+		return nil, "", err
+	}
+	revisions := make([]model.AgentArtifactRevision, 0, len(results))
+	disposition := results[0].Disposition
+	for _, result := range results {
+		if result.Disposition != disposition {
+			return nil, "", repository.ErrMediaAttemptFenceConflict
+		}
+		revisions = append(revisions, result.Revision)
+	}
+	return revisions, disposition, nil
 }
 
 func cloneAgentMediaRevisionRefs(values []agentruntime.ArtifactRevisionRef) []agentruntime.ArtifactRevisionRef {

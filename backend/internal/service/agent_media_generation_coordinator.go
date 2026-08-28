@@ -6,6 +6,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func (s *Service) coordinatePendingAgentMediaGeneration(
@@ -61,7 +62,7 @@ func (s *Service) coordinatePendingAgentMediaGeneration(
 		return nil, errors.New("agent media generation task status is invalid")
 	}
 
-	candidates, err := s.materializeAgentMediaCandidates(scope, *task, arguments)
+	candidates, disposition, err := s.materializeAgentMediaCandidates(scope, *task, arguments, call)
 	if err != nil {
 		if errors.Is(err, errAgentMediaResultInvalid) || errors.Is(err, ErrVisualCandidateReviewInvalid) {
 			return s.failAgentMediaGeneration(scope, call, "media_generation_result_invalid", map[string]string{
@@ -69,6 +70,13 @@ func (s *Service) coordinatePendingAgentMediaGeneration(
 			})
 		}
 		return nil, err
+	}
+	if disposition == repository.MediaAttemptWriteUnadopted {
+		latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		return s.agentRuntimeProgressForCurrentState(scope, latest)
 	}
 	refs := make([]agentruntime.ArtifactRevisionRef, 0, len(candidates))
 	for _, candidate := range candidates {

@@ -20,6 +20,74 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestPostgresConcurrentMediaAttemptCallbacksAppendOneRevision(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	fence := MediaAttemptCompletionFence{
+		ToolCallID: "postgres-media-call", ActionVersion: 1, ExpectedTaskID: "postgres-media-task",
+		ExpectedAttempt: 1, ExpectedArtifactRevisionID: "media-output-1", ApprovalFingerprint: "postgres-media-approval",
+	}
+	inputJSON := json.RawMessage(`{"outputArtifactId":"media-output-1","commercial":{"artifactRevisionId":"media-output-1","attempt":1,"taskId":"postgres-media-task","approvalFingerprint":"postgres-media-approval"}}`)
+	startRepositoryMediaAttempt(t, repo, scope, fence.ToolCallID, inputJSON, now)
+	input := MediaCandidateAttemptInput{
+		ArtifactID: "media-output-1",
+		Draft:      mediaCandidateDraftFixture("media-output-1", "postgres-media-resource", fence.ExpectedTaskID, fence.ExpectedTaskID+":01"),
+	}
+
+	const writers = 8
+	results := make(chan *MediaCandidateAppendResult, writers)
+	errorsChannel := make(chan error, writers)
+	var group sync.WaitGroup
+	for index := 0; index < writers; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			result, err := repo.AppendMediaCandidateRevisionForAttempt(scope, input.ArtifactID, input.Draft, fence, now.Add(5*time.Second))
+			if err != nil {
+				errorsChannel <- err
+				return
+			}
+			results <- result
+		}()
+	}
+	group.Wait()
+	close(results)
+	close(errorsChannel)
+	for err := range errorsChannel {
+		t.Fatalf("concurrent media attempt callback failed: %v", err)
+	}
+	var revisionID string
+	for result := range results {
+		if result.Disposition != MediaAttemptWriteAdopted {
+			t.Fatalf("concurrent callback disposition = %q", result.Disposition)
+		}
+		if revisionID == "" {
+			revisionID = result.Revision.ID
+		} else if result.Revision.ID != revisionID {
+			t.Fatalf("concurrent callback revision = %q, want %q", result.Revision.ID, revisionID)
+		}
+	}
+	var revisionCount, artifactCount int64
+	if err := db.Model(&model.AgentArtifactRevision{}).Where("artifact_id = ?", input.ArtifactID).Count(&revisionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentArtifact{}).Where("id = ?", input.ArtifactID).Count(&artifactCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if revisionCount != 1 || artifactCount != 1 {
+		t.Fatalf("concurrent callback facts revisions=%d artifacts=%d", revisionCount, artifactCount)
+	}
+}
+
 func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalHistory(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {

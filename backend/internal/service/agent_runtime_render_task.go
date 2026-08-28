@@ -33,7 +33,7 @@ func (s *Service) productionArtifactForRender(scope agentruntime.Scope, argument
 		if artifact.ID != arguments.ArtifactID {
 			continue
 		}
-		if artifact.Attempt < arguments.Attempt || artifact.Attempt > arguments.Attempt+1 {
+		if artifact.Attempt < arguments.Attempt {
 			return nil, repository.ErrAgentProductionArtifactConflict
 		}
 		if artifact.Kind != model.AgentProductionArtifactReferenceImage && artifact.Kind != model.AgentProductionArtifactStoryboardImage && artifact.Kind != model.AgentProductionArtifactVideoClip {
@@ -350,37 +350,83 @@ func (s *Service) productionResourceForScope(scope agentruntime.Scope, resourceI
 
 func (s *Service) bindProductionArtifactTask(
 	scope agentruntime.Scope,
+	call *agentruntime.ToolCallDecision,
 	arguments agentruntime.ProductionRenderArguments,
 	artifact model.AgentProductionArtifact,
 	task model.Task,
 	order model.BillingOrder,
-) (*model.AgentProductionArtifact, error) {
-	if artifact.TaskID != "" {
-		if artifact.TaskID != task.ID || artifact.BillingOrderID != order.ID || artifact.Attempt != arguments.Attempt+1 {
-			return nil, repository.ErrAgentProductionArtifactConflict
-		}
-		return &artifact, nil
-	}
-	transitioned, err := s.repo.TransitionAgentProductionArtifact(scope, repository.ArtifactTransition{
+) (*repository.ProductionMediaTransitionResult, error) {
+	return s.repo.TransitionAgentProductionMediaAttempt(scope, productionRenderAttemptFence(call, arguments), repository.ArtifactTransition{
 		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactAwaitingApproval, NextStatus: model.AgentProductionArtifactQueued,
 		ExpectedAttempt: arguments.Attempt, NextAttempt: arguments.Attempt + 1,
 		TaskID: task.ID, BillingOrderID: order.ID, Now: time.Now().UTC(),
 	})
-	if err == nil {
-		return transitioned, nil
+}
+
+func productionRenderAttemptFence(
+	call *agentruntime.ToolCallDecision,
+	arguments agentruntime.ProductionRenderArguments,
+) repository.MediaAttemptCompletionFence {
+	if call == nil {
+		return repository.MediaAttemptCompletionFence{}
 	}
-	if !errors.Is(err, repository.ErrAgentProductionArtifactConflict) {
+	return repository.MediaAttemptCompletionFence{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		ExpectedTaskID: arguments.TaskID, ExpectedAttempt: arguments.Attempt + 1,
+		ExpectedArtifactRevisionID: arguments.ArtifactID,
+		ApprovalFingerprint:        arguments.ApprovalFingerprint,
+	}
+}
+
+func (s *Service) completeProductionMediaAttempt(
+	scope agentruntime.Scope,
+	call *agentruntime.ToolCallDecision,
+	arguments agentruntime.ProductionRenderArguments,
+	artifact model.AgentProductionArtifact,
+	task model.Task,
+	order model.BillingOrder,
+	resource model.Resource,
+) (*repository.ProductionMediaCompletionResult, error) {
+	return s.completeProductionMediaAttemptWithFence(
+		scope,
+		productionRenderAttemptFence(call, arguments),
+		artifact,
+		task,
+		order,
+		resource,
+		false,
+	)
+}
+
+func (s *Service) completeProductionMediaAttemptWithFence(
+	scope agentruntime.Scope,
+	fence repository.MediaAttemptCompletionFence,
+	artifact model.AgentProductionArtifact,
+	task model.Task,
+	order model.BillingOrder,
+	resource model.Resource,
+	recovery bool,
+) (*repository.ProductionMediaCompletionResult, error) {
+	mediaKind := "image"
+	if artifact.Kind == model.AgentProductionArtifactVideoClip {
+		mediaKind = "video"
+	}
+	lateArtifactID := productionRenderTaskIdentity("late-result:"+artifact.ID+":"+task.ID, fence.ExpectedAttempt)
+	lateDraft, err := mediaCandidateDraft(GeneratedMediaCandidate{
+		ArtifactID: lateArtifactID, ArtifactKey: "late-" + artifact.ID,
+		MediaKind: mediaKind, ResourceID: resource.ID, SourceTaskID: task.ID,
+		ProviderRequestIdentity: task.ID + ":01",
+		UpstreamRevisions:       []agentruntime.ArtifactRevisionRef{},
+		SkillVersions:           []agentruntime.SkillSelection{},
+	})
+	if err != nil {
 		return nil, err
 	}
-	latest, loadErr := s.productionArtifactForRender(scope, arguments)
-	if loadErr != nil {
-		return nil, errors.Join(err, loadErr)
-	}
-	if latest.Status != model.AgentProductionArtifactQueued || latest.Attempt != arguments.Attempt+1 ||
-		latest.TaskID != task.ID || latest.BillingOrderID != order.ID {
-		return nil, err
-	}
-	return latest, nil
+	return s.repo.CompleteAgentProductionMediaAttempt(scope, repository.ProductionMediaAttemptCompletion{
+		Fence: fence, ArtifactID: artifact.ID,
+		ExpectedStatus: artifact.Status, BillingOrderID: order.ID, ResourceID: resource.ID,
+		LateArtifactID: lateArtifactID, LateDraft: lateDraft, Recovery: recovery, Now: time.Now().UTC(),
+	})
 }
 
 func productionRenderTaskIdentity(idempotencyKey string, attempt int) string {
@@ -434,6 +480,10 @@ func (s *Service) reconcileSucceededProductionArtifacts(scope agentruntime.Scope
 	if err != nil || record == nil {
 		return err
 	}
+	calls, err := s.repo.AgentToolCallsForScope(scope)
+	if err != nil {
+		return err
+	}
 	for _, current := range record.Artifacts {
 		if current.Kind != model.AgentProductionArtifactReferenceImage && current.Kind != model.AgentProductionArtifactStoryboardImage && current.Kind != model.AgentProductionArtifactVideoClip {
 			continue
@@ -457,31 +507,95 @@ func (s *Service) reconcileSucceededProductionArtifacts(scope agentruntime.Scope
 		if order.UserID != scope.ActorUserID || order.TaskID != task.ID || order.Status != model.BillingStatusSettled {
 			return errors.New("production result recovery billing facts conflict")
 		}
-		if artifact.Status == model.AgentProductionArtifactFailed && artifact.LastErrorCode == "production_result_invalid" {
-			artifactPointer, transitionErr := s.repo.TransitionAgentProductionArtifact(scope, repository.ArtifactTransition{
-				ArtifactID: artifact.ID, ExpectedStatus: artifact.Status, NextStatus: model.AgentProductionArtifactQueued,
-				ExpectedAttempt: artifact.Attempt, NextAttempt: artifact.Attempt,
-				TaskID: artifact.TaskID, BillingOrderID: artifact.BillingOrderID,
-				LastErrorCode: productionResultMaterializing, Now: time.Now().UTC(),
-			})
-			if transitionErr != nil {
-				return transitionErr
-			}
-			artifact = *artifactPointer
+		fence, err := productionMediaRecoveryFence(calls, artifact)
+		if err != nil {
+			return err
 		}
+		claimed, err := s.repo.BeginAgentProductionMediaRecovery(scope, fence, artifact.ID, order.ID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		artifact = claimed.Artifact
 		resourceID, err := s.materializeSucceededProductionTaskResult(scope, *task, artifact.Kind)
 		if err != nil {
 			return err
 		}
-		if _, err := s.repo.TransitionAgentProductionArtifact(scope, repository.ArtifactTransition{
-			ArtifactID: artifact.ID, ExpectedStatus: artifact.Status, NextStatus: model.AgentProductionArtifactSucceeded,
-			ExpectedAttempt: artifact.Attempt, NextAttempt: artifact.Attempt,
-			TaskID: task.ID, BillingOrderID: order.ID, ResourceID: resourceID, Now: time.Now().UTC(),
-		}); err != nil {
+		resource, err := s.productionResourceForScope(scope, resourceID)
+		if err != nil {
 			return err
+		}
+		completed, err := s.completeProductionMediaAttemptWithFence(scope, fence, artifact, *task, *order, *resource, true)
+		if err != nil {
+			return err
+		}
+		if completed.Disposition == repository.MediaAttemptWriteUnadopted {
+			continue
 		}
 	}
 	return nil
+}
+
+func productionMediaRecoveryFence(
+	calls []model.AgentToolCall,
+	artifact model.AgentProductionArtifact,
+) (repository.MediaAttemptCompletionFence, error) {
+	var matched *repository.MediaAttemptCompletionFence
+	for _, call := range calls {
+		if call.Status != agentruntime.ToolCallFailed || call.ErrorCode != "production_result_invalid" ||
+			!call.ApprovalRequired || call.ApprovalDecision != agentruntime.ToolApprovalApproved {
+			continue
+		}
+		var fence repository.MediaAttemptCompletionFence
+		switch agentruntime.ToolName(call.ToolName) {
+		case agentruntime.ToolMediaGenerate:
+			var input struct {
+				OutputArtifactID string `json:"outputArtifactId"`
+				Commercial       struct {
+					ArtifactRevisionID  string `json:"artifactRevisionId"`
+					Attempt             int    `json:"attempt"`
+					TaskID              string `json:"taskId"`
+					ApprovalFingerprint string `json:"approvalFingerprint"`
+				} `json:"commercial"`
+			}
+			if json.Unmarshal([]byte(call.InputJSON), &input) != nil || input.OutputArtifactID != artifact.ID ||
+				input.Commercial.ArtifactRevisionID != artifact.ID || input.Commercial.Attempt != artifact.Attempt ||
+				input.Commercial.TaskID != artifact.TaskID || input.Commercial.ApprovalFingerprint == "" {
+				continue
+			}
+			fence = repository.MediaAttemptCompletionFence{
+				ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+				ExpectedTaskID: artifact.TaskID, ExpectedAttempt: artifact.Attempt,
+				ExpectedArtifactRevisionID: artifact.ID, ApprovalFingerprint: input.Commercial.ApprovalFingerprint,
+			}
+		case agentruntime.ToolProductionRender:
+			var input struct {
+				ArtifactID          string `json:"artifactId"`
+				Attempt             int    `json:"attempt"`
+				TaskID              string `json:"taskId"`
+				ApprovalFingerprint string `json:"approvalFingerprint"`
+			}
+			if json.Unmarshal([]byte(call.InputJSON), &input) != nil || input.ArtifactID != artifact.ID ||
+				input.Attempt+1 != artifact.Attempt || input.TaskID != artifact.TaskID || input.ApprovalFingerprint == "" {
+				continue
+			}
+			fence = repository.MediaAttemptCompletionFence{
+				ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+				ExpectedTaskID: artifact.TaskID, ExpectedAttempt: artifact.Attempt,
+				ExpectedArtifactRevisionID: artifact.ID, ApprovalFingerprint: input.ApprovalFingerprint,
+			}
+		default:
+			continue
+		}
+		if matched != nil {
+			return repository.MediaAttemptCompletionFence{}, errors.New("production result recovery has multiple matching tool attempts")
+		}
+		candidate := fence
+		matched = &candidate
+	}
+	if matched == nil {
+		return repository.MediaAttemptCompletionFence{}, errors.New("production result recovery has no matching approved tool attempt")
+	}
+	return *matched, nil
 }
 
 func (s *Service) materializeSucceededProductionTaskResult(scope agentruntime.Scope, task model.Task, artifactKind model.AgentProductionArtifactKind) (string, error) {

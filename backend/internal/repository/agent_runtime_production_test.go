@@ -3,7 +3,6 @@ package repository
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -202,7 +201,7 @@ func TestAgentProductionArtifactTransitionUsesStatusAndAttemptCAS(t *testing.T) 
 	}
 }
 
-func TestAgentProductionArtifactSuccessAppendsTimelineAfterRunInterruptedAndReplaysIdempotently(t *testing.T) {
+func TestLateResultAfterRunCancelledIsUnadoptedAndDoesNotOverwriteProductionArtifact(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
 	createAgentRunForTest(t, repo, scope)
@@ -224,58 +223,134 @@ func TestAgentProductionArtifactSuccessAppendsTimelineAfterRunInterruptedAndRepl
 		t.Fatal(err)
 	}
 	artifact := firstProductionArtifact(t, created.Artifacts, "shot-1", model.AgentProductionArtifactStoryboardImage)
-	if _, err := repo.TransitionAgentProductionArtifact(scope, ArtifactTransition{
-		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactPlanned,
-		NextStatus: model.AgentProductionArtifactQueued, ExpectedAttempt: 0, NextAttempt: 1,
-		TaskID: "task-late-image", BillingOrderID: "billing-late-image", Now: now.Add(time.Second),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(2*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	transition := ArtifactTransition{
-		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactQueued,
-		NextStatus: model.AgentProductionArtifactSucceeded, ExpectedAttempt: 1, NextAttempt: 1,
-		TaskID: "task-late-image", BillingOrderID: "billing-late-image", ResourceID: "resource-late-image",
-		Now: now.Add(3 * time.Second),
-	}
-	succeeded, err := repo.TransitionAgentProductionArtifact(scope, transition)
+	rawArguments, err := json.Marshal(struct {
+		OutputArtifactID string `json:"outputArtifactId"`
+		Commercial       struct {
+			ArtifactRevisionID  string `json:"artifactRevisionId"`
+			Attempt             int    `json:"attempt"`
+			TaskID              string `json:"taskId"`
+			ApprovalFingerprint string `json:"approvalFingerprint"`
+		} `json:"commercial"`
+	}{
+		OutputArtifactID: artifact.ID,
+		Commercial: struct {
+			ArtifactRevisionID  string `json:"artifactRevisionId"`
+			Attempt             int    `json:"attempt"`
+			TaskID              string `json:"taskId"`
+			ApprovalFingerprint string `json:"approvalFingerprint"`
+		}{ArtifactRevisionID: artifact.ID, Attempt: 1, TaskID: "task-late-image", ApprovalFingerprint: "approval-late-image"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if succeeded.Status != model.AgentProductionArtifactSucceeded || succeeded.ResourceID != transition.ResourceID {
-		t.Fatalf("late succeeded artifact = %#v", succeeded)
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "production-render-1", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+			Arguments: rawArguments, ExpectedDelivery: repositoryTestImageDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: "production-render-1", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{ToolCallID: "production-render-1", ActionVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, approved.State, started, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	fence := MediaAttemptCompletionFence{
+		ToolCallID: "production-render-1", ActionVersion: 1, ExpectedTaskID: "task-late-image",
+		ExpectedAttempt: 1, ExpectedArtifactRevisionID: artifact.ID, ApprovalFingerprint: "approval-late-image",
+	}
+	queued, err := repo.TransitionAgentProductionMediaAttempt(scope, fence, ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactPlanned,
+		NextStatus: model.AgentProductionArtifactQueued, ExpectedAttempt: 0, NextAttempt: 1,
+		TaskID: "task-late-image", BillingOrderID: "billing-late-image", Now: now.Add(4 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.Disposition != MediaAttemptWriteAdopted {
+		t.Fatalf("queued production attempt disposition = %q", queued.Disposition)
+	}
+	runningTransition := ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactQueued,
+		NextStatus: model.AgentProductionArtifactRunning, ExpectedAttempt: 1, NextAttempt: 1,
+		TaskID: "task-late-image", BillingOrderID: "billing-late-image", Now: now.Add(5 * time.Second),
+	}
+	running, err := repo.TransitionAgentProductionMediaAttempt(scope, fence, runningTransition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.Disposition != MediaAttemptWriteAdopted || running.Artifact.Status != model.AgentProductionArtifactRunning {
+		t.Fatalf("running production attempt = %#v", running)
+	}
+	if _, err := repo.CancelAgentRunTree(scope, started.State.StateVersion, now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var eventCountBefore, itemCountBefore int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", scope.RunID).Count(&eventCountBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", scope.RunID).Count(&itemCountBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	lateProgress, err := repo.TransitionAgentProductionMediaAttempt(scope, fence, runningTransition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lateProgress.Disposition != MediaAttemptWriteUnadopted || lateProgress.Artifact.Status != model.AgentProductionArtifactRunning {
+		t.Fatalf("late production progress = %#v", lateProgress)
+	}
+	completion := ProductionMediaAttemptCompletion{
+		Fence:      fence,
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactRunning,
+		BillingOrderID: "billing-late-image", ResourceID: "resource-late-image",
+		LateArtifactID: "late-production-image",
+		LateDraft:      mediaCandidateDraftFixture("late-production-image", "resource-late-image", "task-late-image", "task-late-image:01"),
+		Now:            now.Add(8 * time.Second),
+	}
+	result, err := repo.CompleteAgentProductionMediaAttempt(scope, completion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != MediaAttemptWriteUnadopted || result.Artifact.Status != model.AgentProductionArtifactRunning ||
+		result.Artifact.ResourceID != "" || result.LateRevision == nil || result.LateRevision.LifecycleStatus != model.AgentArtifactRevisionUnadopted {
+		t.Fatalf("late production completion = %#v", result)
 	}
 	var run model.AgentRun
 	if err := db.First(&run, "id = ?", scope.RunID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != agentruntime.RunCancelled || run.StateVersion != 2 || run.LastEventSequence != 4 {
+	if run.Status != agentruntime.RunCancelled || run.StateVersion != started.State.StateVersion+1 || run.LastEventSequence != eventCountBefore {
 		t.Fatalf("late artifact changed terminal runtime facts = %#v", run)
 	}
 	var checkpoint model.AgentCheckpoint
 	if err := db.Where("run_id = ?", scope.RunID).Order("sequence DESC").Take(&checkpoint).Error; err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.Sequence != 3 {
+	if checkpoint.Sequence != eventCountBefore {
 		t.Fatalf("late artifact rewrote runtime checkpoint = %#v", checkpoint)
 	}
-	var event model.AgentRunEvent
-	if err := db.Where("run_id = ? AND sequence = ?", scope.RunID, 4).Take(&event).Error; err != nil {
-		t.Fatal(err)
-	}
-	if event.Kind != agentruntime.EventArtifactAvailable || !strings.Contains(event.PayloadJSON, transition.ResourceID) || strings.Contains(event.PayloadJSON, "Signature=") {
-		t.Fatalf("late artifact event = %#v", event)
-	}
-	var item model.AgentTimelineItem
-	if err := db.Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemArtifact).Take(&item).Error; err != nil {
-		t.Fatal(err)
-	}
-	if item.Status != model.AgentTimelineItemCompleted || item.SourceEventSequence != 4 || !strings.Contains(item.ContentJSON, transition.ResourceID) {
-		t.Fatalf("late artifact timeline item = %#v", item)
-	}
-	if _, err := repo.TransitionAgentProductionArtifact(scope, transition); err != nil {
+	if _, err := repo.CompleteAgentProductionMediaAttempt(scope, completion); err != nil {
 		t.Fatalf("identical late artifact callback replay = %v", err)
 	}
 	var eventCount, itemCount int64
@@ -285,8 +360,102 @@ func TestAgentProductionArtifactSuccessAppendsTimelineAfterRunInterruptedAndRepl
 	if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ?", scope.RunID).Count(&itemCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if eventCount != 4 || itemCount != 3 {
+	if eventCount != eventCountBefore || itemCount != itemCountBefore {
 		t.Fatalf("late artifact replay duplicated facts: events=%d items=%d", eventCount, itemCount)
+	}
+}
+
+func TestProductionMediaCompletionKeepsTerminalResourceImmutable(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	created, err := repo.AppendAgentProductionPlanVersion(AppendAgentProductionPlanInput{
+		Scope: scope, RunID: scope.RunID, PlanKey: "immutable-completion", BaseVersion: 0,
+		Draft: twoShotProductionPlanDraft("不可改写的成功资产"), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := firstProductionArtifact(t, created.Artifacts, "shot-1", model.AgentProductionArtifactStoryboardImage)
+	fence := MediaAttemptCompletionFence{
+		ToolCallID: "immutable-production-render", ActionVersion: 1, ExpectedTaskID: "immutable-media-task",
+		ExpectedAttempt: 1, ExpectedArtifactRevisionID: artifact.ID, ApprovalFingerprint: "immutable-approval",
+	}
+	arguments := json.RawMessage(`{"outputArtifactId":"` + artifact.ID + `","commercial":{"artifactRevisionId":"` + artifact.ID + `","attempt":1,"taskId":"immutable-media-task","approvalFingerprint":"immutable-approval"}}`)
+	startRepositoryMediaAttempt(t, repo, scope, fence.ToolCallID, arguments, now)
+	queued, err := repo.TransitionAgentProductionMediaAttempt(scope, fence, ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactPlanned,
+		NextStatus: model.AgentProductionArtifactQueued, ExpectedAttempt: 0, NextAttempt: 1,
+		TaskID: fence.ExpectedTaskID, BillingOrderID: "immutable-billing-order", Now: now.Add(4 * time.Second),
+	})
+	if err != nil || queued.Disposition != MediaAttemptWriteAdopted {
+		t.Fatalf("queue production attempt = %#v, err=%v", queued, err)
+	}
+	running, err := repo.TransitionAgentProductionMediaAttempt(scope, fence, ArtifactTransition{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactQueued,
+		NextStatus: model.AgentProductionArtifactRunning, ExpectedAttempt: 1, NextAttempt: 1,
+		TaskID: fence.ExpectedTaskID, BillingOrderID: "immutable-billing-order", Now: now.Add(5 * time.Second),
+	})
+	if err != nil || running.Disposition != MediaAttemptWriteAdopted {
+		t.Fatalf("run production attempt = %#v, err=%v", running, err)
+	}
+
+	completion := ProductionMediaAttemptCompletion{
+		Fence: fence, ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactRunning,
+		BillingOrderID: "immutable-billing-order", ResourceID: "resource-original",
+		LateArtifactID: "immutable-late-original",
+		LateDraft:      mediaCandidateDraftFixture("immutable-late-original", "resource-original", fence.ExpectedTaskID, "immutable-media-task:01"),
+		Now:            now.Add(6 * time.Second),
+	}
+	completed, err := repo.CompleteAgentProductionMediaAttempt(scope, completion)
+	if err != nil || completed.Disposition != MediaAttemptWriteAdopted || completed.Artifact.Status != model.AgentProductionArtifactSucceeded {
+		t.Fatalf("complete production attempt = %#v, err=%v", completed, err)
+	}
+
+	conflict := completion
+	conflict.ExpectedStatus = model.AgentProductionArtifactSucceeded
+	conflict.ResourceID = "resource-conflicting-duplicate"
+	conflict.LateArtifactID = "immutable-late-conflict"
+	conflict.LateDraft = mediaCandidateDraftFixture(conflict.LateArtifactID, conflict.ResourceID, fence.ExpectedTaskID, "immutable-media-task:conflict")
+	conflict.Now = now.Add(7 * time.Second)
+	conflicting, err := repo.CompleteAgentProductionMediaAttempt(scope, conflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conflicting.Disposition != MediaAttemptWriteUnadopted || conflicting.LateRevision == nil ||
+		conflicting.LateRevision.LifecycleStatus != model.AgentArtifactRevisionUnadopted {
+		t.Fatalf("conflicting duplicate completion = %#v", conflicting)
+	}
+	var stored model.AgentProductionArtifact
+	if err := db.First(&stored, "id = ?", artifact.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.AgentProductionArtifactSucceeded || stored.ResourceID != completion.ResourceID {
+		t.Fatalf("conflicting duplicate rewrote successful artifact = %#v", stored)
+	}
+
+	committed, err := repo.CommitAgentProductionArtifactCanvasNode(scope, ArtifactCanvasCommit{
+		ArtifactID: artifact.ID, ExpectedStatus: model.AgentProductionArtifactSucceeded,
+		ExpectedAttempt: fence.ExpectedAttempt, CanvasNodeID: "immutable-canvas-node", Now: now.Add(8 * time.Second),
+	})
+	if err != nil || committed.Status != model.AgentProductionArtifactCommitted {
+		t.Fatalf("commit production artifact = %#v, err=%v", committed, err)
+	}
+	replayed, err := repo.CompleteAgentProductionMediaAttempt(scope, completion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Disposition != MediaAttemptWriteAdopted || replayed.LateRevision != nil ||
+		replayed.Artifact.Status != model.AgentProductionArtifactCommitted || replayed.Artifact.ResourceID != completion.ResourceID {
+		t.Fatalf("terminal completion replay = %#v", replayed)
+	}
+	var conflictRevisionCount int64
+	if err := db.Model(&model.AgentArtifactRevision{}).Where("artifact_id = ?", conflict.LateArtifactID).Count(&conflictRevisionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conflictRevisionCount != 1 {
+		t.Fatalf("conflicting duplicate revision count = %d, want 1", conflictRevisionCount)
 	}
 }
 

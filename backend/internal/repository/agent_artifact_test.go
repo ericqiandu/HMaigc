@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
+	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
 )
@@ -132,6 +134,229 @@ func TestMediaCandidateLedgerKeepsDistinctProviderOutputsAndReplaysExactly(t *te
 	}
 	if len(stored) != len(candidates) {
 		t.Fatalf("candidate revisions = %d, want %d", len(stored), len(candidates))
+	}
+}
+
+func TestMediaAttemptFenceRetainsLateResultWithoutMovingArtifactHead(t *testing.T) {
+	repo, db := productionRepositoryFixture(t)
+	scope := productionScopeFixture()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	fence := MediaAttemptCompletionFence{
+		ToolCallID: "media-call-1", ActionVersion: 1, ExpectedTaskID: "media-task-1",
+		ExpectedAttempt: 1, ExpectedArtifactRevisionID: "media-output-1", ApprovalFingerprint: "approval-1",
+	}
+	input := `{"outputArtifactId":"media-output-1","commercial":{"artifactRevisionId":"media-output-1","attempt":1,"taskId":"media-task-1","approvalFingerprint":"approval-1"}}`
+	state := startRepositoryMediaAttempt(t, repo, scope, fence.ToolCallID, json.RawMessage(input), now)
+
+	mismatchedDraft := mediaCandidateDraftFixture("candidate-mismatched-task", "resource-mismatched-task", "different-task", "request-mismatched-task")
+	if _, err := repo.AppendMediaCandidateRevisionForAttempt(scope, "candidate-mismatched-task", mismatchedDraft, fence, now.Add(4*time.Second)); !errors.Is(err, ErrMediaCandidateInvalid) {
+		t.Fatalf("mismatched candidate source task error = %v", err)
+	}
+	var mismatchedCount int64
+	if err := db.Model(&model.AgentArtifactRevision{}).Where("artifact_id = ?", "candidate-mismatched-task").Count(&mismatchedCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mismatchedCount != 0 {
+		t.Fatalf("mismatched candidate wrote %d revisions", mismatchedCount)
+	}
+
+	draft := mediaCandidateDraftFixture("candidate-current", "resource-current", fence.ExpectedTaskID, "request-current")
+	current, err := repo.AppendMediaCandidateRevisionForAttempt(scope, "candidate-current", draft, fence, now.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Disposition != MediaAttemptWriteAdopted || current.Revision.LifecycleStatus != model.AgentArtifactRevisionAwaitingReview {
+		t.Fatalf("current media result = %#v", current)
+	}
+
+	if _, err := repo.CancelAgentRunTree(scope, state.StateVersion, now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	lateDraft := mediaCandidateDraftFixture("candidate-late", "resource-late", fence.ExpectedTaskID, "request-late")
+	late, err := repo.AppendMediaCandidateRevisionForAttempt(scope, "candidate-late", lateDraft, fence, now.Add(7*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if late.Disposition != MediaAttemptWriteUnadopted || late.Revision.LifecycleStatus != model.AgentArtifactRevisionUnadopted {
+		t.Fatalf("late media result = %#v", late)
+	}
+	var lateRoot model.AgentArtifact
+	if err := db.First(&lateRoot, "id = ?", "candidate-late").Error; err != nil {
+		t.Fatal(err)
+	}
+	if lateRoot.HeadRevision != 0 || lateRoot.LifecycleStatus != model.AgentArtifactLifecycleUnadopted {
+		t.Fatalf("late artifact root = %#v", lateRoot)
+	}
+	replayed, err := repo.AppendMediaCandidateRevisionForAttempt(scope, "candidate-late", lateDraft, fence, now.Add(8*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Disposition != MediaAttemptWriteUnadopted || replayed.Revision.ID != late.Revision.ID {
+		t.Fatalf("late duplicate replay = %#v, want revision %s", replayed, late.Revision.ID)
+	}
+	var lateRevisionCount int64
+	if err := db.Model(&model.AgentArtifactRevision{}).Where("artifact_id = ?", "candidate-late").Count(&lateRevisionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if lateRevisionCount != 1 {
+		t.Fatalf("late duplicate revisions = %d, want 1", lateRevisionCount)
+	}
+}
+
+func TestMediaAttemptFenceRetainsReplacedAttemptResultAsUnadopted(t *testing.T) {
+	repo, db := productionRepositoryFixture(t)
+	scope := productionScopeFixture()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC().Truncate(time.Second)
+	oldFence := MediaAttemptCompletionFence{
+		ToolCallID: "media-call-old", ActionVersion: 1, ExpectedTaskID: "media-task-old",
+		ExpectedAttempt: 1, ExpectedArtifactRevisionID: "media-output-old", ApprovalFingerprint: "approval-old",
+	}
+	oldInput := `{"outputArtifactId":"media-output-old","commercial":{"artifactRevisionId":"media-output-old","attempt":1,"taskId":"media-task-old","approvalFingerprint":"approval-old"}}`
+	oldState := startRepositoryMediaAttempt(t, repo, scope, oldFence.ToolCallID, json.RawMessage(oldInput), now)
+
+	resolvedOld, err := agentruntime.ResolveTool(oldState, agentruntime.ToolResolution{
+		ToolCallID: oldFence.ToolCallID, ActionVersion: oldFence.ActionVersion, Succeeded: false,
+		Output:    json.RawMessage(`{"reason":"provider interrupted before callback"}`),
+		ErrorCode: "provider_interrupted", FailureClass: agentruntime.ToolFailureAgentRepairable,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, oldState, resolvedOld, now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	newFence := MediaAttemptCompletionFence{
+		ToolCallID: "media-call-new", ActionVersion: 1, ExpectedTaskID: "media-task-new",
+		ExpectedAttempt: 2, ExpectedArtifactRevisionID: "media-output-new", ApprovalFingerprint: "approval-new",
+	}
+	newInput := `{"outputArtifactId":"media-output-new","commercial":{"artifactRevisionId":"media-output-new","attempt":2,"taskId":"media-task-new","approvalFingerprint":"approval-new"}}`
+	requestedNew, err := agentruntime.Advance(resolvedOld.State, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: newFence.ToolCallID, ToolName: agentruntime.ToolMediaGenerate, ActionVersion: newFence.ActionVersion,
+			Arguments: json.RawMessage(newInput), ExpectedDelivery: repositoryTestImageDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, resolvedOld.State, requestedNew, now.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	approvedNew, err := agentruntime.ReviewToolApproval(requestedNew.State, agentruntime.ToolApproval{
+		ToolCallID: newFence.ToolCallID, ActionVersion: newFence.ActionVersion, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requestedNew.State, approvedNew, now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	startedNew, err := agentruntime.BeginToolExecution(approvedNew.State, agentruntime.ToolExecution{
+		ToolCallID: newFence.ToolCallID, ActionVersion: newFence.ActionVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, approvedNew.State, startedNew, now.Add(7*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	currentDraft := mediaCandidateDraftFixture("candidate-current-attempt", "resource-current-attempt", newFence.ExpectedTaskID, "request-current-attempt")
+	current, err := repo.AppendMediaCandidateRevisionForAttempt(scope, "candidate-current-attempt", currentDraft, newFence, now.Add(8*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Disposition != MediaAttemptWriteAdopted || current.Revision.LifecycleStatus != model.AgentArtifactRevisionAwaitingReview {
+		t.Fatalf("replacement attempt result = %#v", current)
+	}
+
+	lateDraft := mediaCandidateDraftFixture("candidate-replaced-attempt", "resource-replaced-attempt", oldFence.ExpectedTaskID, "request-replaced-attempt")
+	late, err := repo.AppendMediaCandidateRevisionForAttempt(scope, "candidate-replaced-attempt", lateDraft, oldFence, now.Add(9*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if late.Disposition != MediaAttemptWriteUnadopted || late.Revision.LifecycleStatus != model.AgentArtifactRevisionUnadopted {
+		t.Fatalf("replaced attempt result = %#v", late)
+	}
+	latest, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.PendingToolCall == nil || latest.PendingToolCall.ToolCallID != newFence.ToolCallID || !latest.PendingToolStarted {
+		t.Fatalf("current execution identity changed by stale callback: %#v", latest)
+	}
+	var lateRoot model.AgentArtifact
+	if err := db.First(&lateRoot, "id = ?", "candidate-replaced-attempt").Error; err != nil {
+		t.Fatal(err)
+	}
+	if lateRoot.HeadRevision != 0 || lateRoot.LifecycleStatus != model.AgentArtifactLifecycleUnadopted {
+		t.Fatalf("replaced attempt artifact root = %#v", lateRoot)
+	}
+}
+
+func startRepositoryMediaAttempt(
+	t *testing.T,
+	repo *Repository,
+	scope agentruntime.Scope,
+	toolCallID string,
+	arguments json.RawMessage,
+	now time.Time,
+) agentruntime.RuntimeState {
+	t.Helper()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "deepseek-v4-pro", MaxSteps: 8,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: toolCallID, ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+			Arguments: arguments, ExpectedDelivery: repositoryTestImageDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: toolCallID, ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{ToolCallID: toolCallID, ActionVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, approved.State, started, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	return started.State
+}
+
+func mediaCandidateDraftFixture(artifactKey string, resourceID string, taskID string, requestID string) agentruntime.ArtifactDraft {
+	return agentruntime.ArtifactDraft{
+		ArtifactKey: artifactKey, Kind: "media_candidate", SchemaVersion: 1,
+		Payload:    json.RawMessage(`{"candidateKey":"` + artifactKey + `","mediaKind":"image","resourceId":"` + resourceID + `","sourceTaskId":"` + taskID + `","providerRequestIdentity":"` + requestID + `"}`),
+		ResourceID: resourceID, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+		ModelRequestIdentity: requestID, SkillVersions: []agentruntime.SkillSelection{},
 	}
 }
 

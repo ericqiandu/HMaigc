@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,6 +65,9 @@ func TestMediaAttemptIdentityIncludesProjectAndThreadScope(t *testing.T) {
 	command := mediaGenerationTestCommand(t)
 	scope := agentRuntimeServiceScope()
 	identity := MediaAttemptIdentity(scope, command)
+	if len(identity) != 36 {
+		t.Fatalf("media attempt identity length = %d, want 36 for Task/BillingOrder persistence", len(identity))
+	}
 
 	differentProject := scope
 	differentProject.DomainProjectID += "-other"
@@ -229,6 +233,76 @@ func TestRepeatedMediaApprovalCreatesOneInternalTaskAndReservation(t *testing.T)
 	}
 	if taskCount != 1 || orderCount != 1 || reserveCount != 1 {
 		t.Fatalf("media commercial facts tasks=%d orders=%d reserves=%d", taskCount, orderCount, reserveCount)
+	}
+}
+
+func TestSimultaneousMediaAttemptCreatesOneInternalTaskAndReservation(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeCanvas(t, db)
+	createAgentRuntimeImageModel(t, db, fixture)
+	scope := agentRuntimeServiceScope()
+	now := time.Date(2026, time.August, 28, 8, 0, 0, 0, time.UTC)
+	command := mediaGenerationTestCommand(t)
+
+	frozen, err := svc.FreezeMediaQuote(scope, command, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := svc.ApproveMediaAttempt(scope, *frozen, command, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 8
+	type result struct {
+		taskID  string
+		orderID string
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan result, callers)
+	var wait sync.WaitGroup
+	for index := 0; index < callers; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			task, order, ensureErr := svc.EnsureMediaTask(context.Background(), scope, *approved)
+			if ensureErr != nil {
+				results <- result{err: ensureErr}
+				return
+			}
+			results <- result{taskID: task.ID, orderID: order.ID}
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	for got := range results {
+		if got.err != nil {
+			t.Fatalf("simultaneous EnsureMediaTask failed: %v", got.err)
+		}
+		if got.taskID != approved.TaskID {
+			t.Fatalf("task id = %q, want %q", got.taskID, approved.TaskID)
+		}
+	}
+
+	var taskCount, orderCount, reserveCount int64
+	if err := db.Model(&model.Task{}).Where("id = ?", approved.TaskID).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("idempotency_key = ?", approved.BillingIdempotencyKey).Count(&orderCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CreditLedgerEntry{}).
+		Where("billing_order_id IN (?) AND type = ?", db.Model(&model.BillingOrder{}).
+			Select("id").Where("idempotency_key = ?", approved.BillingIdempotencyKey), model.CreditLedgerReserve).
+		Count(&reserveCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 1 || orderCount != 1 || reserveCount != 1 {
+		t.Fatalf("simultaneous media facts tasks=%d orders=%d reserves=%d", taskCount, orderCount, reserveCount)
 	}
 }
 

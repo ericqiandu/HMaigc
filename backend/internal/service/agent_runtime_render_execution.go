@@ -68,9 +68,20 @@ func (s *Service) coordinatePendingAgentProductionRender(
 		}
 		return nil, err
 	}
-	artifact, err = s.bindProductionArtifactTask(scope, arguments, *artifact, *task, *order)
+	bound, err := s.bindProductionArtifactTask(scope, call, arguments, *artifact, *task, *order)
 	if err != nil {
 		return nil, err
+	}
+	if bound.Disposition == repository.MediaAttemptWriteUnadopted {
+		if task.Status != model.TaskStatusSucceeded {
+			latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return s.agentRuntimeProgressForCurrentState(scope, latest)
+		}
+	} else {
+		artifact = &bound.Artifact
 	}
 
 	switch task.Status {
@@ -78,13 +89,21 @@ func (s *Service) coordinatePendingAgentProductionRender(
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	case model.TaskStatusRunning:
 		if artifact.Status == model.AgentProductionArtifactQueued {
-			artifact, err = s.repo.TransitionAgentProductionArtifact(scope, repository.ArtifactTransition{
+			transitioned, transitionErr := s.repo.TransitionAgentProductionMediaAttempt(scope, productionRenderAttemptFence(call, arguments), repository.ArtifactTransition{
 				ArtifactID: artifact.ID, ExpectedStatus: artifact.Status, NextStatus: model.AgentProductionArtifactRunning,
 				ExpectedAttempt: artifact.Attempt, NextAttempt: artifact.Attempt, Now: time.Now().UTC(),
 			})
-			if err != nil {
-				return nil, err
+			if transitionErr != nil {
+				return nil, transitionErr
 			}
+			if transitioned.Disposition == repository.MediaAttemptWriteUnadopted {
+				latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+				if loadErr != nil {
+					return nil, loadErr
+				}
+				return s.agentRuntimeProgressForCurrentState(scope, latest)
+			}
+			artifact = &transitioned.Artifact
 		}
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	case model.TaskStatusFailed:
@@ -111,16 +130,18 @@ func (s *Service) coordinatePendingAgentProductionRender(
 	if resource.Status != model.ResourceStatusReady || resource.Kind != expectedKind {
 		return s.failProductionRender(scope, state, call, *artifact, "production_result_invalid", map[string]string{"taskId": task.ID, "reason": "production resource is not ready or has the wrong kind"})
 	}
-	if artifact.Status != model.AgentProductionArtifactSucceeded {
-		artifact, err = s.repo.TransitionAgentProductionArtifact(scope, repository.ArtifactTransition{
-			ArtifactID: artifact.ID, ExpectedStatus: artifact.Status, NextStatus: model.AgentProductionArtifactSucceeded,
-			ExpectedAttempt: artifact.Attempt, NextAttempt: artifact.Attempt,
-			TaskID: task.ID, BillingOrderID: order.ID, ResourceID: resource.ID, Now: time.Now().UTC(),
-		})
-		if err != nil {
-			return nil, err
-		}
+	completion, err := s.completeProductionMediaAttempt(scope, call, arguments, *artifact, *task, *order, *resource)
+	if err != nil {
+		return nil, err
 	}
+	if completion.Disposition == repository.MediaAttemptWriteUnadopted {
+		latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		return s.agentRuntimeProgressForCurrentState(scope, latest)
+	}
+	artifact = &completion.Artifact
 	output, err := json.Marshal(agentProductionRenderResult{
 		ArtifactID: artifact.ID, ArtifactKind: artifact.Kind, ArtifactStatus: artifact.Status, Attempt: artifact.Attempt,
 		TaskID: task.ID, BillingOrderID: order.ID, ResourceID: resource.ID,
@@ -223,11 +244,23 @@ func (s *Service) failProductionRender(
 	failureOutput map[string]string,
 ) (*AgentRuntimeProgress, error) {
 	if artifact.Status != model.AgentProductionArtifactFailed {
-		if _, err := s.repo.TransitionAgentProductionArtifact(scope, repository.ArtifactTransition{
+		arguments, decodeErr := decodeFrozenProductionRenderArguments(call.Arguments)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		transitioned, transitionErr := s.repo.TransitionAgentProductionMediaAttempt(scope, productionRenderAttemptFence(call, arguments), repository.ArtifactTransition{
 			ArtifactID: artifact.ID, ExpectedStatus: artifact.Status, NextStatus: model.AgentProductionArtifactFailed,
 			ExpectedAttempt: artifact.Attempt, NextAttempt: artifact.Attempt, LastErrorCode: failureCode, Now: time.Now().UTC(),
-		}); err != nil {
-			return nil, err
+		})
+		if transitionErr != nil {
+			return nil, transitionErr
+		}
+		if transitioned.Disposition == repository.MediaAttemptWriteUnadopted {
+			latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return s.agentRuntimeProgressForCurrentState(scope, latest)
 		}
 	}
 	latest, err := s.repo.LoadAgentCheckpoint(scope)

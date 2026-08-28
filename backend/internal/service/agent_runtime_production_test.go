@@ -348,6 +348,62 @@ func TestProductionRenderRetryRejectsUnresolvedPreviousBillingBeforeApproval(t *
 	}
 }
 
+func TestProductionArtifactForRenderAllowsReplacedOlderAttemptToReachCompletionFence(t *testing.T) {
+	decisionServer, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","requiredArtifacts":["text"],"completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer decisionServer.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, decisionServer.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "replaced-production-attempt", UserMessage: "生成分镜图", MaxSteps: 6,
+		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := svc.repo.AppendAgentProductionPlanVersion(repository.AppendAgentProductionPlanInput{
+		Scope: scope, RunID: started.Run.ID, PlanKey: "replaced-production-attempt-plan", BaseVersion: 0,
+		Draft: agentruntime.ProductionPlanDraft{
+			Title: "替换中的分镜", TargetDurationMS: 1_000, Script: "画面。",
+			Shots: []agentruntime.ShotPlanDraft{{
+				ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "画面",
+				Deliverables: agentRuntimeDualProductionDeliverables(), ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{},
+			}},
+		},
+		Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var artifact model.AgentProductionArtifact
+	for _, candidate := range record.Artifacts {
+		if candidate.Kind == model.AgentProductionArtifactStoryboardImage {
+			artifact = candidate
+			break
+		}
+	}
+	if artifact.ID == "" {
+		t.Fatal("storyboard artifact missing")
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("id = ?", artifact.ID).
+		Updates(map[string]interface{}{
+			"status": model.AgentProductionArtifactRunning, "attempt": 3,
+			"task_id": "replacement-task", "billing_order_id": "replacement-order",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := svc.productionArtifactForRender(scope, agentruntime.ProductionRenderArguments{
+		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, ArtifactID: artifact.ID, Attempt: 0,
+	})
+	if err != nil {
+		t.Fatalf("replaced older attempt must reach the stale completion fence: %v", err)
+	}
+	if loaded.Attempt != 3 || loaded.TaskID != "replacement-task" {
+		t.Fatalf("loaded replacement artifact = %#v", loaded)
+	}
+}
+
 func TestProductionRenderLegacyApprovedRetryDoesNotReuseUnresolvedTask(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
@@ -747,6 +803,43 @@ func TestReconcileSucceededProductionArtifactMaterializesRemoteResultExactlyOnce
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatal(err)
 	}
+	recoveryInput, err := json.Marshal(struct {
+		OutputArtifactID string `json:"outputArtifactId"`
+		Commercial       struct {
+			ArtifactRevisionID  string `json:"artifactRevisionId"`
+			Attempt             int    `json:"attempt"`
+			TaskID              string `json:"taskId"`
+			ApprovalFingerprint string `json:"approvalFingerprint"`
+		} `json:"commercial"`
+	}{
+		OutputArtifactID: artifact.ID,
+		Commercial: struct {
+			ArtifactRevisionID  string `json:"artifactRevisionId"`
+			Attempt             int    `json:"attempt"`
+			TaskID              string `json:"taskId"`
+			ApprovalFingerprint string `json:"approvalFingerprint"`
+		}{
+			ArtifactRevisionID:  artifact.ID,
+			Attempt:             1,
+			TaskID:              task.ID,
+			ApprovalFingerprint: "recover-paid-media-approval",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvedAt := now.Add(-time.Second)
+	if err := db.Create(&model.AgentToolCall{
+		ID: "recover-paid-media-call", RunID: scope.RunID, ToolCallID: "recover-paid-media-call", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallFailed,
+		RiskLevel: agentruntime.ToolRiskCost, RequiredAccess: agentruntime.AccessEditor,
+		ApprovalRequired: true, ApprovalDecision: agentruntime.ToolApprovalApproved,
+		ApprovalByUserID: scope.ActorUserID, ApprovalDecidedAt: &approvedAt,
+		IdempotencyKey: "recover-paid-media-call:1", InputJSON: string(recoveryInput), OutputJSON: `{}`,
+		ErrorCode: "production_result_invalid", CreatedAt: approvedAt, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Model(&model.AgentProductionArtifact{}).Where("id = ?", artifact.ID).
 		Select("status", "attempt", "task_id", "billing_order_id", "last_error_code").
 		Updates(model.AgentProductionArtifact{
@@ -807,6 +900,146 @@ func TestReconcileSucceededProductionArtifactMaterializesRemoteResultExactlyOnce
 	}
 	if downloads != 1 {
 		t.Fatalf("provider result downloads = %d, want 1", downloads)
+	}
+}
+
+func TestReconcileSucceededProductionArtifactDoesNotAdoptAfterRunCancellation(t *testing.T) {
+	decisionServer, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","requiredArtifacts":["text"],"completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer decisionServer.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, decisionServer.URL)
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "cancel-recover-paid-media", UserMessage: "生成分镜图", MaxSteps: 6,
+		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := svc.repo.AppendAgentProductionPlanVersion(repository.AppendAgentProductionPlanInput{
+		Scope: scope, RunID: started.Run.ID, PlanKey: "cancel-recover-paid-media-plan", BaseVersion: 0,
+		Draft: agentruntime.ProductionPlanDraft{
+			Title: "取消后的付费产物", TargetDurationMS: 1_000, Script: "画面。",
+			Shots: []agentruntime.ShotPlanDraft{{
+				ShotKey: "shot-1", Order: 1, DurationMS: 1_000, ScriptText: "画面",
+				Deliverables: agentRuntimeDualProductionDeliverables(), ImagePrompt: "画面", VideoPrompt: "动作", Dependencies: []string{},
+			}},
+		},
+		Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var artifact model.AgentProductionArtifact
+	for _, candidate := range record.Artifacts {
+		if candidate.Kind == model.AgentProductionArtifactStoryboardImage {
+			artifact = candidate
+			break
+		}
+	}
+	if artifact.ID == "" {
+		t.Fatal("storyboard artifact missing")
+	}
+	now := time.Now().UTC()
+	resource := model.Resource{
+		ID: "cancelled-recovery-resource", UserID: scope.ActorUserID, Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "oss", ObjectKey: "production/cancelled-recovery.png", MimeType: "image/png", CreatedAt: now, UpdatedAt: now,
+	}
+	task := model.Task{
+		ID: "cancelled-recovery-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Type: "canvas_image", Capability: "image", Status: model.TaskStatusSucceeded,
+		Stage: "已完成", Progress: 100, BillingOrderID: "cancelled-recovery-order",
+		ResultJSON: `{"images":[{"resourceId":"` + resource.ID + `"}]}`, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: scope.ActorUserID, IdempotencyKey: "cancelled-recovery-order-key",
+		TaskID: task.ID, Capability: "image", Status: model.BillingStatusSettled,
+		AmountMicrocredits: 1_000_000, CreatedAt: now, UpdatedAt: now,
+	}
+	recoveryInput, err := json.Marshal(struct {
+		OutputArtifactID string `json:"outputArtifactId"`
+		Commercial       struct {
+			ArtifactRevisionID  string `json:"artifactRevisionId"`
+			Attempt             int    `json:"attempt"`
+			TaskID              string `json:"taskId"`
+			ApprovalFingerprint string `json:"approvalFingerprint"`
+		} `json:"commercial"`
+	}{
+		OutputArtifactID: artifact.ID,
+		Commercial: struct {
+			ArtifactRevisionID  string `json:"artifactRevisionId"`
+			Attempt             int    `json:"attempt"`
+			TaskID              string `json:"taskId"`
+			ApprovalFingerprint string `json:"approvalFingerprint"`
+		}{
+			ArtifactRevisionID:  artifact.ID,
+			Attempt:             1,
+			TaskID:              task.ID,
+			ApprovalFingerprint: "cancelled-recovery-approval",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	approvedAt := now.Add(-time.Second)
+	if err := db.Create(&model.AgentToolCall{
+		ID: "cancelled-recovery-call", RunID: scope.RunID, ToolCallID: "cancelled-recovery-call", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallFailed,
+		RiskLevel: agentruntime.ToolRiskCost, RequiredAccess: agentruntime.AccessEditor,
+		ApprovalRequired: true, ApprovalDecision: agentruntime.ToolApprovalApproved,
+		ApprovalByUserID: scope.ActorUserID, ApprovalDecidedAt: &approvedAt,
+		IdempotencyKey: "cancelled-recovery-call:1", InputJSON: string(recoveryInput), OutputJSON: `{}`,
+		ErrorCode: "production_result_invalid", CreatedAt: approvedAt, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentProductionArtifact{}).Where("id = ?", artifact.ID).
+		Select("status", "attempt", "task_id", "billing_order_id", "last_error_code").
+		Updates(model.AgentProductionArtifact{
+			Status: model.AgentProductionArtifactFailed, Attempt: 1,
+			TaskID: task.ID, BillingOrderID: order.ID, LastErrorCode: "production_result_invalid",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.repo.CancelAgentRunTree(scope, state.StateVersion, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.reconcileSucceededProductionArtifacts(scope); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.reconcileSucceededProductionArtifacts(scope); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := svc.repo.AgentProductionArtifactsForVersion(scope, record.Plan.PlanKey, record.Plan.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range artifacts {
+		if candidate.ID == artifact.ID && (candidate.Status != model.AgentProductionArtifactFailed || candidate.ResourceID != "") {
+			t.Fatalf("cancelled recovery adopted result = %#v", candidate)
+		}
+	}
+	var lateRevisions []model.AgentArtifactRevision
+	if err := db.Where("run_id = ? AND resource_id = ? AND lifecycle_status = ?", scope.RunID, resource.ID, model.AgentArtifactRevisionUnadopted).
+		Find(&lateRevisions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(lateRevisions) != 1 {
+		t.Fatalf("cancelled recovery late revisions = %d, want 1", len(lateRevisions))
 	}
 }
 

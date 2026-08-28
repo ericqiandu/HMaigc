@@ -123,17 +123,25 @@ func TestAgentMediaGenerationMaterializesEveryCandidateExactlyOnce(t *testing.T)
 		ExpectedOutputSchema: agentMediaCandidateSchema,
 		ExpectedDelivery:     exactAgentMediaExpectedDelivery(agentruntime.ArtifactImage),
 		RequestIdentity:      "media-generation:request-1", SkillVersions: []agentruntime.SkillSelection{},
+		Commercial: MediaGenerationAttempt{
+			ArtifactRevisionID: "media-output-root", Attempt: 1, TaskID: "media-task",
+			ApprovalFingerprint: "media-approval",
+		},
 	}
 	resultJSON := `{"images":[{"resourceId":"generated-image"}],"videos":[{"resourceId":"generated-video"}],"audio":{"resourceId":"generated-audio"}}`
 	task := model.Task{ID: "media-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID, Status: model.TaskStatusSucceeded, ResultJSON: resultJSON}
+	call := startRunningMediaMaterializationAttempt(t, svc, scope, arguments)
 
-	first, err := svc.materializeAgentMediaCandidates(scope, task, arguments)
+	first, firstDisposition, err := svc.materializeAgentMediaCandidates(scope, task, arguments, call)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.materializeAgentMediaCandidates(scope, task, arguments)
+	second, secondDisposition, err := svc.materializeAgentMediaCandidates(scope, task, arguments, call)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if firstDisposition != repository.MediaAttemptWriteAdopted || secondDisposition != repository.MediaAttemptWriteAdopted {
+		t.Fatalf("candidate dispositions = %q / %q", firstDisposition, secondDisposition)
 	}
 	if len(first) != 3 || len(second) != 3 {
 		t.Fatalf("candidate counts first=%d second=%d", len(first), len(second))
@@ -160,6 +168,115 @@ func TestAgentMediaGenerationMaterializesEveryCandidateExactlyOnce(t *testing.T)
 			t.Fatalf("candidate %d payload = %#v", index, payload)
 		}
 	}
+}
+
+func TestAgentMediaGenerationLateResultAfterCancellationIsUnadopted(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = "runtime-project"
+	resource := seedAgentMediaInputResource(t, db, scope, "late-generated-image", "image", "outputs/late-image.png", "etag-late-image")
+	arguments := agentMediaGenerationArguments{
+		InputRevisions: []agentruntime.ArtifactRevisionRef{}, InputResources: []agentMediaInputResource{},
+		GenerationModel:         agentruntime.GenerationModelSelection{ChannelID: "channel", Model: "model"},
+		GenerationModelRecordID: "model-record", Capability: "image",
+		Parameters:           json.RawMessage(`{"prompt":"迟到资产","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1}`),
+		OutputArtifactID:     "late-media-output-root",
+		OutputArtifactKey:    "late-media-output",
+		ExpectedOutputSchema: agentMediaCandidateSchema,
+		ExpectedDelivery:     exactAgentMediaExpectedDelivery(agentruntime.ArtifactImage),
+		RequestIdentity:      "media-generation:late-request",
+		SkillVersions:        []agentruntime.SkillSelection{},
+		Commercial: MediaGenerationAttempt{
+			ArtifactRevisionID: "late-media-output-root", Attempt: 1, TaskID: "late-media-task",
+			ApprovalFingerprint: "late-media-approval",
+		},
+	}
+	call := startRunningMediaMaterializationAttempt(t, svc, scope, arguments)
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.repo.CancelAgentRunTree(scope, state.StateVersion, time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, disposition, err := svc.materializeAgentMediaCandidates(scope, model.Task{
+		ID: arguments.Commercial.TaskID, UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Status: model.TaskStatusSucceeded, ResultJSON: `{"images":[{"resourceId":"` + resource.ID + `"}]}`,
+	}, arguments, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disposition != repository.MediaAttemptWriteUnadopted || len(candidates) != 1 || candidates[0].LifecycleStatus != model.AgentArtifactRevisionUnadopted {
+		t.Fatalf("late media candidates = disposition %q candidates %#v", disposition, candidates)
+	}
+	if _, err := svc.repo.ArtifactHeadRevisionForScope(scope, candidates[0].ArtifactID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("late media candidate advanced artifact head: %v", err)
+	}
+}
+
+func startRunningMediaMaterializationAttempt(
+	t *testing.T,
+	svc *Service,
+	scope agentruntime.Scope,
+	arguments agentMediaGenerationArguments,
+) *agentruntime.ToolCallDecision {
+	t.Helper()
+	now := time.Now().UTC()
+	if _, err := svc.repo.CreateInitializedAgentRun(repository.CreateInitializedAgentRunInput{
+		Create: repository.CreateAgentRunInput{Scope: scope, ClientRequestID: "media-materialization", Now: now},
+		Initialize: repository.InitializeAgentRunInput{
+			Scope: scope, ModelRecordID: "media-model-record", ModelKey: "media-model", MaxSteps: 8,
+			ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion,
+			PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成候选资产",
+			Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := agentruntime.BeginModelRequest(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, queued, running, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: "media-materialization-call", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		Arguments: mustMarshalAgentMediaTestJSON(t, arguments), ExpectedDelivery: arguments.ExpectedDelivery,
+	}
+	waitingApproval, err := agentruntime.Advance(running.State, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: call,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, running.State, waitingApproval, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(waitingApproval.State, agentruntime.ToolApproval{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Decision: agentruntime.ToolApprovalApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, waitingApproval.State, approved, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, approved.State, started, now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	return call
 }
 
 func TestAgentMediaGenerationOperationWakesOwningRun(t *testing.T) {

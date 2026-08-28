@@ -261,7 +261,7 @@ func appendArtifactRevisionTx(
 		}
 	}
 	var artifact model.AgentArtifact
-	queryErr := productionArtifactScopeQuery(tx, scope).
+	queryErr := productionArtifactScopeQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}), scope).
 		Where("id = ?", artifactID).
 		First(&artifact).Error
 	if errors.Is(queryErr, gorm.ErrRecordNotFound) {
@@ -396,7 +396,7 @@ func appendUnadoptedArtifactRevisionTx(
 	now time.Time,
 ) (*model.AgentArtifactRevision, error) {
 	if strings.TrimSpace(artifactID) != artifactID || artifactID == "" || len(artifactID) > 80 ||
-		strings.TrimSpace(createdBySpecialistID) != createdBySpecialistID || createdBySpecialistID == "" || len(createdBySpecialistID) > 80 || now.IsZero() {
+		strings.TrimSpace(createdBySpecialistID) != createdBySpecialistID || len(createdBySpecialistID) > 80 || now.IsZero() {
 		return nil, ErrArtifactRevisionConflict
 	}
 	if err := agentruntime.ValidateArtifactDraft(draft); err != nil {
@@ -421,7 +421,7 @@ func appendUnadoptedArtifactRevisionTx(
 	}
 
 	var artifact model.AgentArtifact
-	queryErr := productionArtifactScopeQuery(tx, scope).Where("id = ?", artifactID).First(&artifact).Error
+	queryErr := productionArtifactScopeQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}), scope).Where("id = ?", artifactID).First(&artifact).Error
 	if errors.Is(queryErr, gorm.ErrRecordNotFound) {
 		artifact = model.AgentArtifact{
 			ID: artifactID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,

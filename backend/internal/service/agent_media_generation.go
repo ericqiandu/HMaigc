@@ -309,7 +309,7 @@ func MediaAttemptIdentity(scope agentruntime.Scope, command MediaGenerationComma
 		strings.TrimSpace(command.TaskType), normalizeCapability(command.Capability),
 	}, "\x00")
 	digest := sha256.Sum256([]byte(facts))
-	return "media-" + hex.EncodeToString(digest[:16])
+	return "med-" + hex.EncodeToString(digest[:16])
 }
 
 func mediaApprovalFingerprint(scope agentruntime.Scope, attempt MediaGenerationAttempt) (string, error) {

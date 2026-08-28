@@ -64,29 +64,40 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 	if err := db.Create(&artifact).Error; err != nil {
 		t.Fatal(err)
 	}
-	quote, err := primary.QuoteTaskBilling(scope.ActorUserID, TaskBillingQuoteRequest{
-		ProjectID: scope.CanvasID, Type: "canvas_image", Operation: "production_render", BatchCount: 1,
-		Input: TaskBillingQuoteInput{Mode: "image", Config: TaskBillingQuoteConfig{
-			ChannelID: "postgres-image-channel", Model: "kz_gpt_image2", Size: "1024x1024", Quality: "medium",
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	arguments := agentruntime.ProductionRenderArguments{
 		PlanKey: plan.PlanKey, PlanVersion: plan.Version, ArtifactID: artifact.ID, Attempt: 0,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "postgres-image-channel", Model: "kz_gpt_image2"},
 		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1024x1024", Resolution: "1K", Quality: "medium", Count: 1},
-		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
-			AmountMicrocredits: quote.AmountMicrocredits, PerTaskAmountMicrocredits: quote.PerTaskAmountMicrocredits,
-			PriceVersion: quote.PriceVersion, BillingMode: quote.BillingMode, PricingResolution: quote.PricingResolution,
-			PricingInputVariant: quote.PricingInputVariant, Quantity: quote.Quantity, QuoteFingerprint: quote.QuoteFingerprint,
-		},
 	}
-	call := model.AgentToolCall{IdempotencyKey: "postgres-production-render:1"}
+	capabilities, err := primary.currentProductionRenderCapabilities(arguments.GenerationModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := productionArtifactPrompt(plan, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := primary.productionMediaGenerationCommand(scope, arguments, artifact, prompt, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := primary.FreezeMediaQuote(scope, command, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments.FrozenRenderQuote = frozenRenderQuoteFromMediaAttempt(*attempt)
+	approvedAt := now.Add(time.Second)
+	call := model.AgentToolCall{
+		IdempotencyKey: "postgres-production-render:1", ApprovalDecision: agentruntime.ToolApprovalApproved,
+		ApprovalDecidedAt: &approvedAt,
+	}
+	type commercialFacts struct {
+		task  *model.Task
+		order *model.BillingOrder
+	}
 	services := []*Service{primary, secondary}
 	errs := make([]error, len(services))
-	results := make([]*model.AgentProductionArtifact, len(services))
+	results := make([]commercialFacts, len(services))
 	start := make(chan struct{})
 	var workers sync.WaitGroup
 	for index, svc := range services {
@@ -104,7 +115,7 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 				errs[worker] = createErr
 				return
 			}
-			results[worker], errs[worker] = contender.bindProductionArtifactTask(scope, arguments, *current, *task, *order)
+			results[worker] = commercialFacts{task: task, order: order}
 		}(index, svc)
 	}
 	close(start)
@@ -113,23 +124,24 @@ func TestPostgresProductionRenderApprovalReplayCreatesOneCommercialFactAcrossCon
 		if err != nil {
 			t.Fatalf("production render worker %d: %v", index, err)
 		}
-		if results[index] == nil || results[index].Status != model.AgentProductionArtifactQueued || results[index].Attempt != 1 {
+		if results[index].task == nil || results[index].order == nil {
 			t.Fatalf("production render worker %d result = %#v", index, results[index])
 		}
 	}
 
-	identity := productionRenderTaskIdentity(call.IdempotencyKey, 1)
+	identity := attempt.TaskID
 	var taskCount, orderCount, reserveCount int64
 	if err := db.Model(&model.Task{}).Where("id = ?", identity).Count(&taskCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.BillingOrder{}).Where("user_id = ? AND idempotency_key = ?", scope.ActorUserID, "agent-production:"+identity).Count(&orderCount).Error; err != nil {
+	if err := db.Model(&model.BillingOrder{}).Where("user_id = ? AND idempotency_key = ?", scope.ActorUserID, attempt.BillingIdempotencyKey).Count(&orderCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.CreditLedgerEntry{}).Where("user_id = ? AND type = ?", scope.ActorUserID, model.CreditLedgerReserve).Count(&reserveCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if taskCount != 1 || orderCount != 1 || reserveCount != 1 || results[0].TaskID != results[1].TaskID || results[0].BillingOrderID != results[1].BillingOrderID {
+	if taskCount != 1 || orderCount != 1 || reserveCount != 1 || results[0].task.ID != results[1].task.ID ||
+		results[0].order.ID != results[1].order.ID {
 		t.Fatalf("production commercial facts tasks=%d orders=%d reserves=%d first=%#v second=%#v", taskCount, orderCount, reserveCount, results[0], results[1])
 	}
 }
