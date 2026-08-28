@@ -27,6 +27,7 @@ type ConnectionDropTarget = {
     nodeId: string | null;
     handleId?: string;
     isNearNode: boolean;
+    isRejected: boolean;
 };
 
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
@@ -84,7 +85,7 @@ export function useCanvasConnectionController({
         if (current.nodeId === targetNodeId) return false;
         const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
         if (!connection) {
-            message.warning("配置节点之间不能连接");
+            message.warning("无法连接");
             return false;
         }
         const { fromNodeId, toNodeId } = connection;
@@ -126,7 +127,7 @@ export function useCanvasConnectionController({
         if (storyboardRow) newNode.title = `镜头 ${storyboardRow.shotNumber} · 视频`;
         const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
         if (!connection) {
-            message.warning("配置节点之间不能连接");
+            message.warning("无法连接");
             return;
         }
         const fromHandleId = connection.fromNodeId === pending.connection.nodeId ? pending.connection.handleId : undefined;
@@ -150,6 +151,7 @@ export function useCanvasConnectionController({
         let bestNodeId: string | null = null;
         let bestHandleId: string | undefined;
         let bestPriority = Number.POSITIVE_INFINITY;
+        let isRejected = false;
 
         [...nodesRef.current]
             .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
@@ -166,7 +168,10 @@ export function useCanvasConnectionController({
                 const hitsExpanded = world.x >= node.position.x - padding && world.x <= node.position.x + node.width + padding && world.y >= node.position.y - padding && world.y <= node.position.y + node.height + padding;
                 if (!hitsHandle && !hitsInside && !hitsExpanded) return;
                 isNearNode = true;
-                if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) return;
+                if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) {
+                    isRejected = true;
+                    return;
+                }
                 const priority = hitsInside ? 0 : hitsHandle ? 1 : 2;
                 if (priority < bestPriority) {
                     bestNodeId = node.id;
@@ -174,7 +179,7 @@ export function useCanvasConnectionController({
                     bestPriority = priority;
                 }
             });
-        return { nodeId: bestNodeId, handleId: bestHandleId, isNearNode };
+        return { nodeId: bestNodeId, handleId: bestHandleId, isNearNode, isRejected: !bestNodeId && isRejected };
     }, [nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
 
     const finishConnection = useCallback((clientX: number, clientY: number) => {
@@ -186,6 +191,7 @@ export function useCanvasConnectionController({
             connectNodes(currentConnection, dropTarget.nodeId, dropTarget.handleId);
             setConnecting(null);
         } else if (dropTarget.isNearNode) {
+            if (dropTarget.isRejected) message.warning("无法连接");
             setConnecting(null);
         } else {
             const position = screenToCanvas(clientX, clientY);
@@ -194,7 +200,7 @@ export function useCanvasConnectionController({
             pendingConnectionCreateRef.current = pending;
             setPendingConnectionCreate(pending);
         }
-    }, [connectNodes, getConnectionDropTarget, screenToCanvas, setConnecting]);
+    }, [connectNodes, getConnectionDropTarget, message, screenToCanvas, setConnecting]);
 
     const handleConnectStart = useCallback((event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string) => {
         event.preventDefault();

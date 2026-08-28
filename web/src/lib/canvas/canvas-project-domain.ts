@@ -141,11 +141,16 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     if (!first || !second || first.id === second.id) return null;
     if (isFrameNode(first) || isFrameNode(second)) return null;
     if (first.type === CanvasNodeType.Config && second.type === CanvasNodeType.Config) return null;
-    if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
-    if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
-    if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
-    if (firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
-    return { fromNodeId: first.id, toNodeId: second.id };
+    let connection: Pick<CanvasConnection, "fromNodeId" | "toNodeId">;
+    if (second.type === CanvasNodeType.Config) connection = { fromNodeId: first.id, toNodeId: second.id };
+    else if (first.type === CanvasNodeType.Config && firstHandleType === "target") connection = { fromNodeId: second.id, toNodeId: first.id };
+    else if (first.type === CanvasNodeType.Config) connection = { fromNodeId: first.id, toNodeId: second.id };
+    else if (firstHandleType === "target") connection = { fromNodeId: second.id, toNodeId: first.id };
+    else connection = { fromNodeId: first.id, toNodeId: second.id };
+    const source = connection.fromNodeId === first.id ? first : second;
+    const target = connection.toNodeId === first.id ? first : second;
+    if (source.type === CanvasNodeType.Video && (target.type === CanvasNodeType.Image || target.type === CanvasNodeType.Audio)) return null;
+    return connection;
 }
 
 export function attachNodeToStoryboardRow(nodes: CanvasNodeData[], connection: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">) {
