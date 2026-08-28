@@ -11,8 +11,6 @@ import type { Asset, ImageAsset } from "@/stores/use-asset-store";
 import type { DirectorScene } from "@/types/director";
 import { CanvasNodeType, type CanvasConnection, type CanvasMediaPerformanceMode, type CanvasNodeData, type ContextMenuState, type ViewportTransform } from "@/types/canvas";
 
-type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
-
 type UseCanvasRenderModelOptions = {
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
@@ -22,7 +20,6 @@ type UseCanvasRenderModelOptions = {
     mediaPerformanceMode: CanvasMediaPerformanceMode;
     selectedNodeIds: Set<string>;
     hoveredNodeId: string | null;
-    dragPreview: DragPreview;
     collapsingBatchIds: Set<string>;
     activatedSkills: PlatformSkill[];
     directorScenes?: DirectorScene[];
@@ -53,7 +50,6 @@ export function useCanvasRenderModel({
     mediaPerformanceMode,
     selectedNodeIds,
     hoveredNodeId,
-    dragPreview,
     collapsingBatchIds,
     activatedSkills,
     directorScenes,
@@ -234,11 +230,9 @@ export function useCanvasRenderModel({
                 const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
                 const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
                 if (displayFrom.id === displayTo.id) return [];
-                const from = dragPreview?.nodeIds.has(displayFrom.id) ? { ...displayFrom, position: { x: displayFrom.position.x + dragPreview.x, y: displayFrom.position.y + dragPreview.y } } : displayFrom;
-                const to = dragPreview?.nodeIds.has(displayTo.id) ? { ...displayTo, position: { x: displayTo.position.x + dragPreview.x, y: displayTo.position.y + dragPreview.y } } : displayTo;
-                return [{ connection, from, to }];
+                return [{ connection, from: displayFrom, to: displayTo }];
             }),
-        [collapsedBatchChildIds, connections, dragPreview, nodeById],
+        [collapsedBatchChildIds, connections, nodeById],
     );
 
     const configInputsById = useMemo(() => {

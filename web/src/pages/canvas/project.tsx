@@ -828,7 +828,6 @@ function InfiniteCanvasPage() {
         mediaPerformanceMode,
         selectedNodeIds,
         hoveredNodeId,
-        dragPreview,
         collapsingBatchIds,
         activatedSkills,
         directorScenes: currentProject?.directorScenes,

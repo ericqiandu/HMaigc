@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { createCanvasConnectionPathD } from "@/lib/canvas/canvas-drag-performance";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "@/types/canvas";
@@ -32,14 +33,21 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     const startY = connectionHandleY(from, connection.fromHandleId, fromScrollTop);
     const endX = to.position.x;
     const endY = connectionHandleY(to, connection.toHandleId, toScrollTop);
-    const dx = Math.abs(endX - startX);
-    const curvature = Math.max(dx * 0.5, 50);
-    const pathD = `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+    const pathD = createCanvasConnectionPathD({ x: startX, y: startY }, { x: endX, y: endY });
     const emphasized = active || hovered;
     const gradientId = `canvas-flow-${connection.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
     return (
-        <g className="canvas-connection">
+        <g
+            className="canvas-connection"
+            data-canvas-connection-id={connection.id}
+            data-from-node-id={from.id}
+            data-to-node-id={to.id}
+            data-start-x={startX}
+            data-start-y={startY}
+            data-end-x={endX}
+            data-end-y={endY}
+        >
             {emphasized ? <defs className="canvas-connection-gradient-definitions">
                 <linearGradient className="canvas-connection-gradient" id={gradientId} gradientUnits="userSpaceOnUse" x1={startX} y1={startY} x2={endX} y2={endY}>
                     <stop className="canvas-connection-gradient-start" offset="0%" stopColor={theme.node.muted} stopOpacity={0.18} />

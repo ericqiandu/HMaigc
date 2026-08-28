@@ -3,8 +3,8 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
-import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle, validateCanvasConnection, validateDirectedCanvasConnection } from "@/lib/canvas/canvas-project-domain";
-import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
+import { createCanvasConnectionHitIndex, queryCanvasConnectionHitIndex, type CanvasConnectionHitIndex } from "@/lib/canvas/canvas-connection-hit-index";
+import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle, validateCanvasConnection, validateCanvasNodeConnection, validateDirectedCanvasConnection } from "@/lib/canvas/canvas-project-domain";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
@@ -55,6 +55,7 @@ export function useCanvasConnectionController({
     const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
     const connectingParamsRef = useRef(connectingParams);
     const connectingPointerIdRef = useRef<number | null>(null);
+    const connectionHitIndexRef = useRef<CanvasConnectionHitIndex | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
 
     useLayoutEffect(() => {
@@ -67,6 +68,7 @@ export function useCanvasConnectionController({
         setConnectingParams(next);
         if (!next) {
             connectingPointerIdRef.current = null;
+            connectionHitIndexRef.current = null;
             setConnectionTargetNodeId(null);
         }
     }, []);
@@ -159,10 +161,10 @@ export function useCanvasConnectionController({
         let bestPriority = Number.POSITIVE_INFINITY;
         let isRejected = false;
 
-        [...nodesRef.current]
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
-            .reverse()
-            .forEach((node) => {
+        const hitIndex = connectionHitIndexRef.current;
+        const sourceNode = hitIndex?.nodeById.get(current.nodeId);
+        if (!hitIndex || !sourceNode) return { nodeId: null, isNearNode: false, isRejected: false };
+        queryCanvasConnectionHitIndex(hitIndex, world, Math.max(padding, handleRadius)).forEach((node) => {
                 const scrollTop = scriptScrollTopById[node.id] || 0;
                 const targetHandleId = node.type === CanvasNodeType.Script ? storyboardHandleAtY(node, world.y, scrollTop) : undefined;
                 if (node.type === CanvasNodeType.Script && !targetHandleId) return;
@@ -174,7 +176,7 @@ export function useCanvasConnectionController({
                 const hitsExpanded = world.x >= node.position.x - padding && world.x <= node.position.x + node.width + padding && world.y >= node.position.y - padding && world.y <= node.position.y + node.height + padding;
                 if (!hitsHandle && !hitsInside && !hitsExpanded) return;
                 isNearNode = true;
-                if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) {
+                if (!validateCanvasNodeConnection(sourceNode, node, current.handleType).ok) {
                     isRejected = true;
                     return;
                 }
@@ -186,7 +188,7 @@ export function useCanvasConnectionController({
                 }
             });
         return { nodeId: bestNodeId, handleId: bestHandleId, isNearNode, isRejected: !bestNodeId && isRejected };
-    }, [nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+    }, [screenToCanvas, scriptScrollTopById, viewportRef]);
 
     const finishConnection = useCallback((clientX: number, clientY: number) => {
         if (pendingConnectionCreateRef.current) return;
@@ -212,6 +214,7 @@ export function useCanvasConnectionController({
         event.preventDefault();
         event.stopPropagation();
         connectingPointerIdRef.current = event.pointerId;
+        connectionHitIndexRef.current = createCanvasConnectionHitIndex(nodesRef.current);
         setMouseWorld(screenToCanvas(event.clientX, event.clientY));
         setConnecting({ nodeId, handleType, handleId });
         setConnectionTargetNodeId(null);
