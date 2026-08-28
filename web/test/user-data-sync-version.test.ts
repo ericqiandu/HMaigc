@@ -65,6 +65,7 @@ mock.module("@/services/api/resources", () => ({
 }));
 
 mock.module("@/services/api/projects", () => ({
+    listProjects: async () => ({ projects: [] }),
     linkProjectAsset: async (projectId: string, input: { assetId: string; category: string }) => {
         projectAssetEvents.push(`link:${projectId}:${input.assetId}`);
         return {
@@ -109,6 +110,10 @@ afterEach(async () => {
         throw new Error("相同版本不应读取素材详情");
     };
     uploadResourceFileImpl = async () => ({ id: "uploaded-resource" });
+});
+
+test("项目 API 测试替身保持共享项目查询契约", async () => {
+    await expect(import("../src/queries/projects-query")).resolves.toHaveProperty("projectsQueryOptions");
 });
 
 test("画布上传只定向写入当前素材后再建立项目关联", async () => {
