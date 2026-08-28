@@ -14,6 +14,11 @@ type MentionState = {
     query: string;
 };
 
+type SelectionSnapshot = {
+    value: string;
+    range: TextRange;
+};
+
 type EditableTextPart =
     | {
           type: "text";
@@ -56,6 +61,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const editorRef = useRef<HTMLDivElement | null>(null);
     const composingRef = useRef(false);
     const pendingSelectionRef = useRef<number | null>(null);
+    const lastSelectionRef = useRef<SelectionSnapshot | null>(null);
     const lastRenderedValueRef = useRef("");
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
@@ -90,7 +96,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         const selection = pendingSelectionRef.current ?? (isFocused ? getEditableSelection(editor)?.start ?? null : null);
         renderEditableContent(editor, value, activeReferences, highlightAudioPauseTokens);
         lastRenderedValueRef.current = value;
-        if (isFocused && selection !== null) setEditableSelection(editor, selection);
+        if (isFocused && selection !== null) {
+            setEditableSelection(editor, selection);
+            lastSelectionRef.current = { value, range: { start: selection, end: selection } };
+        }
         pendingSelectionRef.current = null;
         reportContentSize(editor);
     }, [activeReferences, highlightAudioPauseTokens, reportContentSize, useRichEditor, value]);
@@ -111,7 +120,13 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 const editor = editorRef.current;
                 if (!editor) return;
                 editor.focus();
-                if (typeof selectionStart === "number") setEditableSelection(editor, selectionStart);
+                if (typeof selectionStart === "number") {
+                    setEditableSelection(editor, selectionStart);
+                    lastSelectionRef.current = {
+                        value: serializeEditableValue(editor),
+                        range: { start: selectionStart, end: selectionStart },
+                    };
+                }
                 return;
             }
             textareaRef.current?.focus();
@@ -120,7 +135,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     };
 
     const updateValue = (next: string, selectionStart?: number) => {
-        if (typeof selectionStart === "number") pendingSelectionRef.current = selectionStart;
+        if (typeof selectionStart === "number") {
+            pendingSelectionRef.current = selectionStart;
+            lastSelectionRef.current = { value: next, range: { start: selectionStart, end: selectionStart } };
+        }
         onChange(next);
         if (typeof selectionStart === "number") focusEditor(selectionStart);
     };
@@ -128,9 +146,11 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const currentValueAndSelection = () => {
         if (useRichEditor) {
             const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
+            const liveSelection = getEditableSelection(editorRef.current);
+            const savedSelection = lastSelectionRef.current?.value === currentValue ? lastSelectionRef.current.range : null;
             return {
                 value: currentValue,
-                selection: getEditableSelection(editorRef.current) ?? { start: currentValue.length, end: currentValue.length },
+                selection: liveSelection ?? savedSelection ?? { start: currentValue.length, end: currentValue.length },
             };
         }
         const textarea = textareaRef.current;
@@ -168,12 +188,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
-        const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
+        const match = /@([^\s@，。！？、,.!?;:()[\]{}【】（）]*)$/u.exec(prefix);
         if (!match || !references.some((item) => item.active)) {
             closeMention();
             return;
         }
-        const nextMention = { start: cursor - match[2].length - 1, query: match[2] };
+        const nextMention = { start: cursor - match[1].length - 1, query: match[1] };
         const isSameMention = mention?.start === nextMention.start && mention.query === nextMention.query;
         if (!isSameMention) {
             setMention(nextMention);
@@ -183,19 +203,17 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const insertReference = (reference: CanvasResourceReference) => {
         if (!mention) return;
-        const selection = useRichEditor ? getEditableSelection(editorRef.current) : null;
-        const end = selection?.end ?? textareaRef.current?.selectionStart ?? value.length;
+        const current = currentValueAndSelection();
         const insertText = `${canvasResourceMentionToken(reference)} `;
-        const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
+        const next = `${current.value.slice(0, mention.start)}${insertText}${current.value.slice(current.selection.end)}`;
         closeMention();
         updateValue(next, mention.start + insertText.length);
     };
 
     const replaceEditableSelection = (insertText: string) => {
-        const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
-        const selection = getEditableSelection(editorRef.current) || { start: currentValue.length, end: currentValue.length };
-        const next = `${currentValue.slice(0, selection.start)}${insertText}${currentValue.slice(selection.end)}`;
-        const cursor = selection.start + insertText.length;
+        const current = currentValueAndSelection();
+        const next = `${current.value.slice(0, current.selection.start)}${insertText}${current.value.slice(current.selection.end)}`;
+        const cursor = current.selection.start + insertText.length;
         updateValue(next, cursor);
         syncMention(next, cursor);
     };
@@ -205,7 +223,9 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         const editor = editorRef.current;
         if (!editor) return;
         const next = serializeEditableValue(editor);
-        const cursor = getEditableSelection(editor)?.start ?? next.length;
+        const selection = getEditableSelection(editor) ?? { start: next.length, end: next.length };
+        const cursor = selection.start;
+        lastSelectionRef.current = { value: next, range: selection };
         pendingSelectionRef.current = cursor;
         lastRenderedValueRef.current = next;
         onChange(next);
@@ -216,8 +236,11 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const syncEditableMentionFromSelection = () => {
         const editor = editorRef.current;
         if (!editor) return;
-        const cursor = getEditableSelection(editor)?.start;
-        if (typeof cursor === "number") syncMention(serializeEditableValue(editor), cursor);
+        const selection = getEditableSelection(editor);
+        if (!selection) return;
+        const currentValue = serializeEditableValue(editor);
+        lastSelectionRef.current = { value: currentValue, range: selection };
+        syncMention(currentValue, selection.start);
     };
 
     const mergedStyle = {
@@ -313,6 +336,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     onScroll={(event) => props.onScroll?.(event as unknown as React.UIEvent<HTMLTextAreaElement>)}
                     onFocus={(event) => props.onFocus?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>)}
                     onBlur={(event) => {
+                        const selection = getEditableSelection(editorRef.current);
+                        if (selection && editorRef.current) {
+                            lastSelectionRef.current = { value: serializeEditableValue(editorRef.current), range: selection };
+                        }
                         window.setTimeout(closeMention, 120);
                         props.onBlur?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>);
                     }}

@@ -163,29 +163,21 @@ export function CanvasNodePromptPanel({
         updatePrompt(withoutSlash ? `${withoutSlash}\n${preset.prompt}` : preset.prompt);
     };
 
-    const insertPromptReference = (reference: CanvasResourceReference) => {
-        const insertText = `${canvasResourceMentionToken(reference)} `;
-        const pendingMentionMatch = /@[^\s@，。！？、,.!?;:]*\s*$/.exec(prompt);
-        if (pendingMentionMatch) {
-            const prefix = prompt.slice(0, pendingMentionMatch.index).replace(/\s*$/, "");
-            updatePrompt(prefix ? `${prefix} ${insertText}` : insertText);
-            return;
-        }
-        const basePrompt = prompt.replace(/\s*$/, "");
-        updatePrompt(basePrompt ? `${basePrompt} ${insertText}` : insertText);
+    const promptEditor = (expanded: boolean) => {
+        const editor = expanded ? expandedPromptEditorRef.current : promptEditorRef.current;
+        if (!editor) throw new Error("提示词编辑器尚未就绪");
+        return editor;
+    };
+
+    const insertPromptReference = (expanded: boolean, reference: CanvasResourceReference) => {
+        promptEditor(expanded).replaceSelection(`${canvasResourceMentionToken(reference)} `);
     };
 
     const appendAudioText = (fragment: string) => updatePrompt(prompt ? `${prompt}${fragment}` : fragment.trimStart());
 
-    const audioPromptEditor = (expanded: boolean) => {
-        const editor = expanded ? expandedPromptEditorRef.current : promptEditorRef.current;
-        if (!editor) throw new Error("音频文本编辑器尚未就绪");
-        return editor;
-    };
+    const insertAudioPause = (expanded: boolean, fragment: string) => promptEditor(expanded).replaceSelection(fragment);
 
-    const insertAudioPause = (expanded: boolean, fragment: string) => audioPromptEditor(expanded).replaceSelection(fragment);
-
-    const replaceAudioPause = (expanded: boolean, range: { start: number; end: number }, fragment: string) => audioPromptEditor(expanded).replaceRange(range, fragment);
+    const replaceAudioPause = (expanded: boolean, range: { start: number; end: number }, fragment: string) => promptEditor(expanded).replaceRange(range, fragment);
 
     const updateVideoFrameMetadata = useCallback(
         (patch: Partial<CanvasNodeMetadata>) => {
@@ -217,13 +209,13 @@ export function CanvasNodePromptPanel({
         >
             {isImageMode ? (
                 <>
-                    <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
-                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
+                    <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(expanded, reference)} />
+                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(expanded, reference)} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : mode === "video" ? (
                 <>
                     <ReferenceConnectPicker label="+参考" references={availableVideoReferences} theme={theme} targetNodeId={node.id} onConnect={onReferenceConnect} />
-                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
+                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(expanded, reference)} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : isAudioMode ? (
                 <CanvasAudioTextTools
@@ -368,7 +360,7 @@ export function CanvasNodePromptPanel({
                 style={{ height: composerHeight, background: isImageMode || isVideoMode || isAudioMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
                 {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
-                <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(false, reference)} />
                 <CanvasResourceMentionTextarea
                     editorHandleRef={promptEditorRef}
                     value={prompt}
@@ -404,7 +396,7 @@ export function CanvasNodePromptPanel({
                     <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
                     <div className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-lg border focus-within:outline focus-within:outline-1" style={{ borderColor: theme.toolbar.border, outlineColor: theme.accent.primary }}>
                         {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
-                        <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                        <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(true, reference)} />
                         <CanvasResourceMentionTextarea
                             editorHandleRef={expandedPromptEditorRef}
                             value={prompt}
