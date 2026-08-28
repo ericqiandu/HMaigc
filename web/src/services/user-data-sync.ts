@@ -320,22 +320,32 @@ export function saveRemoteAssetNow(assetId: string): Promise<Asset> {
 }
 
 async function persistRemoteAssetById(session: RemoteSession, assetId: string) {
-    const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
-    if (!asset) throw new Error("待同步的素材不存在");
-    const [prepared] = await prepareRemoteAssets([asset], new Map());
-    if (!prepared) throw new Error("素材远端引用准备失败");
-    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法提交素材");
+    const uploaded = new Map<string, string>();
+    while (ownsRemoteSession(session)) {
+        const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
+        if (!asset) throw new Error("待同步的素材不存在");
+        const [prepared] = await prepareRemoteAssets([asset], uploaded);
+        if (!prepared) throw new Error("素材远端引用准备失败");
+        if (!ownsRemoteSession(session)) break;
 
-    applyingRemoteState = true;
-    try {
-        useAssetStore.getState().replaceAssets(replaceById(useAssetStore.getState().assets, [prepared]));
-    } finally {
-        applyingRemoteState = false;
+        const currentAssets = useAssetStore.getState().assets;
+        const current = currentAssets.find((item) => item.id === assetId);
+        // 资源上传期间允许用户继续编辑；只有快照仍是当前版本时才能回写，避免旧字段覆盖新输入。
+        if (current !== asset) continue;
+
+        const previousApplyingRemoteState = applyingRemoteState;
+        applyingRemoteState = true;
+        try {
+            useAssetStore.getState().replaceAssets(replaceById(currentAssets, [prepared]));
+        } finally {
+            applyingRemoteState = previousApplyingRemoteState;
+        }
+        await upsertRemoteAsset(prepared);
+        if (!ownsRemoteSession(session)) break;
+        remoteAssetVersions.set(prepared.id, prepared.updatedAt);
+        if (useAssetStore.getState().assets.find((item) => item.id === assetId) === prepared) return prepared;
     }
-    await upsertRemoteAsset(prepared);
-    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法确认素材写入结果");
-    remoteAssetVersions.set(prepared.id, prepared.updatedAt);
-    return prepared;
+    throw new Error("云端同步会话已变更，无法确认素材写入结果");
 }
 
 async function waitForRemoteProjectCreations(session: RemoteSession) {
@@ -440,8 +450,21 @@ async function hydrateAssets(assets: Asset[]): Promise<Asset[]> {
 
 async function prepareRemoteAssets(assets: Asset[], uploaded: Map<string, string>) {
     const result: Asset[] = [];
-    for (const asset of assets) result.push(await ensureRemoteResourceReferences(asset, uploaded));
+    for (const asset of assets) result.push(await ensureRemoteAssetResourceReferences(asset, uploaded));
     return result;
+}
+
+async function ensureRemoteAssetResourceReferences(asset: Asset, uploaded: Map<string, string>): Promise<Asset> {
+    if (asset.kind === "text" || asset.kind === "entity") return ensureRemoteResourceReferences(asset, uploaded);
+    const data = await ensureRemoteResourceReferences(asset.data, uploaded);
+    const storageKey = data.storageKey;
+    if (!storageKey || !resourceIdFromStorageKey(storageKey)) return { ...asset, data } as Asset;
+    const url = resourceFileUrl(storageKey.slice("resource:".length));
+    return {
+        ...asset,
+        coverUrl: shouldReplaceEphemeralUrl(asset.coverUrl) ? url : asset.coverUrl,
+        data,
+    } as Asset;
 }
 
 async function prepareRemoteCanvasProjects(projects: CanvasProject[], uploaded: Map<string, string>) {
@@ -470,13 +493,14 @@ async function ensureRemoteResourceReferences<T>(value: T, uploaded = new Map<st
     if (!isLocalStorageKey(storageKey)) {
         const inline = inlineMediaDataUrl(next);
         if (!inline) return next as T;
-        const resourceStorage = await uploadInlineDataUrl(inline).catch(() => "");
-        return (resourceStorage ? applyResourceReference(next, resourceStorage) : next) as T;
+        const cacheKey = `inline:${inline}`;
+        const resourceStorage = uploaded.get(cacheKey) || (await uploadInlineDataUrl(inline));
+        uploaded.set(cacheKey, resourceStorage);
+        return applyResourceReference(next, resourceStorage) as T;
     }
 
     const cached = uploaded.get(storageKey);
-    const resourceStorage = cached || (await uploadLocalStorageKey(storageKey, next).catch(() => ""));
-    if (!resourceStorage) return next as T;
+    const resourceStorage = cached || (await uploadLocalStorageKey(storageKey, next));
     uploaded.set(storageKey, resourceStorage);
     return applyResourceReference(next, resourceStorage) as T;
 }
@@ -507,7 +531,7 @@ async function uploadInlineDataUrl(dataUrl: string) {
 
 async function uploadLocalStorageKey(storageKey: string, payload: Record<string, unknown>) {
     const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-    if (!blob) return "";
+    if (!blob) throw new Error(`本地媒体数据不存在，无法同步：${storageKey}`);
     const kind = blob.type.startsWith("image/") ? "image" : blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
     const resource = await uploadResourceFile(blob, kind, {
         width: numberValue(payload.naturalWidth) || numberValue(payload.width),

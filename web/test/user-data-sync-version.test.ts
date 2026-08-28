@@ -3,6 +3,7 @@ import "./setup-happy-dom";
 import { afterEach, expect, mock, test } from "bun:test";
 
 const upsertedAssetIds: string[] = [];
+const upsertedAssets: Array<{ id: string; title: string; updatedAt: string }> = [];
 const createdCanvasIds: string[] = [];
 const projectAssetEvents: string[] = [];
 const remoteAssetSummary = {
@@ -19,6 +20,7 @@ let getRemoteAssetImpl = async () => {
 let createRemoteCanvasProjectImpl = async (project: { id: string }) => {
     createdCanvasIds.push(project.id);
 };
+let uploadResourceFileImpl = async () => ({ id: "uploaded-resource" });
 
 class MockUserDataRequestError extends Error {
     constructor(
@@ -41,11 +43,25 @@ mock.module("@/services/api/user-data", () => ({
     },
     listRemoteAssets: () => listRemoteAssetsImpl(),
     listRemoteCanvasProjects: async () => ({ projects: [], deletions: [] }),
-    upsertRemoteAsset: async (asset: { id: string }) => {
+    upsertRemoteAsset: async (asset: { id: string; title: string; updatedAt: string }) => {
         upsertedAssetIds.push(asset.id);
+        upsertedAssets.push({ id: asset.id, title: asset.title, updatedAt: asset.updatedAt });
         projectAssetEvents.push(`upsert:${asset.id}`);
         return { asset };
     },
+}));
+
+mock.module("@/services/api/resources", () => ({
+    getResource: async (id: string) => ({ id }),
+    getResourceBlob: async () => null,
+    getResourceOSSUrl: async () => "https://example.test/resource",
+    importResourceFromUrl: async () => ({ id: "imported-resource" }),
+    isResourceUrl: (url?: string) => Boolean(url?.startsWith("/api/resources/")),
+    resourceFileUrl: (id: string) => `/api/resources/${encodeURIComponent(id)}/file?direct=1`,
+    resourceIdFromStorageKey: (storageKey?: string) => (storageKey?.startsWith("resource:") ? storageKey.slice("resource:".length) : ""),
+    resourceStorageKey: (id: string) => `resource:${id}`,
+    resolveResourceUrl: async (storageKey?: string, fallback = "") => (storageKey?.startsWith("resource:") ? `/api/resources/${encodeURIComponent(storageKey.slice("resource:".length))}/file?direct=1` : fallback),
+    uploadResourceFile: () => uploadResourceFileImpl(),
 }));
 
 mock.module("@/services/api/projects", () => ({
@@ -82,6 +98,7 @@ afterEach(async () => {
     const { resetRemoteUserDataSync } = await import("../src/services/user-data-sync");
     resetRemoteUserDataSync();
     upsertedAssetIds.length = 0;
+    upsertedAssets.length = 0;
     createdCanvasIds.length = 0;
     projectAssetEvents.length = 0;
     createRemoteCanvasProjectImpl = async (project: { id: string }) => {
@@ -91,6 +108,7 @@ afterEach(async () => {
     getRemoteAssetImpl = async () => {
         throw new Error("相同版本不应读取素材详情");
     };
+    uploadResourceFileImpl = async () => ({ id: "uploaded-resource" });
 });
 
 test("画布上传只定向写入当前素材后再建立项目关联", async () => {
@@ -146,6 +164,86 @@ test("上传完成不等待项目查询失效请求", async () => {
 
     expect(source).not.toContain('await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] })');
     expect(source).toContain("项目资产查询刷新失败");
+});
+
+test("定向素材写入遇到并发编辑时提交并保留最新快照", async () => {
+    const [{ saveRemoteAssetNow, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+    useAssetStore.setState({
+        assets: [{
+            id: "concurrent-asset",
+            kind: "text",
+            title: "旧标题",
+            coverUrl: "",
+            tags: [],
+            createdAt: "2026-08-28T00:00:00.000Z",
+            updatedAt: "2026-08-28T00:00:00.000Z",
+            data: { content: "旧内容" },
+        }],
+    });
+
+    const write = saveRemoteAssetNow("concurrent-asset");
+    useAssetStore.setState({
+        assets: [{
+            id: "concurrent-asset",
+            kind: "text",
+            title: "新标题",
+            coverUrl: "",
+            tags: [],
+            createdAt: "2026-08-28T00:00:00.000Z",
+            updatedAt: "2026-08-28T00:00:01.000Z",
+            data: { content: "新内容" },
+        }],
+    });
+
+    const persisted = await write;
+
+    expect(persisted.title).toBe("新标题");
+    expect(useAssetStore.getState().assets[0]?.title).toBe("新标题");
+    expect(upsertedAssets.at(-1)?.title).toBe("新标题");
+});
+
+test("定向素材写入必须显式上报远端媒体上传失败", async () => {
+    const [{ saveRemoteAssetNow, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+    useAssetStore.setState({
+        assets: [{
+            id: "failed-upload-asset",
+            kind: "image",
+            title: "上传失败图片",
+            coverUrl: "data:image/png;base64,AA==",
+            tags: [],
+            createdAt: "2026-08-28T00:00:00.000Z",
+            updatedAt: "2026-08-28T00:00:00.000Z",
+            data: {
+                dataUrl: "data:image/png;base64,AA==",
+                width: 1,
+                height: 1,
+                bytes: 1,
+                mimeType: "image/png",
+            },
+        }],
+    });
+    uploadResourceFileImpl = async () => {
+        throw new Error("remote media upload failed");
+    };
+
+    await expect(saveRemoteAssetNow("failed-upload-asset")).rejects.toThrow("remote media upload failed");
+    expect(upsertedAssetIds).not.toContain("failed-upload-asset");
 });
 
 test("同一时刻的不同 RFC3339 精度不触发素材重复写回", async () => {
