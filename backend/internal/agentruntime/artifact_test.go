@@ -53,6 +53,35 @@ func TestValidateArtifactDraftRejectsMalformedPayload(t *testing.T) {
 	}
 }
 
+func TestAssemblyPlanArtifactSchemaHardCutsV1FromV2(t *testing.T) {
+	video := agentruntime.ArtifactRevisionRef{ArtifactID: "video-1", RevisionID: "video-1-r1"}
+	draft := agentruntime.ArtifactDraft{
+		ArtifactKey: "assembly", Kind: "assembly_plan", SchemaVersion: 1,
+		Payload:           json.RawMessage(`{"planKey":"assembly","audioMode":"none","videoRevisions":[{"artifactId":"video-1","revisionId":"video-1-r1"}],"audioRevisions":[],"outputArtifactKey":"final"}`),
+		UpstreamRevisions: []agentruntime.ArtifactRevisionRef{video},
+	}
+	if err := agentruntime.ValidateArtifactDraft(draft); err != nil {
+		t.Fatalf("read-only assembly_plan.v1 rejected: %v", err)
+	}
+
+	draft.SchemaVersion = 2
+	if err := agentruntime.ValidateArtifactDraft(draft); !errors.Is(err, agentruntime.ErrArtifactPayloadInvalid) {
+		t.Fatalf("legacy payload accepted as assembly_plan.v2: %v", err)
+	}
+}
+
+func TestAssemblyPlanV2ArtifactKeyMustMatchPlanKey(t *testing.T) {
+	video := agentruntime.ArtifactRevisionRef{ArtifactID: "video-1", RevisionID: "video-1-r1"}
+	err := agentruntime.ValidateArtifactDraft(agentruntime.ArtifactDraft{
+		ArtifactKey: "assembly-envelope", Kind: "assembly_plan", SchemaVersion: 2,
+		Payload:           json.RawMessage(`{"planKey":"different-plan","audioMode":"none","clips":[{"clipKey":"clip-1","sourceRevision":{"artifactId":"video-1","revisionId":"video-1-r1"},"trimStartMs":0,"trimEndMs":5000,"nativeAudioGainMilliDb":null,"transitionToNext":{"kind":"cut","durationMs":0}}],"audioTracks":[],"output":{"artifactKey":"final","container":"mp4","videoCodec":"h264","audioCodec":"none","width":1280,"height":720,"frameRate":25}}`),
+		UpstreamRevisions: []agentruntime.ArtifactRevisionRef{video},
+	})
+	if !errors.Is(err, agentruntime.ErrArtifactPayloadInvalid) {
+		t.Fatalf("mismatched assembly plan key error = %v, want %v", err, agentruntime.ErrArtifactPayloadInvalid)
+	}
+}
+
 func TestScriptBundleRequiresCompleteScriptAndCharacterCatalog(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -21,6 +21,7 @@ const (
 	ArtifactSchemaVideoPlanV1               = "video_plan.v1"
 	ArtifactSchemaAudioPlanV1               = "audio_plan.v1"
 	ArtifactSchemaAssemblyPlanV1            = "assembly_plan.v1"
+	ArtifactSchemaAssemblyPlanV2            = "assembly_plan.v2"
 	ArtifactReviewContentType               = "artifact_review"
 	StageReviewContentType                  = "stage_review_resolution"
 	AssetPublicationContentType             = "asset_publication"
@@ -499,6 +500,14 @@ func validateKnownArtifactPayload(draft ArtifactDraft, payload []byte) error {
 			return err
 		}
 		if !artifactRevisionRefsEqual(draft.UpstreamRevisions, assemblyPlanInputs(plan)) {
+			return ErrArtifactPayloadInvalid
+		}
+	case ArtifactSchemaAssemblyPlanV2:
+		plan, err := DecodeAssemblyPlanV2(payload)
+		if err != nil {
+			return err
+		}
+		if draft.ArtifactKey != plan.PlanKey || !artifactRevisionRefsEqual(draft.UpstreamRevisions, assemblyPlanV2Inputs(plan)) {
 			return ErrArtifactPayloadInvalid
 		}
 	case ArtifactSchemaMediaCandidateSelectionV1:
