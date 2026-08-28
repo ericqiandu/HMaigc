@@ -23,6 +23,7 @@ let applyingRemoteState = false;
 let syncTimer: number | null = null;
 let syncOperation: RemoteWriteOperation | null = null;
 let remoteProjectCreationOperations = new Map<string, RemoteProjectCreationOperation>();
+let remoteAssetWriteOperations = new Map<string, RemoteAssetWriteOperation>();
 let subscriptionsInstalled = false;
 let remoteAssetVersions = new Map<string, string>();
 let remoteProjectVersions = new Map<string, string>();
@@ -32,6 +33,7 @@ const LOCAL_STORAGE_KEY_PATTERN = /^(image|video|audio|file|video-reference|audi
 type RemoteSession = Readonly<{ revision: number; userId: string }>;
 type RemoteWriteOperation = { session: RemoteSession; promise: Promise<void>; queued: boolean };
 type RemoteProjectCreationOperation = { session: RemoteSession; promise: Promise<void> };
+type RemoteAssetWriteOperation = { session: RemoteSession; promise: Promise<Asset> };
 type AgentCanvasProjectCreation = { id: string; remoteReady: Promise<void> };
 
 export async function syncRemoteUserData(userId?: string | null) {
@@ -89,6 +91,7 @@ export function resetRemoteUserDataSync() {
     remoteAssetVersions.clear();
     remoteProjectVersions.clear();
     remoteProjectCreationOperations.clear();
+    remoteAssetWriteOperations.clear();
     if (syncTimer) {
         window.clearTimeout(syncTimer);
         syncTimer = null;
@@ -299,6 +302,42 @@ export async function saveRemoteUserDataNow() {
     }
 }
 
+export function saveRemoteAssetNow(assetId: string): Promise<Asset> {
+    const session = currentRemoteSession();
+    if (!session) return Promise.reject(new Error("尚未建立云端同步会话"));
+    const pending = remoteAssetWriteOperations.get(assetId);
+    if (pending && ownsRemoteSession(pending.session)) return pending.promise;
+
+    const operation: RemoteAssetWriteOperation = {
+        session,
+        promise: persistRemoteAssetById(session, assetId),
+    };
+    remoteAssetWriteOperations.set(assetId, operation);
+    operation.promise.finally(() => {
+        if (remoteAssetWriteOperations.get(assetId) === operation) remoteAssetWriteOperations.delete(assetId);
+    }).catch(() => undefined);
+    return operation.promise;
+}
+
+async function persistRemoteAssetById(session: RemoteSession, assetId: string) {
+    const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
+    if (!asset) throw new Error("待同步的素材不存在");
+    const [prepared] = await prepareRemoteAssets([asset], new Map());
+    if (!prepared) throw new Error("素材远端引用准备失败");
+    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法提交素材");
+
+    applyingRemoteState = true;
+    try {
+        useAssetStore.getState().replaceAssets(replaceById(useAssetStore.getState().assets, [prepared]));
+    } finally {
+        applyingRemoteState = false;
+    }
+    await upsertRemoteAsset(prepared);
+    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法确认素材写入结果");
+    remoteAssetVersions.set(prepared.id, prepared.updatedAt);
+    return prepared;
+}
+
 async function waitForRemoteProjectCreations(session: RemoteSession) {
     const pending = Array.from(remoteProjectCreationOperations.values())
         .filter((operation) => operation.session.revision === session.revision && operation.session.userId === session.userId)
@@ -350,9 +389,7 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
         }
         for (const asset of assets) {
             if (!ownsRemoteSession(session)) return;
-            await upsertRemoteAsset(asset);
-            if (!ownsRemoteSession(session)) return;
-            remoteAssetVersions.set(asset.id, asset.updatedAt);
+            await writeRemoteAsset(session, asset);
         }
         for (const id of deletedAssetIds) {
             if (!ownsRemoteSession(session)) return;
@@ -363,6 +400,18 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
     } finally {
         if (ownsRemoteSession(session)) applyingRemoteState = false;
     }
+}
+
+async function writeRemoteAsset(session: RemoteSession, asset: Asset) {
+    const pending = remoteAssetWriteOperations.get(asset.id);
+    if (pending && ownsRemoteSession(pending.session)) {
+        await pending.promise;
+        if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法继续素材写入");
+    }
+    if (!remoteAssetWriteRequired(remoteAssetVersions.get(asset.id), asset.updatedAt)) return;
+    await upsertRemoteAsset(asset);
+    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法确认素材写入结果");
+    remoteAssetVersions.set(asset.id, asset.updatedAt);
 }
 
 async function hydrateAssets(assets: Asset[]): Promise<Asset[]> {

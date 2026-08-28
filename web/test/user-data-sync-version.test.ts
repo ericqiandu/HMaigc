@@ -4,6 +4,7 @@ import { afterEach, expect, mock, test } from "bun:test";
 
 const upsertedAssetIds: string[] = [];
 const createdCanvasIds: string[] = [];
+const projectAssetEvents: string[] = [];
 const remoteAssetSummary = {
     id: "asset-1",
     kind: "text",
@@ -42,8 +43,39 @@ mock.module("@/services/api/user-data", () => ({
     listRemoteCanvasProjects: async () => ({ projects: [], deletions: [] }),
     upsertRemoteAsset: async (asset: { id: string }) => {
         upsertedAssetIds.push(asset.id);
+        projectAssetEvents.push(`upsert:${asset.id}`);
         return { asset };
     },
+}));
+
+mock.module("@/services/api/projects", () => ({
+    linkProjectAsset: async (projectId: string, input: { assetId: string; category: string }) => {
+        projectAssetEvents.push(`link:${projectId}:${input.assetId}`);
+        return {
+            asset: {
+                id: input.assetId,
+                title: "画布图片",
+                mediaType: "image",
+                category: input.category,
+                status: "confirmed",
+                versionCount: 1,
+                usages: [],
+                updatedAt: "2026-08-28T00:00:00.000Z",
+            },
+        };
+    },
+    updateProjectAssetCategory: async (projectId: string, assetId: string, category: string) => ({
+        asset: {
+            id: assetId,
+            title: "画布图片",
+            mediaType: "image",
+            category,
+            status: "confirmed",
+            versionCount: 1,
+            usages: [],
+            updatedAt: "2026-08-28T00:00:00.000Z",
+        },
+    }),
 }));
 
 afterEach(async () => {
@@ -51,6 +83,7 @@ afterEach(async () => {
     resetRemoteUserDataSync();
     upsertedAssetIds.length = 0;
     createdCanvasIds.length = 0;
+    projectAssetEvents.length = 0;
     createRemoteCanvasProjectImpl = async (project: { id: string }) => {
         createdCanvasIds.push(project.id);
     };
@@ -58,6 +91,61 @@ afterEach(async () => {
     getRemoteAssetImpl = async () => {
         throw new Error("相同版本不应读取素材详情");
     };
+});
+
+test("画布上传只定向写入当前素材后再建立项目关联", async () => {
+    const [{ ensureCanvasNodeAsset }, { syncRemoteUserData }, { useAssetStore }, { useCanvasStore }, { CanvasNodeType }] = await Promise.all([
+        import("../src/services/project-asset-sync"),
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+        import("../src/types/canvas"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+    useAssetStore.setState({
+        assets: [{
+            id: "unrelated-dirty-asset",
+            kind: "text",
+            title: "无关待同步素材",
+            coverUrl: "",
+            tags: [],
+            createdAt: "2026-08-28T00:00:00.000Z",
+            updatedAt: "2026-08-28T00:00:00.000Z",
+            data: { content: "不应由本次上传扫描写入" },
+        }],
+    });
+
+    const result = await ensureCanvasNodeAsset({
+        canvasId: "canvas-1",
+        domainProjectId: "project-1",
+        source: "canvas-upload",
+        node: {
+            id: "uploaded-node",
+            type: CanvasNodeType.Image,
+            title: "上传图片",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: {
+                content: "/api/resources/uploaded-resource/file?direct=1",
+                storageKey: "resource:uploaded-resource",
+            },
+        },
+    });
+
+    expect(upsertedAssetIds).not.toContain("unrelated-dirty-asset");
+    expect(projectAssetEvents[0]).toBe(`upsert:${result.assetId}`);
+    expect(projectAssetEvents).toContain(`link:project-1:${result.assetId}`);
+});
+
+test("上传完成不等待项目查询失效请求", async () => {
+    const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-upload.ts", import.meta.url)).text();
+
+    expect(source).not.toContain('await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] })');
+    expect(source).toContain("项目资产查询刷新失败");
 });
 
 test("同一时刻的不同 RFC3339 精度不触发素材重复写回", async () => {
