@@ -2,7 +2,7 @@
   "skills": [
     {
       "dir": "short-drama-director",
-      "version": 3,
+      "version": 4,
       "name": "短剧总导演",
       "description": "当已有故事蓝图、Treatment 或剧本，需要形成短剧的导演意图、表演调度、视听策略与生产计划时使用；统筹交付但不代替故事开发、剧本撰写或逐镜头分镜。",
       "icon": "clapperboard",
@@ -11,13 +11,18 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v3",
+      "sourceRevision": "hmaigc-v4",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "收紧为导演统筹职责，明确与故事开发、剧本撰写和逐镜头分镜的交付边界"
+      "changelog": "冻结 narrative、storyboard 与 video_assembly 专家能力、工具边界和 Artifact schema",
+      "capabilityManifest": {
+        "specialists": ["narrative", "storyboard", "video_assembly"],
+        "tools": ["canvas.project"],
+        "artifactSchemas": ["assembly_plan.v1", "script_bundle.v1", "storyboard_plan.v1"]
+      }
     },
     {
       "dir": "commercial-film-director",
-      "version": 1,
+      "version": 2,
       "name": "商业广告导演",
       "description": "用于把品牌目标、产品卖点和受众转化为高密度商业短片的叙事与镜头方案。",
       "icon": "badge-dollar-sign",
@@ -26,13 +31,18 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v1",
+      "sourceRevision": "hmaigc-v2",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "建立商业广告导演的品牌与转化约束"
+      "changelog": "冻结商业叙事、分镜、视觉与合成专家能力及 Artifact schema",
+      "capabilityManifest": {
+        "specialists": ["narrative", "storyboard", "video_assembly", "visual"],
+        "tools": ["canvas.project", "vision.analyze"],
+        "artifactSchemas": ["assembly_plan.v1", "script_bundle.v1", "storyboard_plan.v1", "visual_evidence.v1"]
+      }
     },
     {
       "dir": "story-development",
-      "version": 1,
+      "version": 2,
       "name": "故事开发",
       "description": "当用户需要从创意建立故事蓝图，或诊断现有故事的因果、人物与节奏问题时使用；交付定位、Logline、人物驱动、节拍与 Treatment，不代写最终剧本。",
       "icon": "book-open-text",
@@ -43,11 +53,16 @@
       "sourceUrl": "https://github.com/ddcat-ai/open-ai-canvas/blob/50b4cfc2041e390da54664bab8d098bcf225bba5/backend/internal/service/seed/skills.json",
       "sourceRevision": "50b4cfc2041e390da54664bab8d098bcf225bba5",
       "sourceLicense": "MIT",
-      "changelog": "首版：从上游故事开发方法论提炼为定位、故事脊柱、人物驱动、节拍和 Treatment 的单一职责契约"
+      "changelog": "冻结故事开发仅供 narrative 专家加载并交付 story_blueprint/script_bundle",
+      "capabilityManifest": {
+        "specialists": ["narrative"],
+        "tools": [],
+        "artifactSchemas": ["script_bundle.v1", "story_blueprint.v1"]
+      }
     },
     {
       "dir": "screenplay-writer",
-      "version": 1,
+      "version": 2,
       "name": "剧本撰写",
       "description": "当已存在故事蓝图、节拍表或 Treatment，需要写成可拍摄剧本或修订场景与对白时使用；负责场景、可见动作、潜台词与剧本连续性。",
       "icon": "file-pen-line",
@@ -58,11 +73,16 @@
       "sourceUrl": "https://github.com/ddcat-ai/open-ai-canvas/blob/50b4cfc2041e390da54664bab8d098bcf225bba5/backend/internal/service/seed/skills.json",
       "sourceRevision": "50b4cfc2041e390da54664bab8d098bcf225bba5",
       "sourceLicense": "MIT",
-      "changelog": "首版：从上游剧本撰写方法论提炼为场景、动作、潜台词与可拍性契约"
+      "changelog": "冻结剧本撰写仅供 narrative 专家加载并交付 script_bundle",
+      "capabilityManifest": {
+        "specialists": ["narrative"],
+        "tools": [],
+        "artifactSchemas": ["script_bundle.v1"]
+      }
     },
     {
       "dir": "suspense-visual-director",
-      "version": 1,
+      "version": 2,
       "name": "悬疑视觉导演",
       "description": "用于设计信息延迟、空间压迫、视觉线索和悬念节奏明确的短剧镜头。",
       "icon": "scan-eye",
@@ -71,13 +91,18 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v1",
+      "sourceRevision": "hmaigc-v2",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "建立悬疑视觉导演的线索与节奏契约"
+      "changelog": "冻结 storyboard/visual 专家、视觉分析工具与证据 schema",
+      "capabilityManifest": {
+        "specialists": ["storyboard", "visual"],
+        "tools": ["vision.analyze"],
+        "artifactSchemas": ["storyboard_plan.v1", "visual_evidence.v1"]
+      }
     },
     {
       "dir": "storyboard-continuity-director",
-      "version": 3,
+      "version": 5,
       "name": "分镜连续性导演",
       "description": "当剧本、故事节拍或生产计划需要转换为可生成镜头时使用；负责镜头卡、首尾帧承接、角色与空间连续性、对白动作账本以及逐镜头执行证据。",
       "icon": "panels-top-left",
@@ -86,9 +111,134 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v3",
+      "sourceRevision": "hmaigc-v5",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "明确只接收已批准剧本事实，补齐场景追溯、镜头交付结构和故事改写边界"
+      "changelog": "增加视频、独立音频与装配计划的受治理音频分支和精确 revision 交付契约",
+      "capabilityManifest": {
+        "specialists": ["storyboard", "video_assembly", "visual"],
+        "tools": ["canvas.project", "vision.analyze"],
+        "artifactSchemas": ["assembly_plan.v1", "audio_plan.v1", "storyboard_plan.v1", "video_plan.v1", "visual_evidence.v1"]
+      }
+    },
+    {
+      "dir": "character-visual-bible",
+      "version": 1,
+      "name": "角色视觉圣经",
+      "description": "当剧本角色、已确认素材与图片理解证据需要汇总为可追溯的角色身份、稳定外观和分场动态造型约束时使用；只记录证据支持的事实，未知项与冲突必须显式保留。",
+      "icon": "contact-round",
+      "coverUrl": "",
+      "categories": ["角色", "资产", "视觉连续性"],
+      "visibility": "public",
+      "sourceKind": "adapted",
+      "sourceUrl": "https://github.com/HKUDS/ViMax/tree/05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceRevision": "05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceLicense": "MIT",
+      "changelog": "发布基于证据的角色静态特征、动态造型、素材绑定与冲突治理方法",
+      "capabilityManifest": {
+        "specialists": ["asset", "visual"],
+        "tools": ["vision.analyze"],
+        "artifactSchemas": ["character_visual_bible.v1"]
+      }
+    },
+    {
+      "dir": "storyboard-cinematic-language",
+      "version": 1,
+      "name": "分镜电影语言",
+      "description": "当已确认剧本需要转换为可拍摄、可生成、可审阅的逐镜头计划时使用；为每个镜头明确叙事目的、景别、机位、构图、运动、动作、对白、声音、时长与转场。",
+      "icon": "panels-top-left",
+      "coverUrl": "",
+      "categories": ["分镜", "电影语言", "镜头设计"],
+      "visibility": "public",
+      "sourceKind": "adapted",
+      "sourceUrl": "https://github.com/HKUDS/ViMax/tree/05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceRevision": "05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceLicense": "MIT",
+      "changelog": "发布从剧本事实到逐镜头电影语言计划的结构化方法",
+      "capabilityManifest": {
+        "specialists": ["storyboard"],
+        "tools": [],
+        "artifactSchemas": ["storyboard_plan.v1"]
+      }
+    },
+    {
+      "dir": "camera-tree-continuity",
+      "version": 1,
+      "name": "机位树连续性",
+      "description": "当场景分镜需要建立主镜头、子机位、反打、插入镜头及其空间与轴线关系时使用；输出可追溯的机位树和缺失视角，不把未证实空间关系当成事实。",
+      "icon": "git-fork",
+      "coverUrl": "",
+      "categories": ["分镜", "机位", "空间连续性"],
+      "visibility": "public",
+      "sourceKind": "adapted",
+      "sourceUrl": "https://github.com/HKUDS/ViMax/tree/05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceRevision": "05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceLicense": "MIT",
+      "changelog": "发布宽景主镜头、子机位、轴线、视线与反打连续性的机位树方法",
+      "capabilityManifest": {
+        "specialists": ["storyboard", "visual"],
+        "tools": ["vision.analyze"],
+        "artifactSchemas": ["camera_tree.v1"]
+      }
+    },
+    {
+      "dir": "first-motion-last-frame",
+      "version": 1,
+      "name": "首帧动作尾帧设计",
+      "description": "当镜头计划需要转换为可验证的视频生成边界时使用；分别定义静态首帧、镜头与画面内运动、静态尾帧，并把尾帧作为后续连续性的真实证据。",
+      "icon": "film",
+      "coverUrl": "",
+      "categories": ["视频", "首尾帧", "动作设计"],
+      "visibility": "public",
+      "sourceKind": "adapted",
+      "sourceUrl": "https://github.com/HKUDS/ViMax/tree/05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceRevision": "05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceLicense": "MIT",
+      "changelog": "发布静态首帧、运动阶段与可验证静态尾帧的镜头边界方法",
+      "capabilityManifest": {
+        "specialists": ["storyboard", "video_assembly", "visual"],
+        "tools": ["vision.analyze"],
+        "artifactSchemas": ["first_motion_last_frame.v1"]
+      }
+    },
+    {
+      "dir": "visual-consistency-review",
+      "version": 1,
+      "name": "视觉一致性审查",
+      "description": "当角色图、场景图、分镜图或视频候选需要对照已确认角色、资产和连续性证据进行审查时使用；保留全部候选，只追加问题、证据与建议，不自动采用或删除结果。",
+      "icon": "scan-eye",
+      "coverUrl": "",
+      "categories": ["视觉审查", "角色一致性", "质量证据"],
+      "visibility": "public",
+      "sourceKind": "adapted",
+      "sourceUrl": "https://github.com/HKUDS/ViMax/tree/05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceRevision": "05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceLicense": "MIT",
+      "changelog": "发布候选保留、逐项证据审查与人工采用决策的方法",
+      "capabilityManifest": {
+        "specialists": ["visual"],
+        "tools": ["vision.analyze"],
+        "artifactSchemas": ["visual_consistency_review.v1"]
+      }
+    },
+    {
+      "dir": "visual-evidence-analysis",
+      "version": 1,
+      "name": "视觉证据分析",
+      "description": "当真实图片或视频帧需要被理解并形成可追溯证据时使用；记录身份、造型、空间、构图、动作、视线、OCR、不确定性、冲突、模型与请求事实。",
+      "icon": "image-search",
+      "coverUrl": "",
+      "categories": ["图片理解", "视觉证据", "可追溯性"],
+      "visibility": "public",
+      "sourceKind": "adapted",
+      "sourceUrl": "https://github.com/HKUDS/ViMax/tree/05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceRevision": "05a48943878312d88fe5a016c12a9654940ecc43",
+      "sourceLicense": "MIT",
+      "changelog": "发布真实媒体输入、结构化观察、不确定性和陈旧证据治理方法",
+      "capabilityManifest": {
+        "specialists": ["asset", "storyboard", "video_assembly", "visual"],
+        "tools": ["vision.analyze"],
+        "artifactSchemas": ["visual_evidence.v1"]
+      }
     }
   ]
 }

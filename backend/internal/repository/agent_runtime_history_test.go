@@ -104,7 +104,7 @@ func TestAgentMessageStreamRejectsLateFactsAfterRunInterrupt(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); err != nil {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
@@ -310,7 +310,7 @@ func TestAgentThreadHistoryRebuildsMissingTimelineOnlyForTerminalRuns(t *testing
 	createAgentRunForTest(t, repo, scope)
 	now := time.Now().UTC()
 	initializeHistoryRun(t, repo, scope, "旧终态任务", now)
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(time.Second)); err != nil {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Where("run_id = ?", scope.RunID).Delete(&model.AgentTimelineItem{}).Error; err != nil {

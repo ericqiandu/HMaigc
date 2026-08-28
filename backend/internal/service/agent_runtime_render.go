@@ -8,6 +8,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
@@ -115,27 +116,26 @@ func (s *Service) freezeAgentProductionRenderArguments(scope agentruntime.Scope,
 	if err != nil {
 		return nil, err
 	}
-	quoteRequest, err := productionRenderQuoteRequest(scope.CanvasID, request, *artifact)
-	if err != nil {
-		return nil, err
-	}
-	quote, err := s.QuoteTaskBilling(scope.ActorUserID, quoteRequest)
-	if err != nil {
-		return nil, err
-	}
 	frozen := agentruntime.ProductionRenderArguments{
 		PlanKey: request.PlanKey, PlanVersion: request.PlanVersion, ArtifactID: request.ArtifactID,
 		Attempt: artifact.Attempt, GenerationModel: request.GenerationModel,
 		VideoInputMode:       videoInputMode,
 		VideoInputResourceID: videoInputResourceID,
 		ImageConfig:          request.ImageConfig, VideoConfig: request.VideoConfig,
-		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
-			AmountMicrocredits: quote.AmountMicrocredits, PerTaskAmountMicrocredits: quote.PerTaskAmountMicrocredits,
-			PriceVersion: quote.PriceVersion, BillingMode: quote.BillingMode,
-			PricingResolution: quote.PricingResolution, PricingInputVariant: quote.PricingInputVariant,
-			Quantity: quote.Quantity, QuoteFingerprint: quote.QuoteFingerprint,
-		},
 	}
+	prompt, err := productionArtifactPrompt(*plan, *artifact)
+	if err != nil {
+		return nil, err
+	}
+	command, err := s.productionMediaGenerationCommand(scope, frozen, *artifact, prompt, callable.ProviderCapabilities)
+	if err != nil {
+		return nil, err
+	}
+	attempt, err := s.FreezeMediaQuote(scope, command, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	frozen.FrozenRenderQuote = frozenRenderQuoteFromMediaAttempt(*attempt)
 	return json.Marshal(frozen)
 }
 
@@ -359,34 +359,4 @@ func alignProductionImageDimension(value float64) float64 {
 
 func floorProductionImageDimension(value float64) float64 {
 	return math.Max(64, math.Floor(value/16)*16)
-}
-
-func productionRenderQuoteRequest(canvasID string, request agentProductionRenderRequest, artifact model.AgentProductionArtifact) (TaskBillingQuoteRequest, error) {
-	taskType := "canvas_image"
-	mode := "image"
-	config := TaskBillingQuoteConfig{ChannelID: request.GenerationModel.ChannelID, Model: request.GenerationModel.Model}
-	switch artifact.Kind {
-	case model.AgentProductionArtifactReferenceImage, model.AgentProductionArtifactStoryboardImage:
-		if request.ImageConfig == nil || request.VideoConfig != nil {
-			return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "storyboard config is invalid")
-		}
-		config.Size = request.ImageConfig.Size
-		config.Quality = request.ImageConfig.Quality
-	case model.AgentProductionArtifactVideoClip:
-		taskType = "canvas_video"
-		mode = "video"
-		if request.VideoConfig == nil || request.ImageConfig != nil {
-			return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "video config is invalid")
-		}
-		config.VideoSeconds = strconv.Itoa(request.VideoConfig.DurationSeconds)
-		config.Size = request.VideoConfig.AspectRatio
-		config.VideoQuality = request.VideoConfig.Quality
-		config.VideoGenerateAudio = request.VideoConfig.GenerateAudio
-	default:
-		return TaskBillingQuoteRequest{}, newAgentProductionRenderInputError("production_render_invalid", "artifact kind is unsupported")
-	}
-	return TaskBillingQuoteRequest{
-		ProjectID: canvasID, Type: taskType, Operation: "production_render", BatchCount: 1,
-		Input: TaskBillingQuoteInput{Mode: mode, Config: config},
-	}, nil
 }

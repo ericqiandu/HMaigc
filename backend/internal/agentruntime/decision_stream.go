@@ -8,11 +8,18 @@ import (
 )
 
 type DecisionStreamObserver struct {
-	raw     string
-	emitted string
+	raw               string
+	emitted           string
+	toolSchemaVersion int
 }
 
-func NewDecisionStreamObserver() *DecisionStreamObserver { return &DecisionStreamObserver{} }
+func NewDecisionStreamObserver() *DecisionStreamObserver {
+	return NewDecisionStreamObserverForToolSchema(CurrentToolSchemaVersion)
+}
+
+func NewDecisionStreamObserverForToolSchema(toolSchemaVersion int) *DecisionStreamObserver {
+	return &DecisionStreamObserver{toolSchemaVersion: toolSchemaVersion}
+}
 
 func AgentMessageItemID(runID string, stepNumber int) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("agent-message\x00%s\x00%d", runID, stepNumber))))
@@ -44,7 +51,7 @@ func (observer *DecisionStreamObserver) Push(delta string) (string, error) {
 }
 
 func (observer *DecisionStreamObserver) Finish() (ModelDecision, error) {
-	return ParseModelDecision([]byte(observer.raw))
+	return ParseModelDecisionForToolSchema([]byte(observer.raw), observer.toolSchemaVersion)
 }
 
 func directJSONObjectField(raw string, start int, wantedDepth int, key string) (int, bool) {

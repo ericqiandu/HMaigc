@@ -54,7 +54,7 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 			if view.State.PendingToolCall == nil {
 				return nil, errors.New("agent runtime pending tool facts are missing")
 			}
-			_, found := agentruntime.ToolPolicyFor(view.State.PendingToolCall.ToolName)
+			_, found := agentruntime.ToolPolicyForSchema(view.State.PendingToolCall.ToolName, view.Run.ToolSchemaVersion)
 			if !found {
 				return nil, errors.New("agent runtime tool policy is unavailable")
 			}
@@ -111,6 +111,11 @@ func (s *Service) advanceAgentRunReference(reference repository.ActiveAgentRunRe
 	scope, terminated, err := s.authorizeActiveAgentRun(reference)
 	if err != nil || terminated {
 		return err
+	}
+	if wakeup == agentWakeStaleRecovery {
+		if err := s.RecoverAgentRunTree(scope); err != nil {
+			return err
+		}
 	}
 	_, err = s.advanceAgentRun(scope, wakeup)
 	return err

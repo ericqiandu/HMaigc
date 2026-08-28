@@ -61,3 +61,68 @@ func TestVerifyDeliveryRejectsInvalidContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestFinalDeliveryRequiresApprovedExactRevisionReadyResourceAndCanvas(t *testing.T) {
+	expected := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryMixed,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo},
+		TargetCanvasID:    "canvas-1",
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactArtifactRevision, Artifact: agentruntime.ArtifactVideo},
+			{Fact: agentruntime.DeliveryFactResource, Artifact: agentruntime.ArtifactVideo},
+			{Fact: agentruntime.DeliveryFactCanvasRevision},
+		},
+	}
+
+	incomplete := agentruntime.VerifyDelivery(expected, agentruntime.DeliveryEvidence{
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactVideo, ArtifactID: "video-1", RevisionID: "video-r1", Approved: true,
+		}},
+	})
+	if incomplete.Status != agentruntime.VerificationRepairable {
+		t.Fatalf("incomplete final delivery = %#v", incomplete)
+	}
+	wantMissing := []agentruntime.DeliveryCriterion{
+		{Fact: agentruntime.DeliveryFactResource, Artifact: agentruntime.ArtifactVideo},
+		{Fact: agentruntime.DeliveryFactCanvasRevision},
+	}
+	if len(incomplete.MissingCriteria) != len(wantMissing) {
+		t.Fatalf("missing criteria = %#v, want %#v", incomplete.MissingCriteria, wantMissing)
+	}
+	for index := range wantMissing {
+		if incomplete.MissingCriteria[index] != wantMissing[index] {
+			t.Fatalf("missing criterion %d = %#v, want %#v", index, incomplete.MissingCriteria[index], wantMissing[index])
+		}
+	}
+
+	complete := agentruntime.VerifyDelivery(expected, agentruntime.DeliveryEvidence{
+		CanvasID: "canvas-1", CanvasRevision: 8,
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactVideo, ArtifactID: "video-1", RevisionID: "video-r1",
+			ResourceID: "resource-1", URL: "/api/resources/resource-1/file", ResourceReady: true, Approved: true,
+		}},
+	})
+	if complete.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("complete final delivery = %#v", complete)
+	}
+}
+
+func TestFinalDeliveryRejectsUnapprovedRevisionAndPublicationWithoutExactResource(t *testing.T) {
+	expected := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactArtifactRevision, Artifact: agentruntime.ArtifactImage},
+			{Fact: agentruntime.DeliveryFactPublication, Artifact: agentruntime.ArtifactImage},
+		},
+	}
+	verification := agentruntime.VerifyDelivery(expected, agentruntime.DeliveryEvidence{
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactImage, ArtifactID: "image-1", RevisionID: "image-r1",
+			ResourceID: "resource-1", URL: "/api/resources/resource-1/file",
+		}},
+	})
+	if verification.Status != agentruntime.VerificationRepairable || len(verification.MissingCriteria) != 2 {
+		t.Fatalf("unapproved publication verification = %#v", verification)
+	}
+}

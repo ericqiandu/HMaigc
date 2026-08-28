@@ -55,6 +55,47 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 	}
 }
 
+func TestAdvanceForToolSchemaUsesFrozenProductionPolicy(t *testing.T) {
+	t.Parallel()
+
+	answer := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	base := agentruntime.RuntimeState{
+		StateVersion: 1,
+		StepNumber:   0,
+		MaxSteps:     4,
+		Status:       agentruntime.RunRunning,
+		UserMessage:  "创建生产图",
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionAutomatic,
+		},
+	}
+	decision := agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID:       "delegate-1",
+			ToolName:         agentruntime.ToolSpecialistDelegate,
+			ActionVersion:    1,
+			Arguments:        json.RawMessage(`{"specialistKey":"script"}`),
+			ExpectedDelivery: answer,
+		},
+	}
+
+	transition, err := agentruntime.AdvanceForToolSchema(base, agentruntime.RuntimeInput{Decision: decision}, agentruntime.ProductionToolSchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunWaitingTool {
+		t.Fatalf("expected automatic L1 delegation to wait for tool execution, got %s", transition.State.Status)
+	}
+
+	if _, err := agentruntime.AdvanceForToolSchema(base, agentruntime.RuntimeInput{Decision: decision}, agentruntime.CurrentToolSchemaVersion); err == nil {
+		t.Fatal("expected the legacy schema to reject the production-only tool")
+	}
+}
+
 func TestBeginModelRequestChangesOnlyQueuedRuntimeStatus(t *testing.T) {
 	queued := agentruntime.RuntimeState{
 		StateVersion: 1, StepNumber: 0, MaxSteps: 3, Status: agentruntime.RunQueued,

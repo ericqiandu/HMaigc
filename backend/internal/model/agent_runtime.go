@@ -19,23 +19,26 @@ type AgentThread struct {
 }
 
 type AgentRun struct {
-	ID                string                 `json:"id" gorm:"primaryKey;size:80"`
-	ThreadID          string                 `json:"threadId" gorm:"size:80;not null"`
-	ActorUserID       string                 `json:"actorUserId" gorm:"size:80;not null"`
-	ClientRequestID   string                 `json:"clientRequestId" gorm:"size:120;not null"`
-	Status            agentruntime.RunStatus `json:"status" gorm:"size:32;not null"`
-	LastEventSequence int64                  `json:"lastEventSequence" gorm:"not null;default:0"`
-	StateVersion      int                    `json:"stateVersion" gorm:"not null;default:0"`
-	StepNumber        int                    `json:"stepNumber" gorm:"not null;default:0"`
-	MaxSteps          int                    `json:"maxSteps" gorm:"not null;default:0"`
-	ModelRecordID     string                 `json:"modelRecordId" gorm:"size:80;not null;default:''"`
-	ModelKey          string                 `json:"modelKey" gorm:"size:120;not null;default:''"`
-	ToolSchemaVersion int                    `json:"toolSchemaVersion" gorm:"not null;default:0"`
-	RuntimeVersion    int                    `json:"runtimeVersion" gorm:"not null;default:0"`
-	PolicyVersion     int                    `json:"policyVersion" gorm:"not null;default:0"`
-	CreatedAt         time.Time              `json:"createdAt"`
-	UpdatedAt         time.Time              `json:"updatedAt"`
-	CompletedAt       *time.Time             `json:"completedAt,omitempty"`
+	ID                     string                 `json:"id" gorm:"primaryKey;size:80"`
+	ThreadID               string                 `json:"threadId" gorm:"size:80;not null"`
+	ActorUserID            string                 `json:"actorUserId" gorm:"size:80;not null"`
+	ClientRequestID        string                 `json:"clientRequestId" gorm:"size:120;not null"`
+	Status                 agentruntime.RunStatus `json:"status" gorm:"size:32;not null"`
+	LastEventSequence      int64                  `json:"lastEventSequence" gorm:"not null;default:0"`
+	StateVersion           int                    `json:"stateVersion" gorm:"not null;default:0"`
+	StepNumber             int                    `json:"stepNumber" gorm:"not null;default:0"`
+	MaxSteps               int                    `json:"maxSteps" gorm:"not null;default:0"`
+	ModelRecordID          string                 `json:"modelRecordId" gorm:"size:80;not null;default:''"`
+	ModelKey               string                 `json:"modelKey" gorm:"size:120;not null;default:''"`
+	ToolSchemaVersion      int                    `json:"toolSchemaVersion" gorm:"not null;default:0"`
+	RuntimeVersion         int                    `json:"runtimeVersion" gorm:"not null;default:0"`
+	PolicyVersion          int                    `json:"policyVersion" gorm:"not null;default:0"`
+	SpecialistInputTokens  int64                  `json:"specialistInputTokens" gorm:"not null;default:0"`
+	SpecialistCachedTokens int64                  `json:"specialistCachedTokens" gorm:"not null;default:0"`
+	SpecialistOutputTokens int64                  `json:"specialistOutputTokens" gorm:"not null;default:0"`
+	CreatedAt              time.Time              `json:"createdAt"`
+	UpdatedAt              time.Time              `json:"updatedAt"`
+	CompletedAt            *time.Time             `json:"completedAt,omitempty"`
 }
 
 type AgentTimelineItemKind string

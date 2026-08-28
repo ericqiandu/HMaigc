@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"infinite-canvas/backend/internal/agentruntime"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,19 +23,20 @@ type catalogManifest struct {
 }
 
 type manifestSkill struct {
-	Dir            string   `json:"dir"`
-	Version        int      `json:"version"`
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	Icon           string   `json:"icon"`
-	CoverURL       string   `json:"coverUrl"`
-	Categories     []string `json:"categories"`
-	Visibility     string   `json:"visibility"`
-	SourceKind     string   `json:"sourceKind"`
-	SourceURL      string   `json:"sourceUrl"`
-	SourceRevision string   `json:"sourceRevision"`
-	SourceLicense  string   `json:"sourceLicense"`
-	Changelog      string   `json:"changelog"`
+	Dir                string                               `json:"dir"`
+	Version            int                                  `json:"version"`
+	Name               string                               `json:"name"`
+	Description        string                               `json:"description"`
+	Icon               string                               `json:"icon"`
+	CoverURL           string                               `json:"coverUrl"`
+	Categories         []string                             `json:"categories"`
+	Visibility         string                               `json:"visibility"`
+	SourceKind         string                               `json:"sourceKind"`
+	SourceURL          string                               `json:"sourceUrl"`
+	SourceRevision     string                               `json:"sourceRevision"`
+	SourceLicense      string                               `json:"sourceLicense"`
+	Changelog          string                               `json:"changelog"`
+	CapabilityManifest agentruntime.SkillCapabilityManifest `json:"capabilityManifest"`
 }
 
 type skillFrontmatter struct {
@@ -42,21 +45,23 @@ type skillFrontmatter struct {
 }
 
 type BuiltinSkill struct {
-	Dir            string
-	Version        int
-	Name           string
-	Description    string
-	Icon           string
-	CoverURL       string
-	Categories     []string
-	Visibility     string
-	SourceKind     string
-	SourceURL      string
-	SourceRevision string
-	SourceLicense  string
-	Changelog      string
-	Instructions   string
-	Checksum       string
+	Dir                    string
+	Version                int
+	Name                   string
+	Description            string
+	Icon                   string
+	CoverURL               string
+	Categories             []string
+	Visibility             string
+	SourceKind             string
+	SourceURL              string
+	SourceRevision         string
+	SourceLicense          string
+	Changelog              string
+	Instructions           string
+	Checksum               string
+	CapabilityManifest     agentruntime.SkillCapabilityManifest
+	CapabilityManifestJSON string
 }
 
 func Builtins() ([]BuiltinSkill, error) {
@@ -73,7 +78,7 @@ func Builtins() ([]BuiltinSkill, error) {
 	for _, item := range manifest.Skills {
 		item.Dir = strings.TrimSpace(item.Dir)
 		if err := validateManifestSkill(item); err != nil {
-			return nil, fmt.Errorf("第一方技能目录事实无效: dir=%q version=%d", item.Dir, item.Version)
+			return nil, fmt.Errorf("第一方技能目录事实无效: dir=%q version=%d: %w", item.Dir, item.Version, err)
 		}
 		if _, duplicate := seen[item.Dir]; duplicate {
 			return nil, fmt.Errorf("第一方技能标识重复: %s", item.Dir)
@@ -91,12 +96,17 @@ func Builtins() ([]BuiltinSkill, error) {
 			return nil, fmt.Errorf("第一方技能 %s 的目录与 SKILL.md 元数据不一致", item.Dir)
 		}
 		sum := sha256.Sum256([]byte(instructions))
+		capabilityManifestJSON, err := json.Marshal(item.CapabilityManifest)
+		if err != nil {
+			return nil, fmt.Errorf("序列化第一方技能 %s Capability Manifest 失败: %w", item.Dir, err)
+		}
 		result = append(result, BuiltinSkill{
 			Dir: item.Dir, Version: item.Version, Name: item.Name, Description: item.Description,
 			Icon: strings.TrimSpace(item.Icon), CoverURL: strings.TrimSpace(item.CoverURL), Categories: cleanStrings(item.Categories),
 			Visibility: item.Visibility, SourceKind: strings.TrimSpace(item.SourceKind), SourceURL: strings.TrimSpace(item.SourceURL),
 			SourceRevision: strings.TrimSpace(item.SourceRevision), SourceLicense: strings.TrimSpace(item.SourceLicense),
 			Changelog: strings.TrimSpace(item.Changelog), Instructions: instructions, Checksum: hex.EncodeToString(sum[:]),
+			CapabilityManifest: item.CapabilityManifest, CapabilityManifestJSON: string(capabilityManifestJSON),
 		})
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].Dir < result[right].Dir })
@@ -110,7 +120,7 @@ func validateManifestSkill(item manifestSkill) error {
 	if strings.TrimSpace(item.Name) == "" || len(item.Name) > 160 || strings.TrimSpace(item.Description) == "" || len(item.Description) > 500 {
 		return fmt.Errorf("技能名称或描述无效")
 	}
-	if len(item.Icon) > 80 || len(item.CoverURL) > 1000 || len(item.SourceURL) > 1000 || len(item.SourceRevision) > 160 ||
+	if len(item.Icon) > 80 || len(item.CoverURL) > 1000 || len(item.SourceURL) > 1000 || strings.TrimSpace(item.SourceRevision) == "" || len(item.SourceRevision) > 160 ||
 		strings.TrimSpace(item.SourceLicense) == "" || len(item.SourceLicense) > 80 || strings.TrimSpace(item.Changelog) == "" || len(item.Changelog) > 500 {
 		return fmt.Errorf("技能来源或展示元数据无效")
 	}
@@ -119,6 +129,12 @@ func validateManifestSkill(item manifestSkill) error {
 	}
 	if item.SourceKind == "adapted" && strings.TrimSpace(item.SourceURL) == "" {
 		return fmt.Errorf("改编技能缺少来源地址")
+	}
+	if item.SourceKind == "original" && strings.TrimSpace(item.SourceURL) != "" {
+		return fmt.Errorf("原创技能不得声明上游来源地址")
+	}
+	if err := agentruntime.ValidateSkillCapabilityManifest(item.CapabilityManifest); err != nil {
+		return fmt.Errorf("技能 Capability Manifest 无效: %w", err)
 	}
 	categories := cleanStrings(item.Categories)
 	if len(categories) == 0 || len(categories) > 12 {

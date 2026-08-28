@@ -1,11 +1,70 @@
 package service
 
 import (
+	"reflect"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestSuccessfulPublicationIDsByRevisionUsesStableFirstSuccessfulPublication(t *testing.T) {
+	publications := []model.AgentAssetPublication{
+		{ID: "publication-library", ArtifactRevisionID: "revision-1", Status: model.AgentAssetPublicationSucceeded},
+		{ID: "publication-project", ArtifactRevisionID: "revision-1", Status: model.AgentAssetPublicationSucceeded},
+	}
+
+	actual, err := successfulPublicationIDsByRevision(publications)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual["revision-1"] != "publication-library" {
+		t.Fatalf("publication id = %q, want stable first successful publication", actual["revision-1"])
+	}
+}
+
+func TestMediaCandidateDeliveryArtifactCarriesExactApprovedResourceAndPublicationFacts(t *testing.T) {
+	revision := model.AgentArtifactRevision{
+		ID: "candidate-revision-1", ArtifactID: "candidate-artifact-1", ArtifactKey: "final-video",
+		Kind: mediaCandidateArtifactKind, SchemaVersion: 1, ResourceID: "resource-video-1",
+		ModelRequestIdentity: "provider-request-1",
+		PayloadJSON:          `{"candidateKey":"final-video","mediaKind":"video","providerRequestIdentity":"provider-request-1","resourceId":"resource-video-1","sourceTaskId":"task-video-1"}`,
+	}
+	resource := model.Resource{
+		ID: "resource-video-1", Kind: "video", Status: model.ResourceStatusReady,
+		Provider: "oss", ObjectKey: "videos/final.mp4", ETag: "etag-final-video",
+	}
+
+	actual, err := mediaCandidateDeliveryArtifact(revision, resource, true, "publication-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := agentruntime.DeliveryArtifact{
+		Kind: agentruntime.ArtifactVideo, ArtifactID: revision.ArtifactID, RevisionID: revision.ID,
+		ResourceID: resource.ID, URL: "/api/resources/resource-video-1/file", ResourceReady: true,
+		Approved: true, PublicationID: "publication-1",
+	}
+	if !reflect.DeepEqual(actual, want) {
+		t.Fatalf("delivery artifact = %#v, want %#v", actual, want)
+	}
+}
+
+func TestMediaCandidateDeliveryArtifactRejectsPublicationWithoutApproval(t *testing.T) {
+	revision := model.AgentArtifactRevision{
+		ID: "candidate-revision-1", ArtifactID: "candidate-artifact-1", ArtifactKey: "voiceover",
+		Kind: mediaCandidateArtifactKind, SchemaVersion: 1, ResourceID: "resource-audio-1",
+		ModelRequestIdentity: "provider-request-audio-1",
+		PayloadJSON:          `{"candidateKey":"voiceover","mediaKind":"audio","providerRequestIdentity":"provider-request-audio-1","resourceId":"resource-audio-1","sourceTaskId":"task-audio-1"}`,
+	}
+	resource := model.Resource{
+		ID: "resource-audio-1", Kind: "audio", Status: model.ResourceStatusReady,
+		Provider: "oss", ObjectKey: "audio/voiceover.mp3", ETag: "etag-voiceover",
+	}
+
+	if _, err := mediaCandidateDeliveryArtifact(revision, resource, false, "publication-1"); err == nil {
+		t.Fatal("expected publication without exact approval to fail")
+	}
+}
 
 func TestCommittedPlanDeliveryArtifactsIncludesResumedPlanFacts(t *testing.T) {
 	artifacts := []model.AgentProductionArtifact{

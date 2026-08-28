@@ -141,6 +141,8 @@ func (s *Service) QuoteTaskBilling(userID string, request TaskBillingQuoteReques
 func billingUsageFromQuoteInput(capability string, modelKey string, input TaskBillingQuoteInput) (BillingUsage, error) {
 	config := input.Config
 	switch capability {
+	case "audio", "vision":
+		return BillingUsage{Quantity: 1}, nil
 	case "image":
 		if input.ReferenceImageCount < 0 {
 			return BillingUsage{}, BadAuthRequest("参考图片数量无效")
@@ -227,7 +229,7 @@ func taskBillingQuoteFromOrder(order *model.BillingOrder, taskCount int64) (*Tas
 }
 
 func validateTaskBillingQuoteConfirmation(request CreateTaskRequest, order *model.BillingOrder) error {
-	if order == nil || (order.Capability != "image" && order.Capability != "video") {
+	if order == nil || (order.Capability != "audio" && order.Capability != "image" && order.Capability != "video" && order.Capability != "vision") {
 		return nil
 	}
 	current, err := taskBillingQuoteFromOrder(order, 1)

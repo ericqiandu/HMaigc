@@ -86,6 +86,7 @@ type taskCreationIdentity struct {
 	BillingIdempotencyKey  string
 	UseCurrentBillingQuote bool
 	TypedInputJSON         json.RawMessage
+	Audience               model.TaskAudience
 }
 
 type SessionDetail struct {
@@ -366,8 +367,14 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, identity taskCreationIdentity) (*model.Task, error) {
 	identity.TaskID = strings.TrimSpace(identity.TaskID)
 	identity.BillingIdempotencyKey = strings.TrimSpace(identity.BillingIdempotencyKey)
+	if identity.Audience == "" {
+		identity.Audience = model.TaskAudienceCustomer
+	}
 	if identity.TaskID == "" {
 		return nil, errors.New("task creation identity is invalid")
+	}
+	if identity.Audience != model.TaskAudienceCustomer && identity.Audience != model.TaskAudienceInternal {
+		return nil, errors.New("task creation audience is invalid")
 	}
 	if identity.BillingIdempotencyKey != "" {
 		existing, existingErr := s.repo.TaskForUser(userID, identity.TaskID)
@@ -420,7 +427,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if taskType == "" {
 		taskType = "video_image_to_video"
 	}
-	task := model.Task{ID: identity.TaskID, UserID: userID, Audience: model.TaskAudienceCustomer, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	task := model.Task{ID: identity.TaskID, UserID: userID, Audience: identity.Audience, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
@@ -491,7 +498,8 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 
 func (s *Service) validateIdempotentCreatedTask(existing *model.Task, req CreateTaskRequest, identity taskCreationIdentity) (*model.Task, error) {
 	if existing == nil || existing.ID != identity.TaskID || existing.ProjectID != req.ProjectID || existing.Type != req.Type ||
-		existing.Operation != req.Operation || existing.Prompt != strings.TrimSpace(req.Prompt) || existing.BillingOrderID == "" {
+		existing.Operation != req.Operation || existing.Prompt != strings.TrimSpace(req.Prompt) || existing.BillingOrderID == "" ||
+		existing.Audience != identity.Audience {
 		return nil, errors.New("task creation idempotency facts conflict")
 	}
 	order, err := s.repo.BillingOrder(existing.BillingOrderID)
@@ -997,6 +1005,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		runID, _ = agentRuntimeModelRunID(task.Operation)
 	} else if productionRunID, productionTask := agentProductionRenderRunID(task.Operation); productionTask {
 		runID = productionRunID
+	} else if visualRunID, visualTask := agentVisualAnalysisRunID(task.Operation); visualTask {
+		runID = visualRunID
+	} else if mediaRunID, mediaTask := agentMediaGenerationRunID(task.Operation); mediaTask {
+		runID = mediaRunID
 	}
 	if runID != "" {
 		defer func() {
@@ -1243,6 +1255,10 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	ctx = withProviderAnalytics(ctx, s, task)
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
+	}
+	if task.Type == agentVisualAnalysisTaskType {
+		result, err := s.processAgentVisualAnalysisTask(ctx, task)
+		return result, nil, err
 	}
 	if task.Type == agentRuntimeModelTaskType {
 		result, err := s.processAgentRuntimeModelText(ctx, task)

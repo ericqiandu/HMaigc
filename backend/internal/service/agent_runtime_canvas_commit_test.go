@@ -245,7 +245,7 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 		}
 		if progress.State.Status != agentruntime.RunRunning || progress.State.PendingToolCall != nil ||
 			progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded {
-			t.Fatalf("canvas commit state = %#v", progress.State)
+			t.Fatalf("canvas commit state = %#v last tool result = %+v", progress.State, progress.State.LastToolResult)
 		}
 		if _, err := svc.CoordinatePendingAgentTool(scope, CoordinateAgentToolInput{ToolCallID: "commit-production", ActionVersion: 1}); err != nil {
 			t.Fatal(err)
@@ -288,7 +288,7 @@ func TestProductionCanvasCommitCommitsOnceAndRejectsStaleRevision(t *testing.T) 
 			t.Fatal(err)
 		}
 		if progress.State.LastToolResult == nil || progress.State.LastToolResult.Succeeded || progress.State.LastToolResult.ErrorCode != "canvas_revision_conflict" {
-			t.Fatalf("stale canvas commit state = %#v", progress.State)
+			t.Fatalf("stale canvas commit state = %#v last tool result = %+v", progress.State, progress.State.LastToolResult)
 		}
 		var conflictFacts struct {
 			CurrentRevision string `json:"currentRevision"`
@@ -527,9 +527,21 @@ func prepareProductionCanvasCommitTest(t *testing.T) (*Service, *gorm.DB, agentr
 			}
 		}
 		arguments.Attempt = 0
+		capability := "image"
+		taskType := "canvas_image"
+		if artifact.Kind == model.AgentProductionArtifactVideoClip {
+			capability = "video"
+			taskType = "canvas_video"
+		}
 		arguments.FrozenRenderQuote = agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: 1_000_000, PerTaskAmountMicrocredits: 1_000_000,
 			PriceVersion: 1, BillingMode: "flat", Quantity: 1, QuoteFingerprint: "test-quote-" + artifactID,
+			QuoteID: "quote-" + artifactID, ApprovalFingerprint: "approval-" + artifactID,
+			TaskID: artifact.TaskID, BillingIdempotencyKey: "billing-" + artifactID,
+			ChannelModelID: "channel-model-" + artifactID, Capability: capability, TaskType: taskType,
+			Operation: "production_render", Prompt: "test prompt for " + artifactID,
+			ParametersJSON: `{}`, ProviderCapabilitiesJSON: `{}`,
+			ExpiresAt: now.Add(time.Hour),
 		}
 		inputJSON, marshalErr := json.Marshal(arguments)
 		if marshalErr != nil {

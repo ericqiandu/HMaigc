@@ -27,49 +27,8 @@ func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action Faile
 		return errors.New("task is required")
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if strings.TrimSpace(task.BillingOrderID) != "" {
-			var order model.BillingOrder
-			query := tx.Where("id = ?", task.BillingOrderID)
-			if r.Dialect() == "postgres" {
-				query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-			}
-			if err := query.First(&order).Error; err != nil {
-				return err
-			}
-			if order.TaskID != "" && order.TaskID != task.ID {
-				return ErrBillingStateConflict
-			}
-			if action == FailedTaskBillingRefund {
-				if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning {
-					return ErrBillingStateConflict
-				}
-				if err := refundBillingOrderTx(tx, &order, errorText); err != nil {
-					return err
-				}
-			} else if action == FailedTaskBillingUncertain {
-				if order.Status != model.BillingStatusUncertain {
-					now := time.Now()
-					updated := tx.Model(&model.BillingOrder{}).
-						Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
-						Updates(uncertainBillingUpdates(order, errorText, now))
-					if updated.Error != nil {
-						return updated.Error
-					}
-					if updated.RowsAffected != 1 {
-						return ErrBillingStateConflict
-					}
-				} else {
-					updates := uncertainBillingUpdates(order, order.Error, time.Now())
-					if strings.TrimSpace(order.Error) == "" {
-						updates["error"] = errorText
-					}
-					if err := tx.Model(&model.BillingOrder{}).Where("id = ? AND status = ?", order.ID, model.BillingStatusUncertain).Updates(updates).Error; err != nil {
-						return err
-					}
-				}
-			} else {
-				return fmt.Errorf("unsupported failed task billing action: %s", action)
-			}
+		if err := r.finalizeFailedBillingTx(tx, task.BillingOrderID, task.ID, action, errorText); err != nil {
+			return err
 		}
 		now := time.Now()
 		updatedTask := tx.Model(&model.Task{}).
@@ -87,6 +46,51 @@ func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action Faile
 		}
 		return nil
 	})
+}
+
+func (r *Repository) finalizeFailedBillingTx(tx *gorm.DB, orderID string, taskID string, action FailedTaskBillingAction, errorText string) error {
+	if strings.TrimSpace(orderID) == "" {
+		return nil
+	}
+	var order model.BillingOrder
+	query := tx.Where("id = ?", orderID)
+	if r.Dialect() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.First(&order).Error; err != nil {
+		return err
+	}
+	if order.TaskID != "" && order.TaskID != taskID {
+		return ErrBillingStateConflict
+	}
+	switch action {
+	case FailedTaskBillingRefund:
+		if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning {
+			return ErrBillingStateConflict
+		}
+		return refundBillingOrderTx(tx, &order, errorText)
+	case FailedTaskBillingUncertain:
+		if order.Status != model.BillingStatusUncertain {
+			now := time.Now()
+			updated := tx.Model(&model.BillingOrder{}).
+				Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
+				Updates(uncertainBillingUpdates(order, errorText, now))
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return ErrBillingStateConflict
+			}
+			return nil
+		}
+		updates := uncertainBillingUpdates(order, order.Error, time.Now())
+		if strings.TrimSpace(order.Error) == "" {
+			updates["error"] = errorText
+		}
+		return tx.Model(&model.BillingOrder{}).Where("id = ? AND status = ?", order.ID, model.BillingStatusUncertain).Updates(updates).Error
+	default:
+		return fmt.Errorf("unsupported failed task billing action: %s", action)
+	}
 }
 
 func uncertainBillingUpdates(order model.BillingOrder, errorText string, now time.Time) map[string]any {

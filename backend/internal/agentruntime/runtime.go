@@ -51,17 +51,25 @@ type GenerationModelSelection struct {
 }
 
 type GenerationModelSelections struct {
-	Image *GenerationModelSelection `json:"image,omitempty"`
-	Video *GenerationModelSelection `json:"video,omitempty"`
+	Image  *GenerationModelSelection `json:"image,omitempty"`
+	Video  *GenerationModelSelection `json:"video,omitempty"`
+	Audio  *GenerationModelSelection `json:"audio,omitempty"`
+	Vision *GenerationModelSelection `json:"vision,omitempty"`
 }
 
 type SkillSelection struct {
-	Dir          string `json:"dir"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Instructions string `json:"instructions"`
-	Version      int    `json:"version"`
-	Checksum     string `json:"checksum"`
+	Dir                string                  `json:"dir"`
+	Name               string                  `json:"name"`
+	Description        string                  `json:"description"`
+	Instructions       string                  `json:"instructions"`
+	Version            int                     `json:"version"`
+	Checksum           string                  `json:"checksum"`
+	CapabilityManifest SkillCapabilityManifest `json:"capabilityManifest"`
+	SourceKind         string                  `json:"sourceKind,omitempty"`
+	SourceURL          string                  `json:"sourceUrl,omitempty"`
+	SourceRevision     string                  `json:"sourceRevision,omitempty"`
+	SourceLicense      string                  `json:"sourceLicense,omitempty"`
+	PublishedAt        string                  `json:"publishedAt,omitempty"`
 }
 
 type ExecutionMode string
@@ -74,9 +82,12 @@ const (
 type ResourceAttachment struct {
 	ResourceID string `json:"resourceId"`
 	Name       string `json:"name"`
+	Kind       string `json:"kind"`
 	MIMEType   string `json:"mimeType"`
+	SizeBytes  int64  `json:"sizeBytes"`
 	Width      int    `json:"width,omitempty"`
 	Height     int    `json:"height,omitempty"`
+	DurationMS int64  `json:"durationMs,omitempty"`
 }
 
 // RunConfiguration is an immutable snapshot of the user's explicit composer choices.
@@ -294,10 +305,14 @@ func Terminate(current RuntimeState, failureCode string) (RuntimeTransition, err
 }
 
 func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error) {
+	return AdvanceForToolSchema(current, input, CurrentToolSchemaVersion)
+}
+
+func AdvanceForToolSchema(current RuntimeState, input RuntimeInput, toolSchemaVersion int) (RuntimeTransition, error) {
 	if err := validateAdvancingState(current); err != nil {
 		return RuntimeTransition{}, err
 	}
-	if err := input.Decision.Validate(); err != nil {
+	if err := input.Decision.ValidateForToolSchema(toolSchemaVersion); err != nil {
 		return RuntimeTransition{}, err
 	}
 	var decisionExpected ExpectedDelivery
@@ -366,7 +381,7 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 			next.FailureCode = "step_budget_exhausted"
 			return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
 		}
-		policy, ok := ToolPolicyFor(input.Decision.ToolCall.ToolName)
+		policy, ok := ToolPolicyForSchema(input.Decision.ToolCall.ToolName, toolSchemaVersion)
 		if !ok {
 			return RuntimeTransition{}, errors.New("agent tool policy is unavailable")
 		}
@@ -652,6 +667,12 @@ func validateRuntimeState(state RuntimeState) error {
 	return nil
 }
 
+// ValidateRuntimeState verifies a persisted checkpoint before recovery resumes
+// provider or tool execution. It performs no mutation and accepts no fallback.
+func ValidateRuntimeState(state RuntimeState) error {
+	return validateRuntimeState(state)
+}
+
 func validatePendingSteers(pendingSteers []PendingSteer) error {
 	identities := make(map[string]struct{}, len(pendingSteers))
 	for _, pending := range pendingSteers {
@@ -784,7 +805,7 @@ func ValidateRunConfiguration(configuration RunConfiguration) error {
 	if configuration.ExecutionMode != ExecutionGuided && configuration.ExecutionMode != ExecutionAutomatic {
 		return errors.New("agent runtime execution mode is invalid")
 	}
-	for _, selection := range []*GenerationModelSelection{configuration.GenerationModels.Image, configuration.GenerationModels.Video} {
+	for _, selection := range []*GenerationModelSelection{configuration.GenerationModels.Image, configuration.GenerationModels.Video, configuration.GenerationModels.Audio, configuration.GenerationModels.Vision} {
 		if selection == nil {
 			continue
 		}
@@ -816,26 +837,75 @@ func ValidateRunConfiguration(configuration RunConfiguration) error {
 		}
 		previousDir = skill.Dir
 		totalInstructions += len(skill.Instructions)
+		if len(skill.CapabilityManifest.Specialists) > 0 || len(skill.CapabilityManifest.Tools) > 0 || len(skill.CapabilityManifest.ArtifactSchemas) > 0 {
+			if err := ValidateSkillCapabilityManifest(skill.CapabilityManifest); err != nil {
+				return errors.New("agent runtime skill capability manifest is invalid")
+			}
+			if strings.TrimSpace(skill.SourceKind) != skill.SourceKind || strings.TrimSpace(skill.SourceLicense) != skill.SourceLicense ||
+				skill.SourceKind == "" || len(skill.SourceKind) > 32 || skill.SourceLicense == "" || len(skill.SourceLicense) > 80 ||
+				strings.TrimSpace(skill.SourceURL) != skill.SourceURL || len(skill.SourceURL) > 1000 ||
+				strings.TrimSpace(skill.SourceRevision) != skill.SourceRevision || len(skill.SourceRevision) > 160 ||
+				strings.TrimSpace(skill.PublishedAt) != skill.PublishedAt || skill.PublishedAt == "" || len(skill.PublishedAt) > 64 {
+				return errors.New("agent runtime frozen skill source facts are invalid")
+			}
+		}
 	}
 	if totalInstructions > 64*1024 {
 		return errors.New("agent runtime skill selection is invalid")
 	}
-	if len(configuration.Attachments) > 4 {
+	if len(configuration.Attachments) > 12 {
 		return errors.New("agent runtime attachment selection is invalid")
 	}
 	previousResourceID := ""
+	var totalAttachmentBytes int64
 	for _, attachment := range configuration.Attachments {
 		attachment.ResourceID = strings.TrimSpace(attachment.ResourceID)
 		attachment.Name = strings.TrimSpace(attachment.Name)
+		attachment.Kind = strings.TrimSpace(attachment.Kind)
 		attachment.MIMEType = strings.TrimSpace(attachment.MIMEType)
 		if attachment.ResourceID == "" || len(attachment.ResourceID) > 80 || attachment.Name == "" || len(attachment.Name) > 240 ||
-			!strings.HasPrefix(attachment.MIMEType, "image/") || len(attachment.MIMEType) > 120 || attachment.Width < 0 || attachment.Height < 0 ||
+			!validFrozenMediaMIME(attachment.Kind, attachment.MIMEType) || len(attachment.MIMEType) > 120 || attachment.SizeBytes <= 0 ||
+			attachment.SizeBytes > 4<<30 || !validFrozenMediaDimensions(attachment) ||
 			(previousResourceID != "" && attachment.ResourceID <= previousResourceID) {
 			return errors.New("agent runtime attachment selection is invalid")
 		}
+		if totalAttachmentBytes > (4<<30)-attachment.SizeBytes {
+			return errors.New("agent runtime attachment selection is invalid")
+		}
+		totalAttachmentBytes += attachment.SizeBytes
 		previousResourceID = attachment.ResourceID
 	}
 	return nil
+}
+
+func validFrozenMediaMIME(kind string, mimeType string) bool {
+	if mimeType == "" || strings.ToLower(mimeType) != mimeType || strings.ContainsAny(mimeType, "; ") {
+		return false
+	}
+	prefix := kind + "/"
+	if kind != "image" && kind != "audio" && kind != "video" || !strings.HasPrefix(mimeType, prefix) || len(mimeType) <= len(prefix) {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(mimeType, prefix) {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '.' || character == '+' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validFrozenMediaDimensions(attachment ResourceAttachment) bool {
+	switch attachment.Kind {
+	case "image":
+		return attachment.Width > 0 && attachment.Height > 0 && attachment.DurationMS >= 0
+	case "audio":
+		return attachment.Width == 0 && attachment.Height == 0 && attachment.DurationMS > 0
+	case "video":
+		return attachment.Width > 0 && attachment.Height > 0 && attachment.DurationMS > 0
+	default:
+		return false
+	}
 }
 
 func validFailureCode(value string) bool {

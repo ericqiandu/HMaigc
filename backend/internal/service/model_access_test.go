@@ -156,8 +156,22 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityControlled || capabilities.WatermarkCapability != model.WatermarkCapabilityControlled {
 		t.Fatalf("seedance watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
 	}
-	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
+	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxImagesWithVideo != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
 		t.Fatalf("provider capabilities = %#v", capabilities)
+	}
+	if len(capabilities.Durations) != 27 || capabilities.Durations[0] != 4 || capabilities.Durations[len(capabilities.Durations)-1] != 30 {
+		t.Fatalf("provider durations = %#v", capabilities.Durations)
+	}
+	if !capabilities.SupportsTextToVideo || !capabilities.SupportsImageToVideo || !capabilities.SupportsReferenceVideo ||
+		!capabilities.SupportsNativeAudio || !capabilities.SupportsDialogue || !capabilities.SupportsVoiceReference ||
+		capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+		t.Fatalf("provider media delivery capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.AdaptiveRatioModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != "first_last_frame" {
+		t.Fatalf("provider adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+	}
+	if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" {
+		t.Fatalf("provider generation modes = %#v", capabilities.GenerationModes)
 	}
 	if strings.Join(capabilities.Resolutions, ",") != "480p,720p,1080p" {
 		t.Fatalf("provider resolutions = %#v", capabilities.Resolutions)
@@ -171,6 +185,80 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), `"tools":null`) || !strings.Contains(string(encoded), `"tools":[]`) {
 		t.Fatalf("unsupported tools must serialize as an empty array: %s", encoded)
+	}
+}
+
+func TestDirectMediaInterfacesPublishExactCapabilities(t *testing.T) {
+	tests := []struct {
+		name          string
+		interfaceType model.ChannelInterfaceType
+		modelKey      string
+		assert        func(*testing.T, *PublicProviderCapabilities)
+	}{
+		{
+			name: "MiniMax H3 video", interfaceType: model.ChannelInterfaceMiniMaxVideo, modelKey: miniMaxH3Model,
+			assert: func(t *testing.T, capabilities *PublicProviderCapabilities) {
+				t.Helper()
+				if len(capabilities.Durations) != 12 || capabilities.Durations[0] != 4 || capabilities.Durations[11] != 15 {
+					t.Fatalf("durations = %#v", capabilities.Durations)
+				}
+				if !capabilities.SupportsTextToVideo || !capabilities.SupportsImageToVideo || !capabilities.SupportsReferenceVideo ||
+					capabilities.SupportsNativeAudio || capabilities.SupportsDialogue || !capabilities.SupportsVoiceReference ||
+					capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+					t.Fatalf("MiniMax capabilities = %#v", capabilities)
+				}
+				if strings.Join(capabilities.InputVariants, ",") != "standard" {
+					t.Fatalf("MiniMax pricing variants = %#v", capabilities.InputVariants)
+				}
+				if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" {
+					t.Fatalf("MiniMax generation modes = %#v", capabilities.GenerationModes)
+				}
+				if strings.Join(capabilities.AdaptiveRatioModes, ",") != "image,first_last_frame,image_reference,omni_reference" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != strings.Join(capabilities.AdaptiveRatioModes, ",") {
+					t.Fatalf("MiniMax adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+				}
+			},
+		},
+		{
+			name: "Kling direct video", interfaceType: model.ChannelInterfaceKlingVideo, modelKey: "kling-v2-6",
+			assert: func(t *testing.T, capabilities *PublicProviderCapabilities) {
+				t.Helper()
+				if len(capabilities.Durations) != 2 || capabilities.Durations[0] != 5 || capabilities.Durations[1] != 10 || !capabilities.SupportsTextToVideo ||
+					!capabilities.SupportsImageToVideo || capabilities.SupportsReferenceVideo || capabilities.SupportsNativeAudio ||
+					capabilities.SupportsDialogue || capabilities.SupportsVoiceReference || capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+					t.Fatalf("Kling capabilities = %#v", capabilities)
+				}
+				if strings.Join(capabilities.AdaptiveRatioModes, ",") != "image,first_last_frame" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != "image,first_last_frame" {
+					t.Fatalf("Kling adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+				}
+				if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame" {
+					t.Fatalf("Kling generation modes = %#v", capabilities.GenerationModes)
+				}
+			},
+		},
+		{
+			name: "MiniMax speech", interfaceType: model.ChannelInterfaceMiniMaxSpeech, modelKey: "speech-2.6-hd",
+			assert: func(t *testing.T, capabilities *PublicProviderCapabilities) {
+				t.Helper()
+				if capabilities.Capability != "audio" || !capabilities.SupportsDialogue || !capabilities.SupportsIndependentAudio ||
+					capabilities.SupportsTextToVideo || capabilities.SupportsImageToVideo || capabilities.SupportsReferenceVideo ||
+					capabilities.SupportsNativeAudio || capabilities.SupportsVoiceReference || capabilities.SupportsLipSync {
+					t.Fatalf("speech capabilities = %#v", capabilities)
+				}
+				if len(capabilities.GenerationModes) != 0 {
+					t.Fatalf("speech generation modes = %#v", capabilities.GenerationModes)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			capabilities := publicProviderModelCapabilities(test.interfaceType, test.modelKey)
+			if capabilities == nil {
+				t.Fatal("provider capabilities missing")
+			}
+			test.assert(t, capabilities)
+		})
 	}
 }
 
@@ -215,7 +303,7 @@ func TestPublicChannelPublishesAPIMartImageParameterCapabilities(t *testing.T) {
 		t.Fatalf("APIMart image provider capabilities missing: %#v", catalog.ModelCosts)
 	}
 	capabilities := catalog.ModelCosts[0].ProviderCapabilities
-	if capabilities.ModelKey != "gpt-image-2" || capabilities.UpstreamMode != "gpt-image-2" || capabilities.Capability != "image" {
+	if capabilities.ProviderFamily != "apimart" || capabilities.ModelKey != "gpt-image-2" || capabilities.UpstreamMode != "gpt-image-2" || capabilities.Capability != "image" {
 		t.Fatalf("APIMart image identity capabilities = %#v", capabilities)
 	}
 	if strings.Join(capabilities.Resolutions, ",") != "1K,2K,4K" || len(capabilities.Qualities) != 0 {
@@ -229,6 +317,15 @@ func TestPublicChannelPublishesAPIMartImageParameterCapabilities(t *testing.T) {
 	}
 	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityUnsupported || capabilities.WatermarkCapability != model.WatermarkCapabilityUnsupported {
 		t.Fatalf("APIMart image watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
+	}
+	encoded, err := json.Marshal(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"referenceVideoResolutions", "generatedAudioResolutions", "durations", "generationModes", "adaptiveRatioModes", "requiredAdaptiveRatioModes", "tools"} {
+		if strings.Contains(string(encoded), `"`+field+`":null`) {
+			t.Fatalf("APIMart capability field %s encoded as null: %s", field, encoded)
+		}
 	}
 }
 

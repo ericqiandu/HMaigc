@@ -62,11 +62,12 @@ type interruptAgentRunRequest struct {
 
 type agentRuntimeRequest interface {
 	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentClarificationResponseRequest |
-		steerAgentRunRequest | interruptAgentRunRequest
+		steerAgentRunRequest | interruptAgentRunRequest | stageReviewRequest
 }
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 	agent := r.Group("/agent", agentRuntimeSecurityHeaders())
+	registerAgentProductionRoutes(agent, svc)
 	agent.GET("/threads", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

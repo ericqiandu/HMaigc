@@ -187,6 +187,37 @@ func TestProjectAgentItemEventCarriesTimelineKind(t *testing.T) {
 	}
 }
 
+func TestProjectAgentEventMapsPersistedStageReviewResolution(t *testing.T) {
+	now := time.Now().UTC()
+	content := agentruntime.StageReviewResolutionContent{
+		ContentType: agentruntime.StageReviewContentType, StageID: "stage-script", StageVersion: 3,
+		RevisionID: "revision-script-1", Decision: agentruntime.StageReviewApprove, ClientRequestID: "review-1",
+		ResultStageVersion: 4, ResultStatus: agentruntime.StageApproved,
+		ResultReviewRevisionID: "revision-script-1", ResultUpdatedAt: now,
+	}
+	payload, err := json.Marshal(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := model.AgentTimelineItem{
+		ID: "item-stage-review", ThreadID: "thread-1", RunID: "run-1",
+		Kind: model.AgentTimelineItemApproval, Status: model.AgentTimelineItemCompleted,
+		Ordinal: 4, SourceEventSequence: 8, ContentJSON: string(payload),
+		StartedAt: now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventApprovalDecided,
+		PayloadJSON: string(payload), CreatedAt: now,
+	}, &item, CurrentAgentUIProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected.Kind != AgentUIEventApprovalResolved || projected.ItemID != item.ID ||
+		projected.ItemKind != model.AgentTimelineItemApproval || string(projected.Payload) != string(payload) {
+		t.Fatalf("projected stage review resolution = %#v", projected)
+	}
+}
+
 func TestProjectAgentEventPreservesOnlySafeCanvasCommitRefreshFacts(t *testing.T) {
 	now := time.Now().UTC()
 	item := model.AgentTimelineItem{
@@ -273,6 +304,80 @@ func TestProjectAgentEventSanitizesArtifactPayload(t *testing.T) {
 	if _, err := ProjectAgentEvent(item.ThreadID, event, &item, CurrentAgentUIProtocolVersion); err == nil {
 		t.Fatal("artifact timeline containing a signed URL was accepted")
 	}
+}
+
+func TestProjectAgentEventReplaysAssetPublicationLifecycle(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name       string
+		itemID     string
+		status     model.AgentTimelineItemStatus
+		content    json.Marshaler
+		wantKind   AgentUIEventKind
+		wantMarker string
+	}{
+		{
+			name: "published", itemID: "publication-1", status: model.AgentTimelineItemCompleted,
+			content: assetPublicationJSON{Content: agentruntime.AssetPublicationContent{
+				ContentType: agentruntime.AssetPublicationContentType, PublicationID: "publication-1",
+				ArtifactRevisionID: "revision-1", ResourceID: "resource-1", AssetID: "asset-1",
+				AssetVersionID: "asset-version-1", ProjectAssetLinkID: "project-link-1",
+				RepresentationID: "representation-1", PublicationPurpose: "character-library",
+				TargetCategory: "character", TargetBindingKey: "hero",
+			}},
+			wantKind: AgentUIEventItemCompleted, wantMarker: `"assetId":"asset-1"`,
+		},
+		{
+			name: "failed", itemID: "publication-1-failure", status: model.AgentTimelineItemFailed,
+			content: assetPublicationFailureJSON{Content: agentruntime.AssetPublicationFailureContent{
+				ContentType: agentruntime.AssetPublicationFailedType, PublicationID: "publication-1",
+				ArtifactRevisionID: "revision-1", ErrorCode: "asset_publication_persistence_failed",
+			}},
+			wantKind: AgentUIEventItemFailed, wantMarker: `"errorCode":"asset_publication_persistence_failed"`,
+		},
+	}
+	for index, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			content, err := testCase.content.MarshalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sequence := int64(index + 1)
+			item := model.AgentTimelineItem{
+				ID: testCase.itemID, ThreadID: "thread-publication", RunID: "run-publication",
+				Kind: model.AgentTimelineItemArtifact, Status: testCase.status,
+				Ordinal: sequence, SourceEventSequence: sequence, ContentJSON: string(content),
+				StartedAt: now, CreatedAt: now, UpdatedAt: now,
+			}
+			projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+				RunID: item.RunID, Sequence: sequence, Kind: agentruntime.EventArtifactAvailable,
+				PayloadJSON: string(content), CreatedAt: now,
+			}, &item, CurrentAgentUIProtocolVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if projected.Kind != testCase.wantKind || projected.ItemID != item.ID ||
+				!strings.Contains(string(projected.Payload), testCase.wantMarker) {
+				t.Fatalf("projected publication event = %#v", projected)
+			}
+		})
+	}
+}
+
+type assetPublicationJSON struct {
+	Content agentruntime.AssetPublicationContent
+}
+
+func (value assetPublicationJSON) MarshalJSON() ([]byte, error) {
+	return json.Marshal(value.Content)
+}
+
+type assetPublicationFailureJSON struct {
+	Content agentruntime.AssetPublicationFailureContent
+}
+
+func (value assetPublicationFailureJSON) MarshalJSON() ([]byte, error) {
+	return json.Marshal(value.Content)
 }
 
 func TestAgentTimelineHistoryContentSanitizesArtifactPayload(t *testing.T) {

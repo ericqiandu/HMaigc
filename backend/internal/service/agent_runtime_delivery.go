@@ -17,6 +17,29 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 	}
 	evidence := agentruntime.DeliveryEvidence{FinalMessage: strings.TrimSpace(finalMessage)}
 	seenArtifacts := make(map[string]bool)
+	approvedRevisionIDs := map[string]struct{}{}
+	publicationByRevisionID := map[string]string{}
+	mediaFactsLoaded := false
+	loadMediaFacts := func() error {
+		if mediaFactsLoaded {
+			return nil
+		}
+		approved, err := s.repo.ApprovedArtifactRevisionIDsForScope(scope)
+		if err != nil {
+			return err
+		}
+		publications, err := s.repo.SucceededAgentAssetPublicationsForScope(scope)
+		if err != nil {
+			return err
+		}
+		publicationByRevisionID, err = successfulPublicationIDsByRevision(publications)
+		if err != nil {
+			return err
+		}
+		approvedRevisionIDs = approved
+		mediaFactsLoaded = true
+		return nil
+	}
 	var latestCanvasCommit model.AgentToolCall
 	hasCanvasCommit := false
 	for _, call := range calls {
@@ -59,6 +82,50 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 				evidence.Artifacts = append(evidence.Artifacts, artifact)
 				seenArtifacts[key] = true
 			}
+		case agentruntime.ToolMediaGenerate:
+			arguments, err := decodeFrozenAgentMediaGenerationArguments(json.RawMessage(call.InputJSON))
+			if err != nil {
+				return agentruntime.DeliveryEvidence{}, errors.New("agent media delivery input is invalid")
+			}
+			result, err := agentruntime.DecodeMediaGenerationToolResult([]byte(call.OutputJSON))
+			if err != nil {
+				return agentruntime.DeliveryEvidence{}, errors.New("agent media delivery evidence is invalid")
+			}
+			frozenAudioMode, err := agentMediaAudioModeForArguments(arguments)
+			if err != nil || result.AudioMode != frozenAudioMode {
+				return agentruntime.DeliveryEvidence{}, errors.New("agent media audio delivery evidence is invalid")
+			}
+			if err := loadMediaFacts(); err != nil {
+				return agentruntime.DeliveryEvidence{}, err
+			}
+			candidateSet := make(map[agentruntime.ArtifactRevisionRef]struct{}, len(result.Candidates))
+			for _, reference := range result.Candidates {
+				if reference.Validate() != nil {
+					return agentruntime.DeliveryEvidence{}, errors.New("agent media candidate reference is invalid")
+				}
+				if _, duplicate := candidateSet[reference]; duplicate {
+					return agentruntime.DeliveryEvidence{}, errors.New("agent media candidate reference is duplicated")
+				}
+				candidateSet[reference] = struct{}{}
+				revision, err := s.repo.ArtifactRevisionForArtifactInScope(scope, reference.ArtifactID, reference.RevisionID)
+				if err != nil {
+					return agentruntime.DeliveryEvidence{}, err
+				}
+				resource, err := s.productionResourceForScope(scope, revision.ResourceID)
+				if err != nil {
+					return agentruntime.DeliveryEvidence{}, err
+				}
+				_, approved := approvedRevisionIDs[revision.ID]
+				artifact, err := mediaCandidateDeliveryArtifact(*revision, *resource, approved, publicationByRevisionID[revision.ID])
+				if err != nil {
+					return agentruntime.DeliveryEvidence{}, err
+				}
+				key := artifact.ArtifactID + "\x00" + artifact.RevisionID
+				if !seenArtifacts[key] {
+					evidence.Artifacts = append(evidence.Artifacts, artifact)
+					seenArtifacts[key] = true
+				}
+			}
 		}
 	}
 	if hasCanvasCommit {
@@ -83,6 +150,49 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 		}
 	}
 	return evidence, nil
+}
+
+func successfulPublicationIDsByRevision(publications []model.AgentAssetPublication) (map[string]string, error) {
+	byRevisionID := make(map[string]string, len(publications))
+	for _, publication := range publications {
+		if publication.Status != model.AgentAssetPublicationSucceeded ||
+			!validStoredText(publication.ID, 120) || !validStoredText(publication.ArtifactRevisionID, 120) {
+			return nil, errors.New("agent publication delivery facts are invalid")
+		}
+		if byRevisionID[publication.ArtifactRevisionID] == "" {
+			byRevisionID[publication.ArtifactRevisionID] = publication.ID
+		}
+	}
+	return byRevisionID, nil
+}
+
+func mediaCandidateDeliveryArtifact(
+	revision model.AgentArtifactRevision,
+	resource model.Resource,
+	approved bool,
+	publicationID string,
+) (agentruntime.DeliveryArtifact, error) {
+	if !validStoredMediaCandidate(revision) || revision.ResourceID != resource.ID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media candidate delivery facts are invalid")
+	}
+	candidate, err := agentruntime.DecodeMediaCandidateContent([]byte(revision.PayloadJSON))
+	if err != nil || resource.Kind != string(candidate.MediaKind) {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media candidate resource facts are invalid")
+	}
+	if strings.TrimSpace(publicationID) != publicationID || len(publicationID) > 120 ||
+		(publicationID != "" && (!approved || !agentMediaResourceReady(&resource))) {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media candidate publication facts are invalid")
+	}
+	kind := agentruntime.ArtifactKind(candidate.MediaKind)
+	artifact := agentruntime.DeliveryArtifact{
+		Kind: kind, ArtifactID: revision.ArtifactID, RevisionID: revision.ID,
+		ResourceID: resource.ID, ResourceReady: agentMediaResourceReady(&resource),
+		Approved: approved, PublicationID: publicationID,
+	}
+	if artifact.ResourceReady {
+		artifact.URL = "/api/resources/" + resource.ID + "/file"
+	}
+	return artifact, nil
 }
 
 func committedPlanDeliveryArtifacts(

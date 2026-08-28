@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -50,22 +51,25 @@ func (s *Service) SkillIntegrationCapabilities() SkillIntegrationCapabilities {
 }
 
 type Skill struct {
-	Dir           string   `json:"dir"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	Icon          string   `json:"icon"`
-	CoverURL      string   `json:"cover_url"`
-	DetailText    string   `json:"detail_text"`
-	Categories    []string `json:"categories"`
-	Version       int      `json:"version"`
-	Checksum      string   `json:"checksum"`
-	Status        string   `json:"status"`
-	SourceKind    string   `json:"source_kind"`
-	SourceLicense string   `json:"source_license"`
-	PublishedAt   string   `json:"published_at"`
-	UploaderName  string   `json:"uploader_name"`
-	Liked         bool     `json:"liked"`
-	Activated     bool     `json:"activated"`
+	Dir                string                               `json:"dir"`
+	Name               string                               `json:"name"`
+	Description        string                               `json:"description"`
+	Icon               string                               `json:"icon"`
+	CoverURL           string                               `json:"cover_url"`
+	DetailText         string                               `json:"detail_text"`
+	Categories         []string                             `json:"categories"`
+	Version            int                                  `json:"version"`
+	Checksum           string                               `json:"checksum"`
+	Status             string                               `json:"status"`
+	SourceKind         string                               `json:"source_kind"`
+	SourceURL          string                               `json:"source_url"`
+	SourceRevision     string                               `json:"source_revision"`
+	SourceLicense      string                               `json:"source_license"`
+	PublishedAt        string                               `json:"published_at"`
+	UploaderName       string                               `json:"uploader_name"`
+	Liked              bool                                 `json:"liked"`
+	Activated          bool                                 `json:"activated"`
+	CapabilityManifest agentruntime.SkillCapabilityManifest `json:"capability_manifest"`
 }
 
 func (s *Service) SkillsCatalog(_ context.Context, userID string, req SkillListRequest) (*SkillList, error) {
@@ -241,11 +245,17 @@ func skillsFromPublishedRecords(records []repository.PublishedSkillRecord, state
 			publishedAt = record.PublishedAt.UTC().Format(time.RFC3339)
 		}
 		state := stateByDir[record.Dir]
+		var capabilityManifest agentruntime.SkillCapabilityManifest
+		if err := json.Unmarshal([]byte(record.CapabilityManifestJSON), &capabilityManifest); err != nil || agentruntime.ValidateSkillCapabilityManifest(capabilityManifest) != nil {
+			return nil, errors.New("已发布 Skill Capability Manifest 无效")
+		}
 		result = append(result, Skill{
 			Dir: record.Dir, Name: record.Name, Description: record.Description, Icon: record.Icon, CoverURL: record.CoverURL,
 			DetailText: record.Instructions, Categories: categories, Version: record.Version, Checksum: record.Checksum,
-			Status: string(record.Status), SourceKind: record.SourceKind, SourceLicense: record.SourceLicense, PublishedAt: publishedAt,
+			Status: string(record.Status), SourceKind: record.SourceKind, SourceURL: record.SourceURL, SourceRevision: record.SourceRevision,
+			SourceLicense: record.SourceLicense, PublishedAt: publishedAt,
 			UploaderName: "HMaigc", Liked: state.Liked, Activated: state.Activated,
+			CapabilityManifest: capabilityManifest,
 		})
 	}
 	return result, nil

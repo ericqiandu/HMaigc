@@ -36,9 +36,12 @@ func (kind ArtifactKind) Valid() bool {
 type DeliveryFact string
 
 const (
-	DeliveryFactFinalMessage   DeliveryFact = "final_message"
-	DeliveryFactCanvasRevision DeliveryFact = "canvas_revision"
-	DeliveryFactArtifact       DeliveryFact = "artifact"
+	DeliveryFactFinalMessage     DeliveryFact = "final_message"
+	DeliveryFactCanvasRevision   DeliveryFact = "canvas_revision"
+	DeliveryFactArtifact         DeliveryFact = "artifact"
+	DeliveryFactArtifactRevision DeliveryFact = "artifact_revision"
+	DeliveryFactResource         DeliveryFact = "resource"
+	DeliveryFactPublication      DeliveryFact = "publication"
 )
 
 type DeliveryCriterion struct {
@@ -107,7 +110,7 @@ func (expected ExpectedDelivery) Validate() error {
 			if criterion.Artifact != "" {
 				return errors.New("expected delivery criterion artifact is unexpected")
 			}
-		case DeliveryFactArtifact:
+		case DeliveryFactArtifact, DeliveryFactArtifactRevision, DeliveryFactResource, DeliveryFactPublication:
 			if !criterion.Artifact.Valid() {
 				return errors.New("expected delivery criterion artifact is required")
 			}
@@ -149,8 +152,14 @@ func (expected ExpectedDelivery) Validate() error {
 }
 
 type DeliveryArtifact struct {
-	Kind ArtifactKind `json:"kind"`
-	URL  string       `json:"url"`
+	Kind          ArtifactKind `json:"kind"`
+	ArtifactID    string       `json:"artifactId,omitempty"`
+	RevisionID    string       `json:"revisionId,omitempty"`
+	ResourceID    string       `json:"resourceId,omitempty"`
+	URL           string       `json:"url,omitempty"`
+	ResourceReady bool         `json:"resourceReady,omitempty"`
+	Approved      bool         `json:"approved,omitempty"`
+	PublicationID string       `json:"publicationId,omitempty"`
 }
 
 type DeliveryEvidence struct {
@@ -178,12 +187,12 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 	if err := expected.Validate(); err != nil {
 		return DeliveryVerification{Status: VerificationFailed, Rationale: err.Error()}
 	}
-	artifacts := make(map[ArtifactKind]bool, len(evidence.Artifacts))
+	artifacts := make(map[ArtifactKind][]DeliveryArtifact, len(evidence.Artifacts))
 	for _, artifact := range evidence.Artifacts {
-		if !artifact.Kind.Valid() || strings.TrimSpace(artifact.URL) == "" {
+		if !validDeliveryArtifact(artifact) {
 			return DeliveryVerification{Status: VerificationFailed, Rationale: "delivery evidence artifact is invalid"}
 		}
-		artifacts[artifact.Kind] = true
+		artifacts[artifact.Kind] = append(artifacts[artifact.Kind], artifact)
 	}
 	missing := make([]DeliveryCriterion, 0)
 	for _, criterion := range expected.CompletionCriteria {
@@ -194,7 +203,23 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 		case DeliveryFactCanvasRevision:
 			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID
 		case DeliveryFactArtifact:
-			satisfied = artifacts[criterion.Artifact]
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.URL != ""
+			})
+		case DeliveryFactArtifactRevision:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved
+			})
+		case DeliveryFactResource:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved &&
+					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != ""
+			})
+		case DeliveryFactPublication:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved &&
+					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" && artifact.PublicationID != ""
+			})
 		}
 		if !satisfied {
 			missing = append(missing, criterion)
@@ -204,4 +229,37 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 		return DeliveryVerification{Status: VerificationRepairable, Rationale: "delivery evidence is incomplete", MissingCriteria: missing}
 	}
 	return DeliveryVerification{Status: VerificationSatisfied, Rationale: "delivery evidence satisfies every criterion"}
+}
+
+func validDeliveryArtifact(artifact DeliveryArtifact) bool {
+	if !artifact.Kind.Valid() || !validOptionalDeliveryIdentity(artifact.ArtifactID) ||
+		!validOptionalDeliveryIdentity(artifact.RevisionID) || !validOptionalDeliveryIdentity(artifact.ResourceID) ||
+		!validOptionalDeliveryIdentity(artifact.PublicationID) || strings.TrimSpace(artifact.URL) != artifact.URL ||
+		len(artifact.URL) > 4*1024 || (artifact.ArtifactID == "") != (artifact.RevisionID == "") {
+		return false
+	}
+	hasExactRevision := artifact.ArtifactID != "" && artifact.RevisionID != ""
+	if artifact.URL == "" && !hasExactRevision {
+		return false
+	}
+	if artifact.Approved && !hasExactRevision {
+		return false
+	}
+	if artifact.ResourceReady && (!hasExactRevision || artifact.ResourceID == "" || artifact.URL == "") {
+		return false
+	}
+	return artifact.PublicationID == "" || (artifact.Approved && artifact.ResourceReady)
+}
+
+func validOptionalDeliveryIdentity(value string) bool {
+	return strings.TrimSpace(value) == value && len(value) <= 120
+}
+
+func deliveryArtifactMatches(artifacts []DeliveryArtifact, predicate func(DeliveryArtifact) bool) bool {
+	for _, artifact := range artifacts {
+		if predicate(artifact) {
+			return true
+		}
+	}
+	return false
 }

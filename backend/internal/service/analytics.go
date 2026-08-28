@@ -548,7 +548,7 @@ func parseAnalyticsTime(value string) (time.Time, bool) {
 
 func normalizeCapability(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "text", "image", "video", "audio":
+	case "text", "image", "video", "audio", "vision":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -915,6 +915,9 @@ func mergeCurrency(current string, next string) string {
 
 func capabilityFromTaskType(taskType string) string {
 	value := strings.ToLower(taskType)
+	if value == agentVisualAnalysisTaskType {
+		return "vision"
+	}
 	for _, capability := range []string{"video", "image", "audio", "text"} {
 		if strings.Contains(value, capability) {
 			return capability

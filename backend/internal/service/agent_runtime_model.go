@@ -49,6 +49,7 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		return agentRuntimeModelTaskResult{}, errors.New("Agent 冻结模型配置不可用")
 	}
 	text := ""
+	toolSchemaVersion := 0
 	{
 		runID, ok := agentRuntimeModelRunID(task.Operation)
 		if !ok {
@@ -62,11 +63,12 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		if runErr != nil {
 			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型任务运行事实不可用")
 		}
+		toolSchemaVersion = run.ToolSchemaVersion
 		state, stateErr := s.beginAgentRuntimeModelRequest(scope, run.StepNumber)
 		if stateErr != nil {
 			return agentRuntimeModelTaskResult{}, stateErr
 		}
-		observer := agentruntime.NewDecisionStreamObserver()
+		observer := agentruntime.NewDecisionStreamObserverForToolSchema(run.ToolSchemaVersion)
 		itemID := agentruntime.AgentMessageItemID(runID, state.StepNumber)
 		started := false
 		visibleMessage := ""
@@ -154,7 +156,7 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 	}
 	text = strings.TrimSpace(text)
-	if _, err := agentruntime.ParseModelDecision([]byte(text)); err != nil {
+	if _, err := agentruntime.ParseModelDecisionForToolSchema([]byte(text), toolSchemaVersion); err != nil {
 		return agentRuntimeModelTaskResult{
 			Mode:             "text",
 			DecisionFeedback: &agentruntime.ModelDecisionFeedback{Code: "model_decision_invalid", Reason: err.Error()},
@@ -273,7 +275,7 @@ func (s *Service) persistAgentRuntimeTokenBillingEvidence(task model.Task, resul
 	return nil
 }
 
-func parseAgentRuntimeModelTaskResult(raw string) (agentruntime.ModelDecision, error) {
+func parseAgentRuntimeModelTaskResult(raw string, toolSchemaVersion int) (agentruntime.ModelDecision, error) {
 	decoder := json.NewDecoder(bytes.NewBufferString(raw))
 	decoder.DisallowUnknownFields()
 	var result agentRuntimeModelTaskResult
@@ -297,5 +299,5 @@ func parseAgentRuntimeModelTaskResult(raw string) (agentruntime.ModelDecision, e
 	if result.Text == "" {
 		return agentruntime.ModelDecision{}, errors.New("Agent 模型任务结果事实无效")
 	}
-	return agentruntime.ParseModelDecision([]byte(result.Text))
+	return agentruntime.ParseModelDecisionForToolSchema([]byte(result.Text), toolSchemaVersion)
 }

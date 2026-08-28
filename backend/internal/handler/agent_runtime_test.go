@@ -156,7 +156,7 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
-		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "读取并更新画布",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "读取并更新画布",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
 	}); err != nil {
 		t.Fatal(err)

@@ -265,6 +265,8 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	state := transition.State
 	var facts struct {
 		LastEventSequence int64 `gorm:"column:last_event_sequence"`
+		ToolSchemaVersion int   `gorm:"column:tool_schema_version"`
+		RuntimeVersion    int   `gorm:"column:runtime_version"`
 	}
 	var completedAt *time.Time
 	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled {
@@ -281,7 +283,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 			          AND tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
 			          AND domain_project_id = ? AND canvas_id = ?
 			   )
-			 RETURNING last_event_sequence`,
+		 RETURNING last_event_sequence, tool_schema_version, runtime_version`,
 		state.StateVersion, state.StepNumber, state.Status, len(transition.EventKinds), now, completedAt,
 		scope.RunID, scope.ThreadID, scope.ActorUserID, previous.StateVersion, previous.StepNumber, state.MaxSteps, previous.Status,
 		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID,
@@ -295,10 +297,15 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 		}
 		return ErrAgentRuntimeStepConflict
 	}
-	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, now); err != nil {
+	if state.Status == agentruntime.RunCancelled && interruptAudit == nil && facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+		if err := r.cancelAgentRunTreeTx(tx, scope, now); err != nil {
+			return err
+		}
+	}
+	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
-	if err := persistAgentToolTransition(tx, scope, previous, state, now); err != nil {
+	if err := persistAgentToolTransition(tx, scope, previous, state, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
 	nextTimelineOrdinal, err := nextAgentTimelineOrdinal(tx, scope.RunID)
@@ -413,7 +420,7 @@ func (r *Repository) AppendAgentSteer(
 	return state, replayed, nil
 }
 
-func (r *Repository) InterruptAgentRun(
+func (r *Repository) CancelAgentRunTree(
 	scope agentruntime.Scope,
 	expectedStateVersion int,
 	now time.Time,
@@ -426,37 +433,47 @@ func (r *Repository) InterruptAgentRun(
 	}
 	var state agentruntime.RuntimeState
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		current, err := loadAgentCheckpointForScope(tx, scope, true)
-		if err != nil {
-			return err
-		}
-		transition, err := agentruntime.Interrupt(current, expectedStateVersion)
-		if err != nil {
-			return err
-		}
-		if err := validateAgentRuntimeTransition(scope, current, transition, now); err != nil {
-			return err
-		}
-		stateJSON, err := json.Marshal(transition.State)
-		if err != nil {
-			return err
-		}
-		if len(stateJSON) > agentEventPayloadLimit {
-			return ErrAgentPayloadTooLarge
-		}
-		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), nil, now); err != nil {
-			if errors.Is(err, ErrAgentRuntimeStepConflict) {
-				return agentruntime.ErrInterruptConflict
-			}
-			return err
-		}
-		state = transition.State
-		return nil
+		var err error
+		state, err = r.interruptAgentRunTreeTx(tx, scope, expectedStateVersion, now)
+		return err
 	})
 	if err != nil {
 		return agentruntime.RuntimeState{}, err
 	}
 	return state, nil
+}
+
+func (r *Repository) interruptAgentRunTreeTx(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+	expectedStateVersion int,
+	now time.Time,
+) (agentruntime.RuntimeState, error) {
+	current, err := loadAgentCheckpointForScope(tx, scope, true)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	transition, err := agentruntime.Interrupt(current, expectedStateVersion)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	if err := validateAgentRuntimeTransition(scope, current, transition, now); err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	stateJSON, err := json.Marshal(transition.State)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	if len(stateJSON) > agentEventPayloadLimit {
+		return agentruntime.RuntimeState{}, ErrAgentPayloadTooLarge
+	}
+	if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), nil, now); err != nil {
+		if errors.Is(err, ErrAgentRuntimeStepConflict) {
+			return agentruntime.RuntimeState{}, agentruntime.ErrInterruptConflict
+		}
+		return agentruntime.RuntimeState{}, err
+	}
+	return transition.State, nil
 }
 
 func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, now time.Time) error {
@@ -482,19 +499,19 @@ func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentrunt
 		if previous.PendingToolCall != nil || state.PendingToolCall != nil || state.LastToolResult == nil ||
 			state.LastToolResult.ToolCallID != transition.RejectedToolCall.ToolCallID ||
 			state.LastToolResult.ActionVersion != transition.RejectedToolCall.ActionVersion || state.LastToolResult.Succeeded ||
-			!transition.RejectedToolCall.ToolName.Valid() {
+			!transition.RejectedToolCall.ToolName.Known() {
 			return errors.New("agent rejected tool transition is invalid")
 		}
 	}
 	return nil
 }
 
-func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, now time.Time) error {
+func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, toolSchemaVersion int, now time.Time) error {
 	call := transition.RejectedToolCall
 	if call == nil {
 		return nil
 	}
-	policy, ok := agentruntime.ToolPolicyFor(call.ToolName)
+	policy, ok := agentruntime.ToolPolicyForSchema(call.ToolName, toolSchemaVersion)
 	if !ok || transition.State.LastToolResult == nil {
 		return errors.New("agent rejected tool policy is unavailable")
 	}
@@ -511,10 +528,10 @@ func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, pre
 	return db.Create(&record).Error
 }
 
-func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState, now time.Time) error {
+func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState, toolSchemaVersion int, now time.Time) error {
 	runID := scope.RunID
 	if previous.PendingToolCall == nil && next.PendingToolCall != nil {
-		policy, ok := agentruntime.ToolPolicyFor(next.PendingToolCall.ToolName)
+		policy, ok := agentruntime.ToolPolicyForSchema(next.PendingToolCall.ToolName, toolSchemaVersion)
 		if !ok {
 			return errors.New("agent tool policy is unavailable")
 		}
@@ -789,14 +806,30 @@ func loadAgentCheckpointForScope(db *gorm.DB, scope agentruntime.Scope, lock boo
 	if err != nil {
 		return agentruntime.RuntimeState{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewBufferString(facts.StateJSON))
+	return decodeAgentCheckpointState(
+		facts.StateJSON, facts.StateVersion, facts.RunStateVersion,
+		facts.RunStepNumber, facts.RunMaxSteps, facts.RunStatus,
+	)
+}
+
+func decodeAgentCheckpointState(
+	stateJSON string,
+	checkpointStateVersion int,
+	runStateVersion int,
+	runStepNumber int,
+	runMaxSteps int,
+	runStatus agentruntime.RunStatus,
+) (agentruntime.RuntimeState, error) {
+	decoder := json.NewDecoder(bytes.NewBufferString(stateJSON))
 	decoder.DisallowUnknownFields()
 	var state agentruntime.RuntimeState
 	if err := decoder.Decode(&state); err != nil {
 		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
 	}
 	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || state.StateVersion != facts.StateVersion || state.StateVersion != facts.RunStateVersion || state.StepNumber != facts.RunStepNumber || state.MaxSteps != facts.RunMaxSteps || state.Status != facts.RunStatus {
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) ||
+		state.StateVersion != checkpointStateVersion || state.StateVersion != runStateVersion ||
+		state.StepNumber != runStepNumber || state.MaxSteps != runMaxSteps || state.Status != runStatus {
 		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is inconsistent")
 	}
 	return state, nil

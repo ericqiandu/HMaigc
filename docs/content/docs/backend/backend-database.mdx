@@ -26,6 +26,20 @@
 - `agent_production_plan_versions` 以 `tenant_kind + tenant_id + domain_project_id + canvas_id + plan_key + version` 唯一追加不可变的生产计划版本，并绑定来源 run、基础版本、剧本和总时长；相同业务键可在不同租户和画布独立存在，同一 Scope 的同一基础版本只允许一个事实胜出；
 - `agent_production_artifacts` 以 `plan_version_id + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
 
+多专家生产运行时采用七张新表，不覆盖、不回填、不双写上述旧生产表。当前迁移仅安装 schema 与唯一索引；在 Specialist Runtime、审核、计费、资产发布、画布投影和 UI protocol v3 全部完成并通过硬切门禁以前，用户入口仍不向这些表写入生产事实：
+
+- `agent_production_graph_versions` 追加不可变 Graph 版本；完整 scope 下 `graph_key + version` 唯一，`stages_json` 不允许原地修改；
+- `agent_production_stages` 以 `graph_version_id + stage_key` 唯一保存阶段控制事实；只有状态、精确审核 revision、错误和 `version` CAS 生命周期可变，Artifact 内容不进入本表；
+- `agent_specialist_runs` 冻结父 Run scope、阶段、专家版本、继承模型、Skill 版本、工具 allowlist 与交付合同，并用 `version` CAS 保存心跳、结果或失败终态；
+- `agent_artifacts` 是稳定 Artifact 身份与 head revision 的可变 CAS 行；完整 scope 下 `artifact_key` 唯一；
+- `agent_artifact_revisions` 以 `artifact_id + revision` 唯一追加 schema、payload、Resource、上游精确 revision、模型请求身份、Skill 版本和创建者。该表没有更新时间，也不得提供 payload/resource/upstream 的更新方法；
+- `agent_asset_binding_revisions` 追加角色、场景、道具等绑定快照，完整 scope 下 `binding_key + revision` 唯一；
+- `agent_asset_publications` 以 `tenant_kind + tenant_id + domain_project_id + artifact_revision_id + publication_purpose` 建立幂等发布身份，只通过 `version` CAS 收口发布状态和现有 Asset/Version/Link/Representation 身份。
+
+七张表都显式保存 `tenant_kind + tenant_id + actor_user_id + domain_project_id + canvas_id + thread_id + run_id`。仓储层必须把这些列同时写入 SQL 查询条件，不能只凭 Artifact、Stage 或 Publication 主键推断所有权。
+
+旧 Runtime 退役采用“审计先行、运维显式执行”的单一路径。审计按 runtime version/status 汇总非终态 Run，并读取待审批/待执行/执行中 Tool、内部及旧媒体 Task、活动媒体 Artifact、未结 Billing 和 Checkpoint 完整性；旧媒体事实按 `created_by_run_id` 关联的计划版本继续追踪 Task 与 Billing，不能依赖 Agent 专用 operation 或账单幂等键。任一运行中工具、活动 Task、活动 Artifact、未结账单或不可终止 Checkpoint 都会阻止退役。安全退役在单事务内把 Run 终结为 `runtime_schema_retired`，追加连续 sequence 的失败事件和 Checkpoint，关闭进行中的时间线并标记尚未执行的 Tool；既有终态 Run 不变，重复调用为零新增。当前迁移不会修改 `CurrentRuntimeVersion`，用户入口仍使用 Runtime v2，最终硬切由后续发布门禁单独完成。
+
 Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
 
 服务启动迁移只增量创建表和缺失索引。若同名索引定义错误或历史数据已经违反唯一事实，迁移必须保留原数据并显式失败，禁止自动删除、挑选或覆盖冲突记录。真实 PostgreSQL 门禁只能通过 `scripts/tests/run-payment-integration.sh` 使用随机隔离 schema、临时容器和测试数据库执行，不能连接本地或云端业务数据库。

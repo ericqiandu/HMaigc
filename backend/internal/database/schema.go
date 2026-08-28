@@ -109,6 +109,13 @@ func Models() []any {
 		&model.TaskLog{},
 		&model.SessionFile{},
 		&model.Result{},
+		&model.AgentProductionGraphVersion{},
+		&model.AgentProductionStage{},
+		&model.AgentSpecialistRun{},
+		&model.AgentArtifact{},
+		&model.AgentArtifactRevision{},
+		&model.AgentAssetBindingRevision{},
+		&model.AgentAssetPublication{},
 	}
 }
 
@@ -208,6 +215,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := EnsureAgentRuntimeIntegritySchema(tx); err != nil {
+			return err
+		}
+		if err := EnsureAgentProductionRuntimeSchema(tx); err != nil {
 			return err
 		}
 		return EnsureWatermarkPolicyIntegritySchema(tx)

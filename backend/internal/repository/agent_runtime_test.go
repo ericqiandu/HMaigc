@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -62,6 +63,338 @@ func TestCreateAgentRunIsIdempotentWithinThread(t *testing.T) {
 	}
 	if !second.Created || second.Run.ID == first.Run.ID {
 		t.Fatalf("same request id in another thread must create an independent run: %#v", second)
+	}
+}
+
+func TestRetireLegacyAgentRunsLeavesTerminalHistoryUntouched(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	terminalScope := legacyRetirementScope("terminal")
+	waitingScope := legacyRetirementScope("waiting")
+	initializeLegacyRetirementRun(t, repo, terminalScope, now)
+	initializeLegacyRetirementRun(t, repo, waitingScope, now.Add(time.Second))
+
+	waitingState, err := repo.LoadAgentCheckpoint(waitingScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := agentruntime.Advance(waitingState, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "legacy-approval", ToolName: agentruntime.ToolProductionRender,
+			ActionVersion: 1, Arguments: json.RawMessage(`{"artifactId":"legacy-video"}`),
+			ExpectedDelivery: repositoryTestImageDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageLegacyApprovalBoundary(t, db, waitingScope.RunID, waiting.State, now.Add(2*time.Second))
+	completedAt := now.Add(3 * time.Second)
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", terminalScope.RunID).
+		Updates(agentRunTerminalTestUpdates{Status: agentruntime.RunSucceeded, CompletedAt: completedAt, UpdatedAt: completedAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var terminalEventCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", terminalScope.RunID).Count(&terminalEventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := repo.AuditRetirableLegacyAgentRuns(2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || audit[0].RuntimeVersion != 2 || audit[0].Status != agentruntime.RunWaitingApproval ||
+		audit[0].Count != 1 || !audit[0].HasPendingApproval || !audit[0].HasPendingTool || audit[0].HasCheckpointIssue ||
+		audit[0].HasPendingTask || audit[0].HasActiveArtifact || audit[0].HasUnresolvedBilling {
+		t.Fatalf("legacy retirement audit = %#v", audit)
+	}
+
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 1 {
+		t.Fatalf("retired runs = %d, want 1", retired)
+	}
+	assertLegacyRetirementRunStatus(t, db, terminalScope.RunID, agentruntime.RunSucceeded)
+	assertLegacyRetirementRunStatus(t, db, waitingScope.RunID, agentruntime.RunFailed)
+	var unchangedTerminalEventCount int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", terminalScope.RunID).Count(&unchangedTerminalEventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unchangedTerminalEventCount != terminalEventCount {
+		t.Fatalf("terminal event count = %d, want unchanged %d", unchangedTerminalEventCount, terminalEventCount)
+	}
+	var terminalEvent model.AgentRunEvent
+	if err := db.Where("run_id = ?", waitingScope.RunID).Order("sequence DESC").Take(&terminalEvent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if terminalEvent.Kind != agentruntime.EventRunFailed || !strings.Contains(terminalEvent.PayloadJSON, agentruntime.FailureRuntimeSchemaRetired) {
+		t.Fatalf("retirement event = %#v", terminalEvent)
+	}
+	var errorItem model.AgentTimelineItem
+	if err := db.Where("run_id = ? AND kind = ?", waitingScope.RunID, model.AgentTimelineItemError).Take(&errorItem).Error; err != nil {
+		t.Fatal(err)
+	}
+	if errorItem.Status != model.AgentTimelineItemFailed || errorItem.SourceEventSequence != terminalEvent.Sequence ||
+		!strings.Contains(errorItem.ContentJSON, agentruntime.FailureRuntimeSchemaRetired) {
+		t.Fatalf("retirement timeline item = %#v", errorItem)
+	}
+	replayed, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	if err != nil || replayed != 0 {
+		t.Fatalf("retirement replay = %d, %v", replayed, err)
+	}
+}
+
+func TestRetireLegacyAgentRunsBlocksPendingTask(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	scope := legacyRetirementScope("task-blocked")
+	initializeLegacyRetirementRun(t, repo, scope, now)
+	task := model.Task{
+		ID: "legacy-task", UserID: scope.ActorUserID, Audience: model.TaskAudienceInternal,
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusRunning,
+		Operation: "agent_model:" + scope.RunID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	audit, err := repo.AuditRetirableLegacyAgentRuns(2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || !audit[0].HasPendingTask || audit[0].HasActiveArtifact {
+		t.Fatalf("blocked legacy retirement audit = %#v", audit)
+	}
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	if !errors.Is(err, ErrLegacyRunRetirementBlocked) || retired != 0 {
+		t.Fatalf("blocked retirement = %d, %v", retired, err)
+	}
+	assertLegacyRetirementRunStatus(t, db, scope.RunID, agentruntime.RunQueued)
+}
+
+func TestRetireLegacyAgentRunsBlocksActiveArtifactTask(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	scope := legacyRetirementScope("artifact-task-blocked")
+	initializeLegacyRetirementRun(t, repo, scope, now)
+
+	plan := model.AgentProductionPlanVersion{
+		ID: "legacy-plan-artifact-task", PlanKey: "legacy-plan", TenantKind: scope.TenantKind,
+		TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID,
+		CreatedByRunID: scope.RunID, Version: 1, Status: model.AgentProductionPlanActive,
+		Title: "旧计划", TargetDurationMS: 5000, Script: "旧脚本", ReferencesJSON: `[]`, ShotsJSON: `[]`,
+		ExpectedDeliveryJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "legacy-artifact-media-task", UserID: scope.ActorUserID, Audience: model.TaskAudienceCustomer,
+		Type: "video_generation", Capability: "video", Status: model.TaskStatusRunning,
+		Operation: "video.generate", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	artifact := model.AgentProductionArtifact{
+		ID: "legacy-running-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+		ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactRunning,
+		TaskID: task.ID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&artifact).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := repo.AuditRetirableLegacyAgentRuns(2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || !audit[0].HasPendingTask || !audit[0].HasActiveArtifact {
+		t.Fatalf("active artifact task audit = %#v", audit)
+	}
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	if !errors.Is(err, ErrLegacyRunRetirementBlocked) || retired != 0 {
+		t.Fatalf("active artifact task retirement = %d, %v", retired, err)
+	}
+	assertLegacyRetirementRunStatus(t, db, scope.RunID, agentruntime.RunQueued)
+}
+
+func TestRetireLegacyAgentRunsBlocksLinkedUnresolvedBilling(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	scope := legacyRetirementScope("artifact-billing-blocked")
+	initializeLegacyRetirementRun(t, repo, scope, now)
+
+	plan := model.AgentProductionPlanVersion{
+		ID: "legacy-plan-artifact-billing", PlanKey: "legacy-plan", TenantKind: scope.TenantKind,
+		TenantID: scope.TenantID, DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID,
+		CreatedByRunID: scope.RunID, Version: 1, Status: model.AgentProductionPlanActive,
+		Title: "旧计划", TargetDurationMS: 5000, Script: "旧脚本", ReferencesJSON: `[]`, ShotsJSON: `[]`,
+		ExpectedDeliveryJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "legacy-artifact-settled-task", UserID: scope.ActorUserID, Audience: model.TaskAudienceCustomer,
+		Type: "video_generation", Capability: "video", Status: model.TaskStatusSucceeded,
+		Operation: "video.generate", BillingOrderID: "legacy-artifact-unresolved-order",
+		CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: scope.ActorUserID, TaskID: task.ID,
+		IdempotencyKey: "media-order-without-runtime-prefix", Status: model.BillingStatusReserved,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	artifact := model.AgentProductionArtifact{
+		ID: "legacy-succeeded-video", PlanKey: plan.PlanKey, PlanVersionID: plan.ID, PlanVersion: plan.Version,
+		ShotKey: "shot-1", Kind: model.AgentProductionArtifactVideoClip, Status: model.AgentProductionArtifactSucceeded,
+		TaskID: task.ID, BillingOrderID: order.ID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&artifact).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := repo.AuditRetirableLegacyAgentRuns(2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || audit[0].HasPendingTask || audit[0].HasActiveArtifact || !audit[0].HasUnresolvedBilling {
+		t.Fatalf("linked unresolved billing audit = %#v", audit)
+	}
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	if !errors.Is(err, ErrLegacyRunRetirementBlocked) || retired != 0 {
+		t.Fatalf("linked unresolved billing retirement = %d, %v", retired, err)
+	}
+	assertLegacyRetirementRunStatus(t, db, scope.RunID, agentruntime.RunQueued)
+}
+
+func TestRetireLegacyAgentRunsReportsInvalidCheckpointAsBlocker(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	scope := legacyRetirementScope("checkpoint-blocked")
+	initializeLegacyRetirementRun(t, repo, scope, now)
+	if err := db.Model(&model.AgentCheckpoint{}).Where("run_id = ?", scope.RunID).
+		Update("state_json", `{"stateVersion":1}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "legacy-invalid-checkpoint-task", UserID: scope.ActorUserID, Audience: model.TaskAudienceInternal,
+		Type: "agent_runtime_model", Capability: "text", Status: model.TaskStatusRunning,
+		Operation: "agent_model:" + scope.RunID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := repo.AuditRetirableLegacyAgentRuns(2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || !audit[0].HasCheckpointIssue || !audit[0].HasPendingTask {
+		t.Fatalf("invalid checkpoint audit = %#v", audit)
+	}
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(2, 3, agentruntime.FailureRuntimeSchemaRetired)
+	if !errors.Is(err, ErrLegacyRunRetirementBlocked) || retired != 0 {
+		t.Fatalf("invalid checkpoint retirement = %d, %v", retired, err)
+	}
+	assertLegacyRetirementRunStatus(t, db, scope.RunID, agentruntime.RunQueued)
+}
+
+type agentRunTerminalTestUpdates struct {
+	Status      agentruntime.RunStatus `gorm:"column:status"`
+	CompletedAt time.Time              `gorm:"column:completed_at"`
+	UpdatedAt   time.Time              `gorm:"column:updated_at"`
+}
+
+type agentRunApprovalBoundaryTestUpdates struct {
+	Status       agentruntime.RunStatus `gorm:"column:status"`
+	StateVersion int                    `gorm:"column:state_version"`
+	StepNumber   int                    `gorm:"column:step_number"`
+	UpdatedAt    time.Time              `gorm:"column:updated_at"`
+}
+
+type agentCheckpointStateTestUpdates struct {
+	StateVersion int    `gorm:"column:state_version"`
+	StateJSON    string `gorm:"column:state_json"`
+}
+
+func legacyRetirementScope(suffix string) agentruntime.Scope {
+	scope := repositoryAgentScope()
+	scope.ThreadID = "legacy-thread-" + suffix
+	scope.RunID = "legacy-run-" + suffix
+	return scope
+}
+
+func initializeLegacyRetirementRun(t *testing.T, repo *Repository, scope agentruntime.Scope, now time.Time) {
+	t.Helper()
+	createAgentRunForTest(t, repo, scope)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "legacy-model-record", ModelKey: "deepseek-v4",
+		MaxSteps: 6, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage: "创建一个短片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// stageLegacyApprovalBoundary persists the pure runtime transition without
+// invoking the production-render repository adapter. Retirement tests exercise
+// runtime-version handling, not the separate frozen render contract.
+func stageLegacyApprovalBoundary(t *testing.T, db *gorm.DB, runID string, state agentruntime.RuntimeState, now time.Time) {
+	t.Helper()
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.AgentRun{}).Where("id = ?", runID).
+			Select("status", "state_version", "step_number", "updated_at").
+			Updates(agentRunApprovalBoundaryTestUpdates{
+				Status: state.Status, StateVersion: state.StateVersion, StepNumber: state.StepNumber, UpdatedAt: now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.AgentCheckpoint{}).Where("run_id = ? AND sequence = 2", runID).
+			Select("state_version", "state_json").
+			Updates(agentCheckpointStateTestUpdates{StateVersion: state.StateVersion, StateJSON: string(stateJSON)}).Error
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertLegacyRetirementRunStatus(t *testing.T, db *gorm.DB, runID string, want agentruntime.RunStatus) {
+	t.Helper()
+	var run model.AgentRun
+	if err := db.First(&run, "id = ?", runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != want {
+		t.Fatalf("run %s status = %s, want %s", runID, run.Status, want)
 	}
 }
 
@@ -311,6 +644,8 @@ func openAgentRuntimeRepositorySQLite(t *testing.T) (*Repository, *gorm.DB) {
 		&model.AgentToolCall{},
 		&model.AgentProductionPlanVersion{},
 		&model.AgentProductionArtifact{},
+		&model.Task{},
+		&model.BillingOrder{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +668,7 @@ func openAgentRuntimeRepositorySQLiteFile(t *testing.T) (*Repository, *gorm.DB) 
 	}
 	sqlDB.SetMaxOpenConns(16)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}, &model.Task{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {

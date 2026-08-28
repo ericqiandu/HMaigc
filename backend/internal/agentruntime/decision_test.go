@@ -27,6 +27,31 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 	}
 }
 
+func TestParseModelDecisionForToolSchemaSeparatesLegacyAndProductionTools(t *testing.T) {
+	legacy := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-legacy","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"plan-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	production := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v3","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.CurrentToolSchemaVersion); err != nil {
+		t.Fatalf("legacy schema rejected legacy tool: %v", err)
+	}
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.CurrentToolSchemaVersion); err == nil {
+		t.Fatal("legacy schema accepted production tool")
+	}
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.ProductionToolSchemaVersion); err == nil {
+		t.Fatal("production schema accepted retired legacy tool")
+	}
+	decision, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.ProductionToolSchemaVersion)
+	if err != nil {
+		t.Fatalf("production schema rejected generic tool: %v", err)
+	}
+	if decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolSpecialistDelegate {
+		t.Fatalf("production decision = %#v", decision)
+	}
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, 999); err == nil {
+		t.Fatal("unknown tool schema was accepted")
+	}
+}
+
 func TestParseModelDecisionAcceptsStrictClarificationRequest(t *testing.T) {
 	payload := []byte(`{
 		"kind":"clarification_request",

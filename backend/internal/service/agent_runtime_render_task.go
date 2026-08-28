@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -49,19 +50,14 @@ func (s *Service) ensureProductionArtifactTask(
 	arguments agentruntime.ProductionRenderArguments,
 	artifact model.AgentProductionArtifact,
 ) (*model.Task, *model.BillingOrder, error) {
-	if artifact.TaskID != "" {
-		if artifact.Attempt == arguments.Attempt {
-			if err := s.validatePreviousProductionAttemptForRetry(scope, artifact); err != nil {
-				return nil, nil, err
-			}
-			return nil, nil, newAgentProductionRenderInputError("production_artifact_conflict", "retry approval did not detach the previous production attempt")
-		}
-		task, err := s.repo.TaskForUser(scope.ActorUserID, artifact.TaskID)
-		if err != nil {
+	if artifact.TaskID != "" && artifact.Attempt == arguments.Attempt {
+		if err := s.validatePreviousProductionAttemptForRetry(scope, artifact); err != nil {
 			return nil, nil, err
 		}
-		order, err := s.repo.BillingOrder(artifact.BillingOrderID)
-		return task, order, err
+		return nil, nil, newAgentProductionRenderInputError("production_artifact_conflict", "retry approval did not detach the previous production attempt")
+	}
+	if record == nil || record.ApprovalDecision != agentruntime.ToolApprovalApproved || record.ApprovalDecidedAt == nil {
+		return nil, nil, newTerminalAgentProductionRenderInputError("production_approval_invalid", "production media cost approval is missing")
 	}
 	plan, err := s.repo.AgentProductionPlanVersionForScope(scope, arguments.PlanKey, arguments.PlanVersion)
 	if err != nil {
@@ -71,34 +67,109 @@ func (s *Service) ensureProductionArtifactTask(
 	if err != nil {
 		return nil, nil, err
 	}
-	input, taskType, err := s.productionRenderTaskInput(scope, arguments, artifact, prompt)
+	capabilities, err := s.currentProductionRenderCapabilities(arguments.GenerationModel)
 	if err != nil {
 		return nil, nil, err
 	}
-	typedInput, err := json.Marshal(input)
+	command, err := s.productionMediaGenerationCommand(scope, arguments, artifact, prompt, capabilities)
 	if err != nil {
 		return nil, nil, err
 	}
-	identity := productionRenderTaskIdentity(record.IdempotencyKey, arguments.Attempt+1)
-	task, err := s.createTaskWithIdentity(scope.ActorUserID, CreateTaskRequest{
-		ProjectID: scope.CanvasID, Type: taskType, Operation: "production_render:" + scope.RunID,
-		Prompt: prompt, QuotePriceVersion: arguments.PriceVersion, QuoteFingerprint: arguments.QuoteFingerprint,
-	}, taskCreationIdentity{
-		TaskID: identity, BillingIdempotencyKey: "agent-production:" + identity, TypedInputJSON: typedInput,
-	})
+	approved, err := s.ApproveMediaAttempt(scope, mediaAttemptFromFrozenRender(arguments), command, record.ApprovalDecidedAt.UTC())
 	if err != nil {
+		if errors.Is(err, ErrCostApprovalQuoteMismatch) {
+			return nil, nil, newTerminalAgentProductionRenderInputError("production_quote_mismatch", err.Error())
+		}
 		return nil, nil, err
 	}
-	order, err := s.repo.BillingOrder(task.BillingOrderID)
+	task, order, err := s.EnsureMediaTask(context.Background(), scope, *approved)
 	if err != nil {
+		if errors.Is(err, ErrCostApprovalQuoteMismatch) {
+			return nil, nil, newTerminalAgentProductionRenderInputError("production_quote_mismatch", err.Error())
+		}
 		return nil, nil, err
-	}
-	if order.UserID != scope.ActorUserID || order.TaskID != task.ID || order.ChannelID != arguments.GenerationModel.ChannelID ||
-		order.Model != arguments.GenerationModel.Model || order.AmountMicrocredits != arguments.AmountMicrocredits ||
-		order.PriceVersion != arguments.PriceVersion || order.Quantity != arguments.Quantity {
-		return nil, nil, errors.New("production render billing facts conflict")
 	}
 	return task, order, nil
+}
+
+func (s *Service) productionMediaGenerationCommand(
+	scope agentruntime.Scope,
+	arguments agentruntime.ProductionRenderArguments,
+	artifact model.AgentProductionArtifact,
+	prompt string,
+	capabilities *PublicProviderCapabilities,
+) (MediaGenerationCommand, error) {
+	input, taskType, err := s.productionRenderTaskInput(scope, arguments, artifact, prompt)
+	if err != nil {
+		return MediaGenerationCommand{}, err
+	}
+	parameters, err := json.Marshal(input)
+	if err != nil {
+		return MediaGenerationCommand{}, err
+	}
+	capability := capabilityFromTaskType(taskType)
+	quantity := int64(1)
+	if capability == "video" {
+		quantity = int64(arguments.VideoConfig.DurationSeconds)
+	}
+	return MediaGenerationCommand{
+		ArtifactRevisionID:   artifact.ID,
+		Attempt:              arguments.Attempt + 1,
+		TaskType:             taskType,
+		Operation:            "production_render:" + scope.RunID,
+		Prompt:               prompt,
+		Capability:           capability,
+		ChannelID:            arguments.GenerationModel.ChannelID,
+		ModelKey:             arguments.GenerationModel.Model,
+		ParametersJSON:       string(parameters),
+		Quantity:             quantity,
+		ProviderCapabilities: capabilities,
+	}, nil
+}
+
+func (s *Service) currentProductionRenderCapabilities(selection agentruntime.GenerationModelSelection) (*PublicProviderCapabilities, error) {
+	channel, err := s.repo.SystemChannel(selection.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	capabilities := publicProviderModelCapabilities(channel.InterfaceType, selection.Model)
+	if capabilities == nil {
+		return nil, newAgentProductionRenderInputError("generation_parameter_unsupported", "provider capabilities are unavailable for the selected model")
+	}
+	return capabilities, nil
+}
+
+func frozenRenderQuoteFromMediaAttempt(attempt MediaGenerationAttempt) agentruntime.FrozenRenderQuote {
+	return agentruntime.FrozenRenderQuote{
+		AmountMicrocredits: attempt.AmountMicrocredits, PerTaskAmountMicrocredits: attempt.PerTaskAmountMicrocredits,
+		PriceVersion: attempt.PriceVersion, BillingMode: attempt.BillingMode,
+		PricingResolution: attempt.PricingResolution, PricingInputVariant: attempt.PricingInputVariant,
+		Quantity: attempt.Quantity, QuoteFingerprint: attempt.BillingQuoteFingerprint,
+		QuoteID: attempt.QuoteID, ApprovalFingerprint: attempt.ApprovalFingerprint,
+		TaskID: attempt.TaskID, BillingIdempotencyKey: attempt.BillingIdempotencyKey,
+		ChannelModelID: attempt.ChannelModelID, Capability: attempt.Capability,
+		TaskType: attempt.TaskType, Operation: attempt.Operation, Prompt: attempt.Prompt,
+		ParametersJSON: attempt.ParametersJSON, ProviderCapabilitiesJSON: attempt.ProviderCapabilitiesJSON,
+		ExpiresAt: attempt.ExpiresAt,
+	}
+}
+
+func mediaAttemptFromFrozenRender(arguments agentruntime.ProductionRenderArguments) MediaGenerationAttempt {
+	return MediaGenerationAttempt{
+		ArtifactRevisionID: arguments.ArtifactID, Attempt: arguments.Attempt + 1,
+		TaskID: arguments.TaskID, BillingIdempotencyKey: arguments.BillingIdempotencyKey,
+		TaskType: arguments.TaskType, Operation: arguments.Operation, Prompt: arguments.Prompt,
+		Capability: arguments.Capability, ChannelID: arguments.GenerationModel.ChannelID,
+		ChannelModelID: arguments.ChannelModelID, ModelKey: arguments.GenerationModel.Model,
+		ParametersJSON: arguments.ParametersJSON, ProviderCapabilitiesJSON: arguments.ProviderCapabilitiesJSON,
+		Quantity: arguments.Quantity, AmountMicrocredits: arguments.AmountMicrocredits,
+		PerTaskAmountMicrocredits: arguments.PerTaskAmountMicrocredits, PriceVersion: arguments.PriceVersion,
+		BillingMode: arguments.BillingMode, PricingResolution: arguments.PricingResolution,
+		PricingInputVariant:     arguments.PricingInputVariant,
+		BillingQuoteFingerprint: arguments.QuoteFingerprint,
+		QuoteID:                 arguments.QuoteID, ApprovalFingerprint: arguments.ApprovalFingerprint,
+		ExpiresAt: arguments.ExpiresAt,
+	}
 }
 
 func productionArtifactPrompt(plan model.AgentProductionPlanVersion, artifact model.AgentProductionArtifact) (string, error) {

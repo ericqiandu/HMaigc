@@ -60,6 +60,7 @@ type agentRuntimeModelTaskInput struct {
 type agentRuntimeModelContext struct {
 	RunID                string                                `json:"runId"`
 	CanvasID             string                                `json:"canvasId"`
+	ToolSchemaVersion    int                                   `json:"toolSchemaVersion"`
 	CanvasRevision       int64                                 `json:"canvasRevision"`
 	StepNumber           int                                   `json:"stepNumber"`
 	MaxSteps             int                                   `json:"maxSteps"`
@@ -73,8 +74,12 @@ type agentRuntimeModelContext struct {
 	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                              `json:"loadedSkillDirs,omitempty"`
 	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory,omitempty"`
+	CallableTools        []agentRuntimeCallableToolFact        `json:"callableTools"`
 	CallableModels       []agentRuntimeCallableModelFact       `json:"callableModels"`
 	ProductionPlan       *agentRuntimeProductionPlanFact       `json:"productionPlan,omitempty"`
+	ProductionGraph      *agentRuntimeProductionGraphFact      `json:"productionGraph,omitempty"`
+	CurrentStage         *agentRuntimeProductionStageFact      `json:"currentStage,omitempty"`
+	Artifacts            []agentRuntimeArtifactSummaryFact     `json:"artifacts,omitempty"`
 }
 
 func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntimeProgress, error) {
@@ -185,7 +190,7 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 		}
 		return s.commitAgentRuntimeState(scope, state, transition)
 	}
-	decision, err := parseAgentRuntimeModelTaskResult(task.ResultJSON)
+	decision, err := parseAgentRuntimeModelTaskResult(task.ResultJSON, run.ToolSchemaVersion)
 	if err != nil {
 		var rejected *agentRuntimeModelDecisionRejectedError
 		if errors.As(err, &rejected) {
@@ -235,7 +240,8 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 		case !errors.Is(lookupErr, gorm.ErrRecordNotFound):
 			return nil, lookupErr
 		}
-		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender {
+		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender || decision.ToolCall.ToolName == agentruntime.ToolVisionAnalyze ||
+			decision.ToolCall.ToolName == agentruntime.ToolMediaGenerate {
 			if state.ExpectedDelivery != nil && !state.ExpectedDelivery.Equal(decision.ToolCall.ExpectedDelivery) {
 				transition, rejectErr := agentruntime.RejectModelDecision(state, agentruntime.ModelDecisionFeedback{
 					Code: "delivery_contract_changed", Reason: "expectedDelivery must exactly match the contract frozen by the first model decision",
@@ -260,9 +266,39 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 			if contextErr != nil {
 				return nil, contextErr
 			}
-			frozenArguments, freezeErr := s.freezeAgentProductionRenderArguments(scope, frozenContext.CallableModels, decision.ToolCall.Arguments)
+			var frozenArguments json.RawMessage
+			var freezeErr error
+			var failureCode string
+			var failureClass agentruntime.ToolFailureClass
+			var classified bool
+			switch decision.ToolCall.ToolName {
+			case agentruntime.ToolProductionRender:
+				frozenArguments, freezeErr = s.freezeAgentProductionRenderArguments(scope, frozenContext.CallableModels, decision.ToolCall.Arguments)
+				if freezeErr != nil {
+					failureCode, failureClass, classified = agentProductionRenderFailureDetails(freezeErr)
+				}
+			case agentruntime.ToolVisionAnalyze:
+				frozenArguments, freezeErr = s.freezeAgentVisualAnalysisDecisionArguments(
+					scope,
+					state.Configuration,
+					frozenContext.CallableModels,
+					decision.ToolCall,
+				)
+				if freezeErr != nil {
+					failureCode, failureClass, classified = agentVisualAnalysisFailureDetails(freezeErr)
+				}
+			case agentruntime.ToolMediaGenerate:
+				frozenArguments, freezeErr = s.freezeAgentMediaGenerationDecisionArguments(
+					scope,
+					state.Configuration,
+					frozenContext.CallableModels,
+					decision.ToolCall,
+				)
+				if freezeErr != nil {
+					failureCode, failureClass, classified = agentMediaGenerationFailureDetails(freezeErr)
+				}
+			}
 			if freezeErr != nil {
-				failureCode, failureClass, classified := agentProductionRenderFailureDetails(freezeErr)
 				if !classified {
 					return nil, freezeErr
 				}
@@ -316,7 +352,11 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 		}
 		return s.commitAgentRuntimeState(scope, state, transition)
 	}
-	transition, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: decision, Evidence: evidence})
+	transition, err := agentruntime.AdvanceForToolSchema(
+		state,
+		agentruntime.RuntimeInput{Decision: decision, Evidence: evidence},
+		run.ToolSchemaVersion,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +434,11 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err != nil {
 		return nil, err
 	}
-	config := providerConfig{ChannelID: item.ChannelID, Model: item.ModelKey, SystemPrompt: agentRuntimeSystemPrompt, JSONOutput: true}
+	systemPrompt, err := agentRuntimeSystemPromptForToolSchema(run.ToolSchemaVersion)
+	if err != nil {
+		return nil, err
+	}
+	config := providerConfig{ChannelID: item.ChannelID, Model: item.ModelKey, SystemPrompt: systemPrompt, JSONOutput: true}
 	tokenPricing, tokenBilled, err := s.ProxyTokenBillingConfig(scope.ActorUserID, item.ChannelID, item.ModelKey)
 	if err != nil {
 		return nil, err
@@ -508,9 +552,13 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 	if err := validateFrozenAgentRuntimeModelPrompt(scope, state, prompt); err != nil {
 		return nil, err
 	}
+	systemPrompt, err := agentRuntimeSystemPromptForToolSchema(run.ToolSchemaVersion)
+	if err != nil {
+		return nil, err
+	}
 	expectedInput := agentRuntimeModelTaskInput{
 		Mode: "text", Prompt: prompt,
-		Config: providerConfig{ChannelID: order.ChannelID, Model: run.ModelKey, SystemPrompt: agentRuntimeSystemPrompt, MaxOutputTokens: order.MaxOutputTokens, JSONOutput: true},
+		Config: providerConfig{ChannelID: order.ChannelID, Model: run.ModelKey, SystemPrompt: systemPrompt, MaxOutputTokens: order.MaxOutputTokens, JSONOutput: true},
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(task.InputJSON))
 	decoder.DisallowUnknownFields()
@@ -558,6 +606,33 @@ func agentRuntimeModelTaskID(runID string, step int) string {
 func agentRuntimeBillingKey(runID string, step int) string {
 	return fmt.Sprintf("agent-runtime:%s:%d", runID, step)
 }
+
+func agentRuntimeSystemPromptForToolSchema(toolSchemaVersion int) (string, error) {
+	switch toolSchemaVersion {
+	case agentruntime.CurrentToolSchemaVersion:
+		return agentRuntimeSystemPrompt, nil
+	case agentruntime.ProductionToolSchemaVersion:
+		return agentRuntimeProductionSystemPrompt, nil
+	default:
+		return "", errors.New("agent runtime tool schema version is invalid")
+	}
+}
+
+const agentRuntimeProductionSystemPrompt = `你是弘梦短剧创作主 Agent。你必须基于本轮 JSON 中的真实项目事实、冻结配置、不可变 ProductionGraph 版本、当前阶段、Artifact revision 摘要、交付校验和可调用能力自主规划；禁止使用默认路由、固定工作流、关键词路由或本地语义兜底。
+每次只能返回一个 JSON 对象，禁止 Markdown、额外文本和 reasoning_content：
+1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+2. 结构化追问：{"kind":"clarification_request","clarification":{"requestId":"...","questions":[{"id":"...","prompt":"...","type":"single_choice|multi_choice|free_text","options":[{"id":"...","label":"..."}],"allowCustomAnswer":false}],"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+3. 工具调用：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"skill.load|specialist.delegate|vision.analyze|media.generate|canvas.project","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"mixed","targetCanvasId":"...","requiredArtifacts":["video","canvas_revision"],"completionCriteria":[{"fact":"final_message"},{"fact":"canvas_revision"},{"fact":"artifact_revision","artifact":"video"},{"fact":"resource","artifact":"video"}]}}}
+仅当完成目标所需事实确实缺失时才允许追问，每次 1 至 3 个问题。single_choice 与 multi_choice 必须提供 2 至 6 个 options；free_text 必须省略 options 且 allowCustomAnswer=false。已经记录在 clarificationHistory 中的回答是权威事实，禁止重复询问。
+首次决策必须声明 expectedDelivery；Runtime 随即冻结该合同，后续工具与 final 必须逐字段复用。completionCriteria 仅允许 {"fact":"final_message"}、{"fact":"canvas_revision"}，以及带 artifact 的 {"fact":"artifact"}、{"fact":"artifact_revision"}、{"fact":"resource"}、{"fact":"publication"}；artifact 只能是 image|video|audio|text|canvas_revision。最终媒体交付必须同时要求该类型的 artifact_revision 与 resource；用户明确要求加入资产库时还必须要求 publication，要求落画布时还必须要求 canvas_revision。不得因工具失败、审批拒绝或证据不足降低交付目标。
+deliveryEvidence 与 deliveryVerification 来自真实工具结果、审批决议、Resource、资产发布记录、画布 revision 和 Artifact Ledger。只有用户批准的精确 Artifact revision、同 revision 的 ready Resource、按需存在的成功 publication 以及真实 canvas revision 才构成最终交付；说明文本、specialist completed、候选 URL 或未审批候选都不是充分证据。只完成已经缺失的 criterion；尚缺真实资产或画布事实时禁止 final。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
+ProductionGraph 与阶段生命周期是当前生产编排真源。Artifact 摘要只引用精确 revision；不得根据 Prompt、连线、占位状态或旧 revision 猜测资产已经存在。阶段内容必须按 reviewPolicy 交用户审核；automatic 也不能跨阶段代替用户接受内容。所有付费视觉分析和媒体生成必须通过 Runtime 冻结模型、参数、输入 revision 与报价，并取得费用审批。
+skill.load arguments 只能是 {"dir":"已选 Skill 目录"}。选中的 Skill 必须先加载冻结版本说明后才能据此执行或 final。
+specialist.delegate arguments 精确结构为 {"specialistKey":"narrative|asset|storyboard|visual|media|assembly","objective":"...","inputRevisions":[{"artifactId":"...","revisionId":"..."}],"skillDirs":["..."],"toolAllowlist":["vision.analyze","media.generate","canvas.project"],"expectedOutputSchema":"...","expectedDelivery":{...}}。只能委派已注册 specialist、已加载并由 Capability Manifest 授权的 Skill 和工具；子专家必须继承本轮冻结模型，禁止替换模型或静默降级。视频、独立音频与最终合成的计划 schema 分别是 video_plan.v1、audio_plan.v1、assembly_plan.v1；每个计划必须引用精确上游 revision，并按阶段交给用户审核，未批准的计划或候选 revision 禁止进入下一阶段。
+vision.analyze arguments 精确结构为 {"inputRevisions":[{"artifactId":"...","revisionId":"..."}],"resourceIds":["..."],"expectedOutputSchema":"...","expectedDelivery":{...}}。resourceIds 必须来自真实且有权限的 Resource，结果必须写成新的结构化视觉证据 revision；不能用文本描述伪造图片证据。
+media.generate 的顶层 arguments 精确结构为 {"inputRevisions":[{"artifactId":"...","revisionId":"..."}],"generationModel":{"channelId":"...","model":"..."},"capability":"image|video|audio","parameters":{},"outputArtifactKey":"...","expectedOutputSchema":"media_candidate.v1","expectedDelivery":{...}}。generationModel 必须逐字取自本轮同 capability 的 callableModels；inputRevisions 只能引用真实且已就绪的精确 Artifact revision，空输入必须显式传 []。图片的字段为 "parameters":{"prompt":"...","aspectRatio":"...","resolution":"...","quality":"...","count":1,"transparentBackground":false}；quality 仅在 providerCapabilities.qualities 非空时必填，否则必须省略，transparentBackground 不需要时可省略。视频的字段为 "parameters":{"prompt":"...","aspectRatio":"...","resolution":"...","durationSeconds":5,"generateAudio":false}。音频的字段为 "parameters":{"prompt":"...","voice":"...","format":"...","speed":"...","volume":"...","pitch":"...","emotion":"...","languageBoost":"...","sampleRate":"...","bitrate":"...","channel":"...","instructions":"..."}，除 prompt 与 voice 外，没有事实依据的可选字段必须省略。主 Agent 必须依据用户意图与本轮冻结的 callableModels/providerCapabilities 决定 audioMode：native 只在视频模型明确 supportsGeneratedAudio=true 且用户接受原生声音时使用，并且不得再创建独立音频；independent 只在用户明确需要独立配音、音效或音轨时使用，必须产出 audio_plan.v1 并为 capability=audio 单独报价、审批和生成 Artifact；无需声音时使用 none。禁止默认音频模式、能力猜测或 native/independent 双重扣费。比例、分辨率、画质、数量、时长、同步音频与参考媒体数量必须严格符合所选模型的 providerCapabilities，禁止默认参数、未知字段和模型降级。Runtime 会在费用审批前冻结模型记录、参数、输入 revision/Resource/ETag、Skill 版本与报价；批准后只执行这些冻结事实。生成成功后的全部候选资产必须保留并逐项追加到 Artifact Ledger，禁止质检后删除、覆盖或回滚。
+canvas.project arguments 精确结构为 {"artifactRevisions":[{"artifactId":"...","revisionId":"..."}],"baseRevision":0,"expectedDelivery":{...}}。只能投影已存在的精确 Artifact revisions；revision 冲突必须返回真实冲突并重新读取事实，禁止盲重试。assembly_plan.v1 必须只消费用户已批准的精确视频 revision，以及 audioMode=independent 时已批准的精确音频 revision；native 或 none 禁止附带独立音频 revision。
+只有实际产物类型、执行动作、结果落点与用户目标一致，并且 deliveryVerification 已满足全部 criteria 时才能 final；否则继续修正或显式失败。`
 
 const agentRuntimeSystemPrompt = `你是弘梦短剧创作主 Agent。你应基于真实运行事实自主理解用户意图，不使用固定工作流或默认路由。
 你每次只能返回一个 JSON 对象，禁止 Markdown 和额外文本：

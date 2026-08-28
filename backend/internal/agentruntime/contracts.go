@@ -42,9 +42,20 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
+	// Current* remains the only contract accepted by the published user
+	// runtime until the final v3 hard cutover. Advancing it earlier would make
+	// the legacy retirement audit reject or retire live v2 runs while the v3
+	// execution chain is still incomplete.
 	CurrentRuntimeVersion    = 2
 	CurrentPolicyVersion     = 2
 	CurrentToolSchemaVersion = 3
+
+	ProductionRuntimeVersion         = 3
+	ProductionPolicyVersion          = 3
+	ProductionToolSchemaVersion      = 4
+	CurrentProductionSchemaVersion   = 1
+	ProductionAgentUIProtocolVersion = 3
+	FailureRuntimeSchemaRetired      = "runtime_schema_retired"
 
 	RunQueued          RunStatus = "queued"
 	RunRunning         RunStatus = "running"
@@ -55,6 +66,99 @@ const (
 	RunFailed          RunStatus = "failed"
 	RunCancelled       RunStatus = "cancelled"
 )
+
+type SpecialistKey string
+
+const (
+	SpecialistNarrative     SpecialistKey = "narrative"
+	SpecialistAsset         SpecialistKey = "asset"
+	SpecialistStoryboard    SpecialistKey = "storyboard"
+	SpecialistVisual        SpecialistKey = "visual"
+	SpecialistVideoAssembly SpecialistKey = "video_assembly"
+	SpecialistAudio         SpecialistKey = "audio"
+)
+
+func (key SpecialistKey) Valid() bool {
+	switch key {
+	case SpecialistNarrative, SpecialistAsset, SpecialistStoryboard, SpecialistVisual, SpecialistVideoAssembly, SpecialistAudio:
+		return true
+	default:
+		return false
+	}
+}
+
+type ProductionStageStatus string
+
+const (
+	StagePlanned        ProductionStageStatus = "planned"
+	StageRunning        ProductionStageStatus = "running"
+	StageAwaitingReview ProductionStageStatus = "awaiting_review"
+	StageApproved       ProductionStageStatus = "approved"
+	StageCompleted      ProductionStageStatus = "completed"
+	StageFailed         ProductionStageStatus = "failed"
+	StageStopped        ProductionStageStatus = "stopped"
+	StageStale          ProductionStageStatus = "stale"
+)
+
+func (status ProductionStageStatus) Valid() bool {
+	switch status {
+	case StagePlanned, StageRunning, StageAwaitingReview, StageApproved, StageCompleted, StageFailed, StageStopped, StageStale:
+		return true
+	default:
+		return false
+	}
+}
+
+type StageReviewDecision string
+
+const (
+	StageReviewApprove         StageReviewDecision = "approved"
+	StageReviewRequestRevision StageReviewDecision = "revision_requested"
+	StageReviewStop            StageReviewDecision = "stopped"
+)
+
+func (decision StageReviewDecision) Valid() bool {
+	return decision == StageReviewApprove || decision == StageReviewRequestRevision || decision == StageReviewStop
+}
+
+type ReviewPolicy string
+
+const ReviewRequired ReviewPolicy = "required"
+
+func (policy ReviewPolicy) Valid() bool {
+	return policy == ReviewRequired
+}
+
+type CostPolicy string
+
+const (
+	CostNone             CostPolicy = "none"
+	CostApprovalRequired CostPolicy = "approval_required"
+)
+
+func (policy CostPolicy) Valid() bool {
+	return policy == CostNone || policy == CostApprovalRequired
+}
+
+// AgentToolName is the v3 production-runtime tool vocabulary. ToolName remains
+// the decoder-facing type so existing runtime code has one canonical identity.
+type AgentToolName = ToolName
+
+const (
+	ToolSpecialistDelegate AgentToolName = "specialist.delegate"
+	ToolVisionAnalyze      AgentToolName = "vision.analyze"
+	ToolMediaGenerate      AgentToolName = "media.generate"
+	ToolCanvasProject      AgentToolName = "canvas.project"
+)
+
+type StageReviewCommand struct {
+	StageVersion      int64                   `json:"stageVersion"`
+	RevisionID        string                  `json:"revisionId"`
+	Decision          StageReviewDecision     `json:"decision"`
+	ClientRequestID   string                  `json:"clientRequestId"`
+	Comment           string                  `json:"comment,omitempty"`
+	PublicationIntent *AssetPublicationIntent `json:"publicationIntent,omitempty"`
+}
 
 func (status RunStatus) Valid() bool {
 	switch status {

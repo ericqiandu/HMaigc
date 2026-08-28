@@ -47,6 +47,11 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		if record.ApprovalDecision != input.Decision || record.ApprovalByUserID != scope.ActorUserID || record.ApprovalDecidedAt == nil {
 			return nil, errors.New("agent tool approval facts conflict")
 		}
+		if state.Status == agentruntime.RunCancelled {
+			if err := s.cancelAgentRunTreeContexts(scope); err != nil {
+				return nil, err
+			}
+		}
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	}
 	if state.PendingToolCall == nil {
@@ -79,6 +84,11 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	}
 	if record.ApprovalDecision != input.Decision || record.ApprovalByUserID != scope.ActorUserID || record.ApprovalDecidedAt == nil {
 		return nil, errors.New("agent tool approval facts conflict")
+	}
+	if progress.State.Status == agentruntime.RunCancelled {
+		if err := s.cancelAgentRunTreeContexts(scope); err != nil {
+			return nil, err
+		}
 	}
 	if progress.State.Status != agentruntime.RunRunning {
 		if progress.State.Status != agentruntime.RunWaitingTool {
@@ -152,6 +162,10 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		}
 	case agentruntime.ToolProductionRender:
 		return s.coordinatePendingAgentProductionRender(scope, state, call, record)
+	case agentruntime.ToolVisionAnalyze:
+		return s.coordinatePendingAgentVisualAnalysis(scope, state, call, record)
+	case agentruntime.ToolMediaGenerate:
+		return s.coordinatePendingAgentMediaGeneration(scope, state, call, record)
 	case agentruntime.ToolCanvasCommit:
 		return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
 	default:
@@ -196,7 +210,11 @@ func (s *Service) frozenAgentToolCall(scope agentruntime.Scope, call *agentrunti
 	if err != nil {
 		return nil, agentruntime.ToolPolicy{}, err
 	}
-	policy, ok := agentruntime.ToolPolicyFor(call.ToolName)
+	run, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, agentruntime.ToolPolicy{}, err
+	}
+	policy, ok := agentruntime.ToolPolicyForSchema(call.ToolName, run.ToolSchemaVersion)
 	approvalRequired := agentruntime.ApprovalRequiredFor(policy, executionMode)
 	if !ok || record.ToolName != string(call.ToolName) || record.Status != expectedStatus ||
 		record.RiskLevel != policy.RiskLevel || record.RequiredAccess != policy.RequiredAccess ||

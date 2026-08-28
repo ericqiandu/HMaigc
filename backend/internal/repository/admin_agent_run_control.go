@@ -64,6 +64,7 @@ type adminAgentRunScopeFacts struct {
 	ActorUserID     string                  `gorm:"column:actor_user_id"`
 	Status          agentruntime.RunStatus  `gorm:"column:status"`
 	StateVersion    int                     `gorm:"column:state_version"`
+	RuntimeVersion  int                     `gorm:"column:runtime_version"`
 	TenantKind      agentruntime.TenantKind `gorm:"column:tenant_kind"`
 	TenantID        string                  `gorm:"column:tenant_id"`
 	CreatedByUserID string                  `gorm:"column:created_by_user_id"`
@@ -110,7 +111,13 @@ func (r *Repository) InterruptAdminAgentRun(command AdminAgentRunInterruptComman
 		if current.StateVersion != command.ExpectedStateVersion {
 			return ErrAdminAgentRunStateConflict
 		}
-		targets, err := loadAdminAgentRunControlTargets(tx, scope.RunID)
+		loadTargets := func() ([]adminAgentRunControlTarget, error) {
+			if facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+				return loadAgentRunTreeControlTargets(tx, scope)
+			}
+			return loadAdminAgentRunControlTargets(tx, scope.RunID)
+		}
+		targets, err := loadTargets()
 		if err != nil {
 			return err
 		}
@@ -147,10 +154,15 @@ func (r *Repository) InterruptAdminAgentRun(command AdminAgentRunInterruptComman
 			}
 			return err
 		}
+		if facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+			if err := cancelAgentSpecialistLifecyclesTx(tx, scope, command.Now); err != nil {
+				return err
+			}
+		}
 		if err := failAdminAgentRunPendingFacts(tx, scope, current, command.Now); err != nil {
 			return err
 		}
-		taskDispositions, reconciliationPending, err := disposeAdminAgentRunControlTargets(tx, targets, command.Reason, command.Now)
+		taskDispositions, reconciliationPending, err := disposeAdminAgentRunControlTargets(tx, targets, command.Reason, command.Now, false)
 		if err != nil {
 			return err
 		}
@@ -260,11 +272,13 @@ func disposeAdminAgentRunControlTargets(
 	targets []adminAgentRunControlTarget,
 	reason string,
 	now time.Time,
+	allowRunningReconciliation bool,
 ) ([]AdminAgentRunTaskDisposition, bool, error) {
 	dispositions := make([]AdminAgentRunTaskDisposition, 0, len(targets))
 	reconciliationPending := false
 	for _, target := range targets {
 		providerSubmitted := strings.TrimSpace(target.ProviderRequestID) != ""
+		providerPossiblySubmitted := providerSubmitted || (allowRunningReconciliation && target.Status == model.TaskStatusRunning)
 		billingStatus := model.BillingStatus("")
 		if target.BillingOrderID != "" {
 			var order model.BillingOrder
@@ -278,13 +292,14 @@ func disposeAdminAgentRunControlTargets(
 				return nil, false, ErrAdminAgentRunBillingUnresolved
 			}
 			providerSubmitted = providerSubmitted || strings.TrimSpace(order.ProviderRequestID) != ""
+			providerPossiblySubmitted = providerPossiblySubmitted || providerSubmitted
 			switch {
-			case !providerSubmitted && target.Status == model.TaskStatusQueued && order.Status == model.BillingStatusReserved:
-				if err := refundBillingOrderTx(db, &order, "管理员终止未提交的 Agent 任务："+reason); err != nil {
+			case !providerPossiblySubmitted && target.Status == model.TaskStatusQueued && order.Status == model.BillingStatusReserved:
+				if err := refundBillingOrderTx(db, &order, "终止未提交的 Agent 任务："+reason); err != nil {
 					return nil, false, err
 				}
 				billingStatus = model.BillingStatusRefunded
-			case providerSubmitted && (order.Status == model.BillingStatusReserved || order.Status == model.BillingStatusRunning || order.Status == model.BillingStatusUncertain):
+			case providerPossiblySubmitted && (order.Status == model.BillingStatusReserved || order.Status == model.BillingStatusRunning || order.Status == model.BillingStatusUncertain):
 				if order.Status != model.BillingStatusUncertain {
 					updates := uncertainBillingUpdates(order, "管理员终止已提交的 Agent 任务，费用状态待核对", now)
 					updated := db.Model(&model.BillingOrder{}).Where("id = ? AND status = ?", order.ID, order.Status).Updates(updates)
@@ -297,7 +312,7 @@ func disposeAdminAgentRunControlTargets(
 				}
 				billingStatus = model.BillingStatusUncertain
 				reconciliationPending = true
-			case !providerSubmitted && adminAgentRunBillingStatusUnresolved(order.Status):
+			case !providerPossiblySubmitted && adminAgentRunBillingStatusUnresolved(order.Status):
 				return nil, false, ErrAdminAgentRunBillingUnresolved
 			default:
 				billingStatus = order.Status
@@ -305,12 +320,12 @@ func disposeAdminAgentRunControlTargets(
 		}
 		pollStage := ""
 		var nextPollAt *time.Time
-		stage := "管理员已终止 Agent 任务"
-		if providerSubmitted {
+		stage := "Agent 任务已终止"
+		if providerPossiblySubmitted {
 			pollStage = "cancel_reconcile"
 			next := now
 			nextPollAt = &next
-			stage = "管理员已请求取消上游任务，等待结果核对"
+			stage = "已请求取消上游 Agent 任务，等待结果核对"
 			reconciliationPending = true
 		}
 		result := db.Model(&model.Task{}).
@@ -329,7 +344,7 @@ func disposeAdminAgentRunControlTargets(
 		dispositions = append(dispositions, AdminAgentRunTaskDisposition{
 			TaskID: target.TaskID, Kind: target.Kind, PreviousStatus: target.Status, Status: model.TaskStatusCancelled,
 			BillingStatus: billingStatus, ProviderRequestSubmitted: providerSubmitted,
-			ReconciliationPending: providerSubmitted || billingStatus == model.BillingStatusUncertain,
+			ReconciliationPending: providerPossiblySubmitted || billingStatus == model.BillingStatusUncertain,
 		})
 	}
 	return dispositions, reconciliationPending, nil
@@ -339,7 +354,8 @@ func loadAdminAgentRunScopeFacts(db *gorm.DB, runID string) (adminAgentRunScopeF
 	var facts adminAgentRunScopeFacts
 	result := db.Table("agent_runs AS runs").
 		Select(`runs.id AS run_id, runs.thread_id AS thread_id, runs.actor_user_id AS actor_user_id,
-			runs.status AS status, runs.state_version AS state_version, threads.tenant_kind AS tenant_kind,
+			runs.status AS status, runs.state_version AS state_version, runs.runtime_version AS runtime_version,
+			threads.tenant_kind AS tenant_kind,
 			threads.tenant_id AS tenant_id, threads.created_by_user_id AS created_by_user_id,
 			threads.domain_project_id AS domain_project_id, threads.canvas_id AS canvas_id`).
 		Joins("JOIN agent_threads AS threads ON threads.id = runs.thread_id").

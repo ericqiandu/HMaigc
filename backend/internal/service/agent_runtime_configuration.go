@@ -36,28 +36,9 @@ func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUse
 	if _, err := filterAgentRuntimeCallableModels(callableModels, normalized.GenerationModels); err != nil {
 		return agentruntime.RunConfiguration{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	resolver := s.agentRuntimeSkillResolver
-	if resolver == nil {
-		resolver = func(resolveContext context.Context, userID string, dir string) (*Skill, error) {
-			return s.SkillDetail(resolveContext, userID, dir)
-		}
-	}
-	skills := make([]agentruntime.SkillSelection, 0, len(normalized.SkillDirs))
-	for _, dir := range normalized.SkillDirs {
-		skill, resolveErr := resolver(ctx, actorUserID, dir)
-		if resolveErr != nil {
-			return agentruntime.RunConfiguration{}, resolveErr
-		}
-		if skill == nil || strings.TrimSpace(skill.Dir) != dir {
-			return agentruntime.RunConfiguration{}, errors.New("Agent Skill 事实无效")
-		}
-		skills = append(skills, agentruntime.SkillSelection{
-			Dir: dir, Name: strings.TrimSpace(skill.Name), Description: strings.TrimSpace(skill.Description),
-			Instructions: strings.TrimSpace(skill.DetailText), Version: skill.Version, Checksum: strings.TrimSpace(skill.Checksum),
-		})
+	skills, err := s.resolveAgentRuntimeSkillSelections(ctx, actorUserID, normalized.SkillDirs)
+	if err != nil {
+		return agentruntime.RunConfiguration{}, err
 	}
 	attachments := make([]agentruntime.ResourceAttachment, 0, len(normalized.Attachments))
 	for _, inputAttachment := range normalized.Attachments {
@@ -68,11 +49,12 @@ func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUse
 		if resourceErr != nil {
 			return agentruntime.RunConfiguration{}, resourceErr
 		}
-		if resource.Status != model.ResourceStatusReady || resource.Kind != "image" || !strings.HasPrefix(strings.TrimSpace(resource.MimeType), "image/") {
-			return agentruntime.RunConfiguration{}, BadAuthRequest("Agent 参考图片尚不可用")
+		if resource.Status != model.ResourceStatusReady || (resource.Kind != "image" && resource.Kind != "audio" && resource.Kind != "video") {
+			return agentruntime.RunConfiguration{}, BadAuthRequest("Agent 参考媒体尚不可用")
 		}
 		attachments = append(attachments, agentruntime.ResourceAttachment{
-			ResourceID: resource.ID, Name: inputAttachment.Name, MIMEType: strings.TrimSpace(resource.MimeType), Width: resource.Width, Height: resource.Height,
+			ResourceID: resource.ID, Name: inputAttachment.Name, Kind: resource.Kind, MIMEType: strings.TrimSpace(resource.MimeType),
+			SizeBytes: resource.Size, Width: resource.Width, Height: resource.Height, DurationMS: resource.DurationMs,
 		})
 	}
 	configuration := agentruntime.RunConfiguration{GenerationModels: normalized.GenerationModels, Skills: skills, Attachments: attachments, ExecutionMode: normalized.ExecutionMode}
@@ -80,6 +62,55 @@ func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUse
 		return agentruntime.RunConfiguration{}, BadAuthRequest("Agent 模型或 Skill 选择无效")
 	}
 	return configuration, nil
+}
+
+func (s *Service) resolveAgentRuntimeSkillSelections(ctx context.Context, actorUserID string, dirs []string) ([]agentruntime.SkillSelection, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolver := s.agentRuntimeSkillResolver
+	if resolver == nil {
+		resolver = func(resolveContext context.Context, userID string, dir string) (*Skill, error) {
+			return s.SkillDetail(resolveContext, userID, dir)
+		}
+	}
+	skills := make([]agentruntime.SkillSelection, 0, len(dirs))
+	for _, dir := range dirs {
+		skill, resolveErr := resolver(ctx, actorUserID, dir)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if skill == nil || strings.TrimSpace(skill.Dir) != dir {
+			return nil, errors.New("Agent Skill 事实无效")
+		}
+		skills = append(skills, agentruntime.SkillSelection{
+			Dir: dir, Name: strings.TrimSpace(skill.Name), Description: strings.TrimSpace(skill.Description),
+			Instructions: strings.TrimSpace(skill.DetailText), Version: skill.Version, Checksum: strings.TrimSpace(skill.Checksum),
+			CapabilityManifest: skill.CapabilityManifest, SourceKind: strings.TrimSpace(skill.SourceKind), SourceURL: strings.TrimSpace(skill.SourceURL),
+			SourceRevision: strings.TrimSpace(skill.SourceRevision), SourceLicense: strings.TrimSpace(skill.SourceLicense), PublishedAt: strings.TrimSpace(skill.PublishedAt),
+		})
+	}
+	return skills, nil
+}
+
+func (s *Service) resolveAgentRuntimeSkillSelectionsForSpecialist(
+	ctx context.Context,
+	actorUserID string,
+	dirs []string,
+	specialist agentruntime.SpecialistKey,
+) ([]agentruntime.SkillSelection, error) {
+	normalized, err := normalizeAgentRuntimeConfigurationInput(AgentRuntimeConfigurationInput{SkillDirs: dirs, ExecutionMode: agentruntime.ExecutionGuided})
+	if err != nil {
+		return nil, err
+	}
+	skills, err := s.resolveAgentRuntimeSkillSelections(ctx, actorUserID, normalized.SkillDirs)
+	if err != nil {
+		return nil, err
+	}
+	if err := agentruntime.ValidateSkillSelectionsForSpecialist(skills, specialist); err != nil {
+		return nil, BadAuthRequest("Skill Capability Manifest 与 Specialist 不匹配")
+	}
+	return skills, nil
 }
 
 func normalizeAgentRuntimeConfigurationInput(input AgentRuntimeConfigurationInput) (AgentRuntimeConfigurationInput, error) {
@@ -106,18 +137,18 @@ func normalizeAgentRuntimeConfigurationInput(input AgentRuntimeConfigurationInpu
 		return AgentRuntimeConfigurationInput{}, BadAuthRequest("一次最多选择 8 个 Skills")
 	}
 	sort.Strings(result.SkillDirs)
-	if len(input.Attachments) > 4 {
-		return AgentRuntimeConfigurationInput{}, BadAuthRequest("一次最多添加 4 张 Agent 参考图片")
+	if len(input.Attachments) > 12 {
+		return AgentRuntimeConfigurationInput{}, BadAuthRequest("一次最多添加 12 个 Agent 参考媒体")
 	}
 	seenResources := make(map[string]struct{}, len(input.Attachments))
 	for _, attachment := range input.Attachments {
 		resourceID := strings.TrimSpace(attachment.ResourceID)
 		name := strings.TrimSpace(attachment.Name)
 		if resourceID == "" || len(resourceID) > 80 || name == "" || len(name) > 240 {
-			return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 参考图片选择无效")
+			return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 参考媒体选择无效")
 		}
 		if _, duplicate := seenResources[resourceID]; duplicate {
-			return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 参考图片不能重复")
+			return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 参考媒体不能重复")
 		}
 		seenResources[resourceID] = struct{}{}
 		result.Attachments = append(result.Attachments, AgentRuntimeResourceInput{ResourceID: resourceID, Name: name})
@@ -147,7 +178,7 @@ func agentRuntimeConfigurationMatchesInput(configuration agentruntime.RunConfigu
 }
 
 func validateGenerationModelSelections(selections agentruntime.GenerationModelSelections) error {
-	for _, selection := range []*agentruntime.GenerationModelSelection{selections.Image, selections.Video} {
+	for _, selection := range []*agentruntime.GenerationModelSelection{selections.Image, selections.Video, selections.Audio, selections.Vision} {
 		if selection == nil {
 			continue
 		}
@@ -159,7 +190,7 @@ func validateGenerationModelSelections(selections agentruntime.GenerationModelSe
 }
 
 func filterAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact, selections agentruntime.GenerationModelSelections) ([]agentRuntimeCallableModelFact, error) {
-	selected := map[string]*agentruntime.GenerationModelSelection{"image": selections.Image, "video": selections.Video}
+	selected := map[string]*agentruntime.GenerationModelSelection{"audio": selections.Audio, "image": selections.Image, "video": selections.Video, "vision": selections.Vision}
 	found := map[string]bool{}
 	result := make([]agentRuntimeCallableModelFact, 0, len(models))
 	for _, item := range models {
@@ -174,7 +205,7 @@ func filterAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact, se
 	}
 	for capability, selection := range selected {
 		if selection != nil && !found[capability] {
-			return nil, BadAuthRequest("所选" + map[string]string{"image": "图片", "video": "视频"}[capability] + "模型当前不可用于 Agent")
+			return nil, BadAuthRequest("所选" + map[string]string{"audio": "音频", "image": "图片", "video": "视频", "vision": "视觉理解"}[capability] + "模型当前不可用于 Agent")
 		}
 	}
 	return result, nil
@@ -188,11 +219,18 @@ func cloneGenerationModelSelections(value agentruntime.GenerationModelSelections
 	if value.Video != nil {
 		result.Video = &agentruntime.GenerationModelSelection{ChannelID: strings.TrimSpace(value.Video.ChannelID), Model: strings.TrimSpace(value.Video.Model)}
 	}
+	if value.Audio != nil {
+		result.Audio = &agentruntime.GenerationModelSelection{ChannelID: strings.TrimSpace(value.Audio.ChannelID), Model: strings.TrimSpace(value.Audio.Model)}
+	}
+	if value.Vision != nil {
+		result.Vision = &agentruntime.GenerationModelSelection{ChannelID: strings.TrimSpace(value.Vision.ChannelID), Model: strings.TrimSpace(value.Vision.Model)}
+	}
 	return result
 }
 
 func sameGenerationModelSelections(left agentruntime.GenerationModelSelections, right agentruntime.GenerationModelSelections) bool {
-	return sameGenerationModelSelection(left.Image, right.Image) && sameGenerationModelSelection(left.Video, right.Video)
+	return sameGenerationModelSelection(left.Image, right.Image) && sameGenerationModelSelection(left.Video, right.Video) &&
+		sameGenerationModelSelection(left.Audio, right.Audio) && sameGenerationModelSelection(left.Vision, right.Vision)
 }
 
 func sameGenerationModelSelection(left *agentruntime.GenerationModelSelection, right *agentruntime.GenerationModelSelection) bool {

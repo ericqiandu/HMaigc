@@ -352,19 +352,23 @@ func rebuildTerminalAgentTimeline(scope agentruntime.Scope, run model.AgentRun, 
 				ContentJSON: json.RawMessage(event.PayloadJSON),
 			}
 		case agentruntime.EventArtifactAvailable:
-			var payload agentHistoryArtifactPayload
-			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil || payload.ArtifactID == "" ||
-				payload.PlanKey == "" || payload.PlanVersion < 1 || payload.ResourceID == "" || !payload.Status.Valid() {
-				return nil, errors.New("terminal agent artifact facts are invalid")
+			var err error
+			mutation, err = agentArtifactTimelineMutation(run.ID, event)
+			if err != nil {
+				return nil, errors.Join(errors.New("terminal agent artifact facts are invalid"), err)
 			}
-			mutation = &TimelineMutation{
-				ItemID: agentFactID("timeline", run.ID, "artifact", payload.ArtifactID), Kind: model.AgentTimelineItemArtifact,
-				ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
-				ContentJSON: json.RawMessage(event.PayloadJSON),
+		case agentruntime.EventApprovalDecided:
+			stageMutation, matched, err := agentStageReviewTimelineMutation(run.ID, event)
+			if err != nil {
+				return nil, err
+			}
+			if matched {
+				mutation = stageMutation
 			}
 		case agentruntime.EventModelDelta:
 			continue
-		default:
+		}
+		if mutation == nil {
 			var state agentruntime.RuntimeState
 			if err := json.Unmarshal([]byte(event.PayloadJSON), &state); err != nil || state.StateVersion < 1 || !state.Status.Valid() {
 				return nil, errors.New("terminal agent runtime event state is invalid")

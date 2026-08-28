@@ -47,3 +47,23 @@ func TestDecisionStreamObserverEmitsMonotonicDeltasAfterFinalKindIsKnown(t *test
 		t.Fatalf("second delta = %q, error = %v", second, err)
 	}
 }
+
+func TestDecisionStreamObserverUsesFrozenToolSchema(t *testing.T) {
+	observer := NewDecisionStreamObserverForToolSchema(ProductionToolSchemaVersion)
+	legacy := `{"kind":"tool_call","toolCall":{"toolCallId":"legacy","toolName":"production.plan","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	if _, err := observer.Push(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Finish(); err == nil {
+		t.Fatal("production observer accepted retired legacy tool")
+	}
+
+	observer = NewDecisionStreamObserverForToolSchema(ProductionToolSchemaVersion)
+	production := `{"kind":"tool_call","toolCall":{"toolCallId":"delegate","toolName":"specialist.delegate","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	if _, err := observer.Push(production); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Finish(); err != nil {
+		t.Fatalf("production observer rejected generic tool: %v", err)
+	}
+}

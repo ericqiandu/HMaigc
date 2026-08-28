@@ -886,13 +886,26 @@ func TestProductionRenderWithoutUserPinUsesFrozenCallableModelSetAndFreezesQuote
 		t.Fatal(err)
 	}
 	var frozen struct {
-		AmountMicrocredits int64  `json:"amountMicrocredits"`
-		QuoteFingerprint   string `json:"quoteFingerprint"`
+		AmountMicrocredits       int64     `json:"amountMicrocredits"`
+		QuoteFingerprint         string    `json:"quoteFingerprint"`
+		QuoteID                  string    `json:"quoteId"`
+		ApprovalFingerprint      string    `json:"approvalFingerprint"`
+		TaskID                   string    `json:"taskId"`
+		BillingIdempotencyKey    string    `json:"billingIdempotencyKey"`
+		ChannelModelID           string    `json:"channelModelId"`
+		Capability               string    `json:"capability"`
+		TaskType                 string    `json:"taskType"`
+		ParametersJSON           string    `json:"parametersJson"`
+		ProviderCapabilitiesJSON string    `json:"providerCapabilitiesJson"`
+		ExpiresAt                time.Time `json:"expiresAt"`
 	}
 	if err := json.Unmarshal([]byte(toolCall.InputJSON), &frozen); err != nil {
 		t.Fatal(err)
 	}
-	if frozen.AmountMicrocredits != 250 || frozen.QuoteFingerprint == "" {
+	if frozen.AmountMicrocredits != 250 || frozen.QuoteFingerprint == "" || frozen.QuoteID == "" ||
+		frozen.ApprovalFingerprint == "" || frozen.TaskID == "" || frozen.BillingIdempotencyKey == "" ||
+		frozen.ChannelModelID != "runtime-image-model" || frozen.Capability != "image" || frozen.TaskType != "canvas_image" ||
+		frozen.ParametersJSON == "" || frozen.ProviderCapabilitiesJSON == "" || frozen.ExpiresAt.IsZero() {
 		t.Fatalf("frozen production quote = %#v input=%s", frozen, toolCall.InputJSON)
 	}
 	var mediaTasks, mediaOrders int64
@@ -1164,6 +1177,13 @@ func TestProductionRenderApprovalCreatesOneRecoverableTaskAndAdoptsReadyResource
 	}
 	if mediaTasks != 1 || mediaOrders != 1 || reserveEntries != 1 {
 		t.Fatalf("commercial facts tasks=%d orders=%d reserves=%d", mediaTasks, mediaOrders, reserveEntries)
+	}
+	storedTask, err := svc.repo.TaskForUser(scope.ActorUserID, bound.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Audience != model.TaskAudienceInternal {
+		t.Fatalf("production media task audience = %q, want internal", storedTask.Audience)
 	}
 
 	now := time.Now().UTC()

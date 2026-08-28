@@ -135,9 +135,17 @@ func ProjectAgentEvent(threadID string, event model.AgentRunEvent, item *model.A
 	case agentruntime.EventCheckpointSaved:
 		return projectAgentRunEvent(projected, event, item, AgentUIEventStateSnapshot, false)
 	case agentruntime.EventUserMessageAdded, agentruntime.EventRunSteered,
-		agentruntime.EventAgentMessageCompleted, agentruntime.EventClarificationResponded,
-		agentruntime.EventArtifactAvailable:
+		agentruntime.EventAgentMessageCompleted, agentruntime.EventClarificationResponded:
 		projected.Kind = AgentUIEventItemCompleted
+	case agentruntime.EventArtifactAvailable:
+		if item == nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact item is missing"))
+		}
+		if item.Status == model.AgentTimelineItemFailed {
+			projected.Kind = AgentUIEventItemFailed
+		} else {
+			projected.Kind = AgentUIEventItemCompleted
+		}
 	case agentruntime.EventAgentMessageFailed:
 		projected.Kind = AgentUIEventItemFailed
 	case agentruntime.EventClarificationRequested, agentruntime.EventToolCall:
@@ -213,6 +221,48 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 	if item.Kind != model.AgentTimelineItemArtifact {
 		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
 		return projected, nil
+	}
+	var envelope struct {
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline facts are invalid"))
+	}
+	if envelope.ContentType == agentruntime.ArtifactReviewContentType {
+		content, err := agentruntime.DecodeArtifactReviewContent([]byte(item.ContentJSON))
+		if err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact review timeline facts are invalid"))
+		}
+		projected.Payload, err = json.Marshal(content)
+		if err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+		}
+		return projected, nil
+	}
+	if envelope.ContentType == agentruntime.AssetPublicationContentType {
+		content, err := agentruntime.DecodeAssetPublicationContent([]byte(item.ContentJSON))
+		if err != nil || item.Status != model.AgentTimelineItemCompleted {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent asset publication timeline facts are invalid"))
+		}
+		projected.Payload, err = json.Marshal(content)
+		if err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+		}
+		return projected, nil
+	}
+	if envelope.ContentType == agentruntime.AssetPublicationFailedType {
+		content, err := agentruntime.DecodeAssetPublicationFailureContent([]byte(item.ContentJSON))
+		if err != nil || item.Status != model.AgentTimelineItemFailed {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent asset publication failure timeline facts are invalid"))
+		}
+		projected.Payload, err = json.Marshal(content)
+		if err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+		}
+		return projected, nil
+	}
+	if envelope.ContentType != "" {
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline content type is invalid"))
 	}
 	internal, err := decodeAgentArtifactTimelinePayload(item.ContentJSON)
 	if err != nil || internal.ArtifactID == "" ||
@@ -306,6 +356,40 @@ type AgentControlError struct {
 	LatestStateVersion int    `json:"latestStateVersion,omitempty"`
 }
 
+type AgentProductionStageView struct {
+	ID               string                             `json:"id"`
+	StageKey         string                             `json:"stageKey"`
+	SpecialistKey    agentruntime.SpecialistKey         `json:"specialistKey"`
+	ReviewPolicy     agentruntime.ReviewPolicy          `json:"reviewPolicy"`
+	CostPolicy       agentruntime.CostPolicy            `json:"costPolicy"`
+	Status           agentruntime.ProductionStageStatus `json:"status"`
+	Version          int64                              `json:"version"`
+	ReviewRevisionID string                             `json:"reviewRevisionId,omitempty"`
+	LastErrorCode    string                             `json:"lastErrorCode,omitempty"`
+	UpdatedAt        time.Time                          `json:"updatedAt"`
+}
+
+type AgentStageReviewView struct {
+	Stage               AgentProductionStageView `json:"stage"`
+	ArtifactRevisionIDs []string                 `json:"artifactRevisionIds"`
+	Publication         *AssetPublicationResult  `json:"publication,omitempty"`
+}
+
+type AgentArtifactRevisionView struct {
+	ArtifactID        string                             `json:"artifactId"`
+	RevisionID        string                             `json:"revisionId"`
+	ArtifactKey       string                             `json:"artifactKey"`
+	Revision          int64                              `json:"revision"`
+	Kind              string                             `json:"kind"`
+	SchemaVersion     int                                `json:"schemaVersion"`
+	Payload           json.RawMessage                    `json:"payload"`
+	ResourceID        string                             `json:"resourceId,omitempty"`
+	UpstreamRevisions []agentruntime.ArtifactRevisionRef `json:"upstreamRevisions"`
+	SkillVersions     []agentruntime.SkillSelection      `json:"skillVersions"`
+	LifecycleStatus   string                             `json:"lifecycleStatus"`
+	CreatedAt         time.Time                          `json:"createdAt"`
+}
+
 func (err *AgentControlError) Error() string {
 	return err.Message
 }
@@ -357,6 +441,135 @@ func (s *Service) ReadScopedAgentRun(actor *model.User, runID string) (*AgentRun
 		return nil, err
 	}
 	return s.readAgentRuntimeView(scope)
+}
+
+func (s *Service) ReviewScopedProductionStage(
+	ctx context.Context,
+	actor *model.User,
+	runID string,
+	stageID string,
+	command agentruntime.StageReviewCommand,
+) (*AgentStageReviewView, error) {
+	scope, err := s.scopeForAgentRun(actor, runID)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.CanMutateCanvas() {
+		return nil, Forbidden("当前用户没有审核 Agent 阶段的画布权限")
+	}
+	parentRun, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.ReviewProductionStage(ctx, scope, *parentRun, strings.TrimSpace(stageID), command)
+	if err != nil {
+		return nil, s.mapStageReviewError(err)
+	}
+	view := &AgentStageReviewView{
+		Stage: productionStageView(result.Stage), ArtifactRevisionIDs: []string{}, Publication: result.Publication,
+	}
+	if result.Completion != nil {
+		for _, revision := range result.Completion.Revisions {
+			view.ArtifactRevisionIDs = append(view.ArtifactRevisionIDs, revision.ID)
+		}
+	}
+	return view, nil
+}
+
+func (s *Service) ReadScopedAgentArtifactRevision(
+	actor *model.User,
+	runID string,
+	artifactID string,
+	revisionID string,
+) (*AgentArtifactRevisionView, error) {
+	scope, err := s.scopeForAgentRun(actor, runID)
+	if err != nil {
+		return nil, err
+	}
+	revision, err := s.repo.ArtifactRevisionForArtifactInScope(scope, strings.TrimSpace(artifactID), strings.TrimSpace(revisionID))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, NotFound("Agent 产物版本不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
+	var upstream []agentruntime.ArtifactRevisionRef
+	if err := decodeStrictStoredJSONDocument(revision.UpstreamRevisionsJSON, func(decoder *json.Decoder) error {
+		return decoder.Decode(&upstream)
+	}); err != nil {
+		return nil, errors.Join(errors.New("Agent 产物上游版本事实损坏"), err)
+	}
+	var skills []agentruntime.SkillSelection
+	if err := decodeStrictStoredJSONDocument(revision.SkillVersionsJSON, func(decoder *json.Decoder) error {
+		return decoder.Decode(&skills)
+	}); err != nil {
+		return nil, errors.Join(errors.New("Agent 产物技能版本事实损坏"), err)
+	}
+	payload := json.RawMessage(revision.PayloadJSON)
+	if !json.Valid(payload) {
+		return nil, errors.New("Agent 产物正文事实损坏")
+	}
+	return &AgentArtifactRevisionView{
+		ArtifactID: revision.ArtifactID, RevisionID: revision.ID, ArtifactKey: revision.ArtifactKey,
+		Revision: revision.Revision, Kind: revision.Kind, SchemaVersion: revision.SchemaVersion,
+		Payload: payload, ResourceID: revision.ResourceID, UpstreamRevisions: upstream,
+		SkillVersions: skills, LifecycleStatus: revision.LifecycleStatus, CreatedAt: revision.CreatedAt,
+	}, nil
+}
+
+func productionStageView(stage model.AgentProductionStage) AgentProductionStageView {
+	return AgentProductionStageView{
+		ID: stage.ID, StageKey: stage.StageKey, SpecialistKey: stage.SpecialistKey,
+		ReviewPolicy: stage.ReviewPolicy, CostPolicy: stage.CostPolicy, Status: stage.Status,
+		Version: stage.Version, ReviewRevisionID: stage.ReviewRevisionID,
+		LastErrorCode: stage.LastErrorCode, UpdatedAt: stage.UpdatedAt,
+	}
+}
+
+func (s *Service) mapStageReviewError(err error) error {
+	switch {
+	case errors.Is(err, ErrAssetPublicationInvalid):
+		return &AgentControlError{
+			Status: http.StatusBadRequest, ErrorCode: "asset_publication_invalid", Message: "资产入库参数无效",
+		}
+	case errors.Is(err, ErrAssetPublicationApprovalRequired):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "asset_publication_approval_required", Message: "资产入库缺少与当前产物完全一致的用户批准",
+		}
+	case errors.Is(err, ErrAssetPublicationResourceMissing):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "asset_publication_resource_missing", Message: "已批准产物缺少可入库的真实媒体资源",
+		}
+	case errors.Is(err, ErrAssetPublicationBillingMissing):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "asset_publication_billing_missing", Message: "已批准产物缺少完整的模型调用或计费事实",
+		}
+	case errors.Is(err, ErrAssetPublicationConflict):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "asset_publication_conflict", Message: "资产入库事实已经变化，请刷新后重试",
+		}
+	case errors.Is(err, ErrAssetPublicationFailed):
+		return &AgentControlError{
+			Status: http.StatusInternalServerError, ErrorCode: "asset_publication_failed", Message: "资产入库失败，原始产物已保留，可使用同一批准重试",
+		}
+	case errors.Is(err, agentruntime.ErrProductionStageVersionConflict), errors.Is(err, agentruntime.ErrStageApprovalRevisionMismatch):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "stage_approval_revision_mismatch",
+			Message: "Agent 阶段审核版本已经变化，请按最新产物重试",
+		}
+	case errors.Is(err, agentruntime.ErrProductionStageTransitionInvalid):
+		return &AgentControlError{
+			Status: http.StatusBadRequest, ErrorCode: "stage_review_invalid", Message: "Agent 阶段审核请求格式无效",
+		}
+	case errors.Is(err, repository.ErrProductionStageReviewConflict), errors.Is(err, repository.ErrProductionStageConflict),
+		errors.Is(err, repository.ErrAgentSpecialistRunConflict), errors.Is(err, agentruntime.ErrSpecialistModelInheritance),
+		errors.Is(err, agentruntime.ErrInterruptConflict), errors.Is(err, repository.ErrAgentRuntimeStepConflict):
+		return &AgentControlError{
+			Status: http.StatusConflict, ErrorCode: "stage_review_conflict", Message: "Agent 阶段审核状态已经变化，请按最新状态重试",
+		}
+	default:
+		return err
+	}
 }
 
 func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
@@ -473,12 +686,25 @@ func (s *Service) SubmitScopedAgentInterrupt(actor *model.User, runID string, ex
 			Status: http.StatusBadRequest, ErrorCode: "agent_interrupt_conflict", Message: "Agent 停止请求格式无效",
 		}
 	}
-	state, err := s.repo.InterruptAgentRun(scope, expectedStateVersion, time.Now().UTC())
+	state, err := s.repo.CancelAgentRunTree(scope, expectedStateVersion, time.Now().UTC())
 	if err != nil {
 		return nil, s.mapAgentControlError(scope, err, "agent_interrupt_conflict", "Agent 运行状态已经变化，请按最新状态重试")
 	}
-	s.cancelActiveTask(agentRuntimeModelTaskID(scope.RunID, state.StepNumber))
+	if err := s.cancelAgentRunTreeContexts(scope); err != nil {
+		return nil, err
+	}
 	return s.agentRuntimeViewForState(scope, state)
+}
+
+func (s *Service) cancelAgentRunTreeContexts(scope agentruntime.Scope) error {
+	taskIDs, err := s.repo.AgentRunTreeTaskIDs(scope)
+	if err != nil {
+		return err
+	}
+	for _, taskID := range taskIDs {
+		s.cancelActiveTask(taskID)
+	}
+	return nil
 }
 
 func (s *Service) agentRuntimeViewForState(scope agentruntime.Scope, state agentruntime.RuntimeState) (*AgentRuntimeView, error) {

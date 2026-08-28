@@ -45,6 +45,25 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 	}
 }
 
+func TestRuntimeSchemaRetiredAuditIndexIsInstalled(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	const name = "idx_agent_runs_runtime_retirement"
+	const expected = `CREATE INDEX idx_agent_runs_runtime_retirement ON agent_runs(runtime_version, status, created_at, id)`
+	var actual string
+	if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
+		t.Fatal(err)
+	}
+	if compactSQL(actual) != compactSQL(expected) {
+		t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
+	}
+}
+
 func TestEnsureAgentRuntimeIntegritySchemaCreatesTimelineTableAndExactIndexes(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {

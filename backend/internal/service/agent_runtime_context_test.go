@@ -10,7 +10,10 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skillcatalog"
+
+	"gorm.io/gorm"
 )
 
 func TestAgentRuntimeFreezesSeededFirstPartySkillVersion(t *testing.T) {
@@ -39,8 +42,62 @@ func TestAgentRuntimeFreezesSeededFirstPartySkillVersion(t *testing.T) {
 		t.Fatalf("frozen seeded skills = %#v", configuration.Skills)
 	}
 	frozen := configuration.Skills[0]
-	if frozen.Dir != expected.Dir || frozen.Version != expected.Version || frozen.Instructions != expected.Instructions || frozen.Checksum != expected.Checksum {
+	frozenManifestJSON, err := json.Marshal(frozen.CapabilityManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frozen.Dir != expected.Dir || frozen.Version != expected.Version || frozen.Instructions != expected.Instructions || frozen.Checksum != expected.Checksum ||
+		string(frozenManifestJSON) != expected.CapabilityManifestJSON || frozen.SourceLicense != expected.SourceLicense {
 		t.Fatalf("frozen seeded skill = %#v; expected version=%d checksum=%s", frozen, expected.Version, expected.Checksum)
+	}
+}
+
+func TestResolveAgentRuntimeSkillSelectionsForSpecialistRejectsCapabilityMismatch(t *testing.T) {
+	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*Skill, error) {
+		instructions := "只基于真实视觉输入形成可追溯证据。"
+		return &Skill{
+			Dir: dir, Name: "视觉证据分析", Description: "分析视觉资产", DetailText: instructions,
+			Version: 1, Checksum: agentRuntimeTestSkillChecksum(instructions), SourceKind: "original",
+			SourceRevision: "test-v1", SourceLicense: "HMaigc-Proprietary", PublishedAt: "2026-08-27T00:00:00Z",
+			CapabilityManifest: agentruntime.SkillCapabilityManifest{
+				Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistVisual},
+				Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
+				ArtifactSchemas: []string{"visual_evidence.v1"},
+			},
+		}, nil
+	}
+
+	_, err := svc.resolveAgentRuntimeSkillSelectionsForSpecialist(context.Background(), "user-1", []string{"visual-evidence-analysis"}, agentruntime.SpecialistNarrative)
+	if err == nil || !strings.Contains(err.Error(), "Skill Capability Manifest") {
+		t.Fatalf("capability mismatch error = %v", err)
+	}
+}
+
+func TestResolveAgentRuntimeConfigurationFreezesReadyAudioAndVideoAttachments(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	userID := agentRuntimeServiceScope().ActorUserID
+	resources := []model.Resource{
+		{ID: "runtime-reference-audio", UserID: userID, Kind: "audio", Status: model.ResourceStatusReady, MimeType: "audio/wav", Size: 1_024, DurationMs: 12_000},
+		{ID: "runtime-reference-video", UserID: userID, Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 4_096, Width: 1280, Height: 720, DurationMs: 15_000},
+	}
+	if err := db.Create(&resources).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), userID, AgentRuntimeConfigurationInput{
+		Attachments: []AgentRuntimeResourceInput{
+			{ResourceID: "runtime-reference-video", Name: "样片.mp4"},
+			{ResourceID: "runtime-reference-audio", Name: "对白.wav"},
+		},
+		ExecutionMode: agentruntime.ExecutionGuided,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configuration.Attachments) != 2 || configuration.Attachments[0].Kind != "audio" || configuration.Attachments[0].SizeBytes != 1_024 ||
+		configuration.Attachments[1].Kind != "video" || configuration.Attachments[1].DurationMS != 15_000 {
+		t.Fatalf("frozen media attachments = %#v", configuration.Attachments)
 	}
 }
 
@@ -49,7 +106,7 @@ func TestAgentRuntimeFreezesSelectedGenerationModelAndSkillInstructions(t *testi
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeCanvas(t, db)
 	createAgentRuntimeImageModel(t, db, fixture)
-	if err := db.Create(&model.Resource{ID: "runtime-reference-image", UserID: agentRuntimeServiceScope().ActorUserID, Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Width: 1280, Height: 720}).Error; err != nil {
+	if err := db.Create(&model.Resource{ID: "runtime-reference-image", UserID: agentRuntimeServiceScope().ActorUserID, Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Size: 2_048, Width: 1280, Height: 720}).Error; err != nil {
 		t.Fatal(err)
 	}
 	svc.agentRuntimeSkillResolver = func(_ context.Context, userID string, dir string) (*Skill, error) {
@@ -193,6 +250,77 @@ func TestAgentRuntimeFreezesCallableMediaModelFactsWithoutProviderSecrets(t *tes
 	}
 }
 
+func TestAgentRuntimeFreezesNativeAudioVideoCapabilities(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","requiredArtifacts":["text"],"completionCriteria":[{"fact":"final_message"}]}}}`)
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeCanvas(t, db)
+	createAgentRuntimeVideoModel(t, db, fixture)
+
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "context-video-capability-request",
+		UserMessage: "生成带原生对白的视频", MaxSteps: 6,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	progress, err := svc.StartAgentRuntime(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.repo.TaskForUser(input.Scope.ActorUserID, progress.ModelTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, stored.Prompt)
+	if len(context.CallableModels) != 1 || context.CallableModels[0].ProviderCapabilities == nil {
+		t.Fatalf("callable models = %#v", context.CallableModels)
+	}
+	capabilities := context.CallableModels[0].ProviderCapabilities
+	if len(capabilities.Durations) != 27 || capabilities.Durations[0] != 4 || capabilities.Durations[len(capabilities.Durations)-1] != 30 {
+		t.Fatalf("frozen durations = %#v", capabilities.Durations)
+	}
+	if !capabilities.SupportsImageToVideo || !capabilities.SupportsReferenceVideo || !capabilities.SupportsNativeAudio ||
+		!capabilities.SupportsDialogue || !capabilities.SupportsVoiceReference || capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+		t.Fatalf("frozen media delivery capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.AdaptiveRatioModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != "first_last_frame" {
+		t.Fatalf("frozen adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+	}
+	if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" || capabilities.MaxImagesWithVideo != 30 {
+		t.Fatalf("frozen generation modes = %#v; max images with video = %d", capabilities.GenerationModes, capabilities.MaxImagesWithVideo)
+	}
+}
+
+func createAgentRuntimeVideoModel(t *testing.T, db *gorm.DB, fixture agentRuntimeServiceFixture) {
+	t.Helper()
+	now := time.Now().UTC()
+	channel := model.ModelChannel{
+		ID: "runtime-video-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Agent Video",
+		APIFormat: "openai", InterfaceType: model.ChannelInterfaceAIOpenVideoVolcengine,
+		ModelsJSON: `["doubao-seedance-2-5-260628"]`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	tiers := make([]model.ChannelModelPriceTier, 0, 9)
+	for _, resolution := range []string{"480P", "720P", "1080P"} {
+		for _, variant := range []string{"standard", "standard_audio", "reference_video"} {
+			tiers = append(tiers, model.ChannelModelPriceTier{
+				ID:             "runtime-video-" + strings.ToLower(resolution) + "-" + variant,
+				ChannelModelID: "runtime-video-model", Resolution: resolution, InputVariant: variant,
+				UnitPriceMicrocredits: 100, PriceVersion: 1,
+			})
+		}
+	}
+	channelModel := model.ChannelModel{
+		ID: "runtime-video-model", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5",
+		ProviderCredentialID: fixture.credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "video",
+		BillingMode: "per_second", PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
+		PriceTiers: tiers, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channelModel).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateAgentRuntimeCallableModelsAcceptsInputImageUsagePricing(t *testing.T) {
 	models := []agentRuntimeCallableModelFact{{
 		ChannelID: "image-channel", Model: "seedream5.0pro", DisplayName: "Seedream 5.0 Pro", Capability: "image",
@@ -297,6 +425,189 @@ func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
 	}
 }
 
+func TestEncodeProductionAgentRuntimePromptUsesOnlyGraphAndGenericTools(t *testing.T) {
+	t.Parallel()
+
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	state := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 2, MaxSteps: 24, Status: agentruntime.RunRunning,
+		UserMessage: "创作一部短片", ExpectedDelivery: &delivery,
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}
+	stage := agentRuntimeProductionStageFact{
+		ID: "stage-script", StageKey: "script", SpecialistKey: agentruntime.SpecialistNarrative,
+		Status: agentruntime.StageAwaitingReview, Version: 3, ReviewRevisionID: "revision-script-1",
+		ExpectedDelivery: delivery, ReviewPolicy: agentruntime.ReviewRequired, CostPolicy: agentruntime.CostNone,
+	}
+	production := &agentRuntimeProductionContextFact{
+		Graph: &agentRuntimeProductionGraphFact{
+			ID: "graph-version-1", GraphKey: "short-film", Version: 1,
+			SchemaVersion: agentruntime.CurrentProductionSchemaVersion, Stages: []agentRuntimeProductionStageFact{stage},
+		},
+		CurrentStage: &stage,
+		Artifacts: []agentRuntimeArtifactSummaryFact{{
+			ArtifactID: "artifact-script", ArtifactKey: "script", Kind: "script_bundle.v1", HeadRevision: 1,
+			RevisionID: "revision-script-1", SchemaVersion: 1, LifecycleStatus: "awaiting_review",
+		}},
+	}
+	prompt, err := encodeAgentRuntimeModelPromptForToolSchema(
+		agentRuntimeServiceScope(), state, 11, agentruntime.ProductionToolSchemaVersion,
+		nil, nil, production, nil, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix)), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := raw["productionPlan"]; found {
+		t.Fatal("production prompt exposed historical productionPlan")
+	}
+	if _, found := raw["productionGraph"]; !found {
+		t.Fatal("production prompt omitted immutable productionGraph")
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, prompt)
+	if context.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {
+		t.Fatalf("tool schema version = %d", context.ToolSchemaVersion)
+	}
+	wantTools := []agentruntime.ToolName{
+		agentruntime.ToolSkillLoad,
+		agentruntime.ToolSpecialistDelegate,
+		agentruntime.ToolVisionAnalyze,
+		agentruntime.ToolMediaGenerate,
+		agentruntime.ToolCanvasProject,
+	}
+	if len(context.CallableTools) != len(wantTools) {
+		t.Fatalf("callable tools = %#v", context.CallableTools)
+	}
+	for index, want := range wantTools {
+		if context.CallableTools[index].Name != want {
+			t.Fatalf("callable tool[%d] = %q, want %q", index, context.CallableTools[index].Name, want)
+		}
+	}
+	if context.ProductionGraph == nil || context.ProductionGraph.ID != "graph-version-1" ||
+		context.CurrentStage == nil || context.CurrentStage.ReviewRevisionID != "revision-script-1" ||
+		len(context.Artifacts) != 1 || context.Artifacts[0].RevisionID != "revision-script-1" {
+		t.Fatalf("production context = graph %#v, stage %#v, artifacts %#v", context.ProductionGraph, context.CurrentStage, context.Artifacts)
+	}
+	if _, err := frozenAgentRuntimeModelContext(agentRuntimeServiceScope(), state, prompt); err != nil {
+		t.Fatalf("frozen production prompt rejected: %v", err)
+	}
+}
+
+func TestLoadAgentRuntimeProductionContextFactUsesExactHeadFactsWithoutPayload(t *testing.T) {
+	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = "runtime-project"
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	graph, err := svc.repo.AppendProductionGraphVersion(scope, 0, agentruntime.ProductionGraphDraft{
+		GraphKey: "short-film",
+		Stages: []agentruntime.ProductionStageDraft{{
+			StageKey: "script", SpecialistKey: agentruntime.SpecialistNarrative,
+			DependsOnStageKeys: []string{}, InputRevisions: []agentruntime.ArtifactRevisionRef{},
+			ExpectedDelivery: delivery, ReviewPolicy: agentruntime.ReviewRequired, CostPolicy: agentruntime.CostNone,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.AdvanceProductionStageCAS(scope, graph.Stages[0].ID, 1, agentruntime.StageRunning); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := svc.repo.AppendArtifactRevision(scope, "script-artifact", 0, agentruntime.ArtifactDraft{
+		ArtifactKey: "script", Kind: "script_bundle.v1", SchemaVersion: 1,
+		Payload: json.RawMessage(`{"secretScript":"不得进入模型上下文"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fact, err := svc.loadAgentRuntimeProductionContextFact(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fact.Graph == nil || fact.Graph.ID != graph.Graph.ID || fact.CurrentStage == nil ||
+		fact.CurrentStage.ID != graph.Stages[0].ID || fact.CurrentStage.Status != agentruntime.StageRunning {
+		t.Fatalf("production graph fact = %#v, current stage = %#v", fact.Graph, fact.CurrentStage)
+	}
+	if len(fact.Artifacts) != 1 || fact.Artifacts[0].RevisionID != revision.ID || fact.Artifacts[0].HeadRevision != 1 {
+		t.Fatalf("artifact facts = %#v", fact.Artifacts)
+	}
+	encoded, err := json.Marshal(fact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "不得进入模型上下文") {
+		t.Fatalf("production context exposed artifact payload: %s", encoded)
+	}
+}
+
+func TestAgentRuntimeModelPromptUsesStoredProductionToolSchema(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeCanvas(t, db)
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = "runtime-project"
+	if _, err := svc.repo.CreateAgentRun(repository.CreateAgentRunInput{
+		Scope: scope, ClientRequestID: "production-context-request", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).
+		Update("tool_schema_version", agentruntime.ProductionToolSchemaVersion).Error; err != nil {
+		t.Fatal(err)
+	}
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	if _, err := svc.repo.AppendProductionGraphVersion(scope, 0, agentruntime.ProductionGraphDraft{
+		GraphKey: "short-film",
+		Stages: []agentruntime.ProductionStageDraft{{
+			StageKey: "script", SpecialistKey: agentruntime.SpecialistNarrative,
+			DependsOnStageKeys: []string{}, InputRevisions: []agentruntime.ArtifactRevisionRef{},
+			ExpectedDelivery: delivery, ReviewPolicy: agentruntime.ReviewRequired, CostPolicy: agentruntime.CostNone,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 24, Status: agentruntime.RunRunning,
+		UserMessage: "创作短片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}
+	prompt, err := svc.agentRuntimeModelPrompt(scope, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, prompt)
+	if context.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion || context.ProductionGraph == nil || context.ProductionPlan != nil {
+		t.Fatalf("production model context = %#v", context)
+	}
+}
+
+func TestProductionAgentRuntimeSystemPromptExposesOnlyGenericTools(t *testing.T) {
+	prompt, err := agentRuntimeSystemPromptForToolSchema(agentruntime.ProductionToolSchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("production system prompt is missing %q", required)
+		}
+	}
+	for _, legacy := range []string{"production.plan", "production.render", "canvas.commit"} {
+		if strings.Contains(prompt, legacy) {
+			t.Fatalf("production system prompt exposed legacy tool %q", legacy)
+		}
+	}
+}
+
 func TestAgentRuntimeSystemPromptDeclaresStructuredClarificationDecision(t *testing.T) {
 	for _, required := range []string{
 		`"kind":"clarification_request"`,
@@ -323,6 +634,7 @@ func TestAgentRuntimeSystemPromptRequiresCompletionFromAccumulatedEvidence(t *te
 }
 
 type agentRuntimePromptContextForTest struct {
+	ToolSchemaVersion    int                                   `json:"toolSchemaVersion"`
 	CanvasRevision       int64                                 `json:"canvasRevision"`
 	DeliveryEvidence     *agentruntime.DeliveryEvidence        `json:"deliveryEvidence"`
 	DeliveryVerification *agentruntime.DeliveryVerification    `json:"deliveryVerification"`
@@ -330,6 +642,10 @@ type agentRuntimePromptContextForTest struct {
 	LoadedSkillDirs      []string                              `json:"loadedSkillDirs"`
 	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory"`
 	ProductionPlan       *agentRuntimeProductionPlanFact       `json:"productionPlan"`
+	ProductionGraph      *agentRuntimeProductionGraphFact      `json:"productionGraph"`
+	CurrentStage         *agentRuntimeProductionStageFact      `json:"currentStage"`
+	Artifacts            []agentRuntimeArtifactSummaryFact     `json:"artifacts"`
+	CallableTools        []agentRuntimeCallableToolFact        `json:"callableTools"`
 	CallableModels       []struct {
 		ChannelID             string                      `json:"channelId"`
 		Model                 string                      `json:"model"`

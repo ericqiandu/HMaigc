@@ -231,7 +231,7 @@ func TestAgentProductionArtifactSuccessAppendsTimelineAfterRunInterruptedAndRepl
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); err != nil {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	transition := ArtifactTransition{

@@ -20,8 +20,11 @@ func TestCommitRejectedAgentToolDecisionPersistsOneFailedCallAndCheckpoint(t *te
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "生成视频",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "生成视频",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -203,8 +206,11 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "读取当前画布",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -278,8 +284,11 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "修改当前画布",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -331,8 +340,11 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "生成一张图片",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "生成一张图片",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -419,8 +431,11 @@ func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t 
 	now := time.Now().UTC()
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "重试失败镜头",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "重试失败镜头",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -688,14 +703,14 @@ func TestInterruptAgentRunUsesCASAndPersistsInterruptedTimeline(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	state, err := repo.InterruptAgentRun(scope, 1, now.Add(time.Second))
+	state, err := repo.CancelAgentRunTree(scope, 1, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if state.Status != agentruntime.RunCancelled || state.StateVersion != 2 {
 		t.Fatalf("interrupted state = %#v", state)
 	}
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); !errors.Is(err, agentruntime.ErrInterruptConflict) {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(2*time.Second)); !errors.Is(err, agentruntime.ErrInterruptConflict) {
 		t.Fatalf("replayed interrupt error = %v", err)
 	}
 	var run model.AgentRun
@@ -766,7 +781,7 @@ func TestInterruptAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 			if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := repo.InterruptAgentRun(scope, requested.State.StateVersion, now.Add(2*time.Second)); err != nil {
+			if _, err := repo.CancelAgentRunTree(scope, requested.State.StateVersion, now.Add(2*time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			var item model.AgentTimelineItem

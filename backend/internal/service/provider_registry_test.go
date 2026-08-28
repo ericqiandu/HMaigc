@@ -74,7 +74,7 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	if !ok || len(kling.Models) != 1 {
 		t.Fatalf("kuaizi/kling descriptor = %#v, exists=%v", kling, ok)
 	}
-	if got := kling.Models[0]; got.ModelKey != "kling-v3-omni" || got.DisplayName != "Kling 3 Omni" || got.UpstreamMode != "kling-v3-omni" || got.Capability != "video" || got.DurationMin != 3 || got.DurationMax != 15 || !got.SupportsGeneratedAudio || got.MaxImages != 7 || got.MaxVideos != 1 || got.MaxAudios != 0 || strings.Join(got.Resolutions, ",") != "std,pro,4k" || strings.Join(got.ReferenceVideoResolutions, ",") != "std,pro" || strings.Join(got.Ratios, ",") != "16:9,9:16,1:1" {
+	if got := kling.Models[0]; got.ModelKey != "kling-v3-omni" || got.DisplayName != "Kling 3 Omni" || got.UpstreamMode != "kling-v3-omni" || got.Capability != "video" || got.DurationMin != 3 || got.DurationMax != 15 || !got.SupportsImageToVideo || !got.SupportsReferenceVideo || !got.SupportsNativeAudio || !got.SupportsDialogue || got.SupportsVoiceReference || got.SupportsLipSync || got.SupportsIndependentAudio || !got.SupportsGeneratedAudio || got.MaxImages != 7 || got.MaxVideos != 1 || got.MaxAudios != 0 || strings.Join(got.Resolutions, ",") != "std,pro,4k" || strings.Join(got.ReferenceVideoResolutions, ",") != "std,pro" || strings.Join(got.Ratios, ",") != "16:9,9:16,1:1" {
 		t.Fatalf("Kling 3 Omni capabilities = %#v", got)
 	}
 	encodedKling, err := json.Marshal(kling.Models[0])
@@ -158,12 +158,15 @@ func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	}
 	var descriptors []struct {
 		Models []struct {
-			ModelKey     string          `json:"modelKey"`
-			Resolutions  json.RawMessage `json:"resolutions"`
-			Ratios       json.RawMessage `json:"ratios"`
-			Qualities    json.RawMessage `json:"qualities"`
-			OutputCounts json.RawMessage `json:"outputCounts"`
-			Tools        json.RawMessage `json:"tools"`
+			ModelKey                   string          `json:"modelKey"`
+			Resolutions                json.RawMessage `json:"resolutions"`
+			Ratios                     json.RawMessage `json:"ratios"`
+			Qualities                  json.RawMessage `json:"qualities"`
+			OutputCounts               json.RawMessage `json:"outputCounts"`
+			GenerationModes            json.RawMessage `json:"generationModes"`
+			AdaptiveRatioModes         json.RawMessage `json:"adaptiveRatioModes"`
+			RequiredAdaptiveRatioModes json.RawMessage `json:"requiredAdaptiveRatioModes"`
+			Tools                      json.RawMessage `json:"tools"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(payload, &descriptors); err != nil {
@@ -172,11 +175,14 @@ func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	for _, descriptor := range descriptors {
 		for _, model := range descriptor.Models {
 			for field, value := range map[string]json.RawMessage{
-				"resolutions":  model.Resolutions,
-				"ratios":       model.Ratios,
-				"qualities":    model.Qualities,
-				"outputCounts": model.OutputCounts,
-				"tools":        model.Tools,
+				"resolutions":                model.Resolutions,
+				"ratios":                     model.Ratios,
+				"qualities":                  model.Qualities,
+				"outputCounts":               model.OutputCounts,
+				"generationModes":            model.GenerationModes,
+				"adaptiveRatioModes":         model.AdaptiveRatioModes,
+				"requiredAdaptiveRatioModes": model.RequiredAdaptiveRatioModes,
+				"tools":                      model.Tools,
 			} {
 				if string(value) == "null" {
 					t.Fatalf("model %s field %s encoded as null, want []", model.ModelKey, field)
@@ -256,8 +262,11 @@ func TestProviderRegistryPublishesSeedance20And25CompatibleCapabilities(t *testi
 	if model.DurationMin != 4 || model.DurationMax != 30 || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || model.WatermarkCapability != modelpkg.WatermarkCapabilityControlled || !model.SupportsAudioOnly || !model.RequiresAdaptiveFrames {
 		t.Fatalf("seedance 2.5 duration/features = %#v", model)
 	}
-	if strings.Join(model.Resolutions, ",") != "480p,720p,1080p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
+	if strings.Join(model.Resolutions, ",") != "480p,720p,1080p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxImagesWithVideo != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
 		t.Fatalf("seedance 2.5 media constraints = %#v", model)
+	}
+	if !model.SupportsTextToVideo || !model.SupportsImageToVideo || !model.SupportsReferenceVideo || !model.SupportsNativeAudio || !model.SupportsDialogue || !model.SupportsVoiceReference || model.SupportsLipSync || model.SupportsIndependentAudio || strings.Join(model.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" {
+		t.Fatalf("seedance 2.5 delivery capabilities = %#v", model)
 	}
 	if len(model.Tools) != 0 {
 		t.Fatalf("seedance 2.5 tools = %#v, want none", model.Tools)

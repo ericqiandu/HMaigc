@@ -29,6 +29,10 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 		createSQL: `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
 	},
 	{
+		name: "idx_agent_runs_runtime_retirement", table: "agent_runs", columns: "runtime_version,status,created_at,id",
+		createSQL: `CREATE INDEX idx_agent_runs_runtime_retirement ON agent_runs(runtime_version, status, created_at, id)`,
+	},
+	{
 		name: "idx_agent_run_events_run_sequence", table: "agent_run_events", columns: "run_id,sequence", unique: true,
 		createSQL: `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
 	},
