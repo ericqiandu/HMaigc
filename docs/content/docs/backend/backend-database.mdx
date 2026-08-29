@@ -150,6 +150,8 @@ Agent 文本模型使用同一张 `billing_orders` 的 `token_usage` 模式，�
 
 任务的供应商事实不再维护平行状态表：`tasks` 保存请求标识、轮询阶段、终态与结果，`billing_orders` 保存渠道、模型、冻结价格档位、供应商请求号和费用核对状态。创建请求在是否已被上游接受无法确认时，账单必须进入 `uncertain`；该任务在管理员完成核对前禁止重新生成，避免重复创建并再次产生供应商费用。取消与上游成功并发时，成功结果和生成记录继续持久化，任务保持取消，账单进入待核对。
 
+每个新建 Task 同时保存不可变的签名执行事实：`execution_envelope` 是 HMAC-SHA256 签名的规范 JSON，绑定租户、项目、画布、Run、Artifact Revision、Task ID/类型、请求用户、提示词与输入 JSON 的组合载荷摘要及失效时间；`execution_envelope_key_id` 标识签名密钥版本，`execution_payload_digest` 保存该规范执行载荷的 SHA-256 摘要。信封和摘要不通过用户接口返回，也不保存供应商 Key、Authorization header 或原始输入正文。Worker 在写任务日志、建立供应商请求边界或执行本地媒体装配前必须重新读取数据库事实并验签；缺失、过期、密钥未知、作用域不符、计费订单归属不符或载荷被修改都会使任务显式失败。重试与创建幂等复用同样先核对签名及摘要，同一 Task ID 不允许换载荷再次发送。完成或取消后的结果写入不得改写已签名 `input_json`，用户接口只在响应副本上生成脱敏摘要，保证历史 Task 仍可审计验证。
+
 金额单位必须随字段解释：用户售价与冻结订单金额使用 `microcredits`；供应商参考成本使用货币 `micros`；供应商原始余额和账单金额使用 `amount_subunits` 十进制字符串。`total_tokens` 和余额同样以十进制字符串保存，避免超过 JavaScript 安全整数或数据库固定整数范围后丢失精度；币种必须由同一事实记录的显式字段解释，禁止跨单位直接相加。
 
 供应商 Key 使用独立的 `enc:provider:v1:` AES-GCM envelope，AAD 同时绑定账号 ID、逻辑凭据 ID 和凭据版本。密文字段与指纹不通过 JSON 返回，也不得写入日志。它与 OSS/支付密文只共享数据目录中的 `.settings-key` 文件所有权和 `0600` 权限规则，不复用无 AAD 的旧加密协议。原始 cipher 无权创建 key；仅 Service 从数据库确认不存在任何非空 `key_cipher` 后，首次写入供应商 Key 才允许以原子独占方式创建 32 字节 key 文件。server 在 worker、readiness 和 listener 启动前查询全部供应商密文，并使用每行真实的账号、逻辑凭据和版本 AAD 逐条解密验证；文件缺失、长度错误、密文篡改、换绑或错误 key 都使启动显式失败，不得创建替代 key 或自动降级。

@@ -41,6 +41,9 @@ func TestProcessClaimedTaskKeepsTaskRetryableWhenRefundCannotComplete(t *testing
 		Status: model.TaskStatusRunning, BillingOrderID: order.ID, LeaseOwner: svc.workerID,
 		LeaseExpiresAt: &leaseExpiry, CreatedAt: now, UpdatedAt: now,
 	}
+	if err := svc.sealTaskExecutionEnvelope(&task, &order, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}

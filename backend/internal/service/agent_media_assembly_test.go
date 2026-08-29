@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,6 +83,20 @@ func TestUnbilledInternalTaskEnqueueIsDeterministic(t *testing.T) {
 	}
 	if len(taskIDs) != 1 || taskIDs[0] != first.ID {
 		t.Fatalf("run tree task ids = %#v, want [%q]", taskIDs, first.ID)
+	}
+}
+
+func TestTaskEnvelopeRejectsTamperedMediaAssemblyReplay(t *testing.T) {
+	svc, db, scope, plan := mediaAssemblyRuntimeFixture(t)
+	task, err := svc.EnqueueAgentMediaAssembly(EnqueueAgentMediaAssemblyInput{Scope: scope, PlanRevision: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("execution_envelope", `{}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.EnqueueAgentMediaAssembly(EnqueueAgentMediaAssemblyInput{Scope: scope, PlanRevision: plan}); err == nil || !strings.Contains(err.Error(), "任务执行信封校验失败") {
+		t.Fatalf("tampered media assembly replay error = %v", err)
 	}
 }
 

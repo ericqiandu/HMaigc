@@ -68,6 +68,9 @@ func validateStructuredReplacementQuotaWithPolicy(usage repository.UserStorageUs
 }
 
 func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, runtimePolicy RuntimePolicySetting, activeTaskPolicy repository.ActiveTaskPolicy, watermark model.WatermarkCapability) error {
+	if err := s.sealTaskExecutionEnvelope(task, billingOrder, time.Now().UTC()); err != nil {
+		return err
+	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	usage, err := s.repo.UserStorageUsage(task.UserID)
@@ -87,8 +90,6 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 // saveTaskCompletion 在供应商已产出后无条件提交结果事实。
 // 存储配额只允许在任务创建/上传前拦截，不能在已经产生供应商成本后丢弃资产。
 func (s *Service) saveTaskCompletion(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
-	publicInputJSON := publicTaskInputJSON(task.InputJSON)
-
 	var session *model.Session
 	var message *model.Message
 	results := make([]model.Result, 0, 2)
@@ -116,7 +117,6 @@ func (s *Service) saveTaskCompletion(task *model.Task, resultJSON []byte, opsJSO
 	completed.Stage = "任务完成"
 	completed.Progress = 100
 	completed.ResultJSON = string(resultJSON)
-	completed.InputJSON = publicInputJSON
 	completed.CompletedAt = ptr(time.Now())
 	if err := s.repo.SaveTaskCompletion(&completed, session, message, results); err != nil {
 		return err
@@ -126,7 +126,6 @@ func (s *Service) saveTaskCompletion(task *model.Task, resultJSON []byte, opsJSO
 }
 
 func (s *Service) saveCancelledTaskResult(task *model.Task, resultJSON []byte, billingError string) error {
-	publicInputJSON := publicTaskInputJSON(task.InputJSON)
 	result := model.Result{
 		ID: newID(), UserID: task.UserID, TaskID: task.ID, SessionID: task.SessionID,
 		Kind: "generation_result", Payload: string(resultJSON),
@@ -135,7 +134,6 @@ func (s *Service) saveCancelledTaskResult(task *model.Task, resultJSON []byte, b
 	stored.Stage = "任务已取消（已保留生成结果）"
 	stored.Progress = 100
 	stored.ResultJSON = string(resultJSON)
-	stored.InputJSON = publicInputJSON
 	if err := s.repo.SaveCancelledTaskResult(&stored, result, billingError); err != nil {
 		return err
 	}

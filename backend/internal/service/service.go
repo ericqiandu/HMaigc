@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,7 +26,15 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/opsprotocol"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/taskruntime"
 )
+
+const taskExecutionEnvelopeLifetime = 30 * 24 * time.Hour
+
+type taskExecutionPayload struct {
+	Prompt    string `json:"prompt"`
+	InputJSON string `json:"inputJson"`
+}
 
 type Service struct {
 	repo                      *repository.Repository
@@ -190,6 +200,235 @@ type agentStoryboardShot struct {
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
 	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID(), mediaAssembler: execMediaAssembler{}}
+}
+
+func (s *Service) taskExecutionSigningMaterial() (string, []byte, error) {
+	rootKey, err := s.settingsEncryptionKey()
+	if err != nil {
+		return "", nil, err
+	}
+	mac := hmac.New(sha256.New, rootKey)
+	_, _ = mac.Write([]byte("hmaigc/task-execution-envelope/v1"))
+	key := mac.Sum(nil)
+	keyDigest := sha256.Sum256(key)
+	return "task-envelope-v1-" + hex.EncodeToString(keyDigest[:8]), key, nil
+}
+
+func (s *Service) taskExecutionBinding(task *model.Task, order *model.BillingOrder) (taskruntime.Binding, error) {
+	if task == nil {
+		return taskruntime.Binding{}, errors.New("任务执行事实为空")
+	}
+	binding := taskruntime.Binding{
+		TenantKind: string(agentruntime.TenantPersonal), TenantID: task.UserID,
+		CanvasID: task.ProjectID,
+		TaskID:   task.ID, TaskType: task.Type, RequesterID: task.UserID,
+	}
+	if order != nil && strings.TrimSpace(order.TeamID) != "" {
+		binding.TenantKind = string(agentruntime.TenantTeam)
+		binding.TenantID = order.TeamID
+	}
+	if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly {
+		input, err := decodeMediaAssemblyTaskInput(task.InputJSON)
+		if err != nil {
+			return taskruntime.Binding{}, err
+		}
+		if err := input.Scope.Validate(); err != nil {
+			return taskruntime.Binding{}, err
+		}
+		if err := input.PlanRevision.Validate(); err != nil {
+			return taskruntime.Binding{}, err
+		}
+		binding.TenantKind = string(input.Scope.TenantKind)
+		binding.TenantID = input.Scope.TenantID
+		binding.ProjectID = input.Scope.DomainProjectID
+		binding.CanvasID = input.Scope.CanvasID
+		binding.RunID = input.Scope.RunID
+		binding.ArtifactRevisionID = input.PlanRevision.RevisionID
+		if task.UserID != input.Scope.ActorUserID || task.ProjectID != input.Scope.CanvasID {
+			return taskruntime.Binding{}, errors.New("本地媒体组装任务作用域与任务事实冲突")
+		}
+		return binding, validateTaskEnvelopeBillingTenant(binding, order)
+	}
+
+	if runID, ok := agentTaskParentRunID(task.Operation); ok {
+		identity, err := s.repo.AgentRunIdentityForActor(runID, task.UserID)
+		if err != nil {
+			return taskruntime.Binding{}, fmt.Errorf("Agent 运行身份不可用：%w", err)
+		}
+		if identity.Thread.CanvasID != task.ProjectID || identity.Run.ID != runID {
+			return taskruntime.Binding{}, errors.New("Agent 运行作用域与任务事实冲突")
+		}
+		binding.TenantKind = string(identity.Thread.TenantKind)
+		binding.TenantID = identity.Thread.TenantID
+		binding.ProjectID = identity.Thread.DomainProjectID
+		binding.CanvasID = identity.Thread.CanvasID
+		binding.RunID = identity.Run.ID
+		return binding, validateTaskEnvelopeBillingTenant(binding, order)
+	}
+	if strings.HasPrefix(task.Operation, "agent-specialist:") {
+		specialistRunID, err := decodeSpecialistRunIDFromTask(task)
+		if err != nil {
+			return taskruntime.Binding{}, err
+		}
+		run, err := s.repo.AgentSpecialistRunForActor(specialistRunID, task.UserID)
+		if err != nil {
+			return taskruntime.Binding{}, fmt.Errorf("Specialist 运行身份不可用：%w", err)
+		}
+		if run.CanvasID != task.ProjectID || task.Operation != agentSpecialistOperation(run.ID) {
+			return taskruntime.Binding{}, errors.New("Specialist 运行作用域与任务事实冲突")
+		}
+		binding.TenantKind = string(run.TenantKind)
+		binding.TenantID = run.TenantID
+		binding.ProjectID = run.DomainProjectID
+		binding.CanvasID = run.CanvasID
+		binding.RunID = run.ID
+		return binding, validateTaskEnvelopeBillingTenant(binding, order)
+	}
+	return binding, validateTaskEnvelopeBillingTenant(binding, order)
+}
+
+func agentTaskParentRunID(operation string) (string, bool) {
+	if runID, ok := agentRuntimeModelRunID(operation); ok {
+		return runID, true
+	}
+	if runID, ok := agentProductionRenderRunID(operation); ok {
+		return runID, true
+	}
+	if runID, ok := agentVisualAnalysisRunID(operation); ok {
+		return runID, true
+	}
+	return agentMediaGenerationRunID(operation)
+}
+
+func decodeSpecialistRunIDFromTask(task *model.Task) (string, error) {
+	var input agentSpecialistTaskInput
+	decoder := json.NewDecoder(strings.NewReader(task.InputJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		return "", errors.New("Specialist 任务输入事实无效")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return "", errors.New("Specialist 任务输入事实无效")
+	}
+	var prompt agentSpecialistPrompt
+	promptDecoder := json.NewDecoder(strings.NewReader(input.Prompt))
+	promptDecoder.DisallowUnknownFields()
+	if err := promptDecoder.Decode(&prompt); err != nil {
+		return "", errors.New("Specialist 请求事实无效")
+	}
+	if err := promptDecoder.Decode(&trailing); !errors.Is(err, io.EOF) || strings.TrimSpace(prompt.SpecialistRunID) == "" ||
+		task.ID != agentSpecialistTaskID(prompt.SpecialistRunID) {
+		return "", errors.New("Specialist 请求身份与任务事实冲突")
+	}
+	return prompt.SpecialistRunID, nil
+}
+
+func validateTaskEnvelopeBillingTenant(binding taskruntime.Binding, order *model.BillingOrder) error {
+	if order == nil {
+		return nil
+	}
+	if strings.TrimSpace(order.TaskID) != binding.TaskID {
+		return errors.New("任务计费订单与执行任务冲突")
+	}
+	if strings.TrimSpace(order.UserID) != binding.RequesterID {
+		return errors.New("任务计费请求人与执行作用域冲突")
+	}
+	teamID := strings.TrimSpace(order.TeamID)
+	switch agentruntime.TenantKind(binding.TenantKind) {
+	case agentruntime.TenantPersonal:
+		if binding.TenantID != binding.RequesterID || teamID != "" {
+			return errors.New("个人任务计费租户与执行作用域冲突")
+		}
+	case agentruntime.TenantTeam:
+		if teamID == "" || teamID != binding.TenantID {
+			return errors.New("团队任务计费租户与执行作用域冲突")
+		}
+	default:
+		return errors.New("任务执行租户类型无效")
+	}
+	return nil
+}
+
+func taskExecutionPayloadJSON(task *model.Task) ([]byte, error) {
+	if task == nil {
+		return nil, errors.New("任务执行载荷为空")
+	}
+	encoded, err := json.Marshal(taskExecutionPayload{Prompt: task.Prompt, InputJSON: task.InputJSON})
+	if err != nil {
+		return nil, fmt.Errorf("任务执行载荷无法规范编码：%w", err)
+	}
+	return encoded, nil
+}
+
+func (s *Service) sealTaskExecutionEnvelope(task *model.Task, order *model.BillingOrder, now time.Time) error {
+	if task == nil {
+		return errors.New("任务执行信封签发失败：任务为空")
+	}
+	if task.ExecutionEnvelope != "" || task.ExecutionEnvelopeKeyID != "" || task.ExecutionPayloadDigest != "" {
+		return errors.New("任务执行信封签发失败：任务已包含执行信封事实")
+	}
+	binding, err := s.taskExecutionBinding(task, order)
+	if err != nil {
+		return fmt.Errorf("任务执行信封签发失败：%w", err)
+	}
+	keyID, key, err := s.taskExecutionSigningMaterial()
+	if err != nil {
+		return fmt.Errorf("任务执行信封签发失败：%w", err)
+	}
+	payload, err := taskExecutionPayloadJSON(task)
+	if err != nil {
+		return fmt.Errorf("任务执行信封签发失败：%w", err)
+	}
+	claims := taskruntime.NewClaims(binding, payload, now.UTC().Add(taskExecutionEnvelopeLifetime))
+	encoded, err := taskruntime.Sign(claims, keyID, key)
+	if err != nil {
+		return fmt.Errorf("任务执行信封签发失败：%w", err)
+	}
+	task.ExecutionEnvelope = string(encoded)
+	task.ExecutionEnvelopeKeyID = keyID
+	task.ExecutionPayloadDigest = claims.PayloadDigest
+	return nil
+}
+
+func (s *Service) verifyTaskExecutionEnvelope(task *model.Task, now time.Time) error {
+	if task == nil || task.ExecutionEnvelope == "" || task.ExecutionEnvelopeKeyID == "" || task.ExecutionPayloadDigest == "" {
+		return errors.New("任务执行信封校验失败：信封事实缺失")
+	}
+	var order *model.BillingOrder
+	if strings.TrimSpace(task.BillingOrderID) != "" {
+		storedOrder, err := s.repo.BillingOrder(task.BillingOrderID)
+		if err != nil {
+			return fmt.Errorf("任务执行信封校验失败：计费事实不可用：%w", err)
+		}
+		order = storedOrder
+	}
+	binding, err := s.taskExecutionBinding(task, order)
+	if err != nil {
+		return fmt.Errorf("任务执行信封校验失败：%w", err)
+	}
+	keyID, key, err := s.taskExecutionSigningMaterial()
+	if err != nil {
+		return fmt.Errorf("任务执行信封校验失败：%w", err)
+	}
+	if task.ExecutionEnvelopeKeyID != keyID {
+		return errors.New("任务执行信封校验失败：签名密钥标识不可用")
+	}
+	payload, err := taskExecutionPayloadJSON(task)
+	if err != nil {
+		return fmt.Errorf("任务执行信封校验失败：%w", err)
+	}
+	claims, err := taskruntime.Verify(
+		[]byte(task.ExecutionEnvelope), taskruntime.VerificationKeys{keyID: key},
+		binding, payload, now.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("任务执行信封校验失败：%w", err)
+	}
+	if claims.PayloadDigest != task.ExecutionPayloadDigest {
+		return errors.New("任务执行信封校验失败：持久化摘要不一致")
+	}
+	return nil
 }
 
 func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
@@ -379,15 +618,6 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if identity.Audience != model.TaskAudienceCustomer && identity.Audience != model.TaskAudienceInternal {
 		return nil, errors.New("task creation audience is invalid")
 	}
-	if identity.BillingIdempotencyKey != "" {
-		existing, existingErr := s.repo.TaskForUser(userID, identity.TaskID)
-		if existingErr == nil {
-			return s.validateIdempotentCreatedTask(existing, req, identity)
-		}
-		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
-			return nil, existingErr
-		}
-	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		return nil, errors.New("prompt is required")
@@ -473,7 +703,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if err != nil && identity.BillingIdempotencyKey != "" {
 		existing, existingErr := s.repo.TaskForUser(userID, identity.TaskID)
 		if existingErr == nil {
-			return s.validateIdempotentCreatedTask(existing, req, identity)
+			return s.validateIdempotentCreatedTask(existing, &task, identity)
 		}
 		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return nil, errors.Join(err, existingErr)
@@ -499,11 +729,14 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	return taskForOutput(task), nil
 }
 
-func (s *Service) validateIdempotentCreatedTask(existing *model.Task, req CreateTaskRequest, identity taskCreationIdentity) (*model.Task, error) {
-	if existing == nil || existing.ID != identity.TaskID || existing.ProjectID != req.ProjectID || existing.Type != req.Type ||
-		existing.Operation != req.Operation || existing.Prompt != strings.TrimSpace(req.Prompt) || existing.BillingOrderID == "" ||
-		existing.Audience != identity.Audience {
+func (s *Service) validateIdempotentCreatedTask(existing *model.Task, expected *model.Task, identity taskCreationIdentity) (*model.Task, error) {
+	if existing == nil || expected == nil || existing.ID != identity.TaskID || existing.ProjectID != expected.ProjectID || existing.Type != expected.Type ||
+		existing.Operation != expected.Operation || existing.Prompt != expected.Prompt || existing.BillingOrderID == "" ||
+		existing.Audience != identity.Audience || existing.ExecutionPayloadDigest != expected.ExecutionPayloadDigest {
 		return nil, errors.New("task creation idempotency facts conflict")
+	}
+	if err := s.verifyTaskExecutionEnvelope(existing, time.Now().UTC()); err != nil {
+		return nil, err
 	}
 	order, err := s.repo.BillingOrder(existing.BillingOrderID)
 	if err != nil {
@@ -588,6 +821,9 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	}
 	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("only failed or cancelled tasks can be retried")
+	}
+	if err := s.verifyTaskExecutionEnvelope(task, time.Now().UTC()); err != nil {
+		return nil, err
 	}
 	hasUncertainBilling, err := s.repo.TaskHasUncertainBilling(userID, task.ID)
 	if err != nil {
@@ -1007,6 +1243,12 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		return err
 	}
 	task = persistedTask
+	if envelopeErr := s.verifyTaskExecutionEnvelope(task, time.Now().UTC()); envelopeErr != nil {
+		if failErr := s.repo.FailClaimedTaskFacts(task.ID, task.UserID, task.LeaseOwner, envelopeErr, time.Now().UTC()); failErr != nil {
+			return errors.Join(envelopeErr, failErr)
+		}
+		return envelopeErr
+	}
 	_ = s.log(task.UserID, task.ID, "info", "后端任务开始处理", "")
 	runID := ""
 	if task.Type == agentRuntimeModelTaskType {

@@ -564,6 +564,9 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 		task.ProviderAccountID == "" || task.ProviderEndpointVersionID == "" || task.ProviderCredentialVersionID == "" {
 		return nil, errors.New("agent runtime model task facts conflict")
 	}
+	if err := s.verifyTaskExecutionEnvelope(task, time.Now().UTC()); err != nil {
+		return nil, err
+	}
 	order, err := s.repo.BillingOrder(task.BillingOrderID)
 	if err != nil {
 		return nil, err

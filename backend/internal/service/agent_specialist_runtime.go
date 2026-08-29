@@ -89,6 +89,10 @@ func (s *Service) RunSpecialist(ctx context.Context, scope agentruntime.Scope, p
 	if err != nil {
 		return SpecialistCompletion{}, err
 	}
+	if err := s.verifyTaskExecutionEnvelope(task, time.Now().UTC()); err != nil {
+		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_task_envelope_invalid", "Specialist 执行信封校验失败", repository.FailedTaskBillingRefund)
+		return SpecialistCompletion{}, errors.Join(err, failErr)
+	}
 	if err := s.BeginTokenBillingRequest(task.BillingOrderID); err != nil {
 		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_billing_start_failed", "Specialist 计费请求未能开始", repository.FailedTaskBillingRefund)
 		return SpecialistCompletion{}, errors.Join(err, failErr)
@@ -99,12 +103,6 @@ func (s *Service) RunSpecialist(ctx context.Context, scope agentruntime.Scope, p
 		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_model_unavailable", "Specialist 冻结模型配置不可执行", repository.FailedTaskBillingRefund)
 		return SpecialistCompletion{}, errors.Join(err, failErr)
 	}
-	encodedResolved, err := json.Marshal(agentSpecialistTaskInput{Mode: "text", Prompt: task.Prompt, Config: resolved})
-	if err != nil {
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_model_config_invalid", "Specialist 冻结模型配置无法序列化", repository.FailedTaskBillingRefund)
-		return SpecialistCompletion{}, errors.Join(err, failErr)
-	}
-	task.InputJSON = string(encodedResolved)
 	runContext, cancelRun := context.WithCancel(ctx)
 	s.registerActiveTask(task.ID, cancelRun)
 	defer func() {
@@ -337,8 +335,12 @@ func (s *Service) ensureAgentSpecialistTask(scope agentruntime.Scope, parentRun 
 	}
 	if existing, lookupErr := s.repo.TaskForUser(scope.ActorUserID, taskID); lookupErr == nil {
 		if existing.Audience != model.TaskAudienceInternal || existing.Type != agentSpecialistModelTaskType || existing.ProjectID != scope.CanvasID ||
-			existing.Model != parentRun.ModelKey || existing.Operation != agentSpecialistOperation(request.SpecialistRunID) {
+			existing.Model != parentRun.ModelKey || existing.Operation != agentSpecialistOperation(request.SpecialistRunID) ||
+			existing.Prompt != prompt || existing.InputJSON != string(encodedInput) {
 			return nil, providerConfig{}, errors.New("specialist model task facts conflict")
+		}
+		if err := s.verifyTaskExecutionEnvelope(existing, time.Now().UTC()); err != nil {
+			return nil, providerConfig{}, err
 		}
 		return existing, config, nil
 	} else if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {

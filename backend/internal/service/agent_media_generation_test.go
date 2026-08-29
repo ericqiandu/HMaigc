@@ -165,6 +165,7 @@ func TestRepeatedMediaApprovalCreatesOneInternalTaskAndReservation(t *testing.T)
 	createAgentRuntimeImageModel(t, db, fixture)
 	scope := agentRuntimeServiceScope()
 	now := time.Date(2026, time.August, 28, 8, 0, 0, 0, time.UTC)
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
 	command := mediaGenerationTestCommand(t)
 
 	frozen, err := svc.FreezeMediaQuote(scope, command, now)
@@ -205,10 +206,8 @@ func TestRepeatedMediaApprovalCreatesOneInternalTaskAndReservation(t *testing.T)
 	if string(gotInput) != string(wantInput) {
 		t.Fatalf("stored media input = %s, want %s", gotInput, wantInput)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", storedTask.ID).Updates(map[string]any{
-		"status":     model.TaskStatusSucceeded,
-		"input_json": publicTaskInputJSON(storedTask.InputJSON),
-	}).Error; err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", storedTask.ID).
+		Update("status", model.TaskStatusSucceeded).Error; err != nil {
 		t.Fatal(err)
 	}
 	completedTask, completedOrder, err := svc.EnsureMediaTask(context.Background(), scope, *approved)
@@ -242,6 +241,7 @@ func TestSimultaneousMediaAttemptCreatesOneInternalTaskAndReservation(t *testing
 	createAgentRuntimeImageModel(t, db, fixture)
 	scope := agentRuntimeServiceScope()
 	now := time.Date(2026, time.August, 28, 8, 0, 0, 0, time.UTC)
+	createAgentRuntimeScopedRunFacts(t, db, scope, now)
 	command := mediaGenerationTestCommand(t)
 
 	frozen, err := svc.FreezeMediaQuote(scope, command, now)

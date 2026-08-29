@@ -1013,6 +1013,9 @@ type Task struct {
 	Progress                     int                 `json:"progress"`
 	Prompt                       string              `json:"prompt"`
 	Operation                    string              `json:"operation" gorm:"size:64"`
+	ExecutionEnvelope            string              `json:"-" gorm:"type:text"`
+	ExecutionEnvelopeKeyID       string              `json:"-" gorm:"size:128;index"`
+	ExecutionPayloadDigest       string              `json:"-" gorm:"size:64;index"`
 	Provider                     string              `json:"provider" gorm:"size:64"`
 	Model                        string              `json:"model" gorm:"size:120"`
 	BillingOrderID               string              `json:"billingOrderId,omitempty" gorm:"index;size:36"`

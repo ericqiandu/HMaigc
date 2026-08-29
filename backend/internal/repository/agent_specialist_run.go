@@ -143,6 +143,19 @@ func (r *Repository) AgentSpecialistRunForScope(scope agentruntime.Scope, specia
 	return &run, nil
 }
 
+func (r *Repository) AgentSpecialistRunForActor(specialistRunID string, actorUserID string) (*model.AgentSpecialistRun, error) {
+	specialistRunID = strings.TrimSpace(specialistRunID)
+	actorUserID = strings.TrimSpace(actorUserID)
+	if specialistRunID == "" || actorUserID == "" {
+		return nil, errors.New("agent specialist run identity is invalid")
+	}
+	var run model.AgentSpecialistRun
+	if err := r.db.Where("id = ? AND actor_user_id = ?", specialistRunID, actorUserID).Take(&run).Error; err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
 func (r *Repository) AgentSpecialistRevisions(scope agentruntime.Scope, specialistRunID string) ([]model.AgentArtifactRevision, error) {
 	if err := validateProductionRepositoryScope(scope, false); err != nil {
 		return nil, err

@@ -141,6 +141,21 @@ func TestUnbilledInternalTaskExecutionKindMigration(t *testing.T) {
 	}
 }
 
+func TestTaskEnvelopeSchemaCreatesExecutionAuditFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"execution_envelope", "execution_envelope_key_id", "execution_payload_digest"} {
+		if !db.Migrator().HasColumn(&model.Task{}, column) {
+			t.Fatalf("tasks.%s was not migrated", column)
+		}
+	}
+}
+
 func TestWatermarkPolicySchemaCreatesTablesTaskFactsAndExactIndexes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

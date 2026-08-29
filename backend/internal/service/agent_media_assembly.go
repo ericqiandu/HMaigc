@@ -107,7 +107,17 @@ func (s *Service) EnqueueAgentMediaAssembly(input EnqueueAgentMediaAssemblyInput
 		Stage: "等待本地装配", Progress: 5, Operation: operation,
 		InputJSON: string(frozenJSON), CreatedAt: now, UpdatedAt: now,
 	}
-	return s.repo.CreateInternalUnbilledTaskOnce(task)
+	if err := s.sealTaskExecutionEnvelope(task, nil, now); err != nil {
+		return nil, err
+	}
+	stored, err := s.repo.CreateInternalUnbilledTaskOnce(task)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.verifyTaskExecutionEnvelope(stored, now); err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 func (s *Service) CancelAgentMediaAssembly(scope agentruntime.Scope, taskID string) (*model.Task, error) {

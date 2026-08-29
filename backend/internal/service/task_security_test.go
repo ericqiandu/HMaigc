@@ -1,8 +1,10 @@
 package service
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -10,6 +12,174 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestTaskSecurityRejectsMissingEnvelopeBeforeBillingOrExecution(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}, &model.TaskLog{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "task-without-envelope", UserID: "user-1", ProjectID: "canvas-1", Type: "canvas_image",
+		Audience: model.TaskAudienceCustomer, ExecutionKind: model.TaskExecutionProvider,
+		Status: model.TaskStatusRunning, Stage: "运行中", BillingOrderID: "billing-1", InputJSON: `{}`,
+		LeaseOwner: "worker-1", LeaseExpiresAt: ptr(now.Add(time.Minute)), CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID,
+		Status: model.BillingStatusReserved, AmountMicrocredits: 100_000, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := New(repository.New(db), t.TempDir())
+	svc.workerID = task.LeaseOwner
+
+	err = svc.processClaimedTask(&task)
+	if err == nil || !strings.Contains(err.Error(), "任务执行信封") {
+		t.Fatalf("processClaimedTask() error = %v, want explicit envelope error", err)
+	}
+	var storedTask model.Task
+	if err := db.First(&storedTask, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusFailed || !strings.Contains(storedTask.Error, "任务执行信封") {
+		t.Fatalf("stored task = status:%q error:%q", storedTask.Status, storedTask.Error)
+	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.Status != model.BillingStatusReserved {
+		t.Fatalf("billing status = %q, want reserved before any billing side effect", storedOrder.Status)
+	}
+}
+
+func TestTaskSecurityPersistsSignedFactsAndRejectsChangedPayloadOnRetry(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "sealed-task", UserID: "user-1", ProjectID: "canvas-1", Type: "canvas_image",
+		Audience: model.TaskAudienceCustomer, ExecutionKind: model.TaskExecutionProvider,
+		Status: model.TaskStatusFailed, BillingOrderID: "billing-1",
+		Prompt:    "original prompt",
+		InputJSON: `{"mode":"image","apiKey":"encrypted-secret-value"}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: task.UserID, TeamID: "team-1", TaskID: task.ID,
+		Status: model.BillingStatusRefunded, CreatedAt: now, UpdatedAt: now,
+	}
+	svc := New(repository.New(db), t.TempDir())
+	if err := svc.sealTaskExecutionEnvelope(&task, &order, now); err != nil {
+		t.Fatalf("sealTaskExecutionEnvelope(): %v", err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.ExecutionEnvelope == "" || task.ExecutionEnvelopeKeyID == "" || len(task.ExecutionPayloadDigest) != 64 {
+		t.Fatalf("sealed execution facts are incomplete: %#v", task)
+	}
+	if strings.Contains(task.ExecutionEnvelope, "encrypted-secret-value") {
+		t.Fatal("execution envelope leaked task input")
+	}
+	if err := svc.verifyTaskExecutionEnvelope(&task, now.Add(time.Minute)); err != nil {
+		t.Fatalf("verifyTaskExecutionEnvelope(): %v", err)
+	}
+	changedPrompt := task
+	changedPrompt.Prompt = "changed prompt"
+	if err := svc.verifyTaskExecutionEnvelope(&changedPrompt, now.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "payload digest") {
+		t.Fatalf("changed prompt verification error = %v, want payload digest mismatch", err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("task_id", "different-task").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.verifyTaskExecutionEnvelope(&task, now.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "计费订单与执行任务冲突") {
+		t.Fatalf("changed billing task verification error = %v, want billing task mismatch", err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("task_id", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("input_json", `{"mode":"image","apiKey":"changed"}`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.RetryTask(task.UserID, task.ID); err == nil || !strings.Contains(err.Error(), "payload digest") {
+		t.Fatalf("RetryTask() error = %v, want payload digest mismatch", err)
+	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.Status != model.BillingStatusRefunded {
+		t.Fatalf("billing status changed after rejected retry: %q", storedOrder.Status)
+	}
+}
+
+func TestStorageMigrationPreservesSignedTaskInput(t *testing.T) {
+	dataDir := t.TempDir()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(dataDir, "storage.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := db.AutoMigrate(
+		&model.Task{},
+		&model.Asset{},
+		&model.CanvasProject{},
+		&model.TaskLog{},
+		&model.Result{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	originalInput := `{"mode":"image","metadata":{"source":"signed-task"}}`
+	task := model.Task{
+		ID: "signed-storage-migration-task", UserID: "user-1", ProjectID: "canvas-1", Type: "canvas_image",
+		Audience: model.TaskAudienceCustomer, ExecutionKind: model.TaskExecutionProvider,
+		Status: model.TaskStatusSucceeded, InputJSON: originalInput, CreatedAt: now, UpdatedAt: now,
+	}
+	svc := New(repository.New(db), dataDir)
+	if err := svc.sealTaskExecutionEnvelope(&task, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.MigrateLegacyStorage(); err != nil {
+		t.Fatalf("MigrateLegacyStorage(): %v", err)
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.InputJSON != originalInput {
+		t.Fatalf("signed task input changed during migration: got %q want %q", stored.InputJSON, originalInput)
+	}
+	if err := svc.verifyTaskExecutionEnvelope(&stored, now.Add(time.Minute)); err != nil {
+		t.Fatalf("signed task failed verification after storage migration: %v", err)
+	}
+}
 
 func TestTaskInputRejectsClientWatermarkFields(t *testing.T) {
 	for _, input := range []map[string]any{
@@ -141,10 +311,14 @@ func TestRetryTaskRejectsUncertainBillingBeforeAnotherProviderRequest(t *testing
 	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "task", UserID: "user", Status: model.TaskStatusFailed, BillingOrderID: "bill", InputJSON: `{}`}
+	task := model.Task{ID: "task", UserID: "user", Type: "canvas_text", Status: model.TaskStatusFailed, BillingOrderID: "bill", InputJSON: `{}`}
 	orders := []model.BillingOrder{
 		{ID: "bill", UserID: "user", TaskID: task.ID, IdempotencyKey: "uncertain", Status: model.BillingStatusUncertain},
 		{ID: "bill-newer", UserID: "user", TaskID: task.ID, IdempotencyKey: "settled", Status: model.BillingStatusSettled},
+	}
+	svc := New(repository.New(db), t.TempDir())
+	if err := svc.sealTaskExecutionEnvelope(&task, &orders[0], time.Now().UTC()); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
@@ -152,7 +326,6 @@ func TestRetryTaskRejectsUncertainBillingBeforeAnotherProviderRequest(t *testing
 	if err := db.Create(&orders).Error; err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{repo: repository.New(db)}
 	_, err = svc.RetryTask("user", task.ID)
 	if err == nil || !strings.Contains(err.Error(), "费用状态仍待核对") {
 		t.Fatalf("RetryTask() error = %v", err)

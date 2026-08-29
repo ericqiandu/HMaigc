@@ -120,6 +120,47 @@ func TestRunSpecialistRejectsMalformedStructuredOutputWithoutArtifactRevision(t 
 	}
 }
 
+func TestTaskEnvelopeRejectsSpecialistReplayWithChangedOrTamperedFacts(t *testing.T) {
+	request := scriptSpecialistRuntimeRequestFixture("runtime-token-agent-model", "deepseek-v4-flash")
+	svc, db, fixture := newSpecialistRuntimeFixture(t, "https://example.com", request)
+	parentRun := specialistParentRun(t, svc, db, fixture.channelModel, request)
+	if _, err := svc.repo.CreateAgentSpecialistRun(repository.CreateAgentSpecialistRunInput{
+		Scope: specialistRuntimeScope(), Request: request,
+		ToolSchemaVersion: agentruntime.ProductionToolSchemaVersion, Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	task, _, err := svc.ensureAgentSpecialistTask(specialistRuntimeScope(), parentRun, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
+		t.Fatal(err)
+	}
+	binding, err := svc.taskExecutionBinding(task, &order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := specialistRuntimeScope()
+	if binding.TenantKind != string(scope.TenantKind) || binding.TenantID != scope.TenantID ||
+		binding.ProjectID != scope.DomainProjectID || binding.CanvasID != scope.CanvasID || binding.RunID != request.SpecialistRunID {
+		t.Fatalf("specialist task execution binding = %#v, want exact scope %#v and specialist run %q", binding, scope, request.SpecialistRunID)
+	}
+	changed := request
+	changed.Objective = request.Objective + "（被修改）"
+	if _, _, err := svc.ensureAgentSpecialistTask(specialistRuntimeScope(), parentRun, changed); err == nil {
+		t.Fatal("changed specialist replay error = nil")
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("execution_envelope", `{}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.ensureAgentSpecialistTask(specialistRuntimeScope(), parentRun, request); err == nil || !strings.Contains(err.Error(), "任务执行信封校验失败") {
+		t.Fatalf("tampered specialist replay error = %v", err)
+	}
+}
+
 func TestRunSpecialistRejectsMultipleArtifactsForSingleReviewStage(t *testing.T) {
 	request := scriptSpecialistRuntimeRequestFixture("runtime-token-agent-model", "deepseek-v4-flash")
 	var result agentruntime.SpecialistResult

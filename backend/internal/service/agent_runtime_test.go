@@ -417,9 +417,20 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if first.ModelTask.ProviderAccountID != fixture.account.ID || first.ModelTask.ProviderEndpointVersionID != fixture.endpoint.ID || first.ModelTask.ProviderCredentialVersionID != fixture.version.ID {
 		t.Fatalf("frozen task provider = %#v", first.ModelTask)
 	}
+	if first.ModelTask.ExecutionEnvelope == "" || first.ModelTask.ExecutionEnvelopeKeyID == "" || first.ModelTask.ExecutionPayloadDigest == "" {
+		t.Fatalf("model task execution envelope facts are incomplete: %#v", first.ModelTask)
+	}
 	var order model.BillingOrder
 	if err := db.First(&order, "task_id = ?", first.ModelTask.ID).Error; err != nil {
 		t.Fatal(err)
+	}
+	binding, err := svc.taskExecutionBinding(first.ModelTask, &order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.TenantKind != string(input.Scope.TenantKind) || binding.TenantID != input.Scope.TenantID ||
+		binding.ProjectID != input.Scope.DomainProjectID || binding.CanvasID != input.Scope.CanvasID || binding.RunID != input.Scope.RunID {
+		t.Fatalf("model task execution binding = %#v, want exact agent scope %#v", binding, input.Scope)
 	}
 	if order.Status != model.BillingStatusReserved || order.IdempotencyKey != "agent-runtime:"+input.Scope.RunID+":0" || order.AmountMicrocredits != fixture.channelModel.UnitPriceMicrocredits {
 		t.Fatalf("billing order = %#v", order)
@@ -453,6 +464,16 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 		t.Fatalf("credits charged more than once = %#v", credits)
 	}
 
+	if err := db.Model(&model.Task{}).Where("id = ?", first.ModelTask.ID).Update("execution_envelope", `{}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "任务执行信封校验失败") {
+		t.Fatalf("tampered model task envelope replay error = %v", err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", first.ModelTask.ID).Update("execution_envelope", first.ModelTask.ExecutionEnvelope).Error; err != nil {
+		t.Fatal(err)
+	}
+
 	changed := input
 	changed.UserMessage = "另一个请求"
 	if _, err := svc.StartAgentRuntime(changed); err == nil || !strings.Contains(err.Error(), "request facts conflict") {
@@ -466,7 +487,7 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if err := db.Model(&model.Task{}).Where("id = ?", first.ModelTask.ID).Update("input_json", `{}`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "input facts conflict") {
+	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "任务执行信封校验失败") {
 		t.Fatalf("mutated model task replay error = %v", err)
 	}
 }
@@ -662,7 +683,9 @@ func TestStartAgentRuntimeRejectsReplayedBillingOrderFromDifferentAccount(t *tes
 		t.Fatal(err)
 	}
 
-	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "billing facts conflict") {
+	if _, err := svc.StartAgentRuntime(input); err == nil ||
+		!strings.Contains(err.Error(), "任务执行信封校验失败") ||
+		!strings.Contains(err.Error(), "计费租户与执行作用域冲突") {
 		t.Fatalf("replayed Agent billing mismatch error = %v", err)
 	}
 }
