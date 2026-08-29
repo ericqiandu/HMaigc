@@ -475,6 +475,133 @@ func TestShotRevisionDialogueChangeLocalStaleKeepsOldCandidatesReadable(t *testi
 	}
 }
 
+func TestAssemblyPlanRevisionRejectsStaleCandidateAndAcceptsCurrentReplacement(t *testing.T) {
+	repo, db := productionRepositoryFixture(t)
+	scope := productionScopeFixture()
+	shotOne := appendLocalStaleArtifact(t, repo, scope, "shot-one", "shot_revision", nil)
+	shotTwo := appendLocalStaleArtifact(t, repo, scope, "shot-two", "shot_revision", nil)
+	videoOne := appendLocalStaleCandidate(t, repo, scope, "video-one-attempt-one", agentruntime.ArtifactVideo, shotOne)
+	videoTwo := appendLocalStaleCandidate(t, repo, scope, "video-two-attempt-one", agentruntime.ArtifactVideo, shotTwo)
+	firstPlanDraft := assemblyPlanDraftFixture(
+		"assembly-plan",
+		artifactRevisionRef(videoOne),
+		artifactRevisionRef(videoTwo),
+	)
+	firstPlan, err := repo.AppendArtifactRevision(scope, "assembly-plan-artifact", 0, firstPlanDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updatedShot, err := repo.AppendArtifactRevision(scope, shotOne.ArtifactID, shotOne.Revision, agentruntime.ArtifactDraft{
+		ArtifactKey: "shot-one", Kind: "shot_revision", SchemaVersion: 1,
+		Payload: json.RawMessage(`{"dialogue":"第二版对白"}`), UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertArtifactRevisionLifecycle(t, db, videoOne.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, firstPlan.ID, model.AgentArtifactRevisionStale)
+
+	stalePlanDraft := assemblyPlanDraftFixture(
+		"assembly-plan",
+		artifactRevisionRef(videoOne),
+		artifactRevisionRef(videoTwo),
+	)
+	if _, err := repo.AppendArtifactRevision(scope, firstPlan.ArtifactID, firstPlan.Revision, stalePlanDraft); !errors.Is(err, ErrArtifactUpstreamRevisionStale) {
+		t.Fatalf("stale assembly plan append error = %v, want %v", err, ErrArtifactUpstreamRevisionStale)
+	}
+
+	replacementVideo := appendLocalStaleCandidate(t, repo, scope, "video-one-attempt-two", agentruntime.ArtifactVideo, updatedShot)
+	currentPlanDraft := assemblyPlanDraftFixture(
+		"assembly-plan",
+		artifactRevisionRef(replacementVideo),
+		artifactRevisionRef(videoTwo),
+	)
+	currentPlan, err := repo.AppendArtifactRevision(scope, firstPlan.ArtifactID, firstPlan.Revision, currentPlanDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentPlan.Revision != 2 {
+		t.Fatalf("current assembly plan revision = %d, want 2", currentPlan.Revision)
+	}
+	assertArtifactRevisionLifecycle(t, db, firstPlan.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, currentPlan.ID, model.AgentArtifactRevisionAwaitingReview)
+
+	candidates, err := repo.MediaCandidateRevisionsInScope(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("immutable media candidates = %d, want 3", len(candidates))
+	}
+}
+
+func TestArtifactRevisionHeadLockOrderIsDeterministicAcrossAssemblyReorder(t *testing.T) {
+	first := []agentruntime.ArtifactRevisionRef{
+		{ArtifactID: "video-b", RevisionID: "revision-b"},
+		{ArtifactID: "video-a", RevisionID: "revision-a"},
+	}
+	second := []agentruntime.ArtifactRevisionRef{
+		{ArtifactID: "video-a", RevisionID: "revision-a"},
+		{ArtifactID: "video-b", RevisionID: "revision-b"},
+	}
+
+	firstOrder := artifactRevisionRefsForHeadValidation(first)
+	secondOrder := artifactRevisionRefsForHeadValidation(second)
+	for index, want := range secondOrder {
+		if firstOrder[index] != want {
+			t.Fatalf("lock order differs at %d: got %#v want %#v", index, firstOrder[index], want)
+		}
+	}
+	if first[0].ArtifactID != "video-b" || second[0].ArtifactID != "video-a" {
+		t.Fatal("head validation lock ordering mutated semantic reference order")
+	}
+}
+
+func assemblyPlanDraftFixture(
+	artifactKey string,
+	first agentruntime.ArtifactRevisionRef,
+	second agentruntime.ArtifactRevisionRef,
+) agentruntime.ArtifactDraft {
+	payload, err := json.Marshal(agentruntime.AssemblyPlanV2{
+		PlanKey:   artifactKey,
+		AudioMode: agentruntime.MediaAudioNone,
+		Clips: []agentruntime.AssemblyClipV2{
+			{
+				ClipKey: "clip-one", SourceRevision: first,
+				TrimStartMS: testInt64Pointer(0), TrimEndMS: testInt64Pointer(1000),
+				TransitionToNext: agentruntime.AssemblyTransitionV2{Kind: agentruntime.AssemblyTransitionCut, DurationMS: testInt64Pointer(0)},
+			},
+			{
+				ClipKey: "clip-two", SourceRevision: second,
+				TrimStartMS: testInt64Pointer(0), TrimEndMS: testInt64Pointer(1000),
+				TransitionToNext: agentruntime.AssemblyTransitionV2{Kind: agentruntime.AssemblyTransitionCut, DurationMS: testInt64Pointer(0)},
+			},
+		},
+		AudioTracks: []agentruntime.AssemblyAudioTrackV2{},
+		Output: agentruntime.AssemblyOutputV2{
+			ArtifactKey: "assembled-video", Container: "mp4", VideoCodec: "h264", AudioCodec: "none",
+			Width: testIntPointer(1280), Height: testIntPointer(720), FrameRate: testIntPointer(24),
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return agentruntime.ArtifactDraft{
+		ArtifactKey: artifactKey, Kind: "assembly_plan", SchemaVersion: 2,
+		Payload: payload, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{first, second},
+		SkillVersions: []agentruntime.SkillSelection{},
+	}
+}
+
+func testInt64Pointer(value int64) *int64 {
+	return &value
+}
+
+func testIntPointer(value int) *int {
+	return &value
+}
+
 func appendLocalStaleArtifact(
 	t *testing.T,
 	repo *Repository,

@@ -118,6 +118,272 @@ func TestDirectedRegenerationFreezesNextAttemptAndLeavesCurrentCandidateUntouche
 	}
 }
 
+func TestM9ShotEditRegeneratesOnlyTransitiveCandidateAndKeepsCommercialFactsImmutable(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeVideoModel(t, db, fixture)
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = "runtime-project"
+	now := time.Now().UTC()
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", scope.ActorUserID).
+		Update("available_microcredits", 10_000).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentThread{
+		ID: scope.ThreadID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		CreatedByUserID: scope.ActorUserID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, Status: agentruntime.ThreadActive, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRun{
+		ID: scope.RunID, ThreadID: scope.ThreadID, ActorUserID: scope.ActorUserID,
+		ClientRequestID: "m9-directed-regeneration-run", Status: agentruntime.RunRunning,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	shotOne := seedDirectedRegenerationRevision(t, svc, scope, "m9-shot-one", "m9-shot-one", "shot_revision", nil)
+	shotTwo := seedDirectedRegenerationRevision(t, svc, scope, "m9-shot-two", "m9-shot-two", "shot_revision", nil)
+	configuration, callable := directedRegenerationVideoConfiguration(t)
+	firstFrozen := freezeDirectedRegenerationSourceAttempt(t, svc, db, scope, configuration, callable, "m9-source-shot-one", shotOne)
+	secondFrozen := freezeDirectedRegenerationSourceAttempt(t, svc, db, scope, configuration, callable, "m9-source-shot-two", shotTwo)
+	persistDirectedRegenerationSourceTask(t, svc, db, scope, firstFrozen)
+	persistDirectedRegenerationSourceTask(t, svc, db, scope, secondFrozen)
+	firstCommercial := settleAndSnapshotDirectedCommercialFacts(t, svc, db, firstFrozen.Commercial.TaskID)
+	secondCommercial := settleAndSnapshotDirectedCommercialFacts(t, svc, db, secondFrozen.Commercial.TaskID)
+
+	candidateOne := seedDirectedVideoCandidate(t, svc, scope, firstFrozen.OutputArtifactID+"-01", shotOne, firstFrozen.Commercial.TaskID)
+	candidateTwo := seedDirectedVideoCandidate(t, svc, scope, secondFrozen.OutputArtifactID+"-01", shotTwo, secondFrozen.Commercial.TaskID)
+	approveMediaAssemblyRevision(t, db, scope, candidateOne.ID, 1)
+	approveMediaAssemblyRevision(t, db, scope, candidateTwo.ID, 2)
+	firstPlan, err := svc.repo.AppendArtifactRevision(
+		scope,
+		"m9-assembly-plan-artifact",
+		0,
+		m9AssemblyPlanDraft("m9-assembly-plan", exactAgentRevisionRef(candidateOne), exactAgentRevisionRef(candidateTwo)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updatedShotOne, err := svc.repo.AppendArtifactRevision(scope, shotOne.ArtifactID, shotOne.Revision, agentruntime.ArtifactDraft{
+		ArtifactKey: "m9-shot-one", Kind: "shot_revision", SchemaVersion: 1,
+		Payload: json.RawMessage(`{"dialogue":"第二版对白"}`), UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+		SkillVersions: []agentruntime.SkillSelection{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAgentArtifactLifecycle(t, svc, scope, candidateOne.ID, model.AgentArtifactRevisionStale)
+	assertAgentArtifactLifecycle(t, svc, scope, firstPlan.ID, model.AgentArtifactRevisionStale)
+	assertAgentArtifactLifecycle(t, svc, scope, candidateTwo.ID, model.AgentArtifactRevisionAwaitingReview)
+
+	proposal := directedRegenerationVideoProposal(callable, exactAgentRevisionRef(updatedShotOne), &DirectedVideoRegenerationArguments{
+		SourceShotRevision: exactAgentRevisionRef(shotOne), ApprovedCandidateRevision: exactAgentRevisionRef(candidateOne),
+	})
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: "m9-regenerate-shot-one", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		ExpectedDelivery: proposal.ExpectedDelivery, Arguments: mustMarshalAgentMediaTestJSON(t, proposal),
+	}
+	frozenJSON, err := svc.freezeAgentMediaGenerationDecisionArguments(
+		scope, configuration, []agentRuntimeCallableModelFact{callable}, call,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directedFrozen, err := decodeFrozenAgentMediaGenerationArguments(frozenJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directedFrozen.Commercial.Attempt != 2 || directedFrozen.Commercial.TaskID == firstFrozen.Commercial.TaskID ||
+		directedFrozen.Commercial.TaskID == secondFrozen.Commercial.TaskID {
+		t.Fatalf("directed task fact = attempt %d task %q", directedFrozen.Commercial.Attempt, directedFrozen.Commercial.TaskID)
+	}
+	persistDirectedRegenerationSourceTask(t, svc, db, scope, directedFrozen)
+	replacementCandidate := seedDirectedVideoCandidate(
+		t, svc, scope, directedFrozen.OutputArtifactID+"-01", updatedShotOne, directedFrozen.Commercial.TaskID,
+	)
+	approveMediaAssemblyRevision(t, db, scope, replacementCandidate.ID, 3)
+	secondPlan, err := svc.repo.AppendArtifactRevision(
+		scope,
+		firstPlan.ArtifactID,
+		firstPlan.Revision,
+		m9AssemblyPlanDraft("m9-assembly-plan", exactAgentRevisionRef(replacementCandidate), exactAgentRevisionRef(candidateTwo)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondPlan.Revision != 2 {
+		t.Fatalf("replacement assembly revision = %d, want 2", secondPlan.Revision)
+	}
+
+	currentCandidateTwo, err := svc.repo.ArtifactHeadRevisionForScope(scope, candidateTwo.ArtifactID)
+	if err != nil || currentCandidateTwo.ID != candidateTwo.ID || currentCandidateTwo.LifecycleStatus != model.AgentArtifactRevisionAwaitingReview {
+		t.Fatalf("unaffected candidate changed = %#v, err=%v", currentCandidateTwo, err)
+	}
+	candidates, err := svc.repo.MediaCandidateRevisionsInScope(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("candidate facts = %d, want two original plus one replacement", len(candidates))
+	}
+	assertDirectedCommercialFactsUnchanged(t, svc, db, firstCommercial)
+	assertDirectedCommercialFactsUnchanged(t, svc, db, secondCommercial)
+}
+
+type directedCommercialFactsSnapshot struct {
+	task   model.Task
+	order  model.BillingOrder
+	ledger []model.CreditLedgerEntry
+}
+
+func settleAndSnapshotDirectedCommercialFacts(
+	t *testing.T,
+	svc *Service,
+	db *gorm.DB,
+	taskID string,
+) directedCommercialFactsSnapshot {
+	t.Helper()
+	task, err := svc.repo.Task(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.SettleBillingOrder(task.BillingOrderID, "provider-"+task.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err = svc.repo.Task(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order, err := svc.repo.BillingOrder(task.BillingOrderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ledger []model.CreditLedgerEntry
+	if err := db.Where("billing_order_id = ?", order.ID).Order("created_at ASC, id ASC").Find(&ledger).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger) != 2 || ledger[0].Type != model.CreditLedgerReserve || ledger[1].Type != model.CreditLedgerConsume {
+		t.Fatalf("settled commercial ledger = %#v", ledger)
+	}
+	return directedCommercialFactsSnapshot{task: *task, order: *order, ledger: ledger}
+}
+
+func assertDirectedCommercialFactsUnchanged(
+	t *testing.T,
+	svc *Service,
+	db *gorm.DB,
+	want directedCommercialFactsSnapshot,
+) {
+	t.Helper()
+	gotTask, err := svc.repo.Task(want.task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotTask.Status != want.task.Status || gotTask.Stage != want.task.Stage || gotTask.Progress != want.task.Progress ||
+		gotTask.BillingOrderID != want.task.BillingOrderID || gotTask.InputJSON != want.task.InputJSON ||
+		gotTask.ResultJSON != want.task.ResultJSON || !gotTask.UpdatedAt.Equal(want.task.UpdatedAt) {
+		t.Fatalf("provider task mutated: got=%#v want=%#v", gotTask, want.task)
+	}
+	gotOrder, err := svc.repo.BillingOrder(want.order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOrder.Status != want.order.Status || gotOrder.AmountMicrocredits != want.order.AmountMicrocredits ||
+		gotOrder.ProviderRequestID != want.order.ProviderRequestID || !equalOptionalTime(gotOrder.SettledAt, want.order.SettledAt) ||
+		!gotOrder.UpdatedAt.Equal(want.order.UpdatedAt) {
+		t.Fatalf("billing order mutated: got=%#v want=%#v", gotOrder, want.order)
+	}
+	var gotLedger []model.CreditLedgerEntry
+	if err := db.Where("billing_order_id = ?", want.order.ID).Order("created_at ASC, id ASC").Find(&gotLedger).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(gotLedger) != len(want.ledger) {
+		t.Fatalf("billing ledger entries = %d, want %d", len(gotLedger), len(want.ledger))
+	}
+	for index := range want.ledger {
+		got := gotLedger[index]
+		expected := want.ledger[index]
+		if got.ID != expected.ID || got.Type != expected.Type || got.AmountMicrocredits != expected.AmountMicrocredits ||
+			got.AvailableDeltaMicrocredits != expected.AvailableDeltaMicrocredits ||
+			got.ReservedDeltaMicrocredits != expected.ReservedDeltaMicrocredits ||
+			got.AvailableAfterMicrocredits != expected.AvailableAfterMicrocredits ||
+			got.ReservedAfterMicrocredits != expected.ReservedAfterMicrocredits ||
+			got.BillingOrderID != expected.BillingOrderID || !got.CreatedAt.Equal(expected.CreatedAt) {
+			t.Fatalf("billing ledger entry %d mutated: got=%#v want=%#v", index, got, expected)
+		}
+	}
+}
+
+func equalOptionalTime(first *time.Time, second *time.Time) bool {
+	if first == nil || second == nil {
+		return first == nil && second == nil
+	}
+	return first.Equal(*second)
+}
+
+func assertAgentArtifactLifecycle(
+	t *testing.T,
+	svc *Service,
+	scope agentruntime.Scope,
+	revisionID string,
+	want string,
+) {
+	t.Helper()
+	revision, err := svc.repo.ArtifactRevisionInScope(scope, revisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision.LifecycleStatus != want {
+		t.Fatalf("artifact revision %q lifecycle = %q, want %q", revisionID, revision.LifecycleStatus, want)
+	}
+}
+
+func m9AssemblyPlanDraft(
+	artifactKey string,
+	first agentruntime.ArtifactRevisionRef,
+	second agentruntime.ArtifactRevisionRef,
+) agentruntime.ArtifactDraft {
+	payload, err := json.Marshal(agentruntime.AssemblyPlanV2{
+		PlanKey: artifactKey, AudioMode: agentruntime.MediaAudioNone,
+		Clips: []agentruntime.AssemblyClipV2{
+			{
+				ClipKey: "clip-one", SourceRevision: first,
+				TrimStartMS: m9Int64Pointer(0), TrimEndMS: m9Int64Pointer(1000),
+				TransitionToNext: agentruntime.AssemblyTransitionV2{Kind: agentruntime.AssemblyTransitionCut, DurationMS: m9Int64Pointer(0)},
+			},
+			{
+				ClipKey: "clip-two", SourceRevision: second,
+				TrimStartMS: m9Int64Pointer(0), TrimEndMS: m9Int64Pointer(1000),
+				TransitionToNext: agentruntime.AssemblyTransitionV2{Kind: agentruntime.AssemblyTransitionCut, DurationMS: m9Int64Pointer(0)},
+			},
+		},
+		AudioTracks: []agentruntime.AssemblyAudioTrackV2{},
+		Output: agentruntime.AssemblyOutputV2{
+			ArtifactKey: "m9-assembled-video", Container: "mp4", VideoCodec: "h264", AudioCodec: "none",
+			Width: m9IntPointer(1280), Height: m9IntPointer(720), FrameRate: m9IntPointer(24),
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return agentruntime.ArtifactDraft{
+		ArtifactKey: artifactKey, Kind: "assembly_plan", SchemaVersion: 2,
+		Payload: payload, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{first, second},
+		SkillVersions: []agentruntime.SkillSelection{},
+	}
+}
+
+func m9Int64Pointer(value int64) *int64 {
+	return &value
+}
+
+func m9IntPointer(value int) *int {
+	return &value
+}
+
 func persistDirectedRegenerationSourceTask(
 	t *testing.T,
 	svc *Service,

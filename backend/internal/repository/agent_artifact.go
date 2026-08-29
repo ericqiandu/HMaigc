@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -341,7 +342,8 @@ func artifactDraftRequiresCurrentUpstreamHeads(draft agentruntime.ArtifactDraft)
 	switch draft.SchemaID() {
 	case agentruntime.ArtifactSchemaVisualEvidenceV1,
 		agentruntime.ArtifactSchemaVisualConsistencyReviewV1,
-		agentruntime.ArtifactSchemaMediaCandidateSelectionV1:
+		agentruntime.ArtifactSchemaMediaCandidateSelectionV1,
+		agentruntime.ArtifactSchemaAssemblyPlanV2:
 		return true
 	default:
 		return false
@@ -502,7 +504,7 @@ func validateArtifactRevisionHeadsInScope(
 	scope agentruntime.Scope,
 	references []agentruntime.ArtifactRevisionRef,
 ) error {
-	for _, reference := range references {
+	for _, reference := range artifactRevisionRefsForHeadValidation(references) {
 		var artifact model.AgentArtifact
 		if err := productionArtifactScopeQuery(db, scope).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -531,6 +533,19 @@ func validateArtifactRevisionHeadsInScope(
 		}
 	}
 	return nil
+}
+
+func artifactRevisionRefsForHeadValidation(
+	references []agentruntime.ArtifactRevisionRef,
+) []agentruntime.ArtifactRevisionRef {
+	ordered := append([]agentruntime.ArtifactRevisionRef(nil), references...)
+	sort.Slice(ordered, func(first int, second int) bool {
+		if ordered[first].ArtifactID == ordered[second].ArtifactID {
+			return ordered[first].RevisionID < ordered[second].RevisionID
+		}
+		return ordered[first].ArtifactID < ordered[second].ArtifactID
+	})
+	return ordered
 }
 
 func (r *Repository) ArtifactRevisionInScope(scope agentruntime.Scope, revisionID string) (*model.AgentArtifactRevision, error) {
