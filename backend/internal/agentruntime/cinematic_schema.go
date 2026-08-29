@@ -2,9 +2,13 @@ package agentruntime
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"sort"
 )
 
 const (
@@ -19,6 +23,7 @@ var (
 	ErrCameraTreeCycle         = errors.New("camera tree contains a cycle")
 	ErrCameraTreeSelfReference = errors.New("camera tree contains a self reference")
 	ErrFrameBoundaryInvalid    = errors.New("first or last frame boundary is invalid")
+	ErrShotRevisionInvalid     = errors.New("cinematic shot revision is invalid")
 )
 
 type DialogueLine struct {
@@ -63,6 +68,15 @@ type CinematicShot struct {
 	VisibleCharacterKeys []string              `json:"visibleCharacterKeys"`
 	InputRevisions       []ArtifactRevisionRef `json:"inputRevisions"`
 	FramePlan            FirstMotionLastFrame  `json:"framePlan"`
+}
+
+// CinematicShotRevision freezes one shot payload together with the exact
+// upstream Artifact revisions that produced it. Revision numbers only append
+// for the stable ShotKey; DependencyHash is derived from those exact refs.
+type CinematicShotRevision struct {
+	Revision       int64         `json:"revision"`
+	Shot           CinematicShot `json:"shot"`
+	DependencyHash string        `json:"dependencyHash"`
 }
 
 type StoryboardPlan struct {
@@ -218,6 +232,66 @@ func ValidateCinematicShot(shot CinematicShot) error {
 		}
 	}
 	return nil
+}
+
+func NewCinematicShotRevision(shot CinematicShot, revision int64) (CinematicShotRevision, error) {
+	shot = cloneCinematicShot(shot)
+	hash, err := CanonicalDependencyHash(shot.InputRevisions)
+	if err != nil {
+		return CinematicShotRevision{}, fmt.Errorf("%w: %v", ErrShotRevisionInvalid, err)
+	}
+	result := CinematicShotRevision{Revision: revision, Shot: shot, DependencyHash: hash}
+	if err := ValidateCinematicShotRevision(result); err != nil {
+		return CinematicShotRevision{}, err
+	}
+	return result, nil
+}
+
+func ValidateCinematicShotRevision(revision CinematicShotRevision) error {
+	if revision.Revision < 1 || ValidateCinematicShot(revision.Shot) != nil || !validDependencyHash(revision.DependencyHash) {
+		return ErrShotRevisionInvalid
+	}
+	want, err := CanonicalDependencyHash(revision.Shot.InputRevisions)
+	if err != nil || revision.DependencyHash != want {
+		return ErrShotRevisionInvalid
+	}
+	return nil
+}
+
+// CanonicalDependencyHash is order-independent while remaining sensitive to
+// exact Artifact and revision identities. Duplicate Artifact dependencies are
+// rejected instead of being silently normalized.
+func CanonicalDependencyHash(references []ArtifactRevisionRef) (string, error) {
+	if err := validateArtifactRevisionRefs(references); err != nil {
+		return "", err
+	}
+	canonical := append([]ArtifactRevisionRef(nil), references...)
+	sort.Slice(canonical, func(left, right int) bool {
+		if canonical[left].ArtifactID == canonical[right].ArtifactID {
+			return canonical[left].RevisionID < canonical[right].RevisionID
+		}
+		return canonical[left].ArtifactID < canonical[right].ArtifactID
+	})
+	payload, err := json.Marshal(canonical)
+	if err != nil {
+		return "", fmt.Errorf("encode dependency references: %w", err)
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func cloneCinematicShot(shot CinematicShot) CinematicShot {
+	shot.Dialogue = append([]DialogueLine(nil), shot.Dialogue...)
+	shot.Sound = append([]SoundCue(nil), shot.Sound...)
+	shot.VisibleCharacterKeys = append([]string(nil), shot.VisibleCharacterKeys...)
+	shot.InputRevisions = append([]ArtifactRevisionRef(nil), shot.InputRevisions...)
+	shot.FramePlan.FirstFrame.EvidenceRevisions = append([]ArtifactRevisionRef(nil), shot.FramePlan.FirstFrame.EvidenceRevisions...)
+	shot.FramePlan.FirstFrame.VisibleCharacterKeys = append([]string(nil), shot.FramePlan.FirstFrame.VisibleCharacterKeys...)
+	shot.FramePlan.LastFrame.EvidenceRevisions = append([]ArtifactRevisionRef(nil), shot.FramePlan.LastFrame.EvidenceRevisions...)
+	shot.FramePlan.LastFrame.VisibleCharacterKeys = append([]string(nil), shot.FramePlan.LastFrame.VisibleCharacterKeys...)
+	shot.FramePlan.InputRevisions = append([]ArtifactRevisionRef(nil), shot.FramePlan.InputRevisions...)
+	shot.FramePlan.ContinuityConditions = append([]string(nil), shot.FramePlan.ContinuityConditions...)
+	return shot
 }
 
 func DecodeFirstMotionLastFrame(payload []byte) (FirstMotionLastFrame, error) {

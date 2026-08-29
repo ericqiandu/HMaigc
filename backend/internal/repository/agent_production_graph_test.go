@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -470,6 +471,128 @@ func TestProductionIdentityFactsRejectCrossScopeArtifactAndResourceReferences(t 
 				t.Fatalf("cross-scope evidence error = %v, want %v", err, ErrProductionRuntimeSnapshotInvalid)
 			}
 		})
+	}
+}
+
+func TestIdentityRevisionChangeLocalStaleOnlyTouchesBoundShots(t *testing.T) {
+	repo, db := productionRepositoryFixture(t)
+	scope := productionScopeFixture()
+	identitySourceOne := appendLocalStaleArtifact(t, repo, scope, "identity-source-one", "character_bible", nil)
+	identitySourceTwo := appendLocalStaleArtifact(t, repo, scope, "identity-source-two", "character_bible", nil)
+	shotOne := appendLocalStaleArtifact(t, repo, scope, "identity-shot-one", "shot_revision", nil)
+	shotTwo := appendLocalStaleArtifact(t, repo, scope, "identity-shot-two", "shot_revision", nil)
+	videoOne := appendLocalStaleCandidate(t, repo, scope, "identity-video-one", agentruntime.ArtifactVideo, shotOne)
+	videoTwo := appendLocalStaleCandidate(t, repo, scope, "identity-video-two", agentruntime.ArtifactVideo, shotTwo)
+	now := time.Now().UTC()
+	identities := []model.AgentCharacterIdentityVersion{
+		productionIdentityVersionForLocalStale(scope, "identity-one", "character-one", identitySourceOne.ID, "resource-character-one", now),
+		productionIdentityVersionForLocalStale(scope, "identity-two", "character-two", identitySourceTwo.ID, "resource-character-two", now),
+	}
+	if err := db.Create(&identities).Error; err != nil {
+		t.Fatal(err)
+	}
+	bindings := []model.AgentShotBindingRevision{
+		productionShotBindingForLocalStale(scope, "binding-one", "identity-shot-one", "character-one", shotOne.ID, identities[0].ID, "resource-character-one", now),
+		productionShotBindingForLocalStale(scope, "binding-two", "identity-shot-two", "character-two", shotTwo.ID, identities[1].ID, "resource-character-two", now),
+	}
+	if err := db.Create(&bindings).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	updatedIdentitySource := agentruntime.ArtifactDraft{
+		ArtifactKey: identitySourceOne.ArtifactKey, Kind: identitySourceOne.Kind, SchemaVersion: 1,
+		Payload: json.RawMessage(`{"identity":"second-version"}`), UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+	}
+	if _, err := repo.AppendArtifactRevision(scope, identitySourceOne.ArtifactID, identitySourceOne.Revision, updatedIdentitySource); err != nil {
+		t.Fatal(err)
+	}
+
+	assertArtifactRevisionLifecycle(t, db, shotOne.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, videoOne.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, shotTwo.ID, model.AgentArtifactRevisionAwaitingReview)
+	assertArtifactRevisionLifecycle(t, db, videoTwo.ID, model.AgentArtifactRevisionAwaitingReview)
+}
+
+func TestShotRevisionLocalStalePropagatesToExactProductionStages(t *testing.T) {
+	repo, db := productionRepositoryFixture(t)
+	scope := productionScopeFixture()
+	shotOne := appendLocalStaleArtifact(t, repo, scope, "stage-shot-one", "shot_revision", nil)
+	shotTwo := appendLocalStaleArtifact(t, repo, scope, "stage-shot-two", "shot_revision", nil)
+	draft := agentruntime.ProductionGraphDraft{GraphKey: "shot-local-stages", Stages: []agentruntime.ProductionStageDraft{
+		productionStageFixture("render-shot-one", agentruntime.SpecialistStoryboard),
+		productionStageFixture("render-shot-two", agentruntime.SpecialistStoryboard),
+		productionStageFixture("assemble", agentruntime.SpecialistVideoAssembly, "render-shot-one", "render-shot-two"),
+	}}
+	draft.Stages[0].InputRevisions = []agentruntime.ArtifactRevisionRef{artifactRevisionRef(shotOne)}
+	draft.Stages[1].InputRevisions = []agentruntime.ArtifactRevisionRef{artifactRevisionRef(shotTwo)}
+	graph, err := repo.AppendProductionGraphVersion(scope, 0, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updatedShot := agentruntime.ArtifactDraft{
+		ArtifactKey: shotOne.ArtifactKey, Kind: shotOne.Kind, SchemaVersion: 1,
+		Payload: json.RawMessage(`{"dialogue":"revised"}`), UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+	}
+	if _, err := repo.AppendArtifactRevision(scope, shotOne.ArtifactID, shotOne.Revision, updatedShot); err != nil {
+		t.Fatal(err)
+	}
+
+	assertProductionStageState(t, db, graph.Stages[0].ID, agentruntime.StageStale, 2)
+	assertProductionStageState(t, db, graph.Stages[1].ID, agentruntime.StagePlanned, 1)
+	assertProductionStageState(t, db, graph.Stages[2].ID, agentruntime.StageStale, 2)
+}
+
+func assertProductionStageState(
+	t *testing.T,
+	db *gorm.DB,
+	stageID string,
+	wantStatus agentruntime.ProductionStageStatus,
+	wantVersion int64,
+) {
+	t.Helper()
+	var stored model.AgentProductionStage
+	if err := db.Where("id = ?", stageID).Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != wantStatus || stored.Version != wantVersion {
+		t.Fatalf("stage %s = (%s, %d), want (%s, %d)", stageID, stored.Status, stored.Version, wantStatus, wantVersion)
+	}
+}
+
+func productionIdentityVersionForLocalStale(
+	scope agentruntime.Scope,
+	id string,
+	characterKey string,
+	characterBibleRevisionID string,
+	resourceID string,
+	createdAt time.Time,
+) model.AgentCharacterIdentityVersion {
+	return model.AgentCharacterIdentityVersion{
+		ID: id, TenantKind: scope.TenantKind, TenantID: scope.TenantID, ActorUserID: scope.ActorUserID,
+		DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID, ThreadID: scope.ThreadID, RunID: scope.RunID,
+		CharacterKey: characterKey, Version: 1, CharacterBibleRevisionID: characterBibleRevisionID,
+		ResourceID: resourceID, DependencyHash: strings.Repeat("a", 64),
+		LifecycleStatus: agentruntime.ProductionEvidenceCurrent, CreatedAt: createdAt,
+	}
+}
+
+func productionShotBindingForLocalStale(
+	scope agentruntime.Scope,
+	id string,
+	shotKey string,
+	characterKey string,
+	shotRevisionID string,
+	identityVersionID string,
+	resourceID string,
+	createdAt time.Time,
+) model.AgentShotBindingRevision {
+	return model.AgentShotBindingRevision{
+		ID: id, TenantKind: scope.TenantKind, TenantID: scope.TenantID, ActorUserID: scope.ActorUserID,
+		DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID, ThreadID: scope.ThreadID, RunID: scope.RunID,
+		ShotKey: shotKey, CharacterKey: characterKey, Revision: 1, ShotArtifactRevisionID: shotRevisionID,
+		IdentityVersionID: identityVersionID, ResourceID: resourceID, DependencyHash: strings.Repeat("b", 64),
+		LifecycleStatus: agentruntime.ProductionEvidenceCurrent, CreatedAt: createdAt,
 	}
 }
 

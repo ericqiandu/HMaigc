@@ -720,6 +720,143 @@ func productionShotBindingScopeQuery(query *gorm.DB, scope agentruntime.Scope) *
 	)
 }
 
+func productionRevisionDependencyNodesTx(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+) ([]agentruntime.RevisionDependencyNode, map[agentruntime.ArtifactRevisionRef]string, error) {
+	revisions := []model.AgentArtifactRevision{}
+	if err := productionArtifactRevisionScopeQuery(tx, scope).
+		Order("created_at ASC, id ASC").Find(&revisions).Error; err != nil {
+		return nil, nil, err
+	}
+	nodes := make([]agentruntime.RevisionDependencyNode, 0, len(revisions))
+	nodeIndexByRevisionID := make(map[string]int, len(revisions))
+	referenceByRevisionID := make(map[string]agentruntime.ArtifactRevisionRef, len(revisions))
+	lifecycleByRevision := make(map[agentruntime.ArtifactRevisionRef]string, len(revisions))
+	for _, revision := range revisions {
+		reference := agentruntime.ArtifactRevisionRef{ArtifactID: revision.ArtifactID, RevisionID: revision.ID}
+		var upstream []agentruntime.ArtifactRevisionRef
+		if err := decodeProductionSnapshotJSON(revision.UpstreamRevisionsJSON, &upstream); err != nil {
+			return nil, nil, err
+		}
+		nodeIndexByRevisionID[revision.ID] = len(nodes)
+		referenceByRevisionID[revision.ID] = reference
+		lifecycleByRevision[reference] = revision.LifecycleStatus
+		nodes = append(nodes, agentruntime.RevisionDependencyNode{Revision: reference, DependsOn: upstream})
+	}
+
+	identities := []model.AgentCharacterIdentityVersion{}
+	if err := productionCharacterIdentityScopeQuery(tx, scope).
+		Order("character_key ASC, version ASC, id ASC").Find(&identities).Error; err != nil {
+		return nil, nil, err
+	}
+	identityByID := make(map[string]model.AgentCharacterIdentityVersion, len(identities))
+	for _, identity := range identities {
+		identityByID[identity.ID] = identity
+	}
+	bindings := []model.AgentShotBindingRevision{}
+	if err := productionShotBindingScopeQuery(tx, scope).
+		Order("shot_key ASC, character_key ASC, revision ASC, id ASC").Find(&bindings).Error; err != nil {
+		return nil, nil, err
+	}
+	latestBindingByOccurrence := make(map[string]model.AgentShotBindingRevision, len(bindings))
+	for _, binding := range bindings {
+		latestBindingByOccurrence[binding.ShotKey+"\x00"+binding.CharacterKey] = binding
+	}
+	for _, binding := range latestBindingByOccurrence {
+		if binding.LifecycleStatus != agentruntime.ProductionEvidenceCurrent {
+			continue
+		}
+		identity, exists := identityByID[binding.IdentityVersionID]
+		if !exists || identity.LifecycleStatus != agentruntime.ProductionEvidenceCurrent {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		identityReference, exists := referenceByRevisionID[identity.CharacterBibleRevisionID]
+		if !exists {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		shotIndex, exists := nodeIndexByRevisionID[binding.ShotArtifactRevisionID]
+		if !exists {
+			return nil, nil, ErrProductionRuntimeSnapshotInvalid
+		}
+		if !artifactRevisionRefIncluded(nodes[shotIndex].DependsOn, identityReference) {
+			nodes[shotIndex].DependsOn = append(nodes[shotIndex].DependsOn, identityReference)
+		}
+	}
+	return nodes, lifecycleByRevision, nil
+}
+
+func artifactRevisionRefIncluded(
+	references []agentruntime.ArtifactRevisionRef,
+	want agentruntime.ArtifactRevisionRef,
+) bool {
+	for _, reference := range references {
+		if reference == want {
+			return true
+		}
+	}
+	return false
+}
+
+func markProductionStagesStaleForRevisionRefsTx(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+	changed []agentruntime.ArtifactRevisionRef,
+) error {
+	var graph model.AgentProductionGraphVersion
+	if err := productionGraphScopeQuery(tx.Model(&model.AgentProductionGraphVersion{}), scope).
+		Order("version DESC").First(&graph).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	var stageDrafts []agentruntime.ProductionStageDraft
+	if err := decodeProductionSnapshotJSON(graph.StagesJSON, &stageDrafts); err != nil {
+		return err
+	}
+	staleStageKeys, err := agentruntime.StaleStagesForRevisionChanges(
+		agentruntime.ProductionGraphDraft{GraphKey: graph.GraphKey, Stages: stageDrafts},
+		changed,
+	)
+	if err != nil {
+		return err
+	}
+	if len(staleStageKeys) == 0 {
+		return nil
+	}
+	stages := []model.AgentProductionStage{}
+	if err := productionStageScopeQuery(tx.Model(&model.AgentProductionStage{}), scope).
+		Where("graph_version_id = ? AND stage_key IN ?", graph.ID, staleStageKeys).
+		Find(&stages).Error; err != nil {
+		return err
+	}
+	if len(stages) != len(staleStageKeys) {
+		return ErrProductionStageConflict
+	}
+	now := time.Now().UTC()
+	for _, stage := range stages {
+		if stage.Status == agentruntime.StageStopped || stage.Status == agentruntime.StageStale {
+			continue
+		}
+		update := model.AgentProductionStage{
+			Status: agentruntime.StageStale, Version: stage.Version + 1,
+			ReviewRevisionID: "", LastErrorCode: "", UpdatedAt: now,
+		}
+		result := productionStageScopeQuery(tx.Model(&model.AgentProductionStage{}), scope).
+			Where("id = ? AND version = ?", stage.ID, stage.Version).
+			Select("status", "version", "review_revision_id", "last_error_code", "updated_at").
+			Updates(&update)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrProductionStageConflict
+		}
+	}
+	return nil
+}
+
 func productionStageSnapshotMatches(stage model.AgentProductionStage, graphVersionID string, expected agentruntime.ProductionStageDraft) bool {
 	if strings.TrimSpace(stage.ID) != stage.ID || stage.ID == "" || stage.GraphVersionID != graphVersionID ||
 		stage.StageKey != expected.StageKey || stage.SpecialistKey != expected.SpecialistKey ||

@@ -11,6 +11,8 @@ const maxProductionGraphStages = 64
 var (
 	ErrProductionGraphInvalid           = errors.New("production graph is invalid")
 	ErrProductionGraphCycle             = errors.New("production graph contains a cycle")
+	ErrRevisionDependencyGraphInvalid   = errors.New("revision dependency graph is invalid")
+	ErrRevisionDependencyGraphCycle     = errors.New("revision dependency graph contains a cycle")
 	ErrProductionStageTransitionInvalid = errors.New("production stage transition is invalid")
 	ErrProductionStageVersionConflict   = errors.New("production stage version conflict")
 	ErrStageApprovalRevisionMismatch    = errors.New("production stage review revision mismatch")
@@ -36,6 +38,14 @@ type ProductionStageState struct {
 	Status           ProductionStageStatus `json:"status"`
 	Version          int64                 `json:"version"`
 	ReviewRevisionID string                `json:"reviewRevisionId,omitempty"`
+}
+
+// RevisionDependencyNode represents one immutable Artifact revision and its
+// exact upstream revision edges. Revision text and stage naming are not part
+// of dependency evaluation.
+type RevisionDependencyNode struct {
+	Revision  ArtifactRevisionRef
+	DependsOn []ArtifactRevisionRef
 }
 
 func ValidateProductionGraph(draft ProductionGraphDraft) error {
@@ -218,4 +228,161 @@ func StaleDependentStages(draft ProductionGraphDraft, changedStageKey string) ([
 		}
 	}
 	return stale, nil
+}
+
+func StaleDependentRevisions(
+	nodes []RevisionDependencyNode,
+	changed []ArtifactRevisionRef,
+) ([]ArtifactRevisionRef, error) {
+	if len(nodes) == 0 || len(changed) == 0 {
+		return nil, ErrRevisionDependencyGraphInvalid
+	}
+	nodeByRef := make(map[ArtifactRevisionRef]RevisionDependencyNode, len(nodes))
+	for _, node := range nodes {
+		if node.Revision.Validate() != nil || node.DependsOn == nil || validateArtifactRevisionRefs(node.DependsOn) != nil {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		if _, duplicated := nodeByRef[node.Revision]; duplicated {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		nodeByRef[node.Revision] = node
+	}
+	changedSet := make(map[ArtifactRevisionRef]struct{}, len(changed))
+	for _, reference := range changed {
+		if reference.Validate() != nil {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		if _, duplicated := changedSet[reference]; duplicated {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		if _, exists := nodeByRef[reference]; !exists {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		changedSet[reference] = struct{}{}
+	}
+	dependents := make(map[ArtifactRevisionRef][]ArtifactRevisionRef, len(nodes))
+	for _, node := range nodes {
+		for _, dependency := range node.DependsOn {
+			if _, exists := nodeByRef[dependency]; !exists {
+				return nil, ErrRevisionDependencyGraphInvalid
+			}
+			dependents[dependency] = append(dependents[dependency], node.Revision)
+		}
+	}
+	if revisionDependencyGraphContainsCycle(nodes, nodeByRef) {
+		return nil, ErrRevisionDependencyGraphCycle
+	}
+
+	staleSet := make(map[ArtifactRevisionRef]struct{})
+	queue := append([]ArtifactRevisionRef(nil), changed...)
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, dependent := range dependents[current] {
+			if _, changedRoot := changedSet[dependent]; changedRoot {
+				continue
+			}
+			if _, visited := staleSet[dependent]; visited {
+				continue
+			}
+			staleSet[dependent] = struct{}{}
+			queue = append(queue, dependent)
+		}
+	}
+	stale := make([]ArtifactRevisionRef, 0, len(staleSet))
+	for _, node := range nodes {
+		if _, exists := staleSet[node.Revision]; exists {
+			stale = append(stale, node.Revision)
+		}
+	}
+	return stale, nil
+}
+
+func StaleStagesForRevisionChanges(draft ProductionGraphDraft, changed []ArtifactRevisionRef) ([]string, error) {
+	if err := ValidateProductionGraph(draft); err != nil {
+		return nil, err
+	}
+	if len(changed) == 0 {
+		return nil, ErrRevisionDependencyGraphInvalid
+	}
+	changedSet := make(map[ArtifactRevisionRef]struct{}, len(changed))
+	for _, reference := range changed {
+		if reference.Validate() != nil {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		if _, duplicated := changedSet[reference]; duplicated {
+			return nil, ErrRevisionDependencyGraphInvalid
+		}
+		changedSet[reference] = struct{}{}
+	}
+
+	staleSet := make(map[string]struct{})
+	queue := make([]string, 0)
+	dependents := make(map[string][]string, len(draft.Stages))
+	for _, stage := range draft.Stages {
+		for _, dependency := range stage.DependsOnStageKeys {
+			dependents[dependency] = append(dependents[dependency], stage.StageKey)
+		}
+		for _, reference := range stage.InputRevisions {
+			if _, changedInput := changedSet[reference]; changedInput {
+				if _, found := staleSet[stage.StageKey]; !found {
+					staleSet[stage.StageKey] = struct{}{}
+					queue = append(queue, stage.StageKey)
+				}
+				break
+			}
+		}
+	}
+	for len(queue) > 0 {
+		stageKey := queue[0]
+		queue = queue[1:]
+		for _, dependent := range dependents[stageKey] {
+			if _, found := staleSet[dependent]; found {
+				continue
+			}
+			staleSet[dependent] = struct{}{}
+			queue = append(queue, dependent)
+		}
+	}
+	stale := make([]string, 0, len(staleSet))
+	for _, stage := range draft.Stages {
+		if _, found := staleSet[stage.StageKey]; found {
+			stale = append(stale, stage.StageKey)
+		}
+	}
+	return stale, nil
+}
+
+func revisionDependencyGraphContainsCycle(
+	nodes []RevisionDependencyNode,
+	nodeByRef map[ArtifactRevisionRef]RevisionDependencyNode,
+) bool {
+	const (
+		visiting = iota + 1
+		visited
+	)
+	states := make(map[ArtifactRevisionRef]int, len(nodes))
+	var visit func(ArtifactRevisionRef) bool
+	visit = func(reference ArtifactRevisionRef) bool {
+		switch states[reference] {
+		case visiting:
+			return true
+		case visited:
+			return false
+		}
+		states[reference] = visiting
+		for _, dependency := range nodeByRef[reference].DependsOn {
+			if visit(dependency) {
+				return true
+			}
+		}
+		states[reference] = visited
+		return false
+	}
+	for _, node := range nodes {
+		if visit(node.Revision) {
+			return true
+		}
+	}
+	return false
 }

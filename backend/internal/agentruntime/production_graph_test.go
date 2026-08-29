@@ -175,3 +175,50 @@ func TestStaleDependentStagesIsTransitive(t *testing.T) {
 		t.Fatalf("stale stages = %v, want %v", stale, want)
 	}
 }
+
+func TestLocalStaleDependencyGraphUsesExactRevisionEdges(t *testing.T) {
+	shotOne := agentruntime.ArtifactRevisionRef{ArtifactID: "shot-one", RevisionID: "shot-one-r1"}
+	shotTwo := agentruntime.ArtifactRevisionRef{ArtifactID: "shot-two", RevisionID: "shot-two-r1"}
+	videoOne := agentruntime.ArtifactRevisionRef{ArtifactID: "video-one", RevisionID: "video-one-r1"}
+	audioOne := agentruntime.ArtifactRevisionRef{ArtifactID: "audio-one", RevisionID: "audio-one-r1"}
+	videoTwo := agentruntime.ArtifactRevisionRef{ArtifactID: "video-two", RevisionID: "video-two-r1"}
+	assembly := agentruntime.ArtifactRevisionRef{ArtifactID: "assembly", RevisionID: "assembly-r1"}
+	nodes := []agentruntime.RevisionDependencyNode{
+		{Revision: shotOne, DependsOn: []agentruntime.ArtifactRevisionRef{}},
+		{Revision: shotTwo, DependsOn: []agentruntime.ArtifactRevisionRef{}},
+		{Revision: videoOne, DependsOn: []agentruntime.ArtifactRevisionRef{shotOne}},
+		{Revision: audioOne, DependsOn: []agentruntime.ArtifactRevisionRef{shotOne}},
+		{Revision: videoTwo, DependsOn: []agentruntime.ArtifactRevisionRef{shotTwo}},
+		{Revision: assembly, DependsOn: []agentruntime.ArtifactRevisionRef{videoOne, audioOne, videoTwo}},
+	}
+
+	stale, err := agentruntime.StaleDependentRevisions(nodes, []agentruntime.ArtifactRevisionRef{shotOne})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agentruntime.ArtifactRevisionRef{videoOne, audioOne, assembly}
+	if !reflect.DeepEqual(stale, want) {
+		t.Fatalf("stale revisions = %#v, want %#v", stale, want)
+	}
+}
+
+func TestLocalStaleStagesStartFromExactRevisionInputs(t *testing.T) {
+	shotOne := agentruntime.ArtifactRevisionRef{ArtifactID: "shot-one", RevisionID: "shot-one-r1"}
+	shotTwo := agentruntime.ArtifactRevisionRef{ArtifactID: "shot-two", RevisionID: "shot-two-r1"}
+	draft := agentruntime.ProductionGraphDraft{GraphKey: "shot-local", Stages: []agentruntime.ProductionStageDraft{
+		validProductionStage("render-shot-one"),
+		validProductionStage("render-shot-two"),
+		validProductionStage("assemble", "render-shot-one", "render-shot-two"),
+	}}
+	draft.Stages[0].InputRevisions = []agentruntime.ArtifactRevisionRef{shotOne}
+	draft.Stages[1].InputRevisions = []agentruntime.ArtifactRevisionRef{shotTwo}
+
+	stale, err := agentruntime.StaleStagesForRevisionChanges(draft, []agentruntime.ArtifactRevisionRef{shotOne})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"render-shot-one", "assemble"}
+	if !reflect.DeepEqual(stale, want) {
+		t.Fatalf("stale stages = %v, want %v", stale, want)
+	}
+}

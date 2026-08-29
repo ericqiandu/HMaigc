@@ -327,7 +327,7 @@ func appendArtifactRevisionTx(
 			Take(&previous).Error; err != nil {
 			return nil, err
 		}
-		if err := markDependentVisualEvidenceStaleTx(tx, scope, agentruntime.ArtifactRevisionRef{
+		if err := markArtifactRevisionClosureStaleTx(tx, scope, agentruntime.ArtifactRevisionRef{
 			ArtifactID: previous.ArtifactID,
 			RevisionID: previous.ID,
 		}); err != nil {
@@ -348,32 +348,28 @@ func artifactDraftRequiresCurrentUpstreamHeads(draft agentruntime.ArtifactDraft)
 	}
 }
 
-func markDependentVisualEvidenceStaleTx(
+func markArtifactRevisionClosureStaleTx(
 	tx *gorm.DB,
 	scope agentruntime.Scope,
 	source agentruntime.ArtifactRevisionRef,
 ) error {
-	var candidates []model.AgentArtifactRevision
-	if err := productionArtifactRevisionScopeQuery(tx, scope).
-		Where("kind = ? AND lifecycle_status <> ?", "visual_evidence", model.AgentArtifactRevisionStale).
-		Find(&candidates).Error; err != nil {
+	nodes, lifecycleByRevision, err := productionRevisionDependencyNodesTx(tx, scope)
+	if err != nil {
 		return err
 	}
-	staleIDs := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		var upstream []agentruntime.ArtifactRevisionRef
-		if err := json.Unmarshal([]byte(candidate.UpstreamRevisionsJSON), &upstream); err != nil {
-			return fmt.Errorf("decode visual evidence upstream revisions: %w", err)
-		}
-		for _, reference := range upstream {
-			if reference == source {
-				staleIDs = append(staleIDs, candidate.ID)
-				break
-			}
+	dependents, err := agentruntime.StaleDependentRevisions(nodes, []agentruntime.ArtifactRevisionRef{source})
+	if err != nil {
+		return err
+	}
+	staleRefs := append([]agentruntime.ArtifactRevisionRef{source}, dependents...)
+	staleIDs := make([]string, 0, len(staleRefs))
+	for _, reference := range staleRefs {
+		if lifecycleByRevision[reference] != model.AgentArtifactRevisionStale {
+			staleIDs = append(staleIDs, reference.RevisionID)
 		}
 	}
 	if len(staleIDs) == 0 {
-		return nil
+		return markProductionStagesStaleForRevisionRefsTx(tx, scope, staleRefs)
 	}
 	result := productionArtifactRevisionScopeQuery(tx.Model(&model.AgentArtifactRevision{}), scope).
 		Where("id IN ? AND lifecycle_status <> ?", staleIDs, model.AgentArtifactRevisionStale).
@@ -382,9 +378,9 @@ func markDependentVisualEvidenceStaleTx(
 		return result.Error
 	}
 	if result.RowsAffected != int64(len(staleIDs)) {
-		return fmt.Errorf("mark visual evidence stale: expected %d revisions, updated %d", len(staleIDs), result.RowsAffected)
+		return fmt.Errorf("mark artifact revisions stale: expected %d revisions, updated %d", len(staleIDs), result.RowsAffected)
 	}
-	return nil
+	return markProductionStagesStaleForRevisionRefsTx(tx, scope, staleRefs)
 }
 
 func appendUnadoptedArtifactRevisionTx(

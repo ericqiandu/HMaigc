@@ -434,6 +434,108 @@ func TestAppendingSourceRevisionMarksDependentVisualEvidenceStale(t *testing.T) 
 	}
 }
 
+func TestShotRevisionDialogueChangeLocalStaleKeepsOldCandidatesReadable(t *testing.T) {
+	repo, db := productionRepositoryFixture(t)
+	scope := productionScopeFixture()
+	shotOne := appendLocalStaleArtifact(t, repo, scope, "shot-one", "shot_revision", nil)
+	shotTwo := appendLocalStaleArtifact(t, repo, scope, "shot-two", "shot_revision", nil)
+	videoOne := appendLocalStaleCandidate(t, repo, scope, "video-one", agentruntime.ArtifactVideo, shotOne)
+	audioOne := appendLocalStaleCandidate(t, repo, scope, "audio-one", agentruntime.ArtifactAudio, shotOne)
+	videoTwo := appendLocalStaleCandidate(t, repo, scope, "video-two", agentruntime.ArtifactVideo, shotTwo)
+	assembly := appendLocalStaleArtifact(t, repo, scope, "assembly-one", "assembly_output", []agentruntime.ArtifactRevisionRef{
+		artifactRevisionRef(videoOne), artifactRevisionRef(audioOne), artifactRevisionRef(videoTwo),
+	})
+
+	updatedShot := agentruntime.ArtifactDraft{
+		ArtifactKey: "shot-one", Kind: "shot_revision", SchemaVersion: 1,
+		Payload: json.RawMessage(`{"dialogue":"第二版对白"}`), UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+	}
+	if _, err := repo.AppendArtifactRevision(scope, shotOne.ArtifactID, shotOne.Revision, updatedShot); err != nil {
+		t.Fatal(err)
+	}
+
+	assertArtifactRevisionLifecycle(t, db, videoOne.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, audioOne.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, assembly.ID, model.AgentArtifactRevisionStale)
+	assertArtifactRevisionLifecycle(t, db, shotTwo.ID, model.AgentArtifactRevisionAwaitingReview)
+	assertArtifactRevisionLifecycle(t, db, videoTwo.ID, model.AgentArtifactRevisionAwaitingReview)
+
+	candidates, err := repo.MediaCandidateRevisionsInScope(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("readable media candidates = %d, want 3", len(candidates))
+	}
+	wantIDs := map[string]struct{}{videoOne.ID: {}, audioOne.ID: {}, videoTwo.ID: {}}
+	for _, candidate := range candidates {
+		if _, found := wantIDs[candidate.ID]; !found {
+			t.Fatalf("unexpected candidate remained readable: %#v", candidate)
+		}
+	}
+}
+
+func appendLocalStaleArtifact(
+	t *testing.T,
+	repo *Repository,
+	scope agentruntime.Scope,
+	artifactID string,
+	kind string,
+	upstream []agentruntime.ArtifactRevisionRef,
+) *model.AgentArtifactRevision {
+	t.Helper()
+	if upstream == nil {
+		upstream = []agentruntime.ArtifactRevisionRef{}
+	}
+	revision, err := repo.AppendArtifactRevision(scope, artifactID, 0, agentruntime.ArtifactDraft{
+		ArtifactKey: artifactID, Kind: kind, SchemaVersion: 1,
+		Payload: json.RawMessage(`{"state":"current"}`), UpstreamRevisions: upstream,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func appendLocalStaleCandidate(
+	t *testing.T,
+	repo *Repository,
+	scope agentruntime.Scope,
+	artifactID string,
+	mediaKind agentruntime.ArtifactKind,
+	upstream *model.AgentArtifactRevision,
+) *model.AgentArtifactRevision {
+	t.Helper()
+	resourceID := "resource-" + artifactID
+	requestID := "request-" + artifactID
+	draft := agentruntime.ArtifactDraft{
+		ArtifactKey: artifactID, Kind: mediaCandidateArtifactKind, SchemaVersion: 1,
+		Payload:    json.RawMessage(`{"candidateKey":"` + artifactID + `","mediaKind":"` + string(mediaKind) + `","resourceId":"` + resourceID + `","sourceTaskId":"task-` + artifactID + `","providerRequestIdentity":"` + requestID + `"}`),
+		ResourceID: resourceID, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{artifactRevisionRef(upstream)},
+		ModelRequestIdentity: requestID, SkillVersions: []agentruntime.SkillSelection{},
+	}
+	revision, err := repo.AppendMediaCandidateRevision(scope, artifactID, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func artifactRevisionRef(revision *model.AgentArtifactRevision) agentruntime.ArtifactRevisionRef {
+	return agentruntime.ArtifactRevisionRef{ArtifactID: revision.ArtifactID, RevisionID: revision.ID}
+}
+
+func assertArtifactRevisionLifecycle(t *testing.T, db *gorm.DB, revisionID string, want string) {
+	t.Helper()
+	var stored model.AgentArtifactRevision
+	if err := db.Select("id", "lifecycle_status").Where("id = ?", revisionID).Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.LifecycleStatus != want {
+		t.Fatalf("revision %s lifecycle = %q, want %q", revisionID, stored.LifecycleStatus, want)
+	}
+}
+
 func TestAppendVisualEvidenceRejectsNonHeadSourceRevision(t *testing.T) {
 	repo, _ := productionRepositoryFixture(t)
 	scope := productionScopeFixture()
