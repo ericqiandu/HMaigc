@@ -239,6 +239,26 @@
         "tools": ["vision.analyze"],
         "artifactSchemas": ["visual_evidence.v1"]
       }
+    },
+    {
+      "dir": "video-prompt-specialist",
+      "version": 1,
+      "name": "视频提示词专家",
+      "description": "当已确认镜头需要形成可执行的视频生成提示词或只重生成受影响镜头时使用；基于精确 revision、真实参考资产和相邻镜头节奏事实输出 video_plan.v1。",
+      "icon": "clapperboard",
+      "coverUrl": "",
+      "categories": ["视频", "提示词", "定向重生成"],
+      "visibility": "public",
+      "sourceKind": "original",
+      "sourceUrl": "",
+      "sourceRevision": "hmaigc-v1",
+      "sourceLicense": "HMaigc-Proprietary",
+      "changelog": "发布视频提示词与按镜头定向重生成的受治理方法",
+      "capabilityManifest": {
+        "specialists": ["video_assembly"],
+        "tools": ["media.generate"],
+        "artifactSchemas": ["video_plan.v1"]
+      }
     }
   ]
 }

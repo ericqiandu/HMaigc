@@ -31,6 +31,249 @@ func TestExpectedDeliveryRequiresExactApprovedMediaRevisionAndReadyResource(t *t
 	}
 }
 
+func TestDirectedRegenerationFreezesNextAttemptAndLeavesCurrentCandidateUntouched(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeVideoModel(t, db, fixture)
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = "runtime-project"
+	now := time.Now().UTC()
+	if err := db.Create(&model.AgentThread{
+		ID: scope.ThreadID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		CreatedByUserID: scope.ActorUserID, DomainProjectID: scope.DomainProjectID,
+		CanvasID: scope.CanvasID, Status: agentruntime.ThreadActive, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRun{
+		ID: scope.RunID, ThreadID: scope.ThreadID, ActorUserID: scope.ActorUserID,
+		ClientRequestID: "directed-regeneration-run", Status: agentruntime.RunRunning,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	shotOne := seedDirectedRegenerationRevision(t, svc, scope, "shot-one", "shot-one", "shot_revision", nil)
+	shotTwo := seedDirectedRegenerationRevision(t, svc, scope, "shot-two", "shot-two", "shot_revision", nil)
+	configuration, callable := directedRegenerationVideoConfiguration(t)
+	firstFrozen := freezeDirectedRegenerationSourceAttempt(t, svc, db, scope, configuration, callable, "source-shot-one", shotOne)
+	secondFrozen := freezeDirectedRegenerationSourceAttempt(t, svc, db, scope, configuration, callable, "source-shot-two", shotTwo)
+	candidateOne := seedDirectedVideoCandidate(t, svc, scope, firstFrozen.OutputArtifactID+"-01", shotOne, firstFrozen.Commercial.TaskID)
+	candidateTwo := seedDirectedVideoCandidate(t, svc, scope, secondFrozen.OutputArtifactID+"-01", shotTwo, secondFrozen.Commercial.TaskID)
+
+	updatedShotOne, err := svc.repo.AppendArtifactRevision(scope, shotOne.ArtifactID, shotOne.Revision, agentruntime.ArtifactDraft{
+		ArtifactKey: "shot-one", Kind: "shot_revision", SchemaVersion: 1,
+		Payload:           json.RawMessage(`{"dialogue":"第二版对白"}`),
+		UpstreamRevisions: []agentruntime.ArtifactRevisionRef{}, SkillVersions: []agentruntime.SkillSelection{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proposal := directedRegenerationVideoProposal(callable, exactAgentRevisionRef(updatedShotOne), &DirectedVideoRegenerationArguments{
+		SourceShotRevision: exactAgentRevisionRef(shotOne), ApprovedCandidateRevision: exactAgentRevisionRef(candidateOne),
+	})
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: "regenerate-shot-one", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		ExpectedDelivery: proposal.ExpectedDelivery, Arguments: mustMarshalAgentMediaTestJSON(t, proposal),
+	}
+	if _, err := svc.freezeAgentMediaGenerationDecisionArguments(scope, configuration, []agentRuntimeCallableModelFact{callable}, call); !errors.Is(err, errDirectedVideoRegenerationInvalid) {
+		t.Fatalf("unapproved candidate error = %v, want %v", err, errDirectedVideoRegenerationInvalid)
+	}
+	approveMediaAssemblyRevision(t, db, scope, candidateOne.ID, 1)
+	approveMediaAssemblyRevision(t, db, scope, candidateTwo.ID, 2)
+	if _, err := svc.freezeAgentMediaGenerationDecisionArguments(scope, configuration, []agentRuntimeCallableModelFact{callable}, call); !errors.Is(err, errDirectedVideoRegenerationInvalid) {
+		t.Fatalf("missing source task error = %v, want %v", err, errDirectedVideoRegenerationInvalid)
+	}
+	persistDirectedRegenerationSourceTask(t, svc, db, scope, firstFrozen)
+	frozenJSON, err := svc.freezeAgentMediaGenerationDecisionArguments(scope, configuration, []agentRuntimeCallableModelFact{callable}, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := decodeFrozenAgentMediaGenerationArguments(frozenJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frozen.Commercial.Attempt != 2 || frozen.Commercial.TaskID == firstFrozen.Commercial.TaskID {
+		t.Fatalf("directed commercial attempt = %d task=%q", frozen.Commercial.Attempt, frozen.Commercial.TaskID)
+	}
+	command, err := svc.currentAgentMediaGenerationCommand(scope, frozen)
+	if err != nil || command.Attempt != 2 {
+		t.Fatalf("current directed command = %#v, err=%v", command, err)
+	}
+
+	currentCandidate, err := svc.repo.ArtifactHeadRevisionForScope(scope, candidateTwo.ArtifactID)
+	if err != nil || currentCandidate.ID != candidateTwo.ID || currentCandidate.LifecycleStatus == model.AgentArtifactRevisionStale {
+		t.Fatalf("unaffected candidate changed = %#v, err=%v", currentCandidate, err)
+	}
+	currentProposal := directedRegenerationVideoProposal(callable, exactAgentRevisionRef(shotTwo), &DirectedVideoRegenerationArguments{
+		SourceShotRevision: exactAgentRevisionRef(shotTwo), ApprovedCandidateRevision: exactAgentRevisionRef(candidateTwo),
+	})
+	currentCall := &agentruntime.ToolCallDecision{
+		ToolCallID: "regenerate-current-shot", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		ExpectedDelivery: currentProposal.ExpectedDelivery, Arguments: mustMarshalAgentMediaTestJSON(t, currentProposal),
+	}
+	_, err = svc.freezeAgentMediaGenerationDecisionArguments(scope, configuration, []agentRuntimeCallableModelFact{callable}, currentCall)
+	if !errors.Is(err, errDirectedVideoRegenerationInvalid) {
+		t.Fatalf("current shot regeneration error = %v, want %v", err, errDirectedVideoRegenerationInvalid)
+	}
+}
+
+func persistDirectedRegenerationSourceTask(
+	t *testing.T,
+	svc *Service,
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	frozen agentMediaGenerationArguments,
+) {
+	t.Helper()
+	capabilities, err := decodeFrozenMediaCapabilities(frozen.Commercial.ProviderCapabilitiesJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := agentMediaGenerationCommand(scope, frozen, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := svc.ApproveMediaAttempt(scope, frozen.Commercial, command, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err := svc.EnsureMediaTask(t.Context(), scope, *approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(model.Task{
+		Status: model.TaskStatusSucceeded, Stage: "任务完成", Progress: 100,
+		CompletedAt: &now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func directedRegenerationVideoConfiguration(t *testing.T) (agentruntime.RunConfiguration, agentRuntimeCallableModelFact) {
+	t.Helper()
+	selection := agentruntime.GenerationModelSelection{ChannelID: "runtime-video-channel", Model: "doubao-seedance-2-5-260628"}
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: selection.ChannelID, Model: selection.Model, DisplayName: "Seedance 2.5", Capability: "video",
+		BillingMode: "per_second", PriceStrategy: "video_resolution",
+		ProviderCapabilities: publicProviderModelCapabilities(model.ChannelInterfaceAIOpenVideoVolcengine, selection.Model),
+	}
+	return agentruntime.RunConfiguration{
+		ExecutionMode:    agentruntime.ExecutionGuided,
+		GenerationModels: agentruntime.GenerationModelSelections{Video: &selection},
+		Skills:           []agentruntime.SkillSelection{},
+	}, callable
+}
+
+func freezeDirectedRegenerationSourceAttempt(
+	t *testing.T,
+	svc *Service,
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	configuration agentruntime.RunConfiguration,
+	callable agentRuntimeCallableModelFact,
+	toolCallID string,
+	shot *model.AgentArtifactRevision,
+) agentMediaGenerationArguments {
+	t.Helper()
+	proposal := directedRegenerationVideoProposal(callable, exactAgentRevisionRef(shot), nil)
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: toolCallID, ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		ExpectedDelivery: proposal.ExpectedDelivery, Arguments: mustMarshalAgentMediaTestJSON(t, proposal),
+	}
+	frozenJSON, err := svc.freezeAgentMediaGenerationDecisionArguments(scope, configuration, []agentRuntimeCallableModelFact{callable}, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := decodeFrozenAgentMediaGenerationArguments(frozenJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Create(&model.AgentToolCall{
+		ID: "stored-" + toolCallID, RunID: scope.RunID, ToolCallID: toolCallID, ActionVersion: 1,
+		ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallSucceeded,
+		IdempotencyKey: scope.RunID + ":" + toolCallID, InputJSON: string(frozenJSON), OutputJSON: `{}`,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	return frozen
+}
+
+func directedRegenerationVideoProposal(
+	callable agentRuntimeCallableModelFact,
+	shot agentruntime.ArtifactRevisionRef,
+	directed *DirectedVideoRegenerationArguments,
+) MediaGenerateArguments {
+	return MediaGenerateArguments{
+		InputRevisions:    []agentruntime.ArtifactRevisionRef{shot},
+		GenerationModel:   agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		Capability:        "video",
+		Parameters:        json.RawMessage(`{"prompt":"雨夜追逐镜头","aspectRatio":"16:9","resolution":"720p","durationSeconds":5,"generateAudio":false}`),
+		OutputArtifactKey: "directed-video", ExpectedOutputSchema: agentMediaCandidateSchema,
+		ExpectedDelivery:     exactAgentMediaExpectedDelivery(agentruntime.ArtifactVideo),
+		DirectedRegeneration: directed,
+	}
+}
+
+func seedDirectedRegenerationRevision(
+	t *testing.T,
+	svc *Service,
+	scope agentruntime.Scope,
+	artifactID string,
+	artifactKey string,
+	kind string,
+	upstream []agentruntime.ArtifactRevisionRef,
+) *model.AgentArtifactRevision {
+	t.Helper()
+	if upstream == nil {
+		upstream = []agentruntime.ArtifactRevisionRef{}
+	}
+	revision, err := svc.repo.AppendArtifactRevision(scope, artifactID, 0, agentruntime.ArtifactDraft{
+		ArtifactKey: artifactKey, Kind: kind, SchemaVersion: 1,
+		Payload: json.RawMessage(`{"state":"current"}`), UpstreamRevisions: upstream,
+		SkillVersions: []agentruntime.SkillSelection{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func seedDirectedVideoCandidate(
+	t *testing.T,
+	svc *Service,
+	scope agentruntime.Scope,
+	artifactID string,
+	shot *model.AgentArtifactRevision,
+	taskID string,
+) *model.AgentArtifactRevision {
+	t.Helper()
+	payload, err := json.Marshal(agentruntime.MediaCandidateContent{
+		CandidateKey: artifactID, MediaKind: agentruntime.ArtifactVideo,
+		ProviderRequestIdentity: "provider-" + taskID, ResourceID: "resource-" + artifactID,
+		SourceTaskID: taskID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := svc.repo.AppendMediaCandidateRevision(scope, artifactID, agentruntime.ArtifactDraft{
+		ArtifactKey: artifactID, Kind: "media_candidate", SchemaVersion: 1, Payload: payload,
+		ResourceID: "resource-" + artifactID, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{exactAgentRevisionRef(shot)},
+		ModelRequestIdentity: "provider-" + taskID, SkillVersions: []agentruntime.SkillSelection{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
+func exactAgentRevisionRef(revision *model.AgentArtifactRevision) agentruntime.ArtifactRevisionRef {
+	return agentruntime.ArtifactRevisionRef{ArtifactID: revision.ArtifactID, RevisionID: revision.ID}
+}
+
 func exactAgentMediaExpectedDelivery(kind agentruntime.ArtifactKind) agentruntime.ExpectedDelivery {
 	return agentruntime.ExpectedDelivery{
 		Kind:              agentruntime.DeliveryGeneratedAsset,
@@ -104,6 +347,66 @@ func TestFreezeAgentMediaGenerationBindsExactInputsModelAndQuote(t *testing.T) {
 	}
 	if _, err := svc.currentAgentMediaGenerationCommand(scope, frozen); !errors.Is(err, errAgentMediaInputChanged) {
 		t.Fatalf("changed resource error = %v, want %v", err, errAgentMediaInputChanged)
+	}
+}
+
+func TestDirectedRegenerationFreezesStructuralLineageWithoutProviderMedia(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeImageModel(t, db, fixture)
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = "runtime-project"
+	shot := seedDirectedRegenerationRevision(t, svc, scope, "shot-lineage", "shot-lineage", "shot_revision", nil)
+	resource := seedAgentMediaInputResource(t, db, scope, "lineage-reference", "image", "inputs/lineage.png", "etag-lineage")
+	reference := seedAgentMediaInputRevision(t, svc, scope, "lineage-reference-artifact", "lineage-reference", resource.ID)
+	callable := agentRuntimeCallableModelFact{
+		ChannelID: "runtime-image-channel", Model: "kz_gpt_image2", DisplayName: "GPT Image 2",
+		Capability: "image", BillingMode: "fixed_request", PriceStrategy: "image_resolution",
+		UnitPriceMicrocredits: 250, ProviderCapabilities: agentRuntimeGPTImageCapabilitiesForTest(t),
+	}
+	proposal := MediaGenerateArguments{
+		InputRevisions:  []agentruntime.ArtifactRevisionRef{exactAgentRevisionRef(shot), exactAgentRevisionRef(&reference)},
+		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: callable.ChannelID, Model: callable.Model},
+		Capability:      "image", Parameters: json.RawMessage(`{"prompt":"镜头首帧","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1}`),
+		OutputArtifactKey: "shot-lineage-frame", ExpectedOutputSchema: agentMediaCandidateSchema,
+		ExpectedDelivery: exactAgentMediaExpectedDelivery(agentruntime.ArtifactImage),
+	}
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: "directed-lineage-call", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		ExpectedDelivery: proposal.ExpectedDelivery, Arguments: mustMarshalAgentMediaTestJSON(t, proposal),
+	}
+	frozenJSON, err := svc.freezeAgentMediaGenerationDecisionArguments(
+		scope,
+		agentruntime.RunConfiguration{
+			ExecutionMode:    agentruntime.ExecutionGuided,
+			GenerationModels: agentruntime.GenerationModelSelections{Image: &proposal.GenerationModel},
+			Skills:           []agentruntime.SkillSelection{},
+		},
+		[]agentRuntimeCallableModelFact{callable},
+		call,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := decodeFrozenAgentMediaGenerationArguments(frozenJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frozen.InputRevisions) != 2 || frozen.InputRevisions[0] != exactAgentRevisionRef(shot) ||
+		len(frozen.InputResources) != 1 || frozen.InputResources[0].Revision != exactAgentRevisionRef(&reference) {
+		t.Fatalf("frozen lineage/resources = %#v / %#v", frozen.InputRevisions, frozen.InputResources)
+	}
+	if _, err := svc.currentAgentMediaGenerationCommand(scope, frozen); err != nil {
+		t.Fatalf("current command rejected exact structural lineage: %v", err)
+	}
+	if _, err := svc.repo.AppendArtifactRevision(scope, shot.ArtifactID, shot.Revision, agentruntime.ArtifactDraft{
+		ArtifactKey: "shot-lineage", Kind: "shot_revision", SchemaVersion: 1,
+		Payload: json.RawMessage(`{"state":"revised"}`), UpstreamRevisions: []agentruntime.ArtifactRevisionRef{},
+		SkillVersions: []agentruntime.SkillSelection{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.currentAgentMediaGenerationCommand(scope, frozen); !errors.Is(err, errAgentMediaInputChanged) {
+		t.Fatalf("changed structural lineage error = %v, want %v", err, errAgentMediaInputChanged)
 	}
 }
 

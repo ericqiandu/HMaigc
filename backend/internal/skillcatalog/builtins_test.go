@@ -52,8 +52,8 @@ func TestBuiltinsExposeValidatedFirstPartySkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(skills) != 12 {
-		t.Fatalf("builtin skills = %d, want 12", len(skills))
+	if len(skills) != 13 {
+		t.Fatalf("builtin skills = %d, want 13", len(skills))
 	}
 	previousDir := ""
 	for _, skill := range skills {
@@ -70,6 +70,38 @@ func TestBuiltinsExposeValidatedFirstPartySkills(t *testing.T) {
 			t.Fatalf("invalid adapted skill provenance: %#v", skill)
 		}
 		previousDir = skill.Dir
+	}
+}
+
+func TestBuiltinsPublishGovernedVideoPromptSpecialist(t *testing.T) {
+	skills, err := Builtins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byDir := make(map[string]BuiltinSkill, len(skills))
+	for _, skill := range skills {
+		byDir[skill.Dir] = skill
+	}
+
+	skill, exists := byDir["video-prompt-specialist"]
+	if !exists {
+		t.Fatal("missing governed video-prompt-specialist skill")
+	}
+	expectedManifest := agentruntime.SkillCapabilityManifest{
+		Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistVideoAssembly},
+		Tools:           []agentruntime.AgentToolName{agentruntime.ToolMediaGenerate},
+		ArtifactSchemas: []string{agentruntime.ArtifactSchemaVideoPlanV1},
+	}
+	if skill.Version != 1 || skill.SourceKind != "original" || skill.SourceURL != "" ||
+		skill.SourceRevision != "hmaigc-v1" || skill.SourceLicense != "HMaigc-Proprietary" ||
+		skill.Checksum != "eb2dacb60370b62cbef45760cafbf164c5fc920358c546ee9dcb1ed73f7045c7" ||
+		!reflect.DeepEqual(skill.CapabilityManifest, expectedManifest) {
+		t.Fatalf("unexpected video prompt specialist facts: %#v", skill)
+	}
+	for _, section := range []string{"## 输入", "## 输出", "## 证据要求", "## 禁止假设", "## Revision 规则", "## 失败行为", "## 方法"} {
+		if !strings.Contains(skill.Instructions, section) {
+			t.Errorf("video prompt specialist missing contract section %s", section)
+		}
 	}
 }
 

@@ -1,13 +1,41 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentruntime"
+	"infinite-canvas/backend/internal/database"
 )
+
+func TestVideoPromptSpecialistLoadsGovernedRuntimeContract(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	skills, err := svc.resolveAgentRuntimeSkillSelectionsForSpecialist(
+		context.Background(),
+		agentRuntimeServiceScope().ActorUserID,
+		[]string{"video-prompt-specialist"},
+		agentruntime.SpecialistVideoAssembly,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 1 || skills[0].Dir != "video-prompt-specialist" || skills[0].Version != 1 ||
+		skills[0].SourceKind != "original" || skills[0].SourceLicense != "HMaigc-Proprietary" ||
+		len(skills[0].Checksum) != 64 || len(skills[0].CapabilityManifest.Specialists) != 1 ||
+		skills[0].CapabilityManifest.Specialists[0] != agentruntime.SpecialistVideoAssembly ||
+		len(skills[0].CapabilityManifest.Tools) != 1 || skills[0].CapabilityManifest.Tools[0] != agentruntime.ToolMediaGenerate ||
+		len(skills[0].CapabilityManifest.ArtifactSchemas) != 1 ||
+		skills[0].CapabilityManifest.ArtifactSchemas[0] != agentruntime.ArtifactSchemaVideoPlanV1 {
+		t.Fatalf("loaded video prompt specialist facts = %#v", skills)
+	}
+}
 
 func TestProductionSystemPromptPublishesStrictMediaGenerateContract(t *testing.T) {
 	t.Parallel()
@@ -24,6 +52,7 @@ func TestProductionSystemPromptPublishesStrictMediaGenerateContract(t *testing.T
 		`"fact":"publication"`,
 		`"parameters":{"prompt":"...","aspectRatio":"...","resolution":"...","quality":"...","count":1,"transparentBackground":false}`,
 		`"parameters":{"prompt":"...","aspectRatio":"...","resolution":"...","durationSeconds":5,"generateAudio":false}`,
+		`"directedRegeneration":{"sourceShotRevision":{"artifactId":"...","revisionId":"..."},"approvedCandidateRevision":{"artifactId":"...","revisionId":"..."}}`,
 		`"parameters":{"prompt":"...","voice":"...","format":"...","speed":"...","volume":"...","pitch":"...","emotion":"...","languageBoost":"...","sampleRate":"...","bitrate":"...","channel":"...","instructions":"..."}`,
 	}
 	for _, fact := range requiredFacts {

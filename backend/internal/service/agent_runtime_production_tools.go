@@ -45,6 +45,12 @@ type MediaGenerateArguments struct {
 	OutputArtifactKey    string                                `json:"outputArtifactKey"`
 	ExpectedOutputSchema string                                `json:"expectedOutputSchema"`
 	ExpectedDelivery     agentruntime.ExpectedDelivery         `json:"expectedDelivery"`
+	DirectedRegeneration *DirectedVideoRegenerationArguments   `json:"directedRegeneration,omitempty"`
+}
+
+type DirectedVideoRegenerationArguments struct {
+	SourceShotRevision        agentruntime.ArtifactRevisionRef `json:"sourceShotRevision"`
+	ApprovedCandidateRevision agentruntime.ArtifactRevisionRef `json:"approvedCandidateRevision"`
 }
 
 type CanvasProjectArguments struct {
@@ -104,6 +110,11 @@ func decodeMediaGenerateArguments(payload []byte) (MediaGenerateArguments, error
 		len(parameters) < 2 || parameters[0] != '{' || !json.Valid(parameters) ||
 		validateAgentRuntimeRevisionRefs(arguments.InputRevisions) != nil || arguments.ExpectedDelivery.Validate() != nil ||
 		(arguments.ExpectedDelivery.Kind != agentruntime.DeliveryGeneratedAsset && arguments.ExpectedDelivery.Kind != agentruntime.DeliveryMixed) {
+		return MediaGenerateArguments{}, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	if arguments.DirectedRegeneration != nil &&
+		(arguments.Capability != "video" || arguments.DirectedRegeneration.SourceShotRevision.Validate() != nil ||
+			arguments.DirectedRegeneration.ApprovedCandidateRevision.Validate() != nil) {
 		return MediaGenerateArguments{}, ErrAgentRuntimeToolArgumentsInvalid
 	}
 	arguments.Parameters = append(json.RawMessage(nil), parameters...)

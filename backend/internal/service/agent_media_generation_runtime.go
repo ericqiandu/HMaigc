@@ -26,12 +26,13 @@ const (
 )
 
 var (
-	errAgentMediaArgumentsInvalid    = errors.New("agent media generation arguments are invalid")
-	errAgentMediaInputChanged        = errors.New("agent media generation input changed after approval proposal")
-	errAgentMediaModelUnavailable    = errors.New("agent media generation model is unavailable")
-	errAgentMediaCapabilitiesChanged = errors.New("agent media generation provider capabilities changed after approval proposal")
-	errAgentNativeAudioUnavailable   = errors.New("agent video model does not support the requested native audio facts")
-	errAgentMediaResultInvalid       = errors.New("agent media generation result is invalid")
+	errAgentMediaArgumentsInvalid       = errors.New("agent media generation arguments are invalid")
+	errAgentMediaInputChanged           = errors.New("agent media generation input changed after approval proposal")
+	errAgentMediaModelUnavailable       = errors.New("agent media generation model is unavailable")
+	errAgentMediaCapabilitiesChanged    = errors.New("agent media generation provider capabilities changed after approval proposal")
+	errAgentNativeAudioUnavailable      = errors.New("agent video model does not support the requested native audio facts")
+	errAgentMediaResultInvalid          = errors.New("agent media generation result is invalid")
+	errDirectedVideoRegenerationInvalid = errors.New("directed video regeneration facts are invalid")
 )
 
 type agentMediaInputResource struct {
@@ -59,6 +60,7 @@ type agentMediaGenerationArguments struct {
 	RequestIdentity         string                                `json:"requestIdentity"`
 	SkillVersions           []agentruntime.SkillSelection         `json:"skillVersions"`
 	Commercial              MediaGenerationAttempt                `json:"commercial"`
+	DirectedRegeneration    *DirectedVideoRegenerationArguments   `json:"directedRegeneration,omitempty"`
 }
 
 type agentImageGenerationParameters struct {
@@ -93,6 +95,125 @@ type agentAudioGenerationParameters struct {
 	Instructions  string `json:"instructions,omitempty"`
 }
 
+func artifactRevisionContains(raw string, expected agentruntime.ArtifactRevisionRef) bool {
+	var refs []agentruntime.ArtifactRevisionRef
+	if err := json.Unmarshal([]byte(raw), &refs); err != nil {
+		return false
+	}
+	for _, ref := range refs {
+		if ref.Validate() != nil {
+			return false
+		}
+		if ref == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func revisionRefsContain(refs []agentruntime.ArtifactRevisionRef, expected agentruntime.ArtifactRevisionRef) bool {
+	for _, ref := range refs {
+		if ref == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) directedVideoRegenerationAttempt(
+	scope agentruntime.Scope,
+	inputRevisions []agentruntime.ArtifactRevisionRef,
+	facts DirectedVideoRegenerationArguments,
+) (int, error) {
+	if scope.Validate() != nil || facts.SourceShotRevision.Validate() != nil || facts.ApprovedCandidateRevision.Validate() != nil {
+		return 0, errDirectedVideoRegenerationInvalid
+	}
+	sourceShot, err := s.repo.ArtifactRevisionForArtifactInScope(
+		scope, facts.SourceShotRevision.ArtifactID, facts.SourceShotRevision.RevisionID,
+	)
+	if err != nil || sourceShot.Kind != "shot_revision" || sourceShot.LifecycleStatus != model.AgentArtifactRevisionStale {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	currentShot, err := s.repo.ArtifactHeadRevisionForScope(scope, facts.SourceShotRevision.ArtifactID)
+	if err != nil || currentShot.ID == sourceShot.ID || currentShot.Kind != "shot_revision" ||
+		currentShot.ArtifactKey != sourceShot.ArtifactKey || currentShot.LifecycleStatus == model.AgentArtifactRevisionStale {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	currentShotRef := agentruntime.ArtifactRevisionRef{ArtifactID: currentShot.ArtifactID, RevisionID: currentShot.ID}
+	if !revisionRefsContain(inputRevisions, currentShotRef) {
+		return 0, errDirectedVideoRegenerationInvalid
+	}
+
+	approvedRevisionIDs, err := s.repo.ApprovedArtifactRevisionIDsForScope(scope)
+	if err != nil {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	if _, approved := approvedRevisionIDs[facts.ApprovedCandidateRevision.RevisionID]; !approved {
+		return 0, errDirectedVideoRegenerationInvalid
+	}
+	candidate, err := s.repo.ArtifactRevisionForArtifactInScope(
+		scope, facts.ApprovedCandidateRevision.ArtifactID, facts.ApprovedCandidateRevision.RevisionID,
+	)
+	if err != nil || candidate.Kind != "media_candidate" || candidate.LifecycleStatus != model.AgentArtifactRevisionStale ||
+		!artifactRevisionContains(candidate.UpstreamRevisionsJSON, facts.SourceShotRevision) {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	candidateContent, err := agentruntime.DecodeMediaCandidateContent([]byte(candidate.PayloadJSON))
+	if err != nil || candidateContent.MediaKind != agentruntime.ArtifactVideo || candidateContent.ResourceID != candidate.ResourceID ||
+		strings.TrimSpace(candidateContent.SourceTaskID) == "" {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+
+	calls, err := s.repo.AgentToolCallsForScope(scope)
+	if err != nil {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	var previous *agentMediaGenerationArguments
+	for _, call := range calls {
+		if call.ToolName != string(agentruntime.ToolMediaGenerate) || call.Status != agentruntime.ToolCallSucceeded ||
+			frozenAgentMediaTaskID(call.InputJSON) != candidateContent.SourceTaskID {
+			continue
+		}
+		decoded, decodeErr := decodeFrozenAgentMediaGenerationArguments(json.RawMessage(call.InputJSON))
+		if decodeErr != nil || previous != nil {
+			return 0, errors.Join(errDirectedVideoRegenerationInvalid, decodeErr)
+		}
+		previous = &decoded
+	}
+	if previous == nil || previous.Capability != "video" || previous.Commercial.TaskID != candidateContent.SourceTaskID ||
+		!strings.HasPrefix(candidate.ArtifactID, previous.OutputArtifactID+"-") ||
+		!revisionRefsContain(previous.InputRevisions, facts.SourceShotRevision) ||
+		previous.Commercial.Attempt < 1 || previous.Commercial.Attempt >= 999_999 {
+		return 0, errDirectedVideoRegenerationInvalid
+	}
+	task, err := s.repo.TaskForUser(scope.ActorUserID, previous.Commercial.TaskID)
+	if err != nil {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	validatedTask, order, err := s.validateMediaTaskFacts(scope, previous.Commercial, task)
+	if err != nil || validatedTask.Status != model.TaskStatusSucceeded {
+		return 0, errors.Join(errDirectedVideoRegenerationInvalid, err)
+	}
+	switch order.Status {
+	case model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusSettled, model.BillingStatusUncertain:
+	default:
+		return 0, errDirectedVideoRegenerationInvalid
+	}
+	return previous.Commercial.Attempt + 1, nil
+}
+
+func frozenAgentMediaTaskID(raw string) string {
+	var envelope struct {
+		Commercial struct {
+			TaskID string `json:"taskId"`
+		} `json:"commercial"`
+	}
+	if json.Unmarshal([]byte(raw), &envelope) != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Commercial.TaskID)
+}
+
 func agentMediaGenerationOperationForRun(runID string) string {
 	return agentMediaGenerationOperation + ":" + strings.TrimSpace(runID)
 }
@@ -119,6 +240,8 @@ func agentMediaGenerationFailureDetails(err error) (string, agentruntime.ToolFai
 		return "media_generation_capabilities_changed", agentruntime.ToolFailureAgentRepairable, true
 	case errors.Is(err, errAgentNativeAudioUnavailable):
 		return "native_audio_capability_unavailable", agentruntime.ToolFailureAgentRepairable, true
+	case errors.Is(err, errDirectedVideoRegenerationInvalid):
+		return "directed_video_regeneration_invalid", agentruntime.ToolFailureAgentRepairable, true
 	default:
 		return "", "", false
 	}
@@ -164,6 +287,13 @@ func (s *Service) freezeAgentMediaGenerationDecisionArguments(
 	if err != nil {
 		return nil, err
 	}
+	attempt := 1
+	if proposal.DirectedRegeneration != nil {
+		attempt, err = s.directedVideoRegenerationAttempt(scope, proposal.InputRevisions, *proposal.DirectedRegeneration)
+		if err != nil {
+			return nil, err
+		}
+	}
 	digest := agentMediaGenerationIdentity(scope, proposal, configured.ID, call.ToolCallID, call.ActionVersion, parameters)
 	frozen := agentMediaGenerationArguments{
 		InputRevisions: cloneAgentMediaRevisionRefs(proposal.InputRevisions),
@@ -172,7 +302,9 @@ func (s *Service) freezeAgentMediaGenerationDecisionArguments(
 		Parameters: parameters, OutputArtifactID: "generated-media-" + digest[:32],
 		OutputArtifactKey: proposal.OutputArtifactKey, ExpectedOutputSchema: proposal.ExpectedOutputSchema,
 		ExpectedDelivery: proposal.ExpectedDelivery, RequestIdentity: "media-generation:" + digest,
-		SkillVersions: cloneAgentRuntimeSkillSelections(configuration.Skills),
+		SkillVersions:        cloneAgentRuntimeSkillSelections(configuration.Skills),
+		Commercial:           MediaGenerationAttempt{Attempt: attempt},
+		DirectedRegeneration: cloneDirectedVideoRegenerationArguments(proposal.DirectedRegeneration),
 	}
 	command, err := agentMediaGenerationCommand(scope, frozen, callable.ProviderCapabilities)
 	if err != nil {
@@ -255,8 +387,11 @@ func (s *Service) freezeAgentMediaInputResources(scope agentruntime.Scope, refs 
 			return nil, errors.Join(errAgentMediaInputChanged, err)
 		}
 		head, err := s.repo.ArtifactHeadRevisionForScope(scope, ref.ArtifactID)
-		if err != nil || head.ID != revision.ID || revision.LifecycleStatus == model.AgentArtifactRevisionStale || revision.ResourceID == "" {
+		if err != nil || head.ID != revision.ID || revision.LifecycleStatus == model.AgentArtifactRevisionStale {
 			return nil, errors.Join(errAgentMediaInputChanged, err)
+		}
+		if revision.ResourceID == "" {
+			continue
 		}
 		resource, err := s.productionResourceForScope(scope, revision.ResourceID)
 		if err != nil || !agentMediaResourceReady(resource) {
@@ -297,6 +432,14 @@ func agentMediaGenerationIdentity(
 	for _, ref := range proposal.InputRevisions {
 		facts = append(facts, ref.ArtifactID, ref.RevisionID)
 	}
+	if proposal.DirectedRegeneration != nil {
+		facts = append(facts,
+			proposal.DirectedRegeneration.SourceShotRevision.ArtifactID,
+			proposal.DirectedRegeneration.SourceShotRevision.RevisionID,
+			proposal.DirectedRegeneration.ApprovedCandidateRevision.ArtifactID,
+			proposal.DirectedRegeneration.ApprovedCandidateRevision.RevisionID,
+		)
+	}
 	digest := sha256.Sum256([]byte(strings.Join(facts, "\x00")))
 	return hex.EncodeToString(digest[:])
 }
@@ -315,7 +458,7 @@ func agentMediaGenerationCommand(
 		return MediaGenerationCommand{}, err
 	}
 	return MediaGenerationCommand{
-		ArtifactRevisionID: arguments.OutputArtifactID, Attempt: 1,
+		ArtifactRevisionID: arguments.OutputArtifactID, Attempt: arguments.Commercial.Attempt,
 		TaskType: "canvas_" + arguments.Capability, Operation: agentMediaGenerationOperationForRun(scope.RunID),
 		Prompt: prompt, Capability: arguments.Capability, ChannelID: arguments.GenerationModel.ChannelID,
 		ModelKey: arguments.GenerationModel.Model, ParametersJSON: string(parameters), Quantity: quantity,
@@ -528,6 +671,14 @@ func cloneAgentRuntimeSkillSelections(values []agentruntime.SkillSelection) []ag
 	return cloned
 }
 
+func cloneDirectedVideoRegenerationArguments(value *DirectedVideoRegenerationArguments) *DirectedVideoRegenerationArguments {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 func decodeFrozenAgentMediaGenerationArguments(raw json.RawMessage) (agentMediaGenerationArguments, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -543,7 +694,8 @@ func decodeFrozenAgentMediaGenerationArguments(raw json.RawMessage) (agentMediaG
 }
 
 func validateFrozenAgentMediaGenerationArguments(arguments agentMediaGenerationArguments) error {
-	if arguments.InputRevisions == nil || arguments.InputResources == nil || len(arguments.InputRevisions) != len(arguments.InputResources) ||
+	if arguments.InputRevisions == nil || arguments.InputResources == nil ||
+		validateAgentRuntimeRevisionRefs(arguments.InputRevisions) != nil ||
 		strings.TrimSpace(arguments.GenerationModel.ChannelID) == "" || strings.TrimSpace(arguments.GenerationModel.Model) == "" ||
 		strings.TrimSpace(arguments.GenerationModelRecordID) == "" ||
 		(arguments.Capability != "image" && arguments.Capability != "video" && arguments.Capability != "audio") ||
@@ -551,19 +703,33 @@ func validateFrozenAgentMediaGenerationArguments(arguments agentMediaGenerationA
 		arguments.ExpectedOutputSchema != agentMediaCandidateSchema || arguments.ExpectedDelivery.Validate() != nil ||
 		!expectedDeliveryRequiresMedia(arguments.ExpectedDelivery, arguments.Capability) ||
 		!validStoredText(arguments.RequestIdentity, 180) || arguments.SkillVersions == nil ||
+		arguments.Commercial.Attempt < 1 || arguments.Commercial.Attempt >= 1_000_000 ||
 		arguments.Commercial.ArtifactRevisionID != arguments.OutputArtifactID || arguments.Commercial.Capability != arguments.Capability ||
 		arguments.Commercial.ChannelID != arguments.GenerationModel.ChannelID || arguments.Commercial.ModelKey != arguments.GenerationModel.Model ||
 		arguments.Commercial.ChannelModelID != arguments.GenerationModelRecordID || arguments.Commercial.QuoteID == "" ||
 		arguments.Commercial.ApprovalFingerprint == "" || arguments.Commercial.ExpiresAt.IsZero() {
 		return errAgentMediaArgumentsInvalid
 	}
-	for index := range arguments.InputResources {
-		resource := arguments.InputResources[index]
-		if resource.Revision != arguments.InputRevisions[index] || resource.Revision.Validate() != nil ||
+	if arguments.DirectedRegeneration != nil &&
+		(arguments.Capability != "video" || arguments.DirectedRegeneration.SourceShotRevision.Validate() != nil ||
+			arguments.DirectedRegeneration.ApprovedCandidateRevision.Validate() != nil) {
+		return errAgentMediaArgumentsInvalid
+	}
+	resourceIndex := 0
+	for _, revision := range arguments.InputRevisions {
+		if resourceIndex >= len(arguments.InputResources) || arguments.InputResources[resourceIndex].Revision != revision {
+			continue
+		}
+		resource := arguments.InputResources[resourceIndex]
+		if resource.Revision.Validate() != nil ||
 			!validStoredText(resource.ResourceID, 80) || !validStoredText(resource.ObjectKey, 2048) ||
 			!validStoredText(resource.ETag, 160) || (resource.Kind != "image" && resource.Kind != "video" && resource.Kind != "audio") {
 			return errAgentMediaArgumentsInvalid
 		}
+		resourceIndex++
+	}
+	if resourceIndex != len(arguments.InputResources) {
+		return errAgentMediaArgumentsInvalid
 	}
 	return nil
 }
@@ -576,19 +742,33 @@ func (s *Service) currentAgentMediaGenerationCommand(scope agentruntime.Scope, a
 	if err != nil || configured.ID != arguments.GenerationModelRecordID || configured.Capability != arguments.Capability {
 		return MediaGenerationCommand{}, errors.Join(errAgentMediaModelUnavailable, err)
 	}
-	for _, frozen := range arguments.InputResources {
-		revision, err := s.repo.ArtifactRevisionForArtifactInScope(scope, frozen.Revision.ArtifactID, frozen.Revision.RevisionID)
+	currentRevisions := make(map[agentruntime.ArtifactRevisionRef]model.AgentArtifactRevision, len(arguments.InputRevisions))
+	for _, reference := range arguments.InputRevisions {
+		revision, err := s.repo.ArtifactRevisionForArtifactInScope(scope, reference.ArtifactID, reference.RevisionID)
 		if err != nil {
 			return MediaGenerationCommand{}, errors.Join(errAgentMediaInputChanged, err)
 		}
-		head, err := s.repo.ArtifactHeadRevisionForScope(scope, frozen.Revision.ArtifactID)
-		if err != nil || head.ID != revision.ID || revision.ResourceID != frozen.ResourceID || revision.LifecycleStatus == model.AgentArtifactRevisionStale {
+		head, err := s.repo.ArtifactHeadRevisionForScope(scope, reference.ArtifactID)
+		if err != nil || head.ID != revision.ID || revision.LifecycleStatus == model.AgentArtifactRevisionStale {
 			return MediaGenerationCommand{}, errors.Join(errAgentMediaInputChanged, err)
+		}
+		currentRevisions[reference] = *revision
+	}
+	for _, frozen := range arguments.InputResources {
+		revision, found := currentRevisions[frozen.Revision]
+		if !found || revision.ResourceID != frozen.ResourceID {
+			return MediaGenerationCommand{}, errAgentMediaInputChanged
 		}
 		resource, err := s.productionResourceForScope(scope, frozen.ResourceID)
 		if err != nil || !agentMediaResourceReady(resource) || resource.Kind != frozen.Kind || resource.ObjectKey != frozen.ObjectKey ||
 			resource.ETag != frozen.ETag || resource.MimeType != frozen.MimeType || resource.DurationMs != frozen.DurationMS {
 			return MediaGenerationCommand{}, errors.Join(errAgentMediaInputChanged, err)
+		}
+	}
+	if arguments.DirectedRegeneration != nil {
+		attempt, attemptErr := s.directedVideoRegenerationAttempt(scope, arguments.InputRevisions, *arguments.DirectedRegeneration)
+		if attemptErr != nil || attempt != arguments.Commercial.Attempt {
+			return MediaGenerationCommand{}, errors.Join(errDirectedVideoRegenerationInvalid, attemptErr)
 		}
 	}
 	capabilities, err := decodeFrozenMediaCapabilities(arguments.Commercial.ProviderCapabilitiesJSON)
