@@ -27,9 +27,9 @@ export type AgentRuntimeEventKind =
     | "approval.requested"
     | "approval.resolved"
     | "state.snapshot";
-export type AgentToolName = "skill.load" | "specialist.delegate" | "vision.analyze" | "media.generate" | "canvas.project";
+export type AgentToolName = "skill.load" | "specialist.delegate" | "vision.analyze" | "media.generate" | "canvas.project" | "media.assemble";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
-export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact" | "artifact_revision" | "resource" | "publication";
+export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact" | "artifact_revision" | "resource" | "task_backed_resource" | "publication";
 
 export type AgentExpectedDelivery = {
     kind: "answer" | "canvas_change" | "generated_asset" | "mixed";
@@ -96,7 +96,7 @@ export type AgentRunEventPayload = {
     failureCode?: string;
     item?: { kind: AgentTimelineItemKind; status: AgentTimelineItemStatus; content: AgentTimelineItemContent };
 };
-type AgentUIEventBase = { protocolVersion: 3; threadId: string; runId: string; sequence: number; createdAt: string };
+type AgentUIEventBase = { protocolVersion: 4; threadId: string; runId: string; sequence: number; createdAt: string };
 export type AgentRuntimeEvent =
     | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
     | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
@@ -179,11 +179,18 @@ const eventKinds = new Set<AgentRuntimeEventKind>([
 const runEventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "state.snapshot"]);
 const timelineItemKinds = new Set<AgentTimelineItemKind>(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"]);
 const timelineItemStatuses = new Set<AgentTimelineItemStatus>(["in_progress", "completed", "failed", "declined", "interrupted"]);
-const toolNames = new Set<AgentToolName>(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project"]);
-const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact", "artifact_revision", "resource", "publication"]);
+const toolNames = new Set<AgentToolName>(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project", "media.assemble"]);
+const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact", "artifact_revision", "resource", "task_backed_resource", "publication"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const baseURL = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").replace(/\/+$/, "");
+const currentRuntimeVersion = 4;
+const currentPolicyVersion = 4;
+const currentToolSchemaVersion = 5;
+const currentAgentUIProtocolVersion = 4;
+const retiredRuntimeVersion = 3;
+const retiredPolicyVersion = 3;
+const retiredToolSchemaVersion = 4;
 
 export class AgentRuntimeRequestError extends Error {
     readonly status: number;
@@ -226,22 +233,35 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
     if (parsedRun.stateVersion !== state.stateVersion || parsedRun.stepNumber !== state.stepNumber || parsedRun.maxSteps !== state.maxSteps) {
         throw new Error("Agent run 与 checkpoint 版本事实冲突");
     }
+    const isTerminal = terminalRunStatuses.has(parsedRun.status) && parsedRun.completedAt !== undefined;
+    const isCurrentContract =
+        parsedRun.runtimeVersion === currentRuntimeVersion && parsedRun.policyVersion === currentPolicyVersion && parsedRun.toolSchemaVersion === currentToolSchemaVersion;
+    const isRetiredReadOnlyContract =
+        isTerminal &&
+        parsedRun.runtimeVersion === retiredRuntimeVersion &&
+        parsedRun.policyVersion === retiredPolicyVersion &&
+        parsedRun.toolSchemaVersion === retiredToolSchemaVersion;
     if (
         state.configuration.executionMode === "historical" &&
-        (!terminalRunStatuses.has(parsedRun.status) || parsedRun.toolSchemaVersion !== 1 || parsedRun.runtimeVersion !== 1 || parsedRun.policyVersion !== 1 || parsedRun.completedAt === undefined)
+        (!isTerminal || parsedRun.toolSchemaVersion !== 1 || parsedRun.runtimeVersion !== 1 || parsedRun.policyVersion !== 1)
     ) {
         throw new Error("historical 执行模式仅允许首代已终结 Agent 运行");
+    }
+    if (state.configuration.executionMode !== "historical" && !isCurrentContract && !isRetiredReadOnlyContract) {
+        throw new Error(
+            `不受支持的 Agent Runtime 合同: ${parsedRun.runtimeVersion}/${parsedRun.policyVersion}/${parsedRun.toolSchemaVersion}`,
+        );
     }
     return { run: parsedRun, state };
 }
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
     const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "itemKind", "payload", "createdAt"]);
-    if (source.protocolVersion !== 3) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
+    if (source.protocolVersion !== currentAgentUIProtocolVersion) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
-    const base = {
-        protocolVersion: 3 as const,
+    const base: AgentUIEventBase = {
+        protocolVersion: currentAgentUIProtocolVersion,
         threadId: text(source.threadId, "event.threadId"),
         runId: text(source.runId, "event.runId"),
         sequence: integer(source.sequence, "event.sequence"),

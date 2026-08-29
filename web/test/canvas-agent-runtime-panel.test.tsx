@@ -105,7 +105,7 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
     });
     await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
     const event: AgentRuntimeEvent = {
-        protocolVersion: 3,
+        protocolVersion: 4,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,
@@ -460,7 +460,7 @@ test("真实回复增量到达前显示思考中并在首个增量后切换为�
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () =>
         handlers?.onEvent({
-            protocolVersion: 3,
+            protocolVersion: 4,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 2,
@@ -533,7 +533,7 @@ test("运行已终止时即使完成事件稍晚到达也不继续显示流式�
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () =>
         handlers?.onEvent({
-            protocolVersion: 3,
+            protocolVersion: 4,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 2,

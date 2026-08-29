@@ -483,6 +483,7 @@ func TestEncodeProductionAgentRuntimePromptUsesOnlyGraphAndGenericTools(t *testi
 		agentruntime.ToolVisionAnalyze,
 		agentruntime.ToolMediaGenerate,
 		agentruntime.ToolCanvasProject,
+		agentruntime.ToolMediaAssemble,
 	}
 	if len(context.CallableTools) != len(wantTools) {
 		t.Fatalf("callable tools = %#v", context.CallableTools)

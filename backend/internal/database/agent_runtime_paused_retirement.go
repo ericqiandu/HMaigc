@@ -119,7 +119,7 @@ func applyPausedRunRetirementPlan(db *gorm.DB, plan pausedRunRetirementPlan, now
 		Select("status", "error_code", "output_json", "updated_at").
 		Updates(pausedToolCallRetirementUpdates{
 			Status: agentruntime.ToolCallFailed, ErrorCode: retiredAgentRuntimeContractFailureCode,
-			OutputJSON: `{"reason":"runtime_contract_retired"}`, UpdatedAt: now,
+			OutputJSON: `{"reason":"runtime_schema_retired"}`, UpdatedAt: now,
 		}).Error; err != nil {
 		return err
 	}

@@ -197,10 +197,10 @@ func TestBuiltinsPublishNarrativePipelineSkills(t *testing.T) {
 	if !exists {
 		t.Fatal("missing storyboard-continuity-director skill")
 	}
-	if storyboard.Version != 5 || storyboard.SourceRevision != "hmaigc-v5" {
+	if storyboard.Version != 6 || storyboard.SourceRevision != "hmaigc-v6" {
 		t.Fatalf("unexpected storyboard skill facts: %#v", storyboard)
 	}
-	requiredPlanSchemas := []string{"assembly_plan.v1", "audio_plan.v1", "video_plan.v1"}
+	requiredPlanSchemas := []string{"assembly_plan.v2", "audio_plan.v1", "video_plan.v1"}
 	for _, requiredSchema := range requiredPlanSchemas {
 		if !containsString(storyboard.CapabilityManifest.ArtifactSchemas, requiredSchema) {
 			t.Errorf("storyboard skill missing governed plan schema %q: %#v", requiredSchema, storyboard.CapabilityManifest.ArtifactSchemas)
@@ -251,12 +251,12 @@ func TestBuiltinsPublishDirectorOperatingContracts(t *testing.T) {
 		expectedVersion := 3
 		expectedRevision := "hmaigc-v3"
 		if test.dir == "short-drama-director" {
-			expectedVersion = 4
-			expectedRevision = "hmaigc-v4"
-		}
-		if test.dir == "storyboard-continuity-director" {
 			expectedVersion = 5
 			expectedRevision = "hmaigc-v5"
+		}
+		if test.dir == "storyboard-continuity-director" {
+			expectedVersion = 6
+			expectedRevision = "hmaigc-v6"
 		}
 		if skill.Version != expectedVersion || skill.SourceRevision != expectedRevision {
 			t.Fatalf("director skill %s version facts = v%d/%s, want v%d/%s", test.dir, skill.Version, skill.SourceRevision, expectedVersion, expectedRevision)

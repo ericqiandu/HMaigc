@@ -42,25 +42,22 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
-	ProductionRuntimeVersion         = 3
-	ProductionPolicyVersion          = 3
-	ProductionToolSchemaVersion      = 4
-	CurrentProductionSchemaVersion   = 1
-	ProductionAgentUIProtocolVersion = 3
-	// Next* contracts are deliberately dormant until the Runtime v4 hard cut.
-	// They let the next runtime be implemented and verified without exposing a
-	// second execution path to current production runs.
-	NextRuntimeVersion          = 4
-	NextPolicyVersion           = 4
-	NextToolSchemaVersion       = 5
-	NextProductionSchemaVersion = 2
-	NextAgentUIProtocolVersion  = 4
-	LegacyRuntimeVersion        = 2
-	LegacyPolicyVersion         = 2
-	LegacyToolSchemaVersion     = 3
+	ProductionRuntimeVersion         = 4
+	ProductionPolicyVersion          = 4
+	ProductionToolSchemaVersion      = 5
+	CurrentProductionSchemaVersion   = 2
+	ProductionAgentUIProtocolVersion = 4
+	RetiredRuntimeVersion            = 3
+	RetiredPolicyVersion             = 3
+	RetiredToolSchemaVersion         = 4
+	RetiredProductionSchemaVersion   = 1
+	RetiredAgentUIProtocolVersion    = 3
+	LegacyRuntimeVersion             = 2
+	LegacyPolicyVersion              = 2
+	LegacyToolSchemaVersion          = 3
 
 	// Current* is a hard cut to the governed production runtime. New runs and
-	// their UI event stream must never re-enter the retired v2 contract.
+	// their UI event stream must never re-enter a retired contract.
 	CurrentRuntimeVersion    = ProductionRuntimeVersion
 	CurrentPolicyVersion     = ProductionPolicyVersion
 	CurrentToolSchemaVersion = ProductionToolSchemaVersion
@@ -150,7 +147,7 @@ func (policy CostPolicy) Valid() bool {
 	return policy == CostNone || policy == CostApprovalRequired
 }
 
-// AgentToolName is the v3 production-runtime tool vocabulary. ToolName remains
+// AgentToolName is the v5 production-runtime tool vocabulary. ToolName remains
 // the decoder-facing type so existing runtime code has one canonical identity.
 type AgentToolName = ToolName
 

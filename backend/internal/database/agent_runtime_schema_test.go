@@ -456,8 +456,81 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresPristineQueuedRunWithOlderRunti
 	if err := json.Unmarshal([]byte(checkpoint.StateJSON), &terminal); err != nil {
 		t.Fatal(err)
 	}
-	if terminal.Status != agentruntime.RunFailed || terminal.FailureCode != "runtime_contract_retired" || terminal.StateVersion != 2 {
+	if terminal.Status != agentruntime.RunFailed || terminal.FailureCode != agentruntime.FailureRuntimeSchemaRetired || terminal.StateVersion != 2 {
 		t.Fatalf("terminal runtime state = %#v", terminal)
+	}
+}
+
+func TestRuntimeV4CutoverRetiresPristineQueuedV3AndKeepsTerminalHistory(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	state := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 6, Status: agentruntime.RunQueued,
+		UserMessage:   "生成短剧样片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := model.AgentRun{
+		ID: "run-v3-queued", ThreadID: "thread-v3", ActorUserID: "user-v3", ClientRequestID: "request-v3-queued",
+		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
+		ModelRecordID: "model-record-v3", ModelKey: "model-v3", ToolSchemaVersion: 4,
+		RuntimeVersion: 3, PolicyVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	completedAt := now.Add(-time.Minute)
+	terminal := model.AgentRun{
+		ID: "run-v3-terminal", ThreadID: "thread-v3", ActorUserID: "user-v3", ClientRequestID: "request-v3-terminal",
+		Status: agentruntime.RunSucceeded, LastEventSequence: 2, StateVersion: 2, MaxSteps: 6,
+		ModelRecordID: "model-record-v3", ModelKey: "model-v3", ToolSchemaVersion: 4,
+		RuntimeVersion: 3, PolicyVersion: 3, CreatedAt: now.Add(-time.Hour), UpdatedAt: completedAt, CompletedAt: &completedAt,
+	}
+	if err := db.Create(&[]model.AgentRun{queued, terminal}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRunEvent{
+		ID: "event-v3-queued-1", RunID: queued.ID, Sequence: 1, Kind: agentruntime.EventRunCreated,
+		PayloadJSON: string(stateJSON), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentCheckpoint{
+		ID: "checkpoint-v3-queued-1", RunID: queued.ID, Sequence: 1,
+		StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("runtime v4 cutover: %v", err)
+	}
+	var storedQueued, storedTerminal model.AgentRun
+	if err := db.First(&storedQueued, "id = ?", queued.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&storedTerminal, "id = ?", terminal.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedQueued.Status != agentruntime.RunFailed || storedQueued.RuntimeVersion != 3 || storedQueued.ToolSchemaVersion != 4 {
+		t.Fatalf("queued v3 retirement = %#v", storedQueued)
+	}
+	if storedTerminal.Status != agentruntime.RunSucceeded || storedTerminal.CompletedAt == nil {
+		t.Fatalf("terminal v3 history changed = %#v", storedTerminal)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.Order("sequence DESC").First(&checkpoint, "run_id = ?", queued.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var retired agentruntime.RuntimeState
+	if err := json.Unmarshal([]byte(checkpoint.StateJSON), &retired); err != nil {
+		t.Fatal(err)
+	}
+	if retired.FailureCode != agentruntime.FailureRuntimeSchemaRetired {
+		t.Fatalf("retired v3 failure code = %q", retired.FailureCode)
 	}
 }
 

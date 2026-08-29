@@ -90,7 +90,7 @@ test("首页新画布必须先完成定向远端创建，再建立 Agent 的 rev
 
 function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
     return {
-        protocolVersion: 3,
+        protocolVersion: 4,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,

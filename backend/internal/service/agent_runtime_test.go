@@ -407,7 +407,8 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	if first.State.Status != agentruntime.RunQueued || first.State.StepNumber != 0 || first.State.UserMessage != input.UserMessage {
 		t.Fatalf("initial runtime = %#v", first)
 	}
-	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey || first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion || first.Run.RuntimeVersion != agentruntime.CurrentRuntimeVersion || first.Run.PolicyVersion != agentruntime.CurrentPolicyVersion {
+	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey ||
+		first.Run.ToolSchemaVersion != 5 || first.Run.RuntimeVersion != 4 || first.Run.PolicyVersion != 4 {
 		t.Fatalf("frozen run model = %#v", first.Run)
 	}
 	if first.ModelTask == nil || first.ModelTask.Status != model.TaskStatusQueued || first.ModelTask.Type != agentRuntimeModelTaskType || first.ModelTask.Model != fixture.channelModel.ModelKey {
@@ -467,6 +468,43 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	}
 	if _, err := svc.StartAgentRuntime(input); err == nil || !strings.Contains(err.Error(), "input facts conflict") {
 		t.Fatalf("mutated model task replay error = %v", err)
+	}
+}
+
+func TestRuntimeSchemaRetiredRejectsNonterminalV3ResumeBeforeMutation(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-request-retired-v3",
+		UserMessage: "继续旧运行", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", input.Scope.RunID).Updates(model.AgentRun{
+		RuntimeVersion: 3, PolicyVersion: 3, ToolSchemaVersion: 4,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var eventsBefore, tasksBefore int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", input.Scope.RunID).Count(&eventsBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("operation = ?", "agent_model:"+input.Scope.RunID).Count(&tasksBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.ResumeAgentRuntime(input.Scope); err == nil || !strings.Contains(err.Error(), agentruntime.FailureRuntimeSchemaRetired) {
+		t.Fatalf("retired v3 resume error = %v", err)
+	}
+	var eventsAfter, tasksAfter int64
+	if err := db.Model(&model.AgentRunEvent{}).Where("run_id = ?", input.Scope.RunID).Count(&eventsAfter).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("operation = ?", "agent_model:"+input.Scope.RunID).Count(&tasksAfter).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventsAfter != eventsBefore || tasksAfter != tasksBefore {
+		t.Fatalf("retired resume mutated facts: events %d -> %d, tasks %d -> %d", eventsBefore, eventsAfter, tasksBefore, tasksAfter)
 	}
 }
 

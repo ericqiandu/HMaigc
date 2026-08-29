@@ -123,7 +123,7 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 
 const (
 	retiredAgentToolSchemaFailureCode            = "tool_schema_retired"
-	retiredAgentRuntimeContractFailureCode       = "runtime_contract_retired"
+	retiredAgentRuntimeContractFailureCode       = agentruntime.FailureRuntimeSchemaRetired
 	legacyAgentToolSchemaVersion                 = agentruntime.LegacyToolSchemaVersion
 	agentRuntimeMigrationTargetToolSchemaVersion = 3
 	legacyAgentModelTaskOperationPrefix          = "agent_model:"

@@ -12,7 +12,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func TestCurrentAgentContractsHardCutToProductionV3(t *testing.T) {
+func TestCurrentAgentContractsHardCutToProductionV4(t *testing.T) {
 	if agentruntime.CurrentRuntimeVersion != agentruntime.ProductionRuntimeVersion ||
 		agentruntime.CurrentPolicyVersion != agentruntime.ProductionPolicyVersion ||
 		agentruntime.CurrentToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {

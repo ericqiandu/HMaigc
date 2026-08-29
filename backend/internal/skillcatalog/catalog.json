@@ -2,7 +2,7 @@
   "skills": [
     {
       "dir": "short-drama-director",
-      "version": 4,
+      "version": 5,
       "name": "短剧总导演",
       "description": "当已有故事蓝图、Treatment 或剧本，需要形成短剧的导演意图、表演调度、视听策略与生产计划时使用；统筹交付但不代替故事开发、剧本撰写或逐镜头分镜。",
       "icon": "clapperboard",
@@ -11,18 +11,18 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v4",
+      "sourceRevision": "hmaigc-v5",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "冻结 narrative、storyboard 与 video_assembly 专家能力、工具边界和 Artifact schema",
+      "changelog": "硬切 assembly_plan.v2，并授权 video_assembly 专家调用受治理的 media.assemble",
       "capabilityManifest": {
         "specialists": ["narrative", "storyboard", "video_assembly"],
-        "tools": ["canvas.project"],
-        "artifactSchemas": ["assembly_plan.v1", "script_bundle.v1", "storyboard_plan.v1"]
+        "tools": ["canvas.project", "media.assemble"],
+        "artifactSchemas": ["assembly_plan.v2", "script_bundle.v1", "storyboard_plan.v1"]
       }
     },
     {
       "dir": "commercial-film-director",
-      "version": 2,
+      "version": 3,
       "name": "商业广告导演",
       "description": "用于把品牌目标、产品卖点和受众转化为高密度商业短片的叙事与镜头方案。",
       "icon": "badge-dollar-sign",
@@ -31,13 +31,13 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v2",
+      "sourceRevision": "hmaigc-v3",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "冻结商业叙事、分镜、视觉与合成专家能力及 Artifact schema",
+      "changelog": "硬切 assembly_plan.v2，并授权受治理的最终媒体装配",
       "capabilityManifest": {
         "specialists": ["narrative", "storyboard", "video_assembly", "visual"],
-        "tools": ["canvas.project", "vision.analyze"],
-        "artifactSchemas": ["assembly_plan.v1", "script_bundle.v1", "storyboard_plan.v1", "visual_evidence.v1"]
+        "tools": ["canvas.project", "media.assemble", "vision.analyze"],
+        "artifactSchemas": ["assembly_plan.v2", "script_bundle.v1", "storyboard_plan.v1", "visual_evidence.v1"]
       }
     },
     {
@@ -102,7 +102,7 @@
     },
     {
       "dir": "storyboard-continuity-director",
-      "version": 5,
+      "version": 6,
       "name": "分镜连续性导演",
       "description": "当剧本、故事节拍或生产计划需要转换为可生成镜头时使用；负责镜头卡、首尾帧承接、角色与空间连续性、对白动作账本以及逐镜头执行证据。",
       "icon": "panels-top-left",
@@ -111,13 +111,13 @@
       "visibility": "public",
       "sourceKind": "original",
       "sourceUrl": "",
-      "sourceRevision": "hmaigc-v5",
+      "sourceRevision": "hmaigc-v6",
       "sourceLicense": "HMaigc-Proprietary",
-      "changelog": "增加视频、独立音频与装配计划的受治理音频分支和精确 revision 交付契约",
+      "changelog": "硬切 assembly_plan.v2，并授权 video_assembly 专家执行可恢复的最终装配",
       "capabilityManifest": {
         "specialists": ["storyboard", "video_assembly", "visual"],
-        "tools": ["canvas.project", "vision.analyze"],
-        "artifactSchemas": ["assembly_plan.v1", "audio_plan.v1", "storyboard_plan.v1", "video_plan.v1", "visual_evidence.v1"]
+        "tools": ["canvas.project", "media.assemble", "vision.analyze"],
+        "artifactSchemas": ["assembly_plan.v2", "audio_plan.v1", "storyboard_plan.v1", "video_plan.v1", "visual_evidence.v1"]
       }
     },
     {

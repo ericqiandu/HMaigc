@@ -57,6 +57,7 @@ func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 		agentruntime.ToolVisionAnalyze,
 		agentruntime.ToolMediaGenerate,
 		agentruntime.ToolCanvasProject,
+		agentruntime.ToolMediaAssemble,
 	}
 	if !reflect.DeepEqual(productionNames, wantProduction) {
 		t.Fatalf("production tools = %#v, want %#v", productionNames, wantProduction)
@@ -88,7 +89,7 @@ func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 func TestToolSchemaV5AddsOnlyMediaAssembly(t *testing.T) {
 	t.Parallel()
 
-	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.NextToolSchemaVersion)
+	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.CurrentToolSchemaVersion)
 	if !ok {
 		t.Fatal("tool schema v5 is unavailable")
 	}
@@ -108,7 +109,7 @@ func TestToolSchemaV5AddsOnlyMediaAssembly(t *testing.T) {
 		t.Fatalf("v5 tools = %#v, want %#v", names, want)
 	}
 
-	policy, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.NextToolSchemaVersion)
+	policy, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.CurrentToolSchemaVersion)
 	if !ok || policy.RiskLevel != agentruntime.ToolRiskWrite || policy.RequiredAccess != agentruntime.AccessEditor {
 		t.Fatalf("media.assemble policy = %#v, found=%v", policy, ok)
 	}
@@ -118,10 +119,10 @@ func TestToolSchemaV5AddsOnlyMediaAssembly(t *testing.T) {
 	if agentruntime.ApprovalRequiredFor(policy, agentruntime.ExecutionAutomatic) {
 		t.Fatal("automatic media.assemble required a second tool approval")
 	}
-	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.ProductionToolSchemaVersion); ok {
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, 4); ok {
 		t.Fatal("tool schema v4 exposed media.assemble")
 	}
-	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolName("media.assemble.v2"), agentruntime.NextToolSchemaVersion); ok {
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolName("media.assemble.v2"), agentruntime.CurrentToolSchemaVersion); ok {
 		t.Fatal("tool schema v5 accepted an unknown tool")
 	}
 }

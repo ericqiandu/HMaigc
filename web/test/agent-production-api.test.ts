@@ -162,7 +162,7 @@ test("最终装配生命周期以 tool_call 事件进入统一 Agent 时间线",
         planRevision: { artifactId: "artifact-assembly", revisionId: "revision-assembly-2" },
     };
     const event = {
-        protocolVersion: 3,
+        protocolVersion: 4,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 7,

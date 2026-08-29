@@ -14,7 +14,7 @@ description: 当剧本、故事节拍或生产计划需要转换为可生成镜�
 - 输入必须是已批准剧本、明确场次或用户显式要求拆解的现有文本，并保留 `sceneKey`、来源节拍、对白与动作事实。
 - 若输入只有故事蓝图而缺少可拍场次，明确要求先完成剧本撰写；不在分镜阶段临时补写剧情或台词。
 - 每个镜头输出稳定 `shotKey`、来源场次、时长、叙事职责、进入/离开状态、画面与声音事实、图片提示、视频提示、资产依赖和连续性证据。
-- 视频生产必须先交付严格 `video_plan.v1`；仅在用户明确需要独立音频时另交付 `audio_plan.v1`，最终合成使用 `assembly_plan.v1` 精确引用已批准 revision。
+- 视频生产必须先交付严格 `video_plan.v1`；仅在用户明确需要独立音频时另交付 `audio_plan.v1`，最终合成使用 `assembly_plan.v2` 精确引用已批准 revision，并通过 `media.assemble` 执行。
 - 分镜计划、媒体任务和最终资产是不同交付层级；只能用对应的真实工具结果证明完成。
 
 ## 成功标准
@@ -35,7 +35,7 @@ description: 当剧本、故事节拍或生产计划需要转换为可生成镜�
 5. **设计首尾帧承接**：图片提示定义清晰可验证的首帧构图；视频提示只描述该镜可见动作与镜头变化；尾帧状态必须能成为下一镜或下一分组的真实参考。
 6. **检查资产执行链**：逐镜核对角色卡、场景图、道具图、首帧、尾帧和上游媒体 URL。缺失时先补跑当前节点之前的未生成链路；补跑后仍缺失则显式失败。
 7. **规划声音分支**：从本轮用户目标和冻结模型能力决定 `native`、`independent` 或 `none`。独立音频逐条记录 voice、line、timeline、上游 revision，并走独立报价、审批和 Artifact；原生音频不得再创建独立音频 Artifact 或重复计费。
-8. **规划最终装配**：`assembly_plan.v1` 逐段引用精确已批准视频 revision；仅 `independent` 模式可引用精确已批准音频 revision，`native` 和 `none` 模式必须保持独立音频引用为空。
+8. **规划最终装配**：`assembly_plan.v2` 逐段引用精确已批准视频 revision；仅 `independent` 模式可引用精确已批准音频 revision，`native` 和 `none` 模式必须保持独立音频引用为空。用户批准该计划后才调用 `media.assemble`，以真实内部 Task、ready Resource、Artifact revision 与画布 revision 验收。
 9. **逐镜头验收**：把精确已批准 Artifact revision、就绪 Resource、成功资产发布（用户要求入库时）和画布 revision 作为交付证据。已生成资产必须保留，后续质检只能追加记录，不能覆盖或丢弃。
 
 ## 决策规则

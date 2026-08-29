@@ -234,14 +234,14 @@ func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalHistory(t *testi
 	if err := db.First(&failedCurrent, "id = ?", current.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedCurrent.Status != agentruntime.ToolCallFailed || failedCurrent.ErrorCode != "runtime_contract_retired" {
+	if failedCurrent.Status != agentruntime.ToolCallFailed || failedCurrent.ErrorCode != agentruntime.FailureRuntimeSchemaRetired {
 		t.Fatalf("PostgreSQL current tool call was not retired = %#v", failedCurrent)
 	}
 	var failedPendingArtifact model.AgentProductionArtifact
 	if err := db.First(&failedPendingArtifact, "id = ?", "postgres-paused-artifact").Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedPendingArtifact.Status != model.AgentProductionArtifactFailed || failedPendingArtifact.LastErrorCode != "runtime_contract_retired" {
+	if failedPendingArtifact.Status != model.AgentProductionArtifactFailed || failedPendingArtifact.LastErrorCode != agentruntime.FailureRuntimeSchemaRetired {
 		t.Fatalf("PostgreSQL current pending artifact was not retired = %#v", failedPendingArtifact)
 	}
 	for artifactID, wantStatus := range map[string]model.AgentProductionArtifactStatus{

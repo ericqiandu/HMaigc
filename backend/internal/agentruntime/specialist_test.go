@@ -47,6 +47,18 @@ func TestValidateSkillCapabilityManifestRequiresCanonicalFacts(t *testing.T) {
 	}
 }
 
+func TestValidateSkillCapabilityManifestAcceptsCurrentAssemblyTool(t *testing.T) {
+	manifest := SkillCapabilityManifest{
+		Specialists:     []SpecialistKey{SpecialistVideoAssembly},
+		Tools:           []AgentToolName{ToolMediaAssemble},
+		ArtifactSchemas: []string{"assembly_plan.v2"},
+	}
+
+	if err := ValidateSkillCapabilityManifest(manifest); err != nil {
+		t.Fatalf("ValidateSkillCapabilityManifest() error = %v", err)
+	}
+}
+
 func TestValidateRunConfigurationRejectsAttachmentTotalSizeLimit(t *testing.T) {
 	configuration := RunConfiguration{
 		ExecutionMode: ExecutionGuided,

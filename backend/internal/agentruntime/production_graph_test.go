@@ -8,13 +8,13 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestProductionRuntimeContractIsTheOnlyCurrentContract(t *testing.T) {
-	if agentruntime.CurrentRuntimeVersion != 3 || agentruntime.CurrentPolicyVersion != 3 || agentruntime.CurrentToolSchemaVersion != 4 {
+func TestRuntimeV4ProductionContractIsTheOnlyCurrentContract(t *testing.T) {
+	if agentruntime.CurrentRuntimeVersion != 4 || agentruntime.CurrentPolicyVersion != 4 || agentruntime.CurrentToolSchemaVersion != 5 {
 		t.Fatalf("current runtime did not hard cut to production: runtime=%d policy=%d tools=%d",
 			agentruntime.CurrentRuntimeVersion, agentruntime.CurrentPolicyVersion, agentruntime.CurrentToolSchemaVersion)
 	}
-	if agentruntime.ProductionRuntimeVersion != 3 || agentruntime.ProductionPolicyVersion != 3 || agentruntime.ProductionToolSchemaVersion != 4 ||
-		agentruntime.CurrentProductionSchemaVersion != 1 || agentruntime.ProductionAgentUIProtocolVersion != 3 {
+	if agentruntime.ProductionRuntimeVersion != 4 || agentruntime.ProductionPolicyVersion != 4 || agentruntime.ProductionToolSchemaVersion != 5 ||
+		agentruntime.CurrentProductionSchemaVersion != 2 || agentruntime.ProductionAgentUIProtocolVersion != 4 {
 		t.Fatalf("staged production contract mismatch: runtime=%d policy=%d tools=%d production=%d ui=%d",
 			agentruntime.ProductionRuntimeVersion, agentruntime.ProductionPolicyVersion, agentruntime.ProductionToolSchemaVersion,
 			agentruntime.CurrentProductionSchemaVersion, agentruntime.ProductionAgentUIProtocolVersion)

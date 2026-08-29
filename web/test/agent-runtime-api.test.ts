@@ -37,9 +37,9 @@ const view = {
         maxSteps: 8,
         modelRecordId: "model-1",
         modelKey: "agent-model",
-        toolSchemaVersion: 1,
-        runtimeVersion: 1,
-        policyVersion: 1,
+        toolSchemaVersion: 5,
+        runtimeVersion: 4,
+        policyVersion: 4,
         createdAt: "2026-08-15T00:00:00Z",
         updatedAt: "2026-08-15T00:00:01Z",
     },
@@ -50,7 +50,7 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
     expect(parseAgentRuntimeView(view)).toEqual(view);
     expect(
         parseAgentRuntimeEvent({
-            protocolVersion: 3,
+            protocolVersion: 4,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 4,
@@ -60,12 +60,12 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             payload: { toolCallId: "tool-1", actionVersion: 3 },
             createdAt: "2026-08-15T00:00:01Z",
         }),
-    ).toEqual({ protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
+    ).toEqual({ protocolVersion: 4, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
 });
 
-test("Agent UI v3 硬切并严格保留可恢复的产物审核事件", () => {
+test("Agent UI v4 硬切并严格保留可恢复的产物审核事件", () => {
     const event = {
-        protocolVersion: 3,
+        protocolVersion: 4,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 9,
@@ -89,7 +89,7 @@ test("Agent UI v3 硬切并严格保留可恢复的产物审核事件", () => {
     expect(() => parseAgentRuntimeEvent({ ...event, payload: { ...event.payload, signedUrl: "https://example.test/transient" } })).toThrow("短期媒体地址");
 });
 
-test.each(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
+test.each(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project", "media.assemble"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
     const productionState = {
         ...state,
         status: "waiting_tool",
@@ -157,6 +157,7 @@ test("旧终态运行只读投影显式保留 historical 配置而不伪造用�
         run: {
             ...view.run,
             status: "failed",
+            toolSchemaVersion: 1,
             runtimeVersion: 1,
             policyVersion: 1,
             completedAt: "2026-08-15T00:00:02Z",
@@ -177,6 +178,38 @@ test("旧终态运行只读投影显式保留 historical 配置而不伪造用�
     expect(parsed.state.configuration.executionMode).toBe("historical");
     expect(parsed.state.configuration.skills).toEqual([]);
     expect(parsed.state.configuration.attachments).toEqual([]);
+});
+
+test("终态 v3 运行保留原始执行模式并允许只读查看", () => {
+    const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
+    const parsed = parseAgentRuntimeView({
+        ...view,
+        run: {
+            ...view.run,
+            status: "failed",
+            runtimeVersion: 3,
+            policyVersion: 3,
+            toolSchemaVersion: 4,
+            completedAt: "2026-08-15T00:00:02Z",
+        },
+        state: {
+            ...terminalState,
+            status: "failed",
+            failureCode: "legacy_failure",
+        },
+    });
+
+    expect(parsed.state.configuration.executionMode).toBe("automatic");
+    expect(parsed.run.runtimeVersion).toBe(3);
+});
+
+test("活动运行只接受 4/4/5 合同，旧 v3 不可继续执行", () => {
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            run: { ...view.run, runtimeVersion: 3, policyVersion: 3, toolSchemaVersion: 4 },
+        }),
+    ).toThrow("3/3/4");
 });
 
 test("historical 执行模式只接受首代已终结运行", () => {
@@ -203,7 +236,7 @@ test("未知运行状态与事件类型显式失败", () => {
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, status: "thinking" } })).toThrow("不受支持");
     expect(() =>
         parseAgentRuntimeEvent({
-            protocolVersion: 3,
+            protocolVersion: 4,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 5,
@@ -400,12 +433,12 @@ test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => 
     expect(parsed.state.pendingClarification?.answers[0]?.customText).toBe("都市夜景");
     expect(parsed.state.clarificationHistory[0]?.answers[0]?.customText).toBe("BMW X5");
     for (const kind of ["item.started", "item.delta", "item.completed"] as const) {
-        expect(parseAgentRuntimeEvent({ protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
+        expect(parseAgentRuntimeEvent({ protocolVersion: 4, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
     }
 });
 
 test("UI 事件拒绝未知协议、缺失 itemId 与非法运行载荷", () => {
-    const base = { protocolVersion: 3, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
+    const base = { protocolVersion: 4, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
     expect(() => parseAgentRuntimeEvent({ ...base, protocolVersion: 1, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("协议版本");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", payload: { delta: "a" } })).toThrow("itemId");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("itemKind");

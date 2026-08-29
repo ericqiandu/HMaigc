@@ -124,6 +124,15 @@ func TestMediaAssemblySuccessMaterializesChecksummedResourceAndArtifact(t *testi
 	if revision.ResourceID != resource.ID || revision.LifecycleStatus != model.AgentArtifactRevisionAwaitingReview {
 		t.Fatalf("output revision = %#v", revision)
 	}
+	openedResource, body, err := svc.OpenResource(scope.ActorUserID, resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	playedContent, readErr := io.ReadAll(body)
+	closeErr := body.Close()
+	if readErr != nil || closeErr != nil || openedResource.ID != resource.ID || !bytes.Equal(playedContent, []byte("assembled-video")) {
+		t.Fatalf("playback resource = %#v content=%q readErr=%v closeErr=%v", openedResource, playedContent, readErr, closeErr)
+	}
 	var billingCount int64
 	if err := db.Model(&model.BillingOrder{}).Where("task_id = ?", task.ID).Count(&billingCount).Error; err != nil {
 		t.Fatal(err)
@@ -131,6 +140,7 @@ func TestMediaAssemblySuccessMaterializesChecksummedResourceAndArtifact(t *testi
 	if billingCount != 0 {
 		t.Fatalf("billing count = %d", billingCount)
 	}
+	t.Logf("assembly acceptance canvas=%s run=%s task=%s resource=%s artifact=%s revision=%s", scope.CanvasID, scope.RunID, task.ID, resource.ID, revision.ArtifactID, revision.ID)
 }
 
 func TestMediaAssemblyCancellationStopsQueuedTask(t *testing.T) {
@@ -497,26 +507,40 @@ func mediaAssemblyRuntimeFixture(t *testing.T) (*Service, *gorm.DB, agentruntime
 		t.Fatal(err)
 	}
 	svc.mediaDurationProbe = func(context.Context, io.Reader) (int64, error) { return 1000, nil }
-	resource, err := svc.storeScopedResourceWithIdentity("assembly-input-resource", scope.ActorUserID, "", "video", "input.mp4", "video/mp4", 5, 16, 16, bytes.NewReader([]byte("video")))
+	resourceOne, err := svc.storeScopedResourceWithIdentity("assembly-input-resource-1", scope.ActorUserID, "", "video", "input-1.mp4", "video/mp4", 7, 16, 16, bytes.NewReader([]byte("video-1")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource.ETag = "assembly-input-etag"
-	if err := svc.repo.SaveResource(resource); err != nil {
+	resourceOne.ETag = "assembly-input-etag-1"
+	if err := svc.repo.SaveResource(resourceOne); err != nil {
 		t.Fatal(err)
 	}
-	candidatePayload, _ := json.Marshal(agentruntime.MediaCandidateContent{CandidateKey: "clip", MediaKind: agentruntime.ArtifactVideo, ProviderRequestIdentity: "provider-request", ResourceID: resource.ID, SourceTaskID: "source-task"})
-	candidate, err := svc.repo.AppendMediaCandidateRevision(scope, "assembly-input-artifact", agentruntime.ArtifactDraft{ArtifactKey: "clip", Kind: "media_candidate", SchemaVersion: 1, Payload: candidatePayload, ResourceID: resource.ID, ModelRequestIdentity: "provider-request", UpstreamRevisions: []agentruntime.ArtifactRevisionRef{}})
+	resourceTwo, err := svc.storeScopedResourceWithIdentity("assembly-input-resource-2", scope.ActorUserID, "", "video", "input-2.mp4", "video/mp4", 7, 16, 16, bytes.NewReader([]byte("video-2")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	approveMediaAssemblyRevision(t, db, scope, candidate.ID, 1)
-	planPayload := json.RawMessage(`{"planKey":"assembly-plan","audioMode":"none","clips":[{"clipKey":"clip","sourceRevision":{"artifactId":"assembly-input-artifact","revisionId":"` + candidate.ID + `"},"trimStartMs":0,"trimEndMs":1000,"nativeAudioGainMilliDb":null,"transitionToNext":{"kind":"cut","durationMs":0}}],"audioTracks":[],"output":{"artifactKey":"final-video","container":"mp4","videoCodec":"h264","audioCodec":"none","width":16,"height":16,"frameRate":24}}`)
-	planRevision, err := svc.repo.AppendArtifactRevisionOnce(scope, "assembly-plan-artifact", agentruntime.ArtifactDraft{ArtifactKey: "assembly-plan", Kind: "assembly_plan", SchemaVersion: 2, Payload: planPayload, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{{ArtifactID: candidate.ArtifactID, RevisionID: candidate.ID}}})
+	resourceTwo.ETag = "assembly-input-etag-2"
+	if err := svc.repo.SaveResource(resourceTwo); err != nil {
+		t.Fatal(err)
+	}
+	candidateOnePayload, _ := json.Marshal(agentruntime.MediaCandidateContent{CandidateKey: "clip-1", MediaKind: agentruntime.ArtifactVideo, ProviderRequestIdentity: "provider-request-1", ResourceID: resourceOne.ID, SourceTaskID: "source-task-1"})
+	candidateOne, err := svc.repo.AppendMediaCandidateRevision(scope, "assembly-input-artifact-1", agentruntime.ArtifactDraft{ArtifactKey: "clip-1", Kind: "media_candidate", SchemaVersion: 1, Payload: candidateOnePayload, ResourceID: resourceOne.ID, ModelRequestIdentity: "provider-request-1", UpstreamRevisions: []agentruntime.ArtifactRevisionRef{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	approveMediaAssemblyRevision(t, db, scope, planRevision.ID, 2)
+	candidateTwoPayload, _ := json.Marshal(agentruntime.MediaCandidateContent{CandidateKey: "clip-2", MediaKind: agentruntime.ArtifactVideo, ProviderRequestIdentity: "provider-request-2", ResourceID: resourceTwo.ID, SourceTaskID: "source-task-2"})
+	candidateTwo, err := svc.repo.AppendMediaCandidateRevision(scope, "assembly-input-artifact-2", agentruntime.ArtifactDraft{ArtifactKey: "clip-2", Kind: "media_candidate", SchemaVersion: 1, Payload: candidateTwoPayload, ResourceID: resourceTwo.ID, ModelRequestIdentity: "provider-request-2", UpstreamRevisions: []agentruntime.ArtifactRevisionRef{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approveMediaAssemblyRevision(t, db, scope, candidateOne.ID, 1)
+	approveMediaAssemblyRevision(t, db, scope, candidateTwo.ID, 2)
+	planPayload := json.RawMessage(`{"planKey":"assembly-plan","audioMode":"none","clips":[{"clipKey":"clip-1","sourceRevision":{"artifactId":"assembly-input-artifact-1","revisionId":"` + candidateOne.ID + `"},"trimStartMs":0,"trimEndMs":1000,"nativeAudioGainMilliDb":null,"transitionToNext":{"kind":"cut","durationMs":0}},{"clipKey":"clip-2","sourceRevision":{"artifactId":"assembly-input-artifact-2","revisionId":"` + candidateTwo.ID + `"},"trimStartMs":0,"trimEndMs":1000,"nativeAudioGainMilliDb":null,"transitionToNext":{"kind":"cut","durationMs":0}}],"audioTracks":[],"output":{"artifactKey":"final-video","container":"mp4","videoCodec":"h264","audioCodec":"none","width":16,"height":16,"frameRate":24}}`)
+	planRevision, err := svc.repo.AppendArtifactRevisionOnce(scope, "assembly-plan-artifact", agentruntime.ArtifactDraft{ArtifactKey: "assembly-plan", Kind: "assembly_plan", SchemaVersion: 2, Payload: planPayload, UpstreamRevisions: []agentruntime.ArtifactRevisionRef{{ArtifactID: candidateOne.ArtifactID, RevisionID: candidateOne.ID}, {ArtifactID: candidateTwo.ArtifactID, RevisionID: candidateTwo.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approveMediaAssemblyRevision(t, db, scope, planRevision.ID, 3)
 	return svc, db, scope, agentruntime.ArtifactRevisionRef{ArtifactID: planRevision.ArtifactID, RevisionID: planRevision.ID}
 }
 

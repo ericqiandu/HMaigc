@@ -401,7 +401,7 @@ function turn(items: AgentTimelineItem[]): AgentThreadHistoryTurn {
 
 function artifactEvent(itemId: string, payload: Record<string, unknown>): AgentRuntimeEvent {
     return {
-        protocolVersion: 3,
+        protocolVersion: 4,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 4,
@@ -415,7 +415,7 @@ function artifactEvent(itemId: string, payload: Record<string, unknown>): AgentR
 
 function toolEvent(itemId: string, payload: Record<string, unknown>, sequence: number): AgentRuntimeEvent {
     return {
-        protocolVersion: 3,
+        protocolVersion: 4,
         threadId: "thread-1",
         runId: "run-1",
         sequence,
