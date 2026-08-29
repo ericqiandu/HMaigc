@@ -177,8 +177,10 @@ validate_candidate_controller() {
 }
 
 handoff_controller() {
-    local config_dir control_env candidate_env previous_env old_image
-    config_dir="$OPS_STATE_DIR/config"
+    local ops_state_dir config_dir control_env candidate_env previous_env old_image
+    ops_state_dir="${HMAIGC_OPS_STATE_DIR:-}"
+    [[ -n "$ops_state_dir" ]] || fail "缺少 HMAIGC_OPS_STATE_DIR，无法切换控制器"
+    config_dir="$ops_state_dir/config"
     control_env="$config_dir/control.env"
     candidate_env="$config_dir/control.candidate.env"
     previous_env="$config_dir/control.previous.env"
