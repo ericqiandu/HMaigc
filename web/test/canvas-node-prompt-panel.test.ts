@@ -97,6 +97,7 @@ describe("buildNodeConfig", () => {
                                 supportsLipSync: false,
                                 supportsIndependentAudio: false,
                                 supportsGeneratedAudio: false,
+                                supportsGeneratedAudioWithReferenceVideo: false,
                                 watermarkCapability: "controlled",
                                 supportsAudioOnly: false,
                                 requiresAdaptiveFrames: false,

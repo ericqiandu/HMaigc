@@ -79,13 +79,26 @@ export type ProviderModelCapabilities = {
     ratios: string[];
     qualities: string[];
     outputCounts: number[];
+    durations: number[];
     durationMin: number;
     durationMax: number;
     supportsSmartDuration: boolean;
+    supportsTextToVideo: boolean;
+    supportsImageToVideo: boolean;
+    supportsReferenceVideo: boolean;
+    supportsNativeAudio: boolean;
+    supportsDialogue: boolean;
+    supportsVoiceReference: boolean;
+    supportsLipSync: boolean;
+    supportsIndependentAudio: boolean;
     supportsGeneratedAudio: boolean;
+    supportsGeneratedAudioWithReferenceVideo: boolean;
     watermarkCapability: WatermarkCapability;
     supportsAudioOnly: boolean;
     requiresAdaptiveFrames: boolean;
+    generationModes: string[];
+    adaptiveRatioModes: string[];
+    requiredAdaptiveRatioModes: string[];
     maxImages: number;
     maxImagesWithVideo: number;
     maxVideos: number;
@@ -93,6 +106,7 @@ export type ProviderModelCapabilities = {
     maxVideoDurationSeconds: number;
     maxAudioDurationSeconds: number;
     tools: string[];
+    supportsTokenUsageBilling: boolean;
 };
 
 export type WatermarkCapability = "controlled" | "unsupported" | "not_applicable";

@@ -141,46 +141,47 @@ type PublicChannelModelPrice struct {
 }
 
 type PublicProviderCapabilities struct {
-	ProviderFamily             string                    `json:"providerFamily"`
-	ModelKey                   string                    `json:"modelKey"`
-	DisplayName                string                    `json:"displayName"`
-	UpstreamMode               string                    `json:"upstreamMode"`
-	Capability                 string                    `json:"capability"`
-	Resolutions                []string                  `json:"resolutions"`
-	ResolutionPixels           map[string]int64          `json:"resolutionPixels"`
-	InputVariants              []string                  `json:"inputVariants"`
-	ReferenceVideoResolutions  []string                  `json:"referenceVideoResolutions"`
-	GeneratedAudioResolutions  []string                  `json:"generatedAudioResolutions"`
-	Ratios                     []string                  `json:"ratios"`
-	Qualities                  []string                  `json:"qualities"`
-	OutputCounts               []int                     `json:"outputCounts"`
-	Durations                  []int                     `json:"durations"`
-	DurationMin                int                       `json:"durationMin"`
-	DurationMax                int                       `json:"durationMax"`
-	SupportsSmartDuration      bool                      `json:"supportsSmartDuration"`
-	SupportsTextToVideo        bool                      `json:"supportsTextToVideo"`
-	SupportsImageToVideo       bool                      `json:"supportsImageToVideo"`
-	SupportsReferenceVideo     bool                      `json:"supportsReferenceVideo"`
-	SupportsNativeAudio        bool                      `json:"supportsNativeAudio"`
-	SupportsDialogue           bool                      `json:"supportsDialogue"`
-	SupportsVoiceReference     bool                      `json:"supportsVoiceReference"`
-	SupportsLipSync            bool                      `json:"supportsLipSync"`
-	SupportsIndependentAudio   bool                      `json:"supportsIndependentAudio"`
-	SupportsGeneratedAudio     bool                      `json:"supportsGeneratedAudio"`
-	WatermarkCapability        model.WatermarkCapability `json:"watermarkCapability"`
-	SupportsAudioOnly          bool                      `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames     bool                      `json:"requiresAdaptiveFrames"`
-	GenerationModes            []string                  `json:"generationModes"`
-	AdaptiveRatioModes         []string                  `json:"adaptiveRatioModes"`
-	RequiredAdaptiveRatioModes []string                  `json:"requiredAdaptiveRatioModes"`
-	MaxImages                  int                       `json:"maxImages"`
-	MaxImagesWithVideo         int                       `json:"maxImagesWithVideo"`
-	MaxVideos                  int                       `json:"maxVideos"`
-	MaxAudios                  int                       `json:"maxAudios"`
-	MaxVideoDurationSeconds    int                       `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds    int                       `json:"maxAudioDurationSeconds"`
-	Tools                      []string                  `json:"tools"`
-	SupportsTokenUsageBilling  bool                      `json:"supportsTokenUsageBilling"`
+	ProviderFamily                           string                    `json:"providerFamily"`
+	ModelKey                                 string                    `json:"modelKey"`
+	DisplayName                              string                    `json:"displayName"`
+	UpstreamMode                             string                    `json:"upstreamMode"`
+	Capability                               string                    `json:"capability"`
+	Resolutions                              []string                  `json:"resolutions"`
+	ResolutionPixels                         map[string]int64          `json:"resolutionPixels"`
+	InputVariants                            []string                  `json:"inputVariants"`
+	ReferenceVideoResolutions                []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions                []string                  `json:"generatedAudioResolutions"`
+	Ratios                                   []string                  `json:"ratios"`
+	Qualities                                []string                  `json:"qualities"`
+	OutputCounts                             []int                     `json:"outputCounts"`
+	Durations                                []int                     `json:"durations"`
+	DurationMin                              int                       `json:"durationMin"`
+	DurationMax                              int                       `json:"durationMax"`
+	SupportsSmartDuration                    bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo                      bool                      `json:"supportsTextToVideo"`
+	SupportsImageToVideo                     bool                      `json:"supportsImageToVideo"`
+	SupportsReferenceVideo                   bool                      `json:"supportsReferenceVideo"`
+	SupportsNativeAudio                      bool                      `json:"supportsNativeAudio"`
+	SupportsDialogue                         bool                      `json:"supportsDialogue"`
+	SupportsVoiceReference                   bool                      `json:"supportsVoiceReference"`
+	SupportsLipSync                          bool                      `json:"supportsLipSync"`
+	SupportsIndependentAudio                 bool                      `json:"supportsIndependentAudio"`
+	SupportsGeneratedAudio                   bool                      `json:"supportsGeneratedAudio"`
+	SupportsGeneratedAudioWithReferenceVideo bool                      `json:"supportsGeneratedAudioWithReferenceVideo"`
+	WatermarkCapability                      model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly                        bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames                   bool                      `json:"requiresAdaptiveFrames"`
+	GenerationModes                          []string                  `json:"generationModes"`
+	AdaptiveRatioModes                       []string                  `json:"adaptiveRatioModes"`
+	RequiredAdaptiveRatioModes               []string                  `json:"requiredAdaptiveRatioModes"`
+	MaxImages                                int                       `json:"maxImages"`
+	MaxImagesWithVideo                       int                       `json:"maxImagesWithVideo"`
+	MaxVideos                                int                       `json:"maxVideos"`
+	MaxAudios                                int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds                  int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds                  int                       `json:"maxAudioDurationSeconds"`
+	Tools                                    []string                  `json:"tools"`
+	SupportsTokenUsageBilling                bool                      `json:"supportsTokenUsageBilling"`
 }
 
 type PublicChannelModelPriceTier struct {
@@ -881,16 +882,18 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
 		Durations:   inclusiveDurations(capabilities.DurationMin, capabilities.DurationMax),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
-		SupportsTextToVideo:      capabilities.SupportsTextToVideo,
-		SupportsImageToVideo:     capabilities.SupportsImageToVideo,
-		SupportsReferenceVideo:   capabilities.SupportsReferenceVideo,
-		SupportsNativeAudio:      capabilities.SupportsNativeAudio,
-		SupportsDialogue:         capabilities.SupportsDialogue,
-		SupportsVoiceReference:   capabilities.SupportsVoiceReference,
-		SupportsLipSync:          capabilities.SupportsLipSync,
-		SupportsIndependentAudio: capabilities.SupportsIndependentAudio,
-		SupportsSmartDuration:    capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
-		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
+		SupportsTextToVideo:                      capabilities.SupportsTextToVideo,
+		SupportsImageToVideo:                     capabilities.SupportsImageToVideo,
+		SupportsReferenceVideo:                   capabilities.SupportsReferenceVideo,
+		SupportsNativeAudio:                      capabilities.SupportsNativeAudio,
+		SupportsDialogue:                         capabilities.SupportsDialogue,
+		SupportsVoiceReference:                   capabilities.SupportsVoiceReference,
+		SupportsLipSync:                          capabilities.SupportsLipSync,
+		SupportsIndependentAudio:                 capabilities.SupportsIndependentAudio,
+		SupportsSmartDuration:                    capabilities.SupportsSmartDuration,
+		SupportsGeneratedAudio:                   capabilities.SupportsGeneratedAudio,
+		SupportsGeneratedAudioWithReferenceVideo: capabilities.SupportsGeneratedAudioWithReferenceVideo,
+		WatermarkCapability:                      capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
 		RequiresAdaptiveFrames:     capabilities.RequiresAdaptiveFrames,
 		GenerationModes:            append([]string{}, capabilities.GenerationModes...),
 		AdaptiveRatioModes:         append([]string{}, capabilities.AdaptiveRatioModes...),

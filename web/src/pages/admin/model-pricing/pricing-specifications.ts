@@ -52,13 +52,16 @@ export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "p
     const capabilities = model.providerCapabilities;
     if (model.priceStrategy === "image_resolution" && capabilities && capabilities.qualities.length > 0) {
         return capabilities.resolutions.flatMap((resolution) =>
-            capabilities.qualities.map((quality) => ({
-                key: `${resolution}::${quality}`,
-                label: `${resolution} · ${quality === "low" ? "低画质" : quality === "medium" ? "标准画质" : "高画质"}`,
-                group: "base" as const,
-                resolution,
-                inputVariant: quality,
-            })),
+            capabilities.qualities.map((value) => {
+                const quality = imagePricingQuality(value);
+                return {
+                    key: `${resolution}::${quality}`,
+                    label: `${resolution} · ${quality === "low" ? "低画质" : quality === "medium" ? "标准画质" : "高画质"}`,
+                    group: "base" as const,
+                    resolution,
+                    inputVariant: quality,
+                };
+            }),
         );
     }
     if (model.priceStrategy === "video_resolution" && capabilities && capabilities.inputVariants.length > 0) {
@@ -83,4 +86,9 @@ export function specificationsForModel(model: Pick<ChannelModel, "modelKey" | "p
     if (modelKey === "minimax-h3") return [...base, ...miniMaxH3SupplierSpecifications];
     if (modelKey === "speech-2.8-hd" || modelKey === "speech-2.8-turbo") return [...base, ...miniMaxSpeechSupplierSpecifications];
     return base;
+}
+
+function imagePricingQuality(value: string): "low" | "medium" | "high" {
+    if (value === "low" || value === "medium" || value === "high") return value;
+    throw new Error(`后台发布了不受支持的图片画质计费档位：${value}`);
 }

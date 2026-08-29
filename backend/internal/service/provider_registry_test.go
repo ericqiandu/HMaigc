@@ -89,8 +89,12 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatalf("Kling generated-audio resolutions = %#v, want [std pro]", klingFacts["generatedAudioResolutions"])
 	}
 	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel)
-	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" {
+	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" || public.SupportsGeneratedAudioWithReferenceVideo {
 		t.Fatalf("Kling public capabilities = %#v", public)
+	}
+	seedancePublic := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, "doubao-seedance-2-0-260128")
+	if seedancePublic == nil || !seedancePublic.SupportsGeneratedAudioWithReferenceVideo {
+		t.Fatalf("Seedance public reference-video audio capabilities = %#v", seedancePublic)
 	}
 }
 

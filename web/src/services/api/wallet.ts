@@ -1,5 +1,6 @@
 import axios from "axios";
 import type { ModelBrandKey } from "@/lib/model-brands";
+import type { ProviderModelCapabilities } from "@/stores/use-config-store";
 
 const api = axios.create({ baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api", withCredentials: true });
 
@@ -87,14 +88,7 @@ export type ChannelModel = {
     priceConfigured: boolean;
     enabled: boolean;
     priceVersion: number;
-    providerCapabilities?: {
-        resolutions: string[];
-        qualities: Array<"low" | "medium" | "high">;
-        inputVariants: Array<"standard" | "standard_audio" | "reference_video">;
-        referenceVideoResolutions: string[];
-        generatedAudioResolutions: string[];
-        supportsTokenUsageBilling?: boolean;
-    };
+    providerCapabilities?: ProviderModelCapabilities;
     createdAt: string;
     updatedAt: string;
 };

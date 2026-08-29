@@ -14,47 +14,48 @@ type ProviderAdapterDescriptor struct {
 }
 
 type ProviderModelSpec struct {
-	ModelKey                   string                    `json:"modelKey"`
-	DisplayName                string                    `json:"displayName"`
-	MarketingCopy              string                    `json:"marketingCopy"`
-	UpstreamMode               string                    `json:"upstreamMode"`
-	Capability                 string                    `json:"capability"`
-	Resolutions                []string                  `json:"resolutions"`
-	ReferenceVideoResolutions  []string                  `json:"referenceVideoResolutions"`
-	GeneratedAudioResolutions  []string                  `json:"generatedAudioResolutions"`
-	ResolutionPixels           map[string]int64          `json:"resolutionPixels"`
-	Ratios                     []string                  `json:"ratios"`
-	Qualities                  []string                  `json:"qualities"`
-	OutputCounts               []int                     `json:"outputCounts"`
-	DurationMin                int                       `json:"durationMin"`
-	DurationMax                int                       `json:"durationMax"`
-	SupportsSmartDuration      bool                      `json:"supportsSmartDuration"`
-	SupportsTextToVideo        bool                      `json:"supportsTextToVideo"`
-	SupportsImageToVideo       bool                      `json:"supportsImageToVideo"`
-	SupportsReferenceVideo     bool                      `json:"supportsReferenceVideo"`
-	SupportsNativeAudio        bool                      `json:"supportsNativeAudio"`
-	SupportsDialogue           bool                      `json:"supportsDialogue"`
-	SupportsVoiceReference     bool                      `json:"supportsVoiceReference"`
-	SupportsLipSync            bool                      `json:"supportsLipSync"`
-	SupportsIndependentAudio   bool                      `json:"supportsIndependentAudio"`
-	SupportsGeneratedAudio     bool                      `json:"supportsGeneratedAudio"`
-	WatermarkCapability        model.WatermarkCapability `json:"watermarkCapability"`
-	SupportsAudioOnly          bool                      `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames     bool                      `json:"requiresAdaptiveFrames"`
-	GenerationModes            []string                  `json:"generationModes"`
-	AdaptiveRatioModes         []string                  `json:"adaptiveRatioModes"`
-	RequiredAdaptiveRatioModes []string                  `json:"requiredAdaptiveRatioModes"`
-	MaxImages                  int                       `json:"maxImages"`
-	MaxImagesWithVideo         int                       `json:"maxImagesWithVideo"`
-	MaxVideos                  int                       `json:"maxVideos"`
-	MaxAudios                  int                       `json:"maxAudios"`
-	MaxVideoDurationSeconds    int                       `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds    int                       `json:"maxAudioDurationSeconds"`
-	Tools                      []string                  `json:"tools"`
-	Published                  bool                      `json:"published"`
-	ChannelModelID             string                    `json:"channelModelId"`
-	Enabled                    bool                      `json:"enabled"`
-	PriceConfigured            bool                      `json:"priceConfigured"`
+	ModelKey                                 string                    `json:"modelKey"`
+	DisplayName                              string                    `json:"displayName"`
+	MarketingCopy                            string                    `json:"marketingCopy"`
+	UpstreamMode                             string                    `json:"upstreamMode"`
+	Capability                               string                    `json:"capability"`
+	Resolutions                              []string                  `json:"resolutions"`
+	ReferenceVideoResolutions                []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions                []string                  `json:"generatedAudioResolutions"`
+	ResolutionPixels                         map[string]int64          `json:"resolutionPixels"`
+	Ratios                                   []string                  `json:"ratios"`
+	Qualities                                []string                  `json:"qualities"`
+	OutputCounts                             []int                     `json:"outputCounts"`
+	DurationMin                              int                       `json:"durationMin"`
+	DurationMax                              int                       `json:"durationMax"`
+	SupportsSmartDuration                    bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo                      bool                      `json:"supportsTextToVideo"`
+	SupportsImageToVideo                     bool                      `json:"supportsImageToVideo"`
+	SupportsReferenceVideo                   bool                      `json:"supportsReferenceVideo"`
+	SupportsNativeAudio                      bool                      `json:"supportsNativeAudio"`
+	SupportsDialogue                         bool                      `json:"supportsDialogue"`
+	SupportsVoiceReference                   bool                      `json:"supportsVoiceReference"`
+	SupportsLipSync                          bool                      `json:"supportsLipSync"`
+	SupportsIndependentAudio                 bool                      `json:"supportsIndependentAudio"`
+	SupportsGeneratedAudio                   bool                      `json:"supportsGeneratedAudio"`
+	SupportsGeneratedAudioWithReferenceVideo bool                      `json:"supportsGeneratedAudioWithReferenceVideo"`
+	WatermarkCapability                      model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly                        bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames                   bool                      `json:"requiresAdaptiveFrames"`
+	GenerationModes                          []string                  `json:"generationModes"`
+	AdaptiveRatioModes                       []string                  `json:"adaptiveRatioModes"`
+	RequiredAdaptiveRatioModes               []string                  `json:"requiredAdaptiveRatioModes"`
+	MaxImages                                int                       `json:"maxImages"`
+	MaxImagesWithVideo                       int                       `json:"maxImagesWithVideo"`
+	MaxVideos                                int                       `json:"maxVideos"`
+	MaxAudios                                int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds                  int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds                  int                       `json:"maxAudioDurationSeconds"`
+	Tools                                    []string                  `json:"tools"`
+	Published                                bool                      `json:"published"`
+	ChannelModelID                           string                    `json:"channelModelId"`
+	Enabled                                  bool                      `json:"enabled"`
+	PriceConfigured                          bool                      `json:"priceConfigured"`
 }
 
 type ProviderRegistry struct {
@@ -310,7 +311,7 @@ func seedanceProviderModel(modelKey string, displayName string, resolutions []st
 		OutputCounts:              []int{1, 2, 4},
 		DurationMin:               4, DurationMax: durationMax, SupportsSmartDuration: true, SupportsTextToVideo: true,
 		SupportsImageToVideo: true, SupportsReferenceVideo: true, SupportsNativeAudio: true, SupportsDialogue: true, SupportsVoiceReference: true,
-		SupportsGeneratedAudio: true, WatermarkCapability: model.WatermarkCapabilityControlled,
+		SupportsGeneratedAudio: true, SupportsGeneratedAudioWithReferenceVideo: true, WatermarkCapability: model.WatermarkCapabilityControlled,
 		SupportsAudioOnly: supportsAudioOnly, RequiresAdaptiveFrames: supportsAudioOnly,
 		GenerationModes:            []string{"text", "image", "first_last_frame", "image_reference", "omni_reference"},
 		AdaptiveRatioModes:         []string{"text", "image", "first_last_frame", "image_reference", "omni_reference"},
