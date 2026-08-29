@@ -4,6 +4,7 @@
 
 - 基线：`c11114a`（`v1.0.69`）。
 - 验收 HEAD：`9d862bb`（`feat(tasks): close settlement outbox audit`）。
+- 后续收口复验 HEAD：`2b415e0`（`fix(media): 统一模型能力与计费契约`）。
 - 覆盖 Runtime v4 / Policy v4 / Tool schema v5 / UI protocol v4 / Production schema v2，以及从多 Specialist、Artifact Ledger、逐阶段审核、定向重生成、真实媒体装配到 Task 执行信封、取消/租约 fencing、原子结算和耐久 Outbox 的完整提交链。
 - 本报告只记录本次实际执行的门禁和可复核事实；没有运行的真实 PostgreSQL、付费供应商生成或跨进程故障注入不写成成功。
 
@@ -47,7 +48,7 @@ bun run build
 
 - 干净 HEAD：`708 pass / 0 fail`，150 个测试文件；类型检查与生产构建通过。
 - 生产构建预算全部通过：应用入口、首页、项目、技能、画布、后台、FFmpeg 静态闭包和导演台 3D 按需包均在预算内；构建只保留一个超过 900 KiB 的警告，预算检查仍为通过。
-- 当前共享工作区另有用户未提交的视频模型能力改动；该状态的全量 Web 测试为 `711 pass / 2 fail`，两项失败都来自 `canvas-generation-defaults.test.ts` 对 `doubao-seedance-2-0-260128` 动态视频能力契约的预期。相同测试在干净 Agent HEAD 为全绿，因此未修改、未暂存也未归因到本次 Agent 交付。
+- 后续媒体能力与计费契约已由 `2b415e0` 收口；在该 HEAD 重新执行当前共享工作区的完整 Web 门禁为 `741 pass / 0 fail`、`2918 expect()`、156 个测试文件，TypeScript 检查、生产构建与全部 bundle 预算通过。原先的两个动态视频能力契约失败不再存在。
 
 ### 静态完整性
 
@@ -59,7 +60,7 @@ bun run build
 
 本次使用内置浏览器连接本地已登录运行时，没有触发付费模型：
 
-1. 画布 `Q7T5CS18n_TIYaFqCjqSp`：打开 Agent 历史中的已取消 Run，服务端历史恢复了原用户消息与冻结模型配置，状态稳定为“已停止”；刷新恢复期间先显示真实“正在恢复运行事实”，恢复完成后没有继续输出、没有伪造运行中状态。
+1. 画布 `Q7T5CS18n_TIYaFqCjqSp`：打开 Agent 历史中的已取消 Run，服务端历史恢复了原用户消息与冻结模型配置，状态稳定为“已停止”；刷新恢复期间先显示真实“正在恢复运行事实”，恢复完成后没有继续输出、没有伪造运行中状态。历史选择的 `kz_gpt_image2` 当前不可用于 Agent 时，页面明确报出该事实，没有自动替换模型；浏览器控制台无 error/warn。
 2. 画布 `D6gkP85uOI4uC7m573_Dj`：最终视频节点播放器读取真实资源端点，`readyState=4`、`duration=3.041667`、无媒体错误，播放器可见 `0:00 / 0:03`。
 3. Web 自动化同时覆盖：引用顺序变化仍保持稳定资产键、节点提示词 `@` mention 编辑、冻结审批身份、单次阶段修改、定向重生成只推进受影响 attempt、真实装配卡合并、停止后丢弃迟到正文、迟到 Artifact 保留但不复活 Run、刷新后按持久 Turn/Item/sequence 重放。
 

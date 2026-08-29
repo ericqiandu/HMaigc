@@ -69,12 +69,13 @@ pnpm exec bun test test/agent-runtime-api.test.ts test/agent-conversation-reduce
 
 结果：`107 pass / 0 fail`。其中明确覆盖终态 `3/3/4` 保留原始 `guided/automatic` 配置并可只读查看，以及同合同非终态 Run 被拒绝继续执行。
 
-Web 生产构建、TypeScript 检查和全部 bundle 预算通过。Web 全量测试为 `711 pass / 2 fail`；两项失败均来自本任务开始前已经存在且未暂存的 `web/src/lib/video-model-capabilities.ts` 改动，其错误为 `模型 doubao-seedance-2-0-260128 的后台视频能力契约不完整`，对应 `web/test/canvas-generation-defaults.test.ts` 的两个视频默认参数用例。本任务没有修改或暂存该能力契约。
+后续媒体能力与计费契约已由 `2b415e0 fix(media): 统一模型能力与计费契约` 收口。2026-08-29 在该 HEAD 重新执行 Web 全量测试得到 `741 pass / 0 fail`、`2918 expect()`、156 个测试文件；TypeScript 检查、生产构建和全部 bundle 预算均通过。构建仍保留一个导演台按需包超过 900 KiB 的警告，但该包未进入首屏静态闭包且预算检查通过。
 
-内置浏览器刷新 `http://127.0.0.1:3000/canvas/Q7T5CS18n_TIYaFqCjqSp` 后，画布与 Agent 面板正常恢复，读取到 `当前画布 v88`、历史/新建对话入口、输入区、模型与 Skills 控件；浏览器控制台未发现 error。该检查只做现有本地应用的 UI smoke test，没有向运行中的本地服务注入测试数据库，也没有发送 Agent 指令，因此没有把服务测试中的假 Resource 冒充为浏览器真实媒体播放证据。
+内置浏览器刷新 `http://127.0.0.1:3000/canvas/Q7T5CS18n_TIYaFqCjqSp` 后，Agent 面板先显示事实状态 `正在恢复运行事实`，随后恢复 `当前画布 v88`、原用户消息、冻结模型配置和 `已停止` 终态；历史入口、输入区、模型与 Skills 控件恢复可用，浏览器控制台未发现 error/warn。恢复后页面明确提示历史选择的 `kz_gpt_image2` 当前不可用于 Agent，没有静默替换模型。该检查只做现有本地应用的 UI/持久恢复 smoke test，没有向运行中的本地服务注入测试数据库，也没有发送 Agent 指令，因此没有把服务测试中的假 Resource 冒充为浏览器真实媒体播放证据。
 
 ## 未执行的外部门禁
 
 - 未调用真实视频供应商，也未产生付费订单。
+- 本地运行时使用 SQLite，当前环境没有配置 PostgreSQL 测试连接；PostgreSQL 锁、隔离级别和并发迁移专项门禁未执行。
 - 未在云端部署或验证线上数据迁移。
 - 本地确定性 fixture 位于隔离测试数据库，未注入开发环境账号；因此浏览器只完成协议/UI smoke test，最终 Resource 的可读取性由服务测试直接证明。
